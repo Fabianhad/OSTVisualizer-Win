@@ -1,0 +1,15 @@
+from .components.window import DetachedPageViewWindow, DetachedPageViewWindowConfig
+
+_VIEW_WINDOW_CONFIG = DetachedPageViewWindowConfig(
+    window_title="View Window",
+    show_scale_combo=False,
+    show_select_tool=False,
+    default_cursor_mode="pan",
+    allow_annotation_editing=False,
+    dropdown_state_key="view",
+)
+
+
+class ViewWindow(DetachedPageViewWindow):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, config=_VIEW_WINDOW_CONFIG, **kwargs)

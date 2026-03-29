@@ -1,0 +1,565 @@
+import importlib
+import sys
+import types
+import unittest
+from types import SimpleNamespace
+from ost_visualizer.domain.entities import shape as shapes
+
+SNAP_MODULE_NAME = (
+    "ost_visualizer.presentation.components.plan_view.components.snap_index"
+)
+GEOMETRY_MODULE_NAME = (
+    "ost_visualizer.presentation.components.plan_view.components.geometry_utils"
+)
+HANDLE_STYLE_MODULE_NAME = (
+    "ost_visualizer.presentation.components.plan_view.components.handle_style"
+)
+OST_PDF_MODULE_NAME = "ost_visualizer.presentation.visualization.pdf.ost_pdf"
+PLACEMENT_MODULE_NAME = (
+    "ost_visualizer.presentation.components.plan_view.components.placement_mode"
+)
+_ORIGINAL_MODULES = {
+    name: sys.modules.get(name)
+    for name in (
+        SNAP_MODULE_NAME,
+        GEOMETRY_MODULE_NAME,
+        HANDLE_STYLE_MODULE_NAME,
+        OST_PDF_MODULE_NAME,
+        PLACEMENT_MODULE_NAME,
+    )
+}
+
+
+class FakeSnapIndex:
+    instances = []
+    query_result = None
+
+    def __init__(self):
+        self.build_calls = []
+        FakeSnapIndex.instances.append(self)
+
+    def build(self, segments):
+        self.build_calls.append(list(segments))
+
+    def query(self, _x, _y, _radius):
+        return FakeSnapIndex.query_result
+
+    def size(self):
+        return len(self.build_calls[-1]) if self.build_calls else 0
+
+
+class FakePDFRenderer:
+    open_calls = 0
+    extract_calls = 0
+    page_info_calls = 0
+    open_ok = True
+    raw_segments = [(1.0, 2.0, 3.0, 4.0)]
+    page_width = 200.0
+    page_height = 100.0
+    media_width = 200.0
+    media_height = 100.0
+    crop_width = 0.0
+    crop_height = 0.0
+    intrinsic_rotation = 0
+
+    def open(self, _path):
+        FakePDFRenderer.open_calls += 1
+        return FakePDFRenderer.open_ok
+
+    def extract_path_segments(self, _page_index):
+        FakePDFRenderer.extract_calls += 1
+        return list(FakePDFRenderer.raw_segments)
+
+    def page_info(self, _page_index):
+        FakePDFRenderer.page_info_calls += 1
+        return SimpleNamespace(
+            effective_width_pts=FakePDFRenderer.page_width,
+            effective_height_pts=FakePDFRenderer.page_height,
+            media_width_pts=FakePDFRenderer.media_width,
+            media_height_pts=FakePDFRenderer.media_height,
+            crop_width_pts=FakePDFRenderer.crop_width,
+            crop_height_pts=FakePDFRenderer.crop_height,
+            intrinsic_rotation=FakePDFRenderer.intrinsic_rotation,
+        )
+
+    def close(self):
+        pass
+
+
+def _install_fake_native_modules():
+    snap_module = types.ModuleType(SNAP_MODULE_NAME)
+    snap_module.NONE = 0
+    snap_module.GRID = 1
+    snap_module.ENDPOINT = 2
+    snap_module.MIDPOINT = 3
+    snap_module.PERPENDICULAR = 4
+    snap_module.SnapIndex = FakeSnapIndex
+    sys.modules[SNAP_MODULE_NAME] = snap_module
+    geometry_module = types.ModuleType(GEOMETRY_MODULE_NAME)
+    geometry_module.HandleInfo = type("HandleInfo", (), {})
+    geometry_module.segments_intersect = lambda *_args: False
+    geometry_module.polygon_is_valid = lambda _points: True
+    geometry_module.polyline_self_intersects = lambda _points: False
+    geometry_module.point_to_segment_distance = lambda *_args: 0.0
+    geometry_module.signed_area = lambda _points: 1.0
+    geometry_module.resize_cursor_for_edge = lambda *_args: None
+    geometry_module.cursor_for_direction = lambda *_args: None
+    geometry_module.polygon_centroid = lambda _pos, _n: (0.0, 0.0)
+    geometry_module.rotate_position_coords = lambda pos, *_args, **_kwargs: list(pos)
+    geometry_module.rotate_points_around = lambda pos, *_args: list(pos)
+    sys.modules[GEOMETRY_MODULE_NAME] = geometry_module
+    handle_style_module = types.ModuleType(HANDLE_STYLE_MODULE_NAME)
+    handle_style_module.apply_takeoff_handle_style = lambda _item: None
+    sys.modules[HANDLE_STYLE_MODULE_NAME] = handle_style_module
+    pdf_module = types.ModuleType(OST_PDF_MODULE_NAME)
+    pdf_module.PDFRenderer = FakePDFRenderer
+    sys.modules[OST_PDF_MODULE_NAME] = pdf_module
+    pdf_package = sys.modules.get("ost_visualizer.presentation.visualization.pdf")
+    if pdf_package is not None:
+        pdf_package.ost_pdf = pdf_module
+
+
+_install_fake_native_modules()
+placement_mode = importlib.import_module(PLACEMENT_MODULE_NAME)
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.takeoff import Takeoff
+
+
+class FakeCoordinateSystem:
+    scale_ratio = 144.0
+    view_scale = 1.0
+    page_info = {"view_scale": 1.0}
+
+    def transform_vertices_to_2d(self, vertices):
+        return list(vertices)
+
+    def ost_to_pdf_points(self, value):
+        return value
+
+
+class FakeSceneBuilder:
+    def get_coordinate_system(self):
+        return FakeCoordinateSystem()
+
+
+class PlacementHarness(placement_mode.PlacementModeMixin):
+    def __init__(self):
+        self._current_page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="drawing.pdf",
+            height_pts=100.0,
+            page_index=0,
+        )
+        self._pdf_height_pts = 100.0
+        self._pdf_width_pts = 200.0
+        self._scene_builder = FakeSceneBuilder()
+        self._current_takeoffs = {}
+        self._current_conditions = {
+            "linear": Condition(
+                uid="linear",
+                condition_type=Condition.TYPE_LINEAR,
+                layer_visible=True,
+            )
+        }
+        self._snap_index = None
+        self._snap_index_dirty = True
+        self._pdf_snap_segments_cache_key = None
+        self._pdf_snap_segments_cache = []
+        self._snap_increments = 1.0
+
+    def _snap_radius_ost(self):
+        return 1.0
+
+    def _scene_pos_to_ost(self, point):
+        return point
+
+    def snap_ost(self, value):
+        return round(float(value))
+
+
+class FakeScene:
+    def addItem(self, _item):
+        pass
+
+    def removeItem(self, _item):
+        pass
+
+
+class FakeColorService:
+    def int_to_hex(self, _value):
+        return "#808080"
+
+
+class PreviewHarness(PlacementHarness):
+    def __init__(self):
+        super().__init__()
+        self._scene = FakeScene()
+        self._place_preview_items = []
+        self._place_flashing = False
+        self._backout_orig_parent_path = None
+        self._backout_parent_uid = None
+        self._backout_active_uid = None
+        self._place_session_uid = "linear"
+        self._place_points = []
+        self._place_linear_dragging = False
+        self._place_area_rect_dragging = False
+        self._backout_last_valid_ost = None
+        self._uid_to_items = {}
+        self._current_color_map = {}
+        self._color_service = FakeColorService()
+        self.handle_points = []
+        self.snap_result = (10.0, 0.0, 10.0, 0.0, placement_mode.GRID)
+
+    def _placement_snap_from_scene(self, _cursor_scene):
+        return self.snap_result
+
+    def _snap_angle_for_placement(
+        self, origin_x, origin_y, target_x, target_y, _snap_kind
+    ):
+        return self._snap_angle(origin_x, origin_y, target_x, target_y)
+
+    def _current_page_transform(self):
+        return None
+
+    def _apply_pattern_preview(
+        self, item, _path, _condition, _qcolor, _preview_opacity, _page_transform
+    ):
+        self._place_preview_items.append(item)
+
+    def _add_secondary_condition_previews(self, *_args, **_kwargs):
+        pass
+
+    def _request_place_preview_repaint(self):
+        pass
+
+    def _add_place_handle(self, x, y, half=4.0):
+        self.handle_points.append((x, y, half))
+
+
+class SnapSegmentCacheTests(unittest.TestCase):
+    def setUp(self):
+        FakeSnapIndex.instances.clear()
+        FakeSnapIndex.query_result = None
+        FakePDFRenderer.open_calls = 0
+        FakePDFRenderer.extract_calls = 0
+        FakePDFRenderer.page_info_calls = 0
+        FakePDFRenderer.open_ok = True
+        FakePDFRenderer.raw_segments = [(1.0, 2.0, 3.0, 4.0)]
+        FakePDFRenderer.page_width = 200.0
+        FakePDFRenderer.page_height = 100.0
+        FakePDFRenderer.media_width = 200.0
+        FakePDFRenderer.media_height = 100.0
+        FakePDFRenderer.crop_width = 0.0
+        FakePDFRenderer.crop_height = 0.0
+        FakePDFRenderer.intrinsic_rotation = 0
+
+    def test_pdf_segments_are_cached_across_takeoff_rebuilds(self):
+        harness = PlacementHarness()
+        harness._ensure_snap_index()
+        harness._current_takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="linear",
+            position=[10.0, 20.0, 30.0, 40.0],
+        )
+        harness._invalidate_snap_index()
+        harness._ensure_snap_index()
+        snap_index = FakeSnapIndex.instances[-1]
+        self.assertEqual(FakePDFRenderer.extract_calls, 1)
+        self.assertEqual(len(snap_index.build_calls), 2)
+        self.assertEqual(len(snap_index.build_calls[-1]), 3)
+        self.assertEqual(
+            snap_index.build_calls[-1][-2:],
+            [
+                (
+                    9.646446609406727,
+                    20.353553390593273,
+                    29.646446609406727,
+                    40.35355339059328,
+                ),
+                (
+                    10.353553390593273,
+                    19.646446609406727,
+                    30.353553390593273,
+                    39.64644660940672,
+                ),
+            ],
+        )
+
+    def test_linear_takeoff_snap_uses_border_segments_not_centerline(self):
+        harness = PlacementHarness()
+        harness._current_page.image_path = None
+        harness._current_conditions["linear"].thickness = 2.0
+        harness._current_takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="linear",
+            position=[0.0, 0.0, 10.0, 0.0],
+        )
+        self.assertEqual(
+            harness._build_takeoff_snap_segments(),
+            [
+                (0.0, 1.0, 10.0, 1.0),
+                (0.0, -1.0, 10.0, -1.0),
+            ],
+        )
+
+    def test_area_takeoff_snap_uses_polygon_border_segments(self):
+        harness = PlacementHarness()
+        harness._current_page.image_path = None
+        harness._current_conditions["area"] = Condition(
+            uid="area",
+            condition_type=Condition.TYPE_AREA,
+            layer_visible=True,
+        )
+        harness._current_takeoffs["a1"] = Takeoff(
+            uid="a1",
+            condition_uid="area",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 5.0, 0.0, 5.0],
+        )
+        self.assertEqual(
+            harness._build_takeoff_snap_segments(),
+            [
+                (0.0, 0.0, 10.0, 0.0),
+                (10.0, 0.0, 10.0, 5.0),
+                (10.0, 5.0, 0.0, 5.0),
+                (0.0, 5.0, 0.0, 0.0),
+            ],
+        )
+
+    def test_count_square_snap_uses_shape_border_segments(self):
+        harness = PlacementHarness()
+        harness._current_page.image_path = None
+        harness._current_conditions["count"] = Condition(
+            uid="count",
+            condition_type=Condition.TYPE_COUNT,
+            layer_visible=True,
+            shape=shapes.SQUARE,
+            width=4.0,
+            depth=4.0,
+            display_size=100.0,
+        )
+        harness._current_takeoffs["c1"] = Takeoff(
+            uid="c1",
+            condition_uid="count",
+            position=[10.0, 20.0],
+            rotation=0.0,
+        )
+        self.assertEqual(
+            harness._build_takeoff_snap_segments(),
+            [
+                (8.0, 18.0, 12.0, 18.0),
+                (12.0, 18.0, 12.0, 22.0),
+                (12.0, 22.0, 8.0, 22.0),
+                (8.0, 22.0, 8.0, 18.0),
+            ],
+        )
+
+    def test_count_circle_snap_uses_approximated_border_segments(self):
+        harness = PlacementHarness()
+        harness._current_page.image_path = None
+        harness._current_conditions["count"] = Condition(
+            uid="count",
+            condition_type=Condition.TYPE_COUNT,
+            layer_visible=True,
+            shape=shapes.CIRCLE,
+            width=4.0,
+            depth=4.0,
+            display_size=100.0,
+        )
+        harness._current_takeoffs["c1"] = Takeoff(
+            uid="c1",
+            condition_uid="count",
+            position=[0.0, 0.0],
+            rotation=0.0,
+        )
+        segments = harness._build_takeoff_snap_segments()
+        self.assertEqual(len(segments), 32)
+        self.assertEqual(segments[0][0], 2.0)
+        self.assertEqual(segments[0][1], 0.0)
+
+    def test_linear_takeoff_snap_skips_degenerate_segments(self):
+        harness = PlacementHarness()
+        harness._current_page.image_path = None
+        harness._current_conditions["linear"].thickness = 2.0
+        harness._current_takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="linear",
+            position=[5.0, 5.0, 5.0, 5.0],
+        )
+        self.assertEqual(harness._build_takeoff_snap_segments(), [])
+
+    def test_linear_takeoff_snap_uses_default_border_for_non_positive_thickness(
+        self,
+    ):
+        harness = PlacementHarness()
+        harness._current_page.image_path = None
+        harness._current_conditions["linear"].thickness = 0.0
+        harness._current_takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="linear",
+            position=[0.0, 0.0, 10.0, 0.0],
+        )
+        self.assertEqual(
+            harness._build_takeoff_snap_segments(),
+            [
+                (0.0, 0.5, 10.0, 0.5),
+                (0.0, -0.5, 10.0, -0.5),
+            ],
+        )
+
+    def test_pdf_extraction_failure_is_cached_for_same_page(self):
+        FakePDFRenderer.open_ok = False
+        harness = PlacementHarness()
+        with self.assertLogs(placement_mode.logger, level="WARNING"):
+            harness._ensure_snap_index()
+        harness._invalidate_snap_index()
+        harness._ensure_snap_index()
+        self.assertEqual(FakePDFRenderer.open_calls, 1)
+        self.assertEqual(FakePDFRenderer.extract_calls, 0)
+
+    def test_grid_fallback_still_rounds_when_snap_index_is_empty(self):
+        from PySide6 import QtCore
+
+        harness = PlacementHarness()
+        harness._current_page.image_path = None
+        ost_x, ost_y, _cx, _cy, snap_kind = harness._placement_snap_from_scene(
+            QtCore.QPointF(10.4, 20.6)
+        )
+        self.assertEqual((ost_x, ost_y), (10, 21))
+        self.assertEqual(snap_kind, placement_mode.GRID)
+
+    def test_native_line_hit_returns_exact_hit_without_increment_quantizing(self):
+        from PySide6 import QtCore
+
+        FakeSnapIndex.query_result = (10.4, 20.6, placement_mode.PERPENDICULAR, 0)
+        harness = PlacementHarness()
+        harness._current_page.image_path = None
+        ost_x, ost_y, cx, cy, snap_kind = harness._placement_snap_from_scene(
+            QtCore.QPointF(10.4, 20.6)
+        )
+        self.assertEqual((ost_x, ost_y), (10.4, 20.6))
+        self.assertEqual((cx, cy), (5.2, 10.3))
+        self.assertEqual(snap_kind, placement_mode.PERPENDICULAR)
+
+    def test_angle_snap_distance_increment_applies_only_to_grid_snap(self):
+        harness = PlacementHarness()
+        grid_x, grid_y = harness._snap_angle_for_placement(
+            0.0, 0.0, 10.4, 0.0, placement_mode.GRID
+        )
+        line_x, line_y = harness._snap_angle_for_placement(
+            0.0, 0.0, 10.4, 0.0, placement_mode.PERPENDICULAR
+        )
+        self.assertEqual((grid_x, grid_y), (10.0, 0.0))
+        self.assertEqual((line_x, line_y), (10.4, 0.0))
+
+    def test_odd_length_takeoff_position_is_ignored_safely(self):
+        harness = PlacementHarness()
+        harness._current_takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="linear",
+            position=[1.0, 2.0, 3.0],
+        )
+        self.assertEqual(harness._build_takeoff_snap_segments(), [])
+
+    def test_rotated_pdf_segments_are_mapped_to_rendered_page_coordinates(self):
+        FakePDFRenderer.raw_segments = [(1031.58, 1792.26, 1143.0, 1774.26)]
+        FakePDFRenderer.page_width = 2592.0
+        FakePDFRenderer.page_height = 1728.0
+        FakePDFRenderer.media_width = 2592.0
+        FakePDFRenderer.media_height = 1728.0
+        FakePDFRenderer.crop_width = 1728.0
+        FakePDFRenderer.crop_height = 2592.0
+        FakePDFRenderer.intrinsic_rotation = 270
+        harness = PlacementHarness()
+        harness._pdf_width_pts = 2592.0
+        harness._pdf_height_pts = 1728.0
+        harness._ensure_snap_index()
+        snap_index = FakeSnapIndex.instances[-1]
+        self.assertEqual(
+            snap_index.build_calls[-1][0],
+            (
+                (2592.0 - 1792.26) * 2.0,
+                (1728.0 - 1031.58) * 2.0,
+                (2592.0 - 1774.26) * 2.0,
+                (1728.0 - 1143.0) * 2.0,
+            ),
+        )
+
+    def test_pdf_raw_point_rotation_mapping(self):
+        harness = PlacementHarness()
+        self.assertEqual(
+            harness._pdf_raw_point_to_page_point(10.0, 20.0, 100.0, 200.0, 0),
+            (10.0, 180.0),
+        )
+        self.assertEqual(
+            harness._pdf_raw_point_to_page_point(10.0, 20.0, 100.0, 200.0, 90),
+            (20.0, 10.0),
+        )
+        self.assertEqual(
+            harness._pdf_raw_point_to_page_point(10.0, 20.0, 100.0, 200.0, 180),
+            (90.0, 20.0),
+        )
+        self.assertEqual(
+            harness._pdf_raw_point_to_page_point(10.0, 20.0, 100.0, 200.0, 270),
+            (180.0, 90.0),
+        )
+
+    def test_pdf_snap_cache_key_includes_rendered_pdf_width(self):
+        harness = PlacementHarness()
+        first_key = harness._pdf_snap_cache_key()
+        harness._pdf_width_pts = 300.0
+        second_key = harness._pdf_snap_cache_key()
+        self.assertNotEqual(first_key, second_key)
+
+    def test_linear_preview_adds_start_and_current_endpoint_handles(self):
+        from PySide6 import QtCore
+
+        harness = PreviewHarness()
+        harness._place_points = [(0.0, 0.0)]
+        harness._place_linear_dragging = True
+        harness.snap_result = (10.0, 0.0, 10.0, 0.0, placement_mode.GRID)
+        harness.update_place_preview(QtCore.QPointF(10.0, 0.0))
+        self.assertIn((0.0, 0.0, 4.0), harness.handle_points)
+        self.assertIn((10.0, 0.0, 4.0), harness.handle_points)
+
+    def test_area_preview_adds_current_endpoint_handle(self):
+        from PySide6 import QtCore
+
+        harness = PreviewHarness()
+        harness._current_conditions["area"] = Condition(
+            uid="area",
+            condition_type=Condition.TYPE_AREA,
+            layer_visible=True,
+        )
+        harness._place_session_uid = "area"
+        harness._place_points = [(0.0, 0.0), (5.0, 0.0)]
+        harness.snap_result = (5.0, 5.0, 5.0, 5.0, placement_mode.GRID)
+        harness.update_place_preview(QtCore.QPointF(5.0, 5.0))
+        self.assertIn((0.0, 0.0, 4.0), harness.handle_points)
+        self.assertIn((5.0, 0.0, 4.0), harness.handle_points)
+        self.assertIn((5.0, 5.0, 4.0), harness.handle_points)
+
+    def test_snap_cursor_marker_remains_line_snap_only(self):
+        harness = PreviewHarness()
+        harness._add_snap_cursor_marker(1.0, 2.0, placement_mode.GRID)
+        self.assertEqual(harness.handle_points, [])
+        harness._add_snap_cursor_marker(1.0, 2.0, placement_mode.ENDPOINT)
+        self.assertEqual(harness.handle_points, [(1.0, 2.0, 4.0)])
+        harness._add_snap_cursor_marker(3.0, 4.0, placement_mode.MIDPOINT)
+        self.assertEqual(
+            harness.handle_points,
+            [(1.0, 2.0, 4.0), (3.0, 4.0, 4.0)],
+        )
+
+
+def tearDownModule():
+    for name, module in _ORIGINAL_MODULES.items():
+        if module is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = module
+
+
+if __name__ == "__main__":
+    unittest.main()

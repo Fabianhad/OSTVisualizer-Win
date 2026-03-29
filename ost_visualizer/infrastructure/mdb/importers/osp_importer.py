@@ -1,0 +1,117 @@
+import logging
+import shutil
+import tempfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Optional, Set
+from ....presentation.visualization.exporters import ost_cab
+from ...app_paths import get_default_working_dir
+from .ost_importer import OstImporter
+
+logger = logging.getLogger(__name__)
+_SUPPORTED_IMAGE_EXTENSIONS: Set[str] = {".pdf", ".tif", ".tiff"}
+
+
+class OspImporter:
+    def __init__(self, ost_importer: OstImporter):
+        self._ost_importer = ost_importer
+
+    def import_osp(
+        self,
+        osp_file_path: str,
+        target_db_path: str,
+        target_project_uid: Optional[str] = None,
+    ) -> bool:
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                names = ost_cab.list_cab(osp_file_path)
+                for name in names:
+                    subdir = (tmp_path / name).parent
+                    subdir.mkdir(parents=True, exist_ok=True)
+                if not ost_cab.extract_cab(osp_file_path, str(tmp_path)):
+                    logger.error("Failed to extract .osp archive: %s", osp_file_path)
+                    return False
+                ost_files = list(tmp_path.glob("*.ost"))
+                if not ost_files:
+                    logger.error(
+                        "No .ost file found in .osp archive: %s", osp_file_path
+                    )
+                    return False
+                ost_path = ost_files[0]
+                bid_name = ost_path.stem
+                dest_dir = get_default_working_dir() / bid_name
+                self._extract_images(tmp_path, ost_path, dest_dir)
+                return self._ost_importer.import_ost(
+                    str(ost_path), target_db_path, target_project_uid
+                )
+        except Exception:
+            logger.exception("OSP import failed: %s", osp_file_path)
+            return False
+
+    def _extract_images(self, tmp_path: Path, ost_path: Path, dest_dir: Path) -> None:
+        main_names, overlay_names = self._collect_image_names(ost_path)
+        all_names = main_names | overlay_names
+        if not all_names:
+            return
+        image_files = [
+            f
+            for f in tmp_path.rglob("*")
+            if f.is_file()
+            and f.suffix.lower() in _SUPPORTED_IMAGE_EXTENSIONS
+            and f.name in all_names
+        ]
+        if not image_files:
+            return
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        overlay_dir = dest_dir / "Overlay"
+        conflicting = overlay_names & main_names
+        if conflicting:
+            overlay_dir.mkdir(parents=True, exist_ok=True)
+        for img in image_files:
+            if img.name in overlay_names and img.name in main_names:
+                shutil.copy2(str(img), str(overlay_dir / img.name))
+            else:
+                shutil.copy2(str(img), str(dest_dir / img.name))
+        self._rewrite_image_paths(ost_path, dest_dir, main_names)
+
+    def _collect_image_names(self, ost_path: Path) -> tuple:
+        tree = ET.parse(str(ost_path))
+        root = tree.getroot()
+        main_names: Set[str] = set()
+        overlay_names: Set[str] = set()
+        for page_elem in root.iter("BidPage"):
+            image_path = page_elem.get("ImagePath")
+            if image_path:
+                main_names.add(Path(image_path).name)
+            overlay_path = page_elem.get("OverlayImagePath")
+            if overlay_path:
+                overlay_names.add(Path(overlay_path).name)
+        return main_names, overlay_names
+
+    def _rewrite_image_paths(
+        self,
+        ost_path: Path,
+        dest_dir: Path,
+        main_names: Set[str],
+    ) -> None:
+        tree = ET.parse(str(ost_path))
+        root = tree.getroot()
+        overlay_dir = dest_dir / "Overlay"
+        modified = False
+        for page_elem in root.iter("BidPage"):
+            image_path = page_elem.get("ImagePath")
+            if image_path:
+                filename = Path(image_path).name
+                page_elem.set("ImagePath", str(dest_dir / filename))
+                modified = True
+            overlay_path = page_elem.get("OverlayImagePath")
+            if overlay_path:
+                filename = Path(overlay_path).name
+                if filename in main_names:
+                    page_elem.set("OverlayImagePath", str(overlay_dir / filename))
+                else:
+                    page_elem.set("OverlayImagePath", str(dest_dir / filename))
+                modified = True
+        if modified:
+            tree.write(str(ost_path), encoding="unicode", xml_declaration=False)

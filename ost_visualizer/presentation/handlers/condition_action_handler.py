@@ -1,0 +1,623 @@
+import logging
+from dataclasses import fields as dataclass_fields
+from PySide6.QtCore import QSignalBlocker
+from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
+from ...application.dtos.update_condition_dto import (
+    UpdateConditionDto,
+    UpdateConditionResultDto,
+)
+from ...domain.entities.condition import Condition
+from ...domain.entities.layer import Layer
+from ...domain.entities.pattern import TRANSPARENT as PAT_TRANSPARENT
+from ..dialogs.edit_condition_dialog import TYPE_DEFAULTS, EditConditionDialog
+from ..managers.ui_access_manager import Feature
+from ..utils.messagebox import (
+    DB_LOCKED_HINT,
+    confirm,
+    confirm_delete_conditions,
+    show_warning,
+)
+from ..utils.ost_blocking import exec_with_ost_blocking
+
+logger = logging.getLogger(__name__)
+
+
+class ConditionActionHandler:
+    def __init__(
+        self,
+        coordinator,
+        project_write_service,
+        project_read_service,
+        project_data,
+        ui_state_manager,
+    ):
+        self._coordinator = coordinator
+        self._write_service = project_write_service
+        self._read_service = project_read_service
+        self._project_data = project_data
+        self._ui_state = ui_state_manager
+
+    def _get_bid_ref_and_write_service(self):
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if not bid_ref:
+            return None, None
+        return bid_ref, self._write_service
+
+    def _is_metric(self) -> bool:
+        bid = self._project_data.get_current_bid()
+        return bool(bid and bid.measure_base == 1)
+
+    def _layer_dialog_callbacks(self, bid_ref, write_service) -> dict:
+        return {
+            "layer_reload_fn": lambda: self._read_service.get_merged_bid_layers(
+                bid_ref.file_path, bid_ref.bid_uid
+            ),
+            "layer_used_uids_fn": lambda: self._read_service.get_layer_uids_in_use(
+                bid_ref.file_path, bid_ref.bid_uid
+            ),
+            "layer_insert_fn": lambda name, after_sequence: write_service.insert_layer(
+                bid_ref.file_path, bid_ref.bid_uid, name, after_sequence
+            ),
+            "layer_delete_fn": lambda layer_uid: write_service.delete_layer(
+                bid_ref.file_path, layer_uid
+            ),
+            "layer_update_show_fn": lambda layer_uid, show: (
+                write_service.update_layer_show(bid_ref.file_path, layer_uid, show)
+            ),
+            "layer_update_all_show_fn": lambda show: (
+                write_service.update_all_layers_show(
+                    bid_ref.file_path, bid_ref.bid_uid, show
+                )
+            ),
+            "layer_update_name_fn": lambda layer_uid, name: (
+                write_service.update_layer_name(bid_ref.file_path, layer_uid, name)
+            ),
+            "layer_move_fn": lambda layer_uid, neighbor_uid: (
+                write_service.swap_layer_sequence(
+                    bid_ref.file_path, layer_uid, neighbor_uid
+                )
+            ),
+        }
+
+    def on_create_requested(self, folder_uid: str = "") -> None:
+        if not self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        sidebar = self._coordinator.conditions_sidebar
+        if not sidebar:
+            return
+        cdn_types = self._read_service.get_cdn_types(bid_ref.file_path)
+        save_condition_types = lambda changes: write_service.save_condition_types(
+            bid_ref.file_path, changes
+        )
+        reload_condition_types = lambda: list(
+            self._read_service.get_cdn_types(bid_ref.file_path).values()
+        )
+        condition_type_uids_in_use = (
+            lambda: self._read_service.get_condition_type_uids_in_use(bid_ref.file_path)
+        )
+        all_layers = self._read_service.get_merged_bid_layers(
+            bid_ref.file_path, bid_ref.bid_uid
+        )
+        layers = {
+            bl.uid: Layer(uid=bl.uid, name=bl.name, visible=bl.show)
+            for bl in all_layers
+        }
+        default_layer_uid = None
+        for bl in all_layers:
+            if bl.name == "Default":
+                default_layer_uid = bl.uid
+                break
+        synthetic = Condition(
+            uid="__new__",
+            name="",
+            condition_type=Condition.TYPE_LINEAR,
+            thickness=4.0,
+            pattern=PAT_TRANSPARENT,
+            display_size=100.0,
+            width=12.0,
+            height=0.0,
+            depth=0.0,
+            rise=0.0,
+            run=0.0,
+            spacing=4.0,
+            color_fill=13353215,
+            color_line=0,
+            shape=-1,
+            layer_uid=default_layer_uid,
+            uom1=2,
+            uom2=-1,
+            uom3=-1,
+            calc_type1=1,
+            calc_type2=0,
+            calc_type3=0,
+            round_up=0.0,
+            drop_run=False,
+            drop_value=0.0,
+            round_quantity=False,
+            grid=False,
+            grid_size1=0.0,
+            grid_size2=0.0,
+            gap=0.0,
+            connect=True,
+            connect_tolerance=6.0,
+            trim=False,
+            is_curved_segment=False,
+            snap_to_linear=-1,
+            display_dimension=False,
+            display_name=False,
+            display_grid_while_drawing=False,
+        )
+        created_uid = [None]
+
+        def save_new_condition(_cond_uid, dto):
+            changes = dto.get_changes()
+            cond_type = changes.get("condition_type", synthetic.condition_type)
+            td = TYPE_DEFAULTS.get(cond_type, {})
+            spec = CreateConditionSpec(
+                name="Untitled",
+                condition_type=cond_type,
+                thickness=td.get("thickness", 4.0),
+                pattern=PAT_TRANSPARENT,
+                spacing=td.get("spacing", 4.0),
+                color_fill=synthetic.color_fill,
+                shape=td.get("shape", -1),
+                layer_uid=default_layer_uid,
+                uom1=td.get("uom1", 0),
+                calc_type1=td.get("calc_type1", 0),
+                display_grid_while_drawing=td.get("display_grid_while_drawing", False),
+                backout=td.get("backout", False),
+            )
+            spec_field_names = {f.name for f in dataclass_fields(CreateConditionSpec)}
+            for key, val in changes.items():
+                if key in spec_field_names:
+                    setattr(spec, key, val)
+            spec.folder_uid = folder_uid or None
+            with QSignalBlocker(sidebar):
+                new_uid = write_service.create_condition(
+                    bid_ref.file_path, bid_ref.bid_uid, spec
+                )
+            if new_uid:
+                created_uid[0] = new_uid
+                return UpdateConditionResultDto(success=True)
+            return UpdateConditionResultDto(
+                success=False, error="Failed to create condition."
+            )
+
+        dialog = EditConditionDialog(
+            icon_provider=self._coordinator.main_window.icon_provider,
+            parent=sidebar.window(),
+            condition=synthetic,
+            condition_uids=["__new__"],
+            conditions_map={"__new__": synthetic},
+            cdn_types=cdn_types,
+            layers=layers,
+            has_takeoffs_fn=lambda _: False,
+            save_fn=save_new_condition,
+            condition_type_save_fn=save_condition_types,
+            condition_type_reload_fn=reload_condition_types,
+            condition_type_used_uids_fn=condition_type_uids_in_use,
+            **self._layer_dialog_callbacks(bid_ref, write_service),
+            read_service=self._read_service,
+            read_only=False,
+            metric=self._is_metric(),
+        )
+        dialog._dirty = True
+        try:
+            exec_with_ost_blocking(dialog, self._coordinator.event_bus)
+        finally:
+            dialog.deleteLater()
+        self._coordinator.refresh_conditions_ui()
+        if created_uid[0]:
+            sidebar.request_highlight({created_uid[0]})
+
+    def on_duplicate_requested(self, condition_uids: list) -> None:
+        if not condition_uids:
+            return
+        if not self._coordinator.ui_access_manager.is_allowed(
+            Feature.DUPLICATE_CONDITION
+        ):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        sidebar = self._coordinator.conditions_sidebar
+        new_uids = self._duplicate_conditions(
+            bid_ref, write_service, condition_uids, sidebar
+        )
+        if not new_uids:
+            logger.warning("Failed to duplicate conditions %s", condition_uids)
+            return
+        self._finish_condition_duplicate(new_uids, sidebar)
+
+    def on_paste_requested(self, condition_uids: list, target: object) -> None:
+        if not condition_uids or not isinstance(target, dict):
+            return
+        target_kind = target.get("kind")
+        if target_kind not in ("root", "folder", "cdn_type"):
+            return
+        is_cut = bool(target.get("cut"))
+        required_feature = (
+            Feature.EDIT_CONDITION if is_cut else Feature.DUPLICATE_CONDITION
+        )
+        if not self._coordinator.ui_access_manager.is_allowed(required_feature):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        sidebar = self._coordinator.conditions_sidebar
+        if is_cut:
+            self._move_conditions_to_target(
+                bid_ref, write_service, condition_uids, target, sidebar
+            )
+            return
+        new_uids = self._duplicate_conditions(
+            bid_ref, write_service, condition_uids, sidebar
+        )
+        if not new_uids:
+            logger.warning("Failed to paste duplicate conditions %s", condition_uids)
+            return
+        for condition_uid in new_uids:
+            dto = UpdateConditionDto()
+            dto.set("folder_uid", target.get("folder_uid") or None)
+            if target_kind == "cdn_type":
+                dto.set("cdn_type_uid", target.get("cdn_type_uid") or None)
+            result = write_service.update_condition(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                condition_uid,
+                dto,
+            )
+            if not result.success:
+                logger.warning(
+                    "Failed to apply paste target to condition %s: %s",
+                    condition_uid,
+                    result.error,
+                )
+        self._finish_condition_duplicate(new_uids, sidebar)
+
+    def _move_conditions_to_target(
+        self, bid_ref, write_service, condition_uids: list, target: dict, sidebar
+    ) -> None:
+        moved_uids = []
+        target_kind = target.get("kind")
+        for condition_uid in condition_uids:
+            dto = UpdateConditionDto()
+            dto.set("folder_uid", target.get("folder_uid") or None)
+            if target_kind == "cdn_type":
+                dto.set("cdn_type_uid", target.get("cdn_type_uid") or None)
+            result = write_service.update_condition(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                condition_uid,
+                dto,
+                all_conditions=self._project_data.get_bid_conditions(),
+            )
+            if result.success:
+                moved_uids.append(condition_uid)
+                continue
+            logger.warning(
+                "Failed to move condition %s to paste target: %s",
+                condition_uid,
+                result.error,
+            )
+        if not moved_uids:
+            return
+        self._coordinator.refresh_conditions_ui()
+        if sidebar:
+            sidebar.request_highlight(set(moved_uids))
+
+    def _duplicate_conditions(
+        self, bid_ref, write_service, condition_uids: list, sidebar
+    ) -> list:
+        if sidebar:
+            with QSignalBlocker(sidebar):
+                return write_service.duplicate_conditions(
+                    bid_ref.file_path, bid_ref.bid_uid, condition_uids
+                )
+        return write_service.duplicate_conditions(
+            bid_ref.file_path, bid_ref.bid_uid, condition_uids
+        )
+
+    def _finish_condition_duplicate(self, new_uids: list, sidebar) -> None:
+        self._coordinator.placement.enter(new_uids[-1], new_uids)
+        self._coordinator.refresh_conditions_ui()
+        if sidebar:
+            sidebar.request_highlight(set(new_uids))
+
+    def on_delete_requested(self, condition_uids: list) -> None:
+        if not condition_uids:
+            return
+        if not self._coordinator.ui_access_manager.is_allowed(Feature.DELETE_CONDITION):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        sidebar = self._coordinator.conditions_sidebar
+        if not sidebar:
+            return
+        names = [(uid, sidebar.get_condition_name(uid)) for uid in condition_uids]
+        confirmed_uids = confirm_delete_conditions(sidebar.window(), names)
+        if not confirmed_uids:
+            return
+        success = write_service.delete_conditions(
+            bid_ref.file_path, bid_ref.bid_uid, confirmed_uids
+        )
+        if not success:
+            logger.warning("Failed to delete conditions %s", confirmed_uids)
+            return
+        self._coordinator.placement.force_exit()
+        remaining = self._ui_state.highlighted_condition_uids - set(confirmed_uids)
+        self._coordinator.highlight_sidebar(remaining)
+        self._coordinator.ensure_select_mode()
+        self._coordinator.update_conditions_quantities()
+
+    def can_renumber_conditions(self) -> bool:
+        return bool(
+            self._ui_state.get_selected_bid_ref()
+            and self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION)
+            and self._project_data.get_bid_conditions()
+        )
+
+    def on_renumber_requested(self) -> None:
+        if not self.can_renumber_conditions():
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        sidebar = self._coordinator.conditions_sidebar
+        if not bid_ref or not write_service or not sidebar:
+            return
+        self._coordinator.refresh_conditions_ui()
+        ordered_uids = sidebar.collect_ordered_condition_uids()
+        if not ordered_uids:
+            return
+        if not confirm(
+            sidebar.window(),
+            "Renumber Conditions",
+            "Renumber all the conditions using the current sort order?\n"
+            "This cannot be undone",
+        ):
+            return
+        success = write_service.renumber_conditions(
+            bid_ref.file_path, bid_ref.bid_uid, ordered_uids
+        )
+        if not success:
+            show_warning(
+                sidebar.window(),
+                "Renumber Conditions",
+                f"Failed to renumber conditions. {DB_LOCKED_HINT}",
+            )
+
+    def on_create_folder_requested(self, parent_uid: str) -> None:
+        if not self._coordinator.ui_access_manager.is_allowed(Feature.CREATE_FOLDER):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        sidebar = self._coordinator.conditions_sidebar
+        if not sidebar:
+            return
+        parent = parent_uid or None
+        new_uid = write_service.create_condition_folder(
+            bid_ref.file_path, bid_ref.bid_uid, "New Folder", parent
+        )
+        if not new_uid:
+            logger.warning("Failed to create condition folder under parent %s", parent)
+            return
+        sidebar.set_pending_folder_edit(new_uid)
+
+    def on_folder_renamed(self, folder_uid: str, new_name: str) -> None:
+        if not self._coordinator.ui_access_manager.is_allowed(Feature.CREATE_FOLDER):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        success = write_service.rename_condition_folder(
+            bid_ref.file_path, folder_uid, new_name
+        )
+        if not success:
+            logger.warning("Failed to rename condition folder %s", folder_uid)
+
+    def on_condition_renamed(self, condition_uid: str, new_name: str) -> None:
+        if not self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        sidebar = self._coordinator.conditions_sidebar
+        if sidebar:
+            sidebar.set_pending_condition_selection(condition_uid)
+        dto = UpdateConditionDto()
+        dto.set("name", new_name)
+        result = write_service.update_condition(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            condition_uid,
+            dto,
+            all_conditions=self._project_data.get_bid_conditions(),
+        )
+        if not result.success:
+            logger.warning(
+                "Failed to rename condition %s: %s", condition_uid, result.error
+            )
+            self._coordinator.refresh_conditions_ui()
+            if sidebar:
+                sidebar.request_highlight({condition_uid})
+
+    def on_folder_delete_requested(self, folder_uids: list) -> None:
+        if not folder_uids:
+            return
+        if not self._coordinator.ui_access_manager.is_allowed(Feature.DELETE_CONDITION):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        success = write_service.delete_condition_folders(bid_ref.file_path, folder_uids)
+        if not success:
+            logger.warning("Failed to delete condition folders %s", folder_uids)
+
+    def on_move_condition_to_folder(self, condition_uid: str, folder_uid: str) -> None:
+        if not self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        dto = UpdateConditionDto()
+        dto.set("folder_uid", folder_uid or None)
+        result = write_service.update_condition(
+            bid_ref.file_path, bid_ref.bid_uid, condition_uid, dto
+        )
+        if not result.success:
+            logger.warning(
+                "Failed to move condition %s to folder %s", condition_uid, folder_uid
+            )
+
+    def on_condition_layer_change_requested(
+        self, condition_uids: list, layer_uid: str
+    ) -> None:
+        self._update_conditions_field(condition_uids, "layer_uid", layer_uid or None)
+
+    def on_condition_type_change_requested(
+        self, condition_uids: list, cdn_type_uid: str
+    ) -> None:
+        self._update_conditions_field(
+            condition_uids, "cdn_type_uid", cdn_type_uid or None
+        )
+
+    def _update_conditions_field(
+        self, condition_uids: list, field_name: str, value
+    ) -> None:
+        if not condition_uids:
+            return
+        if not self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        sidebar = self._coordinator.conditions_sidebar
+        changed_uids = []
+        for condition_uid in condition_uids:
+            dto = UpdateConditionDto()
+            dto.set(field_name, value)
+            result = write_service.update_condition(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                condition_uid,
+                dto,
+                all_conditions=self._project_data.get_bid_conditions(),
+            )
+            if result.success:
+                changed_uids.append(condition_uid)
+                continue
+            logger.warning(
+                "Failed to update condition %s %s: %s",
+                condition_uid,
+                field_name,
+                result.error,
+            )
+        if not changed_uids:
+            return
+        self._coordinator.refresh_conditions_ui()
+        if sidebar:
+            sidebar.request_highlight(set(changed_uids))
+
+    def on_edit_requested(self, condition_uids: list) -> None:
+        if not condition_uids:
+            return
+        bid_locked = self._project_data.is_current_bid_locked()
+        can_edit = self._coordinator.ui_access_manager.is_allowed(
+            Feature.EDIT_CONDITION
+        )
+        if not can_edit and not (
+            bid_locked and self._coordinator.ui_access_manager.has_license()
+        ):
+            return
+        bid_ref, write_service = self._get_bid_ref_and_write_service()
+        if not bid_ref or not write_service:
+            return
+        sidebar = self._coordinator.conditions_sidebar
+        if not sidebar:
+            return
+        conditions = self._project_data.get_bid_conditions()
+        selected_conds = [
+            conditions[uid] for uid in condition_uids if uid in conditions
+        ]
+        if not selected_conds:
+            return
+        ordered_uids = sidebar.collect_ordered_condition_uids()
+        cdn_types = self._read_service.get_cdn_types(bid_ref.file_path)
+        save_condition_types = lambda changes: write_service.save_condition_types(
+            bid_ref.file_path, changes
+        )
+        reload_condition_types = lambda: list(
+            self._read_service.get_cdn_types(bid_ref.file_path).values()
+        )
+        condition_type_uids_in_use = (
+            lambda: self._read_service.get_condition_type_uids_in_use(bid_ref.file_path)
+        )
+        all_bid_layers = self._read_service.get_merged_bid_layers(
+            bid_ref.file_path, bid_ref.bid_uid
+        )
+        layers = {
+            bl.uid: Layer(uid=bl.uid, name=bl.name, visible=bl.show)
+            for bl in all_bid_layers
+        }
+        all_takeoffs = self._project_data.get_all_takeoffs()
+        cond_uids_with_takeoffs = {t.condition_uid for t in all_takeoffs}
+
+        def has_takeoffs(cond_uid: str) -> bool:
+            return cond_uid in cond_uids_with_takeoffs
+
+        def save_condition(cond_uid, dto):
+            with QSignalBlocker(sidebar):
+                result = write_service.update_condition(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    cond_uid,
+                    dto,
+                    all_conditions=self._project_data.get_bid_conditions(),
+                )
+                if result.success:
+                    self._coordinator.refresh_conditions_ui()
+                    dialog.refresh_condition_data(
+                        self._project_data.get_bid_conditions()
+                    )
+            if result.success:
+                sidebar.request_highlight({cond_uid})
+            return result
+
+        dialog = EditConditionDialog(
+            icon_provider=self._coordinator.main_window.icon_provider,
+            parent=sidebar.window(),
+            condition=selected_conds[0],
+            condition_uids=ordered_uids,
+            conditions_map=conditions,
+            cdn_types=cdn_types,
+            layers=layers,
+            has_takeoffs_fn=has_takeoffs,
+            save_fn=save_condition,
+            condition_type_save_fn=save_condition_types,
+            condition_type_reload_fn=reload_condition_types,
+            condition_type_used_uids_fn=condition_type_uids_in_use,
+            **self._layer_dialog_callbacks(bid_ref, write_service),
+            read_service=self._read_service,
+            read_only=bid_locked,
+            metric=self._is_metric(),
+        )
+        _current_uid = [condition_uids[0]]
+
+        def _on_navigated(uid):
+            _current_uid[0] = uid
+            self._coordinator.highlight_sidebar({uid})
+            sidebar.request_highlight({uid})
+            if self._coordinator.placement.is_active:
+                self._coordinator.placement.enter(uid, [uid])
+
+        dialog.condition_navigated.connect(_on_navigated)
+        try:
+            exec_with_ost_blocking(dialog, self._coordinator.event_bus)
+        finally:
+            dialog.deleteLater()
+        self._coordinator.refresh_conditions_ui()
+        sidebar.request_highlight({_current_uid[0]})

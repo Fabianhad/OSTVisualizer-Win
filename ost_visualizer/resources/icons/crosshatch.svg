@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" height="24px" width="24px" viewBox="0 0 24 24" fill="#e3e3e3">
+  <!-- Vertical bar top -->
+  <rect x="11.25" y="2" width="1.5" height="8"/>
+  <!-- Vertical bar bottom -->
+  <rect x="11.25" y="14" width="1.5" height="8"/>
+  <!-- Horizontal bar left -->
+  <rect x="2" y="11.25" width="8" height="1.5"/>
+  <!-- Horizontal bar right -->
+  <rect x="14" y="11.25" width="8" height="1.5"/>
+  <!-- Center dot -->
+  <circle cx="12" cy="12" r="1.5"/>
+</svg>

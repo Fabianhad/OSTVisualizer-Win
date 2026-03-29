@@ -1,0 +1,662 @@
+import logging
+import math
+from typing import Any, Dict, List, Optional
+from ....application.dtos.export_dto import ExportErrorCode, ExportResultDto
+from ....application.dtos.page_export_data_dto import PageExportData
+from ....application.interfaces.i_color_service import IColorService
+from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
+from ....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
+from ....application.interfaces.i_uom_service import IUOMService
+from ....domain.dtos.page_render_info_dto import PageRenderInfo
+from ....domain.entities import shape as shapes
+from ....domain.entities.annotation import BidAnnotation
+from ....domain.entities.condition import Condition
+from ....domain.entities.page import Page
+from ....domain.entities.takeoff import Takeoff
+from ..core.geometry.ost_linear_geom import (
+    gen_curve_pts,
+    gen_thick_curve_offsets,
+    proc_curved_pos,
+)
+from ..core.geometry.takeoff_geometry import (
+    compute_count_vertices,
+    compute_curved_linear_vertices,
+    compute_straight_linear_vertices,
+)
+from . import ost_pdf_writer
+
+logger = logging.getLogger(__name__)
+_PDF_RENDER_SCALE = 2.0
+_ROTATION_ASPECT_THRESHOLD = 0.5
+_AREA_CONDITION_TYPE = 1
+_LINEAR_CONDITION_TYPE = 0
+_COUNT_CONDITION_TYPE = 2
+_ATTACHMENT_CONDITION_TYPE = 3
+_DEFAULT_FILL_OPACITY = 0.5
+_GRAY_COLOR_HEX = "#808080"
+_INCHES_TO_FEET = 1.0 / 12.0
+
+
+class PDFExporter:
+    def __init__(
+        self,
+        coord_system: ICoordinateTransformer,
+        color_service: IColorService,
+        takeoff_service: ITakeoffDomainService,
+        uom_service: IUOMService,
+    ):
+        self._coord_system = coord_system
+        self._color_service = color_service
+        self._takeoff_service = takeoff_service
+        self._uom_service = uom_service
+        self._writer = ost_pdf_writer.PDFWriter()
+
+    def export(
+        self,
+        pages_data: List[PageExportData],
+        output_path: str,
+        color_mode: str,
+        grayscale_enabled: bool,
+        page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        bid_annotations: Optional[List[BidAnnotation]] = None,
+        on_progress=None,
+    ) -> ExportResultDto:
+        try:
+            total = len(pages_data)
+            page_exports = []
+            for idx, page_data in enumerate(pages_data):
+                page: Page = page_data.page
+                if on_progress:
+                    on_progress(idx + 1, total, page.name or f"Page {idx + 1}")
+                bid_takeoffs = page_data.bid_takeoffs
+                bid_conditions = page_data.bid_conditions
+                page_info = self._build_page_info(page)
+                _, color_map = self._color_service.get_color_mapping(
+                    bid_conditions, bid_takeoffs, color_mode, grayscale_enabled
+                )
+                takeoff_data = self._collect_takeoffs(
+                    bid_takeoffs,
+                    bid_conditions,
+                    page_info,
+                    color_map,
+                    page_area_selections,
+                )
+                arrow_data = self._collect_arrows(
+                    page.uid, bid_annotations or [], page_info
+                )
+                rect_data = self._collect_rects(
+                    page.uid, bid_annotations or [], page_info
+                )
+                line_data = self._collect_lines(
+                    page.uid, bid_annotations or [], page_info
+                )
+                oval_data = self._collect_ovals(
+                    page.uid, bid_annotations or [], page_info
+                )
+                polygon_data = self._collect_polygons(
+                    page.uid, bid_annotations or [], page_info
+                )
+                ink_data = self._collect_inks(
+                    page.uid, bid_annotations or [], page_info
+                )
+                text_data = self._collect_texts(
+                    page.uid, bid_annotations or [], page_info
+                )
+                export_data = ost_pdf_writer.PageExportData()
+                image_path = page.image_path or ""
+                show_original = page.image_show_mode in (0, 2)
+                use_source_pdf = (
+                    image_path.lower().endswith(".pdf")
+                    and page.layer_visible
+                    and show_original
+                )
+                if use_source_pdf:
+                    export_data.source_pdf = image_path
+                    export_data.page_index = page.page_index or 0
+                else:
+                    export_data.is_blank = True
+                    export_data.page_width = page_info.get("width", 612.0)
+                    export_data.page_height = page_info.get("height", 792.0)
+                    export_data.rotation = page_info.get("rotation", 0)
+                export_data.takeoffs = takeoff_data
+                export_data.arrows = arrow_data
+                export_data.rects = rect_data
+                export_data.lines = line_data
+                export_data.ovals = oval_data
+                export_data.polygons = polygon_data
+                export_data.inks = ink_data
+                export_data.texts = text_data
+                page_exports.append(export_data)
+            if not page_exports:
+                logger.error("No valid pages to export")
+                return ExportResultDto(
+                    success=False,
+                    format_name="PDF",
+                    error_message="No valid pages to export.",
+                    error_code=ExportErrorCode.NO_DATA,
+                )
+            if not self._writer.merge_pages_with_annotations(page_exports, output_path):
+                err = self._writer.get_last_error()
+                logger.error("Failed to merge pages: %s", err)
+                return ExportResultDto(
+                    success=False,
+                    format_name="PDF",
+                    error_message=err or "Failed to write PDF.",
+                    error_code=ExportErrorCode.WRITE_FAILED,
+                )
+            return ExportResultDto(
+                success=True,
+                format_name="PDF",
+                page_count=len(page_exports),
+            )
+        except Exception as e:
+            logger.exception("Error during PDF export: %s", e)
+            return ExportResultDto(
+                success=False,
+                format_name="PDF",
+                error_message=str(e),
+                error_code=ExportErrorCode.UNEXPECTED,
+            )
+
+    def _build_page_info(self, page: Page) -> PageRenderInfo:
+        stored_width_pts = page.width_pts
+        stored_height_pts = page.height_pts
+        scale_x = 1.0
+        scale_y = 1.0
+        offset_x = 0.0
+        offset_y = 0.0
+        is_rotated = False
+        image_path = page.image_path or ""
+        if image_path.lower().endswith(".pdf"):
+            try:
+                sizes = self._writer.get_page_sizes(image_path)
+                page_idx = page.page_index or 0
+                if page_idx < len(sizes):
+                    size_data = sizes[page_idx]
+                    actual_width = size_data[0]
+                    actual_height = size_data[1]
+                    offset_x = size_data[2] if len(size_data) > 2 else 0.0
+                    offset_y = size_data[3] if len(size_data) > 3 else 0.0
+                    stored_ratio = (
+                        stored_width_pts / stored_height_pts
+                        if stored_height_pts
+                        else 1.0
+                    )
+                    actual_ratio = (
+                        actual_width / actual_height if actual_height else 1.0
+                    )
+                    is_rotated = (
+                        abs(stored_ratio - actual_ratio) > _ROTATION_ASPECT_THRESHOLD
+                    )
+                    if is_rotated:
+                        scale_x = (
+                            actual_height / stored_width_pts
+                            if stored_width_pts
+                            else 1.0
+                        )
+                        scale_y = (
+                            actual_width / stored_height_pts
+                            if stored_height_pts
+                            else 1.0
+                        )
+                    else:
+                        scale_x = (
+                            actual_width / stored_width_pts if stored_width_pts else 1.0
+                        )
+                        scale_y = (
+                            actual_height / stored_height_pts
+                            if stored_height_pts
+                            else 1.0
+                        )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to get PDF page size for '%s': %s", image_path, exc
+                )
+        rotation = page.rotation
+        return {
+            "scale_factor1": page.scale_factor1 or 1.0,
+            "scale_factor2": page.scale_factor2 or 1.0,
+            "rotation": rotation,
+            "flip_x": 1 if page.flip_x else 0,
+            "flip_y": 1 if page.flip_y else 0,
+            "width": stored_width_pts,
+            "height": stored_height_pts,
+            "view_scale": _PDF_RENDER_SCALE,
+            "coord_scale_x": scale_x,
+            "coord_scale_y": scale_y,
+            "coord_offset_x": offset_x,
+            "coord_offset_y": offset_y,
+            "is_page_rotated": is_rotated,
+            "auto_rotate_180": False,
+        }
+
+    def _collect_takeoffs(
+        self,
+        bid_takeoffs: List[Takeoff],
+        bid_conditions: Dict[str, Condition],
+        page_info: PageRenderInfo,
+        color_map: Optional[Dict[str, Any]] = None,
+        page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+    ) -> List[Any]:
+        polygons = []
+        scale_factor1 = page_info.get("scale_factor1", 1.0)
+        scale_factor2 = page_info.get("scale_factor2", 1.0)
+        parent_takeoffs, holes_map = (
+            self._takeoff_service.group_area_takeoffs_with_holes(
+                bid_takeoffs, bid_conditions
+            )
+        )
+        for takeoff in parent_takeoffs:
+            condition_uid = takeoff.condition_uid
+            if condition_uid not in bid_conditions:
+                continue
+            condition = bid_conditions[condition_uid]
+            condition_type = condition.condition_type if condition.condition_type else 0
+            if condition_type != _AREA_CONDITION_TYPE:
+                continue
+            position = self._coord_system.parse_position(takeoff.position)
+            if not position or len(position) < 6:
+                continue
+            pdf_vertices = self._coord_system.ost_to_pdf_coordinates(
+                position, page_info
+            )
+            if not pdf_vertices or len(pdf_vertices) < 3:
+                continue
+            hole_takeoff_list = holes_map.get(takeoff.uid, [])
+            pdf_holes = []
+            for hole_takeoff in hole_takeoff_list:
+                hole_position = self._coord_system.parse_position(hole_takeoff.position)
+                if not hole_position or len(hole_position) < 6:
+                    continue
+                hole_vertices = self._coord_system.ost_to_pdf_coordinates(
+                    hole_position, page_info
+                )
+                if hole_vertices and len(hole_vertices) >= 3:
+                    pdf_holes.append(hole_vertices)
+            if self._color_service.should_gray_out_takeoff(
+                takeoff, page_area_selections
+            ):
+                color_rgb = self._color_service.hex_to_rgb_int(_GRAY_COLOR_HEX)
+                fill_opacity = _DEFAULT_FILL_OPACITY
+            elif color_map and condition_uid in color_map:
+                color_entry = color_map[condition_uid]
+                hex_color = color_entry.hex
+                fill_opacity = color_entry.opacity
+                color_rgb = self._color_service.hex_to_rgb_int(hex_color)
+            else:
+                color_rgb = self._color_service.get_condition_color(condition)
+                fill_opacity = _DEFAULT_FILL_OPACITY
+            condition_name = condition.name if condition.name else "Takeoff"
+            ref_no = condition.ref_no if condition.ref_no else ""
+            label = f"{ref_no} - {condition_name}" if ref_no else condition_name
+            hole_positions = [ht.position for ht in hole_takeoff_list if ht.position]
+            area_sf = self._uom_service.calculate_net_area_sf(
+                takeoff.position, hole_positions
+            )
+            thickness = max(condition.thickness if condition.thickness else 0, 0)
+            depth_ft = thickness * _INCHES_TO_FEET if thickness > 0 else 0.0
+            polygon_data = ost_pdf_writer.PolygonAnnotationData()
+            polygon_data.vertices = pdf_vertices
+            polygon_data.holes = pdf_holes
+            polygon_data.label = label
+            polygon_data.color = color_rgb
+            polygon_data.fill_opacity = fill_opacity
+            polygon_data.area_sf = area_sf
+            polygon_data.scale_factor1 = scale_factor1
+            polygon_data.scale_factor2 = scale_factor2
+            polygon_data.depth = depth_ft
+            polygons.append(polygon_data)
+        for takeoff in bid_takeoffs:
+            condition_uid = takeoff.condition_uid
+            if condition_uid not in bid_conditions:
+                continue
+            condition = bid_conditions[condition_uid]
+            cond_type = condition.condition_type if condition.condition_type else 0
+            if cond_type == _AREA_CONDITION_TYPE:
+                continue
+            if takeoff.is_hole and cond_type != _ATTACHMENT_CONDITION_TYPE:
+                continue
+            position = self._coord_system.parse_position(takeoff.position)
+            if not position or len(position) < 2:
+                continue
+            verts = None
+            area_sf = 0.0
+            depth_inches = 0.0
+            if cond_type == _LINEAR_CONDITION_TYPE:
+                if len(position) < 4:
+                    continue
+                thickness = condition.thickness if condition.thickness else 1.0
+                if thickness <= 0:
+                    thickness = 1.0
+                x1, y1, x2, y2 = position[0], position[1], position[2], position[3]
+                if takeoff.curve >= 0 and len(position) >= 6:
+                    rx = list(position[:6])
+                    rx[0], rx[1], rx[2], rx[3], rx[4], rx[5] = proc_curved_pos(
+                        position, rx[0], rx[1], rx[2], rx[3], rx[4], rx[5]
+                    )
+                    verts = compute_curved_linear_vertices(
+                        rx[0],
+                        rx[1],
+                        rx[2],
+                        rx[3],
+                        rx[4],
+                        rx[5],
+                        gen_curve_pts,
+                        gen_thick_curve_offsets,
+                        thickness,
+                    )
+                else:
+                    verts = compute_straight_linear_vertices(x1, y1, x2, y2, thickness)
+                if not verts:
+                    continue
+                dx, dy = x2 - x1, y2 - y1
+                length_inches = math.sqrt(dx * dx + dy * dy)
+                area_sf = (length_inches * thickness) / 144.0
+                height = max(condition.height if condition.height else 0, 0)
+                depth_inches = height
+            elif cond_type in (_COUNT_CONDITION_TYPE, _ATTACHMENT_CONDITION_TYPE):
+                cx, cy = position[0], position[1]
+                shape_id = condition.shape if condition.shape else shapes.SQUARE
+                width_ost = max(condition.width if condition.width else 1, 1)
+                if shape_id == shapes.SQUARE or shape_id == shapes.CIRCLE:
+                    depth_ost = width_ost
+                else:
+                    depth_ost = max(
+                        condition.depth if condition.depth else width_ost, 1
+                    )
+                if condition.is_count:
+                    display_scale = max(condition.display_size, 0.1) / 100.0
+                    width_ost *= display_scale
+                    depth_ost *= display_scale
+                rotation = takeoff.rotation
+                verts = compute_count_vertices(
+                    cx, cy, shape_id, width_ost, depth_ost, rotation
+                )
+                if not verts:
+                    continue
+                area_sf = (width_ost * depth_ost) / 144.0
+                depth_inches = max(condition.height if condition.height else 0, 0)
+            else:
+                continue
+            flat_pos = [c for pt in verts for c in pt]
+            pdf_vertices = self._coord_system.ost_to_pdf_coordinates(
+                flat_pos, page_info
+            )
+            if not pdf_vertices or len(pdf_vertices) < 3:
+                continue
+            if self._color_service.should_gray_out_takeoff(
+                takeoff, page_area_selections
+            ):
+                color_rgb = self._color_service.hex_to_rgb_int(_GRAY_COLOR_HEX)
+                fill_opacity = _DEFAULT_FILL_OPACITY
+            elif color_map and condition_uid in color_map:
+                color_entry = color_map[condition_uid]
+                hex_color = color_entry.hex
+                fill_opacity = color_entry.opacity
+                color_rgb = self._color_service.hex_to_rgb_int(hex_color)
+            else:
+                color_rgb = self._color_service.get_condition_color(condition)
+                fill_opacity = _DEFAULT_FILL_OPACITY
+            condition_name = condition.name if condition.name else "Takeoff"
+            ref_no = condition.ref_no if condition.ref_no else ""
+            label = f"{ref_no} - {condition_name}" if ref_no else condition_name
+            polygon_data = ost_pdf_writer.PolygonAnnotationData()
+            polygon_data.vertices = pdf_vertices
+            polygon_data.holes = []
+            polygon_data.label = label
+            polygon_data.color = color_rgb
+            polygon_data.fill_opacity = fill_opacity
+            polygon_data.area_sf = area_sf
+            polygon_data.scale_factor1 = scale_factor1
+            polygon_data.scale_factor2 = scale_factor2
+            polygon_data.depth = (
+                depth_inches * _INCHES_TO_FEET if depth_inches > 0 else 0.0
+            )
+            polygons.append(polygon_data)
+        return polygons
+
+    def _collect_arrows(
+        self,
+        page_uid: str,
+        bid_annotations: List[BidAnnotation],
+        page_info: PageRenderInfo,
+    ) -> List[Any]:
+        arrows = []
+        for annotation in bid_annotations:
+            if not annotation.is_arrow or annotation.page_uid != page_uid:
+                continue
+            line_coords = annotation.get_line_coords()
+            if not line_coords:
+                continue
+            x1, y1, x2, y2 = line_coords
+            pdf_coords = self._coord_system.ost_to_pdf_coordinates(
+                [x1, y1, x2, y2], page_info
+            )
+            if len(pdf_coords) < 2:
+                continue
+            pdf_x1, pdf_y1 = pdf_coords[0]
+            pdf_x2, pdf_y2 = pdf_coords[1]
+            arrow_data = ost_pdf_writer.ArrowAnnotationData()
+            arrow_data.x1 = pdf_x1
+            arrow_data.y1 = pdf_y1
+            arrow_data.x2 = pdf_x2
+            arrow_data.y2 = pdf_y2
+            arrow_data.color = self._color_service.hex_to_rgb_int(annotation.color)
+            arrow_data.width = annotation.width
+            arrows.append(arrow_data)
+        return arrows
+
+    def _collect_rects(
+        self,
+        page_uid: str,
+        bid_annotations: List[BidAnnotation],
+        page_info: PageRenderInfo,
+    ) -> List[Any]:
+        rects = []
+        for annotation in bid_annotations:
+            if not annotation.is_rect or annotation.page_uid != page_uid:
+                continue
+            position = annotation.position
+            if len(position) < 4:
+                continue
+            if len(position) >= 8:
+                xs = position[0::2]
+                ys = position[1::2]
+                min_x, max_x = min(xs), max(xs)
+                min_y, max_y = min(ys), max(ys)
+            else:
+                min_x, min_y, max_x, max_y = (
+                    position[0],
+                    position[1],
+                    position[2],
+                    position[3],
+                )
+            pdf_coords = self._coord_system.ost_to_pdf_coordinates(
+                [min_x, min_y, max_x, max_y], page_info
+            )
+            if len(pdf_coords) < 2:
+                continue
+            pdf_x1, pdf_y1 = pdf_coords[0]
+            pdf_x2, pdf_y2 = pdf_coords[1]
+            rect_data = ost_pdf_writer.RectAnnotationData()
+            rect_data.min_x = min(pdf_x1, pdf_x2)
+            rect_data.min_y = min(pdf_y1, pdf_y2)
+            rect_data.max_x = max(pdf_x1, pdf_x2)
+            rect_data.max_y = max(pdf_y1, pdf_y2)
+            rect_data.color = self._color_service.hex_to_rgb_int(annotation.color)
+            rect_data.width = annotation.width
+            rects.append(rect_data)
+        return rects
+
+    def _collect_lines(
+        self,
+        page_uid: str,
+        bid_annotations: List[BidAnnotation],
+        page_info: PageRenderInfo,
+    ) -> List[Any]:
+        lines = []
+        for annotation in bid_annotations:
+            if not annotation.is_line or annotation.page_uid != page_uid:
+                continue
+            line_coords = annotation.get_line_coords()
+            if not line_coords:
+                continue
+            x1, y1, x2, y2 = line_coords
+            pdf_coords = self._coord_system.ost_to_pdf_coordinates(
+                [x1, y1, x2, y2], page_info
+            )
+            if len(pdf_coords) < 2:
+                continue
+            pdf_x1, pdf_y1 = pdf_coords[0]
+            pdf_x2, pdf_y2 = pdf_coords[1]
+            line_data = ost_pdf_writer.LineAnnotationData()
+            line_data.x1 = pdf_x1
+            line_data.y1 = pdf_y1
+            line_data.x2 = pdf_x2
+            line_data.y2 = pdf_y2
+            line_data.color = self._color_service.hex_to_rgb_int(annotation.color)
+            line_data.width = annotation.width
+            lines.append(line_data)
+        return lines
+
+    def _collect_ovals(
+        self,
+        page_uid: str,
+        bid_annotations: List[BidAnnotation],
+        page_info: PageRenderInfo,
+    ) -> List[Any]:
+        ovals = []
+        for annotation in bid_annotations:
+            if not annotation.is_oval or annotation.page_uid != page_uid:
+                continue
+            position = annotation.position
+            if len(position) < 4:
+                continue
+            if len(position) >= 8:
+                xs = position[0::2]
+                ys = position[1::2]
+                min_x, max_x = min(xs), max(xs)
+                min_y, max_y = min(ys), max(ys)
+            else:
+                min_x, min_y, max_x, max_y = (
+                    position[0],
+                    position[1],
+                    position[2],
+                    position[3],
+                )
+            pdf_coords = self._coord_system.ost_to_pdf_coordinates(
+                [min_x, min_y, max_x, max_y], page_info
+            )
+            if len(pdf_coords) < 2:
+                continue
+            pdf_x1, pdf_y1 = pdf_coords[0]
+            pdf_x2, pdf_y2 = pdf_coords[1]
+            oval_data = ost_pdf_writer.OvalAnnotationData()
+            oval_data.min_x = min(pdf_x1, pdf_x2)
+            oval_data.min_y = min(pdf_y1, pdf_y2)
+            oval_data.max_x = max(pdf_x1, pdf_x2)
+            oval_data.max_y = max(pdf_y1, pdf_y2)
+            oval_data.color = self._color_service.hex_to_rgb_int(annotation.color)
+            oval_data.width = annotation.width
+            ovals.append(oval_data)
+        return ovals
+
+    def _collect_polygons(
+        self,
+        page_uid: str,
+        bid_annotations: List[BidAnnotation],
+        page_info: PageRenderInfo,
+    ) -> List[Any]:
+        polygons = []
+        for annotation in bid_annotations:
+            if not annotation.is_polygon and not annotation.is_cloud:
+                continue
+            if annotation.page_uid != page_uid:
+                continue
+            position = annotation.position
+            if len(position) < 6:
+                continue
+            vertices = self._coord_system.ost_to_pdf_coordinates(position, page_info)
+            if len(vertices) < 3:
+                continue
+            poly_data = ost_pdf_writer.PolygonAnnotationAnnotData()
+            poly_data.vertices = vertices
+            poly_data.color = self._color_service.hex_to_rgb_int(annotation.color)
+            poly_data.width = annotation.width
+            poly_data.is_cloud = annotation.is_cloud
+            polygons.append(poly_data)
+        return polygons
+
+    def _collect_inks(
+        self,
+        page_uid: str,
+        bid_annotations: List[BidAnnotation],
+        page_info: PageRenderInfo,
+    ) -> List[Any]:
+        inks = []
+        for annotation in bid_annotations:
+            if not annotation.is_ink or annotation.page_uid != page_uid:
+                continue
+            position = annotation.position
+            if len(position) < 4:
+                continue
+            start_idx = 2 if (len(position) >= 2 and position[0] == 0) else 0
+            raw_slice = position[start_idx:]
+            pair_count = len(raw_slice) // 2
+            flat = []
+            for i in range(pair_count):
+                flat.append(raw_slice[i * 2 + 1])
+                flat.append(raw_slice[i * 2])
+            stroke_points = self._coord_system.ost_to_pdf_coordinates(flat, page_info)
+            if len(stroke_points) < 2:
+                continue
+            ink_data = ost_pdf_writer.InkAnnotationData()
+            ink_data.strokes = [stroke_points]
+            ink_data.color = self._color_service.hex_to_rgb_int(annotation.color)
+            ink_data.width = annotation.width
+            inks.append(ink_data)
+        return inks
+
+    def _collect_texts(
+        self,
+        page_uid: str,
+        bid_annotations: List[BidAnnotation],
+        page_info: PageRenderInfo,
+    ) -> List[Any]:
+        texts = []
+        for annotation in bid_annotations:
+            if not annotation.is_text or annotation.page_uid != page_uid:
+                continue
+            position = annotation.position
+            if len(position) < 4:
+                continue
+            center_x = position[0]
+            center_y = position[1]
+            box_width = position[2]
+            box_height = position[3]
+            min_x_ost = center_x - box_width / 2
+            min_y_ost = center_y - box_height / 2
+            max_x_ost = center_x + box_width / 2
+            max_y_ost = center_y + box_height / 2
+            pdf_coords = self._coord_system.ost_to_pdf_coordinates(
+                [min_x_ost, min_y_ost, max_x_ost, max_y_ost], page_info
+            )
+            if len(pdf_coords) < 2:
+                continue
+            pdf_x1, pdf_y1 = pdf_coords[0]
+            pdf_x2, pdf_y2 = pdf_coords[1]
+            content = annotation.get_text_content()
+            font_size = float(annotation.properties.get("FontSize") or 12.0)
+            raw_align = annotation.properties.get("TextAlign") or "left"
+            text_align = raw_align.lower() if isinstance(raw_align, str) else "left"
+            text_data = ost_pdf_writer.TextAnnotationData()
+            text_data.min_x = min(pdf_x1, pdf_x2)
+            text_data.min_y = min(pdf_y1, pdf_y2)
+            text_data.max_x = max(pdf_x1, pdf_x2)
+            text_data.max_y = max(pdf_y1, pdf_y2)
+            text_data.content = content
+            text_data.font_size = font_size
+            text_data.color = self._color_service.hex_to_rgb_int(annotation.color)
+            text_data.text_align = text_align
+            texts.append(text_data)
+        return texts

@@ -1,0 +1,412 @@
+from typing import Any, List, Optional, Tuple
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen
+from PySide6.QtWidgets import QGraphicsPathItem
+from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
+from .....domain.entities import pattern as pt
+from .....domain.entities import shape as shapes
+from .....domain.entities.condition import Condition
+from .....domain.entities.takeoff import Takeoff
+from ...core.geometry.ost_linear_geom import (
+    gen_curve_pts,
+    gen_thick_curve_offsets,
+    proc_curved_pos,
+)
+from ...core.geometry.takeoff_geometry import (
+    compute_count_vertices,
+    compute_curved_linear_vertices,
+    compute_straight_linear_vertices,
+)
+from ...pdf.renderers import pattern_renderer as pr
+from ...services.color_service import ColorService
+
+
+class TakeoffRenderer:
+    def __init__(
+        self, coord_system: ICoordinateTransformer, color_service: ColorService
+    ):
+        self._cs = coord_system
+        self._color_service = color_service
+
+    @property
+    def coordinate_system(self) -> ICoordinateTransformer:
+        return self._cs
+
+    def set_page_info(self, page_info: dict[str, Any]):
+        self._cs.update_page_info(page_info)
+
+    def _build_item(
+        self,
+        path: QPainterPath,
+        condition,
+        color: str,
+        opacity: float,
+        line_width: float,
+        uid: str,
+        condition_uid: str,
+        is_negative: bool = False,
+    ) -> QGraphicsPathItem | list[QGraphicsPathItem]:
+        pattern_type = condition.pattern if condition.pattern else 1
+        qcolor = QColor(color)
+        pen = QPen(qcolor)
+        pen.setWidthF(line_width)
+        pen.setCosmetic(True)
+        fill_brush = pr.get_pattern_fill_brush(pattern_type, qcolor, opacity)
+        item = QGraphicsPathItem(path)
+        item.setPen(pen)
+        if fill_brush is not None:
+            item.setBrush(fill_brush)
+        item.setData(0, uid)
+        item.setData(1, condition_uid)
+        items: list[QGraphicsPathItem] = [item]
+        if pattern_type in pt.LINE_PATTERNS:
+            spacing = condition.spacing if condition.spacing else 4.0
+            pattern_items = pr.create_pattern_items(
+                path, pattern_type, qcolor, spacing, line_width, self._cs
+            )
+            if pattern_items:
+                for pitem in pattern_items:
+                    pitem.setData(0, uid)
+                    pitem.setData(1, condition_uid)
+                items.extend(pattern_items)
+        if is_negative:
+            neg_indicator = self._create_negative_indicator(path)
+            if neg_indicator:
+                if isinstance(neg_indicator, list):
+                    for ind_item in neg_indicator:
+                        ind_item.setData(0, uid)
+                        ind_item.setData(1, condition_uid)
+                    items.extend(neg_indicator)
+                else:
+                    neg_indicator.setData(0, uid)
+                    neg_indicator.setData(1, condition_uid)
+                    items.append(neg_indicator)
+        return items if len(items) > 1 else items[0]
+
+    def build_pattern_fill(
+        self,
+        path: QPainterPath,
+        pattern_type: int,
+        color: QColor,
+        opacity: float,
+        spacing: float,
+        line_width: float,
+    ) -> Tuple[Optional[QBrush], List[QGraphicsPathItem]]:
+        fill_brush = pr.get_pattern_fill_brush(pattern_type, color, opacity)
+        pattern_items: List[QGraphicsPathItem] = []
+        if pattern_type in pt.LINE_PATTERNS:
+            pattern_items = pr.create_pattern_items(
+                path, pattern_type, color, spacing, line_width, self._cs
+            )
+        return fill_brush, pattern_items
+
+    def _create_negative_indicator(
+        self, path: QPainterPath
+    ) -> QGraphicsPathItem | list[QGraphicsPathItem] | None:
+        points = []
+        for i in range(path.elementCount()):
+            elem = path.elementAt(i)
+            if elem.type.value in (0, 1):
+                points.append((elem.x, elem.y))
+        if len(points) < 3:
+            return None
+        cx, cy = self._calculate_polygon_centroid(points)
+        rect_w, rect_h = 12.0, 12.0
+        minus_w, minus_h = 6.0, 1.5
+        rect_path = QPainterPath()
+        rect_path.addRect(-rect_w / 2, -rect_h / 2, rect_w, rect_h)
+        rect_item = QGraphicsPathItem(rect_path)
+        border_pen = QPen(Qt.GlobalColor.black)
+        border_pen.setWidthF(1.0)
+        rect_item.setPen(border_pen)
+        rect_item.setBrush(QBrush(Qt.GlobalColor.red))
+        rect_item.setZValue(10)
+        rect_item.setPos(cx, cy)
+        rect_item.setFlag(QGraphicsPathItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        minus_path = QPainterPath()
+        minus_path.addRect(-minus_w / 2, -minus_h / 2, minus_w, minus_h)
+        minus_item = QGraphicsPathItem(minus_path)
+        minus_item.setPen(QPen(Qt.GlobalColor.white))
+        minus_item.setBrush(QBrush(Qt.GlobalColor.white))
+        minus_item.setZValue(11)
+        minus_item.setPos(cx, cy)
+        minus_item.setFlag(
+            QGraphicsPathItem.GraphicsItemFlag.ItemIgnoresTransformations
+        )
+        return [rect_item, minus_item]
+
+    def _calculate_polygon_centroid(
+        self, points: list[tuple[float, float]]
+    ) -> tuple[float, float]:
+        n = len(points)
+        area = 0.0
+        cx = 0.0
+        cy = 0.0
+        for i in range(n):
+            x0, y0 = points[i]
+            x1, y1 = points[(i + 1) % n]
+            cross = x0 * y1 - x1 * y0
+            area += cross
+            cx += (x0 + x1) * cross
+            cy += (y0 + y1) * cross
+        area *= 0.5
+        if abs(area) < 1e-10:
+            return sum(p[0] for p in points) / n, sum(p[1] for p in points) / n
+        factor = 1.0 / (6.0 * area)
+        return cx * factor, cy * factor
+
+    def _create_path_item(
+        self,
+        takeoff: dict,
+        condition,
+        color: str,
+        opacity: float = 0.5,
+        line_width: float = 2.0,
+    ) -> QGraphicsPathItem | list[QGraphicsPathItem] | None:
+        position = self._cs.parse_position(takeoff.position)
+        if not position or len(position) < 2:
+            return None
+        path = self._create_path(condition, position, takeoff)
+        if path is None or path.isEmpty():
+            return None
+        is_negative = takeoff.is_negative
+        return self._build_item(
+            path,
+            condition,
+            color,
+            opacity,
+            line_width,
+            takeoff.uid,
+            takeoff.condition_uid,
+            is_negative,
+        )
+
+    def _create_path(
+        self,
+        condition,
+        position: list[float],
+        takeoff: dict,
+    ) -> QPainterPath | None:
+        tx_position = self._cs.transform_vertices_to_2d(position)
+        if condition.is_linear:
+            return self._create_linear_path(position, tx_position, takeoff, condition)
+        elif condition.is_area:
+            return self._create_area_path(tx_position, takeoff)
+        elif condition.is_count or condition.is_attachment:
+            return self._create_count_path(tx_position, takeoff, condition)
+        return None
+
+    @staticmethod
+    def _vertices_to_path(
+        vertices: list[tuple[float, float]],
+    ) -> QPainterPath:
+        path = QPainterPath()
+        path.moveTo(vertices[0][0], vertices[0][1])
+        for x, y in vertices[1:]:
+            path.lineTo(x, y)
+        path.closeSubpath()
+        return path
+
+    def _create_linear_path(
+        self,
+        raw_position: list[float],
+        position: list[float],
+        takeoff: dict,
+        condition,
+    ) -> QPainterPath | None:
+        if len(position) < 4:
+            return None
+        curve = takeoff.curve
+        thickness_ost = condition.thickness if condition.thickness else 1.0
+        view_scale = self._cs.page_info.get("view_scale", 1.0)
+        thickness_px = self._cs.ost_to_pdf_points(thickness_ost) * view_scale
+        thickness_px = max(thickness_px, 2.0)
+        if curve >= 0 and len(raw_position) >= 6:
+            rx1, ry1, rx2, ry2, rcx, rcy = raw_position[:6]
+            rx1, ry1, rx2, ry2, rcx, rcy = proc_curved_pos(
+                raw_position, rx1, ry1, rx2, ry2, rcx, rcy
+            )
+            tx = self._cs.transform_vertices_to_2d([rx1, ry1, rx2, ry2, rcx, rcy])
+            verts = compute_curved_linear_vertices(
+                tx[0],
+                tx[1],
+                tx[2],
+                tx[3],
+                tx[4],
+                tx[5],
+                gen_curve_pts,
+                gen_thick_curve_offsets,
+                thickness_px,
+            )
+            if not verts:
+                return None
+            return self._vertices_to_path(verts)
+        x1, y1, x2, y2 = position[0], position[1], position[2], position[3]
+        verts = compute_straight_linear_vertices(x1, y1, x2, y2, thickness_px)
+        if not verts:
+            return None
+        return self._vertices_to_path(verts)
+
+    def _create_area_path(
+        self, position: list[float], takeoff: dict | None = None
+    ) -> QPainterPath | None:
+        if len(position) < 6:
+            return None
+        points = [(position[i], position[i + 1]) for i in range(0, len(position), 2)]
+        if len(points) < 3:
+            return None
+        path = QPainterPath()
+        path.moveTo(points[0][0], points[0][1])
+        for x, y in points[1:]:
+            path.lineTo(x, y)
+        path.closeSubpath()
+        return path
+
+    def _create_count_path(
+        self,
+        position: list[float],
+        takeoff: dict,
+        condition,
+    ) -> QPainterPath | None:
+        if len(position) < 2:
+            return None
+        x, y = position[0], position[1]
+        shape_id = condition.shape if condition.shape else shapes.SQUARE
+        width_ost = max(condition.width if condition.width else 1, 1)
+        if shape_id == shapes.SQUARE or shape_id == shapes.CIRCLE:
+            depth_ost = width_ost
+        else:
+            depth_ost = max(condition.depth if condition.depth else width_ost, 1)
+        if condition.is_count:
+            scale = max(condition.display_size, 0.1) / 100.0
+            width_ost *= scale
+            depth_ost *= scale
+        view_scale = self._cs.page_info.get("view_scale", 1.0)
+        width_px = self._cs.ost_to_pdf_points(width_ost) * view_scale
+        depth_px = self._cs.ost_to_pdf_points(depth_ost) * view_scale
+        min_dim = min(width_px, depth_px)
+        if 0 < min_dim < 8.0:
+            scale = 8.0 / min_dim
+            width_px *= scale
+            depth_px *= scale
+        rotation = takeoff.rotation
+        verts = compute_count_vertices(x, y, shape_id, width_px, depth_px, rotation)
+        return self._vertices_to_path(verts)
+
+    def create_all_path_items(
+        self,
+        takeoffs: list[Takeoff],
+        conditions: dict[str, Condition],
+        color_map: dict[str, str],
+        opacity: float = 0.5,
+        page_info: dict[str, Any] | None = None,
+        page_area_selections: dict[str, str | None] | None = None,
+    ) -> list[tuple[str, QGraphicsPathItem | list[QGraphicsPathItem]]]:
+        if page_info:
+            self.set_page_info(page_info)
+        takeoff_map = {t.uid: t for t in takeoffs}
+        area_holes_map: dict[str, list[Takeoff]] = {}
+        child_uids: set = set()
+        for takeoff in takeoffs:
+            parent_uid = takeoff.parent_uid
+            if parent_uid and str(parent_uid) != "0" and parent_uid != 0:
+                if parent_uid in takeoff_map:
+                    parent = takeoff_map[parent_uid]
+                    parent_condition_uid = parent.condition_uid
+                    if parent_condition_uid in conditions:
+                        parent_condition = conditions[parent_condition_uid]
+                        child_condition = conditions.get(takeoff.condition_uid)
+                        if (
+                            parent_condition.is_area
+                            and child_condition
+                            and child_condition.is_area
+                        ):
+                            area_holes_map.setdefault(parent_uid, []).append(takeoff)
+                            child_uids.add(takeoff.uid)
+        items = []
+        for takeoff in takeoffs:
+            takeoff_uid = takeoff.uid
+            if takeoff_uid in child_uids:
+                continue
+            condition_uid = takeoff.condition_uid
+            if condition_uid not in conditions:
+                continue
+            condition = conditions[condition_uid]
+            if not condition.layer_visible:
+                continue
+            if condition_uid not in color_map:
+                continue
+            color_entry = color_map[condition_uid]
+            color = color_entry.hex
+            item_opacity = color_entry.opacity
+            if self._color_service.should_gray_out_takeoff(
+                takeoff, page_area_selections
+            ):
+                color = "#808080"
+            holes = area_holes_map.get(takeoff_uid, [])
+            if holes and condition.condition_type == Condition.TYPE_AREA:
+                result = self._create_area_with_holes(
+                    takeoff, condition, holes, color, item_opacity
+                )
+            else:
+                result = self._create_path_item(takeoff, condition, color, item_opacity)
+            if result:
+                items.append((takeoff_uid, result))
+        for hole_uid in child_uids:
+            hole_takeoff = takeoff_map.get(hole_uid)
+            if not hole_takeoff:
+                continue
+            hole_condition = conditions.get(hole_takeoff.condition_uid)
+            if not hole_condition:
+                continue
+            position = self._cs.parse_position(hole_takeoff.position)
+            if not position or len(position) < 6:
+                continue
+            tx = self._cs.transform_vertices_to_2d(position)
+            hole_path = self._create_area_path(tx, hole_takeoff)
+            if hole_path and not hole_path.isEmpty():
+                hole_item = QGraphicsPathItem()
+                hole_item.setPath(hole_path)
+                hole_item.setPen(QPen(Qt.PenStyle.NoPen))
+                hole_item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+                hole_item.setZValue(0)
+                hole_item.setData(0, hole_uid)
+                items.append((hole_uid, hole_item))
+        return items
+
+    def _create_area_with_holes(
+        self,
+        takeoff: dict,
+        condition,
+        holes: list[dict],
+        color: str,
+        opacity: float,
+    ) -> QGraphicsPathItem | list[QGraphicsPathItem] | None:
+        position = self._cs.parse_position(takeoff.position)
+        if not position or len(position) < 6:
+            return None
+        tx_position = self._cs.transform_vertices_to_2d(position)
+        parent_path = self._create_area_path(tx_position, takeoff)
+        if parent_path is None or parent_path.isEmpty():
+            return None
+        for hole_takeoff in holes:
+            hole_position = self._cs.parse_position(hole_takeoff.position)
+            if not hole_position or len(hole_position) < 6:
+                continue
+            tx_hole_position = self._cs.transform_vertices_to_2d(hole_position)
+            hole_path = self._create_area_path(tx_hole_position, hole_takeoff)
+            if hole_path and not hole_path.isEmpty():
+                parent_path = parent_path.subtracted(hole_path)
+        if parent_path.isEmpty():
+            return None
+        is_negative = takeoff.is_negative
+        return self._build_item(
+            parent_path,
+            condition,
+            color,
+            opacity,
+            2.0,
+            takeoff.uid,
+            takeoff.condition_uid,
+            is_negative,
+        )

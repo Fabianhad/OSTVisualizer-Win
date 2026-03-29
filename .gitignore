@@ -1,0 +1,42 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# C++ build output
+cpp_extensions/build/
+
+# Vendor binaries (downloaded by scripts/setup-cpp.ps1)
+cpp_extensions/pdfium/
+cpp_extensions/qpdf*/
+
+# Nuitka build output
+dist_visualizer/
+
+# Installer creator script
+build-msi.ps1
+
+# Installer and binary distributions
+*.msi
+RealtimeService.zip
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.sln
+*.vcxproj*
+.DS_Store
+Thumbs.db
+.claude/
+scripts/nuitka-crash-report.xml
+
+# Local release secrets
+.secrets/

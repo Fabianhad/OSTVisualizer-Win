@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{TITLE}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            overflow: hidden;
+            background: #1a1a1a;
+        }
+
+        #canvas {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+
+        #pdf-toggle {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            z-index: 10;
+            background: #333;
+            color: #ccc;
+            border: 1px solid #555;
+            padding: 8px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            font: 13px sans-serif;
+        }
+
+        #pdf-toggle:hover {
+            background: #444;
+        }
+
+        #pdf-toggle.active {
+            background: #00796b;
+            color: #fff;
+            border-color: #00897b;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas"></canvas>
+    <button id="pdf-toggle" style="display:none;">Show Plan</button>
+    <script type="application/json" id="scene-data">
+{{SCENE_DATA}}
+    </script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.150.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.150.0/examples/jsm/",
+            "three-wboit": "https://unpkg.com/three-wboit@1.0.8/src/index.js",
+            "three-wboit/": "https://unpkg.com/three-wboit@1.0.8/src/"
+        }
+    }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { WboitPass } from 'three-wboit';
+        import { MeshWboitMaterial } from 'three-wboit';
+
+        const sceneData = JSON.parse(document.getElementById('scene-data').textContent);
+        const canvas = document.getElementById('canvas');
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x1a1a1a);
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 0.5;
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100000);
+        camera.position.set(
+            sceneData.camera.position[0],
+            sceneData.camera.position[1],
+            sceneData.camera.position[2]
+        );
+
+        const controls = new OrbitControls(camera, canvas);
+        controls.target.set(
+            sceneData.camera.target[0],
+            sceneData.camera.target[1],
+            sceneData.camera.target[2]
+        );
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.update();
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        keyLight.position.set(500, 500, -500);
+        scene.add(keyLight);
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        fillLight.position.set(-500, 500, 500);
+        scene.add(fillLight);
+        const rimLight = new THREE.DirectionalLight(0xffffff, 0.4);
+        rimLight.position.set(0, -500, -500);
+        scene.add(rimLight);
+
+        let hasTransparent = false;
+
+        sceneData.geometries.forEach(geomData => {
+            if (geomData.opacity < 1.0) hasTransparent = true;
+        });
+
+        const wboitPass = hasTransparent
+            ? new WboitPass(renderer, scene, camera, new THREE.Color(0x1a1a1a), 1.0)
+            : null;
+
+        sceneData.geometries.forEach(geomData => {
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(geomData.vertices), 3));
+            if (geomData.normals && geomData.normals.length > 0) {
+                geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(geomData.normals), 3));
+            }
+            geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(geomData.indices), 1));
+            const color = new THREE.Color(geomData.color[0], geomData.color[1], geomData.color[2]);
+            const isTransparent = geomData.opacity < 1.0;
+
+            if (isTransparent && wboitPass) {
+                const material = new MeshWboitMaterial({
+                    color: color,
+                    opacity: geomData.opacity,
+                    transparent: true,
+                    side: THREE.DoubleSide,
+                    depthWrite: false,
+                    weight: 1.0,
+                });
+                scene.add(new THREE.Mesh(geometry, material));
+            } else {
+                const material = new THREE.MeshPhongMaterial({
+                    color: color,
+                    opacity: geomData.opacity,
+                    transparent: isTransparent,
+                    side: THREE.DoubleSide,
+                    depthWrite: !isTransparent,
+                });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.renderOrder = isTransparent ? 1 : 0;
+                scene.add(mesh);
+            }
+        });
+
+        const pdfBase64 = sceneData.pdf_base64 || null;
+        const pdfPageIndex = sceneData.pdf_page_index || 0;
+        const pageW = sceneData.page_width || 0;
+        const pageH = sceneData.page_height || 0;
+        const pdfToggle = document.getElementById('pdf-toggle');
+        let pdfPlane = null;
+
+        if (pdfBase64 && pageW > 0 && pageH > 0 && typeof pdfjsLib !== 'undefined') {
+            pdfjsLib.GlobalWorkerOptions.workerSrc =
+                'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            const pdfData = atob(pdfBase64);
+            const pdfArray = new Uint8Array(pdfData.length);
+            for (let i = 0; i < pdfData.length; i++) pdfArray[i] = pdfData.charCodeAt(i);
+
+            pdfjsLib.getDocument({ data: pdfArray }).promise.then(doc => {
+                return doc.getPage(Math.min(pdfPageIndex + 1, doc.numPages));
+            }).then(page => {
+                const vp = page.getViewport({ scale: 3.0 });
+                const off = document.createElement('canvas');
+                off.width = vp.width; off.height = vp.height;
+                const ctx = off.getContext('2d');
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, vp.width, vp.height);
+                return page.render({ canvasContext: ctx, viewport: vp }).promise.then(() => off);
+            }).then(off => {
+                const tex = new THREE.CanvasTexture(off);
+                tex.colorSpace = THREE.SRGBColorSpace;
+                tex.minFilter = THREE.LinearFilter;
+                tex.magFilter = THREE.LinearFilter;
+                const geo = new THREE.PlaneGeometry(pageW, pageH);
+                pdfPlane = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
+                pdfPlane.rotation.x = -Math.PI / 2;
+                const floorY = sceneData.bounds ? sceneData.bounds.min[1] - 0.01 : -0.01;
+                pdfPlane.position.set(-pageW / 2, floorY, -pageH / 2);
+                const uv = geo.attributes.uv;
+                for (let i = 0; i < uv.count; i++) { uv.setX(i, 1 - uv.getX(i)); uv.setY(i, 1 - uv.getY(i)); }
+                uv.needsUpdate = true;
+                pdfPlane.renderOrder = -1;
+                pdfToggle.style.display = 'block';
+            }).catch(e => console.warn('PDF floor failed:', e));
+
+            pdfToggle.addEventListener('click', () => {
+                if (!pdfPlane) return;
+                const showing = pdfPlane.parent === scene;
+                if (showing) {
+                    scene.remove(pdfPlane);
+                } else {
+                    scene.add(pdfPlane);
+                }
+                pdfToggle.textContent = !showing ? 'Hide Plan' : 'Show Plan';
+                pdfToggle.classList.toggle('active', !showing);
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            if (wboitPass) {
+                wboitPass.render(renderer);
+            } else {
+                renderer.render(scene, camera);
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            if (wboitPass) wboitPass.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+
+</html>
