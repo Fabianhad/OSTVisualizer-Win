@@ -375,7 +375,7 @@ class MenuController:
             if action:
                 action.setEnabled(master_allowed)
 
-    def trigger_context_command(self, command_key: str) -> None:
+    def trigger_menu_callback(self, command_key: str) -> None:
         callback = self._get_menu_callbacks().get(command_key)
         if callback:
             callback()

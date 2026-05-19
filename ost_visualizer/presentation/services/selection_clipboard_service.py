@@ -9,15 +9,18 @@ class SelectionClipboardService:
         self._takeoff_extras: Dict[str, Dict[str, Any]] = {}
         self._annotations: List[BidAnnotation] = []
         self._source_bid_uid: Optional[str] = None
+        self._source_file_path: Optional[str] = None
 
     def copy(
         self,
         takeoffs: List[Takeoff],
         annotations: List[BidAnnotation] = None,
         source_bid_uid: Optional[str] = None,
+        source_file_path: Optional[str] = None,
         takeoff_extras: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
         self._source_bid_uid = source_bid_uid
+        self._source_file_path = source_file_path
         self._takeoffs = [
             Takeoff(
                 uid=t.uid,
@@ -67,6 +70,10 @@ class SelectionClipboardService:
     @property
     def source_bid_uid(self) -> Optional[str]:
         return self._source_bid_uid
+
+    @property
+    def source_file_path(self) -> Optional[str]:
+        return self._source_file_path
 
     def get_extras(self, takeoff_uid: str) -> Dict[str, Any]:
         return self._takeoff_extras.get(str(takeoff_uid), {})

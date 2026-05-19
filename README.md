@@ -6,7 +6,7 @@ Built for estimators and construction teams who work with OST project files dail
 
 **[Download](https://fabianhad.com/ost3d/download)** | **[Commercial License](https://fabianhad.com/ost3d/download)** | **[Release Notes](https://fabianhad.com/ost3d/release-notes)**
 
-[![Version](https://img.shields.io/badge/version-1.2.2.1-blue)](https://fabianhad.com/ost3d/download)
+[![Version](https://img.shields.io/badge/version-1.2.2.2-blue)](https://fabianhad.com/ost3d/download)
 [![License: Elastic-2.0](https://img.shields.io/badge/license-Elastic--2.0-blue)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows%2064--bit-lightgrey)]()
 [![Build](https://github.com/Fabianhad/OSTVisualizer-Win/actions/workflows/architecture.yml/badge.svg)](https://github.com/Fabianhad/OSTVisualizer-Win/actions/workflows/architecture.yml)
@@ -46,7 +46,7 @@ Built for estimators and construction teams who work with OST project files dail
 
 Download the latest installer from the [download page](https://fabianhad.com/ost3d/download):
 
-- **`ost3dvisualizer-1.2.2.1-64.msi`** -- Windows 64-bit installer (Windows 10+)
+- **`ost3dvisualizer-1.2.2.2-64.msi`** -- Windows 64-bit installer (Windows 10+)
 
 > A [commercial license](https://fabianhad.com/ost3d/download) is required for production use. See [Licensing](#licensing).
 

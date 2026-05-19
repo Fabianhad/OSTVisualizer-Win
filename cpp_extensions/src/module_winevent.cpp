@@ -80,7 +80,6 @@ private:
             handle_ = nullptr;
         }
     }
-
     HANDLE handle_;
     mutable std::mutex mutex_;
 };

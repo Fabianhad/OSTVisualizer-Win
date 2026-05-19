@@ -2,11 +2,8 @@
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
-
 #include "snap/snap_index.hpp"
-
 namespace nb = nanobind;
-
 NB_MODULE(ost_snap, m)
 {
     m.doc() = "Native snap-to-line index for 2D plan placement";
@@ -15,7 +12,6 @@ NB_MODULE(ost_snap, m)
     m.attr("ENDPOINT") = static_cast<int32_t>(ost_snap::ENDPOINT);
     m.attr("MIDPOINT") = static_cast<int32_t>(ost_snap::MIDPOINT);
     m.attr("PERPENDICULAR") = static_cast<int32_t>(ost_snap::PERPENDICULAR);
-
     nb::class_<ost_snap::SnapIndex>(m, "SnapIndex")
         .def(nb::init<>())
         .def("build", &ost_snap::SnapIndex::build, nb::arg("raw"))

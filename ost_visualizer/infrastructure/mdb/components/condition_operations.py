@@ -6,6 +6,13 @@ from ....application.dtos.update_condition_dto import UpdateConditionDto
 
 
 class ConditionOperationsMixin:
+    _CONDITION_CROSS_BID_CLEAR_COLUMNS = frozenset(
+        {
+            "BidConditionFolderUID",
+            "BidLayerUID",
+        }
+    )
+
     @staticmethod
     def _new_ost_guid() -> str:
         return "{" + str(uuid.uuid4()).upper() + "}"
@@ -84,6 +91,86 @@ class ConditionOperationsMixin:
         except Exception:
             self.logger.exception("Failed to duplicate conditions in %s", db_path)
             return []
+
+    def duplicate_conditions_to_bid(
+        self,
+        db_path: str,
+        source_bid_uid: str,
+        destination_bid_uid: str,
+        condition_uids: List[str],
+    ) -> Dict[str, str]:
+        if not condition_uids:
+            return {}
+        ordered_uids = list(dict.fromkeys(str(uid) for uid in condition_uids if uid))
+        if not ordered_uids:
+            return {}
+        uid_map: Dict[str, str] = {}
+        try:
+            with self._connection(db_path) as conn:
+                schema = self._schema(conn)
+                self._require_write_columns(schema, "BidConditions", ("UID", "BidUID"))
+                cursor = conn.cursor()
+                table_cols = sorted(schema.get_columns("BidConditions"))
+                select_cols = ", ".join(f"[{c}]" for c in table_cols)
+                for condition_uid in ordered_uids:
+                    cursor.execute(
+                        f"SELECT {select_cols} FROM [BidConditions] "
+                        "WHERE [UID] = ? AND [BidUID] = ?",
+                        int(condition_uid),
+                        int(source_bid_uid),
+                    )
+                    cols = [d[0] for d in cursor.description]
+                    binary_cols = {
+                        d[0] for d in cursor.description if d[1] is bytearray
+                    }
+                    source_row = cursor.fetchone()
+                    if not source_row:
+                        raise ValueError(
+                            f"Condition {condition_uid} was not found in bid "
+                            f"{source_bid_uid}"
+                        )
+                    row_data = dict(zip(cols, source_row))
+                    old_uid = str(int(row_data["UID"]))
+                    new_uid, new_guid, next_ref_no = self._allocate_condition_identity(
+                        cursor, destination_bid_uid
+                    )
+                    row_data["UID"] = new_uid
+                    row_data["BidUID"] = int(destination_bid_uid)
+                    if "GUID" in row_data:
+                        row_data["GUID"] = new_guid
+                    if "RefNo" in row_data:
+                        row_data["RefNo"] = next_ref_no
+                    for col in self._CONDITION_CROSS_BID_CLEAR_COLUMNS:
+                        if col in row_data:
+                            row_data[col] = None
+                    values = []
+                    for c in cols:
+                        val = row_data[c]
+                        if (
+                            c in binary_cols
+                            and val is not None
+                            and isinstance(val, str)
+                        ):
+                            val = val.encode("utf-8")
+                        values.append(val)
+                    self._execute_insert_values(
+                        cursor,
+                        schema,
+                        "BidConditions",
+                        dict(zip(cols, values)),
+                        ("UID", "BidUID"),
+                        "duplicate_conditions_to_bid",
+                    )
+                    uid_map[old_uid] = str(new_uid)
+            return uid_map
+        except Exception:
+            self.logger.exception(
+                "Failed to duplicate conditions from bid %s to bid %s in %s",
+                source_bid_uid,
+                destination_bid_uid,
+                db_path,
+            )
+            return {}
 
     def insert_condition(
         self, db_path: str, bid_uid: str, spec: CreateConditionSpec

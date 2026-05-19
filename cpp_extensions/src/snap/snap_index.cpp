@@ -1,28 +1,23 @@
 #include "snap/snap_index.hpp"
-
 #include <cmath>
 #include <limits>
-
 namespace ost_snap
 {
     namespace
     {
         constexpr float kDegenerateEpsilonSq = 1.0e-12f;
-
         float dist_sq(float ax, float ay, float bx, float by)
         {
             const float dx = ax - bx;
             const float dy = ay - by;
             return dx * dx + dy * dy;
         }
-
         bool finite_segment(float x1, float y1, float x2, float y2)
         {
             return std::isfinite(x1) && std::isfinite(y1) &&
                    std::isfinite(x2) && std::isfinite(y2);
         }
     }
-
     void SnapIndex::build(const std::vector<RawSegment> &raw)
     {
         segments_.clear();
@@ -42,7 +37,6 @@ namespace ost_snap
             segments_.push_back(Segment{x1, y1, x2, y2});
         }
     }
-
     std::optional<SnapHit> SnapIndex::query(float x, float y, float radius) const
     {
         if (radius < 0.0f || segments_.empty())
@@ -56,7 +50,6 @@ namespace ost_snap
         SnapHit best_endpoint{0.0f, 0.0f, NONE, -1};
         SnapHit best_midpoint{0.0f, 0.0f, NONE, -1};
         SnapHit best_perpendicular{0.0f, 0.0f, NONE, -1};
-
         auto consider = [&](float hx,
                             float hy,
                             SnapKind kind,
@@ -71,7 +64,6 @@ namespace ost_snap
                 best_hit = SnapHit{hx, hy, static_cast<int32_t>(kind), segment_index};
             }
         };
-
         for (std::size_t i = 0; i < segments_.size(); ++i)
         {
             const Segment &s = segments_[i];
@@ -90,7 +82,6 @@ namespace ost_snap
                 segment_index,
                 best_endpoint_dist_sq,
                 best_endpoint);
-
             const float dx = s.x2 - s.x1;
             const float dy = s.y2 - s.y1;
             const float len_sq = dx * dx + dy * dy;
@@ -117,7 +108,6 @@ namespace ost_snap
                     best_perpendicular);
             }
         }
-
         if (std::isfinite(best_endpoint_dist_sq))
         {
             return best_endpoint;
@@ -132,7 +122,6 @@ namespace ost_snap
         }
         return std::nullopt;
     }
-
     std::size_t SnapIndex::size() const noexcept
     {
         return segments_.size();

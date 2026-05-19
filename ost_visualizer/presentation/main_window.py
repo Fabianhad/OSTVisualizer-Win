@@ -331,7 +331,7 @@ class MainWindow(QtWidgets.QMainWindow):
         def connect_menu_command(action: QtGui.QAction, command_key: str) -> None:
             action.triggered.connect(
                 lambda _checked=False, key=command_key: (
-                    self.menu_controller.trigger_context_command(key)
+                    self.menu_controller.trigger_menu_callback(key)
                 )
             )
 
@@ -643,7 +643,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _trigger_project_tree_menu_command(self, command_key: str) -> None:
         if self.menu_controller:
-            self.menu_controller.trigger_context_command(command_key)
+            self.menu_controller.trigger_menu_action(command_key)
 
     def _is_project_tree_menu_command_enabled(self, command_key: str) -> bool:
         if not self.menu_controller:

@@ -56,6 +56,29 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
     def set_ui_access_manager(self, access_manager) -> None:
         self._ui_access_manager = access_manager
 
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        item = self.itemAt(event.position().toPoint())
+        if (
+            event.button() == QtCore.Qt.MouseButton.LeftButton
+            and item is None
+            and self.selectedItems()
+        ):
+            self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+            event.accept()
+            return
+        if (
+            event.button() == QtCore.Qt.MouseButton.LeftButton
+            and item is not None
+            and item.isSelected()
+            and len(self.selectedItems()) == 1
+            and event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier
+        ):
+            self.setCurrentItem(item)
+            self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def _eligible_drag_items(self) -> List[QtWidgets.QTreeWidgetItem]:
         out: List[QtWidgets.QTreeWidgetItem] = []
         seen_file: Optional[str] = None
@@ -755,9 +778,9 @@ class ProjectView(QtWidgets.QWidget):
         return bid_refs, project_uids
 
     def _on_top_selection_change(self):
-        items = self.top_tree.selectedItems()
         bid_refs, project_uids = self._collect_multi_selection()
-        if not items:
+        item = self._current_selected_item()
+        if item is None:
             self.current_bid_ref = None
             self._selected_node_state = None
             if self.on_bid_selection:
@@ -767,7 +790,6 @@ class ProjectView(QtWidgets.QWidget):
             if self.on_multi_selection:
                 self.on_multi_selection(bid_refs, project_uids)
             return
-        item = self.top_tree.currentItem() or items[0]
         kind, uid, file_path = self._get_item_info(item)
         self._selected_node_state = self._selection_state_for_item(item)
         if kind == "bid" and uid and file_path:

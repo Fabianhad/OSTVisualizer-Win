@@ -1,11 +1,8 @@
 # Changelog
 
-## 1.2.2.1 - 2026-05-18
-
-### Changed
-- Show selected takeoff actions from the 2D and 3D view context menus even when right-clicking empty view space.
+## 1.2.2.2 - 2026-05-19
 
 ### Fixed
-- Fixed bid lock and unlock changes not refreshing editing permissions until restart.
-- Blocked condition and takeoff edits immediately while the active bid is locked.
-- Allowed locked bids to be duplicated or deleted while keeping condition properties read-only.
+- Fixed copying takeoffs from one bid and pasting them into another bid in the same database, including copying the required conditions.
+- Kept the Project Tree selection active when clicking empty tree space.
+- Fixed Project Tree context-menu commands such as Delete and Duplicate not running from shared toolbar/menu actions.

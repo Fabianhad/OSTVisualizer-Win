@@ -335,6 +335,25 @@ class ProjectWriteService(BaseWriteService):
             self.reload_and_notify(db_path)
         return new_uids
 
+    def duplicate_conditions_to_bid(
+        self,
+        db_path: str,
+        source_bid_uid: str,
+        destination_bid_uid: str,
+        condition_uids: list,
+        reload_database: bool = True,
+    ) -> dict:
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            "duplicate_conditions_to_bid", db_path, destination_bid_uid
+        ):
+            return {}
+        uid_map = self._duplicate_conditions.execute_to_bid(
+            db_path, source_bid_uid, destination_bid_uid, condition_uids
+        )
+        if uid_map and reload_database:
+            self.reload_and_notify(db_path)
+        return uid_map
+
     def update_condition(
         self,
         db_path: str,

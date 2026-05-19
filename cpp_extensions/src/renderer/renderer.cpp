@@ -22,7 +22,6 @@ namespace ost_renderer
             for (size_t i = 0; i + 2 < flat.size(); i += 3)
                 out.emplace_back(flat[i], flat[i + 1], flat[i + 2]);
         }
-
 #ifdef _WIN32
         class ContextGuard
         {
@@ -244,13 +243,11 @@ namespace ost_renderer
         std::memcpy(out_matrix, glm::value_ptr(proj), 16 * sizeof(float));
     }
     const std::string Scene::kEmptyString;
-
     void Scene::attach_gl_context(void *hdc, void *hglrc)
     {
         gl_hdc_ = hdc;
         gl_hglrc_ = hglrc;
     }
-
     void Scene::clear()
     {
         ContextGuard guard(gl_hdc_, gl_hglrc_);
@@ -271,7 +268,6 @@ namespace ost_renderer
         bounds_.clear();
         selected_.clear();
     }
-
     void Scene::add_mesh(const MeshData &data)
     {
         if (data.vertices.empty() || data.indices.empty())
@@ -284,7 +280,6 @@ namespace ost_renderer
         mesh.color = data.color;
         mesh.condition_uid = data.condition_uid;
         mesh.takeoff_uid = data.takeoff_uid;
-
         struct Vertex
         {
             float x, y, z, nx, ny, nz, r, g, b, a;
@@ -316,7 +311,6 @@ namespace ost_renderer
             v.a = data.color.a;
             verts.push_back(v);
         }
-
         glGenVertexArrays(1, &mesh.vao);
         glGenBuffers(1, &mesh.vbo);
         glGenBuffers(1, &mesh.ebo);
@@ -333,7 +327,6 @@ namespace ost_renderer
         glEnableVertexAttribArray(2);
         glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void *)offsetof(Vertex, r));
         glBindVertexArray(0);
-
         int triCount = (int)(data.indices.size() / 3);
         if (triCount > 0)
         {
@@ -354,11 +347,9 @@ namespace ost_renderer
                 int face;
                 uint32_t v0, v1;
             };
-
             std::unordered_map<uint64_t, EdgeInfo> edgeMap;
             std::vector<uint32_t> lineIndices;
             const float creaseThreshold = cosf(15.0f * 3.14159f / 180.0f);
-
             auto faceNormal = [&](int t) -> glm::vec3
             {
                 auto &a = data.vertices[data.indices[t * 3]];
@@ -368,7 +359,6 @@ namespace ost_renderer
                 glm::vec3 e2(c.x - a.x, c.y - a.y, c.z - a.z);
                 return glm::normalize(glm::cross(e1, e2));
             };
-
             for (int t = 0; t < triCount; t++)
             {
                 uint32_t idx[3] = {data.indices[t * 3], data.indices[t * 3 + 1], data.indices[t * 3 + 2]};
@@ -399,7 +389,6 @@ namespace ost_renderer
                 lineIndices.push_back(kv.second.v0);
                 lineIndices.push_back(kv.second.v1);
             }
-
             if (!lineIndices.empty())
             {
                 mesh.line_count = lineIndices.size();
@@ -415,12 +404,9 @@ namespace ost_renderer
                 glBindVertexArray(0);
             }
         }
-
         meshes_.push_back(mesh);
     }
-
     Box3 Scene::get_bounds() const { return bounds_; }
-
     const std::string &Scene::get_condition_uid(int index) const
     {
         if (index < 0 || index >= (int)meshes_.size())
@@ -590,7 +576,6 @@ void main() {
     );
 }
 )";
-
     class Renderer::Impl
     {
     public:
@@ -616,10 +601,8 @@ void main() {
         GLuint selection_post_shader_prog = 0;
         GLuint scene_fbo = 0, scene_texture = 0;
         GLuint sel_mask_fbo = 0, sel_mask_texture = 0;
-
         bool pick_initialized = false;
         std::vector<uint8_t> pick_buffer;
-
         float bg_r = 0.08f, bg_g = 0.08f, bg_b = 0.08f, bg_a = 1.0f;
         bool initialized = false;
         bool oit_initialized = false;
@@ -980,7 +963,6 @@ void main() {
         pick_shader_prog = create_shader(mesh_vertex_shader, pick_fragment_shader);
         flat_color_shader_prog = create_shader(mesh_vertex_shader, flat_color_fragment_shader);
         selection_post_shader_prog = create_shader(quad_vertex_shader, selection_post_fragment_shader);
-
         glGenFramebuffers(1, &scene_fbo);
         glGenTextures(1, &scene_texture);
         glBindTexture(GL_TEXTURE_2D, scene_texture);
@@ -1060,10 +1042,8 @@ void main() {
             glDrawElements(GL_TRIANGLES, (GLsizei)m.index_count, GL_UNSIGNED_INT, 0);
         }
         glBindVertexArray(0);
-
         pick_buffer.resize((size_t)width * height * 4);
         glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pick_buffer.data());
-
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
     int Renderer::Impl::pick_at(int x, int y)
@@ -1096,7 +1076,6 @@ void main() {
         GLint colorLoc = glGetUniformLocation(flat_color_shader_prog, "u_color");
         float yellow[4] = {1.0f, 0.95f, 0.0f, 1.0f};
         glUniform4fv(colorLoc, 1, yellow);
-
         for (auto &m : scene->get_meshes())
         {
             if (!scene->is_selected(m.mesh_index))
@@ -1294,7 +1273,6 @@ void main() {
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
-
         render_wireframe();
 #ifdef _WIN32
         SwapBuffers(hdc);

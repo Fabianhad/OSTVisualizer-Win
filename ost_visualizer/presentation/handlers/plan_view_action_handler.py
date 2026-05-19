@@ -1,4 +1,5 @@
-from typing import List
+import logging
+from typing import Dict, List, Optional
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
@@ -13,6 +14,8 @@ from ..services.selection_commands import (
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PlanViewActionHandler:
@@ -59,7 +62,11 @@ class PlanViewActionHandler:
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not self._clipboard_svc.has_content():
             return False
-        return self._clipboard_svc.source_bid_uid == bid_ref.bid_uid
+        if self._clipboard_svc.source_file_path != bid_ref.file_path:
+            return False
+        if self._clipboard_svc.source_bid_uid == bid_ref.bid_uid:
+            return True
+        return bool(self._clipboard_svc.items)
 
     def _takeoff_uids_only(self, uids: list) -> list:
         return [u for u in uids if self._resolver.resolve_takeoff(u)]
@@ -387,10 +394,17 @@ class PlanViewActionHandler:
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not placements:
             return
+        condition_uid_map = self._condition_uid_map_for_paste(
+            bid_ref, [p["condition_uid"] for p in placements]
+        )
+        if condition_uid_map is None:
+            return
         area_uid = self._page_settings_bar.get_current_area_uid()
         specs = [
             InsertTakeoffSpec(
-                condition_uid=p["condition_uid"],
+                condition_uid=condition_uid_map.get(
+                    str(p["condition_uid"]), p["condition_uid"]
+                ),
                 page_uid=p["page_uid"],
                 area_uid=area_uid,
                 position=p["position"],
@@ -610,9 +624,49 @@ class PlanViewActionHandler:
                 takeoffs,
                 annotations,
                 source_bid_uid=bid_ref.bid_uid if bid_ref else None,
+                source_file_path=bid_ref.file_path if bid_ref else None,
                 takeoff_extras=takeoff_extras,
             )
             self._plan_view.clipboard_changed.emit()
+
+    def _condition_uid_map_for_paste(
+        self, bid_ref, condition_uids: List[str]
+    ) -> Optional[Dict[str, str]]:
+        source_bid_uid = self._clipboard_svc.source_bid_uid
+        source_file_path = self._clipboard_svc.source_file_path
+        if source_bid_uid == bid_ref.bid_uid and source_file_path == bid_ref.file_path:
+            return {}
+        # Same-bid paste reuses condition IDs; cross-bid paste needs destination
+        # condition copies so pasted takeoffs never point at source-bid conditions.
+        if not source_bid_uid:
+            return None
+        if source_file_path != bid_ref.file_path:
+            logger.warning(
+                "Cannot paste takeoffs across database files: source=%s destination=%s",
+                source_file_path,
+                bid_ref.file_path,
+            )
+            return None
+        source_condition_uids = list(
+            dict.fromkeys(str(uid) for uid in condition_uids if uid)
+        )
+        if not source_condition_uids:
+            return {}
+        uid_map = self._write_svc.duplicate_conditions_to_bid(
+            bid_ref.file_path,
+            source_bid_uid,
+            bid_ref.bid_uid,
+            source_condition_uids,
+            reload_database=False,
+        )
+        if len(uid_map) != len(source_condition_uids):
+            logger.warning(
+                "Failed to duplicate all conditions for cross-bid paste: %s -> %s",
+                source_bid_uid,
+                bid_ref.bid_uid,
+            )
+            return None
+        return uid_map
 
     def on_paste_requested(self) -> None:
         if not self._clipboard_svc.has_content():
@@ -630,7 +684,12 @@ class PlanViewActionHandler:
             else 1.0
         )
         source_bid_uid = self._clipboard_svc.source_bid_uid
+        source_file_path = self._clipboard_svc.source_file_path
         all_items = list(self._clipboard_svc.items)
+        if not all_items and (
+            source_bid_uid != bid_ref.bid_uid or source_file_path != bid_ref.file_path
+        ):
+            return
         regulars = [t for t in all_items if not t.is_hole]
         holes = [t for t in all_items if t.is_hole]
         if holes and not regulars:
@@ -639,9 +698,16 @@ class PlanViewActionHandler:
             }
             self._plan_view.begin_paste_backout(holes, extras_by_uid, source_bid_uid)
             holes = []
+        condition_uid_map = self._condition_uid_map_for_paste(
+            bid_ref, [t.condition_uid for t in regulars + holes]
+        )
+        if condition_uid_map is None:
+            return
         regular_specs = [
             InsertTakeoffSpec(
-                condition_uid=t.condition_uid,
+                condition_uid=condition_uid_map.get(
+                    str(t.condition_uid), t.condition_uid
+                ),
                 page_uid=page_uid,
                 area_uid=area_uid,
                 position=[v + step for v in t.position],
@@ -667,7 +733,9 @@ class PlanViewActionHandler:
         }
         hole_specs = [
             InsertTakeoffSpec(
-                condition_uid=t.condition_uid,
+                condition_uid=condition_uid_map.get(
+                    str(t.condition_uid), t.condition_uid
+                ),
                 page_uid=page_uid,
                 area_uid=area_uid,
                 position=[v + step for v in t.position],

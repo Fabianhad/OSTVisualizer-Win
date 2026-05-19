@@ -94,7 +94,6 @@ namespace ost_pdf
         {
             return {0.0, 0.0};
         }
-
         FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
         if (!page)
         {
@@ -147,7 +146,6 @@ namespace ost_pdf
         {
             return std::nullopt;
         }
-
         int intrinsic_rotation = 0;
         double effective_w = media_w;
         double effective_h = media_h;
@@ -166,7 +164,6 @@ namespace ost_pdf
             effective_w = FPDF_GetPageWidth(page);
             effective_h = FPDF_GetPageHeight(page);
             FPDF_ClosePage(page);
-
             switch (raw & 3)
             {
             case 1:
@@ -226,7 +223,6 @@ namespace ost_pdf
         {
             return result;
         }
-
         const int object_count = FPDFPage_CountObjects(page);
         for (int object_index = 0; object_index < object_count; ++object_index)
         {
@@ -235,7 +231,6 @@ namespace ost_pdf
             {
                 continue;
             }
-
             FS_MATRIX matrix{1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
             FPDFPageObj_GetMatrix(object, &matrix);
             auto map_point = [&matrix](float x, float y)
@@ -245,7 +240,6 @@ namespace ost_pdf
                     matrix.b * x + matrix.d * y + matrix.f,
                 };
             };
-
             const int segment_count = FPDFPath_CountSegments(object);
             bool has_current = false;
             bool has_subpath_start = false;
@@ -253,7 +247,6 @@ namespace ost_pdf
             float current_y = 0.0f;
             float subpath_start_x = 0.0f;
             float subpath_start_y = 0.0f;
-
             for (int segment_index = 0; segment_index < segment_count; ++segment_index)
             {
                 FPDF_PATHSEGMENT segment = FPDFPath_GetPathSegment(
@@ -270,7 +263,6 @@ namespace ost_pdf
                 }
                 auto [mapped_x, mapped_y] = map_point(x, y);
                 const int type = FPDFPathSegment_GetType(segment);
-
                 if (type == FPDF_SEGMENT_MOVETO)
                 {
                     current_x = mapped_x;
@@ -296,7 +288,6 @@ namespace ost_pdf
                     current_y = mapped_y;
                     has_current = true;
                 }
-
                 if (
                     FPDFPathSegment_GetClose(segment) &&
                     has_current &&
@@ -313,7 +304,6 @@ namespace ost_pdf
                 }
             }
         }
-
         FPDF_ClosePage(page);
         return result;
     }

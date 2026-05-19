@@ -100,6 +100,13 @@ class IMdbWriter(Protocol):
     def duplicate_conditions(
         self, db_path: str, bid_uid: str, condition_uids: List[str]
     ) -> List[str]: ...
+    def duplicate_conditions_to_bid(
+        self,
+        db_path: str,
+        source_bid_uid: str,
+        destination_bid_uid: str,
+        condition_uids: List[str],
+    ) -> Dict[str, str]: ...
     def insert_condition(
         self, db_path: str, bid_uid: str, spec: CreateConditionSpec
     ) -> Optional[str]: ...
