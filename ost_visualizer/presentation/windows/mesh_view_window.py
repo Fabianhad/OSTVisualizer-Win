@@ -266,6 +266,9 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         if self.viewer:
             self.viewer.set_selected_takeoffs(takeoff_uids)
 
+    def get_selected_takeoff_uids(self) -> list:
+        return self.viewer.get_selected_takeoff_uids() if self.viewer else []
+
     def set_pick_enabled(self, enabled: bool) -> None:
         if self.viewer:
             self.viewer.set_pick_enabled(enabled)

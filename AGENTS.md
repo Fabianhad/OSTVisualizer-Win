@@ -21,9 +21,11 @@ All scripts are PowerShell. Run from the client root (`projects/ost3d/client`).
 
 # Development
 .\scripts\run.ps1             # Activate venv and run the app
+.\scripts\setup-mcp.ps1       # Optional: install MCP SDK dependencies (Python 3.10+)
+.\venv\Scripts\python.exe -m ost_visualizer.mcp_server.main # Run read-only MCP stdio server
 
 # Release
-.\scripts\build.ps1           # Nuitka standalone build -> dist_visualizer/
+.\scripts\build.ps1           # Nuitka standalone builds -> dist_visualizer/ and dist_mcp/
 .\build-msi.ps1               # Package into MSI installer (reads version from update_check_service.py)
 ```
 
@@ -72,6 +74,13 @@ Orchestrates domain logic. Contains:
 - **Builders** - `AppControllerBuilder` orchestrates DI registration via sub-builders (`ModelBuilder`, `UseCaseBuilder`, `OrchestratorBuilder`, `ServiceBuilder`)
 
 `AppController` is the central facade: UI calls into it, it delegates to services/use cases.
+
+### MCP Adapter (`ost_visualizer/mcp_server/`)
+Standalone local Model Context Protocol server for read-only project context. It is an adapter package outside the four core layers and must not be imported by the Qt desktop startup path. The MCP entry point is `McpServer.py` / `ost_visualizer/mcp_server/main.py`; it runs over stdio as a separate process and logs only to stderr or `~/.ost_visualizer/mcp_server.log` so stdout remains reserved for MCP protocol messages.
+
+MCP access is read-only and database-scoped. The adapter builds an allowlist only from `~/.ost_visualizer/file_state.json`; do not add `--database`, custom database path overrides, or other arbitrary database selection paths. It composes `MdbReader`, `MdbFileParser`, `FileProjectRepository`, and `application/services/mcp_read_service.py` directly. Do not expose arbitrary file reads, shell execution, arbitrary SQL, generic database access, PDF rendering/text extraction, 3D generation, exports, or write/edit tools through MCP. CSV export through MCP is intentionally deferred until the app has a polished CSV export system. Live UI context flows through `presentation/services/mcp_context_bridge.py`, an app-owned local `QLocalServer` that returns small JSON snapshots from the main Qt thread; do not read Qt widget internals directly from the MCP process.
+
+Production builds package MCP as a separate lightweight one-file `ostv-mcp.exe` helper, not inside the Qt executable. The desktop Tools menu may expose setup/copy helpers for Claude Desktop, Cursor, and Codex, but MCP-compatible clients should launch `ostv-mcp.exe` themselves over stdio. Keep the MCP helper path free of PySide6/presentation imports; the MCP-side bridge client talks to the app-owned `QLocalServer` through the compatible Windows named-pipe path.
 
 ### Infrastructure Layer (`ost_visualizer/infrastructure/`)
 Implements domain interfaces:
@@ -338,6 +347,15 @@ Known Vulture false positives from the current `vulture ost_visualizer` output:
 - `tint_r`, `tint_g`, and `tint_b` in `ost_visualizer/presentation/visualization/pdf/page_cache.py`
   - Why Vulture flags them: dataclass fields may appear unused because no explicit attribute reads are present.
   - Why they are used: `TintedCacheKey` is a frozen dataclass used as an `OrderedDict` cache key; these fields participate in generated equality and hashing so different tint colors cache separately.
+- `database`, `bid_count`, `takeoff_count`, `condition_type_name`, `point_count`, `visible_takeoff_count`, `selected_takeoff_count`, `missing_takeoff_uids`, `uom1_label`, `uom2_label`, and `uom3_label` in `ost_visualizer/application/dtos/mcp_context_dtos.py`
+  - Why Vulture flags them: MCP DTO dataclass fields are serialized with `dataclasses.asdict()` rather than read as Python attributes.
+  - Why they are used: MCP hierarchy, project, page, condition, takeoff, and selected-context responses include these summary and human-readable fields for clients.
+- `quantity1`, `quantity2`, `quantity3`, `uom1_label`, `uom2_label`, and `uom3_label` in `ost_visualizer/application/dtos/mcp_context_dtos.py`
+  - Why Vulture flags them: MCP DTO dataclass fields are serialized with `dataclasses.asdict()` rather than read as Python attributes.
+  - Why they are used: MCP quantity summary responses include these values and labels for clients.
+- MCP tool/resource/prompt functions in `ost_visualizer/mcp_server/server.py`, such as `get_current_context`, `databases_resource`, `review_current_estimator_context`, and `review_takeoff_scope`
+  - Why Vulture flags them: FastMCP decorators register these functions dynamically, so there are no direct Python calls.
+  - Why they are used: MCP hosts call the registered tools, resources, and prompt through the Model Context Protocol runtime.
 
 ## C++ Extensions
 

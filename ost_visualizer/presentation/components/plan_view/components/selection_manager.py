@@ -132,6 +132,11 @@ class SelectionManagerMixin:
         self._selected_uids.clear()
         self.update_selection_visuals(emit=emit)
 
+    def get_selected_takeoff_uids(self) -> List[str]:
+        return sorted(
+            uid for uid in self._selected_uids if uid in self._current_takeoffs
+        )
+
     def set_selected_uids(self, uids: set, emit: bool = True) -> None:
         if self._selected_uids == uids:
             return

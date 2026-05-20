@@ -7,6 +7,7 @@ from ...domain.entities.cover_sheet import CoverSheetData, CoverSheetPage
 from ..components.menu_builder import MenuBuilder
 from ..dialogs.about_dialog import AboutDialog
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
+from ..dialogs.mcp_setup_dialog import McpSetupDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.image_show_mode import mode_to_flags
 from ..utils.messagebox import DB_LOCKED_HINT, show_critical
@@ -143,6 +144,7 @@ class MenuController:
             "set_scale": lambda: self.handlers.ui_event.open_set_scale_dialog(),
             "rename_page": lambda: self.handlers.ui_event.open_rename_page_dialog(),
             "adjust_images": lambda: self.handlers.ui_event.open_adjust_images_dialog(),
+            "mcp_setup": self._show_mcp_setup_dialog,
             "show_about": self._show_about_dialog,
         }
         for fmt in self._export_formats:
@@ -773,6 +775,14 @@ class MenuController:
 
     def _show_about_dialog(self) -> None:
         dialog = AboutDialog(self.icon_provider, self.window)
+        try:
+            dialog.exec()
+        finally:
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def _show_mcp_setup_dialog(self) -> None:
+        dialog = McpSetupDialog(self.icon_provider, self.window)
         try:
             dialog.exec()
         finally:

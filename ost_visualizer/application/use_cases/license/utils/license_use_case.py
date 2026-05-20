@@ -5,16 +5,6 @@ from .....config.license_config import MAX_HWID_LENGTH, MAX_LICENSE_KEY_LENGTH
 from .....domain.entities.license import LicenseStatus
 from ....dtos.license_dto import LicenseOperationResultDto, LicenseOperationStatus
 
-"""
-Current minimal license API contract used by the client:
-Validate success: {"valid": true, "expiry_date": "...", "signature": "..."}
-Activate success: {"success": true, "expiry_date": "...", "signature": "..."}
-Deactivate success: {"success": true, "message": "..."}
-Failure: {"error": "...", "error_code": 1001 | 1002 | 1003 | 1005 | ...}
-The server may also return activation_count, max_activations, and active_hwids.
-The client currently ignores those fields; they should not be used for future
-service entitlement logic.
-"""
 LicenseOperation = Literal["activate", "deactivate", "validate"]
 
 

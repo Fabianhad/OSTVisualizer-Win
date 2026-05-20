@@ -104,6 +104,74 @@ For licensing questions, contact [fabian@fabianhad.com](mailto:fabian@fabianhad.
 | Database | Microsoft Access (.mdb) via pyodbc |
 | Build | Nuitka, CMake |
 | C++ Bindings | nanobind v2.4.0 (13 extension modules) |
+| Local AI Context | Model Context Protocol (optional, Python 3.10+) |
+
+## Local MCP Server
+
+OST Visualizer includes an optional read-only local MCP server for MCP-compatible
+clients such as Claude Desktop and Cursor. It runs as a separate stdio process,
+does not start inside the Qt UI thread, and exposes only registered `.mdb`
+database context from OST Visualizer's local checked-file settings.
+It does not support `--database` or other arbitrary database path overrides.
+
+The MCP server exposes project, bid, page, PDF metadata, condition, takeoff,
+condition summary, selected-page summary, selected-takeoff summary, search,
+quantity-summary, and lightweight consistency-check tools. It does not expose shell execution,
+arbitrary SQL, arbitrary file reads, PDF text extraction, rendering, exports, or
+database mutation. CSV export is intentionally deferred until the app has a
+polished CSV export system.
+When the desktop app is running, `get_current_context` also includes a live
+read-only UI snapshot through a local app bridge, including active tab/view,
+selected bid/page/conditions, and selected takeoff UIDs.
+
+Install optional MCP dependencies:
+
+```powershell
+.\scripts\setup-mcp.ps1
+```
+
+Source checkout MCP command:
+
+```powershell
+.\venv\Scripts\python.exe -m ost_visualizer.mcp_server.main
+```
+
+Claude Desktop / Cursor style configuration:
+
+```json
+{
+  "mcpServers": {
+    "ost-visualizer": {
+      "command": "C:\\path\\to\\OSTVisualizerLicense\\venv\\Scripts\\python.exe",
+      "args": ["-m", "ost_visualizer.mcp_server.main"],
+      "env": {
+        "PYTHONPATH": "C:\\path\\to\\OSTVisualizerLicense"
+      }
+    }
+  }
+}
+```
+
+Production builds include a separate lightweight MCP helper executable. Use
+`Tools > MCP Setup...` in the desktop app to copy client configuration for the
+packaged helper:
+
+```json
+{
+  "mcpServers": {
+    "ost-visualizer": {
+      "command": "C:\\Program Files\\OST Visualizer\\ostv-mcp.exe",
+      "args": []
+    }
+  }
+}
+```
+
+Codex production setup uses the helper directly:
+
+```powershell
+codex mcp add ost-visualizer -- 'C:\Program Files\OST Visualizer\ostv-mcp.exe'
+```
 
 ## Repository Layout
 
@@ -112,6 +180,7 @@ The desktop client lives inside the main server repository:
 - Client root: `projects/ost3d/client`
 - App package: `projects/ost3d/client/ost_visualizer`
 - Entry point: `projects/ost3d/client/Visualizer.py`
+- MCP entry point: `projects/ost3d/client/McpServer.py`
 - Server license API: `projects/ost3d/routes/api.py` and `projects/ost3d/utils/validation.py`
 
 Run client setup, development, architecture, and build commands from `projects/ost3d/client`.
@@ -142,6 +211,7 @@ Requires Python 3.8+, Visual Studio 2022 (MSVC x64), CMake 3.20+, and Qt 6.10.2.
 
 ```powershell
 .\scripts\setup.ps1          # Create venv, install Python dependencies
+.\scripts\setup-mcp.ps1      # Optional: install local MCP server dependencies
 .\scripts\setup-cpp.ps1      # Download vendor libs, build C++ extensions
 .\scripts\run.ps1             # Run the application
 ```
@@ -151,7 +221,7 @@ For release builds:
 ```powershell
 New-Item -ItemType Directory -Force .secrets
 # Copy your license_public_key.pem into .secrets\license_public_key.pem first.
-.\scripts\build.ps1           # Nuitka standalone build -> dist_visualizer/
+.\scripts\build.ps1           # Nuitka standalone builds -> dist_visualizer/ and dist_mcp/
 .\build-msi.ps1               # Package into MSI installer
 ```
 

@@ -186,6 +186,8 @@ class MenuBuilder:
                 ("shared", "pan_tool"),
                 ("sep",),
                 ("shared", "backout_mode"),
+                ("sep",),
+                ("cmd", "MCP Setup...", "mcp_setup"),
             ],
             "Image": [
                 ("cmd", "Adjust Images", "adjust_images"),

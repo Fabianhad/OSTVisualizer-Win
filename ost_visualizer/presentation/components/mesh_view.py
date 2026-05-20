@@ -312,6 +312,9 @@ class OpenGLViewer(QtWidgets.QWidget):
                 scene.set_selected(i, True)
         self.update()
 
+    def get_selected_takeoff_uids(self) -> list:
+        return list(self._selected_takeoff_uids)
+
     def set_negative_check_fn(self, fn) -> None:
         self._negative_check_fn = fn
 

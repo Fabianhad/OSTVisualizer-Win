@@ -636,8 +636,6 @@ class PlanViewActionHandler:
         source_file_path = self._clipboard_svc.source_file_path
         if source_bid_uid == bid_ref.bid_uid and source_file_path == bid_ref.file_path:
             return {}
-        # Same-bid paste reuses condition IDs; cross-bid paste needs destination
-        # condition copies so pasted takeoffs never point at source-bid conditions.
         if not source_bid_uid:
             return None
         if source_file_path != bid_ref.file_path:

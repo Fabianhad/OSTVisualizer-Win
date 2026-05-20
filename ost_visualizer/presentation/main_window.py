@@ -30,6 +30,7 @@ from .managers.shortcut_manager import ShortcutManager
 from .managers.ui_access_manager import Feature, UIAccessManager
 from .managers.ui_state_manager import UIStateManager
 from .services.bid_clipboard_service import BidClipboardService
+from .services.mcp_context_bridge import McpContextBridge
 from .utils.messagebox import show_warning
 from .utils.qt_window_icon_provider import QtWindowIconProvider
 from .utils.themed_icon import rebuild_all_icons
@@ -367,6 +368,14 @@ class MainWindow(QtWidgets.QMainWindow):
             workspace_state_model=self._workspace_state_model,
         )
         self._workspace_state_coordinator.restore_initial_state()
+        self._mcp_context_bridge = McpContextBridge(
+            main_window=self,
+            ui_state_manager=self.ui_state_manager,
+            project_data_service=self._project_data_service,
+            plan_view=self.plan_view,
+            parent=self,
+        )
+        self._mcp_context_bridge.start()
         self.update_dialog_requested.connect(self._show_update_dialog)
         self._update_service = self._resolve_update_service()
         QtCore.QTimer.singleShot(0, self._load_files_from_config)
@@ -1242,6 +1251,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handlers.ui_event.cleanup()
         self.license_coordinator.cleanup()
         self.ui_access_manager.cleanup()
+        self._mcp_context_bridge.cleanup()
         lifecycle_orchestrator = self.app_controller.get_service(
             "lifecycle_orchestrator"
         )
