@@ -551,50 +551,99 @@ class ComponentBuilder:
         ui_event_handler.set_mesh_window_action(mesh_window_action)
         backout_action = QtGui.QAction("Backout Mode", viewer_container)
         IconManager.apply(backout_action, IconId.BACKOUT_MODE)
-        backout_action.setToolTip("Backout Mode")
+        _BACKOUT_ENABLED_TOOLTIP = "Create a backout in the selected area takeoff"
+        _BACKOUT_DISABLED_TOOLTIP = "Select a visible area takeoff to create a backout."
+        backout_action.setToolTip(_BACKOUT_DISABLED_TOOLTIP)
         backout_action.setCheckable(True)
         backout_action.setEnabled(False)
         takeoff_tools_toolbar.addAction(backout_action)
-        _backout_parent_uid = [None]
+
+        def _set_backout_checked_silent(checked: bool) -> None:
+            if backout_action.isChecked() == checked:
+                return
+            backout_action.blockSignals(True)
+            backout_action.setChecked(checked)
+            backout_action.blockSignals(False)
+
+        def _is_backout_context_available() -> bool:
+            if tab_widget.currentIndex() != TAB_INDEX_TAKEOFF:
+                return False
+            if view_stack.currentIndex() != 1:
+                return False
+            if ui_access_manager and not ui_access_manager.is_allowed(
+                Feature.PLACE_TAKEOFF
+            ):
+                return False
+            return True
+
+        def _current_backout_candidate_uid():
+            if not _is_backout_context_available():
+                return None
+            return plan_view.backout_parent_candidate_uid()
+
+        def _refresh_backout_action_state() -> None:
+            context_available = _is_backout_context_available()
+            active = plan_view.backout_mode_active
+            if active and (
+                not context_available or not plan_view.is_backout_context_valid()
+            ):
+                plan_view.cancel_backout_mode()
+                active = False
+            if active:
+                backout_action.setEnabled(True)
+                backout_action.setToolTip(_BACKOUT_ENABLED_TOOLTIP)
+                _set_backout_checked_silent(True)
+                return
+            parent_uid = _current_backout_candidate_uid()
+            enabled = bool(parent_uid)
+            backout_action.setEnabled(enabled)
+            backout_action.setToolTip(
+                _BACKOUT_ENABLED_TOOLTIP if enabled else _BACKOUT_DISABLED_TOOLTIP
+            )
+            _set_backout_checked_silent(False)
+
+        backout_action._refresh_enabled = _refresh_backout_action_state
 
         def _on_backout_toggled(checked: bool):
             if checked:
-                if _backout_parent_uid[0]:
-                    plan_view.enter_backout_mode(_backout_parent_uid[0])
+                parent_uid = _current_backout_candidate_uid()
+                if not parent_uid:
+                    _refresh_backout_action_state()
+                    return
+                if not plan_view.enter_backout_mode(parent_uid):
+                    _refresh_backout_action_state()
+                    return
+                takeoff = plan_view.get_takeoff(parent_uid)
+                condition_uid = takeoff.condition_uid if takeoff else None
+                if not condition_uid or not ui_event_handler.placement.enter(
+                    condition_uid, [condition_uid]
+                ):
+                    plan_view.cancel_backout_mode()
+                    _refresh_backout_action_state()
+                    return
+                _refresh_backout_action_state()
             else:
                 plan_view.cancel_backout_mode()
+                _refresh_backout_action_state()
 
         backout_action.toggled.connect(_on_backout_toggled)
-        _last_selection_uids: list = []
 
-        def _on_selection_for_backout(uids: list):
-            nonlocal _last_selection_uids
-            _last_selection_uids = uids
-            if plan_view.backout_mode_active:
-                return
-            can_backout = False
-            if not plan_view.backout_parent_uid:
-                _backout_parent_uid[0] = None
-                if len(uids) == 1:
-                    takeoff = plan_view.get_takeoff(uids[0])
-                    if takeoff:
-                        condition = plan_view.get_condition(takeoff.condition_uid)
-                        if condition and condition.is_area and not takeoff.is_hole:
-                            can_backout = True
-                            _backout_parent_uid[0] = takeoff.uid
-                backout_action.setEnabled(can_backout)
-                if not can_backout and backout_action.isChecked():
-                    backout_action.setChecked(False)
+        def _on_selection_for_backout(_uids: list) -> None:
+            _refresh_backout_action_state()
 
         plan_view.takeoff_selection_changed.connect(_on_selection_for_backout)
 
-        def _on_backout_mode_changed(active: bool) -> None:
-            if not active and backout_action.isChecked():
-                backout_action.setChecked(False)
-            if not active:
-                _on_selection_for_backout(_last_selection_uids)
+        def _on_backout_mode_changed(_active: bool) -> None:
+            _refresh_backout_action_state()
 
         plan_view.backout_mode_changed.connect(_on_backout_mode_changed)
+        tab_widget.currentChanged.connect(
+            lambda _index: _refresh_backout_action_state()
+        )
+        view_stack.currentChanged.connect(
+            lambda _index: _refresh_backout_action_state()
+        )
+        _refresh_backout_action_state()
         workspace_main_toolbar = QtWidgets.QToolBar(self.window)
         workspace_main_toolbar.setWindowTitle("Main")
         workspace_main_toolbar.setMovable(True)

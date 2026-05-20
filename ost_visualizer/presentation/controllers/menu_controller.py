@@ -435,7 +435,6 @@ class MenuController:
             "takeoff_tool",
             "zoom_tool",
             "pan_tool",
-            "backout_mode",
         ):
             action = self._actions.get(action_key)
             if not action:
@@ -452,6 +451,14 @@ class MenuController:
                 ):
                     self._tool_action_enabled_state[action_key] = action.isEnabled()
                 action.setEnabled(False)
+        backout_action = self._actions.get("backout_mode")
+        if backout_action:
+            self._tool_action_enabled_state.pop("backout_mode", None)
+            refresh_enabled = getattr(backout_action, "_refresh_enabled", None)
+            if callable(refresh_enabled):
+                refresh_enabled()
+            else:
+                backout_action.setEnabled(False)
 
     def _set_variable_actions_enabled(self, variable: str, enabled: bool) -> None:
         for action in self._variable_actions.get(variable, ()):

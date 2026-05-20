@@ -695,22 +695,8 @@ class PlacementModeMixin:
                         event.accept()
                         return
                     if not self.is_inside_parent(ost_x, ost_y):
-                        new_parent = self._find_area_at(ost_x, ost_y)
-                        if new_parent:
-                            self._backout_parent_uid = new_parent
-                            self._backout_active_uid = self._current_takeoffs[
-                                new_parent
-                            ].condition_uid
-                        else:
-                            self._backout_parent_uid = None
-                            self._backout_active_uid = None
-                elif self._backout_mode_active:
-                    new_parent = self._find_area_at(ost_x, ost_y)
-                    if new_parent:
-                        self._backout_parent_uid = new_parent
-                        self._backout_active_uid = self._current_takeoffs[
-                            new_parent
-                        ].condition_uid
+                        event.accept()
+                        return
                 if not self._backout_parent_uid:
                     self._selected_uids.clear()
                     self.update_selection_visuals()

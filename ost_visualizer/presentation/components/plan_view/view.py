@@ -532,10 +532,6 @@ class TakeoffPlanView(
         return self._place_session_uid
 
     @property
-    def backout_parent_uid(self) -> Optional[str]:
-        return self._backout_parent_uid
-
-    @property
     def backout_mode_active(self) -> bool:
         return self._backout_mode_active
 
@@ -546,8 +542,50 @@ class TakeoffPlanView(
     def get_takeoff(self, uid: str):
         return self._current_takeoffs.get(uid)
 
-    def get_condition(self, condition_uid: str):
-        return self._current_conditions.get(condition_uid)
+    def backout_parent_candidate_uid(self) -> Optional[str]:
+        if len(self._selected_uids) != 1:
+            return None
+        uid = next(iter(self._selected_uids))
+        return self._valid_backout_parent_uid(uid)
+
+    def is_backout_context_valid(self) -> bool:
+        if not (
+            self._backout_mode_active
+            and self._backout_parent_uid
+            and self._backout_active_uid
+        ):
+            return False
+        parent_uid = self._valid_backout_parent_uid(self._backout_parent_uid)
+        if parent_uid != self._backout_parent_uid:
+            return False
+        parent = self._current_takeoffs.get(parent_uid)
+        return bool(parent and parent.condition_uid == self._backout_active_uid)
+
+    def _valid_backout_parent_uid(self, parent_uid: Optional[str]) -> Optional[str]:
+        if not parent_uid:
+            return None
+        takeoff = self._current_takeoffs.get(parent_uid)
+        if not takeoff or takeoff.is_hole:
+            return None
+        condition = self._current_conditions.get(takeoff.condition_uid)
+        if not condition or not condition.is_area:
+            return None
+        if not getattr(condition, "layer_visible", True):
+            return None
+        cs = self._scene_builder.get_coordinate_system()
+        parent_pos = cs.parse_position(takeoff.position)
+        if not parent_pos or len(parent_pos) < 6:
+            return None
+        return takeoff.uid
+
+    def _cancel_backout_if_invalid(self) -> None:
+        has_backout_state = bool(
+            self._backout_mode_active
+            or self._backout_parent_uid
+            or self._backout_active_uid
+        )
+        if has_backout_state and not self.is_backout_context_valid():
+            self._clear_backout_state()
 
     def get_annotation(self, uid: str):
         return self._current_annotations.get(uid)
@@ -950,7 +988,10 @@ class TakeoffPlanView(
             return True
         self._cancel_pending_renders()
         saved_selection = set() if project_changed else set(self._selected_uids)
-        if project_changed:
+        page_changed = (
+            self._current_page is not None and self._current_page.uid != page.uid
+        )
+        if project_changed or page_changed:
             self._clear_backout_state()
         saved_cursor = self._persistent_cursor_mode
         preserve_place = not project_changed and self._place_session_uid is not None
@@ -965,13 +1006,8 @@ class TakeoffPlanView(
             self.cursor_mode_change_requested.emit(saved_cursor)
         self._current_takeoffs = {t.uid: t for t in takeoffs}
         self._invalidate_snap_index()
-        if (
-            self._backout_parent_uid
-            and self._backout_parent_uid not in self._current_takeoffs
-        ):
-            self._backout_parent_uid = None
-            self._backout_active_uid = None
         self._current_conditions = conditions
+        self._cancel_backout_if_invalid()
         self._current_color_map = color_map
         self._current_page = page
         self._current_bid_page_uid = page.uid
@@ -1048,7 +1084,7 @@ class TakeoffPlanView(
         self._selected_uids = saved_selection & (
             self._current_takeoffs.keys() | self._current_annotations.keys()
         )
-        if self._selected_uids:
+        if self._selected_uids or saved_selection:
             self.update_selection_visuals()
         if strategy.needs_async_loading:
             self._pending_page_data = self._load_coordinator.create_pending_page_data(
@@ -1159,6 +1195,7 @@ class TakeoffPlanView(
         self._current_takeoffs = {t.uid: t for t in takeoffs}
         self._invalidate_snap_index()
         self._current_conditions = conditions
+        self._cancel_backout_if_invalid()
         self._current_color_map = color_map
         rotation = page.rotation
         page_info = self._scene_builder.build_page_info(
@@ -1204,7 +1241,7 @@ class TakeoffPlanView(
         self._selected_uids = saved_selection & (
             self._current_takeoffs.keys() | self._current_annotations.keys()
         )
-        if self._selected_uids:
+        if self._selected_uids or saved_selection:
             self.update_selection_visuals()
         if self._cursor_mode == "rotate":
             if self._selected_uids and self._create_rotate_handle(self._selected_uids):
@@ -1248,6 +1285,8 @@ class TakeoffPlanView(
         elif preserve_place_session and self._place_session_uid is not None:
             self.clear_place_preview()
             self._reset_place_session_state()
+        if not preserve_place_session:
+            self._clear_backout_state()
         self._flush_dirty_rotations()
         self._flush_dirty_positions()
         self._cancel_tile_requests()
@@ -1346,6 +1385,7 @@ class TakeoffPlanView(
                 return
         else:
             self._exit_place_mode()
+            self._clear_backout_state()
         self._apply_cursor_mode(mode)
 
     def update_color_map(self, color_map: Dict[str, str]) -> None:
@@ -1380,16 +1420,13 @@ class TakeoffPlanView(
         return same_type
 
     def enter_backout_mode(self, parent_uid: str) -> bool:
-        takeoff = self._current_takeoffs.get(parent_uid)
-        if not takeoff:
+        parent_uid = self._valid_backout_parent_uid(parent_uid)
+        if not parent_uid:
+            self._clear_backout_state()
             return False
-        condition = self._current_conditions.get(takeoff.condition_uid)
-        if not condition or not condition.is_area:
-            return False
-        self._backout_parent_uid = parent_uid
-        self._backout_active_uid = takeoff.condition_uid
-        self._backout_mode_active = True
-        self.backout_mode_changed.emit(True)
+        self._set_backout_state(
+            parent_uid, self._current_takeoffs[parent_uid].condition_uid
+        )
         return True
 
     def is_inside_parent(self, ost_x: float, ost_y: float) -> bool:
@@ -1479,11 +1516,27 @@ class TakeoffPlanView(
         self._apply_cursor_mode("select")
         self.cursor_mode_change_requested.emit("select")
 
+    def _set_backout_state(self, parent_uid: str, condition_uid: str) -> None:
+        changed = (
+            not self._backout_mode_active
+            or self._backout_parent_uid != parent_uid
+            or self._backout_active_uid != condition_uid
+        )
+        self._backout_mode_active = True
+        self._backout_parent_uid = parent_uid
+        self._backout_active_uid = condition_uid
+        self._backout_last_valid_ost = None
+        if changed:
+            self.backout_mode_changed.emit(True)
+
     def _clear_backout_state(self) -> None:
-        was_backout = self._backout_mode_active
+        was_backout = self._backout_mode_active or bool(
+            self._backout_parent_uid or self._backout_active_uid
+        )
         self._backout_mode_active = False
         self._backout_parent_uid = None
         self._backout_active_uid = None
+        self._backout_last_valid_ost = None
         if was_backout:
             self.backout_mode_changed.emit(False)
 
