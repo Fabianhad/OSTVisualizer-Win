@@ -151,6 +151,11 @@ class McpInternalServerProtocolTests(unittest.TestCase):
             )["error"]["code"],
             -32600,
         )
+        invalid_id = self.server._handle_request(
+            {"jsonrpc": "2.0", "id": {"bad": "id"}, "method": "ping", "params": {}}
+        )
+        self.assertEqual(invalid_id["id"], None)
+        self.assertEqual(invalid_id["error"]["code"], -32600)
         self.assertEqual(
             self.request("does/not/exist")["error"]["code"],
             -32601,
@@ -177,6 +182,16 @@ class McpInternalServerProtocolTests(unittest.TestCase):
             self.server._handle_request(
                 {"jsonrpc": "2.0", "method": "notifications/initialized"}
             )
+        )
+        self.assertEqual(
+            self.server._handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "notifications/initialized",
+                }
+            )["error"]["code"],
+            -32601,
         )
         self.assertIsNone(
             self.server._handle_request({"jsonrpc": "2.0", "method": "ping"})

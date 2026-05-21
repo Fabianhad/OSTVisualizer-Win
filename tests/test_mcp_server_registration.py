@@ -18,7 +18,7 @@ class McpServerRegistrationTests(unittest.TestCase):
             server = build_mcp_server(registry, logger=logger)
             self.assertIsNotNone(server)
 
-    def test_expected_phase_three_tools_are_registered_without_csv(self):
+    def test_expected_tools_are_registered_without_csv(self):
         from ost_visualizer.mcp_server.registry import DatabaseRegistry
         from ost_visualizer.mcp_server.server import build_mcp_server
 

@@ -648,11 +648,15 @@ class McpReadService:
     def _find_file_entry(
         hierarchy: HierarchyData, file_path: str
     ) -> Optional[HierarchyFileEntry]:
-        target = str(file_path).lower()
+        target = McpReadService._normalize_path(file_path)
         for entry in hierarchy.loaded_files:
-            if str(entry.file_path).lower() == target:
+            if McpReadService._normalize_path(str(entry.file_path)) == target:
                 return entry
-        return hierarchy.loaded_files[0] if hierarchy.loaded_files else None
+        return None
+
+    @staticmethod
+    def _normalize_path(file_path: str) -> str:
+        return str(Path(file_path).expanduser().resolve()).casefold()
 
     @staticmethod
     def _project_dto(uid: str, project: HierarchyProjectInfo) -> McpProjectDto:

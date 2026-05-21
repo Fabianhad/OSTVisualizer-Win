@@ -123,6 +123,11 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual(len(bids), 1)
         self.assertEqual(bids[0].uid, "bid-1")
 
+    def test_hierarchy_lookup_does_not_fall_back_to_unmatched_file(self):
+        self.repo.hierarchy.loaded_files[0].file_path = "other.mdb"
+        with self.assertRaises(McpReadError):
+            self.service.list_projects("db-1")
+
     def test_current_page_uses_saved_bid_selected_page(self):
         page = self.service.get_current_page("db-1", "bid-1")
         self.assertIsNotNone(page)

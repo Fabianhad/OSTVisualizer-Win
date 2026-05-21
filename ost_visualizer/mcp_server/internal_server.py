@@ -120,6 +120,8 @@ class OstMcpServer:
         if "id" not in request:
             return None
         request_id = request.get("id")
+        if not _is_valid_request_id(request_id):
+            return _error_response(None, -32600, "Invalid JSON-RPC id")
         if request.get("jsonrpc") != "2.0":
             return _error_response(request_id, -32600, "JSON-RPC version must be 2.0")
         method = request.get("method")
@@ -134,8 +136,6 @@ class OstMcpServer:
             return _error_response(
                 request_id, -32602, "JSON-RPC params must be an object"
             )
-        if method.startswith("notifications/"):
-            return None
         try:
             result = self._dispatch(method, params)
         except KeyError as exc:
@@ -359,6 +359,14 @@ def _optional_object(params: dict, name: str) -> dict:
 
 def _is_error_result(result: Any) -> bool:
     return isinstance(result, dict) and result.get("success") is False
+
+
+def _is_valid_request_id(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, (str, int, float))
 
 
 def _error_response(request_id: Any, code: int, message: str) -> dict:

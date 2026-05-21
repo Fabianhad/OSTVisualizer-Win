@@ -100,7 +100,10 @@ def build_mcp_server(
                     selection.database_id, selection.bid_uid
                 )
                 payload["selected_page_uid"] = page.uid if page else None
+            except McpReadError:
+                payload["selected_page_uid"] = None
             except Exception:
+                log.exception("Failed to resolve saved MCP current page")
                 payload["selected_page_uid"] = None
         if not registry.databases:
             return ok(payload, status="no_checked_database")
