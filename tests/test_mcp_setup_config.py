@@ -20,19 +20,34 @@ class McpSetupConfigTests(unittest.TestCase):
 
     def test_claude_config_uses_packaged_helper_only(self):
         helper_path = Path(r"C:\Program Files\OST Visualizer\ostv-mcp.exe")
-        config = json.loads(build_claude_desktop_config(helper_path))
+        text = build_claude_desktop_config(helper_path)
+        self.assertEqual(
+            text,
+            "{\n"
+            '  "mcpServers": {\n'
+            '    "ost-visualizer": {\n'
+            '      "command": "C:\\\\Program Files\\\\OST Visualizer\\\\ostv-mcp.exe",\n'
+            '      "args": []\n'
+            "    }\n"
+            "  }\n"
+            "}",
+        )
+        config = json.loads(text)
         server = config["mcpServers"][MCP_SERVER_NAME]
         self.assertEqual(server["command"], str(helper_path))
         self.assertEqual(server["args"], [])
-        self.assertNotIn("--database", json.dumps(config))
-        self.assertNotIn("PYTHONPATH", json.dumps(config))
+        self.assertNotIn("--database", text)
+        self.assertNotIn("PYTHONPATH", text)
 
     def test_codex_command_uses_helper_without_database_override(self):
         command = build_codex_mcp_add_command(
             Path(r"C:\Program Files\OST Visualizer\ostv-mcp.exe")
         )
-        self.assertIn("codex mcp add ost-visualizer --", command)
-        self.assertIn(r"C:\Program Files\OST Visualizer\ostv-mcp.exe", command)
+        self.assertEqual(
+            command,
+            "codex mcp add ost-visualizer -- "
+            r"'C:\Program Files\OST Visualizer\ostv-mcp.exe'",
+        )
         self.assertNotIn("--database", command)
         self.assertNotIn("python", command.lower())
 

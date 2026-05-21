@@ -6,7 +6,7 @@ Built for estimators and construction teams who work with OST project files dail
 
 **[Download](https://fabianhad.com/ost3d/download)** | **[Commercial License](https://fabianhad.com/ost3d/download)** | **[Release Notes](https://fabianhad.com/ost3d/release-notes)**
 
-[![Version](https://img.shields.io/badge/version-1.2.2.3-blue)](https://fabianhad.com/ost3d/download)
+[![Version](https://img.shields.io/badge/version-1.2.3-blue)](https://fabianhad.com/ost3d/download)
 [![License: Elastic-2.0](https://img.shields.io/badge/license-Elastic--2.0-blue)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows%2064--bit-lightgrey)]()
 [![Build](https://github.com/Fabianhad/OSTVisualizer-Win/actions/workflows/architecture.yml/badge.svg)](https://github.com/Fabianhad/OSTVisualizer-Win/actions/workflows/architecture.yml)
@@ -46,7 +46,7 @@ Built for estimators and construction teams who work with OST project files dail
 
 Download the latest installer from the [download page](https://fabianhad.com/ost3d/download):
 
-- **`ost3dvisualizer-1.2.2.3-64.msi`** -- Windows 64-bit installer (Windows 10+)
+- **`ost3dvisualizer-1.2.3-64.msi`** -- Windows 64-bit installer (Windows 10+)
 
 > A [commercial license](https://fabianhad.com/ost3d/download) is required for production use. See [Licensing](#licensing).
 
@@ -104,7 +104,7 @@ For licensing questions, contact [fabian@fabianhad.com](mailto:fabian@fabianhad.
 | Database | Microsoft Access (.mdb) via pyodbc |
 | Build | Nuitka, CMake |
 | C++ Bindings | nanobind v2.4.0 (13 extension modules) |
-| Local AI Context | Model Context Protocol (optional, Python 3.10+) |
+| Local AI Context | Model Context Protocol via stdlib stdio helper (optional, Python 3.10+) |
 
 ## Local MCP Server
 
@@ -116,21 +116,18 @@ It does not support `--database` or other arbitrary database path overrides.
 
 The MCP server exposes project, bid, page, PDF metadata, condition, takeoff,
 condition summary, selected-page summary, selected-takeoff summary, search,
-quantity-summary, and lightweight consistency-check tools. It does not expose shell execution,
-arbitrary SQL, arbitrary file reads, PDF text extraction, rendering, exports, or
-database mutation. CSV export is intentionally deferred until the app has a
-polished CSV export system.
+quantity-summary, page-context, duplicate-condition, zero-quantity, unplaced
+takeoff, and lightweight scope-gap review tools. Broad result sets use explicit
+limits and include status/metadata such as returned count and truncation state.
+It does not expose shell execution, arbitrary SQL, arbitrary file reads, PDF
+text extraction, rendering, exports, or database mutation. CSV export is
+intentionally deferred until the app has a polished CSV export system. Page text
+is also deferred unless a safe app-owned extraction path is added later.
 When the desktop app is running, `get_current_context` also includes a live
 read-only UI snapshot through a local app bridge, including active tab/view,
 selected bid/page/conditions, and selected takeoff UIDs.
 
-Install optional MCP dependencies:
-
-```powershell
-.\scripts\setup-mcp.ps1
-```
-
-Source checkout MCP command:
+Developers can run the source checkout MCP helper directly:
 
 ```powershell
 .\venv\Scripts\python.exe -m ost_visualizer.mcp_server.main
@@ -152,9 +149,15 @@ Claude Desktop / Cursor style configuration:
 }
 ```
 
-Production builds include a separate lightweight MCP helper executable. Use
-`Tools > MCP Setup...` in the desktop app to copy client configuration for the
-packaged helper:
+The MCP server uses an internal stdlib stdio implementation. There is no
+separate MCP dependency install or extra MCP setup step.
+Compatibility has been smoke-tested with the official Python MCP client for
+initialize, tools, resources, templates, and prompts. Production builds include a
+separate lightweight MCP helper executable. Use `Tools > MCP Setup...` in the
+desktop app to copy client configuration for the packaged helper. The setup
+dialog only generates and copies text; it does not edit Claude Desktop, Cursor,
+or Codex configuration files. After adding the configuration, restart or reload
+your MCP client so it launches the helper:
 
 ```json
 {
@@ -172,6 +175,12 @@ Codex production setup uses the helper directly:
 ```powershell
 codex mcp add ost-visualizer -- 'C:\Program Files\OST Visualizer\ostv-mcp.exe'
 ```
+
+If a client reports that the server is unavailable, confirm that
+`C:\Program Files\OST Visualizer\ostv-mcp.exe` exists and that at least one
+database is checked in OST Visualizer. The checked database list is stored in
+`~/.ost_visualizer/file_state.json`; unchecked or missing databases are not
+visible to MCP clients.
 
 ## Repository Layout
 
@@ -211,7 +220,6 @@ Requires Python 3.8+, Visual Studio 2022 (MSVC x64), CMake 3.20+, and Qt 6.10.2.
 
 ```powershell
 .\scripts\setup.ps1          # Create venv, install Python dependencies
-.\scripts\setup-mcp.ps1      # Optional: install local MCP server dependencies
 .\scripts\setup-cpp.ps1      # Download vendor libs, build C++ extensions
 .\scripts\run.ps1             # Run the application
 ```

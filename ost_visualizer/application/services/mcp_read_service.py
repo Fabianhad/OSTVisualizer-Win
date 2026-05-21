@@ -1,4 +1,6 @@
+from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 from ...domain.entities.condition import Condition
 from ...domain.entities.file_results import BidLoadResult, FileLoadResult
@@ -16,17 +18,26 @@ from ...domain.services.takeoff_domain_service import is_takeoff_visible
 from ...domain.services.uom_service import get_uom_label
 from ..dtos.mcp_context_dtos import (
     McpBidDto,
+    McpBidQuantitySummaryDto,
     McpConditionDto,
+    McpConditionQuantitySummaryDto,
     McpConditionSummaryDto,
     McpDatabaseDto,
+    McpDuplicateConditionGroupDto,
+    McpDuplicateConditionSummaryDto,
     McpHierarchyDto,
+    McpPageContextDto,
     McpPageDto,
     McpPageTakeoffSummaryDto,
     McpProjectDto,
     McpQuantityDto,
+    McpResultMetaDto,
+    McpScopeGapSummaryDto,
     McpSelectedPagesSummaryDto,
     McpSelectedTakeoffsSummaryDto,
     McpTakeoffDto,
+    McpUnplacedTakeoffSummaryDto,
+    McpZeroQuantitySummaryDto,
 )
 
 
@@ -344,6 +355,193 @@ class McpReadService:
     ) -> List[McpQuantityDto]:
         return self.summarize_quantities(database_id, bid_uid, page_uid=page_uid)
 
+    def get_bid_quantity_summary(
+        self,
+        database_id: str,
+        bid_uid: str,
+        limit: int = 250,
+    ) -> McpBidQuantitySummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        summaries = [
+            self._condition_quantity_summary(condition, bid_data)
+            for condition in self._ordered_conditions(bid_data)
+        ]
+        limited, meta = self._limited(summaries, limit, default=250)
+        return McpBidQuantitySummaryDto(
+            status=self._summary_status(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            meta=meta,
+            conditions=limited,
+        )
+
+    def review_scope_gaps(
+        self,
+        database_id: str,
+        bid_uid: str,
+        limit: int = 100,
+    ) -> McpScopeGapSummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        pages = self._pages_without_takeoffs(bid_data)
+        conditions = self._conditions_without_takeoffs(bid_data)
+        missing_pages = [
+            takeoff
+            for takeoff in bid_data.bid_takeoffs
+            if not takeoff.page_uid or takeoff.page_uid not in bid_data.pages
+        ]
+        missing_conditions = [
+            takeoff
+            for takeoff in bid_data.bid_takeoffs
+            if not takeoff.condition_uid
+            or takeoff.condition_uid not in bid_data.bid_conditions
+        ]
+        total_count = (
+            len(pages) + len(conditions) + len(missing_pages) + len(missing_conditions)
+        )
+        clean_limit = self._clean_limit(limit, default=100)
+        remaining = clean_limit
+        limited_pages = pages[:remaining]
+        remaining -= len(limited_pages)
+        limited_conditions = conditions[: max(0, remaining)]
+        remaining -= len(limited_conditions)
+        limited_missing_pages = missing_pages[: max(0, remaining)]
+        remaining -= len(limited_missing_pages)
+        limited_missing_conditions = missing_conditions[: max(0, remaining)]
+        returned_count = (
+            len(limited_pages)
+            + len(limited_conditions)
+            + len(limited_missing_pages)
+            + len(limited_missing_conditions)
+        )
+        meta = McpResultMetaDto(
+            limit=clean_limit,
+            returned_count=returned_count,
+            total_count=total_count,
+            truncated=returned_count < total_count,
+        )
+        return McpScopeGapSummaryDto(
+            status=self._summary_status(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            meta=meta,
+            pages_without_takeoffs=limited_pages,
+            conditions_without_takeoffs=limited_conditions,
+            takeoffs_missing_pages=[
+                self._takeoff_dto(takeoff, bid_data, include_geometry=False)
+                for takeoff in limited_missing_pages
+            ],
+            takeoffs_missing_conditions=[
+                self._takeoff_dto(takeoff, bid_data, include_geometry=False)
+                for takeoff in limited_missing_conditions
+            ],
+        )
+
+    def find_duplicate_conditions(
+        self,
+        database_id: str,
+        bid_uid: str,
+        limit: int = 100,
+    ) -> McpDuplicateConditionSummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        by_name: Dict[str, List[Condition]] = defaultdict(list)
+        for condition in self._ordered_conditions(bid_data):
+            name = " ".join(condition.name.lower().split())
+            if name:
+                by_name[name].append(condition)
+        groups = [
+            McpDuplicateConditionGroupDto(
+                name=conditions[0].name,
+                conditions=[self._condition_dto(condition) for condition in conditions],
+            )
+            for conditions in by_name.values()
+            if len(conditions) > 1
+        ]
+        groups.sort(key=lambda group: group.name.lower())
+        limited, meta = self._limited(groups, limit, default=100)
+        return McpDuplicateConditionSummaryDto(
+            status=self._summary_status(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            meta=meta,
+            groups=limited,
+        )
+
+    def find_zero_quantity_conditions(
+        self,
+        database_id: str,
+        bid_uid: str,
+        limit: int = 100,
+    ) -> McpZeroQuantitySummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        summaries = [
+            self._condition_quantity_summary(condition, bid_data)
+            for condition in self._ordered_conditions(bid_data)
+        ]
+        zero_summaries = [
+            summary
+            for summary in summaries
+            if summary.takeoff_count > 0 and summary.zero_quantity
+        ]
+        limited, meta = self._limited(zero_summaries, limit, default=100)
+        return McpZeroQuantitySummaryDto(
+            status=self._summary_status(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            meta=meta,
+            conditions=limited,
+        )
+
+    def find_unplaced_takeoffs(
+        self,
+        database_id: str,
+        bid_uid: str,
+        limit: int = 100,
+    ) -> McpUnplacedTakeoffSummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        takeoffs = [
+            takeoff
+            for takeoff in bid_data.bid_takeoffs
+            if not takeoff.page_uid
+            or takeoff.page_uid == "NO_PAGE_ID"
+            or takeoff.page_uid not in bid_data.pages
+        ]
+        limited, meta = self._limited(takeoffs, limit, default=100)
+        return McpUnplacedTakeoffSummaryDto(
+            status=self._summary_status(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            meta=meta,
+            takeoffs=[
+                self._takeoff_dto(takeoff, bid_data, include_geometry=False)
+                for takeoff in limited
+            ],
+        )
+
+    def get_page_context(
+        self,
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+    ) -> McpPageContextDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        page = bid_data.pages.get(page_uid)
+        if page is None:
+            raise McpReadError(f"Unknown page_uid: {page_uid}")
+        image_path = page.image_path or ""
+        page_dto = self._page_dto(page)
+        return McpPageContextDto(
+            status="ok",
+            database_id=database_id,
+            bid_uid=bid_uid,
+            page=page_dto,
+            page_label=page.name,
+            sheet_name=page.name,
+            source_file_name=Path(image_path).name if image_path else "",
+            has_pdf_source=page_dto.is_pdf,
+            has_overlay=bool(page.overlay_image_path),
+            page_text_status="deferred",
+        )
+
     def search_takeoffs(
         self,
         database_id: str,
@@ -386,8 +584,21 @@ class McpReadService:
         self,
         database_id: str,
         bid_uid: str,
+        limit: int = 500,
     ) -> List[McpPageDto]:
         bid_data = self._load_bid(database_id, bid_uid)
+        return self._pages_without_takeoffs(bid_data)[: self._clean_limit(limit)]
+
+    def find_conditions_without_takeoffs(
+        self,
+        database_id: str,
+        bid_uid: str,
+        limit: int = 500,
+    ) -> List[McpConditionDto]:
+        bid_data = self._load_bid(database_id, bid_uid)
+        return self._conditions_without_takeoffs(bid_data)[: self._clean_limit(limit)]
+
+    def _pages_without_takeoffs(self, bid_data: BidLoadResult) -> List[McpPageDto]:
         pages_with_takeoffs = {t.page_uid for t in bid_data.bid_takeoffs}
         return [
             self._page_dto(page)
@@ -395,12 +606,10 @@ class McpReadService:
             if page.uid not in pages_with_takeoffs
         ]
 
-    def find_conditions_without_takeoffs(
+    def _conditions_without_takeoffs(
         self,
-        database_id: str,
-        bid_uid: str,
+        bid_data: BidLoadResult,
     ) -> List[McpConditionDto]:
-        bid_data = self._load_bid(database_id, bid_uid)
         used_condition_uids = {t.condition_uid for t in bid_data.bid_takeoffs}
         return [
             self._condition_dto(condition)
@@ -504,12 +713,12 @@ class McpReadService:
             ),
         )
 
-    def _page_dto(self, page: Page, folder_uid: Optional[str] = None) -> McpPageDto:
+    def _page_dto(self, page: Page) -> McpPageDto:
         image_path = page.image_path or None
         return McpPageDto(
             uid=page.uid,
             name=page.name,
-            folder_uid=folder_uid or page.folder_uid,
+            folder_uid=page.folder_uid,
             image_path=image_path,
             is_pdf=bool(image_path and image_path.lower().endswith(".pdf")),
             page_index=page.page_index,
@@ -579,6 +788,45 @@ class McpReadService:
             curve=takeoff.curve,
             point_count=len(takeoff.position) // 2,
             position=list(takeoff.position) if include_geometry else None,
+        )
+
+    def _condition_quantity_summary(
+        self,
+        condition: Condition,
+        bid_data: BidLoadResult,
+    ) -> McpConditionQuantitySummaryDto:
+        takeoffs = [
+            takeoff
+            for takeoff in bid_data.bid_takeoffs
+            if takeoff.condition_uid == condition.uid
+        ]
+        visible_takeoffs = [
+            takeoff
+            for takeoff in takeoffs
+            if is_takeoff_visible(takeoff, bid_data.bid_conditions)
+        ]
+        quantities = compute_page_quantities(
+            bid_data.bid_conditions,
+            visible_takeoffs,
+            only_condition_uids={condition.uid},
+        )
+        quantity_dtos = self._quantity_dtos(
+            quantities,
+            bid_data.bid_conditions,
+            visible_takeoffs,
+        )
+        page_summaries = self._page_takeoff_summaries(takeoffs, bid_data)
+        has_quantity = any(
+            dto.quantity1 or dto.quantity2 or dto.quantity3 for dto in quantity_dtos
+        )
+        return McpConditionQuantitySummaryDto(
+            condition=self._condition_dto(condition),
+            quantities=quantity_dtos,
+            pages=page_summaries,
+            takeoff_count=len(takeoffs),
+            visible_takeoff_count=len(visible_takeoffs),
+            page_count=len(page_summaries),
+            zero_quantity=bool(takeoffs and not has_quantity),
         )
 
     def _filter_takeoffs(
@@ -689,3 +937,26 @@ class McpReadService:
         except (TypeError, ValueError):
             value = default
         return max(1, min(value, 5000))
+
+    def _limited(
+        self,
+        items: List,
+        limit: int,
+        default: int = 500,
+    ) -> Tuple[List, McpResultMetaDto]:
+        clean_limit = self._clean_limit(limit, default=default)
+        limited = items[:clean_limit]
+        return limited, McpResultMetaDto(
+            limit=clean_limit,
+            returned_count=len(limited),
+            total_count=len(items),
+            truncated=len(limited) < len(items),
+        )
+
+    @staticmethod
+    def _summary_status(meta: McpResultMetaDto) -> str:
+        if meta.truncated:
+            return "truncated"
+        if meta.total_count == 0:
+            return "empty"
+        return "ok"

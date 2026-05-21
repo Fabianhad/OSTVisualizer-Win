@@ -54,12 +54,26 @@ $nuitkaArgs = @(
 
 $StartTime = Get-Date
 
-Write-Host "Building desktop app..." -ForegroundColor Cyan
-& nuitka @nuitkaArgs
+function Invoke-NuitkaBuild {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Label,
+        [Parameter(Mandatory = $true)]
+        [string[]] $Arguments
+    )
+
+    Write-Host $Label -ForegroundColor Cyan
+    & nuitka @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Nuitka failed while $($Label.ToLowerInvariant())" -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+}
+
+Invoke-NuitkaBuild -Label "Building desktop app..." -Arguments $nuitkaArgs
 
 $mcpNuitkaArgs = @(
     '--standalone'
-    '--onefile'
     '--windows-console-mode=force'
     "--output-dir=$McpOutDir"
     '--output-filename=ostv-mcp.exe'
@@ -73,8 +87,23 @@ $mcpNuitkaArgs = @(
     $McpScript
 )
 
-Write-Host "Building lightweight MCP helper..." -ForegroundColor Cyan
-& nuitka @mcpNuitkaArgs
+Invoke-NuitkaBuild -Label "Building lightweight MCP helper..." -Arguments $mcpNuitkaArgs
+
+$McpBuildDir = Join-Path $McpOutDir 'McpServer.dist'
+$McpHelperExe = Join-Path $McpBuildDir 'ostv-mcp.exe'
+$DesktopBuildDir = Join-Path $OutDir 'Visualizer.dist'
+if (-not (Test-Path $McpHelperExe)) {
+    Write-Host "ERROR: MCP helper build did not produce $McpHelperExe" -ForegroundColor Red
+    exit 1
+}
+if (Test-Path $DesktopBuildDir) {
+    Copy-Item (Join-Path $McpBuildDir '*') -Destination $DesktopBuildDir -Recurse -Force
+    Write-Host "Copied MCP helper and runtime files into desktop distribution." -ForegroundColor Green
+}
+else {
+    Write-Host "ERROR: Desktop distribution directory not found: $DesktopBuildDir" -ForegroundColor Red
+    exit 1
+}
 
 $Duration = (Get-Date) - $StartTime
 Write-Host "Build completed in $($Duration.ToString('hh\:mm\:ss'))" -ForegroundColor Green

@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude when working with code in this repository.
 
 ## Project Overview
 
@@ -21,9 +21,10 @@ All scripts are PowerShell. Run from the client root (`projects/ost3d/client`).
 
 # Development
 .\scripts\run.ps1             # Activate venv and run the app
+.\venv\Scripts\python.exe -m ost_visualizer.mcp_server.main # Run read-only MCP stdio server
 
 # Release
-.\scripts\build.ps1           # Nuitka standalone build -> dist_visualizer/
+.\scripts\build.ps1           # Nuitka standalone builds -> dist_visualizer/ and dist_mcp/
 .\build-msi.ps1               # Package into MSI installer (reads version from update_check_service.py)
 ```
 
@@ -73,6 +74,13 @@ Orchestrates domain logic. Contains:
 
 `AppController` is the central facade: UI calls into it, it delegates to services/use cases.
 
+### MCP Adapter (`ost_visualizer/mcp_server/`)
+Standalone local Model Context Protocol server for read-only project context. It is an adapter package outside the four core layers and must not be imported by the Qt desktop startup path. The MCP entry point is `McpServer.py` / `ost_visualizer/mcp_server/main.py`; it runs over stdio as a separate process and logs only to stderr or `~/.ost_visualizer/mcp_server.log` so stdout remains reserved for MCP protocol messages. The stdio transport is implemented by the internal stdlib adapter in `ost_visualizer/mcp_server/internal_server.py`; there is no separate MCP dependency file or extra MCP setup step. Do not reintroduce an external MCP framework unless the feature scope expands to advanced protocol features such as roots, sampling, elicitation, progress/cancellation, subscriptions, logging notifications, output schemas, or complex schema validation.
+
+MCP access is read-only and database-scoped. The adapter builds an allowlist only from `~/.ost_visualizer/file_state.json`; do not add `--database`, custom database path overrides, or other arbitrary database selection paths. It composes `MdbReader`, `MdbFileParser`, `FileProjectRepository`, and `application/services/mcp_read_service.py` directly. Broad MCP tools should expose explicit limits plus status/metadata (`returned_count`, `total_count` when cheap, and `truncated`). Current read-only estimator tools cover summaries, selected context, scope gaps, duplicate condition names, zero-quantity conditions, unplaced takeoffs, and page metadata. Do not expose arbitrary file reads, shell execution, arbitrary SQL, generic database access, PDF rendering/text extraction, 3D generation, exports, or write/edit tools through MCP. CSV export and page text through MCP are intentionally deferred until the app has polished, safe app-owned paths. Live UI context flows through `presentation/services/mcp_context_bridge.py`, an app-owned local `QLocalServer` that returns small JSON snapshots from the main Qt thread; do not read Qt widget internals directly from the MCP process.
+
+Production builds package MCP as a separate lightweight Nuitka standalone helper directory, not inside the Qt executable. The helper executable is copied into the desktop distribution next to its required runtime DLLs. The desktop Tools menu may expose setup/copy helpers for Claude Desktop, Cursor, and Codex, but MCP-compatible clients should launch `ostv-mcp.exe` themselves over stdio. Keep the MCP helper path free of PySide6/presentation imports; the MCP-side bridge client talks to the app-owned `QLocalServer` through the compatible Windows named-pipe path.
+
 ### Infrastructure Layer (`ost_visualizer/infrastructure/`)
 Implements domain interfaces:
 - **MDB access** (`mdb/`) - Thread-safe `MdbConnectionManager` with separate read/write connection pools. `MdbReader` (composed of reader mixins), `MdbWriter`, `DatabaseCreator`
@@ -94,7 +102,7 @@ The server may return `activation_count`, `max_activations`, and `active_hwids`,
 PySide6 UI. Key patterns:
 - `MainWindow` receives `AppController`, creates UI via `ComponentBuilder`. It is the **presentation composition root** — the only presentation file that calls `app_controller.get_service()`. All child handlers, coordinators, and builders receive concrete services via constructor injection.
 - **Coordinators** bridge events to UI: `EventCoordinator` (AppEvents -> Qt slots), `UIEventCoordinator` (button clicks -> services), `LicenseUICoordinator`
-- `WorkspaceStateCoordinator` applies/restores global workspace shell state through `MainWindow`, including main-window layout, active 2D/3D view, sidebar visibility, splitter sizes, dropdown popup sizes, and detached window state.
+- `WorkspaceStateCoordinator` applies/restores global workspace shell state through `MainWindow`, including main-window layout, active 2D/3D view, sidebar visibility, Conditions Sidebar grouping, splitter sizes, dropdown popup sizes, and detached window state.
 - **Handlers** group related UI operations: `FileOperationHandler`, `ExportHandler`, `ProjectWriteHandler`
 - **Managers** (`managers/`) - Shared presentation managers for UI access/state, icons, shortcuts, context menus, and detached Annotation/View windows. `MainWindow` remains at `presentation/main_window.py` as the presentation composition root.
 - **Visualization** (`visualization/`) - Qt-aware rendering pipeline: mesh generators, PDF rendering (`ost_pdf`), exporters (OSP/OST/PDF/DXF/OBJ/FBX), Three.js renderer, color service, coordinate transformer factory. Qt-aware code lives here rather than in infrastructure because it depends on PySide6 types.
@@ -119,7 +127,7 @@ Wired in `config/di_config.py` via provider classes and `AppControllerBuilder.bu
 
 **Projects -> Takeoff flow**: Selecting a bid on the Projects tab stages bid context only. Takeoff-specific hydration (page/sidebar restore, active page selection, placement restore, and annotation restore eligibility) happens when `UIEventCoordinator._activate_takeoff_workspace()` runs after the Takeoff tab becomes active.
 
-**Workspace persistence**: Durable preferences stay in `config.json`. Restorable shell/UI state lives in `workspace_state.json` via `WorkspaceStateAggregate` + `WorkspaceStateCoordinator`. This includes main-window geometry/state, active 2D/3D view, sidebar visibility, splitter sizes, dropdown popup sizes, and detached 3D / Annotation / View window state. Annotation and View window reopen are deferred until Takeoff is active and a valid page exists, and View restore remains dependent on Annotation being open first.
+**Workspace persistence**: Durable preferences stay in `config.json`. Restorable shell/UI state lives in `workspace_state.json` via `WorkspaceStateAggregate` + `WorkspaceStateCoordinator`. This includes main-window geometry/state, active 2D/3D view, sidebar visibility, Conditions Sidebar grouping, splitter sizes, dropdown popup sizes, and detached 3D / Annotation / View window state. Annotation and View window reopen are deferred until Takeoff is active and a valid page exists, and View restore remains dependent on Annotation being open first.
 
 **Project Tree selection restore**: Treat Project Tree visual selection, current item, active bid, selected-node persistence, highlighted condition, and placement condition as separate states that must be synchronized intentionally. During internal rebuilds, snapshot the selected node before clearing the tree, do not let transient `clear()` or signal-blocked rebuilds overwrite persisted selected-node state with `None`, and compare file paths with normalized paths. Silent Project Tree restore must set the current item first, then apply visual selection; `selectionModel.select(...)` can be undone by a later `setCurrentItem(item)`. Normal refresh restore must be visual/callback-silent and must not trigger bid activation. Do not select fallback bids, roots, or first items when a saved bid is missing. `TAKEOFFS_CHANGED` fast paths may need visual selection repair without a full `DATABASE_REFRESHED`, because visual selection can drift while the internal active bid remains correct.
 
@@ -195,13 +203,13 @@ Teardown order in `closeEvent()`: presentation `cleanup()` calls first, then `li
 
 ## Documentation Maintenance
 
-After any refactor that changes layer boundaries, package structure, DI topology, C++ extension destinations, architectural rules, or cross-layer exceptions, update this file (`CLAUDE.md`) in the **same commit** as the code change. The architecture sections, the C++ extensions table, and the architectural-rule exception lists must always match the code.
+After any refactor that changes layer boundaries, package structure, DI topology, C++ extension destinations, architectural rules, or cross-layer exceptions, update this file (`AGENTS.md`) in the **same commit** as the code change. The architecture sections, the C++ extensions table, and the architectural-rule exception lists must always match the code.
 
 When a refactor also changes what users see, what contributors need to build, or the feature set, update `README.md` too. Internal reorganization that leaves the public surface unchanged does not require a README update.
 
-After any release-facing update, version bump, user-visible fix, or stability improvement, update `CHANGELOG.md` for the next release, not the last released version. If the current `CHANGELOG.md` only contains notes for an already-launched version and the working tree is starting a new update cycle, replace that released-only content with a fresh section for the next version (for example, `## 1.2.2.3 - Unreleased`) and include only changes made since the previous release. Do not insert the new unreleased section above the released section while leaving old release notes in the file; that carries forward already-launched fixes into the next release. Do not carry forward fixes from already-launched versions, and do not edit a released section except to correct factual errors.
+After any release-facing update, version bump, user-visible fix, or stability improvement, update `CHANGELOG.md` for the next release, not the last released version. If the current `CHANGELOG.md` only contains notes for an already-launched version and the working tree is starting a new update cycle, replace that released-only content with a fresh section for the next version (for example, `## 1.2.3 - Unreleased`) and include only changes made since the previous release. Do not insert the new unreleased section above the released section while leaving old release notes in the file; that carries forward already-launched fixes into the next release. Do not carry forward fixes from already-launched versions, and do not edit a released section except to correct factual errors.
 
-When `CHANGELOG.md` already has an `Unreleased` section, append the new entry under that existing section. When it only has a released heading such as `## 1.2.2.3 - 2026-05-19`, replace that heading and its entries with the next unreleased heading and only the new changes. The correct result is a single current unreleased section, not an unreleased section stacked above stale released entries.
+When `CHANGELOG.md` already has an `Unreleased` section, append the new entry under that existing section. When it only has a released heading such as `## 1.2.3 - 2026-05-19`, replace that heading and its entries with the next unreleased heading and only the new changes. The correct result is a single current unreleased section, not an unreleased section stacked above stale released entries.
 
 Keep changelog entries separated by concern/type and preserve the existing version heading and style. Use `Added` for new user-visible capabilities or UI controls, `Changed` for behavior changes, refactors with user-visible impact, persistence changes, or altered enablement/state behavior, and `Fixed` for bug fixes and regressions. Do not put new toolbar buttons, new context-menu options, or new UI capabilities under `Fixed` unless they specifically restore broken behavior. Keep entries concise and user-visible, avoiding implementation details unless they help users understand the release note.
 
@@ -248,8 +256,11 @@ If unsure, update the docs -- drift is harder to fix later than prevent.
 - `EDIT_CONDITION`, `DUPLICATE_CONDITION`, `DELETE_CONDITION` — condition modifications
 - `EDIT_PAGE_SETTINGS` — scale, area, layer rename
 - `COVER_SHEET` — cover sheet editing
+- `EDIT_MASTER_DATA` — database-global master data editing
 
 **How gating works:** `ToolbarStateCoordinator.refresh()` calls `is_allowed(Feature.X)` and disables UI controls accordingly. The 3D viewer uses `set_pick_enabled(False)` + `_pick_enabled` checks in `keyPressEvent`/`contextMenuEvent`. The layers sidebar uses `set_interactive(False)` which sets `EditTrigger.NoEditTriggers`. New write operations must either be gated by an existing Feature or have a new Feature added to `_LICENSE_REQUIRED`.
+
+Bid lock state is part of the same access model. A locked active bid blocks bid-internal editing features such as takeoff selection/placement, page/layer settings, condition create/edit/duplicate/delete, and application-level write-service mutation paths. `ActiveBidWriteGuard` is the application-layer policy shared by project and annotation write services; `UIAccessManager` is only the presentation availability layer. Bid duplicate/delete and job-status changes remain allowed because they operate outside the bid contents and allow a locked bid to be copied, removed, or moved to an unlocked status. Condition properties may still open for a locked bid, but the dialog must be read-only and save/apply paths must still be blocked below the UI. Refresh handlers must recompute the active bid lock state after database reloads before refreshing toolbar, menu, sidebar, and shortcut state.
 
 ## Architecture Enforcement
 
@@ -335,6 +346,15 @@ Known Vulture false positives from the current `vulture ost_visualizer` output:
 - `tint_r`, `tint_g`, and `tint_b` in `ost_visualizer/presentation/visualization/pdf/page_cache.py`
   - Why Vulture flags them: dataclass fields may appear unused because no explicit attribute reads are present.
   - Why they are used: `TintedCacheKey` is a frozen dataclass used as an `OrderedDict` cache key; these fields participate in generated equality and hashing so different tint colors cache separately.
+- `database`, `bid_count`, `takeoff_count`, `condition_type_name`, `point_count`, `visible_takeoff_count`, `selected_takeoff_count`, `missing_takeoff_uids`, `uom1_label`, `uom2_label`, and `uom3_label` in `ost_visualizer/application/dtos/mcp_context_dtos.py`
+  - Why Vulture flags them: MCP DTO dataclass fields are serialized with `dataclasses.asdict()` rather than read as Python attributes.
+  - Why they are used: MCP hierarchy, project, page, condition, takeoff, and selected-context responses include these summary and human-readable fields for clients.
+- `quantity1`, `quantity2`, `quantity3`, `uom1_label`, `uom2_label`, and `uom3_label` in `ost_visualizer/application/dtos/mcp_context_dtos.py`
+  - Why Vulture flags them: MCP DTO dataclass fields are serialized with `dataclasses.asdict()` rather than read as Python attributes.
+  - Why they are used: MCP quantity summary responses include these values and labels for clients.
+- MCP tool/resource/prompt functions in `ost_visualizer/mcp_server/server.py`, such as `get_current_context`, `databases_resource`, `review_current_estimator_context`, and `review_takeoff_scope`
+  - Why Vulture flags them: `OstMcpServer` registers these functions dynamically, so there are no direct Python calls.
+  - Why they are used: MCP hosts call the registered tools, resources, and prompt through the Model Context Protocol runtime.
 
 ## C++ Extensions
 

@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
@@ -54,6 +55,10 @@ class FakeProjectData:
         self.added_takeoffs = []
         self.takeoffs = {}
         self.extras = {}
+        self.conditions = {
+            "42": SimpleNamespace(layer_visible=True, condition_type="linear"),
+            "c1": SimpleNamespace(layer_visible=True, condition_type="area"),
+        }
 
     def add_takeoffs(self, takeoffs):
         self.added_takeoffs.extend(takeoffs)
@@ -71,6 +76,9 @@ class FakeProjectData:
 
     def get_takeoff_extras(self, uid):
         return self.extras.get(uid, {})
+
+    def get_bid_conditions(self):
+        return dict(self.conditions)
 
     def update_takeoff_positions(self, positions):
         page_uids = []
@@ -175,10 +183,17 @@ class FakeUndoService:
 
 
 class FakeClipboard:
-    def __init__(self, items, extras=None, source_bid_uid="7"):
+    def __init__(
+        self,
+        items,
+        extras=None,
+        source_bid_uid="7",
+        source_file_path="bid.mdb",
+    ):
         self.items = items
         self.annotations = []
         self.source_bid_uid = source_bid_uid
+        self.source_file_path = source_file_path
         self._extras = extras or {}
 
     def has_content(self):

@@ -18,16 +18,21 @@ def to_jsonable(value: Any) -> Any:
     return value
 
 
-def ok(data: Any) -> dict:
-    return {
+def ok(data: Any, status: str = "ok", meta: Any = None) -> dict:
+    payload = {
         "success": True,
+        "status": status,
         "data": to_jsonable(data),
     }
+    if meta is not None:
+        payload["meta"] = to_jsonable(meta)
+    return payload
 
 
 def error(message: str, code: str = "mcp_error") -> dict:
     return {
         "success": False,
+        "status": code,
         "error": {
             "code": code,
             "message": str(message),

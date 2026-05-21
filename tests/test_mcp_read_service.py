@@ -198,6 +198,63 @@ class McpReadServiceTests(unittest.TestCase):
         conditions = self.service.find_conditions_without_takeoffs("db-1", "bid-1")
         self.assertEqual([condition.uid for condition in conditions], ["cond-3"])
 
+    def test_bid_quantity_summary_has_stable_shape_and_limit_metadata(self):
+        summary = self.service.get_bid_quantity_summary("db-1", "bid-1", limit=2)
+        self.assertEqual(summary.status, "truncated")
+        self.assertEqual(summary.meta.limit, 2)
+        self.assertEqual(summary.meta.returned_count, 2)
+        self.assertEqual(summary.meta.total_count, 3)
+        first = summary.conditions[0]
+        self.assertEqual(first.condition.uid, "cond-1")
+        self.assertEqual(first.page_count, 1)
+        self.assertFalse(first.zero_quantity)
+
+    def test_summary_limits_are_clamped_and_report_exact_counts(self):
+        summary = self.service.get_bid_quantity_summary("db-1", "bid-1", limit=0)
+        self.assertEqual(summary.status, "truncated")
+        self.assertEqual(summary.meta.limit, 1)
+        self.assertEqual(summary.meta.returned_count, 1)
+        self.assertEqual(summary.meta.total_count, 3)
+        self.assertTrue(summary.meta.truncated)
+        empty = self.service.find_duplicate_conditions("db-1", "bid-1", limit=99999)
+        self.assertEqual(empty.status, "empty")
+        self.assertEqual(empty.meta.limit, 5000)
+        self.assertEqual(empty.meta.returned_count, 0)
+        self.assertEqual(empty.meta.total_count, 0)
+        self.assertFalse(empty.meta.truncated)
+
+    def test_scope_duplicate_zero_unplaced_and_page_context_checks(self):
+        duplicate = Condition(uid="cond-4", name="Visible Count", ref_no=4)
+        self.repo.bid_data.bid_conditions[duplicate.uid] = duplicate
+        unplaced = Takeoff(uid="unplaced-1", condition_uid="cond-1", page_uid="")
+        self.repo.bid_data.bid_takeoffs.append(unplaced)
+        gaps = self.service.review_scope_gaps("db-1", "bid-1")
+        self.assertEqual(gaps.status, "ok")
+        self.assertEqual(gaps.meta.total_count, 4)
+        self.assertEqual(gaps.meta.returned_count, 4)
+        self.assertEqual([page.uid for page in gaps.pages_without_takeoffs], ["page-3"])
+        self.assertEqual([t.uid for t in gaps.takeoffs_missing_pages], ["unplaced-1"])
+        duplicates = self.service.find_duplicate_conditions("db-1", "bid-1")
+        self.assertEqual(duplicates.status, "ok")
+        self.assertEqual(duplicates.groups[0].name, "Visible Count")
+        self.assertEqual(
+            [condition.uid for condition in duplicates.groups[0].conditions],
+            ["cond-1", "cond-4"],
+        )
+        zero = self.service.find_zero_quantity_conditions("db-1", "bid-1")
+        self.assertEqual([item.condition.uid for item in zero.conditions], ["cond-2"])
+        unplaced_summary = self.service.find_unplaced_takeoffs("db-1", "bid-1")
+        self.assertEqual(
+            [takeoff.uid for takeoff in unplaced_summary.takeoffs],
+            ["unplaced-1"],
+        )
+        page_context = self.service.get_page_context("db-1", "bid-1", "page-1")
+        self.assertEqual(page_context.status, "ok")
+        self.assertEqual(page_context.page_label, "A101")
+        self.assertEqual(page_context.source_file_name, "A101.pdf")
+        self.assertTrue(page_context.has_pdf_source)
+        self.assertEqual(page_context.page_text_status, "deferred")
+
     def test_rejects_unknown_database_and_filter_ids(self):
         with self.assertRaises(McpReadError):
             self.service.list_projects("missing")

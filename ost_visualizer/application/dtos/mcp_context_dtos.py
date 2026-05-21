@@ -110,11 +110,30 @@ class McpQuantityDto:
 
 
 @dataclass
+class McpResultMetaDto:
+    limit: int = 0
+    returned_count: int = 0
+    total_count: int = 0
+    truncated: bool = False
+
+
+@dataclass
 class McpPageTakeoffSummaryDto:
     page_uid: str
     page_name: str
     takeoff_count: int = 0
     visible_takeoff_count: int = 0
+
+
+@dataclass
+class McpConditionQuantitySummaryDto:
+    condition: McpConditionDto
+    quantities: List[McpQuantityDto] = field(default_factory=list)
+    pages: List[McpPageTakeoffSummaryDto] = field(default_factory=list)
+    takeoff_count: int = 0
+    visible_takeoff_count: int = 0
+    page_count: int = 0
+    zero_quantity: bool = False
 
 
 @dataclass
@@ -124,6 +143,74 @@ class McpConditionSummaryDto:
     pages: List[McpPageTakeoffSummaryDto] = field(default_factory=list)
     takeoff_count: int = 0
     visible_takeoff_count: int = 0
+
+
+@dataclass
+class McpBidQuantitySummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    meta: McpResultMetaDto
+    conditions: List[McpConditionQuantitySummaryDto] = field(default_factory=list)
+
+
+@dataclass
+class McpScopeGapSummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    meta: McpResultMetaDto
+    pages_without_takeoffs: List[McpPageDto] = field(default_factory=list)
+    conditions_without_takeoffs: List[McpConditionDto] = field(default_factory=list)
+    takeoffs_missing_pages: List[McpTakeoffDto] = field(default_factory=list)
+    takeoffs_missing_conditions: List[McpTakeoffDto] = field(default_factory=list)
+
+
+@dataclass
+class McpDuplicateConditionGroupDto:
+    name: str
+    conditions: List[McpConditionDto] = field(default_factory=list)
+
+
+@dataclass
+class McpDuplicateConditionSummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    meta: McpResultMetaDto
+    groups: List[McpDuplicateConditionGroupDto] = field(default_factory=list)
+
+
+@dataclass
+class McpZeroQuantitySummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    meta: McpResultMetaDto
+    conditions: List[McpConditionQuantitySummaryDto] = field(default_factory=list)
+
+
+@dataclass
+class McpUnplacedTakeoffSummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    meta: McpResultMetaDto
+    takeoffs: List[McpTakeoffDto] = field(default_factory=list)
+
+
+@dataclass
+class McpPageContextDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    page: McpPageDto
+    page_label: str = ""
+    sheet_name: str = ""
+    source_file_name: str = ""
+    has_pdf_source: bool = False
+    has_overlay: bool = False
+    page_text_status: str = "deferred"
 
 
 @dataclass

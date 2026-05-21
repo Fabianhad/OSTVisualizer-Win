@@ -54,8 +54,8 @@ def main(argv=None) -> int:
         from .server import run_stdio_server
     except ImportError as exc:
         print(
-            "OST Visualizer MCP dependencies are not installed. "
-            "Run scripts\\setup-mcp.ps1 or install requirements-mcp.txt.",
+            "OST Visualizer MCP server failed to import. "
+            "Run scripts\\setup.ps1 and verify the application dependencies.",
             file=sys.stderr,
         )
         logger.exception("Failed to import MCP server: %s", exc)

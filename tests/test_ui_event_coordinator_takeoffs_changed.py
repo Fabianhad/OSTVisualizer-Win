@@ -8,6 +8,9 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 class FakeUiState:
     active_page_uid = "page-1"
 
+    def get_selected_bid_ref(self):
+        return None
+
 
 class FakeProjectData:
     def __init__(self):

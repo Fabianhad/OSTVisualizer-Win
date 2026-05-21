@@ -65,9 +65,6 @@ class DatabaseRegistry:
             return []
         paths = []
         for entry in entries:
-            if isinstance(entry, str):
-                paths.append(entry)
-                continue
             if not isinstance(entry, dict):
                 continue
             if not bool(entry.get("is_checked", True)):

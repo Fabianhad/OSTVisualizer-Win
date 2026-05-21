@@ -24,7 +24,8 @@ $PdfiumDir = Join-Path $CppDir 'pdfium'
 
 if (Test-Path $PdfiumDir) {
     Write-Host "PDFium already present, skipping download." -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "Downloading PDFium..." -ForegroundColor Yellow
 
     $PdfiumUrl = "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-win-x64.tgz"
@@ -56,7 +57,8 @@ $QpdfDir = Join-Path $CppDir $QpdfDirName
 
 if (Test-Path $QpdfDir) {
     Write-Host "QPDF already present, skipping download." -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "Downloading QPDF $QpdfVersion..." -ForegroundColor Yellow
 
     $QpdfUrl = "https://github.com/qpdf/qpdf/releases/download/v$QpdfVersion/$QpdfDirName.zip"
@@ -102,6 +104,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 
     Write-Host "C++ extensions built successfully." -ForegroundColor Green
-} finally {
+}
+finally {
     Pop-Location
 }

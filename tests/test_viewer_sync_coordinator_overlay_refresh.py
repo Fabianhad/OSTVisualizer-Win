@@ -164,6 +164,14 @@ class FakeSignal:
         self._calls.append(("zoom", value))
 
 
+class FakeScrollBar:
+    def maximum(self):
+        return 0
+
+    def setValue(self, _value):
+        pass
+
+
 class FakeSizedViewport:
     def size(self):
         return QtCore.QSize(100, 100)
@@ -240,9 +248,19 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.zoom_changed = FakeSignal(calls)
         view.transform = lambda: FakeTransform()
         view.fitInView = lambda rect, _mode: calls.append(("fit", rect))
+        view.horizontalScrollBar = lambda: FakeScrollBar()
+        view.verticalScrollBar = lambda: FakeScrollBar()
+        view.horizontalScrollBarPolicy = (
+            lambda: QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        view.verticalScrollBarPolicy = (
+            lambda: QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        view.setHorizontalScrollBarPolicy = lambda _policy: None
+        view.setVerticalScrollBarPolicy = lambda _policy: None
         view.fit_to_page()
         self.assertEqual(calls[0][0], "fit")
-        self.assertEqual(calls[0][1], QtCore.QRectF(0.0, 0.0, 100.0, 200.0))
+        self.assertEqual(calls[0][1], QtCore.QRectF(-50.0, -50.0, 200.0, 300.0))
 
     def test_scene_rect_update_keeps_existing_view_center_when_off_page_items_expand_origin(
         self,

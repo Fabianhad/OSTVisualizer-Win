@@ -19,7 +19,8 @@ Write-Host "  Python: $PythonVersion" -ForegroundColor Green
 if (-not (Test-Path $VenvPath)) {
     Write-Host "Creating virtual environment..." -ForegroundColor Yellow
     python -m venv $VenvPath
-} else {
+}
+else {
     Write-Host "Virtual environment already exists." -ForegroundColor Green
 }
 

@@ -38,6 +38,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                             {"file_path": str(db_path), "is_checked": True},
                             {"file_path": str(unchecked_path), "is_checked": False},
                             {"file_path": str(txt_path), "is_checked": True},
+                            str(root / "string-entry.mdb"),
                             {
                                 "file_path": str(root / "missing.mdb"),
                                 "is_checked": True,

@@ -1,7 +1,7 @@
+import ctypes
 import json
 import logging
 import sys
-import ctypes
 from ctypes import wintypes
 from typing import Optional
 from ..application.dtos.mcp_context_dtos import MCP_BRIDGE_SERVER_NAME
@@ -24,8 +24,10 @@ class McpBridgeClient:
         self._logger = logger or logging.getLogger(__name__)
         self._timeout_ms = timeout_ms
         self._server_name = server_name
+        self.last_status = "bridge_unavailable"
 
     def get_context(self) -> Optional[dict]:
+        self.last_status = "bridge_unavailable"
         if sys.platform != "win32":
             return None
         try:
@@ -35,10 +37,22 @@ class McpBridgeClient:
             )
             data = json.loads(response)
             if not isinstance(data, dict) or not data.get("success"):
+                self.last_status = "malformed_bridge_payload"
                 return None
             context = data.get("data")
-            return context if isinstance(context, dict) else None
-        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            if not isinstance(context, dict):
+                self.last_status = "malformed_bridge_payload"
+                return None
+            self.last_status = "live_context"
+            return context
+        except (ValueError, TypeError) as exc:
+            self.last_status = "malformed_bridge_payload"
+            self._logger.debug(
+                "MCP live context bridge returned malformed data: %s", exc
+            )
+            return None
+        except (OSError, RuntimeError) as exc:
+            self.last_status = "bridge_unavailable"
             self._logger.debug("MCP live context bridge unavailable: %s", exc)
             return None
 

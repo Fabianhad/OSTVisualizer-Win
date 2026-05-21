@@ -85,14 +85,18 @@ class McpSetupDialog(QtWidgets.QDialog):
         button_row.addWidget(self.close_button)
         layout.addLayout(button_row)
 
-    def _status_text(self) -> str:
+    def _status_text(self, feedback: str = "") -> str:
         helper_status = "found" if self.helper_path.exists() else "not found"
         file_state_status = "found" if self.file_state_path.exists() else "not found"
         return (
             f"MCP helper: {self.helper_path} ({helper_status})\n"
             f"Database source: {self.file_state_path} ({file_state_status})\n"
             "MCP uses checked OST Visualizer databases only. It does not accept "
-            "custom database paths."
+            "custom database paths.\n"
+            "Copy the config into your MCP client, then restart or reload that "
+            "client. This dialog does not edit client config files, and OST "
+            "Visualizer does not start the stdio server.\n"
+            f"{feedback or ' '}"
         )
 
     def _section_label(self, text: str) -> QtWidgets.QLabel:
@@ -120,7 +124,7 @@ class McpSetupDialog(QtWidgets.QDialog):
 
     def _copy_to_clipboard(self, text: str) -> None:
         QtWidgets.QApplication.clipboard().setText(text)
-        self.status_label.setText(self._status_text() + "\nCopied to clipboard.")
+        self.status_label.setText(self._status_text("Copied to clipboard."))
 
     def cleanup(self) -> None:
         for button in (

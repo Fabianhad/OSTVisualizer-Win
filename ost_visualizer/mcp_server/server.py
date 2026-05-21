@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
-from mcp.server.fastmcp import FastMCP
 from ..application.dtos.mcp_context_dtos import (
+    McpResultMetaDto,
     McpSelectedPagesSummaryDto,
     McpSelectedTakeoffsSummaryDto,
 )
@@ -12,6 +12,7 @@ from ..infrastructure.persistence.repositories.file_project_repository import (
     MdbFileParser,
 )
 from .bridge_client import McpBridgeClient
+from .internal_server import OstMcpServer
 from .registry import DatabaseRegistry
 from .serializers import error, ok, to_jsonable
 
@@ -39,35 +40,60 @@ def build_mcp_server(
     registry: DatabaseRegistry,
     logger: Optional[logging.Logger] = None,
     name: str = "ost-visualizer",
-) -> FastMCP:
+) -> OstMcpServer:
     log = logger or LOGGER
     read_service = create_read_service(registry, log)
-    mcp = FastMCP(name)
+    mcp = OstMcpServer(name)
 
     def run_read(fn, *args, **kwargs) -> dict:
         try:
             return ok(fn(*args, **kwargs))
         except McpReadError as exc:
-            return error(str(exc), code="read_error")
+            return error(str(exc), code=_read_error_code(str(exc)))
+        except Exception as exc:
+            log.exception("MCP read failed")
+            return error(str(exc), code="unexpected_error")
+
+    def run_limited_read(fn, limit: int, *args, **kwargs) -> dict:
+        try:
+            result = fn(*args, limit=limit, **kwargs)
+            meta = _result_meta(result, limit)
+            status = _result_status(result, meta)
+            return ok(result, status=status, meta=meta)
+        except McpReadError as exc:
+            return error(str(exc), code=_read_error_code(str(exc)))
         except Exception as exc:
             log.exception("MCP read failed")
             return error(str(exc), code="unexpected_error")
 
     @mcp.tool()
     def list_databases() -> dict:
+        """List checked OST databases visible to the read-only MCP helper."""
         registry.reload()
         read_service.set_databases(registry.databases)
-        return run_read(read_service.list_databases)
+        databases = read_service.list_databases()
+        return ok(
+            databases,
+            status="ok" if databases else "no_checked_database",
+            meta=McpResultMetaDto(
+                returned_count=len(databases),
+                total_count=len(databases),
+            ),
+        )
 
     @mcp.tool()
     def get_current_context() -> dict:
+        """Return live app context when available, otherwise saved workspace context."""
         registry.reload()
         read_service.set_databases(registry.databases)
-        live_context = McpBridgeClient(log).get_context()
+        bridge_client = McpBridgeClient(log)
+        live_context = bridge_client.get_context()
         if live_context is not None:
-            return ok(_with_database_ids(live_context, registry))
+            return ok(_with_database_ids(live_context, registry), status="live_context")
         selection = registry.workspace_selection
         payload = to_jsonable(selection)
+        payload["source"] = "saved_workspace"
+        payload["bridge_status"] = bridge_client.last_status
         if selection.database_id and selection.bid_uid:
             try:
                 page = read_service.get_current_page(
@@ -76,34 +102,43 @@ def build_mcp_server(
                 payload["selected_page_uid"] = page.uid if page else None
             except Exception:
                 payload["selected_page_uid"] = None
-        return ok(payload)
+        if not registry.databases:
+            return ok(payload, status="no_checked_database")
+        return ok(payload, status="saved_context")
 
     @mcp.tool()
     def list_projects(database_id: str) -> dict:
+        """List projects in a checked database before selecting bids."""
         return run_read(read_service.list_projects, database_id)
 
     @mcp.tool()
     def list_bids(database_id: str, project_uid: Optional[str] = None) -> dict:
+        """List bids in a checked database, optionally scoped to one project."""
         return run_read(read_service.list_bids, database_id, project_uid)
 
     @mcp.tool()
     def get_bid_summary(database_id: str, bid_uid: str) -> dict:
+        """Return identifying and count metadata for a single bid."""
         return run_read(read_service.get_bid_summary, database_id, bid_uid)
 
     @mcp.tool()
     def list_pages(database_id: str, bid_uid: str) -> dict:
+        """List page inventory for a bid; use get_page_context for page details."""
         return run_read(read_service.list_pages, database_id, bid_uid)
 
     @mcp.tool()
     def get_current_page(database_id: str, bid_uid: str) -> dict:
+        """Return the saved current page for a bid, or the first page fallback."""
         return run_read(read_service.get_current_page, database_id, bid_uid)
 
     @mcp.tool()
     def get_page_pdf_info(database_id: str, bid_uid: str, page_uid: str) -> dict:
+        """Return basic page and PDF metadata already stored for one page."""
         return run_read(read_service.get_page_pdf_info, database_id, bid_uid, page_uid)
 
     @mcp.tool()
     def list_conditions(database_id: str, bid_uid: str) -> dict:
+        """List condition inventory for a bid; use search_conditions for lookup."""
         return run_read(read_service.list_conditions, database_id, bid_uid)
 
     @mcp.tool()
@@ -113,12 +148,13 @@ def build_mcp_server(
         query: str,
         limit: int = 50,
     ) -> dict:
-        return run_read(
+        """Search conditions by name, ref, notes, type, or UID with a bounded limit."""
+        return run_limited_read(
             read_service.search_conditions,
+            limit,
             database_id,
             bid_uid,
             query,
-            limit,
         )
 
     @mcp.tool()
@@ -127,6 +163,7 @@ def build_mcp_server(
         bid_uid: str,
         condition_uid: str,
     ) -> dict:
+        """Summarize one condition's quantities, pages, and takeoff counts."""
         return run_read(
             read_service.get_condition_summary,
             database_id,
@@ -144,26 +181,29 @@ def build_mcp_server(
         include_geometry: bool = False,
         limit: int = 500,
     ) -> dict:
-        return run_read(
+        """List takeoffs for browsing, optionally scoped by page or condition."""
+        return run_limited_read(
             read_service.list_takeoffs,
+            limit,
             database_id,
             bid_uid,
             page_uid,
             condition_uid,
             visible_only,
             include_geometry,
-            limit,
         )
 
     @mcp.tool()
     def get_selected_takeoffs_summary(limit: int = 500) -> dict:
+        """Resolve live selected takeoff IDs into read-only estimator summary data."""
         registry.reload()
         read_service.set_databases(registry.databases)
-        live_context = McpBridgeClient(log).get_context()
+        bridge_client = McpBridgeClient(log)
+        live_context = bridge_client.get_context()
         if live_context is None:
             return ok(
                 McpSelectedTakeoffsSummaryDto(
-                    status="bridge_unavailable",
+                    status=bridge_client.last_status,
                     message=(
                         "OST Visualizer is not running or the live context bridge "
                         "is unavailable."
@@ -200,13 +240,15 @@ def build_mcp_server(
 
     @mcp.tool()
     def get_selected_pages_summary() -> dict:
+        """Resolve live selected page IDs into read-only page summary data."""
         registry.reload()
         read_service.set_databases(registry.databases)
-        live_context = McpBridgeClient(log).get_context()
+        bridge_client = McpBridgeClient(log)
+        live_context = bridge_client.get_context()
         if live_context is None:
             return ok(
                 McpSelectedPagesSummaryDto(
-                    status="bridge_unavailable",
+                    status=bridge_client.last_status,
                     message=(
                         "OST Visualizer is not running or the live context bridge "
                         "is unavailable."
@@ -255,6 +297,7 @@ def build_mcp_server(
         page_uid: Optional[str] = None,
         condition_uid: Optional[str] = None,
     ) -> dict:
+        """Return quantity totals for a bid, optionally scoped by page or condition."""
         return run_read(
             read_service.summarize_quantities,
             database_id,
@@ -267,6 +310,7 @@ def build_mcp_server(
     def get_page_quantity_summary(
         database_id: str, bid_uid: str, page_uid: str
     ) -> dict:
+        """Return quantity totals for one page in a bid."""
         return run_read(
             read_service.get_page_quantity_summary,
             database_id,
@@ -283,34 +327,109 @@ def build_mcp_server(
         condition_uid: Optional[str] = None,
         limit: int = 50,
     ) -> dict:
-        return run_read(
+        """Search visible takeoffs by IDs, condition name, page name, or area UID."""
+        return run_limited_read(
             read_service.search_takeoffs,
+            limit,
             database_id,
             bid_uid,
             query,
             page_uid,
             condition_uid,
+        )
+
+    @mcp.tool()
+    def get_bid_quantity_summary(
+        database_id: str,
+        bid_uid: str,
+        limit: int = 250,
+    ) -> dict:
+        """Return bounded condition-level quantity summaries for a bid."""
+        return run_read(
+            read_service.get_bid_quantity_summary, database_id, bid_uid, limit
+        )
+
+    @mcp.tool()
+    def review_scope_gaps(
+        database_id: str,
+        bid_uid: str,
+        limit: int = 100,
+    ) -> dict:
+        """Aggregate bounded read-only scope gap checks for a bid."""
+        return run_read(read_service.review_scope_gaps, database_id, bid_uid, limit)
+
+    @mcp.tool()
+    def find_duplicate_conditions(
+        database_id: str,
+        bid_uid: str,
+        limit: int = 100,
+    ) -> dict:
+        """Find duplicate condition names using a conservative name-only heuristic."""
+        return run_read(
+            read_service.find_duplicate_conditions, database_id, bid_uid, limit
+        )
+
+    @mcp.tool()
+    def find_zero_quantity_conditions(
+        database_id: str,
+        bid_uid: str,
+        limit: int = 100,
+    ) -> dict:
+        """Find conditions with takeoffs but zero computed visible quantity."""
+        return run_read(
+            read_service.find_zero_quantity_conditions,
+            database_id,
+            bid_uid,
             limit,
         )
 
     @mcp.tool()
-    def find_pages_without_takeoffs(database_id: str, bid_uid: str) -> dict:
+    def find_unplaced_takeoffs(
+        database_id: str,
+        bid_uid: str,
+        limit: int = 100,
+    ) -> dict:
+        """Find takeoffs with missing or invalid page links; no geometry guessing."""
         return run_read(
+            read_service.find_unplaced_takeoffs, database_id, bid_uid, limit
+        )
+
+    @mcp.tool()
+    def get_page_context(database_id: str, bid_uid: str, page_uid: str) -> dict:
+        """Return detailed stored metadata for one page; page text is deferred."""
+        return run_read(read_service.get_page_context, database_id, bid_uid, page_uid)
+
+    @mcp.tool()
+    def find_pages_without_takeoffs(
+        database_id: str,
+        bid_uid: str,
+        limit: int = 100,
+    ) -> dict:
+        """Find pages with no takeoffs; use review_scope_gaps for aggregate review."""
+        return run_limited_read(
             read_service.find_pages_without_takeoffs,
+            limit,
             database_id,
             bid_uid,
         )
 
     @mcp.tool()
-    def find_conditions_without_takeoffs(database_id: str, bid_uid: str) -> dict:
-        return run_read(
+    def find_conditions_without_takeoffs(
+        database_id: str,
+        bid_uid: str,
+        limit: int = 100,
+    ) -> dict:
+        """Find conditions with no takeoffs; use review_scope_gaps for aggregate review."""
+        return run_limited_read(
             read_service.find_conditions_without_takeoffs,
+            limit,
             database_id,
             bid_uid,
         )
 
     @mcp.prompt()
     def review_current_estimator_context() -> str:
+        """Guide a read-only review of the currently active OST Visualizer context."""
         return (
             "Review the current OST Visualizer estimator context using only "
             "read-only MCP tools. Start with get_current_context and "
@@ -322,12 +441,14 @@ def build_mcp_server(
 
     @mcp.prompt()
     def review_takeoff_scope(database_id: str, bid_uid: str) -> str:
+        """Guide a read-only bid scope review using summary and gap tools."""
         return (
             "Review the OST takeoff scope for database_id="
             f"{database_id} and bid_uid={bid_uid}. Use list_pages, "
             "list_conditions, search_conditions, list_takeoffs, "
-            "get_condition_summary, summarize_quantities, "
-            "find_pages_without_takeoffs, and find_conditions_without_takeoffs. "
+            "get_condition_summary, get_bid_quantity_summary, review_scope_gaps, "
+            "find_duplicate_conditions, find_zero_quantity_conditions, "
+            "find_unplaced_takeoffs, and get_page_context. "
             "Call out pages with unusually low or high takeoff counts, "
             "conditions without takeoffs, hidden-layer conditions, and major "
             "quantity drivers. Do not suggest edits unless the user explicitly "
@@ -336,22 +457,27 @@ def build_mcp_server(
 
     @mcp.resource("ost://databases")
     def databases_resource() -> dict:
+        """Resource view of checked databases visible to MCP clients."""
         return list_databases()
 
     @mcp.resource("ost://database/{database_id}/hierarchy")
     def hierarchy_resource(database_id: str) -> dict:
+        """Resource template for project and bid hierarchy in one checked database."""
         return run_read(read_service.get_hierarchy, database_id)
 
     @mcp.resource("ost://database/{database_id}/bid/{bid_uid}/pages")
     def pages_resource(database_id: str, bid_uid: str) -> dict:
+        """Resource template for page inventory in a bid."""
         return list_pages(database_id, bid_uid)
 
     @mcp.resource("ost://database/{database_id}/bid/{bid_uid}/conditions")
     def conditions_resource(database_id: str, bid_uid: str) -> dict:
+        """Resource template for condition inventory in a bid."""
         return list_conditions(database_id, bid_uid)
 
     @mcp.resource("ost://database/{database_id}/bid/{bid_uid}/quantities")
     def quantities_resource(database_id: str, bid_uid: str) -> dict:
+        """Resource template for bid quantity totals."""
         return summarize_quantities(database_id, bid_uid)
 
     return mcp
@@ -366,7 +492,7 @@ def run_stdio_server(
         logger=logger,
     )
     server = build_mcp_server(registry, logger=logger)
-    server.run(transport="stdio")
+    server.run_stdio()
 
 
 def _with_database_ids(payload: dict, registry: DatabaseRegistry) -> dict:
@@ -403,3 +529,46 @@ def _with_database_id(value, registry: DatabaseRegistry):
         str(result.get("file_path", ""))
     )
     return result
+
+
+def _read_error_code(message: str) -> str:
+    if message.startswith("Unknown database_id"):
+        return "invalid_database_id"
+    if message.startswith("Unknown "):
+        return "not_found"
+    return "read_error"
+
+
+def _result_meta(result, limit: int) -> McpResultMetaDto:
+    if isinstance(result, list):
+        clean_limit = _clean_tool_limit(limit)
+        returned_count = len(result)
+        return McpResultMetaDto(
+            limit=clean_limit,
+            returned_count=returned_count,
+            total_count=returned_count,
+            truncated=False,
+        )
+    meta = getattr(result, "meta", None)
+    if isinstance(meta, McpResultMetaDto):
+        return meta
+    return McpResultMetaDto()
+
+
+def _result_status(result, meta: McpResultMetaDto) -> str:
+    status = getattr(result, "status", None)
+    if status:
+        return str(status)
+    if meta.truncated:
+        return "truncated"
+    if meta.returned_count == 0:
+        return "empty"
+    return "ok"
+
+
+def _clean_tool_limit(limit: int, default: int = 500) -> int:
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        value = default
+    return max(1, min(value, 5000))
