@@ -672,16 +672,8 @@ class InputHandlerMixin:
                 scene_cur = self.mapToScene(cur_vp)
                 sdx = scene_cur.x() - self._select_band_origin.x()
                 sdy = scene_cur.y() - self._select_band_origin.y()
-                delta = QtCore.QPointF(sdx, sdy)
-                for uid in self._drag_multi_orig_positions:
-                    for item in self._uid_to_items.get(uid, []):
-                        orig = self._drag_item_orig_positions.get(id(item))
-                        if orig is not None:
-                            item.setPos(orig + delta)
-                for item in self._selection_items:
-                    orig = self._drag_item_orig_positions.get(id(item))
-                    if orig is not None:
-                        item.setPos(orig + delta)
+                ost_dx, ost_dy = self.scene_to_ost_delta(sdx, sdy)
+                self._update_snapped_multi_drag_preview(sdx, sdy, ost_dx, ost_dy)
                 event.accept()
                 return
         if self._rubber_band is not None and self._rubber_band_origin is not None:
@@ -930,27 +922,9 @@ class InputHandlerMixin:
                         sdy = release_scene.y() - origin.y()
                         ost_dx, ost_dy = self.scene_to_ost_delta(sdx, sdy)
                         for uid, orig_pos in self._drag_multi_orig_positions.items():
-                            _m_ann = self._current_annotations.get(uid)
-                            if _m_ann and _m_ann.is_ink:
-                                new_pos = self.compute_new_position(
-                                    orig_pos,
-                                    ost_dy,
-                                    ost_dx,
-                                    -1,
-                                    0,
-                                )
-                                if len(new_pos) % 2 == 1:
-                                    new_pos[0] = orig_pos[0]
-                            else:
-                                _m_text = _m_ann is not None and _m_ann.is_text
-                                new_pos = self.compute_new_position(
-                                    orig_pos,
-                                    ost_dx,
-                                    ost_dy,
-                                    -1,
-                                    0,
-                                    move_only_first_pair=_m_text,
-                                )
+                            new_pos = self._compute_snapped_multi_drag_position(
+                                uid, orig_pos, ost_dx, ost_dy
+                            )
                             if uid in self._current_takeoffs:
                                 takeoff = self._current_takeoffs.get(uid)
                                 if takeoff:
@@ -1071,6 +1045,63 @@ class InputHandlerMixin:
         self._dirty_ann_positions[uid] = (ann.annotation_type, pos)
         self._drag_orig_position = list(pos)
         self._flush_dirty_positions()
+
+    def _compute_snapped_multi_drag_position(
+        self, uid: str, orig_pos: list, ost_dx: float, ost_dy: float
+    ) -> list:
+        ann = self._current_annotations.get(uid)
+        if ann and ann.is_ink:
+            new_pos = self.compute_new_position(orig_pos, ost_dy, ost_dx, -1, 0)
+            if len(new_pos) % 2 == 1:
+                new_pos[0] = orig_pos[0]
+            return new_pos
+        text_move = ann is not None and ann.is_text
+        return self.compute_new_position(
+            orig_pos,
+            ost_dx,
+            ost_dy,
+            -1,
+            0,
+            move_only_first_pair=text_move,
+        )
+
+    def _snapped_multi_drag_scene_delta(
+        self,
+        orig_pos: list,
+        new_pos: list,
+        fallback_sdx: float,
+        fallback_sdy: float,
+    ) -> QtCore.QPointF:
+        if len(orig_pos) < 2 or len(new_pos) < 2:
+            return QtCore.QPointF(fallback_sdx, fallback_sdy)
+        item_sdx, item_sdy = self.ost_to_scene_delta(
+            new_pos[0] - orig_pos[0],
+            new_pos[1] - orig_pos[1],
+        )
+        return QtCore.QPointF(item_sdx, item_sdy)
+
+    def _update_snapped_multi_drag_preview(
+        self, scene_dx: float, scene_dy: float, ost_dx: float, ost_dy: float
+    ) -> None:
+        fallback_delta = QtCore.QPointF(scene_dx, scene_dy)
+        preview_delta_by_uid = {}
+        for uid, orig_pos in self._drag_multi_orig_positions.items():
+            new_pos = self._compute_snapped_multi_drag_position(
+                uid, orig_pos, ost_dx, ost_dy
+            )
+            delta = self._snapped_multi_drag_scene_delta(
+                orig_pos, new_pos, scene_dx, scene_dy
+            )
+            preview_delta_by_uid[uid] = delta
+            for item in self._uid_to_items.get(uid, []):
+                orig = self._drag_item_orig_positions.get(id(item))
+                if orig is not None:
+                    item.setPos(orig + delta)
+        for item in self._selection_items:
+            orig = self._drag_item_orig_positions.get(id(item))
+            if orig is not None:
+                delta = preview_delta_by_uid.get(item.data(0), fallback_delta)
+                item.setPos(orig + delta)
 
     def _compute_ann_resize(
         self, ann, orig_pos, ost_dx, ost_dy, handle_idx, corner_count

@@ -866,9 +866,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._current_uid = cond.uid
             self._rebuild_tabs(cond.condition_type)
             self._set_combo_by_data(self._style_combo, cond.condition_type)
-            self._style_combo.setEnabled(
-                not self._read_only and not self._has_takeoffs_fn(cond.uid)
-            )
+            self._update_style_combo_state()
             self._type_edit.setText(self._cdn_type_name_for_condition(cond))
             parts = parse_elevation(cond.name)
             self._name_edit.setText(parts.base_name)
@@ -1311,6 +1309,22 @@ class EditConditionDialog(QtWidgets.QDialog):
             and self._dirty
         )
 
+    def _update_style_combo_state(self) -> None:
+        has_takeoffs = self._has_takeoffs_fn(self._current_uid)
+        editable = (
+            self._interactive_enabled
+            and self._has_license
+            and not self._read_only
+            and not has_takeoffs
+        )
+        self._style_combo.setEnabled(editable)
+        tooltip = (
+            "Condition style cannot be changed after takeoffs have been placed."
+            if has_takeoffs
+            else ""
+        )
+        self._style_combo.setToolTip(tooltip)
+
     def _parse_dimension_field(
         self, edit: _DimensionLineEdit, label: str
     ) -> Optional[float]:
@@ -1691,7 +1705,6 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._interactive_enabled = bool(enabled)
         editable = bool(enabled) and self._has_license and not self._read_only
         for widget in (
-            self._style_combo,
             self._name_edit,
             self._type_edit,
             self._type_picker_btn,
@@ -1705,6 +1718,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._ok_btn,
         ):
             widget.setEnabled(editable)
+        self._update_style_combo_state()
         self._update_apply_button()
         can_navigate = (bool(enabled) and self._has_license) or self._read_only
         current_index = self._get_current_index()

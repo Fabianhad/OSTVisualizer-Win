@@ -2,6 +2,9 @@ import unittest
 from types import SimpleNamespace
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
+from ost_visualizer.presentation.components.plan_view.components.drag_handler import (
+    DragHandlerMixin,
+)
 from ost_visualizer.presentation.components.plan_view.components.input_handler import (
     InputHandlerMixin,
 )
@@ -12,7 +15,7 @@ class BaseKeyHandler:
         pass
 
 
-class InputHandlerHarness(InputHandlerMixin, BaseKeyHandler):
+class InputHandlerHarness(InputHandlerMixin, DragHandlerMixin, BaseKeyHandler):
     pass
 
 
@@ -50,8 +53,9 @@ class FakeKeyEvent:
 
 
 class FakeItem:
-    def __init__(self, x=0.0, y=0.0):
+    def __init__(self, x=0.0, y=0.0, uid=None):
         self._pos = QtCore.QPointF(x, y)
+        self._uid = uid
 
     def pos(self):
         return QtCore.QPointF(self._pos)
@@ -61,6 +65,9 @@ class FakeItem:
             self._pos = QtCore.QPointF(args[0])
         else:
             self._pos = QtCore.QPointF(args[0], args[1])
+
+    def data(self, role):
+        return self._uid if role == 0 else None
 
 
 class CtrlDragTests(unittest.TestCase):
@@ -74,6 +81,7 @@ class CtrlDragTests(unittest.TestCase):
         view._select_band_active = False
         view._select_band_dragged = False
         view._press_changed_selection = False
+        view._rotation_drag_active = False
         view._drag_takeoff_uid = None
         view._drag_handle_index = -2
         view._drag_orig_position = []
@@ -92,6 +100,7 @@ class CtrlDragTests(unittest.TestCase):
         view._current_conditions = {}
         view._uid_to_items = {"t1": [FakeItem(1.0, 2.0)], "t2": [FakeItem(3.0, 4.0)]}
         view.mapToScene = lambda _point: QtCore.QPointF(10.0, 10.0)
+        view.mapFromScene = lambda point: QtCore.QPoint(int(point.x()), int(point.y()))
         view.find_takeoff_at = lambda _scene_pos: "t1"
         view.find_takeoffs_at = lambda _scene_pos: ["t1"]
         view._flush_dirty_positions = lambda: None
@@ -154,6 +163,40 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(handle.pos(), handle_orig)
         self.assertIsNone(view._drag_takeoff_uid)
         self.assertEqual(view._drag_item_orig_positions, {})
+
+    def test_multi_takeoff_drag_preview_uses_snapped_item_deltas(self):
+        view = self._make_view({"t1", "t2"})
+        view._current_takeoffs["t1"].position = [3.0, 3.0, 13.0, 3.0]
+        view._current_takeoffs["t2"].position = [22.0, 22.0, 32.0, 22.0]
+        view._uid_to_items = {
+            "t1": [FakeItem(100.0, 100.0)],
+            "t2": [FakeItem(200.0, 200.0)],
+        }
+        border1 = FakeItem(300.0, 300.0, uid="t1")
+        border2 = FakeItem(400.0, 400.0, uid="t2")
+        view._selection_items = [border1, border2]
+        view._snap_increments = 10.0
+        view.mapToScene = lambda point: QtCore.QPointF(point)
+        view.scene_to_ost_delta = lambda dx, dy: (dx, dy)
+        view.ost_to_scene_delta = lambda dx, dy: (dx, dy)
+
+        press = FakeMouseEvent(x=0, y=0)
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        self.assertEqual(set(view._drag_multi_orig_positions), {"t1", "t2"})
+
+        move = FakeMouseEvent(x=6, y=6)
+        view.mouseMoveEvent(move)
+
+        self.assertTrue(move.accepted)
+        self.assertEqual(
+            view._uid_to_items["t1"][0].pos(), QtCore.QPointF(107.0, 107.0)
+        )
+        self.assertEqual(
+            view._uid_to_items["t2"][0].pos(), QtCore.QPointF(208.0, 208.0)
+        )
+        self.assertEqual(border1.pos(), QtCore.QPointF(307.0, 307.0))
+        self.assertEqual(border2.pos(), QtCore.QPointF(408.0, 408.0))
 
 
 if __name__ == "__main__":

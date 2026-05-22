@@ -287,6 +287,13 @@ class ConditionsSidebar(QtWidgets.QWidget):
             context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
             ignore_when_text_input=True,
         )
+        ShortcutManager.register_shortcut(
+            self.tree,
+            "delete",
+            self._on_delete_clicked,
+            context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
+            ignore_when_text_input=True,
+        )
 
     def _on_selection_changed(self) -> None:
         if self._block_selection_signal:
