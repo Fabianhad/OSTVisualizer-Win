@@ -33,25 +33,64 @@ class TakeoffOperationsMixin:
     def save_takeoffs_area(
         self, db_path: str, takeoff_uids: List[str], area_uid: str
     ) -> bool:
+        try:
+            area_val = None if area_uid in ("0", "", None) else int(area_uid)
+        except (TypeError, ValueError):
+            self.logger.exception(
+                "Invalid area uid for takeoff assignment: %s", area_uid
+            )
+            return False
+        return self._save_takeoffs_value(
+            db_path,
+            takeoff_uids,
+            "BidAreaUID",
+            area_val,
+            "takeoffs area",
+        )
+
+    def save_takeoffs_condition(
+        self, db_path: str, takeoff_uids: List[str], condition_uid: str
+    ) -> bool:
+        try:
+            condition_val = int(condition_uid)
+        except (TypeError, ValueError):
+            self.logger.exception(
+                "Invalid condition uid for takeoff assignment: %s", condition_uid
+            )
+            return False
+        return self._save_takeoffs_value(
+            db_path,
+            takeoff_uids,
+            "BidConditionUID",
+            condition_val,
+            "takeoffs condition",
+        )
+
+    def _save_takeoffs_value(
+        self,
+        db_path: str,
+        takeoff_uids: List[str],
+        column: str,
+        value,
+        label: str,
+    ) -> bool:
         if not takeoff_uids:
             return True
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
-                self._require_write_columns(
-                    schema, "BidTakeoffs", ("UID", "BidAreaUID")
-                )
+                self._require_write_columns(schema, "BidTakeoffs", ("UID", column))
                 cursor = conn.cursor()
-                area_val = None if area_uid in ("0", "", None) else int(area_uid)
                 placeholders = ",".join("?" * len(takeoff_uids))
                 uid_ints = [int(u) for u in takeoff_uids]
                 cursor.execute(
-                    f"UPDATE [BidTakeoffs] SET [BidAreaUID]=? WHERE [UID] IN ({placeholders})",
-                    [area_val] + uid_ints,
+                    f"UPDATE [BidTakeoffs] SET [{column}]=? "
+                    f"WHERE [UID] IN ({placeholders})",
+                    [value] + uid_ints,
                 )
                 return True
         except Exception:
-            self.logger.exception("Failed to save takeoffs area in %s", db_path)
+            self.logger.exception("Failed to save %s in %s", label, db_path)
             return False
 
     def set_takeoffs_negative(

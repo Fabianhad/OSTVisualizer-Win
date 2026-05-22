@@ -57,6 +57,9 @@ from ..use_cases.project.save_takeoff_rotations_use_case import (
     SaveTakeoffRotationsUseCase,
 )
 from ..use_cases.project.save_takeoffs_area_use_case import SaveTakeoffsAreaUseCase
+from ..use_cases.project.save_takeoffs_condition_use_case import (
+    SaveTakeoffsConditionUseCase,
+)
 from ..use_cases.project.set_takeoff_curve_use_case import SetTakeoffCurveUseCase
 from ..use_cases.project.set_takeoffs_negative_use_case import (
     SetTakeoffsNegativeUseCase,
@@ -94,6 +97,7 @@ class ProjectWriteService(BaseWriteService):
         save_takeoff_positions: SaveTakeoffPositionsUseCase,
         save_takeoff_rotations: SaveTakeoffRotationsUseCase,
         save_takeoffs_area: SaveTakeoffsAreaUseCase,
+        save_takeoffs_condition: SaveTakeoffsConditionUseCase,
         set_takeoffs_negative: SetTakeoffsNegativeUseCase,
         set_takeoff_curve: SetTakeoffCurveUseCase,
         insert_takeoffs: InsertTakeoffsUseCase,
@@ -151,6 +155,7 @@ class ProjectWriteService(BaseWriteService):
         self._save_takeoff_positions = save_takeoff_positions
         self._save_takeoff_rotations = save_takeoff_rotations
         self._save_takeoffs_area = save_takeoffs_area
+        self._save_takeoffs_condition = save_takeoffs_condition
         self._set_takeoffs_negative = set_takeoffs_negative
         self._set_takeoff_curve = set_takeoff_curve
         self._insert_takeoffs = insert_takeoffs
@@ -436,11 +441,36 @@ class ProjectWriteService(BaseWriteService):
     def save_takeoffs_area(
         self, db_path: str, takeoff_uids: List[str], area_uid: str
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_takeoffs_area", db_path
-        ):
+        return self._save_takeoffs_assignment(
+            "save_takeoffs_area",
+            self._save_takeoffs_area,
+            db_path,
+            takeoff_uids,
+            area_uid,
+        )
+
+    def save_takeoffs_condition(
+        self, db_path: str, takeoff_uids: List[str], condition_uid: str
+    ) -> bool:
+        return self._save_takeoffs_assignment(
+            "save_takeoffs_condition",
+            self._save_takeoffs_condition,
+            db_path,
+            takeoff_uids,
+            condition_uid,
+        )
+
+    def _save_takeoffs_assignment(
+        self,
+        operation: str,
+        use_case,
+        db_path: str,
+        takeoff_uids: List[str],
+        target_uid: str,
+    ) -> bool:
+        if self._bid_write_guard.blocks_active_locked_bid_write(operation, db_path):
             return False
-        success = self._save_takeoffs_area.execute(db_path, takeoff_uids, area_uid)
+        success = use_case.execute(db_path, takeoff_uids, target_uid)
         if success:
             self.reload_and_notify(db_path)
         return success

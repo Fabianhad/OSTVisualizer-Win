@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from .annotation import BidAnnotation
+from .area import BidArea
 from .cdn_type import CdnType
 from .condition import Condition
 from .condition_folder import BidConditionFolder
@@ -24,6 +25,7 @@ class FileLoadResult:
 class BidLoadResult:
     bid_conditions: Dict[str, Condition] = field(default_factory=dict)
     bid_takeoffs: List[Takeoff] = field(default_factory=list)
+    bid_areas: Dict[str, BidArea] = field(default_factory=dict)
     bid_pages: Dict[str, BidPageInfo] = field(default_factory=dict)
     pages: Dict[str, Page] = field(default_factory=dict)
     page_area_selections: Dict[str, Optional[str]] = field(default_factory=dict)

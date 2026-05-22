@@ -3,7 +3,6 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
-from ...domain.entities import pattern as _pattern
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
 from ...domain.entities.condition_folder import BidConditionFolder
@@ -13,6 +12,7 @@ from ..config import COMPACT_SPACING, NO_MARGINS
 from ..managers.context_menu_manager import ContextMenuManager
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
+from ..utils.condition_icon import make_condition_color_icon
 from ..utils.messagebox import confirm_multi_delete, show_warning
 
 _ITEM_ROLE = QtCore.Qt.ItemDataRole.UserRole
@@ -26,50 +26,7 @@ _COL_NAME = 1
 _COL_QTY1 = 2
 _COL_QTY2 = 3
 _COL_QTY3 = 4
-_COLOR_BOX_SIZE = 12
 _DISABLED_TEXT_COLOR = QtGui.QColor(120, 120, 120)
-
-
-def _is_fill_pixel(pattern: int, row: int, col: int) -> bool:
-    if pattern == _pattern.SOLID:
-        return True
-    if pattern == _pattern.HORIZONTAL:
-        return row % 4 == 0
-    if pattern == _pattern.VERTICAL:
-        return col % 4 == 0
-    if pattern == _pattern.BACKWARD_DIAG:
-        return (row - col) % 4 == 0
-    if pattern == _pattern.FORWARD_DIAG:
-        return (row + col) % 4 == 0
-    if pattern == _pattern.CROSSHATCH:
-        return row % 4 == 0 or col % 4 == 0
-    if pattern == _pattern.DIAG_CROSSHATCH:
-        return (row - col) % 4 == 0 or (row + col) % 4 == 0
-    if pattern == _pattern.TRANSPARENT:
-        return (row + col) % 2 == 0
-    return False
-
-
-def _make_color_icon(
-    color_int: int, pattern: int = 1, grayscale: bool = False
-) -> QtGui.QIcon:
-    r = color_int & 0xFF
-    g = (color_int >> 8) & 0xFF
-    b = (color_int >> 16) & 0xFF
-    if grayscale:
-        gray = int(0.299 * r + 0.587 * g + 0.114 * b)
-        r, g, b = gray, gray, gray
-    fill_rgb = QtGui.QColor(r, g, b).rgb()
-    bg_rgb = QtGui.QColor(255, 255, 255).rgb()
-    image = QtGui.QImage(
-        _COLOR_BOX_SIZE, _COLOR_BOX_SIZE, QtGui.QImage.Format.Format_RGB32
-    )
-    for row in range(_COLOR_BOX_SIZE):
-        for col in range(_COLOR_BOX_SIZE):
-            image.setPixel(
-                col, row, fill_rgb if _is_fill_pixel(pattern, row, col) else bg_rgb
-            )
-    return QtGui.QIcon(QtGui.QPixmap.fromImage(image))
 
 
 class _ConditionsTree(QtWidgets.QTreeWidget):
@@ -578,7 +535,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         item.setData(_COL_NAME, _SORT_ROLE, display_name)
         item.setIcon(
             _COL_NO,
-            _make_color_icon(
+            make_condition_color_icon(
                 cond.color_fill,
                 cond.pattern,
                 grayscale or not cond.layer_visible,
@@ -715,11 +672,16 @@ class ConditionsSidebar(QtWidgets.QWidget):
     def _on_item_double_clicked(
         self, item: QtWidgets.QTreeWidgetItem, column: int
     ) -> None:
-        if not self._edit_allowed or column != _COL_NAME:
+        kind, condition_uid = self._item_kind_uid(item)
+        if kind != _TYPE_CONDITION or not self.is_condition_placeable(condition_uid):
             return
-        data = item.data(_COL_NO, _ITEM_ROLE)
-        if data and data[0] == _TYPE_CONDITION and self.is_condition_placeable(data[1]):
+        if column == _COL_NAME:
+            if not self._edit_allowed:
+                return
             self.tree.editItem(item, _COL_NAME)
+            return
+        if self._properties_allowed:
+            self.edit_requested.emit([condition_uid])
 
     def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
         if self._block_item_changed or column != _COL_NAME:

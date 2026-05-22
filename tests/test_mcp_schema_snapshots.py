@@ -1,8 +1,11 @@
 import unittest
 from ost_visualizer.application.dtos.mcp_context_dtos import (
+    McpAreaDto,
+    McpAreaSummaryDto,
     McpConditionDto,
     McpConditionQuantitySummaryDto,
     McpConditionSummaryDto,
+    McpPageTakeoffSummaryDto,
     McpResultMetaDto,
     McpSelectedTakeoffsSummaryDto,
     McpTakeoffDto,
@@ -67,6 +70,35 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "quantities",
                 "pages",
                 "condition_uids",
+            },
+        )
+
+    def test_takeoff_shape_includes_area_name(self):
+        payload = ok(McpTakeoffDto(uid="t1", condition_uid="c1"))
+        self.assertIn("area_uid", payload["data"])
+        self.assertIn("area_name", payload["data"])
+
+    def test_area_summary_shape_is_stable(self):
+        payload = ok(
+            McpAreaSummaryDto(
+                status="ok",
+                database_id="db",
+                bid_uid="bid",
+                area=McpAreaDto(uid="a1", bid_uid="bid"),
+                meta=McpResultMetaDto(limit=10),
+                pages=[McpPageTakeoffSummaryDto(page_uid="p1", page_name="A101")],
+            )
+        )
+        self.assertEqual(
+            set(payload["data"].keys()),
+            {
+                "status",
+                "database_id",
+                "bid_uid",
+                "area",
+                "meta",
+                "pages",
+                "children",
             },
         )
 

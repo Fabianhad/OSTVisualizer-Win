@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from PySide6 import QtGui, QtWidgets
+from ...domain.entities.condition import Condition
 from ..managers.context_menu_manager import ContextMenuManager
+from .condition_icon import make_condition_color_icon
 from .overlay_context_menu import add_overlay_submenu_with_select
 
 CONTEXT_TOOLS_ACTIONS = (
@@ -43,6 +45,12 @@ class SelectedTakeoffContextState:
     show_curved: bool
     all_negative: bool
     all_curved: bool
+
+
+@dataclass(frozen=True)
+class ReassignConditionSubmenu:
+    submenu: QtWidgets.QMenu
+    actions: dict[QtGui.QAction, str]
 
 
 def build_selected_takeoff_context_state(
@@ -135,6 +143,43 @@ def add_context_command_submenu(
         label, action_key = entry
         add_context_command(submenu, label, action_key, trigger_fn, action_state_fn)
     return submenu
+
+
+def _condition_menu_label(condition: Condition) -> str:
+    name = condition.name or condition.uid
+    if condition.ref_no:
+        return f"{condition.ref_no} - {name}"
+    return name
+
+
+def add_reassign_condition_submenu(
+    menu: QtWidgets.QMenu,
+    conditions: dict[str, Condition],
+) -> ReassignConditionSubmenu:
+    submenu = menu.addMenu("Reassign Condition")
+    actions: dict[QtGui.QAction, str] = {}
+    ordered = sorted(
+        conditions.values(),
+        key=lambda condition: (
+            condition.ref_no,
+            condition.name.lower(),
+            condition.uid,
+        ),
+    )
+    if not ordered:
+        submenu.setEnabled(False)
+        return ReassignConditionSubmenu(submenu, actions)
+    for condition in ordered:
+        action = submenu.addAction(_condition_menu_label(condition))
+        action.setIcon(
+            make_condition_color_icon(
+                condition.color_fill,
+                condition.pattern,
+                not condition.layer_visible,
+            )
+        )
+        actions[action] = condition.uid
+    return ReassignConditionSubmenu(submenu, actions)
 
 
 def add_common_context_submenus(

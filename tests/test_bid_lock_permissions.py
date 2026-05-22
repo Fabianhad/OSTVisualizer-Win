@@ -113,6 +113,7 @@ def _write_service(project_data):
         save_takeoff_positions=forbidden,
         save_takeoff_rotations=forbidden,
         save_takeoffs_area=forbidden,
+        save_takeoffs_condition=forbidden,
         set_takeoffs_negative=forbidden,
         set_takeoff_curve=forbidden,
         insert_takeoffs=forbidden,
@@ -203,6 +204,13 @@ class BidLockPermissionTests(unittest.TestCase):
                 project_data.bid_ref.file_path,
                 project_data.bid_ref.bid_uid,
                 {"job_status_uid": 2},
+            )
+        )
+        self.assertFalse(
+            service.save_takeoffs_condition(
+                project_data.bid_ref.file_path,
+                ["12"],
+                "34",
             )
         )
         self.assertTrue(

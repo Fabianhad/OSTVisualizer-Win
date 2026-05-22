@@ -893,8 +893,8 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self._run_edit.setText(str(cond.run) if cond.run else "")
             else:
                 self._thickness_edit.setText(self._inches_to_display(cond.thickness))
-                self._rise_edit.setText(str(cond.rise) if cond.rise else "")
-                self._run_edit.setText(str(cond.run) if cond.run else "")
+                self._rise_edit.setText(str(abs(cond.rise)) if cond.rise else "")
+                self._run_edit.setText(str(abs(cond.run)) if cond.run else "")
             self._color_btn.set_color(cond.color_fill)
             self._set_combo_by_data(self._pattern_combo, cond.pattern)
             self._spacing_edit.setText(self._inches_to_display(cond.spacing))
@@ -1476,7 +1476,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             if thickness != cond.thickness:
                 dto.set("thickness", thickness)
             try:
-                rise = float(self._rise_edit.text() or "0")
+                rise = abs(float(self._rise_edit.text() or "0"))
             except ValueError:
                 show_warning(self, "Invalid Value", "Rise must be a number.")
                 self._rise_edit.setFocus()
@@ -1484,7 +1484,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             if rise != cond.rise:
                 dto.set("rise", rise)
             try:
-                run = float(self._run_edit.text() or "0")
+                run = abs(float(self._run_edit.text() or "0"))
             except ValueError:
                 show_warning(self, "Invalid Value", "Run must be a number.")
                 self._run_edit.setFocus()

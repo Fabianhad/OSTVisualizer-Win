@@ -18,6 +18,8 @@ EXPECTED_TOOLS = {
     "get_current_page",
     "get_page_pdf_info",
     "list_conditions",
+    "list_areas",
+    "get_area_summary",
     "search_conditions",
     "get_condition_summary",
     "list_takeoffs",

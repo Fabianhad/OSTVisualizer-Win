@@ -76,12 +76,18 @@ class BasePickerDialog(BaseListDialog):
         used_uids: Optional[Set[str]] = None,
         initial_name: Optional[str] = None,
         save_fn: Optional[Callable] = None,
+        accept_button_text: str = "Select",
+        show_cancel_button: bool = True,
+        accept_requires_selection: bool = True,
     ) -> None:
         super().__init__(icon_provider, parent, save_fn)
         self._items: List[ItemRecord] = list(items or [])
         self._selected_uid: Optional[str] = selected_uid or None
         self._interactive: bool = True
         self._used_uids: Set[str] = {str(u) for u in (used_uids or set())}
+        self._accept_button_text = accept_button_text
+        self._show_cancel_button = show_cancel_button
+        self._accept_requires_selection = accept_requires_selection
         self._setup_ui()
         self._populate()
         if initial_name:
@@ -117,16 +123,18 @@ class BasePickerDialog(BaseListDialog):
         content_row.addWidget(self.tree, 1)
         btn_layout = QtWidgets.QVBoxLayout()
         btn_layout.setSpacing(COMPACT_SPACING)
-        self.btn_select = QtWidgets.QPushButton("Select")
+        self.btn_select = QtWidgets.QPushButton(self._accept_button_text)
         self.btn_select.setFixedWidth(self._button_width)
         self.btn_select.setDefault(True)
         self.btn_select.setEnabled(False)
-        self.btn_select.clicked.connect(self._on_select)
+        self.btn_select.clicked.connect(self._on_accept_clicked)
         btn_layout.addWidget(self.btn_select)
-        self.btn_cancel = QtWidgets.QPushButton("Cancel")
-        self.btn_cancel.setFixedWidth(self._button_width)
-        self.btn_cancel.clicked.connect(self.reject)
-        btn_layout.addWidget(self.btn_cancel)
+        self.btn_cancel = None
+        if self._show_cancel_button:
+            self.btn_cancel = QtWidgets.QPushButton("Cancel")
+            self.btn_cancel.setFixedWidth(self._button_width)
+            self.btn_cancel.clicked.connect(self.reject)
+            btn_layout.addWidget(self.btn_cancel)
         btn_layout.addSpacing(RELAXED_SPACING)
         self.btn_new = QtWidgets.QPushButton("New")
         self.btn_new.setFixedWidth(self._button_width)
@@ -184,6 +192,12 @@ class BasePickerDialog(BaseListDialog):
         if len(visible_selected) == 1:
             self._selected_uid = visible_selected[0].data(self._uid_col, self._UID_ROLE)
         self.accept()
+
+    def _on_accept_clicked(self) -> None:
+        if self._accept_requires_selection:
+            self._on_select()
+        else:
+            self.accept()
 
     def _on_new(self) -> None:
         item = self._on_new_with_name("")
@@ -245,7 +259,7 @@ class BasePickerDialog(BaseListDialog):
         visible_selected = [i for i in self.tree.selectedItems() if not i.isHidden()]
         single = len(visible_selected) == 1
         has_any = len(visible_selected) > 0
-        self.btn_select.setEnabled(single)
+        self.btn_select.setEnabled(single or not self._accept_requires_selection)
         self.btn_delete.setEnabled(has_any)
         self._update_extra_button_states(visible_selected)
 

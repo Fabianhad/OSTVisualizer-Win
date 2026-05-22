@@ -94,10 +94,10 @@ process and exposes only checked `.mdb` databases from
 `~/.ost_visualizer/file_state.json`. The desktop GUI does not start the stdio
 server; it only provides a live-context bridge when the app is running.
 
-The MCP server exposes project, bid, page, PDF metadata, condition, takeoff,
-condition summary, selected-page summary, selected-takeoff summary, search,
-quantity-summary, page-context, duplicate-condition, zero-quantity, unplaced
-takeoff, and lightweight scope-gap review tools. Broad result sets use explicit
+The MCP server exposes project, bid, page, area, PDF metadata, condition,
+takeoff, condition summary, selected-page summary, selected-takeoff summary,
+search, quantity-summary, page-context, duplicate-condition, zero-quantity,
+unplaced takeoff, and lightweight scope-gap review tools. Broad result sets use explicit
 limits and include status/metadata such as returned count and truncation state.
 It does not support `--database`, arbitrary database paths, shell execution,
 arbitrary SQL, arbitrary file reads, PDF rendering/text extraction, OCR, page

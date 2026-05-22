@@ -4,6 +4,7 @@ from ost_visualizer.application.services.mcp_read_service import (
     McpReadError,
     McpReadService,
 )
+from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.file_results import BidLoadResult, FileLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import (
@@ -71,18 +72,21 @@ class FakeProjectRepository:
             uid="takeoff-1",
             condition_uid="cond-1",
             page_uid="page-1",
+            area_uid="area-1",
             position=[1.0, 2.0],
         )
         t2 = Takeoff(
             uid="takeoff-2",
             condition_uid="cond-1",
             page_uid="page-1",
+            area_uid="area-1",
             position=[3.0, 4.0],
         )
         t3 = Takeoff(
             uid="takeoff-hidden",
             condition_uid="cond-2",
             page_uid="page-2",
+            area_uid="0",
             position=[5.0, 6.0],
         )
         page1.takeoffs = [t1, t2]
@@ -90,6 +94,24 @@ class FakeProjectRepository:
         self.bid_data = BidLoadResult(
             bid_conditions={"cond-1": visible, "cond-2": hidden, "cond-3": unused},
             bid_takeoffs=[t1, t2, t3],
+            bid_areas={
+                "area-1": BidArea(
+                    uid="area-1",
+                    bid_uid="bid-1",
+                    parent_uid="",
+                    name="Level One Deck",
+                    sequence=1,
+                    guid="{AREA-1}",
+                ),
+                "area-2": BidArea(
+                    uid="area-2",
+                    bid_uid="bid-1",
+                    parent_uid="area-1",
+                    name="Nested Area",
+                    sequence=2,
+                    guid="{AREA-2}",
+                ),
+            },
             pages={"page-1": page1, "page-2": page2, "page-3": page3},
             selected_page_uid="page-2",
         )
@@ -137,8 +159,32 @@ class McpReadServiceTests(unittest.TestCase):
     def test_list_takeoffs_filters_visible_and_limit(self):
         takeoffs = self.service.list_takeoffs("db-1", "bid-1", limit=1)
         self.assertEqual([t.uid for t in takeoffs], ["takeoff-1"])
+        self.assertEqual(takeoffs[0].area_name, "Level One Deck")
         all_takeoffs = self.service.list_takeoffs("db-1", "bid-1", visible_only=False)
         self.assertEqual(len(all_takeoffs), 3)
+        self.assertIsNone(all_takeoffs[2].area_name)
+
+    def test_area_tools_report_metadata_and_usage(self):
+        areas = self.service.list_areas("db-1", "bid-1")
+        self.assertEqual([area.uid for area in areas], ["area-1", "area-2"])
+        self.assertEqual(areas[0].name, "Level One Deck")
+        self.assertEqual(areas[0].guid, "{AREA-1}")
+        self.assertEqual(areas[0].child_uids, ["area-2"])
+        self.assertEqual(areas[0].takeoff_count, 2)
+        self.assertEqual(areas[0].visible_takeoff_count, 2)
+        self.assertEqual(areas[0].page_count, 1)
+        summary = self.service.get_area_summary("db-1", "bid-1", "area-1")
+        self.assertEqual(summary.status, "ok")
+        self.assertEqual(summary.area.name, "Level One Deck")
+        self.assertEqual([page.page_uid for page in summary.pages], ["page-1"])
+        self.assertEqual([child.uid for child in summary.children], ["area-2"])
+
+    def test_unassigned_area_summary_uses_clear_synthetic_metadata(self):
+        summary = self.service.get_area_summary("db-1", "bid-1", "0")
+        self.assertEqual(summary.area.uid, "0")
+        self.assertEqual(summary.area.name, "Unassigned")
+        self.assertEqual(summary.area.takeoff_count, 1)
+        self.assertEqual([page.page_uid for page in summary.pages], ["page-2"])
 
     def test_quantity_summary_reuses_domain_quantity_logic(self):
         quantities = self.service.get_page_quantity_summary("db-1", "bid-1", "page-1")
@@ -150,6 +196,8 @@ class McpReadServiceTests(unittest.TestCase):
     def test_search_takeoffs_uses_narrow_text_fields(self):
         matches = self.service.search_takeoffs("db-1", "bid-1", "visible")
         self.assertEqual([m.uid for m in matches], ["takeoff-1", "takeoff-2"])
+        by_area_name = self.service.search_takeoffs("db-1", "bid-1", "deck")
+        self.assertEqual([m.uid for m in by_area_name], ["takeoff-1", "takeoff-2"])
         filtered = self.service.search_takeoffs(
             "db-1", "bid-1", "visible", condition_uid="cond-1", limit=1
         )
@@ -176,6 +224,7 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual(summary.selected_takeoff_count, 1)
         self.assertEqual(summary.missing_takeoff_uids, ["missing"])
         self.assertEqual(summary.takeoffs[0].uid, "takeoff-2")
+        self.assertEqual(summary.takeoffs[0].area_name, "Level One Deck")
         self.assertEqual(summary.pages[0].page_uid, "page-1")
 
     def test_selected_takeoffs_summary_handles_no_selection(self):

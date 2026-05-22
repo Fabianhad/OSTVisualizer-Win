@@ -86,6 +86,28 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(deleted, [])
         sidebar.close()
 
+    def test_double_click_non_name_condition_cell_requests_edit_dialog(self):
+        sidebar, _deleted = self._make_sidebar_with_selected_condition()
+        edits = []
+        sidebar.edit_requested.connect(lambda uids: edits.append(list(uids)))
+        sidebar.set_edit_enabled(True)
+
+        sidebar._on_item_double_clicked(sidebar._condition_items["c1"], 0)
+
+        self.assertEqual(edits, [["c1"]])
+        sidebar.close()
+
+    def test_double_click_name_condition_cell_keeps_inline_rename_behavior(self):
+        sidebar, _deleted = self._make_sidebar_with_selected_condition()
+        edits = []
+        sidebar.edit_requested.connect(lambda uids: edits.append(list(uids)))
+        sidebar.set_edit_enabled(True)
+
+        sidebar._on_item_double_clicked(sidebar._condition_items["c1"], 1)
+
+        self.assertEqual(edits, [])
+        sidebar.close()
+
     def test_edit_condition_dialog_initializes_style_locked_when_takeoffs_exist(self):
         condition = Condition(
             uid="c1",

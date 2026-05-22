@@ -582,7 +582,10 @@ def _calc_raw_for_area(
     return 0.0
 
 
-def _calc_slope_factor(rise: float, run: float) -> float:
+def _calc_slope_factor(rise: float, run: float, use_absolute: bool = False) -> float:
+    if use_absolute:
+        rise = abs(rise)
+        run = abs(run)
     if run > 0.0 and rise > 0.0:
         return math.sqrt(rise * rise + run * run) / run
     return 1.0
@@ -612,7 +615,11 @@ def calculate_condition_quantities(
     curve: int = -1,
 ) -> Tuple[float, float, float]:
     pos = position or []
-    slope = _calc_slope_factor(rise, run)
+    slope = _calc_slope_factor(
+        rise,
+        run,
+        use_absolute=condition_type == Condition.TYPE_AREA,
+    )
     if condition_type == Condition.TYPE_LINEAR:
         length_inches = _calc_linear_length(pos, curve) * slope
     elif condition_type == Condition.TYPE_AREA:

@@ -319,41 +319,9 @@ class SettingsReaderMixin:
         try:
             with self._connection(file_path) as conn:
                 schema = MdbSchemaInspector(conn, self.logger)
-                if schema.optional_table_missing("BidAreas"):
-                    return []
-                schema.require_column("BidAreas", "UID")
-                schema.require_column("BidAreas", "BidUID")
-                area_select = ", ".join(
-                    [
-                        "[UID]",
-                        "[BidUID]",
-                        schema.optional_column("BidAreas", "ParentUID", "NULL"),
-                        schema.optional_column("BidAreas", "Name", "NULL"),
-                        schema.optional_column("BidAreas", "Sequence", "0"),
-                    ]
+                return list(
+                    self._parse_bid_areas_for_bid(conn, bid_uid, schema).values()
                 )
-                order_clause = schema.order_by_existing(
-                    "BidAreas", ("Sequence",), "[UID]"
-                )
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        f"SELECT {area_select} "
-                        f"FROM [BidAreas] WHERE [BidUID] = ? ORDER BY {order_clause}",
-                        bid_uid,
-                    )
-                    rows = cursor.fetchall()
-            result = []
-            for row in rows:
-                result.append(
-                    BidArea(
-                        uid=str(row[0]),
-                        bid_uid=str(row[1]),
-                        parent_uid=str(row[2]) if row[2] is not None else "",
-                        name=str(row[3]) if row[3] else "",
-                        sequence=int(row[4]) if row[4] is not None else 0,
-                    )
-                )
-            return result
         except Exception:
             self.logger.warning(
                 "Could not load bid areas for bid %s from %s", bid_uid, file_path

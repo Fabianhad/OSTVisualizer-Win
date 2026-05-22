@@ -50,6 +50,7 @@ class MdbFileParser(IFileParser):
         (
             bid_conditions,
             bid_takeoffs,
+            bid_areas,
             bid_pages,
             page_area_selections,
             cdn_types,
@@ -62,6 +63,7 @@ class MdbFileParser(IFileParser):
         return BidLoadResult(
             bid_conditions=bid_conditions,
             bid_takeoffs=bid_takeoffs,
+            bid_areas=bid_areas,
             bid_pages=bid_pages,
             pages=pages,
             page_area_selections=page_area_selections,

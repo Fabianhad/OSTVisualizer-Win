@@ -68,6 +68,9 @@ class IMdbWriter(Protocol):
     def save_takeoffs_area(
         self, db_path: str, takeoff_uids: List[str], area_uid: str
     ) -> bool: ...
+    def save_takeoffs_condition(
+        self, db_path: str, takeoff_uids: List[str], condition_uid: str
+    ) -> bool: ...
     def set_takeoffs_negative(
         self, db_path: str, takeoff_uids: List[str], is_negative: bool
     ) -> bool: ...

@@ -292,6 +292,7 @@ class UIEventCoordinator:
         viewer.set_negative_check_fn(self._check_takeoffs_all_negative)
         viewer.set_curved_check_fn(self._check_takeoffs_curved_state)
         viewer.set_selected_context_state_fn(self._selected_takeoff_context_state)
+        viewer.set_context_menu_conditions_fn(self.project_data.get_bid_conditions)
         self._sync_overlay_display_mode(self.ui_state_manager.active_page_uid)
         self._viewer.update_license_visualization_state()
         self._sync_embedded_renderer_exposure()
@@ -324,6 +325,7 @@ class UIEventCoordinator:
                 negative_check_fn=self._check_takeoffs_all_negative,
                 curved_check_fn=self._check_takeoffs_curved_state,
                 selected_context_state_fn=self._selected_takeoff_context_state,
+                context_menu_conditions_fn=self.project_data.get_bid_conditions,
             )
             window.mesh_clicked.connect(self._on_mesh_window_clicked)
             if initial_geometry is not None:
@@ -334,6 +336,9 @@ class UIEventCoordinator:
                 )
                 window.assign_to_area_requested.connect(
                     self._plan_view_handler.on_assign_to_area
+                )
+                window.reassign_condition_requested.connect(
+                    self._plan_view_handler.on_reassign_condition
                 )
                 window.set_negative_requested.connect(
                     self._plan_view_handler.on_set_negative
@@ -769,6 +774,7 @@ class UIEventCoordinator:
             job_statuses=job_statuses,
             used_job_status_uids=used_job_status_uids,
             save_fn=lambda changes: self._save_master_job_statuses(file_path, changes),
+            menu_mode=True,
         )
         try:
             exec_with_ost_blocking(dialog, self.event_bus)

@@ -14,6 +14,7 @@ from ..utils.view_context_menu import (
     add_context_clipboard_actions,
     add_context_command,
     add_context_page_actions,
+    add_reassign_condition_submenu,
 )
 from . import ost_renderer
 
@@ -28,6 +29,7 @@ class OpenGLViewer(QtWidgets.QWidget):
     mesh_clicked = Signal(list)
     elements_deleted = Signal(list)
     assign_to_area_requested = Signal(list)
+    reassign_condition_requested = Signal(list, str)
     set_negative_requested = Signal(list, bool)
     set_curved_requested = Signal(list, bool)
     overlay_display_mode_requested = Signal(int)
@@ -68,6 +70,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._image_show_mode: int = 0
         self._context_menu_command_trigger = None
         self._context_menu_action_state = None
+        self._context_menu_conditions_fn = lambda: {}
         self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.DefaultContextMenu)
 
     def paintEngine(self) -> None:
@@ -331,6 +334,9 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._context_menu_command_trigger = trigger_fn
         self._context_menu_action_state = action_state_fn
 
+    def set_context_menu_conditions_fn(self, fn) -> None:
+        self._context_menu_conditions_fn = fn or (lambda: {})
+
     def set_cursor_mode(self, mode: str) -> None:
         self._cursor_mode = mode
         if mode == "zoom" and self._zoom_cursor:
@@ -453,6 +459,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         assign_action = None
         negative_action = None
         curved_action = None
+        reassign_condition_menu = None
         if has_selected_takeoffs:
             if selected_state.show_curved:
                 curved_action = ContextMenuManager.add_action(
@@ -482,6 +489,10 @@ class OpenGLViewer(QtWidgets.QWidget):
             if curved_action or assign_action or negative_action:
                 menu.addSeparator()
         overlay_action, original_action = self._add_common_context_submenus(menu)
+        if has_selected_takeoffs:
+            reassign_condition_menu = add_reassign_condition_submenu(
+                menu, dict(self._context_menu_conditions_fn() or {})
+            )
         menu.addSeparator()
         if has_selected_takeoffs:
             self._add_context_clipboard_actions(menu)
@@ -503,7 +514,12 @@ class OpenGLViewer(QtWidgets.QWidget):
         if not has_selected_takeoffs:
             event.accept()
             return
-        if action == assign_action:
+        if reassign_condition_menu and action in reassign_condition_menu.actions:
+            self.reassign_condition_requested.emit(
+                list(self._selected_takeoff_uids),
+                reassign_condition_menu.actions[action],
+            )
+        elif action == assign_action:
             self.assign_to_area_requested.emit(list(self._selected_takeoff_uids))
         elif action == negative_action:
             self.set_negative_requested.emit(

@@ -1,5 +1,5 @@
 import math
-from typing import List
+from typing import List, Optional
 from PySide6 import QtCore
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QMouseEvent, QPainterPath, QTransform, QWheelEvent
@@ -12,6 +12,7 @@ from ....utils.view_context_menu import (
     add_context_clipboard_actions,
     add_context_command,
     add_context_page_actions,
+    add_reassign_condition_submenu,
     build_selected_takeoff_context_state,
 )
 from .geometry_utils import (
@@ -223,7 +224,7 @@ class InputHandlerMixin:
         ):
             self.handle_paste_backout_press(event)
         elif (
-            self._cursor_mode == "rotate"
+            self._cursor_mode in ("rotate", "slope_rotate")
             and event.button() == Qt.MouseButton.LeftButton
         ):
             near_handle = False
@@ -245,6 +246,16 @@ class InputHandlerMixin:
                 self._rotation_drag_orig_positions = {}
                 self._rotation_drag_orig_rotations = {}
                 self._rotation_drag_preview_items = []
+                if self._cursor_mode == "slope_rotate":
+                    uid = self._rotate_handle_uid
+                    takeoff = self._current_takeoffs.get(uid)
+                    if takeoff is not None:
+                        self._rotation_drag_uid = uid
+                        self._rotation_drag_orig_rotations[uid] = takeoff.rotation
+                    else:
+                        self._rotation_drag_active = False
+                    event.accept()
+                    return
                 rotation_preview_uids = self._selected_rotation_preview_uids()
                 for sel_uid in rotation_preview_uids:
                     t = self._current_takeoffs.get(sel_uid)
@@ -309,7 +320,10 @@ class InputHandlerMixin:
             "zoom",
             "place",
         ):
-            if self._cursor_mode in ("select", "rotate") and self._selection_enabled:
+            if (
+                self._cursor_mode in ("select", "rotate", "slope_rotate")
+                and self._selection_enabled
+            ):
                 ctrl_zoom_requested = (
                     bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
                     or self._ctrl_held
@@ -529,6 +543,11 @@ class InputHandlerMixin:
                 snapped_deg = round(self._rotation_drag_accumulated_deg / 15.0) * 15.0
             if snapped_deg != self._rotation_drag_snapped_deg:
                 single = len(self._selected_uids) == 1
+                if self._cursor_mode == "slope_rotate":
+                    self._rotation_drag_snapped_deg = snapped_deg
+                    self._update_rotation_handle_preview(snapped_deg)
+                    event.accept()
+                    return
                 if single:
                     takeoff = self._current_takeoffs.get(self._rotation_drag_uid)
                     if takeoff and takeoff.is_hole and takeoff.parent_uid:
@@ -547,17 +566,12 @@ class InputHandlerMixin:
                 self._rotation_drag_snapped_deg = snapped_deg
                 for item in self._rotation_drag_preview_items:
                     item.setRotation(snapped_deg)
-                new_angle_rad = math.radians(-90.0 + snapped_deg)
-                cx = self._rotate_center_scene.x()
-                cy = self._rotate_center_scene.y()
-                new_hx = cx + self._rotate_handle_radius * math.cos(new_angle_rad)
-                new_hy = cy + self._rotate_handle_radius * math.sin(new_angle_rad)
-                self._rotate_handle_item.setPos(new_hx, new_hy)
-                self._rotate_line_item.setLine(cx, cy, new_hx, new_hy)
-                self._rotate_line_outline_item.setLine(cx, cy, new_hx, new_hy)
+                self._update_rotation_handle_preview(snapped_deg)
                 rad = math.radians(snapped_deg)
                 cos_a = math.cos(rad)
                 sin_a = math.sin(rad)
+                cx = self._rotate_center_scene.x()
+                cy = self._rotate_center_scene.y()
                 for handle_item, orig_pos in self._rotation_drag_handle_origins:
                     hdx = orig_pos.x() - cx
                     hdy = orig_pos.y() - cy
@@ -729,6 +743,8 @@ class InputHandlerMixin:
         if self._rotation_drag_active and event.button() == Qt.MouseButton.LeftButton:
             snapped_deg = self._rotation_drag_snapped_deg
             single = len(self._selected_uids) == 1
+            slope_mode = self._cursor_mode == "slope_rotate"
+            rotation_drag_uid = self._rotation_drag_uid
             self._rotation_drag_active = False
             self._rotation_drag_uid = None
             self._rotation_drag_last_angle = 0.0
@@ -737,7 +753,9 @@ class InputHandlerMixin:
             self._rotation_drag_preview_items = []
             self._rotation_drag_handle_origins = []
             if abs(snapped_deg) > 1e-9:
-                if single:
+                if slope_mode:
+                    self._apply_slope_rotation(rotation_drag_uid, snapped_deg)
+                elif single:
                     uid = next(iter(self._selected_uids))
                     self._apply_single_rotation(uid, snapped_deg)
                 else:
@@ -1184,6 +1202,65 @@ class InputHandlerMixin:
                 x1 += dx
         return x1, y1, x2, y2
 
+    def _update_rotation_handle_preview(self, snapped_deg: float) -> None:
+        if (
+            self._rotate_handle_item is None
+            or self._rotate_line_item is None
+            or self._rotate_line_outline_item is None
+        ):
+            return
+        new_angle_rad = math.radians(self._rotate_handle_start_angle_deg + snapped_deg)
+        cx = self._rotate_center_scene.x()
+        cy = self._rotate_center_scene.y()
+        new_hx = cx + self._rotate_handle_radius * math.cos(new_angle_rad)
+        new_hy = cy + self._rotate_handle_radius * math.sin(new_angle_rad)
+        self._rotate_handle_item.setPos(new_hx, new_hy)
+        self._rotate_line_item.setLine(cx, cy, new_hx, new_hy)
+        self._rotate_line_outline_item.setLine(cx, cy, new_hx, new_hy)
+
+    def _selected_area_slope_uid(self) -> str:
+        if not self._selection_enabled or len(self._selected_uids) != 1:
+            return ""
+        uid = next(iter(self._selected_uids))
+        takeoff = self._current_takeoffs.get(uid)
+        if not takeoff or takeoff.is_hole or len(takeoff.position) < 6:
+            return ""
+        condition = self._current_conditions.get(takeoff.condition_uid)
+        if (
+            not condition
+            or not condition.is_area
+            or not condition.layer_visible
+            or not abs(condition.rise)
+            or not abs(condition.run)
+        ):
+            return ""
+        return uid
+
+    def _create_slope_rotate_handle(self) -> bool:
+        uid = self._selected_area_slope_uid()
+        if not uid:
+            return False
+        takeoff = self._current_takeoffs[uid]
+        return self._create_rotate_handle(
+            {uid},
+            start_angle_degrees=math.degrees(-takeoff.rotation),
+            slope_mode=True,
+        )
+
+    def _apply_slope_rotation(self, uid: Optional[str], snapped_deg: float) -> None:
+        if not uid:
+            return
+        takeoff = self._current_takeoffs.get(uid)
+        if takeoff is None:
+            return
+        orig_rotation = self._rotation_drag_orig_rotations.get(uid, takeoff.rotation)
+        if uid not in self._rotation_before_edit:
+            self._rotation_before_edit[uid] = orig_rotation
+        new_rotation = orig_rotation - math.radians(snapped_deg)
+        takeoff.rotation = new_rotation
+        self._dirty_rotations[uid] = new_rotation
+        self._flush_dirty_rotations()
+
     def _apply_single_rotation(self, uid: str, snapped_deg: float) -> None:
         ann = self._current_annotations.get(uid)
         if ann and ann.is_interactive:
@@ -1405,6 +1482,11 @@ class InputHandlerMixin:
             self._flush_rotation_group()
 
     def _restore_rotation_handles_if_needed(self) -> None:
+        if self._cursor_mode == "slope_rotate":
+            if not self._create_slope_rotate_handle():
+                self._apply_cursor_mode("select")
+                self.cursor_mode_change_requested.emit("select")
+            return
         if self._cursor_mode != "rotate":
             return
         if not self._selected_uids:
@@ -1437,6 +1519,16 @@ class InputHandlerMixin:
                 event.accept()
                 return
             if event.key() == Qt.Key.Key_R and self._selected_uids:
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    if self._cursor_mode == "slope_rotate":
+                        self._remove_rotate_handle()
+                        self._apply_cursor_mode("select")
+                        self.cursor_mode_change_requested.emit("select")
+                    elif self._create_slope_rotate_handle():
+                        self._apply_cursor_mode("slope_rotate")
+                        self.cursor_mode_change_requested.emit("slope_rotate")
+                    event.accept()
+                    return
                 if self._rotate_handle_uid is not None:
                     self._remove_rotate_handle()
                     self._apply_cursor_mode("select")
@@ -1447,7 +1539,10 @@ class InputHandlerMixin:
                         self.cursor_mode_change_requested.emit("rotate")
                 event.accept()
                 return
-        if self._cursor_mode == "rotate" and event.key() == Qt.Key.Key_Escape:
+        if (
+            self._cursor_mode in ("rotate", "slope_rotate")
+            and event.key() == Qt.Key.Key_Escape
+        ):
             self._remove_rotate_handle()
             self._apply_cursor_mode("select")
             self.cursor_mode_change_requested.emit("select")
@@ -1581,13 +1676,17 @@ class InputHandlerMixin:
         active_press = (
             self._select_band_origin is not None or self._rotation_drag_active
         )
-        if self._ctrl_held and self._cursor_mode != "rotate" and not active_press:
+        if (
+            self._ctrl_held
+            and self._cursor_mode not in ("rotate", "slope_rotate")
+            and not active_press
+        ):
             return self._zoom_cursor
         if self._cursor_mode == "zoom":
             return self._zoom_cursor
         if self._cursor_mode == "pan":
             return Qt.CursorShape.OpenHandCursor
-        if self._cursor_mode == "rotate":
+        if self._cursor_mode in ("rotate", "slope_rotate"):
             if self._rotate_handle_item is not None and vp_pos is not None:
                 handle_vp = self.mapFromScene(self._rotate_handle_item.pos())
                 dist = math.hypot(
@@ -1749,6 +1848,9 @@ class InputHandlerMixin:
         current_mode, overlay_action, original_action = (
             self._add_common_context_submenus(menu)
         )
+        reassign_condition_menu = add_reassign_condition_submenu(
+            menu, self._current_conditions
+        )
         menu.addSeparator()
         self._add_context_clipboard_actions(menu)
         menu.addSeparator()
@@ -1764,7 +1866,11 @@ class InputHandlerMixin:
             event.accept()
             return
         selected_takeoff_uids = list(selected_state.takeoff_uids)
-        if assign_action and action == assign_action:
+        if reassign_condition_menu and action in reassign_condition_menu.actions:
+            self.reassign_condition_requested.emit(
+                selected_takeoff_uids, reassign_condition_menu.actions[action]
+            )
+        elif assign_action and action == assign_action:
             self.assign_to_area_requested.emit(selected_takeoff_uids)
         elif negative_action and action == negative_action:
             self.set_negative_requested.emit(

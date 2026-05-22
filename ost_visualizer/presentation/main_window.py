@@ -199,6 +199,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.opengl_viewer.assign_to_area_requested.connect(
             components.plan_view_handler.on_assign_to_area
         )
+        self.opengl_viewer.reassign_condition_requested.connect(
+            components.plan_view_handler.on_reassign_condition
+        )
         self.opengl_viewer.set_negative_requested.connect(
             components.plan_view_handler.on_set_negative
         )

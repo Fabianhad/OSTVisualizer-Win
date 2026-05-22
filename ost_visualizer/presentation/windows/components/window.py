@@ -175,6 +175,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         nav_layout.addWidget(self._btn_prev)
         nav_layout.addWidget(self._page_combo, 1)
         nav_layout.addWidget(self._btn_next)
+        nav_layout.addWidget(QtWidgets.QLabel("View"))
         nav_layout.addWidget(self._named_view_combo, 1)
         if self._config.show_scale_combo:
             self._scale_combo = QtWidgets.QComboBox()

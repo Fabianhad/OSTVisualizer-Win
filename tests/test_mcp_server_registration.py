@@ -30,6 +30,8 @@ class McpServerRegistrationTests(unittest.TestCase):
         self.assertIn("get_selected_pages_summary", tool_names)
         self.assertIn("get_selected_takeoffs_summary", tool_names)
         self.assertIn("search_conditions", tool_names)
+        self.assertIn("list_areas", tool_names)
+        self.assertIn("get_area_summary", tool_names)
         self.assertIn("get_bid_quantity_summary", tool_names)
         self.assertIn("review_scope_gaps", tool_names)
         self.assertIn("find_duplicate_conditions", tool_names)

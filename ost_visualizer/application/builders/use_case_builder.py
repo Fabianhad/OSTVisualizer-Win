@@ -76,6 +76,9 @@ from ..use_cases.project.save_takeoff_rotations_use_case import (
     SaveTakeoffRotationsUseCase,
 )
 from ..use_cases.project.save_takeoffs_area_use_case import SaveTakeoffsAreaUseCase
+from ..use_cases.project.save_takeoffs_condition_use_case import (
+    SaveTakeoffsConditionUseCase,
+)
 from ..use_cases.project.set_takeoff_curve_use_case import SetTakeoffCurveUseCase
 from ..use_cases.project.set_takeoffs_negative_use_case import (
     SetTakeoffsNegativeUseCase,
@@ -222,6 +225,9 @@ class UseCaseBuilder:
         save_takeoffs_area_uc = SaveTakeoffsAreaUseCase(
             mdb_writer, write_logger.getChild("SaveTakeoffsArea")
         )
+        save_takeoffs_condition_uc = SaveTakeoffsConditionUseCase(
+            mdb_writer, write_logger.getChild("SaveTakeoffsCondition")
+        )
         set_takeoffs_negative_uc = SetTakeoffsNegativeUseCase(
             mdb_writer, write_logger.getChild("SetTakeoffsNegative")
         )
@@ -356,6 +362,9 @@ class UseCaseBuilder:
             "save_takeoffs_area_use_case", save_takeoffs_area_uc
         )
         self.container.register_instance(
+            "save_takeoffs_condition_use_case", save_takeoffs_condition_uc
+        )
+        self.container.register_instance(
             "set_takeoffs_negative_use_case", set_takeoffs_negative_uc
         )
         self.container.register_instance("insert_takeoffs_use_case", insert_takeoffs_uc)
@@ -388,6 +397,7 @@ class UseCaseBuilder:
                 save_takeoff_positions=save_takeoff_positions_uc,
                 save_takeoff_rotations=save_takeoff_rotations_uc,
                 save_takeoffs_area=save_takeoffs_area_uc,
+                save_takeoffs_condition=save_takeoffs_condition_uc,
                 set_takeoffs_negative=set_takeoffs_negative_uc,
                 set_takeoff_curve=set_takeoff_curve_uc,
                 insert_takeoffs=insert_takeoffs_uc,

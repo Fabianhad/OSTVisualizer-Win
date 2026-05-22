@@ -44,6 +44,7 @@ class PlanViewActionHandler:
     def connect_signals(self) -> None:
         pv = self._plan_view
         pv.assign_to_area_requested.connect(self.on_assign_to_area)
+        pv.reassign_condition_requested.connect(self.on_reassign_condition)
         pv.set_negative_requested.connect(self.on_set_negative)
         pv.set_curved_requested.connect(self.on_set_curved)
         pv.positions_flushed.connect(self.on_positions_flushed)
@@ -176,6 +177,19 @@ class PlanViewActionHandler:
             return
         area_uid = self._page_settings_bar.get_current_area_uid()
         self._write_svc.save_takeoffs_area(db_path, takeoff_uids, area_uid)
+
+    def on_reassign_condition(self, uids: list, condition_uid: str) -> None:
+        db_path = self._data_svc.get_current_bid_file_path()
+        takeoff_uids = self._takeoff_uids_only(uids)
+        if (
+            not db_path
+            or not takeoff_uids
+            or condition_uid not in self._data_svc.get_bid_conditions()
+        ):
+            return
+        self._write_svc.save_takeoffs_condition(
+            db_path, takeoff_uids, str(condition_uid)
+        )
 
     def on_set_negative(self, uids: list, is_negative: bool) -> None:
         db_path = self._data_svc.get_current_bid_file_path()

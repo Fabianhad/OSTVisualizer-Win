@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 import pyodbc
 from ....domain.dtos.raw_bid_data_dto import RawBidData
+from ....domain.entities.area import BidArea
 from ....domain.entities.cdn_type import CdnType
 from ....domain.entities.condition import Condition
 from ....domain.entities.condition_folder import BidConditionFolder
@@ -21,6 +22,7 @@ from ..schema_compatibility import MdbSchemaInspector
 
 BidConditions = Dict[str, Condition]
 BidTakeoffs = List[Takeoff]
+BidAreas = Dict[str, BidArea]
 BidPages = Dict[str, BidPageInfo]
 BidPageAreaSelections = Dict[str, Optional[str]]
 CdnTypes = Dict[str, CdnType]
@@ -31,6 +33,7 @@ class BidDataReaderMixin:
     def get_bid_data(self, file_path: str, bid_uid: str) -> Tuple[
         BidConditions,
         BidTakeoffs,
+        BidAreas,
         BidPages,
         BidPageAreaSelections,
         CdnTypes,
@@ -57,6 +60,7 @@ class BidDataReaderMixin:
             bid_pages = self._parse_bid_pages_for_bid(
                 connection, bid_uid, bid_layers, schema
             )
+            bid_areas = self._parse_bid_areas_for_bid(connection, bid_uid, schema)
             page_area_selections = self._parse_page_area_selections_for_bid(
                 connection, bid_pages, schema
             )
@@ -76,6 +80,7 @@ class BidDataReaderMixin:
             return (
                 bid_conditions,
                 bid_takeoffs,
+                bid_areas,
                 bid_pages,
                 page_area_selections,
                 cdn_types,
@@ -105,6 +110,44 @@ class BidDataReaderMixin:
         except Exception:
             pass
         return None
+
+    def _parse_bid_areas_for_bid(
+        self,
+        connection: "pyodbc.Connection",
+        bid_uid: str,
+        schema: MdbSchemaInspector,
+    ) -> BidAreas:
+        areas: BidAreas = {}
+        if schema.optional_table_missing("BidAreas"):
+            return areas
+        schema.require_column("BidAreas", "UID")
+        schema.require_column("BidAreas", "BidUID")
+        parent_col = schema.optional_column("BidAreas", "ParentUID", "NULL")
+        name_col = schema.optional_column("BidAreas", "Name", "NULL")
+        sequence_col = schema.optional_column("BidAreas", "Sequence", "0")
+        guid_col = schema.optional_column("BidAreas", "GUID", "NULL")
+        order_clause = schema.order_by_existing("BidAreas", ("Sequence",), "[UID]")
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT [UID], [BidUID], "
+                    f"{parent_col}, {name_col}, {sequence_col}, {guid_col} "
+                    f"FROM [BidAreas] WHERE [BidUID] = ? ORDER BY {order_clause}",
+                    bid_uid,
+                )
+                for row in cursor.fetchall():
+                    uid = str(row[0])
+                    areas[uid] = BidArea(
+                        uid=uid,
+                        bid_uid=str(row[1]),
+                        parent_uid=str(row[2]) if row[2] is not None else "",
+                        name=decode_value(row[3]) if row[3] else "",
+                        sequence=int(row[4]) if row[4] is not None else 0,
+                        guid=str(row[5]) if row[5] else "",
+                    )
+        except pyodbc.Error:
+            pass
+        return areas
 
     def get_database_statistics(self, file_path: str) -> Dict[str, int]:
         with self._connection(file_path) as connection:

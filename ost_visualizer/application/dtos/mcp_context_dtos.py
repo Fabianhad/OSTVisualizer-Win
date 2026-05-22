@@ -82,6 +82,7 @@ class McpTakeoffDto:
     page_uid: str = ""
     page_name: str = ""
     area_uid: str = "0"
+    area_name: Optional[str] = None
     parent_uid: str = "0"
     is_hole: bool = False
     is_negative: bool = False
@@ -123,6 +124,31 @@ class McpPageTakeoffSummaryDto:
     page_name: str
     takeoff_count: int = 0
     visible_takeoff_count: int = 0
+
+
+@dataclass
+class McpAreaDto:
+    uid: str
+    bid_uid: str
+    parent_uid: str = ""
+    name: str = ""
+    sequence: int = 0
+    guid: str = ""
+    child_uids: List[str] = field(default_factory=list)
+    takeoff_count: int = 0
+    visible_takeoff_count: int = 0
+    page_count: int = 0
+
+
+@dataclass
+class McpAreaSummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    area: McpAreaDto
+    meta: "McpResultMetaDto"
+    pages: List[McpPageTakeoffSummaryDto] = field(default_factory=list)
+    children: List[McpAreaDto] = field(default_factory=list)
 
 
 @dataclass

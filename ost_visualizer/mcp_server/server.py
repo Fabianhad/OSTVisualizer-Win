@@ -89,11 +89,14 @@ def build_mcp_server(
         bridge_client = McpBridgeClient(log)
         live_context = bridge_client.get_context()
         if live_context is not None:
-            return ok(_with_database_ids(live_context, registry), status="live_context")
+            context = _with_database_ids(live_context, registry)
+            _add_selected_area_name(context, read_service, log)
+            return ok(context, status="live_context")
         selection = registry.workspace_selection
         payload = to_jsonable(selection)
         payload["source"] = "saved_workspace"
         payload["bridge_status"] = bridge_client.last_status
+        payload["selected_area_name"] = None
         if selection.database_id and selection.bid_uid:
             try:
                 page = read_service.get_current_page(
@@ -143,6 +146,32 @@ def build_mcp_server(
     def list_conditions(database_id: str, bid_uid: str) -> dict:
         """List condition inventory for a bid; use search_conditions for lookup."""
         return run_read(read_service.list_conditions, database_id, bid_uid)
+
+    @mcp.tool()
+    def list_areas(database_id: str, bid_uid: str, limit: int = 500) -> dict:
+        """List bid area inventory with bounded usage counts."""
+        return run_limited_read(
+            read_service.list_areas,
+            limit,
+            database_id,
+            bid_uid,
+        )
+
+    @mcp.tool()
+    def get_area_summary(
+        database_id: str,
+        bid_uid: str,
+        area_uid: str,
+        limit: int = 250,
+    ) -> dict:
+        """Summarize one bid area's metadata, children, pages, and takeoff counts."""
+        return run_read(
+            read_service.get_area_summary,
+            database_id,
+            bid_uid,
+            area_uid,
+            limit,
+        )
 
     @mcp.tool()
     def search_conditions(
@@ -330,7 +359,7 @@ def build_mcp_server(
         condition_uid: Optional[str] = None,
         limit: int = 50,
     ) -> dict:
-        """Search visible takeoffs by IDs, condition name, page name, or area UID."""
+        """Search visible takeoffs by IDs, condition name, page name, area UID, or area name."""
         return run_limited_read(
             read_service.search_takeoffs,
             limit,
@@ -522,6 +551,30 @@ def _with_database_ids(payload: dict, registry: DatabaseRegistry) -> dict:
         )
     result["selected_page_uid"] = result.get("active_page_uid")
     return result
+
+
+def _add_selected_area_name(
+    payload: dict,
+    read_service: McpReadService,
+    log: logging.Logger,
+) -> None:
+    payload["selected_area_name"] = None
+    area_uid = payload.get("selected_area_uid")
+    database_id = payload.get("database_id")
+    bid_uid = payload.get("bid_uid")
+    if area_uid in (None, "", "0", 0) or not database_id or not bid_uid:
+        return
+    try:
+        payload["selected_area_name"] = read_service.resolve_area_name(
+            str(database_id),
+            str(bid_uid),
+            str(area_uid),
+        )
+    except McpReadError:
+        payload["selected_area_name"] = None
+    except Exception:
+        log.exception("Failed to resolve selected MCP area name")
+        payload["selected_area_name"] = None
 
 
 def _with_database_id(value, registry: DatabaseRegistry):

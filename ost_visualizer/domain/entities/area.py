@@ -9,6 +9,7 @@ class BidArea:
     parent_uid: str
     name: str
     sequence: int
+    guid: str = ""
 
 
 @dataclass

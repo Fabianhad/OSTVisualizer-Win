@@ -53,6 +53,9 @@ from .components.placement_mode import PlacementModeMixin
 from .components.selection_manager import SelectionManagerMixin
 from .components.zoom_handler import ZoomHandlerMixin
 
+SLOPE_ROTATE_HANDLE_HEX = "#2f9e44"
+SLOPE_ROTATE_HANDLE_RGB = (47, 158, 68)
+
 
 def _build_annotation_dict(
     annotations: List[BidAnnotation],
@@ -106,6 +109,7 @@ class TakeoffPlanView(
     page_fully_loaded = Signal()
     zoom_changed = Signal(float)
     assign_to_area_requested = Signal(list)
+    reassign_condition_requested = Signal(list, str)
     set_negative_requested = Signal(list, bool)
     set_curved_requested = Signal(list, bool)
     overlay_display_mode_requested = Signal(int)
@@ -207,6 +211,7 @@ class TakeoffPlanView(
         self._rotate_handle_uid: Optional[str] = None
         self._rotate_center_scene: QtCore.QPointF = QtCore.QPointF()
         self._rotate_handle_radius: float = 0.0
+        self._rotate_handle_start_angle_deg: float = -90.0
         self._rotation_drag_uid: Optional[str] = None
         self._rotation_drag_active: bool = False
         self._rotation_drag_last_angle: float = 0.0
@@ -521,7 +526,10 @@ class TakeoffPlanView(
 
     @property
     def is_rotate_mode_active(self) -> bool:
-        return self._cursor_mode == "rotate" or self._rotation_drag_active
+        return (
+            self._cursor_mode in ("rotate", "slope_rotate")
+            or self._rotation_drag_active
+        )
 
     @property
     def is_view_state_stable(self) -> bool:
@@ -768,7 +776,13 @@ class TakeoffPlanView(
             return ann.is_interactive and ann.can_rotate
         return uid in self._current_takeoffs
 
-    def _create_rotate_handle(self, uids=None) -> bool:
+    def _create_rotate_handle(
+        self,
+        uids=None,
+        *,
+        start_angle_degrees: Optional[float] = None,
+        slope_mode: bool = False,
+    ) -> bool:
         self._remove_rotate_handle()
         if uids is None:
             uids = set(self._selected_uids)
@@ -799,14 +813,16 @@ class TakeoffPlanView(
         center_scene = self._pt_to_scene(cx, cy)
         vp_scale = self.transform().m11()
         radius = 60.0 / vp_scale
-        handle_x = center_scene.x()
-        handle_y = center_scene.y() - radius
+        start_angle = -90.0 if start_angle_degrees is None else start_angle_degrees
+        start_angle_rad = math.radians(start_angle)
+        handle_x = center_scene.x() + radius * math.cos(start_angle_rad)
+        handle_y = center_scene.y() + radius * math.sin(start_angle_rad)
         svg_path = resource_path(
             "resources",
             "icons",
             "replay_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
         )
-        hex_color = current_text_hex()
+        hex_color = SLOPE_ROTATE_HANDLE_HEX if slope_mode else current_text_hex()
         svg_data = recolor_svg(svg_path, hex_color)
         renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg_data))
         icon_pm = QPixmap(24, 24)
@@ -835,7 +851,11 @@ class TakeoffPlanView(
         )
         line_outline.setPen(black_pen)
         line_outline.setZValue(17)
-        text_color = self.palette().color(QPalette.ColorRole.WindowText)
+        text_color = (
+            QColor(*SLOPE_ROTATE_HANDLE_RGB)
+            if slope_mode
+            else self.palette().color(QPalette.ColorRole.WindowText)
+        )
         line_pen = QPen(text_color)
         line_pen.setWidthF(1.0)
         line_pen.setCosmetic(True)
@@ -851,6 +871,7 @@ class TakeoffPlanView(
         self._rotate_handle_uid = first_uid
         self._rotate_center_scene = center_scene
         self._rotate_handle_radius = radius
+        self._rotate_handle_start_angle_deg = start_angle
         return True
 
     def _remove_rotate_handle(self) -> None:
@@ -867,6 +888,7 @@ class TakeoffPlanView(
                 self._scene.removeItem(self._rotate_line_outline_item)
             self._rotate_line_outline_item = None
         self._rotate_handle_uid = None
+        self._rotate_handle_start_angle_deg = -90.0
         self._rotation_drag_uid = None
         self._rotation_drag_active = False
 
@@ -1244,9 +1266,13 @@ class TakeoffPlanView(
         if self._selected_uids or saved_selection:
             self.update_selection_visuals()
         if self._cursor_mode == "rotate":
-            if self._selected_uids and self._create_rotate_handle(self._selected_uids):
-                pass
-            else:
+            if not (
+                self._selected_uids and self._create_rotate_handle(self._selected_uids)
+            ):
+                self._apply_cursor_mode("select")
+                self.cursor_mode_change_requested.emit("select")
+        elif self._cursor_mode == "slope_rotate":
+            if not self._create_slope_rotate_handle():
                 self._apply_cursor_mode("select")
                 self.cursor_mode_change_requested.emit("select")
         self._update_cursor()

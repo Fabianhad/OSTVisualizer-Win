@@ -45,14 +45,12 @@ def calc_area_mesh_verts(
         projs = [(x - cx) * dx + (y - cy) * dy for x, y in verts]
         min_p, max_p = min(projs), max(projs)
         span = max_p - min_p
-        slope_h = span * abs(rise_v) / abs(run_v)
-        asc = (rise_v > 0 and run_v > 0) or (rise_v < 0 and run_v < 0)
+        slope_ratio = abs(rise_v) / abs(run_v)
 
         def calc_z(x, y):
             proj = (x - cx) * dx + (y - cy) * dy
             prog = (proj - min_p) / span if span > 0 else 0
-            h_chg = span * prog * abs(rise_v) / abs(run_v)
-            return z_offset + thickness + (h_chg if asc else slope_h - h_chg)
+            return z_offset + thickness + span * prog * slope_ratio
 
         top_verts = [[x, y, calc_z(x, y)] for x, y in verts]
         if holes:

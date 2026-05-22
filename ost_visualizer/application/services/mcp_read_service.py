@@ -1,7 +1,8 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
+from ...domain.entities.area import BidArea
 from ...domain.entities.condition import Condition
 from ...domain.entities.file_results import BidLoadResult, FileLoadResult
 from ...domain.entities.hierarchy_data import (
@@ -19,6 +20,8 @@ from ...domain.services.uom_service import get_uom_label
 from ..dtos.mcp_context_dtos import (
     McpBidDto,
     McpBidQuantitySummaryDto,
+    McpAreaDto,
+    McpAreaSummaryDto,
     McpConditionDto,
     McpConditionQuantitySummaryDto,
     McpConditionSummaryDto,
@@ -160,6 +163,73 @@ class McpReadService:
             self._condition_dto(condition)
             for condition in self._ordered_conditions(bid_data)
         ]
+
+    def list_areas(
+        self, database_id: str, bid_uid: str, limit: int = 500
+    ) -> List[McpAreaDto]:
+        bid_data = self._load_bid(database_id, bid_uid)
+        counts, visible_counts, page_uids = self._area_usage_maps(bid_data)
+        children = self._area_child_uid_map(bid_data)
+        return [
+            self._area_dto(area, counts, visible_counts, page_uids, children)
+            for area in self._ordered_areas(bid_data)[: self._clean_limit(limit)]
+        ]
+
+    def get_area_summary(
+        self,
+        database_id: str,
+        bid_uid: str,
+        area_uid: str,
+        limit: int = 250,
+    ) -> McpAreaSummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        normalized_uid = self._normalize_area_uid(area_uid)
+        counts, visible_counts, page_uids = self._area_usage_maps(bid_data)
+        children = self._area_child_uid_map(bid_data)
+        if self._is_unassigned_area_uid(normalized_uid):
+            area_dto = McpAreaDto(
+                uid="0",
+                bid_uid=str(bid_uid),
+                name="Unassigned",
+                takeoff_count=counts.get("0", 0),
+                visible_takeoff_count=visible_counts.get("0", 0),
+                page_count=len(page_uids.get("0", set())),
+            )
+            child_dtos: List[McpAreaDto] = []
+        else:
+            area = bid_data.bid_areas.get(normalized_uid)
+            if area is None:
+                raise McpReadError(f"Unknown area_uid: {area_uid}")
+            area_dto = self._area_dto(area, counts, visible_counts, page_uids, children)
+            child_dtos = [
+                self._area_dto(child, counts, visible_counts, page_uids, children)
+                for child in self._ordered_areas(bid_data)
+                if child.parent_uid == area.uid
+            ]
+        area_takeoffs = [
+            takeoff
+            for takeoff in bid_data.bid_takeoffs
+            if self._normalize_area_uid(takeoff.area_uid) == area_dto.uid
+        ]
+        pages = self._page_takeoff_summaries(area_takeoffs, bid_data)
+        limited_pages, meta = self._limited(pages, limit, default=250)
+        return McpAreaSummaryDto(
+            status=self._summary_status(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            area=area_dto,
+            meta=meta,
+            pages=limited_pages,
+            children=child_dtos,
+        )
+
+    def resolve_area_name(
+        self, database_id: str, bid_uid: str, area_uid: str
+    ) -> Optional[str]:
+        if self._is_unassigned_area_uid(area_uid):
+            return None
+        bid_data = self._load_bid(database_id, bid_uid)
+        return self._area_name(area_uid, bid_data)
 
     def search_conditions(
         self,
@@ -564,6 +634,7 @@ class McpReadService:
         ):
             condition = bid_data.bid_conditions.get(takeoff.condition_uid)
             page = bid_data.pages.get(takeoff.page_uid)
+            area_name = self._area_name(takeoff.area_uid, bid_data)
             haystack = " ".join(
                 [
                     takeoff.uid,
@@ -572,6 +643,7 @@ class McpReadService:
                     page.name if page else "",
                     takeoff.page_uid,
                     takeoff.area_uid,
+                    area_name or "",
                 ]
             ).lower()
             if query_text in haystack:
@@ -717,6 +789,16 @@ class McpReadService:
             ),
         )
 
+    def _ordered_areas(self, bid_data: BidLoadResult) -> List[BidArea]:
+        return sorted(
+            bid_data.bid_areas.values(),
+            key=lambda area: (
+                area.sequence,
+                area.name.lower(),
+                area.uid,
+            ),
+        )
+
     def _page_dto(self, page: Page) -> McpPageDto:
         image_path = page.image_path or None
         return McpPageDto(
@@ -784,6 +866,7 @@ class McpReadService:
             page_uid=takeoff.page_uid,
             page_name=page.name if page else "",
             area_uid=takeoff.area_uid,
+            area_name=self._area_name(takeoff.area_uid, bid_data),
             parent_uid=takeoff.parent_uid,
             is_hole=takeoff.is_hole,
             is_negative=takeoff.is_negative,
@@ -793,6 +876,68 @@ class McpReadService:
             point_count=len(takeoff.position) // 2,
             position=list(takeoff.position) if include_geometry else None,
         )
+
+    def _area_dto(
+        self,
+        area: BidArea,
+        counts: Dict[str, int],
+        visible_counts: Dict[str, int],
+        page_uids: Dict[str, Set[str]],
+        child_uids: Dict[str, List[str]],
+    ) -> McpAreaDto:
+        return McpAreaDto(
+            uid=area.uid,
+            bid_uid=area.bid_uid,
+            parent_uid=area.parent_uid,
+            name=area.name,
+            sequence=area.sequence,
+            guid=area.guid,
+            child_uids=child_uids.get(area.uid, []),
+            takeoff_count=counts.get(area.uid, 0),
+            visible_takeoff_count=visible_counts.get(area.uid, 0),
+            page_count=len(page_uids.get(area.uid, set())),
+        )
+
+    def _area_name(
+        self,
+        area_uid: str,
+        bid_data: BidLoadResult,
+    ) -> Optional[str]:
+        normalized_uid = self._normalize_area_uid(area_uid)
+        if self._is_unassigned_area_uid(normalized_uid):
+            return None
+        area = bid_data.bid_areas.get(normalized_uid)
+        return area.name if area else None
+
+    @staticmethod
+    def _normalize_area_uid(area_uid: str) -> str:
+        return str(area_uid or "0")
+
+    @staticmethod
+    def _is_unassigned_area_uid(area_uid: str) -> bool:
+        return str(area_uid or "").strip() in {"", "0"}
+
+    def _area_usage_maps(
+        self, bid_data: BidLoadResult
+    ) -> Tuple[Dict[str, int], Dict[str, int], Dict[str, Set[str]]]:
+        counts: Dict[str, int] = defaultdict(int)
+        visible_counts: Dict[str, int] = defaultdict(int)
+        page_uids: Dict[str, Set[str]] = defaultdict(set)
+        for takeoff in bid_data.bid_takeoffs:
+            area_uid = self._normalize_area_uid(takeoff.area_uid)
+            counts[area_uid] += 1
+            if takeoff.page_uid:
+                page_uids[area_uid].add(takeoff.page_uid)
+            if is_takeoff_visible(takeoff, bid_data.bid_conditions):
+                visible_counts[area_uid] += 1
+        return counts, visible_counts, page_uids
+
+    def _area_child_uid_map(self, bid_data: BidLoadResult) -> Dict[str, List[str]]:
+        children: Dict[str, List[str]] = {}
+        for area in self._ordered_areas(bid_data):
+            if area.parent_uid and area.parent_uid != "0":
+                children.setdefault(area.parent_uid, []).append(area.uid)
+        return children
 
     def _condition_quantity_summary(
         self,

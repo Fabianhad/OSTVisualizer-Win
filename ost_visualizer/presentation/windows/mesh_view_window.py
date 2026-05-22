@@ -19,6 +19,7 @@ class MeshViewWindow(QtWidgets.QMainWindow):
     mesh_clicked = QtCore.Signal(list)
     elements_deleted = QtCore.Signal(list)
     assign_to_area_requested = QtCore.Signal(list)
+    reassign_condition_requested = QtCore.Signal(list, str)
     set_negative_requested = QtCore.Signal(list, bool)
     set_curved_requested = QtCore.Signal(list, bool)
     overlay_display_mode_requested = QtCore.Signal(int)
@@ -32,6 +33,7 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         negative_check_fn=None,
         curved_check_fn=None,
         selected_context_state_fn=None,
+        context_menu_conditions_fn=None,
         parent: Optional[QtWidgets.QWidget] = None,
     ):
         super().__init__(parent)
@@ -57,7 +59,12 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         self._resize_timer.setSingleShot(True)
         self._resize_timer.setInterval(_RESIZE_DEBOUNCE_MS)
         self._resize_timer.timeout.connect(self._on_resize_settled)
-        self._setup_ui(negative_check_fn, curved_check_fn, selected_context_state_fn)
+        self._setup_ui(
+            negative_check_fn,
+            curved_check_fn,
+            selected_context_state_fn,
+            context_menu_conditions_fn,
+        )
         ShortcutManager.register_shortcut(self, "undo", self.undo_requested.emit)
         ShortcutManager.register_shortcut(self, "redo", self.redo_requested.emit)
 
@@ -85,7 +92,11 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         self.show()
 
     def _setup_ui(
-        self, negative_check_fn, curved_check_fn, selected_context_state_fn
+        self,
+        negative_check_fn,
+        curved_check_fn,
+        selected_context_state_fn,
+        context_menu_conditions_fn,
     ) -> None:
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
@@ -155,9 +166,14 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             self.viewer.set_curved_check_fn(curved_check_fn)
         if selected_context_state_fn:
             self.viewer.set_selected_context_state_fn(selected_context_state_fn)
+        if context_menu_conditions_fn:
+            self.viewer.set_context_menu_conditions_fn(context_menu_conditions_fn)
         self.viewer.mesh_clicked.connect(self.mesh_clicked)
         self.viewer.elements_deleted.connect(self.elements_deleted)
         self.viewer.assign_to_area_requested.connect(self.assign_to_area_requested)
+        self.viewer.reassign_condition_requested.connect(
+            self.reassign_condition_requested
+        )
         self.viewer.set_negative_requested.connect(self.set_negative_requested)
         self.viewer.set_curved_requested.connect(self.set_curved_requested)
         self.viewer.overlay_display_mode_requested.connect(
@@ -286,6 +302,10 @@ class MeshViewWindow(QtWidgets.QMainWindow):
     def set_selected_context_state_fn(self, fn) -> None:
         if self.viewer:
             self.viewer.set_selected_context_state_fn(fn)
+
+    def set_context_menu_conditions_fn(self, fn) -> None:
+        if self.viewer:
+            self.viewer.set_context_menu_conditions_fn(fn)
 
     def clear_scene(self) -> None:
         if self.viewer:

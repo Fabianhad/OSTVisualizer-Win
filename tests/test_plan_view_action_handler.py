@@ -113,6 +113,7 @@ class FakeProjectData:
 class FakeWriteService:
     def __init__(self):
         self.calls = []
+        self.condition_calls = []
         self.position_calls = []
         self.rotation_calls = []
         self.delete_calls = []
@@ -138,6 +139,10 @@ class FakeWriteService:
 
     def save_takeoff_rotations(self, db_path, rotations, reload_database=True):
         self.rotation_calls.append((db_path, rotations, reload_database))
+        return True
+
+    def save_takeoffs_condition(self, db_path, uids, condition_uid):
+        self.condition_calls.append((db_path, list(uids), condition_uid))
         return True
 
     def delete_takeoffs(self, db_path, uids, reload_database=True):
@@ -267,6 +272,28 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         self.assertEqual(write.calls[0][3], True)
         self.assertEqual(data.added_takeoffs, [])
+
+    def test_reassign_condition_writes_selected_takeoffs(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+        )
+
+        handler.on_reassign_condition(["t1", "missing"], "42")
+        handler.on_reassign_condition(["t1"], "missing-condition")
+
+        self.assertEqual(write.condition_calls, [("bid.mdb", ["t1"], "42")])
 
     def test_pure_takeoff_position_edit_uses_takeoffs_changed(self):
         data = FakeProjectData()

@@ -36,6 +36,7 @@ class JobStatusesDialog(BasePickerDialog):
         used_job_status_uids: Optional[Set[str]] = None,
         initial_name: Optional[str] = None,
         save_fn=None,
+        menu_mode: bool = False,
     ):
         items = [
             {
@@ -55,6 +56,9 @@ class JobStatusesDialog(BasePickerDialog):
             used_uids=used_job_status_uids,
             initial_name=initial_name,
             save_fn=save_fn,
+            accept_button_text="OK" if menu_mode else "Select",
+            show_cancel_button=not menu_mode,
+            accept_requires_selection=not menu_mode,
         )
 
     def _configure_tree(self) -> None:
