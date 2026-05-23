@@ -179,15 +179,12 @@ class CtrlDragTests(unittest.TestCase):
         view.mapToScene = lambda point: QtCore.QPointF(point)
         view.scene_to_ost_delta = lambda dx, dy: (dx, dy)
         view.ost_to_scene_delta = lambda dx, dy: (dx, dy)
-
         press = FakeMouseEvent(x=0, y=0)
         view.mousePressEvent(press)
         self.assertTrue(press.accepted)
         self.assertEqual(set(view._drag_multi_orig_positions), {"t1", "t2"})
-
         move = FakeMouseEvent(x=6, y=6)
         view.mouseMoveEvent(move)
-
         self.assertTrue(move.accepted)
         self.assertEqual(
             view._uid_to_items["t1"][0].pos(), QtCore.QPointF(107.0, 107.0)

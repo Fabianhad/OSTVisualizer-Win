@@ -253,13 +253,14 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             window_key = self._find_tracked_detached_window_key(watched)
             if window_key is not None:
                 if (
-                    event_type == QtCore.QEvent.Type.Show
+                    window_key == self._DETACHED_MESH
+                    and event_type == QtCore.QEvent.Type.Show
                     and not self._detached_restore_applied.get(window_key, False)
                 ):
                     QtCore.QTimer.singleShot(
                         0,
-                        lambda key=window_key, window=watched: self._apply_saved_detached_state(
-                            key, window
+                        lambda window=watched: self._apply_saved_mesh_window_state(
+                            window
                         ),
                     )
                 if event_type in (
@@ -402,7 +403,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             if window.isVisible() and not self._detached_restore_applied.get(
                 key, False
             ):
-                self._apply_saved_detached_state(key, window)
+                self._apply_restore_for_tracked_window(key, window)
             return
         if previous is not None:
             try:
@@ -422,12 +423,13 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                 window_key, widget
             )
         )
-        QtCore.QTimer.singleShot(
-            0,
-            lambda window_key=key, widget=window: self._apply_saved_detached_state(
-                window_key, widget
-            ),
-        )
+        if key == self._DETACHED_MESH:
+            QtCore.QTimer.singleShot(
+                0,
+                lambda widget=window: self._apply_saved_mesh_window_state(widget),
+            )
+        else:
+            self._complete_detached_window_tracking(key, window)
         self.request_save()
 
     def _on_tracked_window_destroyed(self, key: str, window: QtWidgets.QWidget) -> None:
@@ -436,7 +438,8 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             self._detached_restore_applied.pop(key, None)
         self.request_save()
 
-    def _apply_saved_detached_state(self, key: str, window: QtWidgets.QWidget) -> None:
+    def _apply_saved_mesh_window_state(self, window: QtWidgets.QWidget) -> None:
+        key = self._DETACHED_MESH
         if self._tracked_detached_windows.get(key) is not window:
             return
         state = self._get_detached_window_state(key)
@@ -453,12 +456,25 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                     if window.isMaximized() or window.isMinimized():
                         window.showNormal()
                     window.restoreGeometry(geometry)
-            if key in (self._DETACHED_ANNOTATION, self._DETACHED_VIEW):
-                window.set_dropdown_popup_sizes(
-                    self._state.takeoff_workspace.dropdown_popup_sizes
-                )
+            self._complete_detached_window_tracking(key, window)
         except RuntimeError:
             return
+
+    def _apply_restore_for_tracked_window(
+        self, key: str, window: QtWidgets.QWidget
+    ) -> None:
+        if key == self._DETACHED_MESH:
+            self._apply_saved_mesh_window_state(window)
+            return
+        self._complete_detached_window_tracking(key, window)
+
+    def _complete_detached_window_tracking(
+        self, key: str, window: QtWidgets.QWidget
+    ) -> None:
+        if key in (self._DETACHED_ANNOTATION, self._DETACHED_VIEW):
+            window.set_dropdown_popup_sizes(
+                self._state.takeoff_workspace.dropdown_popup_sizes
+            )
         self._detached_restore_applied[key] = True
 
     def _save_now(self) -> None:

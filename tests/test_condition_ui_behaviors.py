@@ -2,11 +2,9 @@ import os
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
@@ -64,10 +62,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         sidebar.show()
         sidebar.tree.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
         self.app.processEvents()
-
         QTest.keyClick(sidebar.tree, Qt.Key.Key_Delete)
         self.app.processEvents()
-
         self.assertEqual(deleted, [["c1"]])
         sidebar.close()
 
@@ -79,10 +75,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         sidebar.show()
         text_input.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
         self.app.processEvents()
-
         QTest.keyClick(text_input, Qt.Key.Key_Delete)
         self.app.processEvents()
-
         self.assertEqual(deleted, [])
         sidebar.close()
 
@@ -91,9 +85,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         edits = []
         sidebar.edit_requested.connect(lambda uids: edits.append(list(uids)))
         sidebar.set_edit_enabled(True)
-
         sidebar._on_item_double_clicked(sidebar._condition_items["c1"], 0)
-
         self.assertEqual(edits, [["c1"]])
         sidebar.close()
 
@@ -102,9 +94,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         edits = []
         sidebar.edit_requested.connect(lambda uids: edits.append(list(uids)))
         sidebar.set_edit_enabled(True)
-
         sidebar._on_item_double_clicked(sidebar._condition_items["c1"], 1)
-
         self.assertEqual(edits, [])
         sidebar.close()
 
@@ -127,7 +117,6 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             lambda _uid, _dto: True,
             read_service=FakeReadService(),
         )
-
         self.assertFalse(dialog._style_combo.isEnabled())
         self.assertEqual(
             dialog._style_combo.toolTip(),

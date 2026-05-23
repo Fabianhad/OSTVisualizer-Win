@@ -343,6 +343,7 @@ class DetachedPageViewManager(IShutdownAware):
         )
         self._window.set_read_only(self._is_read_only())
         self._window.destroyed.connect(self._on_window_destroyed)
+        self._window.show_when_page_ready()
 
     def _get_page_data(self, view: AnnotationView) -> PageViewDto:
         page_uid = view.target_page_uid

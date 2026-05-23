@@ -92,6 +92,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._read_only: bool = False
         self._is_closing: bool = False
         self._show_timer: Optional[QtCore.QTimer] = None
+        self._initial_show_requested: bool = False
+        self._initial_page_geometry_ready: bool = False
         self._named_view_resize_focus_timer: Optional[QtCore.QTimer] = None
         self._pending_named_view_resize_focus: bool = False
         self._named_view_blank_canvas_active: bool = False
@@ -129,7 +131,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._apply_named_view_focus_after_resize
         )
         self.load_view(view, navigation_source=navigation_source)
-        self._show_timer.start(_PAGE_LOAD_TIMEOUT_MS)
 
     def set_initial_window_state(
         self, geometry: QtCore.QByteArray, is_maximized: bool
@@ -138,6 +139,15 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._initial_show_maximized = bool(is_maximized)
         if self._initial_geometry and not self._initial_geometry.isEmpty():
             self.restoreGeometry(self._initial_geometry)
+
+    def show_when_page_ready(self) -> None:
+        if self._is_closing or self.isVisible():
+            return
+        self._initial_show_requested = True
+        if self._initial_page_geometry_ready:
+            self._show_initial_window()
+        elif self._show_timer is not None and not self._show_timer.isActive():
+            self._show_timer.start(_PAGE_LOAD_TIMEOUT_MS)
 
     def _setup_ui(self) -> None:
         central = QtWidgets.QWidget()
@@ -517,9 +527,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _on_page_geometry_ready(self) -> None:
         if self._is_closing:
             return
+        self._initial_page_geometry_ready = True
         if self._show_timer and self._show_timer.isActive():
             self._show_timer.stop()
-        if not self.isVisible():
+        if self._initial_show_requested and not self.isVisible():
             self._show_initial_window()
 
     def _on_page_loaded(self) -> None:
@@ -533,7 +544,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _on_show_timeout(self) -> None:
         if self._is_closing:
             return
-        if not self.isVisible():
+        if self._initial_show_requested and not self.isVisible():
             self.logger.warning("Page loading timeout - showing window anyway")
             self._show_initial_window()
         if self._apply_named_view_focus_if_possible(require_stable_view=True):

@@ -289,10 +289,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
         )
-
         handler.on_reassign_condition(["t1", "missing"], "42")
         handler.on_reassign_condition(["t1"], "missing-condition")
-
         self.assertEqual(write.condition_calls, [("bid.mdb", ["t1"], "42")])
 
     def test_pure_takeoff_position_edit_uses_takeoffs_changed(self):

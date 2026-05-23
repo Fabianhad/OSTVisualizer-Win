@@ -38,6 +38,9 @@ class FakeDetachedWindow:
         self.dropdown_sizes = None
         self.raise_calls = 0
         self.activate_calls = 0
+        self.installed_filters = []
+        self.dropdown_size_changed = SimpleNamespace(connect=lambda callback: None)
+        self.destroyed = SimpleNamespace(connect=lambda callback: None)
 
     def isVisible(self):
         return self.visible
@@ -81,16 +84,47 @@ class FakeDetachedWindow:
     def activateWindow(self):
         self.activate_calls += 1
 
+    def installEventFilter(self, event_filter):
+        self.installed_filters.append(event_filter)
+
+    def removeEventFilter(self, event_filter):
+        if event_filter in self.installed_filters:
+            self.installed_filters.remove(event_filter)
+
+
+class FakeSignal:
+    def __init__(self, calls):
+        self._calls = calls
+
+    def connect(self, callback):
+        self._calls.append("destroyed_connected")
+
+
+class FakeConstructedWindow:
+    def __init__(self, calls):
+        self._calls = calls
+        self.destroyed = FakeSignal(calls)
+
+    def set_read_only(self, read_only):
+        self._calls.append(("set_read_only", read_only))
+
+    def show_when_page_ready(self):
+        self._calls.append("show_when_page_ready")
+
 
 class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
-    def _coordinator_for_window(self, window, *, is_maximized: bool):
+    def _coordinator_for_window(
+        self,
+        window,
+        *,
+        key=WorkspaceStateCoordinator._DETACHED_ANNOTATION,
+        is_maximized: bool,
+    ):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
-        coordinator._tracked_detached_windows = {
-            WorkspaceStateCoordinator._DETACHED_ANNOTATION: window
-        }
+        coordinator._tracked_detached_windows = {key: window}
         coordinator._detached_restore_applied = {}
         coordinator._state = WorkspaceState()
-        state = coordinator._state.detached_windows.annotation_view
+        state = coordinator._get_detached_window_state(key)
         state.geometry_b64 = _encoded_geometry()
         state.is_maximized = is_maximized
         coordinator._state.takeoff_workspace.dropdown_popup_sizes = {
@@ -98,38 +132,53 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         }
         return coordinator
 
-    def test_saved_windowed_state_restores_geometry_without_maximizing(self):
+    def test_saved_mesh_windowed_state_restores_geometry_without_maximizing(self):
         window = FakeDetachedWindow(visible=True, maximized=True)
-        coordinator = self._coordinator_for_window(window, is_maximized=False)
-        coordinator._apply_saved_detached_state(
-            WorkspaceStateCoordinator._DETACHED_ANNOTATION,
+        coordinator = self._coordinator_for_window(
             window,
+            key=WorkspaceStateCoordinator._DETACHED_MESH,
+            is_maximized=False,
         )
+        coordinator._apply_saved_mesh_window_state(window)
         self.assertEqual(window.restored_geometries, [b"geometry", b"geometry"])
         self.assertEqual(window.show_normal_calls, 1)
         self.assertEqual(window.show_maximized_calls, 0)
-        self.assertEqual(window.dropdown_sizes, {"annotation_page": [320, 360]})
 
-    def test_saved_maximized_state_restores_maximized_intentionally(self):
+    def test_saved_mesh_maximized_state_restores_maximized_intentionally(self):
         window = FakeDetachedWindow(visible=True, maximized=False)
-        coordinator = self._coordinator_for_window(window, is_maximized=True)
-        coordinator._apply_saved_detached_state(
-            WorkspaceStateCoordinator._DETACHED_ANNOTATION,
+        coordinator = self._coordinator_for_window(
             window,
+            key=WorkspaceStateCoordinator._DETACHED_MESH,
+            is_maximized=True,
         )
+        coordinator._apply_saved_mesh_window_state(window)
         self.assertEqual(window.restored_geometries, [b"geometry"])
         self.assertEqual(window.show_maximized_calls, 1)
         self.assertEqual(window.show_normal_calls, 0)
 
-    def test_hidden_window_receives_initial_state_before_show(self):
+    def test_hidden_mesh_window_receives_initial_state_before_show(self):
         window = FakeDetachedWindow(visible=False)
+        coordinator = self._coordinator_for_window(
+            window,
+            key=WorkspaceStateCoordinator._DETACHED_MESH,
+            is_maximized=False,
+        )
+        coordinator._apply_saved_mesh_window_state(window)
+        self.assertEqual(window.initial_states, [(b"geometry", False)])
+        self.assertEqual(window.show_maximized_calls, 0)
+
+    def test_tracked_page_window_keeps_pre_show_geometry(self):
+        window = FakeDetachedWindow(visible=True, maximized=True)
         coordinator = self._coordinator_for_window(window, is_maximized=False)
-        coordinator._apply_saved_detached_state(
+        coordinator._complete_detached_window_tracking(
             WorkspaceStateCoordinator._DETACHED_ANNOTATION,
             window,
         )
-        self.assertEqual(window.initial_states, [(b"geometry", False)])
+        self.assertEqual(window.initial_states, [])
+        self.assertEqual(window.restored_geometries, [])
+        self.assertEqual(window.show_normal_calls, 0)
         self.assertEqual(window.show_maximized_calls, 0)
+        self.assertEqual(window.dropdown_sizes, {"annotation_page": [320, 360]})
 
     def test_public_tracking_methods_schedule_detached_page_windows(self):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
@@ -146,7 +195,51 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         )
 
 
-class DetachedPageViewManagerBringToFrontTests(unittest.TestCase):
+class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
+    def test_create_window_defers_first_show_until_after_manager_setup(self):
+        calls = []
+        factory_kwargs = []
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.icon_provider = object()
+        manager.event_bus = object()
+        manager.project_data = SimpleNamespace(
+            get_bid=lambda bid_ref: None,
+            get_current_bid_file_path=lambda: None,
+            get_all_takeoffs=lambda: [],
+        )
+        manager.config_model = object()
+        manager._coord_factory = SimpleNamespace(create=lambda: object())
+        manager._color_service = object()
+        manager._infrastructure_provider = SimpleNamespace(
+            create_plan_view_renderers=lambda coord_system, color_service: object()
+        )
+        manager._window_factory = lambda **kwargs: factory_kwargs.append(
+            kwargs
+        ) or FakeConstructedWindow(calls)
+        manager._annotation_write_service = None
+        manager._write_service = None
+        manager.parent_window = None
+        manager._on_window_destroyed = lambda *args: None
+        manager._on_window_page_selected = lambda page_uid: None
+        manager._on_window_named_view_selected = lambda page_uid, named_view_uid: None
+        manager._on_window_scale_changed = lambda page_uid, sf1, sf2: None
+        manager._collect_pages_with_takeoffs = lambda bid_ref: set()
+        manager._is_read_only = lambda: False
+        manager._get_page_data = lambda view: SimpleNamespace(page=object())
+        view = SimpleNamespace(uid="view-1", bid_ref=None)
+        geometry = QtCore.QByteArray(b"geometry")
+        manager._create_window(view, geometry, False)
+        self.assertEqual(factory_kwargs[0]["initial_geometry"], geometry)
+        self.assertFalse(factory_kwargs[0]["initial_is_maximized"])
+        self.assertEqual(
+            calls,
+            [
+                ("set_read_only", False),
+                "destroyed_connected",
+                "show_when_page_ready",
+            ],
+        )
+
     def test_bring_to_front_does_not_maximize_windowed_minimized_window(self):
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._window = FakeDetachedWindow(minimized=True, maximized=False)

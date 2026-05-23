@@ -1,6 +1,5 @@
 import math
 import unittest
-
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.services.uom_service import (
     UOM_SQUARE_FEET,
@@ -29,7 +28,6 @@ class AreaSlopeBehaviorTests(unittest.TestCase):
             rise=-3,
             run=4,
         )
-
         self.assertAlmostEqual(q1, 125.0)
 
     def test_area_mesh_slope_direction_uses_rotation_not_rise_run_signs(self):
@@ -55,7 +53,6 @@ class AreaSlopeBehaviorTests(unittest.TestCase):
             run=1,
             rotation=math.pi,
         )
-
         self.assertTrue(has_slope)
         self.assertEqual(
             [point[2] for point in top_negative],

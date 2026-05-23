@@ -1100,6 +1100,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self._annotation_window_action.setChecked(False)
             self._annotation_window_action.blockSignals(False)
             return
+        if visible:
+            initial_geometry, initial_is_maximized = (
+                self._resolve_detached_initial_state(
+                    self._workspace_state_model.state.detached_windows.annotation_view,
+                    initial_geometry,
+                    initial_is_maximized,
+                )
+            )
         action = self._annotation_window_action
         if action.isChecked() != visible:
             action.blockSignals(True)
@@ -1142,6 +1150,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self._view_window_action.setChecked(False)
             self._view_window_action.blockSignals(False)
             return
+        if visible:
+            initial_geometry, initial_is_maximized = (
+                self._resolve_detached_initial_state(
+                    self._workspace_state_model.state.detached_windows.view_window,
+                    initial_geometry,
+                    initial_is_maximized,
+                )
+            )
         action = self._view_window_action
         if action.isChecked() != visible:
             action.blockSignals(True)
@@ -1217,6 +1233,19 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             return QtCore.QByteArray()
 
+    def _resolve_detached_initial_state(
+        self,
+        detached_state,
+        initial_geometry: QtCore.QByteArray | None,
+        initial_is_maximized: bool,
+    ) -> tuple[QtCore.QByteArray | None, bool]:
+        if initial_geometry is not None:
+            return initial_geometry, initial_is_maximized
+        saved_geometry = self._decode_workspace_geometry(detached_state.geometry_b64)
+        if saved_geometry is None:
+            return initial_geometry, initial_is_maximized
+        return saved_geometry, detached_state.is_maximized
+
     def set_mesh_window_visible(
         self,
         visible: bool,
@@ -1230,12 +1259,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self._mesh_window_action.setChecked(False)
             self._mesh_window_action.blockSignals(False)
             return
-        if visible and initial_geometry is None:
-            mesh_state = self._workspace_state_model.state.detached_windows.mesh_view
-            saved_geometry = self._decode_workspace_geometry(mesh_state.geometry_b64)
-            if saved_geometry is not None:
-                initial_geometry = saved_geometry
-                initial_is_maximized = mesh_state.is_maximized
+        if visible:
+            initial_geometry, initial_is_maximized = (
+                self._resolve_detached_initial_state(
+                    self._workspace_state_model.state.detached_windows.mesh_view,
+                    initial_geometry,
+                    initial_is_maximized,
+                )
+            )
         action = self._mesh_window_action
         if action.isChecked() != visible:
             action.blockSignals(True)
