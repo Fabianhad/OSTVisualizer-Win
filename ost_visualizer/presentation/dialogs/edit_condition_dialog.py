@@ -706,7 +706,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             row2.addWidget(self._add_length_edit)
             left_layout.addLayout(row2)
             left_layout.addStretch()
-            layout.addWidget(left_group)
+            layout.addWidget(left_group, 1)
             right_group = QtWidgets.QGroupBox("Properties")
             right_layout = QtWidgets.QVBoxLayout(right_group)
             right_layout.setSpacing(COMPACT_SPACING)
@@ -715,7 +715,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._curved_check = QtWidgets.QCheckBox("Set as Curved Segment")
             right_layout.addWidget(self._curved_check)
             right_layout.addStretch()
-            layout.addWidget(right_group)
+            layout.addWidget(right_group, 1)
             self._grid_check = None
             self._tile1_edit = None
             self._tile2_edit = None

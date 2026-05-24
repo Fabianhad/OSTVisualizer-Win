@@ -227,6 +227,22 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self._assert_removed_connect_controls_absent(dialog)
         dialog.close()
 
+    def test_linear_advanced_groups_use_equal_layout_stretch(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=1,
+        )
+        dialog = self._make_dialog(condition)
+        layout = dialog._advanced_tab.layout()
+        self.assertEqual(layout.count(), 2)
+        self.assertEqual(layout.stretch(0), 1)
+        self.assertEqual(layout.stretch(1), 1)
+        self.assertEqual(layout.itemAt(0).widget().title(), "Measurement")
+        self.assertEqual(layout.itemAt(1).widget().title(), "Properties")
+        dialog.close()
+
     def test_area_advanced_properties_hide_snap_to_linear_control(self):
         condition = Condition(
             uid="c1",

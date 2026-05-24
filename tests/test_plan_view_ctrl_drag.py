@@ -40,6 +40,9 @@ class BaseKeyHandler:
     def keyReleaseEvent(self, _event):
         pass
 
+    def mouseMoveEvent(self, _event):
+        pass
+
 
 class InputHandlerHarness(
     InputHandlerMixin, DragHandlerMixin, SelectionManagerMixin, BaseKeyHandler
@@ -92,13 +95,23 @@ class InputHandlerHarness(
 
 
 class FakeMouseEvent:
-    def __init__(self, modifiers=Qt.KeyboardModifier.NoModifier, x=10, y=10):
+    def __init__(
+        self,
+        modifiers=Qt.KeyboardModifier.NoModifier,
+        x=10,
+        y=10,
+        buttons=Qt.MouseButton.LeftButton,
+    ):
         self._modifiers = modifiers
         self._point = QtCore.QPoint(x, y)
+        self._buttons = buttons
         self.accepted = False
 
     def button(self):
         return Qt.MouseButton.LeftButton
+
+    def buttons(self):
+        return self._buttons
 
     def modifiers(self):
         return self._modifiers
@@ -207,6 +220,9 @@ class CtrlDragTests(unittest.TestCase):
         view._select_band_dragged = False
         view._press_changed_selection = False
         view._rotation_drag_active = False
+        view._panning = False
+        view._right_pan_active = False
+        view._last_pan_point = None
         view._drag_takeoff_uid = None
         view._drag_handle_index = -2
         view._drag_orig_position = []
@@ -325,6 +341,25 @@ class CtrlDragTests(unittest.TestCase):
             view._current_annotations["a1"].position,
         )
         self.assertEqual(view._drag_item_orig_positions[id(item)], item.pos())
+
+    def test_stale_drag_state_clears_when_mouse_moves_without_left_button(self):
+        view = self._make_view()
+        overlay = view._uid_to_items["t1"][0]
+        overlay_orig = overlay.pos()
+        overlay.setPos(25.0, 30.0)
+        view._drag_takeoff_uid = "t1"
+        view._drag_handle_index = -1
+        view._drag_orig_position = [0.0, 0.0, 10.0, 0.0]
+        view._drag_item_orig_positions = {id(overlay): overlay_orig}
+        view._select_band_origin = QtCore.QPointF(10.0, 10.0)
+
+        move = FakeMouseEvent(x=200, y=200, buttons=Qt.MouseButton.NoButton)
+        view.mouseMoveEvent(move)
+
+        self.assertIsNone(view._drag_takeoff_uid)
+        self.assertEqual(view._drag_handle_index, -2)
+        self.assertIsNone(view._select_band_origin)
+        self.assertEqual(overlay.pos(), overlay_orig)
 
     def test_single_click_text_annotation_selects_toolbar_target_without_editing(self):
         view, _item = self._make_selected_text_annotation_view()

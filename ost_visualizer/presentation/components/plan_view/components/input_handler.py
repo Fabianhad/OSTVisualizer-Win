@@ -155,6 +155,35 @@ class InputHandlerMixin:
         self._drag_multi_orig_positions = {}
         self._drag_last_valid_new_pos = []
 
+    def _has_active_drag_interaction(self) -> bool:
+        return (
+            self._select_band_origin is not None
+            or self._select_band_active
+            or self._select_band_dragged
+            or self._zoom_press_ctrl
+            or self._drag_handle_index >= -1
+            or self._drag_takeoff_uid is not None
+            or bool(self._drag_multi_orig_positions)
+        )
+
+    def _cancel_active_drag_interaction(self, restore_preview: bool = True) -> bool:
+        if not self._has_active_drag_interaction():
+            return False
+        if self._rubber_band is not None:
+            self._rubber_band.hide()
+        self._rubber_band_origin = None
+        self._select_band_origin = None
+        self._select_band_active = False
+        self._select_band_dragged = False
+        self._zoom_press_ctrl = False
+        self._clear_drag_tracking(restore_preview=restore_preview)
+        return True
+
+    def _clear_stale_drag_tracking_if_mouse_released(self, event: QMouseEvent) -> None:
+        if event.buttons() & Qt.MouseButton.LeftButton:
+            return
+        self._cancel_active_drag_interaction(restore_preview=True)
+
     def _apply_wheel_zoom(self, event: QWheelEvent, delta_y: float) -> None:
         factor = self.ZOOM_FACTOR if delta_y > 0 else 1.0 / self.ZOOM_FACTOR
         cursor_vp = event.position().toPoint()
@@ -631,6 +660,7 @@ class InputHandlerMixin:
         cur_vp = event.position().toPoint()
         self._last_mouse_vp_pos = cur_vp
         self._request_crosshair_repaint()
+        self._clear_stale_drag_tracking_if_mouse_released(event)
         if self._cursor_mode == "place":
             if self._panning and self._last_pan_point:
                 delta = cur_vp - self._last_pan_point
@@ -1718,7 +1748,7 @@ class InputHandlerMixin:
             event.accept()
             return
         if self._intelligent_paste_active and event.key() == Qt.Key.Key_Escape:
-            self._clear_drag_tracking(restore_preview=True)
+            self._cancel_active_drag_interaction(restore_preview=True)
             self.finish_intelligent_paste_placement()
             self._update_cursor()
             event.accept()
@@ -1826,14 +1856,7 @@ class InputHandlerMixin:
         if event.key() == Qt.Key.Key_Control and not event.isAutoRepeat():
             self._ctrl_held = False
             if self._zoom_press_ctrl:
-                self._zoom_press_ctrl = False
-                self._clear_drag_tracking(restore_preview=True)
-                if self._rubber_band_origin is not None:
-                    self._rubber_band.hide()
-                    self._rubber_band_origin = None
-                elif self._select_band_origin is not None:
-                    self._select_band_origin = None
-                    self._select_band_dragged = False
+                self._cancel_active_drag_interaction(restore_preview=True)
             self._update_cursor()
         super().keyReleaseEvent(event)
 
@@ -2079,9 +2102,12 @@ class InputHandlerMixin:
 
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
+        self._cancel_active_drag_interaction(restore_preview=True)
         self.reset_ctrl_held()
 
     def leaveEvent(self, event) -> None:
+        if not (QApplication.mouseButtons() & Qt.MouseButton.LeftButton):
+            self._cancel_active_drag_interaction(restore_preview=True)
         if self._selection_enabled and self._cursor_mode == "select":
             self.setCursor(Qt.CursorShape.ArrowCursor)
         self._last_mouse_vp_pos = None

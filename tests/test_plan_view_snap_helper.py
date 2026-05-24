@@ -763,6 +763,31 @@ class SnapSegmentCacheTests(unittest.TestCase):
         self.assertEqual(harness._place_preview_items, [item])
         self.assertEqual(item.brush().style(), Qt.BrushStyle.NoBrush)
 
+    def test_linear_preview_uses_pattern_even_without_display_pattern_flag(self):
+        harness = PlacementHarness()
+        harness._scene = RecordingScene()
+        harness._scene_builder = PatternPreviewSceneBuilder()
+        harness._place_preview_items = []
+        path = QPainterPath()
+        path.addRect(0.0, 0.0, 12.0, 4.0)
+        item = QGraphicsPathItem(path)
+        condition = Condition(
+            uid="linear",
+            condition_type=Condition.TYPE_LINEAR,
+            display_grid_while_drawing=False,
+        )
+        harness._apply_pattern_preview(
+            item,
+            path,
+            condition,
+            QColor("#123456"),
+            0.5,
+            None,
+        )
+        self.assertEqual(harness._scene_builder.pattern_fill_calls, 1)
+        self.assertEqual(len(harness._place_preview_items), 2)
+        self.assertIs(harness._place_preview_items[0], item)
+
     def test_snap_cursor_marker_remains_line_snap_only(self):
         harness = PreviewHarness()
         harness._add_snap_cursor_marker(1.0, 2.0, placement_mode.GRID)

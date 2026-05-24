@@ -1037,7 +1037,7 @@ class PlacementModeMixin:
     ) -> None:
         fill_brush = None
         pattern_items = []
-        if condition.display_grid_while_drawing:
+        if condition.is_linear or condition.display_grid_while_drawing:
             pattern_type = condition.pattern if condition.pattern else 1
             spacing = condition.spacing if condition.spacing else 4.0
             fill_brush, pattern_items = self._scene_builder.build_pattern_fill(
