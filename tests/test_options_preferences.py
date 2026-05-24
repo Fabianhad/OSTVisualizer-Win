@@ -9,7 +9,7 @@ from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.config_service import ConfigService
-from ost_visualizer.application.services.mcp_setup_config import (
+from ost_visualizer.presentation.utils.mcp_setup_config import (
     build_claude_desktop_config,
     build_codex_mcp_add_command,
 )

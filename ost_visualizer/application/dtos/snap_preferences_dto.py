@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 
-class SnapPreferenceSource(Protocol):
+class ISnapPreferenceSource(Protocol):
     snap_to_grid_enabled: bool
     snap_to_grid_threshold_px: int
     snap_to_pdf_lines_enabled: bool
@@ -23,7 +23,7 @@ class SnapPreferencesDto:
     right_angle_indicator_threshold_px: int
 
     @classmethod
-    def from_config(cls, config: SnapPreferenceSource) -> "SnapPreferencesDto":
+    def from_config(cls, config: ISnapPreferenceSource) -> "SnapPreferencesDto":
         return cls(
             snap_to_grid_enabled=config.snap_to_grid_enabled,
             snap_to_grid_threshold_px=config.snap_to_grid_threshold_px,

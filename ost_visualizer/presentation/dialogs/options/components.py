@@ -1,12 +1,6 @@
 from pathlib import Path
 from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
-from ....application.services.mcp_setup_config import (
-    build_claude_desktop_config,
-    build_codex_mcp_add_command,
-    default_file_state_path,
-    default_mcp_helper_path,
-)
 from ...config import (
     COMPACT_SPACING,
     NO_MARGINS,
@@ -58,6 +52,12 @@ from ...config import (
     OPTIONS_SNAP_THRESHOLD_MIN,
     RELAXED_MARGINS,
     RELAXED_SPACING,
+)
+from ...utils.mcp_setup_config import (
+    build_claude_desktop_config,
+    build_codex_mcp_add_command,
+    default_file_state_path,
+    default_mcp_helper_path,
 )
 from ...utils.color_swatch import rounded_color_swatch
 from ...utils.theme import get_dialog_header_font
