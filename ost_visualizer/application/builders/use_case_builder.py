@@ -47,6 +47,9 @@ from ..use_cases.project.renumber_conditions_use_case import RenumberConditionsU
 from ..use_cases.project.save_annotation_positions_use_case import (
     SaveAnnotationPositionsUseCase,
 )
+from ..use_cases.project.save_annotation_text_properties_use_case import (
+    SaveAnnotationTextPropertiesUseCase,
+)
 from ..use_cases.project.save_bid_areas_use_case import SaveBidAreasUseCase
 from ..use_cases.project.save_bid_selected_page_use_case import (
     SaveBidSelectedPageUseCase,
@@ -74,6 +77,9 @@ from ..use_cases.project.save_takeoff_positions_use_case import (
 )
 from ..use_cases.project.save_takeoff_rotations_use_case import (
     SaveTakeoffRotationsUseCase,
+)
+from ..use_cases.project.save_takeoff_text_properties_use_case import (
+    SaveTakeoffTextPropertiesUseCase,
 )
 from ..use_cases.project.save_takeoffs_area_use_case import SaveTakeoffsAreaUseCase
 from ..use_cases.project.save_takeoffs_condition_use_case import (
@@ -222,6 +228,7 @@ class UseCaseBuilder:
         save_takeoff_rotations_uc = SaveTakeoffRotationsUseCase(
             mdb_writer, write_logger.getChild("SaveTakeoffRotations")
         )
+        save_takeoff_text_properties_uc = SaveTakeoffTextPropertiesUseCase(mdb_writer)
         save_takeoffs_area_uc = SaveTakeoffsAreaUseCase(
             mdb_writer, write_logger.getChild("SaveTakeoffsArea")
         )
@@ -240,8 +247,9 @@ class UseCaseBuilder:
         delete_pages_uc = DeletePagesUseCase(
             mdb_writer, write_logger.getChild("DeletePages")
         )
-        save_annotation_positions_uc = SaveAnnotationPositionsUseCase(
-            mdb_writer, ann_logger.getChild("SavePositions")
+        save_annotation_positions_uc = SaveAnnotationPositionsUseCase(mdb_writer)
+        save_annotation_text_properties_uc = SaveAnnotationTextPropertiesUseCase(
+            mdb_writer
         )
         insert_annotations_uc = InsertAnnotationsUseCase(
             mdb_writer, ann_logger.getChild("Insert")
@@ -359,6 +367,10 @@ class UseCaseBuilder:
             "save_takeoff_rotations_use_case", save_takeoff_rotations_uc
         )
         self.container.register_instance(
+            "save_takeoff_text_properties_use_case",
+            save_takeoff_text_properties_uc,
+        )
+        self.container.register_instance(
             "save_takeoffs_area_use_case", save_takeoffs_area_uc
         )
         self.container.register_instance(
@@ -372,6 +384,10 @@ class UseCaseBuilder:
         self.container.register_instance("delete_pages_use_case", delete_pages_uc)
         self.container.register_instance(
             "save_annotation_positions_use_case", save_annotation_positions_uc
+        )
+        self.container.register_instance(
+            "save_annotation_text_properties_use_case",
+            save_annotation_text_properties_uc,
         )
         self.container.register_instance(
             "insert_annotations_use_case", insert_annotations_uc
@@ -396,6 +412,7 @@ class UseCaseBuilder:
                 delete_condition_folders=delete_condition_folders_uc,
                 save_takeoff_positions=save_takeoff_positions_uc,
                 save_takeoff_rotations=save_takeoff_rotations_uc,
+                save_takeoff_text_properties=save_takeoff_text_properties_uc,
                 save_takeoffs_area=save_takeoffs_area_uc,
                 save_takeoffs_condition=save_takeoffs_condition_uc,
                 set_takeoffs_negative=set_takeoffs_negative_uc,
@@ -436,6 +453,7 @@ class UseCaseBuilder:
             "annotation_write_service",
             AnnotationWriteService(
                 save_annotation_positions=save_annotation_positions_uc,
+                save_annotation_text_properties=save_annotation_text_properties_uc,
                 insert_annotations=insert_annotations_uc,
                 delete_annotations=delete_annotations_uc,
                 reload_database=reload_database_uc.execute,

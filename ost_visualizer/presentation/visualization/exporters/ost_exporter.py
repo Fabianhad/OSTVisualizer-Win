@@ -706,6 +706,9 @@ class OstExporter:
                 "grid_size1": float(cdn_row.get("GridSize1", "0") or "0"),
                 "grid_size2": float(cdn_row.get("GridSize2", "0") or "0"),
                 "gap": float(cdn_row.get("Gap", "0") or "0"),
+                "round_quantity": str(cdn_row.get("RoundQuantity", "0") or "0")
+                in ("1", "True", "true"),
+                "round_up": float(cdn_row.get("RoundUp", "0") or "0"),
             }
         area_condition_uid = 1
         for cdn_row in condition_rows:
@@ -724,6 +727,8 @@ class OstExporter:
             grid_size1 = _props["grid_size1"]
             grid_size2 = _props["grid_size2"]
             gap = _props["gap"]
+            round_quantity = _props["round_quantity"]
+            round_up = _props["round_up"]
             calc_type1 = int(cdn_row.get("Quantity1", "0") or "0")
             calc_type2 = int(cdn_row.get("Quantity2", "0") or "0")
             calc_type3 = int(cdn_row.get("Quantity3", "0") or "0")
@@ -786,6 +791,8 @@ class OstExporter:
                             grid_size1=grid_size1,
                             grid_size2=grid_size2,
                             gap=gap,
+                            round_quantity=round_quantity,
+                            round_up=round_up,
                         )
                         if area_key not in area_totals:
                             area_totals[area_key] = [0.0, 0.0, 0.0]
@@ -818,6 +825,8 @@ class OstExporter:
                             grid_size2=grid_size2,
                             gap=gap,
                             curve=int(takeoff.get("Curve", "-1") or "-1"),
+                            round_quantity=round_quantity,
+                            round_up=round_up,
                         )
                         if area_key not in area_totals:
                             area_totals[area_key] = [0.0, 0.0, 0.0]

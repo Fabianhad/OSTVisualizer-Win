@@ -34,3 +34,8 @@ class ServiceContainer:
             if singleton is not None and isinstance(singleton, iface):
                 results.append(singleton)
         return results
+
+    def clear(self) -> None:
+        self._services.clear()
+        self._factories.clear()
+        self._singletons.clear()

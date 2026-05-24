@@ -6,6 +6,9 @@ from ..use_cases.project.insert_annotations_use_case import InsertAnnotationsUse
 from ..use_cases.project.save_annotation_positions_use_case import (
     SaveAnnotationPositionsUseCase,
 )
+from ..use_cases.project.save_annotation_text_properties_use_case import (
+    SaveAnnotationTextPropertiesUseCase,
+)
 from .active_bid_write_guard import ActiveBidWriteGuard
 from .base_write_service import BaseWriteService
 
@@ -14,6 +17,7 @@ class AnnotationWriteService(BaseWriteService):
     def __init__(
         self,
         save_annotation_positions: SaveAnnotationPositionsUseCase,
+        save_annotation_text_properties: SaveAnnotationTextPropertiesUseCase,
         insert_annotations: InsertAnnotationsUseCase,
         delete_annotations: DeleteAnnotationsUseCase,
         reload_database=None,
@@ -26,6 +30,7 @@ class AnnotationWriteService(BaseWriteService):
         super().__init__(reload_database, event_bus, logger)
         self._bid_write_guard = bid_write_guard
         self._save_annotation_positions = save_annotation_positions
+        self._save_annotation_text_properties = save_annotation_text_properties
         self._insert_annotations = insert_annotations
         self._delete_annotations = delete_annotations
 
@@ -37,6 +42,37 @@ class AnnotationWriteService(BaseWriteService):
         ):
             return False
         success = self._save_annotation_positions.execute(db_path, positions)
+        if success:
+            self.reload_and_notify(db_path)
+        return success
+
+    def save_annotation_text_properties(
+        self, db_path: str, updates: List[Tuple[str, str, dict]]
+    ) -> bool:
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            "save_annotation_text_properties", db_path
+        ):
+            return False
+        success = self._save_annotation_text_properties.execute(db_path, updates)
+        if success:
+            self.reload_and_notify(db_path)
+        return success
+
+    def save_annotation_text_properties_and_positions(
+        self,
+        db_path: str,
+        updates: List[Tuple[str, str, dict]],
+        positions: List[Tuple[str, str, List[float]]],
+    ) -> bool:
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            "save_annotation_text_properties_and_positions", db_path
+        ):
+            return False
+        success = True
+        if updates:
+            success = self._save_annotation_text_properties.execute(db_path, updates)
+        if success and positions:
+            success = self._save_annotation_positions.execute(db_path, positions)
         if success:
             self.reload_and_notify(db_path)
         return success

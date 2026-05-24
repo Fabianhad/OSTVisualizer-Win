@@ -1,7 +1,8 @@
+from ..config import ANNOTATION_WINDOW_TITLE
 from .components.window import DetachedPageViewWindow, DetachedPageViewWindowConfig
 
 _ANNOTATION_WINDOW_CONFIG = DetachedPageViewWindowConfig(
-    window_title="Annotation Window",
+    window_title=ANNOTATION_WINDOW_TITLE,
     show_scale_combo=True,
     show_select_tool=True,
     default_cursor_mode="select",

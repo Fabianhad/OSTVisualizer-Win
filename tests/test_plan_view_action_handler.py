@@ -5,11 +5,13 @@ from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
 )
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.handlers.plan_view_action_handler import (
     PlanViewActionHandler,
 )
+from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.services.selection_commands import (
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
@@ -23,6 +25,11 @@ class FakePlanView:
         self.data = data
         self.current_page_uid = "p1"
         self.snap_increments = 1.0
+        self.intelligent_paste_enabled = True
+        self.cancel_place_mode_calls = 0
+        self.paste_backout_calls = []
+        self.mouse_ost_position = (100.0, 200.0)
+        self.intelligent_paste_calls = []
 
     def set_selected_uids(self, uids):
         self.selected = set(uids)
@@ -41,6 +48,19 @@ class FakePlanView:
 
     def find_annotation_keys_by_uid_type(self, _uid_type_set):
         return set()
+
+    def cancel_place_mode(self):
+        self.cancel_place_mode_calls += 1
+
+    def begin_paste_backout(self, holes, extras_by_uid, source_bid_uid):
+        self.paste_backout_calls.append((holes, extras_by_uid, source_bid_uid))
+
+    def current_mouse_ost_position(self):
+        return self.mouse_ost_position
+
+    def mark_intelligent_paste_drag_pending(self, pasted_uids, source_anchor_ost):
+        self.intelligent_paste_calls.append((list(pasted_uids), source_anchor_ost))
+        return True
 
 
 class FakeUiState:
@@ -98,6 +118,39 @@ class FakeProjectData:
                 page_uids.append(takeoff.page_uid)
         return page_uids
 
+    def update_takeoff_text_properties(self, updates):
+        page_uids = []
+        for uid, properties in updates:
+            takeoff = self.takeoffs[uid]
+            for key, value in properties.items():
+                if key == "dimension_font_name":
+                    takeoff.dimension_font_name = str(value)
+                elif key == "dimension_font_color":
+                    takeoff.dimension_font_color = int(value)
+                elif key == "dimension_font_size":
+                    takeoff.dimension_font_size = int(value)
+                elif key == "dimension_font_bold":
+                    takeoff.dimension_font_bold = bool(value)
+                elif key == "dimension_font_italic":
+                    takeoff.dimension_font_italic = bool(value)
+                elif key == "dimension_font_underline":
+                    takeoff.dimension_font_underline = bool(value)
+                elif key == "name_font_name":
+                    takeoff.name_font_name = str(value)
+                elif key == "name_font_color":
+                    takeoff.name_font_color = int(value)
+                elif key == "name_font_size":
+                    takeoff.name_font_size = int(value)
+                elif key == "name_font_bold":
+                    takeoff.name_font_bold = bool(value)
+                elif key == "name_font_italic":
+                    takeoff.name_font_italic = bool(value)
+                elif key == "name_font_underline":
+                    takeoff.name_font_underline = bool(value)
+            if takeoff.page_uid not in page_uids:
+                page_uids.append(takeoff.page_uid)
+        return page_uids
+
     def remove_takeoffs(self, uids):
         page_uids = []
         for uid in uids:
@@ -114,8 +167,10 @@ class FakeWriteService:
     def __init__(self):
         self.calls = []
         self.condition_calls = []
+        self.update_condition_calls = []
         self.position_calls = []
         self.rotation_calls = []
+        self.text_property_calls = []
         self.delete_calls = []
         self.next_uids = ["100"]
         self.uid_batches = []
@@ -141,6 +196,10 @@ class FakeWriteService:
         self.rotation_calls.append((db_path, rotations, reload_database))
         return True
 
+    def save_takeoff_text_properties(self, db_path, updates, reload_database=True):
+        self.text_property_calls.append((db_path, updates, reload_database))
+        return True
+
     def save_takeoffs_condition(self, db_path, uids, condition_uid):
         self.condition_calls.append((db_path, list(uids), condition_uid))
         return True
@@ -149,16 +208,42 @@ class FakeWriteService:
         self.delete_calls.append((db_path, list(uids), reload_database))
         return True
 
+    def update_condition(
+        self, db_path, bid_uid, condition_uid, updates, all_conditions=None
+    ):
+        self.update_condition_calls.append(
+            (
+                db_path,
+                bid_uid,
+                condition_uid,
+                updates.get_changes(),
+                all_conditions,
+            )
+        )
+        return SimpleNamespace(success=True)
+
 
 class FakeAnnotationWriteService:
     def __init__(self):
         self.position_calls = []
+        self.text_property_calls = []
+        self.text_and_position_calls = []
         self.insert_calls = []
         self.delete_calls = []
         self.next_uids = ["ann-1"]
 
     def save_annotation_positions(self, db_path, positions):
         self.position_calls.append((db_path, positions))
+        return True
+
+    def save_annotation_text_properties(self, db_path, updates):
+        self.text_property_calls.append((db_path, updates))
+        return True
+
+    def save_annotation_text_properties_and_positions(
+        self, db_path, updates, positions
+    ):
+        self.text_and_position_calls.append((db_path, updates, positions))
         return True
 
     def insert_annotations(self, db_path, bid_uid, specs, ref_remap=None):
@@ -216,7 +301,120 @@ class FakeEventBus:
         self.events.append((event_name, kwargs))
 
 
+class FakeAccess:
+    def __init__(self, allowed_features):
+        self.allowed_features = set(allowed_features)
+
+    def is_allowed(self, feature):
+        return feature in self.allowed_features
+
+
 class PlanViewActionHandlerTests(unittest.TestCase):
+    def test_denied_takeoff_selection_access_blocks_plan_view_write_signals(self):
+        data = FakeProjectData()
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="42",
+            page_uid="p1",
+            area_uid="0",
+            position=[1.0, 2.0],
+        )
+        data.takeoffs[takeoff.uid] = takeoff
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess(set()),
+        )
+        handler.on_elements_deleted(["t1"])
+        handler.on_positions_flushed([("t1", [1.0, 2.0], [3.0, 4.0])], [])
+        handler.on_takeoff_created("42", [1.0, 2.0], "p1")
+        self.assertEqual(write.delete_calls, [])
+        self.assertEqual(write.position_calls, [])
+        self.assertEqual(write.calls, [])
+
+    def test_denied_annotation_text_access_blocks_text_property_write(self):
+        annotation_write = FakeAnnotationWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.SELECT_TAKEOFFS}),
+        )
+        handler.on_annotation_text_properties_flushed(
+            [("a1", "text", {"Text": "Old"}, {"Text": "New"})]
+        )
+        self.assertEqual(annotation_write.text_property_calls, [])
+
+    def test_condition_label_text_properties_write_takeoff_style_fields(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(uid="t1", condition_uid="c1", page_uid="p1")
+        write = FakeWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+            ui_access_manager=FakeAccess({Feature.EDIT_CONDITION}),
+        )
+        handler.on_condition_text_properties_flushed(
+            [
+                (
+                    "t1",
+                    "display_name",
+                    {},
+                    {
+                        "name_font_name": "Segoe UI",
+                        "name_font_color": 0x332211,
+                        "name_font_size": 24,
+                        "name_font_bold": True,
+                        "name_font_italic": False,
+                        "name_font_underline": True,
+                    },
+                )
+            ]
+        )
+        self.assertEqual(
+            write.text_property_calls,
+            [
+                (
+                    "bid.mdb",
+                    [
+                        (
+                            "t1",
+                            {
+                                "name_font_name": "Segoe UI",
+                                "name_font_color": 0x332211,
+                                "name_font_size": 24,
+                                "name_font_bold": True,
+                                "name_font_italic": False,
+                                "name_font_underline": True,
+                            },
+                        )
+                    ],
+                    False,
+                )
+            ],
+        )
+        self.assertEqual(data.takeoffs["t1"].name_font_size, 24)
+        self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
+
     def test_new_takeoff_uses_fast_refresh_and_updates_model(self):
         plan_view = FakePlanView()
         data = FakeProjectData()
@@ -243,6 +441,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.added_takeoffs[0].page_uid, "9")
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
         self.assertEqual(event_bus.events[0][1]["takeoff_uids"], ["100"])
+        self.assertEqual(plan_view.cancel_place_mode_calls, 0)
 
     def test_raw_extra_insert_keeps_full_reload(self):
         plan_view = FakePlanView()
@@ -374,6 +573,96 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.position_calls[0][2], True)
         self.assertEqual(ann_write.position_calls[0][0], "bid.mdb")
         self.assertEqual(event_bus.events, [])
+
+    def test_annotation_text_property_changes_use_annotation_write_service(self):
+        data = FakeProjectData()
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+        )
+        handler.on_annotation_text_properties_flushed(
+            [
+                (
+                    "a1",
+                    "text",
+                    {"Text": "Old", "FontBold": False},
+                    {"Text": "New", "FontBold": True},
+                )
+            ]
+        )
+        self.assertEqual(
+            ann_write.text_property_calls[0],
+            ("bid.mdb", [("a1", "text", {"Text": "New", "FontBold": True})]),
+        )
+        undo.undo()
+        undo.redo()
+        self.assertEqual(
+            ann_write.text_property_calls[1:],
+            [
+                ("bid.mdb", [("a1", "text", {"Text": "Old", "FontBold": False})]),
+                ("bid.mdb", [("a1", "text", {"Text": "New", "FontBold": True})]),
+            ],
+        )
+
+    def test_annotation_text_and_box_changes_are_saved_together(self):
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+        )
+        handler.on_annotation_text_and_positions_flushed(
+            [
+                (
+                    "a1",
+                    "text",
+                    {"FontSize": 12, "FontColor": 0},
+                    {"FontSize": 24, "FontColor": 0x332211},
+                )
+            ],
+            [("a1", "text", [100.0, 100.0, 40.0, 15.0], [100.0, 100.0, 80.0, 30.0])],
+        )
+        self.assertEqual(
+            ann_write.text_and_position_calls[0],
+            (
+                "bid.mdb",
+                [("a1", "text", {"FontSize": 24, "FontColor": 0x332211})],
+                [("a1", "text", [100.0, 100.0, 80.0, 30.0])],
+            ),
+        )
+        self.assertEqual(ann_write.text_property_calls, [])
+        self.assertEqual(ann_write.position_calls, [])
+        undo.undo()
+        undo.redo()
+        self.assertEqual(
+            ann_write.text_and_position_calls[1:],
+            [
+                (
+                    "bid.mdb",
+                    [("a1", "text", {"FontSize": 12, "FontColor": 0})],
+                    [("a1", "text", [100.0, 100.0, 40.0, 15.0])],
+                ),
+                (
+                    "bid.mdb",
+                    [("a1", "text", {"FontSize": 24, "FontColor": 0x332211})],
+                    [("a1", "text", [100.0, 100.0, 80.0, 30.0])],
+                ),
+            ],
+        )
 
     def test_pure_takeoff_rotation_uses_takeoffs_changed(self):
         data = FakeProjectData()
@@ -520,8 +809,14 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         handler.on_paste_requested()
         self.assertEqual(write.calls[0][2][0].parent_uid, "0")
+        self.assertEqual(write.calls[0][2][0].position[:2], [100.0, 200.0])
         self.assertEqual(write.calls[1][2][0].parent_uid, "new-parent")
+        self.assertEqual(write.calls[1][2][0].position[:2], [100.5, 200.5])
         self.assertEqual(write.calls[1][2][0].raw_extras, {"Raw": "kept"})
+        self.assertEqual(
+            plan_view.intelligent_paste_calls,
+            [(["new-parent", "new-hole"], (0.0, 0.0))],
+        )
         self.assertEqual(plan_view.selected, {"new-parent", "new-hole"})
         undo.undo()
         self.assertEqual(write.delete_calls[-1][1], ["new-parent", "new-hole"])
@@ -531,6 +826,109 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.calls[-1][2][0].parent_uid, "redo-parent")
         self.assertEqual(write.calls[-1][2][0].raw_extras, {"Raw": "kept"})
         self.assertEqual(plan_view.selected, {"redo-parent", "redo-hole"})
+
+    def test_intelligent_paste_enabled_pastes_regular_takeoff_at_mouse(self):
+        source = Takeoff(
+            uid="source",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[10.0, 20.0, 14.0, 20.0],
+            parent_uid="0",
+        )
+        plan_view = FakePlanView()
+        plan_view.mouse_ost_position = (50.0, 75.0)
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+        )
+        handler._clipboard_svc = FakeClipboard([source])
+        handler.on_paste_requested()
+        self.assertEqual(write.calls[0][2][0].position, [50.0, 75.0, 54.0, 75.0])
+        self.assertEqual(plan_view.intelligent_paste_calls, [(["100"], (10.0, 20.0))])
+
+    def test_intelligent_paste_disabled_uses_existing_offset_paste(self):
+        source = Takeoff(
+            uid="source",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[10.0, 20.0, 14.0, 20.0],
+            parent_uid="0",
+        )
+        plan_view = FakePlanView()
+        plan_view.intelligent_paste_enabled = False
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+        )
+        handler._clipboard_svc = FakeClipboard([source])
+        handler.on_paste_requested()
+        self.assertEqual(write.calls[0][2][0].position, [11.0, 21.0, 15.0, 21.0])
+        self.assertEqual(plan_view.intelligent_paste_calls, [])
+
+    def test_intelligent_paste_off_blocks_holes_only_backout_paste(self):
+        hole = Takeoff(
+            uid="old-hole",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[0.5, 0.5, 1.0, 0.5, 1.0, 1.0],
+            parent_uid="old-parent",
+        )
+        plan_view = FakePlanView()
+        plan_view.intelligent_paste_enabled = False
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+        )
+        handler._clipboard_svc = FakeClipboard([hole])
+        handler.on_paste_requested()
+        self.assertEqual(plan_view.paste_backout_calls, [])
+        self.assertEqual(write.calls, [])
+
+    def test_intelligent_paste_on_uses_holes_only_backout_paste(self):
+        hole = Takeoff(
+            uid="old-hole",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[0.5, 0.5, 1.0, 0.5, 1.0, 1.0],
+            parent_uid="old-parent",
+        )
+        plan_view = FakePlanView()
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+        )
+        handler._clipboard_svc = FakeClipboard([hole])
+        handler.on_paste_requested()
+        self.assertEqual(len(plan_view.paste_backout_calls), 1)
+        self.assertEqual(write.calls, [])
 
     def test_paste_annotation_redo_uses_source_to_current_takeoff_remap(self):
         plan_view = FakePlanView()

@@ -57,6 +57,7 @@ class LicenseOrchestrator:
 
     def cleanup(self) -> None:
         self._scheduler.stop()
+        self._scheduler.clear_task()
         self._thread_manager.cleanup()
         self._callback_bridge = None
         self._event_publisher = None

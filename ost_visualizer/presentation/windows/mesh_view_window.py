@@ -5,14 +5,32 @@ from ...domain.entities.identity_refs import BidRef
 from ..components.mesh_view import OpenGLViewer
 from ..components.popup_tracking_combo import PopupTrackingComboBox
 from ..components.viewer_cursors import make_zoom_cursor
-from ..config import DEFAULT_ICON_SIZE, NO_MARGINS, NO_SPACING
+from ..config import (
+    ACTION_ORBIT_LABEL,
+    ACTION_ORBIT_TOOLTIP,
+    ACTION_PAN_LABEL,
+    ACTION_PAN_TOOLTIP,
+    ACTION_RESET_VIEW_LABEL,
+    ACTION_RESET_VIEW_TOOLTIP,
+    ACTION_ZOOM_IN_LABEL,
+    ACTION_ZOOM_IN_TOOLTIP,
+    ACTION_ZOOM_LABEL,
+    ACTION_ZOOM_OUT_LABEL,
+    ACTION_ZOOM_OUT_TOOLTIP,
+    ACTION_ZOOM_TOOLTIP,
+    DEFAULT_ICON_SIZE,
+    MESH_WINDOW_TITLE,
+    NO_MARGINS,
+    NO_SPACING,
+    VIEWER_ZOOM_COMBO_WIDTH,
+    VIEWER_ZOOM_FACTOR,
+    VIEWER_ZOOM_LEVELS,
+    VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS,
+)
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 
-_ZOOM_LEVELS = [5, 10, 25, 50, 75, 100, 150, 200, 250, 300, 400, 800, 1600]
-_ZOOM_FACTOR = 1.15
 _RESIZE_DEBOUNCE_MS = 100
-_POPUP_CLOSE_DEFER_MS = 100
 
 
 class MeshViewWindow(QtWidgets.QMainWindow):
@@ -46,7 +64,7 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         self._zoom_combo: Optional[QtWidgets.QComboBox] = None
         self._context_menu_command_trigger = None
         self._context_menu_action_state = None
-        self.setWindowTitle("3D View")
+        self.setWindowTitle(MESH_WINDOW_TITLE)
         self.setWindowFlags(
             QtCore.Qt.WindowType.Window
             | QtCore.Qt.WindowType.WindowMinimizeButtonHint
@@ -110,44 +128,44 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
         cursor_group = QtGui.QActionGroup(toolbar)
         cursor_group.setExclusive(True)
-        default_action = QtGui.QAction("Orbit", toolbar)
+        default_action = QtGui.QAction(ACTION_ORBIT_LABEL, toolbar)
         IconManager.apply(default_action, IconId.SELECT_TOOL)
         default_action.setCheckable(True)
         default_action.setChecked(True)
-        default_action.setToolTip("Orbit")
+        default_action.setToolTip(ACTION_ORBIT_TOOLTIP)
         cursor_group.addAction(default_action)
         toolbar.addAction(default_action)
-        pan_action = QtGui.QAction("Pan", toolbar)
+        pan_action = QtGui.QAction(ACTION_PAN_LABEL, toolbar)
         IconManager.apply(pan_action, IconId.PAN_TOOL)
         pan_action.setCheckable(True)
-        pan_action.setToolTip("Pan")
+        pan_action.setToolTip(ACTION_PAN_TOOLTIP)
         cursor_group.addAction(pan_action)
         toolbar.addAction(pan_action)
-        zoom_mode_action = QtGui.QAction("Zoom", toolbar)
+        zoom_mode_action = QtGui.QAction(ACTION_ZOOM_LABEL, toolbar)
         IconManager.apply(zoom_mode_action, IconId.ZOOM_TOOL)
         zoom_mode_action.setCheckable(True)
-        zoom_mode_action.setToolTip("Zoom")
+        zoom_mode_action.setToolTip(ACTION_ZOOM_TOOLTIP)
         cursor_group.addAction(zoom_mode_action)
         toolbar.addAction(zoom_mode_action)
-        fit_action = QtGui.QAction("Reset View", toolbar)
+        fit_action = QtGui.QAction(ACTION_RESET_VIEW_LABEL, toolbar)
         IconManager.apply(fit_action, IconId.RESET_VIEW)
-        fit_action.setToolTip("Reset view")
+        fit_action.setToolTip(ACTION_RESET_VIEW_TOOLTIP)
         toolbar.addAction(fit_action)
-        zoom_in_action = QtGui.QAction("Zoom In", toolbar)
+        zoom_in_action = QtGui.QAction(ACTION_ZOOM_IN_LABEL, toolbar)
         IconManager.apply(zoom_in_action, IconId.ZOOM_IN)
-        zoom_in_action.setToolTip("Zoom in")
+        zoom_in_action.setToolTip(ACTION_ZOOM_IN_TOOLTIP)
         toolbar.addAction(zoom_in_action)
-        zoom_out_action = QtGui.QAction("Zoom Out", toolbar)
+        zoom_out_action = QtGui.QAction(ACTION_ZOOM_OUT_LABEL, toolbar)
         IconManager.apply(zoom_out_action, IconId.ZOOM_OUT)
-        zoom_out_action.setToolTip("Zoom out")
+        zoom_out_action.setToolTip(ACTION_ZOOM_OUT_TOOLTIP)
         toolbar.addAction(zoom_out_action)
         self._zoom_combo = PopupTrackingComboBox(
-            popup_hidden_delay_ms=_POPUP_CLOSE_DEFER_MS
+            popup_hidden_delay_ms=VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS
         )
         self._zoom_combo.setEditable(True)
         self._zoom_combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
-        self._zoom_combo.setFixedWidth(80)
-        for lvl in _ZOOM_LEVELS:
+        self._zoom_combo.setFixedWidth(VIEWER_ZOOM_COMBO_WIDTH)
+        for lvl in VIEWER_ZOOM_LEVELS:
             self._zoom_combo.addItem(f"{lvl}%", lvl)
         self._zoom_combo.setCurrentIndex(-1)
         self._zoom_combo.setEditText("100%")
@@ -224,14 +242,14 @@ class MeshViewWindow(QtWidgets.QMainWindow):
     def _on_zoom_in(self) -> None:
         if not self.viewer:
             return
-        pct = self.viewer.get_zoom_percent() * _ZOOM_FACTOR
+        pct = self.viewer.get_zoom_percent() * VIEWER_ZOOM_FACTOR
         self.viewer.set_zoom_percent(pct)
         self._update_zoom_combo(pct / 100.0)
 
     def _on_zoom_out(self) -> None:
         if not self.viewer:
             return
-        pct = self.viewer.get_zoom_percent() / _ZOOM_FACTOR
+        pct = self.viewer.get_zoom_percent() / VIEWER_ZOOM_FACTOR
         self.viewer.set_zoom_percent(pct)
         self._update_zoom_combo(pct / 100.0)
 
@@ -335,6 +353,8 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             self.viewer.cleanup()
             self.viewer = None
         self._zoom_combo = None
+        self._context_menu_command_trigger = None
+        self._context_menu_action_state = None
         self.icon_provider = None
         self._color_service = None
 

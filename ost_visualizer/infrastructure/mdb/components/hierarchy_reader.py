@@ -185,6 +185,7 @@ class HierarchyReaderMixin:
                     ("Name", "NULL"),
                     ("BidPageFolderUID", "NULL"),
                     ("SheetNo", "NULL"),
+                    ("Sequence", "0"),
                     ("ImagePath", "NULL"),
                     ("Width", "0"),
                     ("Height", "0"),
@@ -214,7 +215,8 @@ class HierarchyReaderMixin:
                 page_info = HierarchyPageInfo(
                     uid=page_uid_str,
                     name=page_name_str,
-                    sheet_no=row.SheetNo,
+                    sheet_no=decode_value(row.SheetNo) or "",
+                    sequence=int(row.Sequence or 0),
                     image_path=decode_value(row.ImagePath) or None,
                     width=parse_float(row.Width),
                     height=parse_float(row.Height),

@@ -363,4 +363,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
     def cleanup(self) -> None:
         self._disconnect_pending_new_editor_signal()
         self.icon_provider = None
+        self._save_fn = None
+        self._reload_fn = None
         self._items.clear()
+        self._used_uids.clear()

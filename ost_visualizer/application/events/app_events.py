@@ -32,7 +32,7 @@ class FileSelectedEvent:
 
 
 @dataclass
-class PreferencesUpdatedEvent:
+class AppConfigUpdatedEvent:
     setting: str
     value: Any
 
@@ -73,7 +73,7 @@ class AppEvents:
     TAKEOFFS_CHANGED = TakeoffsChangedEvent
     FILE_UNLOADED = FileUnloadedEvent
     FILE_SELECTED = FileSelectedEvent
-    PREFERENCES_UPDATED = PreferencesUpdatedEvent
+    APP_CONFIG_UPDATED = AppConfigUpdatedEvent
     NATIVE_SCENE_UPDATED = NativeSceneUpdatedEvent
     LICENSE_STATUS_CHANGED = LicenseStatusChangedEvent
     LICENSE_EXPIRED = LicenseExpiredEvent

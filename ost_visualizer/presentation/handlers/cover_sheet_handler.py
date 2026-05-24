@@ -2,7 +2,7 @@ from PySide6 import QtWidgets
 from ..dialogs.cover_sheet.context import CoverSheetContext
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
 from ..managers.ui_access_manager import Feature
-from ..utils.messagebox import DB_LOCKED_HINT, show_critical
+from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical
 from ..utils.ost_blocking import exec_with_ost_blocking
 
 
@@ -91,6 +91,92 @@ class CoverSheetHandler:
                     )
         finally:
             dialog.deleteLater()
+
+    def add_blank_page_from_takeoff_tab(self) -> bool:
+        if not self._ui_access_manager.is_allowed(Feature.COVER_SHEET):
+            return False
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if not bid_ref or self._project_data.is_current_bid_locked():
+            return False
+        if not confirm(self.window, "Add Page", "Do you want to add a new page?"):
+            return False
+        data = self._read_service.get_cover_sheet_data(
+            bid_ref.file_path, bid_ref.bid_uid
+        )
+        if data is None:
+            show_critical(
+                self.window,
+                "Add Page",
+                f"Failed to load cover sheet data. {DB_LOCKED_HINT}",
+            )
+            return False
+        pages = list(self._iter_cover_sheet_pages(data))
+        updates = {
+            "job_status_uid": data.job_status_uid,
+            "job_name": data.job_name,
+            "estimator_uid": data.estimator_uid,
+            "notes": data.notes,
+            "bid_date": data.bid_date,
+            "bid_no": data.bid_no,
+            "job_id": data.job_id,
+            "measure_base": data.measure_base,
+            "takeoff_increments": data.takeoff_increments,
+            "scale_style": data.scale_style,
+            "scale_factor1": data.scale_factor1,
+            "scale_factor2": data.scale_factor2,
+            "page_width": data.page_width,
+            "page_height": data.page_height,
+            "pages": [
+                {
+                    "uid": None,
+                    "folder_uid": None,
+                    "sequence": len(pages) + 1,
+                    "sheet_no": self._next_sheet_no(pages),
+                    "name": "",
+                    "width": data.page_width,
+                    "height": data.page_height,
+                    "scale_factor1": data.scale_factor1,
+                    "scale_factor2": data.scale_factor2,
+                    "show_mode": 0,
+                    "index": 1,
+                    "multi_page_count": 0,
+                    "image_path": "",
+                    "overlay_path": "",
+                }
+            ],
+        }
+        context = CoverSheetContext(
+            project_read_service=self._read_service,
+            project_write_service=self._write_service,
+            bid_ref=bid_ref,
+        )
+        if context.save_cover_sheet(updates):
+            context.refresh()
+            return True
+        show_critical(
+            self.window,
+            "Add Page",
+            f"Failed to add page. {DB_LOCKED_HINT}",
+        )
+        return False
+
+    def _iter_cover_sheet_pages(self, data):
+        yield from data.pages_without_folder
+        for folder in data.folders.values():
+            yield from self._iter_folder_pages(folder)
+
+    def _iter_folder_pages(self, folder):
+        yield from folder.pages
+        for child in folder.subfolders.values():
+            yield from self._iter_folder_pages(child)
+
+    def _next_sheet_no(self, pages) -> str:
+        numbers = []
+        for page in pages:
+            text = str(page.sheet_no or "").strip()
+            if text.isdigit():
+                numbers.append(int(text))
+        return f"{max(numbers) + 1:05d}" if numbers else "00001"
 
     def _save_locked_bid_status_change(
         self, context: CoverSheetContext, current_status_uid, updates: dict

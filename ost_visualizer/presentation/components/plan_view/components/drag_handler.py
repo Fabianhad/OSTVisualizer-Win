@@ -1,10 +1,16 @@
 import math
 from typing import List, Optional, Tuple
 from PySide6 import QtCore
-from PySide6.QtCore import QPointF, QRectF
-from PySide6.QtGui import QPainterPath
-from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsRectItem, QGraphicsTextItem
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen, QPolygonF
+from PySide6.QtWidgets import (
+    QGraphicsPathItem,
+    QGraphicsPolygonItem,
+    QGraphicsRectItem,
+    QGraphicsTextItem,
+)
 from .geometry_utils import polygon_is_valid, signed_area
+from .graphics_items import ClippedTextGraphicsItem
 
 
 def _line_line_intersect(
@@ -25,6 +31,69 @@ def _line_line_intersect(
 
 
 class DragHandlerMixin:
+    def _drag_preview_color_for_condition(self, condition):
+        color_entry = self._current_color_map.get(condition.uid)
+        if color_entry is not None:
+            return self._color_service.as_hex_with_opacity(color_entry)
+        color_hex = (
+            self._color_service.int_to_hex(condition.color_fill)
+            if condition.color_fill
+            else "#808080"
+        )
+        return color_hex, 1.0
+
+    def _refresh_takeoff_pattern_preview(
+        self,
+        uid: str,
+        path_item: QGraphicsPathItem,
+        path: QPainterPath,
+        condition,
+    ) -> None:
+        color_hex, opacity = self._drag_preview_color_for_condition(condition)
+        qcolor = QColor(color_hex)
+        pattern_type = condition.pattern if condition.pattern else 1
+        spacing = condition.spacing if condition.spacing else 4.0
+        fill_brush, pattern_items = self._scene_builder.build_pattern_fill(
+            path, pattern_type, qcolor, opacity, spacing, 2.0
+        )
+        border_pen = QPen(qcolor)
+        border_pen.setWidthF(2.0)
+        border_pen.setCosmetic(True)
+        path_item.setPen(border_pen)
+        path_item.setBrush(
+            fill_brush if fill_brush is not None else QBrush(Qt.BrushStyle.NoBrush)
+        )
+        existing_items = list(self._uid_to_items.get(uid, []))
+        preserved_items: List = []
+        for item in existing_items[1:]:
+            is_pattern_line = (
+                isinstance(item, QGraphicsPathItem)
+                and item.brush().style() == Qt.BrushStyle.NoBrush
+            )
+            if is_pattern_line:
+                if item.scene() is self._scene:
+                    self._scene.removeItem(item)
+                if item in self._takeoff_items:
+                    self._takeoff_items.remove(item)
+            else:
+                preserved_items.append(item)
+        transform = self._current_page_transform()
+        if transform is None:
+            transform = path_item.transform()
+        new_items: List = [path_item]
+        for pattern_item in pattern_items:
+            pattern_item.setData(0, uid)
+            pattern_item.setData(1, condition.uid)
+            pattern_item.setZValue(path_item.zValue())
+            pattern_item.setVisible(path_item.isVisible())
+            pattern_item.setTransform(transform)
+            self._scene.addItem(pattern_item)
+            if pattern_item not in self._takeoff_items:
+                self._takeoff_items.append(pattern_item)
+            new_items.append(pattern_item)
+        new_items.extend(preserved_items)
+        self._uid_to_items[uid] = new_items
+
     def scene_to_ost_delta(self, dx: float, dy: float) -> Tuple[float, float]:
         cs = self._scene_builder.get_coordinate_system()
         factor = cs.scale_ratio / (72.0 * cs.view_scale)
@@ -296,6 +365,9 @@ class DragHandlerMixin:
                 if items_for_uid and isinstance(items_for_uid[0], QGraphicsPathItem):
                     items_for_uid[0].setPos(0.0, 0.0)
                     items_for_uid[0].setPath(new_path)
+                    self._refresh_takeoff_pattern_preview(
+                        uid, items_for_uid[0], new_path, condition
+                    )
                 if takeoff.is_hole:
                     self._update_parent_hole_path(takeoff.parent_uid, uid, new_path)
                 elif self._has_child_holes(uid):
@@ -376,6 +448,9 @@ class DragHandlerMixin:
                     if new_path is not None:
                         path_item.setPos(0.0, 0.0)
                         path_item.setPath(new_path)
+                        self._refresh_takeoff_pattern_preview(
+                            uid, path_item, new_path, condition
+                        )
         is_body_move = self._drag_handle_index == -1 or (
             not is_ann
             and not condition.is_linear
@@ -429,6 +504,9 @@ class DragHandlerMixin:
                 bx1 = by1 = bx2 = by2 = 0
             if not is_body and n_h >= 4:
                 self._update_bbox_handles(cs, bx1, by1, bx2, by2, n_h)
+                self._update_annotation_selection_outline_from_box(
+                    uid, cs, bx1, by1, bx2, by2
+                )
             if not is_body:
                 tx = cs.transform_vertices_to_2d([bx1, by1, bx2, by2])
                 self._rebuild_ann_shape_path(atype, uid, tx[0], tx[1], tx[2], tx[3])
@@ -474,10 +552,10 @@ class DragHandlerMixin:
                 orig_p = self._drag_item_orig_positions.get(id(item))
                 if orig_p is not None:
                     item.setPos(orig_p + delta)
-            for info in self._handle_infos:
-                orig_p = self._drag_item_orig_positions.get(id(info.item))
+            for item in self._selection_items:
+                orig_p = self._drag_item_orig_positions.get(id(item))
                 if orig_p is not None:
-                    info.item.setPos(orig_p + delta)
+                    item.setPos(orig_p + delta)
         self._drag_last_valid_new_pos = list(new_pos)
 
     def _update_bbox_handles(self, cs, ox1, oy1, ox2, oy2, n_h):
@@ -494,6 +572,20 @@ class DragHandlerMixin:
                 self._handle_infos[mid_i].item.setPos(
                     type(p1)((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2)
                 )
+
+    def _update_annotation_selection_outline_from_box(
+        self, uid: str, cs, ox1: float, oy1: float, ox2: float, oy2: float
+    ) -> None:
+        corners_ost = [ox1, oy1, ox2, oy1, ox2, oy2, ox1, oy2]
+        tx = cs.transform_vertices_to_2d(corners_ost)
+        pts = [self._pt_to_scene(tx[i], tx[i + 1]) for i in range(0, len(tx), 2)]
+        if len(pts) < 4:
+            return
+        polygon = QPolygonF(pts)
+        for item in self._selection_items:
+            if isinstance(item, QGraphicsPolygonItem) and item.data(0) == uid:
+                item.setPolygon(polygon)
+                return
 
     def _rebuild_ann_shape_path(self, atype, uid, x1, y1, x2, y2):
         items = self._uid_to_items.get(uid, [])
@@ -521,6 +613,9 @@ class DragHandlerMixin:
             return
         if isinstance(main, QGraphicsTextItem):
             main.setPos(rect.topLeft())
+            main.setTextWidth(rect.width())
+            if isinstance(main, ClippedTextGraphicsItem):
+                main.set_clip_rect(QRectF(0.0, 0.0, rect.width(), rect.height()))
 
     def _update_parent_hole_path(
         self, parent_uid: str, dragged_hole_uid: str, new_hole_path: QPainterPath
@@ -558,6 +653,11 @@ class DragHandlerMixin:
             if isinstance(item, QGraphicsPathItem):
                 item.setPos(0.0, 0.0)
                 item.setPath(combined)
+                parent_condition = self._current_conditions.get(parent.condition_uid)
+                if parent_condition is not None:
+                    self._refresh_takeoff_pattern_preview(
+                        parent_uid, item, combined, parent_condition
+                    )
                 break
 
     def _has_child_holes(self, parent_uid: str) -> bool:
@@ -588,6 +688,16 @@ class DragHandlerMixin:
             if isinstance(item, QGraphicsPathItem):
                 item.setPos(0.0, 0.0)
                 item.setPath(combined)
+                parent = self._current_takeoffs.get(parent_uid)
+                parent_condition = (
+                    self._current_conditions.get(parent.condition_uid)
+                    if parent
+                    else None
+                )
+                if parent_condition is not None:
+                    self._refresh_takeoff_pattern_preview(
+                        parent_uid, item, combined, parent_condition
+                    )
                 break
 
     def _validate_parent_contains_holes(

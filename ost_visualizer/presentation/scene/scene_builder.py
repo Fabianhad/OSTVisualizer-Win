@@ -93,7 +93,8 @@ class SceneBuilder:
                 item_or_items if isinstance(item_or_items, list) else [item_or_items]
             )
             for item in items_to_add:
-                item.setZValue(1)
+                if item.data(2) != "condition_label":
+                    item.setZValue(1)
                 scene.addItem(item)
                 takeoff_items.append(item)
             uid_to_items[uid] = items_to_add

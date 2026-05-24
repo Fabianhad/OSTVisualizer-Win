@@ -147,10 +147,12 @@ class VisualizationService:
         self._mesh_worker.join(timeout=3.0)
         self.close_realtime_visualization()
         self._transaction_monitor.cleanup()
+        self._transaction_monitor = None
         if self._scene_notifier is not None:
             self._scene_notifier.cleanup()
         self._scene_notifier = None
         self._mesh_pending_task = None
+        self.config_model = None
         self._mesh_generator = None
         self._visualization_provider = None
         self.project_data = None

@@ -487,6 +487,8 @@ class BidDataReaderMixin:
             [
                 "[UID]",
                 schema.optional_column("BidPages", "Name", "NULL"),
+                schema.optional_column("BidPages", "SheetNo", "NULL"),
+                schema.optional_column("BidPages", "Sequence", "0"),
                 schema.optional_column("BidPages", "ImagePath", "NULL"),
                 schema.optional_column("BidPages", "Width", "0"),
                 schema.optional_column("BidPages", "Height", "0"),
@@ -532,6 +534,8 @@ class BidDataReaderMixin:
                     overlay_rect = (rect_x, rect_y, rect_w, rect_h)
                 bid_pages[uid] = BidPageInfo(
                     name=name_str,
+                    sheet_no=decode_value(row.SheetNo),
+                    sequence=int(row.Sequence or 0),
                     image_path=decode_value(row.ImagePath) or None,
                     width_pts=parse_float(row.Width) * 72.0,
                     height_pts=parse_float(row.Height) * 72.0,
@@ -899,6 +903,36 @@ class BidDataReaderMixin:
                         else -1
                     )
                     is_negative_quantity = bool(row_data.get("IsNegativeQuantity", 0))
+                    dimension_font_name = (
+                        str(row_data.get("FontName"))
+                        if row_data.get("FontName")
+                        else None
+                    )
+                    dimension_font_color = (
+                        int(row_data["FontColor"])
+                        if row_data.get("FontColor") is not None
+                        else None
+                    )
+                    dimension_font_size = (
+                        abs(int(row_data["FontSize"]))
+                        if row_data.get("FontSize") not in (None, 0)
+                        else None
+                    )
+                    name_font_name = (
+                        str(row_data.get("NameFontName"))
+                        if row_data.get("NameFontName")
+                        else None
+                    )
+                    name_font_color = (
+                        int(row_data["NameFontColor"])
+                        if row_data.get("NameFontColor") is not None
+                        else None
+                    )
+                    name_font_size = (
+                        abs(int(row_data["NameFontSize"]))
+                        if row_data.get("NameFontSize") not in (None, 0)
+                        else None
+                    )
                     if isinstance(position_raw, bytes):
                         position_str = position_raw.decode("latin-1")
                     else:
@@ -915,6 +949,26 @@ class BidDataReaderMixin:
                             curve=curve,
                             parent_uid=parent_uid,
                             is_negative=is_negative_quantity,
+                            dimension_font_name=dimension_font_name,
+                            dimension_font_color=dimension_font_color,
+                            dimension_font_size=dimension_font_size,
+                            dimension_font_bold=bool(row_data.get("FontBold", False)),
+                            dimension_font_italic=bool(
+                                row_data.get("FontItalic", False)
+                            ),
+                            dimension_font_underline=bool(
+                                row_data.get("FontUnderline", False)
+                            ),
+                            name_font_name=name_font_name,
+                            name_font_color=name_font_color,
+                            name_font_size=name_font_size,
+                            name_font_bold=bool(row_data.get("NameFontBold", False)),
+                            name_font_italic=bool(
+                                row_data.get("NameFontItalic", False)
+                            ),
+                            name_font_underline=bool(
+                                row_data.get("NameFontUnderline", False)
+                            ),
                         )
                     )
                     takeoff_extras[uid] = {c: row_data[c] for c in extra_cols}

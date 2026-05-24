@@ -56,6 +56,9 @@ from ..use_cases.project.save_takeoff_positions_use_case import (
 from ..use_cases.project.save_takeoff_rotations_use_case import (
     SaveTakeoffRotationsUseCase,
 )
+from ..use_cases.project.save_takeoff_text_properties_use_case import (
+    SaveTakeoffTextPropertiesUseCase,
+)
 from ..use_cases.project.save_takeoffs_area_use_case import SaveTakeoffsAreaUseCase
 from ..use_cases.project.save_takeoffs_condition_use_case import (
     SaveTakeoffsConditionUseCase,
@@ -96,6 +99,7 @@ class ProjectWriteService(BaseWriteService):
         delete_condition_folders: DeleteConditionFoldersUseCase,
         save_takeoff_positions: SaveTakeoffPositionsUseCase,
         save_takeoff_rotations: SaveTakeoffRotationsUseCase,
+        save_takeoff_text_properties: SaveTakeoffTextPropertiesUseCase,
         save_takeoffs_area: SaveTakeoffsAreaUseCase,
         save_takeoffs_condition: SaveTakeoffsConditionUseCase,
         set_takeoffs_negative: SetTakeoffsNegativeUseCase,
@@ -154,6 +158,7 @@ class ProjectWriteService(BaseWriteService):
         self._delete_condition_folders = delete_condition_folders
         self._save_takeoff_positions = save_takeoff_positions
         self._save_takeoff_rotations = save_takeoff_rotations
+        self._save_takeoff_text_properties = save_takeoff_text_properties
         self._save_takeoffs_area = save_takeoffs_area
         self._save_takeoffs_condition = save_takeoffs_condition
         self._set_takeoffs_negative = set_takeoffs_negative
@@ -434,6 +439,21 @@ class ProjectWriteService(BaseWriteService):
         ):
             return False
         success = self._save_takeoff_rotations.execute(db_path, rotations)
+        if success and reload_database:
+            self.reload_and_notify(db_path)
+        return success
+
+    def save_takeoff_text_properties(
+        self,
+        db_path: str,
+        updates: List[Tuple[str, dict]],
+        reload_database: bool = True,
+    ) -> bool:
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            "save_takeoff_text_properties", db_path
+        ):
+            return False
+        success = self._save_takeoff_text_properties.execute(db_path, updates)
         if success and reload_database:
             self.reload_and_notify(db_path)
         return success

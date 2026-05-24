@@ -64,12 +64,17 @@ class FakeProgressDialog:
 
     def __init__(self, _filename, task_fn, parent=None):
         self.result = task_fn()
+        self.cleanup_calls = 0
+        self.delete_later_calls = 0
 
     def exec(self):
         return self.result_code
 
     def cleanup(self):
-        pass
+        self.cleanup_calls += 1
+
+    def deleteLater(self):
+        self.delete_later_calls += 1
 
 
 class ImportRefreshFlowTests(unittest.TestCase):

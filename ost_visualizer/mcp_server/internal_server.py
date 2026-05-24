@@ -57,7 +57,7 @@ class OstMcpServer:
             name=fn.__name__,
             fn=fn,
             input_schema=_input_schema_for(fn),
-            description=inspect.getdoc(fn) or "",
+            description=_handler_description(fn),
         )
 
     def register_prompt(self, fn: Callable) -> None:
@@ -65,7 +65,7 @@ class OstMcpServer:
             name=fn.__name__,
             fn=fn,
             input_schema=_input_schema_for(fn),
-            description=inspect.getdoc(fn) or "",
+            description=_handler_description(fn),
         )
 
     def register_resource(self, uri_template: str, fn: Callable) -> None:
@@ -73,7 +73,7 @@ class OstMcpServer:
             uri_template=uri_template,
             fn=fn,
             name=fn.__name__,
-            description=inspect.getdoc(fn) or "",
+            description=_handler_description(fn),
         )
 
     def list_tools(self) -> list[dict]:
@@ -290,6 +290,10 @@ def _resource_template_item(handler: _ResourceHandler) -> dict:
         "description": handler.description,
         "mimeType": handler.mime_type,
     }
+
+
+def _handler_description(fn: Callable) -> str:
+    return inspect.getdoc(fn) or fn.__name__.replace("_", " ").capitalize()
 
 
 def _schema_for_annotation(annotation: Any) -> dict:

@@ -5,26 +5,33 @@ import weakref
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QGuiApplication, QPainterPath, QPen
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsRectItem
+from PySide6.QtWidgets import (
+    QGraphicsItem,
+    QGraphicsLineItem,
+    QGraphicsPathItem,
+    QGraphicsRectItem,
+)
 from .....domain.entities import shape as shapes
 from .....domain.entities.condition import Condition
 from ....visualization.core.geometry.takeoff_geometry import compute_count_vertices
 from ....visualization.pdf import ost_pdf
 from .geometry_utils import polygon_is_valid, polyline_self_intersects
 from .handle_style import apply_takeoff_handle_style
-from .snap_index import ENDPOINT, GRID, MIDPOINT, PERPENDICULAR, SnapIndex
+from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
 
 logger = logging.getLogger(__name__)
-_SNAP_ANGLE_DEG = 22.5
-_SNAP_ANGLE_RAD = math.radians(_SNAP_ANGLE_DEG)
-_SNAP_RADIUS_VIEW_PX = 8.0
 
 
 class PlacementModeMixin:
     def _snap_angle(
         self, origin_x: float, origin_y: float, target_x: float, target_y: float
     ) -> tuple[float, float]:
-        if QGuiApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier:
+        snap_angle_deg = (
+            self._mouse_pressed_snap_angle
+            if QGuiApplication.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier
+            else self._mouse_unpressed_snap_angle
+        )
+        if snap_angle_deg <= 0:
             return target_x, target_y
         dx = target_x - origin_x
         dy = target_y - origin_y
@@ -32,10 +39,32 @@ class PlacementModeMixin:
         if length < 1e-9:
             return target_x, target_y
         angle = math.atan2(dy, dx)
-        snapped = round(angle / _SNAP_ANGLE_RAD) * _SNAP_ANGLE_RAD
+        snap_angle_rad = math.radians(snap_angle_deg)
+        snapped = round(angle / snap_angle_rad) * snap_angle_rad
         return origin_x + length * math.cos(snapped), origin_y + length * math.sin(
             snapped
         )
+
+    def _right_angle_snap_from_first_point(
+        self, target_x: float, target_y: float
+    ) -> tuple[float, float, bool]:
+        if not self._show_right_angle_line_indicator or not self._place_points:
+            return target_x, target_y, False
+        first_x, first_y = self._place_points[0]
+        first_scene = self._ost_to_scene_pos(first_x, first_y)
+        target_scene = self._ost_to_scene_pos(target_x, target_y)
+        first_vp = self.mapFromScene(first_scene)
+        target_vp = self.mapFromScene(target_scene)
+        threshold_px = float(self._right_angle_indicator_threshold_px)
+        if threshold_px <= 0.0:
+            return target_x, target_y, False
+        snap_x = abs(target_vp.x() - first_vp.x()) <= threshold_px
+        snap_y = abs(target_vp.y() - first_vp.y()) <= threshold_px
+        if snap_x:
+            target_x = first_x
+        if snap_y:
+            target_y = first_y
+        return target_x, target_y, snap_x or snap_y
 
     def _snap_angle_for_placement(
         self,
@@ -77,7 +106,8 @@ class PlacementModeMixin:
         return origin_x + dx * scale, origin_y + dy * scale
 
     def _invalidate_snap_index(self) -> None:
-        self._snap_index_dirty = True
+        self._takeoff_snap_index_dirty = True
+        self._pdf_snap_index_dirty = True
 
     def _pdf_snap_cache_key(self):
         page = self._current_page
@@ -294,21 +324,21 @@ class PlacementModeMixin:
         finally:
             renderer.close()
 
-    def _build_snap_segments(self) -> list:
-        pdf_segments = self._build_pdf_snap_segments()
-        takeoff_segments = self._build_takeoff_snap_segments()
-        segments = pdf_segments
-        segments.extend(takeoff_segments)
-        return segments
+    def _ensure_takeoff_snap_index(self) -> SnapIndex:
+        if self._takeoff_snap_index is None:
+            self._takeoff_snap_index = SnapIndex()
+        if self._takeoff_snap_index_dirty:
+            self._takeoff_snap_index.build(self._build_takeoff_snap_segments())
+            self._takeoff_snap_index_dirty = False
+        return self._takeoff_snap_index
 
-    def _ensure_snap_index(self) -> SnapIndex:
-        if self._snap_index is None:
-            self._snap_index = SnapIndex()
-        if self._snap_index_dirty:
-            segments = self._build_snap_segments()
-            self._snap_index.build(segments)
-            self._snap_index_dirty = False
-        return self._snap_index
+    def _ensure_pdf_snap_index(self) -> SnapIndex:
+        if self._pdf_snap_index is None:
+            self._pdf_snap_index = SnapIndex()
+        if self._pdf_snap_index_dirty:
+            self._pdf_snap_index.build(self._build_pdf_snap_segments())
+            self._pdf_snap_index_dirty = False
+        return self._pdf_snap_index
 
     def _request_place_preview_repaint(self) -> None:
         viewport = self.viewport()
@@ -331,9 +361,9 @@ class PlacementModeMixin:
             return self._place_linear_dragging or not self._place_points
         return False
 
-    def _snap_radius_ost(self) -> float:
+    def _screen_px_to_ost_radius(self, threshold_px: float) -> float:
         origin = self.mapToScene(QtCore.QPoint(0, 0))
-        offset = self.mapToScene(QtCore.QPoint(int(_SNAP_RADIUS_VIEW_PX), 0))
+        offset = self.mapToScene(QtCore.QPoint(int(threshold_px), 0))
         ost_origin = self._scene_pos_to_ost(origin)
         ost_offset = self._scene_pos_to_ost(offset)
         return math.hypot(
@@ -341,17 +371,67 @@ class PlacementModeMixin:
             ost_offset.y() - ost_origin.y(),
         )
 
+    def _query_takeoff_snap(
+        self, ost_x: float, ost_y: float, threshold_px: int
+    ) -> tuple | None:
+        if not self._snap_to_takeoffs_enabled or threshold_px <= 0:
+            return None
+        return self._ensure_takeoff_snap_index().query(
+            float(ost_x),
+            float(ost_y),
+            float(self._screen_px_to_ost_radius(float(threshold_px))),
+        )
+
+    def _query_pdf_line_snap(
+        self, ost_x: float, ost_y: float, threshold_px: int
+    ) -> tuple | None:
+        if not self._snap_to_pdf_lines_enabled or threshold_px <= 0:
+            return None
+        return self._ensure_pdf_snap_index().query(
+            float(ost_x),
+            float(ost_y),
+            float(self._screen_px_to_ost_radius(float(threshold_px))),
+        )
+
+    def _grid_snap_from_cursor(
+        self, cursor_scene: QtCore.QPointF, cursor_ost: QtCore.QPointF
+    ) -> tuple[float, float] | None:
+        threshold_px = int(self._snap_to_grid_threshold_px)
+        if (
+            not self._snap_to_grid_enabled
+            or threshold_px <= 0
+            or self._snap_increments <= 0
+        ):
+            return None
+        ost_x = self.snap_ost(cursor_ost.x())
+        ost_y = self.snap_ost(cursor_ost.y())
+        snapped_scene = self._ost_to_scene_pos(ost_x, ost_y)
+        cursor_vp = self.mapFromScene(cursor_scene)
+        snapped_vp = self.mapFromScene(snapped_scene)
+        dist_px = math.hypot(
+            snapped_vp.x() - cursor_vp.x(),
+            snapped_vp.y() - cursor_vp.y(),
+        )
+        if dist_px > threshold_px:
+            return None
+        return ost_x, ost_y
+
     def _placement_snap_from_scene(self, cursor_scene: QtCore.QPointF):
         cs = self._scene_builder.get_coordinate_system()
         ost_factor = cs.scale_ratio / (72.0 * cs.view_scale)
         inv_factor = 1.0 / ost_factor
         cursor_ost = self._scene_pos_to_ost(cursor_scene)
-        snap_index = self._ensure_snap_index()
-        hit = snap_index.query(
+        hit = self._query_takeoff_snap(
             float(cursor_ost.x()),
             float(cursor_ost.y()),
-            float(self._snap_radius_ost()),
+            int(self._snap_to_takeoffs_threshold_px),
         )
+        if hit is None:
+            hit = self._query_pdf_line_snap(
+                float(cursor_ost.x()),
+                float(cursor_ost.y()),
+                int(self._snap_to_pdf_lines_threshold_px),
+            )
         if hit is not None:
             ost_x, ost_y, kind, _segment_index = hit
             return (
@@ -361,9 +441,13 @@ class PlacementModeMixin:
                 float(ost_y) * inv_factor,
                 int(kind),
             )
-        ost_x = self.snap_ost(cursor_ost.x())
-        ost_y = self.snap_ost(cursor_ost.y())
-        return ost_x, ost_y, ost_x * inv_factor, ost_y * inv_factor, GRID
+        grid_snap = self._grid_snap_from_cursor(cursor_scene, cursor_ost)
+        if grid_snap is not None:
+            ost_x, ost_y = grid_snap
+            return ost_x, ost_y, ost_x * inv_factor, ost_y * inv_factor, GRID
+        ost_x = float(cursor_ost.x())
+        ost_y = float(cursor_ost.y())
+        return ost_x, ost_y, ost_x * inv_factor, ost_y * inv_factor, NONE
 
     def _is_line_snap(self, snap_kind: int) -> bool:
         return snap_kind in (ENDPOINT, MIDPOINT, PERPENDICULAR)
@@ -581,9 +665,16 @@ class PlacementModeMixin:
                 (flat_scene[i], flat_scene[i + 1]) for i in range(0, len(flat_scene), 2)
             ]
             last_sx, last_sy = scene_pts[-1]
-            snapped_end = self._snap_angle_for_placement(
-                last_sx, last_sy, cx, cy, snap_kind
+            right_ost_x, right_ost_y, right_angle_active = (
+                self._right_angle_snap_from_first_point(ost_x, ost_y)
             )
+            if right_angle_active:
+                snapped_scene = cs.transform_vertices_to_2d([right_ost_x, right_ost_y])
+                snapped_end = (snapped_scene[0], snapped_scene[1])
+            else:
+                snapped_end = self._snap_angle_for_placement(
+                    last_sx, last_sy, cx, cy, snap_kind
+                )
             polyline_pts = scene_pts + [snapped_end]
             is_invalid = polyline_self_intersects(polyline_pts)
             fill_color = QColor(200, 0, 0) if is_invalid else qcolor
@@ -633,6 +724,22 @@ class PlacementModeMixin:
                 border.setTransform(page_transform)
             self._scene.addItem(border)
             self._place_preview_items.append(border)
+            if right_angle_active:
+                indicator_pen = QPen(QColor("#1f9d45"))
+                indicator_pen.setWidthF(2.0)
+                indicator_pen.setCosmetic(True)
+                indicator = QGraphicsLineItem(
+                    last_sx,
+                    last_sy,
+                    snapped_end[0],
+                    snapped_end[1],
+                )
+                indicator.setPen(indicator_pen)
+                indicator.setZValue(12)
+                if page_transform is not None:
+                    indicator.setTransform(page_transform)
+                self._scene.addItem(indicator)
+                self._place_preview_items.append(indicator)
             for hx, hy in scene_pts:
                 self._add_place_handle(hx, hy)
             self._add_place_handle(snapped_end[0], snapped_end[1])
@@ -744,9 +851,15 @@ class PlacementModeMixin:
                             )
                 else:
                     last_ox, last_oy = self._place_points[-1]
-                    ost_x, ost_y = self._snap_angle_for_placement(
-                        last_ox, last_oy, ost_x, ost_y, snap_kind
+                    right_ost_x, right_ost_y, right_angle_active = (
+                        self._right_angle_snap_from_first_point(ost_x, ost_y)
                     )
+                    if right_angle_active:
+                        ost_x, ost_y = right_ost_x, right_ost_y
+                    else:
+                        ost_x, ost_y = self._snap_angle_for_placement(
+                            last_ox, last_oy, ost_x, ost_y, snap_kind
+                        )
                     candidate = self._place_points + [(ost_x, ost_y)]
                     if polyline_self_intersects(candidate):
                         flash_uid = self._backout_active_uid or self._place_session_uid
@@ -922,17 +1035,22 @@ class PlacementModeMixin:
         opacity: float,
         page_transform,
     ) -> None:
-        pattern_type = condition.pattern if condition.pattern else 1
-        spacing = condition.spacing if condition.spacing else 4.0
-        fill_brush, pattern_items = self._scene_builder.build_pattern_fill(
-            path, pattern_type, qcolor, opacity, spacing, 2.0
-        )
+        fill_brush = None
+        pattern_items = []
+        if condition.display_grid_while_drawing:
+            pattern_type = condition.pattern if condition.pattern else 1
+            spacing = condition.spacing if condition.spacing else 4.0
+            fill_brush, pattern_items = self._scene_builder.build_pattern_fill(
+                path, pattern_type, qcolor, opacity, spacing, 2.0
+            )
         border_pen = QPen(qcolor)
         border_pen.setWidthF(2.0)
         border_pen.setCosmetic(True)
         item.setPen(border_pen)
         if fill_brush is not None:
             item.setBrush(fill_brush)
+        else:
+            item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         item.setZValue(10)
         if page_transform is not None:
             item.setTransform(page_transform)

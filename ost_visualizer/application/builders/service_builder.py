@@ -7,10 +7,10 @@ from ..interfaces.i_infrastructure_service_provider import (
 from ..interfaces.i_parser_provider import IParserProvider
 from ..interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from ..service_container import ServiceContainer
+from ..services.config_service import ConfigService
 from ..services.export_service import ExportService
 from ..services.file_loading_service import FileLoadingService
 from ..services.import_service import ImportService
-from ..services.preferences_service import PreferencesService
 from ..services.update_check_service import UpdateCheckService
 from ..services.visualization_service import VisualizationService
 from ..services.working_directory_service import WorkingDirectoryService
@@ -79,8 +79,8 @@ class ServiceBuilder:
             ),
         )
         self.container.register_singleton(
-            "preferences_service",
-            lambda: PreferencesService(config_model, event_bus),
+            "config_service",
+            lambda: ConfigService(config_model, event_bus),
         )
         transaction_monitor = self.infrastructure_provider.get_transaction_monitor()
         conn_manager = connection_manager

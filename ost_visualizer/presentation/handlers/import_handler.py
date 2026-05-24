@@ -63,9 +63,12 @@ class ImportHandler:
                 ),
                 parent=self.window,
             )
-            rc = dialog.exec()
-            worker_error = dialog.error
-            dialog.cleanup()
+            try:
+                rc = dialog.exec()
+                worker_error = dialog.error
+            finally:
+                dialog.cleanup()
+                dialog.deleteLater()
             if rc == QtWidgets.QDialog.DialogCode.Accepted:
                 self._import_service.reload_and_notify(target_db)
                 show_info(

@@ -25,30 +25,25 @@ class ShortcutId(Enum):
 class ShortcutSpec:
     sequence: str
     description: str
-    scope: str
 
 
 _SHORTCUTS = {
-    ShortcutId.OPEN_FILES: ShortcutSpec("Ctrl+O", "Open files", "main_window"),
-    ShortcutId.SELECT_ALL: ShortcutSpec("Ctrl+A", "Select all", "takeoff_or_menu"),
-    ShortcutId.COPY: ShortcutSpec("Ctrl+C", "Copy", "focused_command"),
-    ShortcutId.CUT: ShortcutSpec("Ctrl+X", "Cut", "focused_command"),
-    ShortcutId.PASTE: ShortcutSpec("Ctrl+V", "Paste", "focused_command"),
-    ShortcutId.DUPLICATE: ShortcutSpec("Ctrl+D", "Duplicate", "focused_command"),
-    ShortcutId.DELETE: ShortcutSpec("Del", "Delete", "focused_command"),
-    ShortcutId.UNDO: ShortcutSpec("Ctrl+Z", "Undo", "focused_command"),
-    ShortcutId.REDO: ShortcutSpec("Ctrl+Y", "Redo", "focused_command"),
-    ShortcutId.NEXT_PAGE: ShortcutSpec("PgDown", "Next page", "takeoff_tab"),
-    ShortcutId.PREVIOUS_PAGE: ShortcutSpec("PgUp", "Previous page", "takeoff_tab"),
-    ShortcutId.LAYERS_SIDEBAR: ShortcutSpec(
-        "Ctrl+L", "Toggle Layers Sidebar", "takeoff_tab"
-    ),
+    ShortcutId.OPEN_FILES: ShortcutSpec("Ctrl+O", "Open files"),
+    ShortcutId.SELECT_ALL: ShortcutSpec("Ctrl+A", "Select all"),
+    ShortcutId.COPY: ShortcutSpec("Ctrl+C", "Copy"),
+    ShortcutId.CUT: ShortcutSpec("Ctrl+X", "Cut"),
+    ShortcutId.PASTE: ShortcutSpec("Ctrl+V", "Paste"),
+    ShortcutId.DUPLICATE: ShortcutSpec("Ctrl+D", "Duplicate"),
+    ShortcutId.DELETE: ShortcutSpec("Del", "Delete"),
+    ShortcutId.UNDO: ShortcutSpec("Ctrl+Z", "Undo"),
+    ShortcutId.REDO: ShortcutSpec("Ctrl+Y", "Redo"),
+    ShortcutId.NEXT_PAGE: ShortcutSpec("PgDown", "Next page"),
+    ShortcutId.PREVIOUS_PAGE: ShortcutSpec("PgUp", "Previous page"),
+    ShortcutId.LAYERS_SIDEBAR: ShortcutSpec("Ctrl+L", "Toggle Layers Sidebar"),
     ShortcutId.ANNOTATION_WINDOW: ShortcutSpec(
-        "Ctrl+2", "Toggle Annotation and View Window", "takeoff_tab"
+        "Ctrl+2", "Toggle Annotation and View Window"
     ),
-    ShortcutId.ADJUST_IMAGES: ShortcutSpec(
-        "Ctrl+I", "Adjust page images", "takeoff_tab"
-    ),
+    ShortcutId.ADJUST_IMAGES: ShortcutSpec("Ctrl+I", "Adjust page images"),
 }
 _SHORTCUTS_BY_ACTION_KEY = {shortcut.value: shortcut for shortcut in _SHORTCUTS}
 _TEXT_EDITING_WIDGETS = (

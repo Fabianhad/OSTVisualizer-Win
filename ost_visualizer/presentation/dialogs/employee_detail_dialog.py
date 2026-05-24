@@ -326,6 +326,10 @@ class EmployeeDetailDialog(QtWidgets.QDialog):
 
     def cleanup(self) -> None:
         self.icon_provider = None
+        self._pay_classes_save_fn = None
+        self._active_payroll_dialog = None
+        self._employees.clear()
+        self._pay_classes.clear()
 
     def closeEvent(self, event) -> None:
         event.accept()

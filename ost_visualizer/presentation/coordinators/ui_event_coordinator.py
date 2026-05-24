@@ -18,6 +18,7 @@ from ..dialogs.payroll_class_dialog import PayrollClassListDialog
 from ..dialogs.rename_page_dialog import PageRenameTarget, RenamePageDialog
 from ..dialogs.set_scale_dialog import ScaleSettings, SetScaleDialog
 from ..handlers.condition_action_handler import ConditionActionHandler
+from ..managers.app_config_presentation_manager import AppConfigPresentationManager
 from ..managers.ui_access_manager import Feature
 from ..resolvers.entity_resolver import EntityResolver
 from ..utils.image_show_mode import SHOW_BOTH, SHOW_ORIGINAL, SHOW_OVERLAY
@@ -60,6 +61,10 @@ class _MainThreadSignaler(QObject):
     def _on_update_requested(self):
         if self._callback:
             self._callback()
+
+    def cleanup(self) -> None:
+        self.update_requested.disconnect()
+        self._callback = None
 
 
 class UIEventCoordinator:
@@ -106,6 +111,7 @@ class UIEventCoordinator:
         self._toolbar = ToolbarStateCoordinator(
             ui_state_manager, ui_access_manager, self.project_data
         )
+        self._app_config_presentation = AppConfigPresentationManager()
         self._placement = PlacementCoordinator(
             ui_state_manager=ui_state_manager,
             ui_access_manager=ui_access_manager,
@@ -120,6 +126,7 @@ class UIEventCoordinator:
             project_read_service=project_read_service,
             project_data=self.project_data,
             ui_state_manager=ui_state_manager,
+            config_model=main_window._config_model,
         )
         self._view_stack = None
         self._status_panel = None
@@ -419,6 +426,9 @@ class UIEventCoordinator:
         self._toolbar.set_plan_view(view)
         view.takeoff_selection_changed.connect(self._on_takeoff_selection_changed)
         view.clipboard_changed.connect(self._toolbar.refresh)
+        view.text_annotation_edit_mode_changed.connect(
+            self._on_text_annotation_edit_mode_changed
+        )
         view.overlay_display_mode_requested.connect(
             self._on_overlay_display_mode_requested
         )
@@ -649,13 +659,17 @@ class UIEventCoordinator:
         self._sync_selection(self._SOURCE_2D, uids)
         self._restore_project_tree_bid_selection_if_needed()
 
+    def _on_text_annotation_edit_mode_changed(self, active: bool) -> None:
+        self.ui_access_manager.set_text_annotation_edit_active(active)
+        self._update_export_menu_state()
+
     def _setup_event_subscriptions(self) -> None:
         self._subscribe(AppEvents.FILE_OPENED, self._on_file_opened)
         self._subscribe(AppEvents.DATABASE_REFRESHED, self._on_database_refreshed)
         self._subscribe(AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed)
         self._subscribe(AppEvents.FILE_UNLOADED, self._on_file_unloaded)
         self._subscribe(AppEvents.FILE_SELECTED, self._on_file_selected)
-        self._subscribe(AppEvents.PREFERENCES_UPDATED, self._on_preferences_updated)
+        self._subscribe(AppEvents.APP_CONFIG_UPDATED, self._on_app_config_updated)
         self._subscribe(
             AppEvents.LICENSE_STATUS_CHANGED, self._on_license_status_changed
         )
@@ -913,8 +927,7 @@ class UIEventCoordinator:
             self._delete_state_signaler,
         ):
             if signaler:
-                signaler.blockSignals(True)
-                signaler.update_requested.disconnect()
+                signaler.cleanup()
         if self._bid_data_cache:
             self._bid_data_cache.clear()
         self._bid_data_cache = None
@@ -1173,18 +1186,28 @@ class UIEventCoordinator:
         self.visualization_service.refresh_mesh_view([])
         self._update_export_menu_state()
 
-    def _on_preferences_updated(self, **kwargs) -> None:
-        setting = kwargs.get("setting", "")
+    def _on_app_config_updated(self, **kwargs) -> None:
         self.ui_state_manager.sync_from_config()
-        if setting in {"color_mode", "grayscale_enabled"}:
-            prev_highlighted = set(self.ui_state_manager.highlighted_condition_uids)
-            self._sidebar.load_conditions_sidebar()
-            if prev_highlighted and self.conditions_sidebar:
-                self.conditions_sidebar.highlight_conditions(prev_highlighted)
-            if self.ui_access_manager.is_allowed(Feature.VIEW_2D):
-                selected_pages = self.project_data.get_selected_page_uids()
-                self._viewer.update_viewers(selected_pages)
-                self._update_plan_view_for_active()
+        needs_condition_display_refresh = (
+            self._app_config_presentation.apply_updated_options(
+                self.main_window,
+                self.main_window._config_model,
+                kwargs["value"],
+            )
+        )
+        self.main_window.menu_controller.update_menu_states()
+        if needs_condition_display_refresh:
+            self._refresh_condition_display_after_app_config_change()
+
+    def _refresh_condition_display_after_app_config_change(self) -> None:
+        prev_highlighted = set(self.ui_state_manager.highlighted_condition_uids)
+        self._sidebar.load_conditions_sidebar()
+        if prev_highlighted and self.conditions_sidebar:
+            self.conditions_sidebar.highlight_conditions(prev_highlighted)
+        if self.ui_access_manager.is_allowed(Feature.VIEW_2D):
+            selected_pages = self.project_data.get_selected_page_uids()
+            self._viewer.update_viewers(selected_pages)
+            self._update_plan_view_for_active()
 
     def _on_license_status_changed(self, **_) -> None:
         self._viewer.update_license_visualization_state()
@@ -1919,7 +1942,8 @@ class UIEventCoordinator:
 
     def toggle_page_invert(self, invert: bool) -> None:
         self._toggle_page_image_flag(
-            "invert",
+            lambda page: page.invert,
+            self._set_page_invert,
             bool(invert),
             self._project_write_service.save_page_invert,
             "Failed to save page invert state",
@@ -1927,14 +1951,23 @@ class UIEventCoordinator:
 
     def toggle_page_bitonal(self, bitonal: bool) -> None:
         self._toggle_page_image_flag(
-            "bitonal",
+            lambda page: page.bitonal,
+            self._set_page_bitonal,
             bool(bitonal),
             self._project_write_service.save_page_bitonal,
             "Failed to save page bitonal state",
         )
 
+    @staticmethod
+    def _set_page_invert(page, value: bool) -> None:
+        page.invert = value
+
+    @staticmethod
+    def _set_page_bitonal(page, value: bool) -> None:
+        page.bitonal = value
+
     def _toggle_page_image_flag(
-        self, field_name: str, value: bool, save_fn, failure_message: str
+        self, read_fn, write_fn, value: bool, save_fn, failure_message: str
     ) -> None:
         page_uid = self.ui_state_manager.active_page_uid
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -1949,15 +1982,15 @@ class UIEventCoordinator:
             self._update_export_menu_state()
             return
         self._save_current_page_view_state(selected_page_override=page_uid)
-        previous = getattr(page, field_name)
-        setattr(page, field_name, value)
+        previous = read_fn(page)
+        write_fn(page, value)
         try:
             success = save_fn(bid_ref.file_path, page_uid, value)
         except Exception:
             logger.warning(failure_message, exc_info=True)
             success = False
         if not success:
-            setattr(page, field_name, previous)
+            write_fn(page, previous)
             self._update_export_menu_state()
             return
         if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):

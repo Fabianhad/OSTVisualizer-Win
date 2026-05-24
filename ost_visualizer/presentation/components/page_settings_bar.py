@@ -5,7 +5,7 @@ from PySide6.QtCore import Signal
 from ...domain.entities.identity_refs import BidRef
 from ..components.area_combo import AreaComboBox
 from ..components.resizable_combo import ResizableComboBox
-from ..config import COMPACT_MARGINS, COMPACT_SPACING, NO_MARGINS
+from ..config import COMPACT_MARGINS, COMPACT_SPACING, NO_MARGINS, SCALE_TOOLTIP
 from ..dialogs.areas_dialog import BidAreaPickerDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.button_policy import apply_no_highlight_button_policy
@@ -56,7 +56,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         self.scale_combo = ResizableComboBox()
         self.scale_combo.setFixedWidth(120)
         self.scale_combo.setEnabled(False)
-        self.scale_combo.setToolTip("Scale")
+        self.scale_combo.setToolTip(SCALE_TOOLTIP)
         for sf1, sf2, label in ALL_SCALES:
             self.scale_combo.addItem(label, (sf1, sf2))
         self.scale_combo.addItem("Custom scale", _CUSTOM_SCALE_DATA)
@@ -230,6 +230,7 @@ class PageSettingsBar(QtWidgets.QWidget):
                 selected_uid = dlg.get_selected_uid()
         finally:
             dlg.cleanup()
+            dlg.deleteLater()
         self.load_bid_areas(self._bid_ref, areas_with_takeoff=self._bid_areas_in_use)
         if self._page_areas_in_use is not None:
             self.update_bold_states(self._page_areas_in_use)

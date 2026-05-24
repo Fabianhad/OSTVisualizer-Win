@@ -107,6 +107,45 @@ def create_pattern_items(
     return items
 
 
+def create_grid_items(
+    base_path: QPainterPath,
+    color: QColor,
+    spacing_x: float,
+    spacing_y: float,
+    line_width: float,
+    coord_system: ICoordinateTransformer | None = None,
+) -> List[QGraphicsPathItem]:
+    polygon_points = _extract_polygon_points(base_path)
+    if len(polygon_points) < 3:
+        return []
+    bounds = base_path.boundingRect()
+    pen = QPen(color)
+    pen.setWidthF(line_width)
+    pen.setCosmetic(True)
+    horizontal_spacing = _convert_spacing(spacing_y, coord_system)
+    vertical_spacing = _convert_spacing(spacing_x, coord_system)
+    items: List[QGraphicsPathItem] = []
+    items.extend(
+        _create_horizontal_lines(
+            polygon_points,
+            bounds.top(),
+            bounds.bottom(),
+            horizontal_spacing,
+            pen,
+        )
+    )
+    items.extend(
+        _create_vertical_lines(
+            polygon_points,
+            bounds.left(),
+            bounds.right(),
+            vertical_spacing,
+            pen,
+        )
+    )
+    return items
+
+
 def _convert_spacing(
     spacing: float, coord_system: ICoordinateTransformer | None
 ) -> float:

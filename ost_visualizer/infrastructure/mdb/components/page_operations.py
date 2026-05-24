@@ -1,5 +1,5 @@
 class PageOperationsMixin:
-    _POSITION_TABLES = [
+    _POSITION_TABLES = (
         "BidTakeoffs",
         "BidHighlights",
         "BidTexts",
@@ -17,7 +17,7 @@ class PageOperationsMixin:
         "BidNamedViews",
         "BidTypGroupViews",
         "BidComments",
-    ]
+    )
 
     def save_page_scale(
         self, db_path: str, page_uid: str, sf1: float, sf2: float

@@ -1,14 +1,27 @@
 import os
 import unittest
+from dataclasses import fields
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.services.condition_quantity_service import (
+    compute_page_quantities,
+)
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
+)
+from ost_visualizer.presentation.utils.view_context_menu import (
+    build_selected_takeoff_context_state,
+)
+from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
+    TakeoffRenderer,
 )
 
 
@@ -36,7 +49,42 @@ class FakeReadService:
         return []
 
 
+class FakeCoordinateSystem:
+    page_info = {"view_scale": 1.0}
+
+    def update_page_info(self, page_info):
+        self.page_info.update(page_info)
+
+    def parse_position(self, position):
+        return list(position)
+
+    def transform_vertices_to_2d(self, position):
+        return list(position)
+
+    def ost_to_pdf_points(self, value):
+        return float(value)
+
+
+class FakeColorService:
+    def should_gray_out_takeoff(self, _takeoff, _page_area_selections):
+        return False
+
+
 class ConditionUiBehaviorTests(unittest.TestCase):
+    def test_condition_entity_does_not_expose_label_style_fields(self):
+        condition_fields = {field.name for field in fields(Condition)}
+        self.assertFalse(
+            {
+                "name_font_name",
+                "name_font_color",
+                "name_font_size",
+                "name_font_bold",
+                "name_font_italic",
+                "name_font_underline",
+            }
+            & condition_fields
+        )
+
     @classmethod
     def setUpClass(cls):
         cls.app = _app()
@@ -56,6 +104,32 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         sidebar.set_delete_enabled(True)
         sidebar.highlight_conditions({"c1"})
         return sidebar, deleted
+
+    def _make_dialog(self, condition):
+        return EditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {},
+            {},
+            lambda _uid: False,
+            lambda _uid, _dto: True,
+            read_service=FakeReadService(),
+        )
+
+    def _checkbox_texts(self, dialog):
+        return {
+            checkbox.text() for checkbox in dialog.findChildren(QtWidgets.QCheckBox)
+        }
+
+    def _assert_removed_connect_controls_absent(self, dialog):
+        texts = self._checkbox_texts(dialog)
+        self.assertNotIn("Connect", texts)
+        self.assertNotIn("Snap to Linear", texts)
+        label_texts = {label.text() for label in dialog.findChildren(QtWidgets.QLabel)}
+        self.assertFalse(any("Tolerance" in text for text in label_texts))
 
     def test_delete_key_invokes_condition_delete_for_tree_selection(self):
         sidebar, deleted = self._make_sidebar_with_selected_condition()
@@ -123,6 +197,347 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             "Condition style cannot be changed after takeoffs have been placed.",
         )
         dialog.close()
+
+    def test_count_attachment_advanced_properties_show_only_display_name(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_COUNT,
+            ref_no=1,
+        )
+        dialog = self._make_dialog(condition)
+        self.assertIsNotNone(dialog._display_name_check)
+        self._assert_removed_connect_controls_absent(dialog)
+        dialog.close()
+
+    def test_linear_advanced_properties_hide_connect_and_snap_controls(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=1,
+        )
+        dialog = self._make_dialog(condition)
+        self.assertIsNotNone(dialog._round_qty_check)
+        self.assertIsNotNone(dialog._round_to_edit)
+        self.assertIsNotNone(dialog._drop_run_check)
+        self.assertIsNotNone(dialog._add_length_edit)
+        self.assertIsNotNone(dialog._trim_check)
+        self.assertIsNotNone(dialog._curved_check)
+        self._assert_removed_connect_controls_absent(dialog)
+        dialog.close()
+
+    def test_area_advanced_properties_hide_snap_to_linear_control(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_AREA,
+            ref_no=1,
+        )
+        dialog = self._make_dialog(condition)
+        self.assertIsNotNone(dialog._grid_check)
+        self.assertIsNotNone(dialog._tile1_edit)
+        self.assertIsNotNone(dialog._tile2_edit)
+        self.assertIsNotNone(dialog._display_pattern_check)
+        self.assertIsNotNone(dialog._display_dim_check)
+        self.assertIsNotNone(dialog._display_name_check)
+        self._assert_removed_connect_controls_absent(dialog)
+        dialog.close()
+
+    def test_hidden_connect_fields_round_trip_by_not_writing_dialog_changes(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_AREA,
+            ref_no=1,
+            connect=True,
+            connect_tolerance=9.0,
+            snap_to_linear=3,
+            display_name=False,
+        )
+        dialog = self._make_dialog(condition)
+        dialog._display_name_check.setChecked(True)
+        dto = dialog._validate_and_build_dto()
+        changes = dto.get_changes()
+        self.assertTrue(changes["display_name"])
+        self.assertNotIn("connect", changes)
+        self.assertNotIn("connect_tolerance", changes)
+        self.assertNotIn("snap_to_linear", changes)
+        dialog._dirty = False
+        dialog.close()
+
+    def test_trim_disables_curved_segment_control(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=1,
+        )
+        dialog = self._make_dialog(condition)
+        dialog._trim_check.setChecked(True)
+        self.assertFalse(dialog._curved_check.isChecked())
+        self.assertFalse(dialog._curved_check.isEnabled())
+        dialog._dirty = False
+        dialog.close()
+
+    def test_trim_condition_hides_curved_context_action(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            trim=True,
+        )
+        takeoff = Takeoff(uid="t1", condition_uid="c1", position=[0, 0, 12, 0])
+        state = build_selected_takeoff_context_state(
+            ["t1"], lambda _uid: takeoff, {"c1": condition}
+        )
+        self.assertFalse(state.show_curved)
+
+    def test_new_area_condition_uses_auto_dimension_default(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_AREA,
+            ref_no=1,
+        )
+        dialog = EditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {},
+            {},
+            lambda _uid: False,
+            lambda _uid, _dto: True,
+            read_service=FakeReadService(),
+            default_auto_dimension_lines=True,
+        )
+        dialog._populate_defaults_for_type(Condition.TYPE_AREA)
+        self.assertTrue(dialog._display_dim_check.isChecked())
+        dialog.close()
+
+    def test_round_quantity_rounds_linear_and_area_results_without_mutating_geometry(
+        self,
+    ):
+        linear = Condition(
+            uid="linear",
+            condition_type=Condition.TYPE_LINEAR,
+            calc_type1=1,
+            uom1=1,
+            round_quantity=True,
+            round_up=12.0,
+        )
+        area = Condition(
+            uid="area",
+            condition_type=Condition.TYPE_AREA,
+            calc_type1=11,
+            uom1=4,
+            round_quantity=True,
+            round_up=12.0,
+        )
+        linear_takeoff = Takeoff(
+            uid="t1", condition_uid="linear", position=[0.0, 0.0, 13.0, 0.0]
+        )
+        area_takeoff = Takeoff(
+            uid="t2",
+            condition_uid="area",
+            position=[0.0, 0.0, 13.0, 0.0, 13.0, 13.0, 0.0, 13.0],
+        )
+        results = compute_page_quantities(
+            {"linear": linear, "area": area}, [linear_takeoff, area_takeoff]
+        )
+        self.assertEqual(results["linear"][0], 24.0)
+        self.assertEqual(results["area"][0], 180.0)
+        self.assertEqual(linear_takeoff.position, [0.0, 0.0, 13.0, 0.0])
+
+    def test_display_name_dimension_and_grid_render_as_scene_items(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        condition = Condition(
+            uid="c1",
+            name="Area Label",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0,
+            pattern=0,
+            spacing=0.0,
+            grid=True,
+            grid_size1=3.0,
+            grid_size2=3.0,
+            display_name=True,
+            display_dimension=True,
+            calc_type1=11,
+            uom1=4,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 12.0, 0.0, 12.0, 12.0, 0.0, 12.0],
+        )
+        rendered = renderer.create_all_path_items(
+            [takeoff],
+            {"c1": condition},
+            {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+        )
+        items = rendered[0][1]
+        items = items if isinstance(items, list) else [items]
+        text_items = [item for item in items if isinstance(item, QGraphicsTextItem)]
+        grid_items = [
+            item
+            for item in items
+            if isinstance(item, QGraphicsPathItem)
+            and item.data(2) != "condition_label"
+            and not item.path().boundingRect().isNull()
+        ]
+        dimension_label = next(
+            item for item in text_items if item.data(3) == "display_dimension"
+        )
+        name_label = next(item for item in text_items if item.data(3) == "display_name")
+        self.assertIn("Area Label", name_label.toPlainText())
+        self.assertIn("144.00 SQ IN", dimension_label.toPlainText())
+        name_center = name_label.mapToScene(name_label.boundingRect().center())
+        dimension_center = dimension_label.mapToScene(
+            dimension_label.boundingRect().center()
+        )
+        self.assertAlmostEqual(dimension_center.x(), 6.0)
+        self.assertAlmostEqual(dimension_center.y(), 6.0)
+        self.assertAlmostEqual(name_center.x(), dimension_center.x())
+        self.assertGreater(name_center.y(), dimension_center.y())
+        self.assertNotEqual(name_center, dimension_center)
+        self.assertGreater(len(grid_items), 1)
+
+    def test_area_display_name_uses_centroid_when_dimension_is_not_present(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        condition = Condition(
+            uid="c1",
+            name="Area Label",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0,
+            pattern=0,
+            spacing=0.0,
+            display_name=True,
+            display_dimension=False,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 12.0, 0.0, 12.0, 12.0, 0.0, 12.0],
+        )
+        rendered = renderer.create_all_path_items(
+            [takeoff],
+            {"c1": condition},
+            {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+        )
+        items = rendered[0][1]
+        items = items if isinstance(items, list) else [items]
+        name_label = next(
+            item
+            for item in items
+            if isinstance(item, QGraphicsTextItem) and item.data(3) == "display_name"
+        )
+        name_center = name_label.mapToScene(name_label.boundingRect().center())
+        self.assertAlmostEqual(name_center.x(), 6.0)
+        self.assertAlmostEqual(name_center.y(), 6.0)
+
+    def test_area_display_dimension_uses_negative_indicator_centroid_anchor(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        condition = Condition(
+            uid="c1",
+            name="Area Label",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0,
+            pattern=0,
+            spacing=0.0,
+            display_dimension=True,
+            calc_type1=11,
+            uom1=4,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 12.0, 0.0, 12.0, 12.0, 0.0, 12.0],
+            is_negative=True,
+        )
+        rendered = renderer.create_all_path_items(
+            [takeoff],
+            {"c1": condition},
+            {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+        )
+        items = rendered[0][1]
+        items = items if isinstance(items, list) else [items]
+        dimension_label = next(
+            item
+            for item in items
+            if isinstance(item, QGraphicsTextItem)
+            and item.data(3) == "display_dimension"
+        )
+        negative_box = next(
+            item
+            for item in items
+            if isinstance(item, QGraphicsPathItem) and item.zValue() == 10
+        )
+        dimension_center = dimension_label.mapToScene(
+            dimension_label.boundingRect().center()
+        )
+        self.assertEqual(dimension_center, negative_box.pos())
+
+    def test_condition_label_style_fields_render_after_overlay_rebuild(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        condition = Condition(
+            uid="c1",
+            name="Area Label",
+            condition_type=Condition.TYPE_AREA,
+            display_name=True,
+            display_dimension=True,
+            calc_type1=11,
+            uom1=4,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 12.0, 0.0, 12.0, 12.0, 0.0, 12.0],
+            dimension_font_name="Segoe UI",
+            dimension_font_color=0x332211,
+            dimension_font_size=24,
+            dimension_font_bold=True,
+            dimension_font_italic=True,
+            dimension_font_underline=True,
+            name_font_name="Calibri",
+            name_font_color=0x665544,
+            name_font_size=18,
+            name_font_bold=True,
+            name_font_italic=False,
+            name_font_underline=True,
+        )
+        rendered = renderer.create_all_path_items(
+            [takeoff],
+            {"c1": condition},
+            {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+        )
+        items = rendered[0][1]
+        items = items if isinstance(items, list) else [items]
+        dimension_label = next(
+            item
+            for item in items
+            if isinstance(item, QGraphicsTextItem)
+            and item.data(3) == "display_dimension"
+        )
+        name_label = next(
+            item
+            for item in items
+            if isinstance(item, QGraphicsTextItem) and item.data(3) == "display_name"
+        )
+        self.assertEqual(dimension_label.defaultTextColor().name(), "#112233")
+        self.assertEqual(dimension_label.font().family(), "Segoe UI")
+        self.assertEqual(dimension_label.font().pointSize(), 24)
+        self.assertTrue(dimension_label.font().bold())
+        self.assertTrue(dimension_label.font().italic())
+        self.assertTrue(dimension_label.font().underline())
+        self.assertEqual(name_label.defaultTextColor().name(), "#445566")
+        self.assertEqual(name_label.font().family(), "Calibri")
+        self.assertEqual(name_label.font().pointSize(), 18)
+        self.assertTrue(name_label.font().bold())
+        self.assertFalse(name_label.font().italic())
+        self.assertTrue(name_label.font().underline())
 
 
 if __name__ == "__main__":

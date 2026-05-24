@@ -1,5 +1,6 @@
 import logging
 import unittest
+from types import SimpleNamespace
 from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
 from ost_visualizer.application.services.active_bid_write_guard import (
     ActiveBidWriteGuard,
@@ -8,6 +9,15 @@ from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.controllers.menu_controller import MenuController
+from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
+    ToolbarStateCoordinator,
+)
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
+from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.ui_access_manager import (
     Feature,
     UIAccessManager,
@@ -70,6 +80,62 @@ class _UiState:
         return True
 
 
+class _ToolbarUiState(_UiState):
+    selected_project_uid = None
+    selected_project_uids = []
+
+    def get_selected_bid_refs(self):
+        return [self._bid_ref] if self._bid_ref else []
+
+
+class _FakeAction:
+    def __init__(self):
+        self.enabled = None
+
+    def setEnabled(self, enabled):
+        self.enabled = bool(enabled)
+
+
+class _FakeLayersSidebar:
+    def __init__(self):
+        self.interactive = None
+
+    def set_interactive(self, interactive):
+        self.interactive = bool(interactive)
+
+
+class _FakeTabWidget:
+    def __init__(self, index):
+        self._index = index
+
+    def currentIndex(self):
+        return self._index
+
+
+class _FakePlanView:
+    has_selection = True
+    place_condition_uid = None
+
+    def __init__(self):
+        self.deleted = 0
+        self.selected_all = 0
+
+    def selected_takeoff_condition_uid(self):
+        return None
+
+    def set_selection_enabled(self, _enabled):
+        pass
+
+    def delete_selected(self):
+        self.deleted += 1
+
+    def select_all(self):
+        self.selected_all += 1
+
+    def is_text_annotation_inline_edit_active(self):
+        return False
+
+
 class _UseCase:
     def __init__(self, result=True):
         self.result = result
@@ -112,6 +178,7 @@ def _write_service(project_data):
         delete_condition_folders=forbidden,
         save_takeoff_positions=forbidden,
         save_takeoff_rotations=forbidden,
+        save_takeoff_text_properties=forbidden,
         save_takeoffs_area=forbidden,
         save_takeoffs_condition=forbidden,
         set_takeoffs_negative=forbidden,
@@ -151,20 +218,25 @@ def _write_service(project_data):
 
 
 class BidLockPermissionTests(unittest.TestCase):
-    def test_bid_lock_applies_and_unlocks_immediately_in_access_manager(self):
-        project_data = _ProjectData()
-        manager = UIAccessManager(
+    def _access_manager(self, project_data, ui_state=None):
+        return UIAccessManager(
             _EventBus(),
             _License(),
             _TransactionMonitor(),
             project_data,
-            _UiState(project_data.bid_ref),
+            ui_state or _UiState(project_data.bid_ref),
         )
+
+    def test_bid_lock_applies_and_unlocks_immediately_in_access_manager(self):
+        project_data = _ProjectData()
+        manager = self._access_manager(project_data)
         self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION))
         self.assertTrue(manager.is_allowed(Feature.SELECT_TAKEOFFS))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
         project_data.locked = True
         self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION))
         self.assertFalse(manager.is_allowed(Feature.SELECT_TAKEOFFS))
+        self.assertFalse(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
         self.assertTrue(manager.is_allowed(Feature.DELETE_BID))
         self.assertTrue(manager.is_allowed(Feature.DUPLICATE_BID))
         self.assertTrue(manager.is_allowed(Feature.EDIT_BID_JOB_STATUS))
@@ -173,6 +245,78 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(manager.is_allowed(Feature.SELECT_TAKEOFFS))
         self.assertTrue(manager.is_allowed(Feature.DELETE_BID))
         self.assertTrue(manager.is_allowed(Feature.DUPLICATE_BID))
+
+    def test_text_annotation_edit_mode_blocks_conflicting_actions(self):
+        project_data = _ProjectData()
+        manager = self._access_manager(project_data)
+        self.assertTrue(manager.is_allowed(Feature.SELECT_TAKEOFFS))
+        self.assertTrue(manager.is_allowed(Feature.PLACE_TAKEOFF))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
+        manager.set_text_annotation_edit_active(True)
+        self.assertFalse(manager.is_allowed(Feature.SELECT_TAKEOFFS))
+        self.assertFalse(manager.is_allowed(Feature.PLACE_TAKEOFF))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
+
+    def test_exiting_text_edit_reenables_shell_controls_without_page_switch(self):
+        project_data = _ProjectData()
+        ui_state = _ToolbarUiState(project_data.bid_ref)
+        manager = self._access_manager(project_data, ui_state)
+        toolbar = ToolbarStateCoordinator(ui_state, manager, project_data)
+        cover_sheet_button = _FakeAction()
+        layers_sidebar = _FakeLayersSidebar()
+        toolbar.set_cover_sheet_button(cover_sheet_button)
+        toolbar.set_bid_layers_sidebar(layers_sidebar)
+        toolbar.set_plan_view(_FakePlanView())
+        toolbar.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = manager
+        coordinator._update_export_menu_state = toolbar.refresh
+        coordinator._on_text_annotation_edit_mode_changed(True)
+        self.assertFalse(manager.is_allowed(Feature.COVER_SHEET))
+        self.assertFalse(cover_sheet_button.enabled)
+        self.assertFalse(layers_sidebar.interactive)
+        coordinator._on_text_annotation_edit_mode_changed(False)
+        self.assertTrue(manager.is_allowed(Feature.COVER_SHEET))
+        self.assertTrue(cover_sheet_button.enabled)
+        self.assertTrue(layers_sidebar.interactive)
+
+    def test_takeoff_tab_delete_toolbar_uses_takeoff_selection_permission(self):
+        project_data = _ProjectData()
+        project_data.locked = True
+        ui_state = _ToolbarUiState(project_data.bid_ref)
+        manager = self._access_manager(project_data, ui_state)
+        coordinator = ToolbarStateCoordinator(ui_state, manager, project_data)
+        delete_action = _FakeAction()
+        coordinator.set_delete_action(delete_action)
+        coordinator.set_plan_view(_FakePlanView())
+        coordinator.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
+        coordinator.refresh()
+        self.assertFalse(delete_action.enabled)
+
+    def test_takeoff_shortcuts_do_not_run_when_selection_access_denied(self):
+        project_data = _ProjectData()
+        project_data.locked = True
+        ui_state = _ToolbarUiState(project_data.bid_ref)
+        manager = self._access_manager(project_data, ui_state)
+        window = MainWindow.__new__(MainWindow)
+        window.tab_widget = _FakeTabWidget(TAB_INDEX_TAKEOFF)
+        window.ui_access_manager = manager
+        window.plan_view = _FakePlanView()
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(refresh_toolbar=lambda: None)
+        )
+        MainWindow._delete_selected(window)
+        MainWindow._select_all(window)
+        self.assertEqual(window.plan_view.deleted, 0)
+        self.assertEqual(window.plan_view.selected_all, 0)
+
+    def test_shared_menu_callback_respects_enabled_state(self):
+        controller = MenuController.__new__(MenuController)
+        calls = []
+        controller._get_menu_callbacks = lambda: {"blocked": lambda: calls.append(1)}
+        controller.is_context_command_enabled = lambda _key: False
+        MenuController.trigger_menu_callback(controller, "blocked")
+        self.assertEqual(calls, [])
 
     def test_locked_bid_blocks_condition_edits_at_write_service(self):
         project_data = _ProjectData()

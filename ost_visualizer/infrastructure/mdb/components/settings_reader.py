@@ -236,19 +236,20 @@ class SettingsReaderMixin:
                         schema.optional_column("Settings", "NextBidNo", "1"),
                     ]
                 )
-                cursor = conn.cursor()
-                cursor.execute(f"SELECT {settings_select} FROM [Settings]")
-                row = cursor.fetchone()
-                if row:
-                    defaults["scale_style"] = row.ScaleStyle or 1
-                    defaults["scale_factor1"] = row.ScaleFactor1 or 0.125
-                    defaults["scale_factor2"] = row.ScaleFactor2 or 12.0
-                    defaults["page_width"] = row.PageWidth or 42.0
-                    defaults["page_height"] = row.PageHeight or 30.0
-                    defaults["measure_base"] = row.MeasureBase or 0
-                    defaults["takeoff_increments"] = row.TakeoffIncrements or 1.0
-                    defaults["next_bid_no"] = int(row.NextBidNo) if row.NextBidNo else 1
-                cursor.close()
+                with conn.cursor() as cursor:
+                    cursor.execute(f"SELECT {settings_select} FROM [Settings]")
+                    row = cursor.fetchone()
+                    if row:
+                        defaults["scale_style"] = row.ScaleStyle or 1
+                        defaults["scale_factor1"] = row.ScaleFactor1 or 0.125
+                        defaults["scale_factor2"] = row.ScaleFactor2 or 12.0
+                        defaults["page_width"] = row.PageWidth or 42.0
+                        defaults["page_height"] = row.PageHeight or 30.0
+                        defaults["measure_base"] = row.MeasureBase or 0
+                        defaults["takeoff_increments"] = row.TakeoffIncrements or 1.0
+                        defaults["next_bid_no"] = (
+                            int(row.NextBidNo) if row.NextBidNo else 1
+                        )
         except Exception:
             pass
         return defaults

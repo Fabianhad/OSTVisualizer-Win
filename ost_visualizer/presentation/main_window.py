@@ -10,9 +10,13 @@ from .config import (
     DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH,
     MAIN_MARGINS,
+    MAIN_TOOLBAR_LABEL,
     NO_SPACING,
+    SHOW_TOOLBARS_MENU_TITLE,
     SIDEBAR_MIN_WIDTH,
     TAB_INDEX_TAKEOFF,
+    TAKEOFF_TOOLS_TOOLBAR_LABEL,
+    VIEW_TOOLBAR_LABEL,
 )
 from .configurators.window_configurator import WindowConfigurator
 from .coordinators.event_coordinator import EventCoordinator
@@ -26,6 +30,7 @@ from .handlers.export_handler import ExportHandler
 from .handlers.file_operation_handler import FileOperationHandler
 from .handlers.import_handler import ImportHandler
 from .handlers.project_write_handler import ProjectWriteHandler
+from .managers.app_config_presentation_manager import AppConfigPresentationManager
 from .managers.shortcut_manager import ShortcutManager
 from .managers.ui_access_manager import Feature, UIAccessManager
 from .managers.ui_state_manager import UIStateManager
@@ -95,7 +100,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._working_directory_service = app_controller.get_service(
             "working_directory_service"
         )
-        self._preferences_service = app_controller.get_service("preferences_service")
+        self._config_service = app_controller.get_service("config_service")
         self._workspace_state_model = app_controller.get_service(
             "workspace_state_model"
         )
@@ -290,7 +295,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.project_view.set_ui_access_manager(self.ui_access_manager)
         self._visualization_service.set_message_parent(self)
         self.menu_controller = component_builder.create_menu(
-            preferences_service=self._preferences_service,
+            config_service=self._config_service,
             ui_state_manager=self.ui_state_manager,
             handlers=self.handlers,
             ui_access_manager=self.ui_access_manager,
@@ -347,6 +352,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.menu_controller.trigger_menu_action,
             self.menu_controller.get_menu_action_state,
         )
+        self.apply_config_preferences()
         self.opengl_viewer.set_context_menu_command_handlers(
             self.menu_controller.trigger_menu_action,
             self.menu_controller.get_menu_action_state,
@@ -541,20 +547,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self.license_coordinator.show_dialog()
 
     def _delete_selected(self) -> None:
+        if self._handle_inline_text_shortcut("delete"):
+            return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
+            if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+                return
             self.plan_view.delete_selected()
         else:
+            if not self.ui_access_manager.is_allowed(Feature.DELETE_BID):
+                return
             self.handlers.delete.delete_selected()
 
     def _duplicate_selected(self) -> None:
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
+            if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+                return
             self.plan_view.duplicate_selected()
         else:
+            if not self.ui_access_manager.is_allowed(Feature.DUPLICATE_BID):
+                return
             self.handlers.delete.duplicate_selected()
 
     def _copy_selected(self) -> None:
+        if self._handle_inline_text_shortcut("copy"):
+            return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
+            if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+                return
             self.plan_view.copy_selected()
+            return
+        if not self.ui_access_manager.is_allowed(Feature.DUPLICATE_BID):
             return
         bid_refs = self.ui_state_manager.get_selected_bid_refs()
         if not self._same_file_bid_refs(bid_refs):
@@ -563,7 +585,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handlers.ui_event.refresh_toolbar()
 
     def _cut_selected(self) -> None:
+        if self._handle_inline_text_shortcut("cut"):
+            return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
+            return
+        if not self.ui_access_manager.is_allowed(Feature.DELETE_BID):
             return
         bid_refs = self.ui_state_manager.get_selected_bid_refs()
         if not self._same_file_bid_refs(bid_refs):
@@ -572,7 +598,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handlers.ui_event.refresh_toolbar()
 
     def _paste_clipboard(self) -> None:
+        if self._handle_inline_text_shortcut("paste"):
+            return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
+            if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+                return
             if not self._plan_view_handler.can_paste_to_current_bid():
                 return
             self.plan_view.paste_clipboard()
@@ -619,8 +649,21 @@ class MainWindow(QtWidgets.QMainWindow):
     def _select_all(self) -> None:
         if self.tab_widget.currentIndex() != TAB_INDEX_TAKEOFF:
             return
+        if self._handle_inline_text_shortcut("select_all"):
+            return
+        if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+            return
         self.plan_view.select_all()
         self.handlers.ui_event.refresh_toolbar()
+
+    def _handle_inline_text_shortcut(self, action_key: str) -> bool:
+        if self.tab_widget.currentIndex() != TAB_INDEX_TAKEOFF:
+            return False
+        return bool(
+            self.plan_view
+            and self.plan_view.is_text_annotation_inline_edit_active()
+            and self.plan_view.handle_inline_text_shortcut(action_key)
+        )
 
     def _same_file_bid_refs(self, bid_refs) -> bool:
         if not bid_refs:
@@ -738,6 +781,12 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             self._syncing_toolbar_visibility = False
 
+    def apply_config_preferences(self) -> None:
+        AppConfigPresentationManager().apply(self, self._config_model)
+
+    def apply_toolbar_text_preference(self) -> None:
+        AppConfigPresentationManager().apply_toolbar_text(self, self._config_model)
+
     def _on_workspace_toolbar_visibility_changed(self, key: str, visible: bool) -> None:
         if self._syncing_toolbar_visibility:
             return
@@ -745,19 +794,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def createPopupMenu(self) -> QtWidgets.QMenu:
         menu = QtWidgets.QMenu(self)
-        menu.setTitle("Show Toolbars")
+        menu.setTitle(SHOW_TOOLBARS_MENU_TITLE)
         toolbar_entries = (
             (
                 self._MAIN_TOOLBAR_KEY,
-                "Main",
+                MAIN_TOOLBAR_LABEL,
             ),
             (
                 self._VIEW_TOOLBAR_KEY,
-                "View",
+                VIEW_TOOLBAR_LABEL,
             ),
             (
                 self._TAKEOFF_TOOLS_TOOLBAR_KEY,
-                "Takeoff Tools",
+                TAKEOFF_TOOLS_TOOLBAR_LABEL,
             ),
         )
         for key, label in toolbar_entries:
@@ -836,7 +885,30 @@ class MainWindow(QtWidgets.QMainWindow):
         return self._can_go_takeoff_page(-1)
 
     def can_go_next_takeoff_page(self) -> bool:
-        return self._can_go_takeoff_page(1)
+        if self._can_go_takeoff_page(1):
+            return True
+        return (
+            self._is_on_last_takeoff_page()
+            and self.can_add_page_from_takeoff_tab()
+            and self.is_takeoff_tab_active()
+        )
+
+    def can_add_page_from_takeoff_tab(self) -> bool:
+        return (
+            self._config_model.allow_add_page_from_takeoff_tab
+            and self.ui_access_manager.is_allowed(Feature.COVER_SHEET)
+            and not self._project_data_service.is_current_bid_locked()
+            and bool(self.ui_state_manager.get_selected_bid_ref())
+        )
+
+    def _is_on_last_takeoff_page(self) -> bool:
+        order = self.takeoff_sidebar.get_page_order()
+        page_uid = self.takeoff_sidebar.get_active_page_uid()
+        return (
+            bool(order)
+            and page_uid in order
+            and order.index(page_uid) == len(order) - 1
+        )
 
     def _can_go_takeoff_page(self, direction: int) -> bool:
         order = self.takeoff_sidebar.get_page_order()
@@ -845,6 +917,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         target = order.index(page_uid) + direction
         return 0 <= target < len(order)
+
+    def go_next_takeoff_page(self) -> None:
+        if self._can_go_takeoff_page(1):
+            self.takeoff_sidebar.go_next()
+            return
+        if not self.can_go_next_takeoff_page():
+            return
+        self.handlers.cover_sheet.add_blank_page_from_takeoff_tab()
 
     def set_active_takeoff_view(self, active_view: str) -> None:
         index = 1 if str(active_view).lower() == "2d" else 0
@@ -1281,6 +1361,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.handlers.ui_event.flush_current_page_state()
         self._workspace_state_coordinator.flush()
+        self._workspace_state_coordinator.cleanup()
         self.event_coordinator.cleanup()
         self.handlers.ui_event.cleanup()
         self.license_coordinator.cleanup()

@@ -59,6 +59,8 @@ def compute_page_quantities(
                 grid_size2=condition.grid_size2,
                 gap=condition.gap,
                 curve=t.curve,
+                round_quantity=condition.round_quantity,
+                round_up=condition.round_up,
             )
             total_q1 += q1 * sign
             total_q2 += q2 * sign

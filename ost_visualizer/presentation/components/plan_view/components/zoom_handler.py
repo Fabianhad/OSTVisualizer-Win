@@ -9,6 +9,8 @@ _DISPLAY_ZOOM_RATIO = 0.333
 class ZoomHandlerMixin:
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
+        if dx or dy:
+            self._request_crosshair_repaint()
         if (dx or dy) and self._selected_uids:
             self.viewport().update()
         if (dx or dy) and self._cursor_mode == "place" and self._place_preview_items:

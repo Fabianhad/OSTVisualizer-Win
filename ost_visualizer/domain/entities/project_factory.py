@@ -117,4 +117,6 @@ def _build_page(page_info: HierarchyPageInfo) -> Page:
     return Page(
         uid=page_info.uid,
         name=page_info.name,
+        sheet_no=str(page_info.sheet_no or ""),
+        sequence=int(page_info.sequence or 0),
     )

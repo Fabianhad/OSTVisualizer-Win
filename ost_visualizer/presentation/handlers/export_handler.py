@@ -126,10 +126,13 @@ class ExportHandler:
                 parent=self.window,
                 reporter=reporter,
             )
-            rc = dialog.exec()
-            result = dialog.result
-            worker_error = dialog.error
-            dialog.cleanup()
+            try:
+                rc = dialog.exec()
+                result = dialog.result
+                worker_error = dialog.error
+            finally:
+                dialog.cleanup()
+                dialog.deleteLater()
             if (
                 rc == QtWidgets.QDialog.DialogCode.Accepted
                 and result
@@ -218,10 +221,13 @@ class ExportHandler:
                 parent=self.window,
                 reporter=reporter,
             )
-            rc = dialog.exec()
-            result = dialog.result
-            worker_error = dialog.error
-            dialog.cleanup()
+            try:
+                rc = dialog.exec()
+                result = dialog.result
+                worker_error = dialog.error
+            finally:
+                dialog.cleanup()
+                dialog.deleteLater()
             if (
                 rc == QtWidgets.QDialog.DialogCode.Accepted
                 and result

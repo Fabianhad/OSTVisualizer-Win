@@ -30,4 +30,6 @@ class IUOMService(Protocol):
         grid_size2: float = 0.0,
         gap: float = 0.0,
         curve: int = -1,
+        round_quantity: bool = False,
+        round_up: float = 0.0,
     ) -> Tuple[float, float, float]: ...

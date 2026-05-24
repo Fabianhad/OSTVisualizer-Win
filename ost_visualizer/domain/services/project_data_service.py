@@ -201,6 +201,48 @@ class ProjectDataService:
                 takeoff.rotation = by_uid[takeoff.uid]
         return page_uids
 
+    def update_takeoff_text_properties(
+        self, updates: Iterable[Tuple[str, Dict[str, object]]]
+    ) -> List[str]:
+        changes = [(str(uid), dict(properties)) for uid, properties in updates]
+        page_uids = self.get_page_uids_for_takeoffs(uid for uid, _ in changes)
+        by_uid = {uid: properties for uid, properties in changes}
+        for takeoff in self.model.get_all_takeoffs():
+            properties = by_uid.get(takeoff.uid)
+            if properties is not None:
+                self._apply_takeoff_text_properties(takeoff, properties)
+        return page_uids
+
+    def _apply_takeoff_text_properties(
+        self, takeoff: Takeoff, properties: Dict[str, object]
+    ) -> None:
+        if "dimension_font_name" in properties:
+            takeoff.dimension_font_name = str(properties["dimension_font_name"])
+        if "dimension_font_color" in properties:
+            takeoff.dimension_font_color = int(properties["dimension_font_color"])
+        if "dimension_font_size" in properties:
+            takeoff.dimension_font_size = int(properties["dimension_font_size"])
+        if "dimension_font_bold" in properties:
+            takeoff.dimension_font_bold = bool(properties["dimension_font_bold"])
+        if "dimension_font_italic" in properties:
+            takeoff.dimension_font_italic = bool(properties["dimension_font_italic"])
+        if "dimension_font_underline" in properties:
+            takeoff.dimension_font_underline = bool(
+                properties["dimension_font_underline"]
+            )
+        if "name_font_name" in properties:
+            takeoff.name_font_name = str(properties["name_font_name"])
+        if "name_font_color" in properties:
+            takeoff.name_font_color = int(properties["name_font_color"])
+        if "name_font_size" in properties:
+            takeoff.name_font_size = int(properties["name_font_size"])
+        if "name_font_bold" in properties:
+            takeoff.name_font_bold = bool(properties["name_font_bold"])
+        if "name_font_italic" in properties:
+            takeoff.name_font_italic = bool(properties["name_font_italic"])
+        if "name_font_underline" in properties:
+            takeoff.name_font_underline = bool(properties["name_font_underline"])
+
     def remove_takeoffs(self, takeoff_uids: Iterable[str]) -> List[str]:
         wanted = {str(uid) for uid in takeoff_uids if uid}
         if not wanted:

@@ -29,6 +29,20 @@ class TakeoffOperationsMixin:
             "TypGroupMarkerUID",
         }
     )
+    _TAKEOFF_TEXT_PROPERTY_COLUMNS = {
+        "dimension_font_name": "FontName",
+        "dimension_font_color": "FontColor",
+        "dimension_font_size": "FontSize",
+        "dimension_font_bold": "FontBold",
+        "dimension_font_italic": "FontItalic",
+        "dimension_font_underline": "FontUnderline",
+        "name_font_name": "NameFontName",
+        "name_font_color": "NameFontColor",
+        "name_font_size": "NameFontSize",
+        "name_font_bold": "NameFontBold",
+        "name_font_italic": "NameFontItalic",
+        "name_font_underline": "NameFontUnderline",
+    }
 
     def save_takeoffs_area(
         self, db_path: str, takeoff_uids: List[str], area_uid: str
@@ -181,6 +195,38 @@ class TakeoffOperationsMixin:
         except Exception:
             self.logger.exception(
                 "Failed to bulk save takeoff rotations in %s", db_path
+            )
+            return False
+
+    def save_takeoff_text_properties(self, db_path: str, updates: List[tuple]) -> bool:
+        if not updates:
+            return True
+        try:
+            with self._connection(db_path) as conn:
+                schema = self._schema(conn)
+                cursor = conn.cursor()
+                for takeoff_uid, properties in updates:
+                    values = {
+                        self._TAKEOFF_TEXT_PROPERTY_COLUMNS[key]: value
+                        for key, value in properties.items()
+                        if key in self._TAKEOFF_TEXT_PROPERTY_COLUMNS
+                    }
+                    if not values:
+                        continue
+                    self._execute_update_values(
+                        cursor,
+                        schema,
+                        "BidTakeoffs",
+                        values,
+                        ("UID",),
+                        "[UID]=?",
+                        [int(takeoff_uid)],
+                        "save_takeoff_text_properties",
+                    )
+                return True
+        except Exception:
+            self.logger.exception(
+                "Failed to bulk save takeoff text properties in %s", db_path
             )
             return False
 

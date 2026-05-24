@@ -6,6 +6,7 @@ from ost_visualizer.application.use_cases.annotation_view.open_annotation_view_u
     OpenAnnotationViewUseCase,
 )
 from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.workspace_state import WorkspaceState
 from ost_visualizer.presentation.coordinators.workspace_state_coordinator import (
@@ -83,6 +84,32 @@ class FakeDetachedWindow:
 
     def activateWindow(self):
         self.activate_calls += 1
+
+    def installEventFilter(self, event_filter):
+        self.installed_filters.append(event_filter)
+
+    def removeEventFilter(self, event_filter):
+        if event_filter in self.installed_filters:
+            self.installed_filters.remove(event_filter)
+
+
+class TrackableSignal:
+    def __init__(self):
+        self.connected = []
+        self.disconnected = []
+
+    def connect(self, callback):
+        self.connected.append(callback)
+
+    def disconnect(self, callback):
+        self.disconnected.append(callback)
+
+
+class TrackableDetachedWindow:
+    def __init__(self):
+        self.installed_filters = []
+        self.dropdown_size_changed = TrackableSignal()
+        self.destroyed = TrackableSignal()
 
     def installEventFilter(self, event_filter):
         self.installed_filters.append(event_filter)
@@ -194,6 +221,37 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             ],
         )
 
+    def test_untracking_detached_window_releases_filters_and_callbacks(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        window = TrackableDetachedWindow()
+        callback = lambda *_args: None
+        key = WorkspaceStateCoordinator._DETACHED_ANNOTATION
+        coordinator._tracked_detached_destroy_callbacks = {key: callback}
+        window.installEventFilter(coordinator)
+        window.dropdown_size_changed.connect(coordinator.request_save)
+        window.destroyed.connect(callback)
+        coordinator._untrack_detached_window(key, window)
+        self.assertEqual(window.installed_filters, [])
+        self.assertEqual(
+            window.dropdown_size_changed.disconnected,
+            [coordinator.request_save],
+        )
+        self.assertEqual(window.destroyed.disconnected, [callback])
+        self.assertEqual(coordinator._tracked_detached_destroy_callbacks, {})
+
+    def test_tracked_window_destroy_drops_reference_after_cleanup(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        key = WorkspaceStateCoordinator._DETACHED_VIEW
+        window = TrackableDetachedWindow()
+        coordinator._tracked_detached_windows = {key: window}
+        coordinator._tracked_detached_destroy_callbacks = {key: lambda *_args: None}
+        coordinator._detached_restore_applied = {key: True}
+        coordinator._save_timer = None
+        coordinator._on_tracked_window_destroyed(key)
+        self.assertEqual(coordinator._tracked_detached_windows, {})
+        self.assertEqual(coordinator._tracked_detached_destroy_callbacks, {})
+        self.assertEqual(coordinator._detached_restore_applied, {})
+
 
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
     def test_create_window_defers_first_show_until_after_manager_setup(self):
@@ -207,11 +265,11 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             get_current_bid_file_path=lambda: None,
             get_all_takeoffs=lambda: [],
         )
-        manager.config_model = object()
+        manager.config_model = Config()
         manager._coord_factory = SimpleNamespace(create=lambda: object())
         manager._color_service = object()
         manager._infrastructure_provider = SimpleNamespace(
-            create_plan_view_renderers=lambda coord_system, color_service: object()
+            create_plan_view_renderers=lambda _coord_system, _color_service: object()
         )
         manager._window_factory = lambda **kwargs: factory_kwargs.append(
             kwargs
@@ -221,8 +279,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager.parent_window = None
         manager._on_window_destroyed = lambda *args: None
         manager._on_window_page_selected = lambda page_uid: None
-        manager._on_window_named_view_selected = lambda page_uid, named_view_uid: None
-        manager._on_window_scale_changed = lambda page_uid, sf1, sf2: None
+        manager._on_window_named_view_selected = lambda page_uid, _named_view_uid: None
+        manager._on_window_scale_changed = lambda page_uid, _sf1, _sf2: None
         manager._collect_pages_with_takeoffs = lambda bid_ref: set()
         manager._is_read_only = lambda: False
         manager._get_page_data = lambda view: SimpleNamespace(page=object())
@@ -289,6 +347,45 @@ class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):
         self.assertEqual(calls[0]["bid_ref"], bid_ref)
         self.assertEqual(calls[0]["target_page_uid"], "page-2")
         self.assertEqual(calls[0]["target_named_view_uid"], "view-1")
+
+    def test_hotlink_preference_can_route_to_view_window_manager(self):
+        bid_ref = BidRef(file_path="job.ost", bid_uid="bid-1")
+        named_view = BidAnnotation(
+            uid="view-1",
+            annotation_type="namedview",
+            page_uid="page-2",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 5.0, 0.0, 5.0],
+        )
+        project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: bid_ref,
+            get_all_annotations=lambda: [named_view],
+        )
+        annotation_calls = []
+        view_calls = []
+        annotation_manager = SimpleNamespace(
+            is_view_open=lambda: False,
+            open_view=lambda **kwargs: annotation_calls.append(kwargs) or "annotation",
+        )
+        view_manager = SimpleNamespace(
+            is_view_open=lambda: False,
+            open_view=lambda **kwargs: view_calls.append(kwargs) or "view",
+        )
+        use_case = OpenAnnotationViewUseCase(
+            annotation_manager,
+            project_data,
+            config_model=Config(hotlink_target="view"),
+            view_window_manager=view_manager,
+        )
+        result = use_case.execute_from_hotlink(
+            AppEvents.HOTLINK_CLICKED(
+                hotlink_uid="hotlink-1",
+                bid_page_uid="page-1",
+                target_view_uid="view-1",
+            )
+        )
+        self.assertEqual(result, "view")
+        self.assertEqual(annotation_calls, [])
+        self.assertEqual(view_calls[0]["target_page_uid"], "page-2")
 
 
 if __name__ == "__main__":

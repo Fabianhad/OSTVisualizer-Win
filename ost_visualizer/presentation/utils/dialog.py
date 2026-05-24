@@ -51,6 +51,7 @@ class BaseListDialog(QtWidgets.QDialog):
 
     def cleanup(self) -> None:
         self.icon_provider = None
+        self._save_fn = None
         self._on_cleanup()
 
     def _on_cleanup(self) -> None:

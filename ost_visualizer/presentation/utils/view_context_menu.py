@@ -1,22 +1,31 @@
 from dataclasses import dataclass
 from PySide6 import QtGui, QtWidgets
 from ...domain.entities.condition import Condition
+from ..config import (
+    ACTION_PAN_LABEL,
+    ACTION_RESET_VIEW_LABEL,
+    ACTION_SELECT_LABEL,
+    ACTION_TAKEOFF_LABEL,
+    ACTION_ZOOM_IN_LABEL,
+    ACTION_ZOOM_LABEL,
+    ACTION_ZOOM_OUT_LABEL,
+)
 from ..managers.context_menu_manager import ContextMenuManager
 from .condition_icon import make_condition_color_icon
 from .overlay_context_menu import add_overlay_submenu_with_select
 
 CONTEXT_TOOLS_ACTIONS = (
-    ("Select", "select_tool"),
-    ("Takeoff", "takeoff_tool"),
-    ("Zoom", "zoom_tool"),
-    ("Pan", "pan_tool"),
+    (ACTION_SELECT_LABEL, "select_tool"),
+    (ACTION_TAKEOFF_LABEL, "takeoff_tool"),
+    (ACTION_ZOOM_LABEL, "zoom_tool"),
+    (ACTION_PAN_LABEL, "pan_tool"),
     None,
     ("Backout", "backout_mode"),
 )
 CONTEXT_ZOOM_ACTIONS = (
-    ("Zoom In", "zoom_in"),
-    ("Zoom Out", "zoom_out"),
-    ("Reset View", "reset_view"),
+    (ACTION_ZOOM_IN_LABEL, "zoom_in"),
+    (ACTION_ZOOM_OUT_LABEL, "zoom_out"),
+    (ACTION_RESET_VIEW_LABEL, "reset_view"),
 )
 CONTEXT_ROTATE_FLIP_ACTIONS = (
     ("Rotate Takeoff Left", "rotate_takeoff_left"),
@@ -75,7 +84,7 @@ def build_selected_takeoff_context_state(
     if len(selected_takeoffs) == 1 and len(regular_takeoffs) == 1:
         _uid, takeoff = regular_takeoffs[0]
         condition = conditions.get(takeoff.condition_uid)
-        single_linear = bool(condition and condition.is_linear)
+        single_linear = bool(condition and condition.is_linear and not condition.trim)
         all_curved = takeoff.curve >= 0
     return SelectedTakeoffContextState(
         takeoff_uids=[uid for uid, _takeoff in selected_takeoffs],

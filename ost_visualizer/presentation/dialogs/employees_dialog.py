@@ -313,7 +313,12 @@ class EmployeesDialog(QtWidgets.QDialog):
 
     def cleanup(self) -> None:
         self.icon_provider = None
+        self._save_fn = None
+        self._pay_classes_save_fn = None
+        self._active_detail_dialog = None
         self._employees.clear()
+        self._pay_classes.clear()
+        self._used_uids.clear()
 
     def closeEvent(self, event) -> None:
         self._save_pending()

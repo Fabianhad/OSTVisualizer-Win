@@ -36,6 +36,8 @@ class UOMDomainService:
         grid_size2: float = 0.0,
         gap: float = 0.0,
         curve: int = -1,
+        round_quantity: bool = False,
+        round_up: float = 0.0,
     ) -> Tuple[float, float, float]:
         return _calculate_condition_quantities(
             condition_type,
@@ -59,4 +61,6 @@ class UOMDomainService:
             grid_size2,
             gap,
             curve,
+            round_quantity,
+            round_up,
         )

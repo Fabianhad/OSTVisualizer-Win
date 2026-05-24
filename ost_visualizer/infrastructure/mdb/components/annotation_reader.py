@@ -256,34 +256,30 @@ class AnnotationReaderMixin:
                             name_str.replace("\x00", "").replace("\r\n", "\n").strip()
                         )
                         layer_uid, visible = _layer(row.BidLayerUID)
-                        bid_annotations.append(
-                            BidAnnotation(
-                                uid=str(row.UID),
-                                annotation_type="text",
-                                page_uid=str(row.BidPageUID) if row.BidPageUID else "",
-                                layer_uid=layer_uid,
-                                position=position,
-                                color=_resolve_color(row.FontColor),
-                                width=0.0,
-                                properties={
-                                    "Text": name_str,
-                                    "FontColor": row.FontColor,
-                                    "FontName": (
-                                        str(row.FontName) if row.FontName else "Arial"
-                                    ),
-                                    "FontSize": (
-                                        int(row.FontSize) if row.FontSize else 12
-                                    ),
-                                    "FontBold": bool(row.FontBold),
-                                    "FontItalic": bool(row.FontItalic),
-                                    "FontUnderline": bool(row.FontUnderline),
-                                    "TextAlign": (
-                                        int(row.TextAlign) if row.TextAlign else 0
-                                    ),
-                                },
-                                visible=visible,
-                            )
+                        props = {
+                            "Text": name_str,
+                            "FontColor": row.FontColor,
+                            "FontName": (
+                                str(row.FontName) if row.FontName else "Arial"
+                            ),
+                            "FontSize": (int(row.FontSize) if row.FontSize else 12),
+                            "FontBold": bool(row.FontBold),
+                            "FontItalic": bool(row.FontItalic),
+                            "FontUnderline": bool(row.FontUnderline),
+                            "TextAlign": (int(row.TextAlign) if row.TextAlign else 0),
+                        }
+                        annotation = BidAnnotation(
+                            uid=str(row.UID),
+                            annotation_type="text",
+                            page_uid=str(row.BidPageUID) if row.BidPageUID else "",
+                            layer_uid=layer_uid,
+                            position=position,
+                            color=_resolve_color(row.FontColor),
+                            width=0.0,
+                            properties=props,
+                            visible=visible,
                         )
+                        bid_annotations.append(annotation)
             except pyodbc.Error as e:
                 pass
             try:
@@ -396,34 +392,30 @@ class AnnotationReaderMixin:
                             name_str.replace("\x00", "").replace("\r\n", "\n").strip()
                         )
                         layer_uid, visible = _layer(row.BidLayerUID)
-                        bid_annotations.append(
-                            BidAnnotation(
-                                uid=str(row.UID),
-                                annotation_type="callout",
-                                page_uid=str(row.BidPageUID) if row.BidPageUID else "",
-                                layer_uid=layer_uid,
-                                position=position,
-                                color=_resolve_color(row.Color),
-                                width=float(row.Width) if row.Width else 2.0,
-                                properties={
-                                    "Text": name_str,
-                                    "FontColor": row.FontColor,
-                                    "FontName": (
-                                        str(row.FontName) if row.FontName else "Arial"
-                                    ),
-                                    "FontSize": (
-                                        int(row.FontSize) if row.FontSize else 12
-                                    ),
-                                    "FontBold": bool(row.FontBold),
-                                    "FontItalic": bool(row.FontItalic),
-                                    "FontUnderline": bool(row.FontUnderline),
-                                    "TextAlign": (
-                                        int(row.TextAlign) if row.TextAlign else 0
-                                    ),
-                                },
-                                visible=visible,
-                            )
+                        props = {
+                            "Text": name_str,
+                            "FontColor": row.FontColor,
+                            "FontName": (
+                                str(row.FontName) if row.FontName else "Arial"
+                            ),
+                            "FontSize": (int(row.FontSize) if row.FontSize else 12),
+                            "FontBold": bool(row.FontBold),
+                            "FontItalic": bool(row.FontItalic),
+                            "FontUnderline": bool(row.FontUnderline),
+                            "TextAlign": (int(row.TextAlign) if row.TextAlign else 0),
+                        }
+                        annotation = BidAnnotation(
+                            uid=str(row.UID),
+                            annotation_type="callout",
+                            page_uid=str(row.BidPageUID) if row.BidPageUID else "",
+                            layer_uid=layer_uid,
+                            position=position,
+                            color=_resolve_color(row.Color),
+                            width=float(row.Width) if row.Width else 2.0,
+                            properties=props,
+                            visible=visible,
                         )
+                        bid_annotations.append(annotation)
             except pyodbc.Error as e:
                 pass
         return bid_annotations

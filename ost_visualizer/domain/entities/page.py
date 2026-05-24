@@ -9,6 +9,8 @@ from .takeoff import Takeoff
 class Page:
     uid: str
     name: str
+    sheet_no: str = ""
+    sequence: int = 0
     takeoffs: List[Takeoff] = field(default_factory=list)
     folder_uid: Optional[str] = None
     image_path: Optional[str] = None
@@ -64,6 +66,8 @@ def build_pages_from_bid_data(
         pages[uid] = Page(
             uid=uid,
             name=info.name,
+            sheet_no=info.sheet_no,
+            sequence=info.sequence,
             takeoffs=takeoffs_by_page.get(uid, []),
             image_path=info.image_path,
             width_pts=info.width_pts,

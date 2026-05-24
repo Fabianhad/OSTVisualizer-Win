@@ -39,6 +39,7 @@ class AppController:
         self._file_state_model = file_state_model
         self._cleanup_hooks: List[Callable[[], None]] = list(cleanup_hooks or [])
         self._subscriptions = []
+        self._cleaned_up = False
 
     def get_service(self, name: str) -> Any:
         return self.container.get(name)
@@ -120,16 +121,31 @@ class AppController:
         self._subscriptions.append((event_name, callback))
 
     def cleanup(self) -> None:
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
         for event_name, callback in self._subscriptions:
             self.event_bus.unsubscribe(event_name, callback)
         self._subscriptions.clear()
-        self.orchestrators.visualization.cleanup()
-        self.orchestrators.license.cleanup()
+        if self.orchestrators is not None:
+            self.orchestrators.visualization.cleanup()
+            self.orchestrators.license.cleanup()
         for hook in self._cleanup_hooks:
             try:
                 hook()
             except Exception:
                 self.logger.exception("Cleanup hook failed")
+        self._cleanup_hooks.clear()
+        self._project_data_service = None
+        self._file_loading_service = None
+        self._load_files_from_config_use_case = None
+        self._working_directory_service = None
+        self._file_state_model = None
+        self.orchestrators = None
+        self.event_bus = None
+        if self.container is not None:
+            self.container.clear()
+        self.container = None
 
 
 class AppControllerBuilder:

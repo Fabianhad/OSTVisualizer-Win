@@ -24,10 +24,14 @@ class AnnotationViewEventHandler(IShutdownAware, IStartable):
         self._subscribed = True
 
     def shutdown(self) -> None:
-        if not self._subscribed:
-            return
-        self._event_bus.unsubscribe(AppEvents.HOTLINK_CLICKED, self._on_hotlink_clicked)
-        self._subscribed = False
+        if self._subscribed:
+            self._event_bus.unsubscribe(
+                AppEvents.HOTLINK_CLICKED, self._on_hotlink_clicked
+            )
+            self._subscribed = False
+        self._use_case = None
+        self._use_case_factory = None
+        self._event_bus = None
 
     def _on_hotlink_clicked(
         self,

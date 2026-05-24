@@ -44,5 +44,9 @@ class LifecycleOrchestrator:
                     )
             if self._app_controller:
                 self._app_controller.cleanup()
+                self._app_controller = None
+            self._container = None
+            self._viz_orchestrator = None
+            self.event_bus = None
         except Exception as exc:
             self.logger.exception("Error during shutdown: %s", exc)

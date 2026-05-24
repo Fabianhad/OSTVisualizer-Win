@@ -4,6 +4,7 @@ from PySide6 import QtCore
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QMouseEvent, QPainterPath, QTransform, QWheelEvent
 from PySide6.QtWidgets import QApplication, QGraphicsPathItem, QMenu, QRubberBand
+from ....config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ....managers.context_menu_manager import ContextMenuManager
 from ....utils.overlay_context_menu import resolve_overlay_menu_action
 from ....utils.view_context_menu import (
@@ -21,8 +22,6 @@ from .geometry_utils import (
     rotate_points_around,
     rotate_position_coords,
 )
-
-RIGHT_CLICK_CONTEXT_MENU_MAX_MS = 250
 
 
 def _ink_strip_prefix(pos: List[float]) -> List[float]:
@@ -71,18 +70,73 @@ def _rotate_annotation(
 
 
 class InputHandlerMixin:
+    _advanced_mouse_controls_enabled: bool = True
+    _intelligent_paste_active: bool = False
+    _use_full_window_crosshairs: bool = False
+
+    def _request_crosshair_repaint(self) -> None:
+        if not self._use_full_window_crosshairs:
+            return
+        viewport = self.viewport()
+        if viewport is not None:
+            viewport.update()
+
+    def _advanced_mouse_controls_active(self) -> bool:
+        return self._advanced_mouse_controls_enabled
+
+    def apply_intelligent_paste_axis_snap(
+        self, ost_dx: float, ost_dy: float
+    ) -> tuple[float, float]:
+        return ost_dx, ost_dy
+
+    def begin_intelligent_paste_drag_if_pending(self, _drag_positions) -> bool:
+        return False
+
+    def finish_intelligent_paste_placement(self) -> None:
+        pass
+
+    def _on_selection_changed(self) -> None:
+        pass
+
+    def _roping_item_selection_mode(self):
+        if self._roping_selection_method == "inclusive":
+            return Qt.ItemSelectionMode.ContainsItemShape
+        return Qt.ItemSelectionMode.IntersectsItemShape
+
     def _restore_drag_preview_positions(self) -> None:
-        if not self._drag_item_orig_positions:
+        if (
+            not self._drag_item_orig_positions
+            and not self._drag_item_orig_paths
+            and not self._drag_uid_orig_items
+        ):
             return
         uids = set()
         if self._drag_takeoff_uid:
             uids.add(self._drag_takeoff_uid)
         uids.update(self._drag_multi_orig_positions.keys())
         for uid in uids:
+            original_items = self._drag_uid_orig_items.get(uid)
+            if original_items is not None:
+                original_item_ids = {id(item) for item in original_items}
+                for item in list(self._uid_to_items.get(uid, [])):
+                    if id(item) not in original_item_ids:
+                        if item.scene() is self._scene:
+                            self._scene.removeItem(item)
+                        if item in self._takeoff_items:
+                            self._takeoff_items.remove(item)
+                self._uid_to_items[uid] = list(original_items)
+                for item in original_items:
+                    if item.scene() is not self._scene:
+                        self._scene.addItem(item)
+                    if item not in self._takeoff_items:
+                        self._takeoff_items.append(item)
             for item in self._uid_to_items.get(uid, []):
                 orig = self._drag_item_orig_positions.get(id(item))
                 if orig is not None:
                     item.setPos(orig)
+                orig_path = self._drag_item_orig_paths.get(id(item))
+                if orig_path is not None and isinstance(item, QGraphicsPathItem):
+                    item.setPath(orig_path)
         for item in self._selection_items:
             orig = self._drag_item_orig_positions.get(id(item))
             if orig is not None:
@@ -96,6 +150,8 @@ class InputHandlerMixin:
         self._drag_orig_position = []
         self._drag_handle_corner_count = 0
         self._drag_item_orig_positions = {}
+        self._drag_item_orig_paths = {}
+        self._drag_uid_orig_items = {}
         self._drag_multi_orig_positions = {}
         self._drag_last_valid_new_pos = []
 
@@ -113,6 +169,7 @@ class InputHandlerMixin:
         )
 
     def wheelEvent(self, event: QWheelEvent):
+        advanced_mouse_controls = self._advanced_mouse_controls_active()
         mods = event.modifiers()
         pixel_delta = event.pixelDelta()
         if not pixel_delta.isNull():
@@ -125,9 +182,9 @@ class InputHandlerMixin:
             self._sync_rubber_band_to_viewport()
             event.accept()
             return
-        if mods & Qt.KeyboardModifier.ControlModifier:
+        if advanced_mouse_controls and mods & Qt.KeyboardModifier.ControlModifier:
             self._apply_wheel_zoom(event, delta_y)
-        elif mods & Qt.KeyboardModifier.ShiftModifier:
+        elif advanced_mouse_controls and mods & Qt.KeyboardModifier.ShiftModifier:
             self.horizontalScrollBar().setValue(
                 self.horizontalScrollBar().value() - int(delta_y)
             )
@@ -162,12 +219,67 @@ class InputHandlerMixin:
         if self._cursor_mode == "place":
             event.accept()
             return
+        vp_pos = event.position().toPoint()
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._cursor_mode != "zoom"
+            and self._selection_enabled
+        ):
+            scene_pos = self.mapToScene(vp_pos)
+            named_view_label = self._named_view_label_at(vp_pos)
+            if named_view_label is not None:
+                named_view_uid = named_view_label.data(0)
+                if named_view_uid is not None:
+                    self._flush_dirty_positions()
+                    self._selected_uids = {str(named_view_uid)}
+                    self._on_selection_changed()
+                    self.update_selection_visuals()
+                    self._begin_named_view_rename(str(named_view_uid))
+                    event.accept()
+                    return
+            text_uid = self.find_text_annotation_at(scene_pos)
+            if text_uid:
+                self._flush_dirty_positions()
+                self._selected_uids = {text_uid}
+                self._on_selection_changed()
+                self.update_selection_visuals()
+                self._select_text_annotation_label(text_uid)
+                self._begin_text_annotation_edit(text_uid)
+                event.accept()
+                return
         self.mousePressEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent):
+        advanced_mouse_controls = self._advanced_mouse_controls_active()
         vp_pos = event.position().toPoint()
         self._last_mouse_vp_pos = vp_pos
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.is_text_annotation_inline_edit_active()
+        ):
+            scene_pos = self.mapToScene(vp_pos)
+            if self._active_inline_text_editor_contains_scene_point(scene_pos):
+                super().mousePressEvent(event)
+                return
+            self._finish_active_inline_text_edit(commit=True)
+        if event.button() == Qt.MouseButton.LeftButton and self._cursor_mode != "place":
+            text_label = self._condition_text_label_at(vp_pos)
+            if text_label is not None:
+                self._select_condition_text_label(text_label)
+                event.accept()
+                return
+            self._clear_text_selection()
+            text_uid = (
+                self.find_text_annotation_at(self.mapToScene(vp_pos))
+                if self._selection_enabled
+                else None
+            )
+            if text_uid is not None:
+                self._select_text_annotation_label(text_uid)
         if event.button() == Qt.MouseButton.MiddleButton:
+            if not advanced_mouse_controls:
+                super().mousePressEvent(event)
+                return
             if self._ctrl_held or self._cursor_mode == "place":
                 event.accept()
                 return
@@ -187,6 +299,9 @@ class InputHandlerMixin:
             return
         if event.button() == Qt.MouseButton.RightButton:
             self._suppress_next_context_menu = False
+            if not advanced_mouse_controls:
+                super().mousePressEvent(event)
+                return
             if self._cursor_mode == "place":
                 event.accept()
                 return
@@ -206,7 +321,7 @@ class InputHandlerMixin:
             return
         if self._cursor_mode == "zoom":
             if event.button() == Qt.MouseButton.LeftButton:
-                self._rubber_band_origin = self.mapToScene(event.pos())
+                self._rubber_band_origin = self.mapToScene(vp_pos)
                 if self._rubber_band is None:
                     self._rubber_band = QRubberBand(QRubberBand.Shape.Rectangle, self)
                 self._rubber_band.setGeometry(QRect(vp_pos, vp_pos))
@@ -235,7 +350,7 @@ class InputHandlerMixin:
                 )
                 near_handle = dist <= 16
             if near_handle:
-                scene_pos = self.mapToScene(event.pos())
+                scene_pos = self.mapToScene(vp_pos)
                 dx = scene_pos.x() - self._rotate_center_scene.x()
                 dy = scene_pos.y() - self._rotate_center_scene.y()
                 self._rotation_drag_last_angle = math.degrees(math.atan2(dy, dx))
@@ -308,7 +423,7 @@ class InputHandlerMixin:
                         _register_preview_item(item)
                 event.accept()
                 return
-            scene_pos = self.mapToScene(event.pos())
+            scene_pos = self.mapToScene(vp_pos)
             hit_uid = self.find_takeoff_at(scene_pos)
             if not (hit_uid and hit_uid in self._selected_uids):
                 self._remove_rotate_handle()
@@ -324,14 +439,14 @@ class InputHandlerMixin:
                 self._cursor_mode in ("select", "rotate", "slope_rotate")
                 and self._selection_enabled
             ):
-                ctrl_zoom_requested = (
+                ctrl_zoom_requested = advanced_mouse_controls and (
                     bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
                     or self._ctrl_held
                 )
                 self._zoom_press_ctrl = (
                     ctrl_zoom_requested and self._cursor_mode == "select"
                 )
-                self._select_band_origin = self.mapToScene(event.pos())
+                self._select_band_origin = self.mapToScene(vp_pos)
                 self._select_band_active = False
                 self._select_band_dragged = False
                 self._press_changed_selection = False
@@ -339,7 +454,7 @@ class InputHandlerMixin:
                 if self._zoom_press_ctrl:
                     event.accept()
                     return
-                scene_pos = self.mapToScene(event.pos())
+                scene_pos = self.mapToScene(vp_pos)
                 multi = bool(
                     event.modifiers()
                     & (
@@ -373,6 +488,7 @@ class InputHandlerMixin:
                             else:
                                 self._flush_dirty_positions()
                                 self._selected_uids = {hit_uid}
+                                self._on_selection_changed()
                                 self.update_selection_visuals()
                                 self._press_changed_selection = True
                                 _can_start_drag = True
@@ -393,9 +509,21 @@ class InputHandlerMixin:
                                 id(item): item.pos()
                                 for item in self._uid_to_items.get(uid, [])
                             }
+                            self._drag_item_orig_paths = {
+                                id(item): QPainterPath(item.path())
+                                for item in self._uid_to_items.get(uid, [])
+                                if isinstance(item, QGraphicsPathItem)
+                            }
+                            self._drag_uid_orig_items = {
+                                uid: list(self._uid_to_items.get(uid, []))
+                            }
                             for info in self._handle_infos:
                                 self._drag_item_orig_positions[id(info.item)] = (
                                     info.item.pos()
+                                )
+                            for item in self._selection_items:
+                                self._drag_item_orig_positions.setdefault(
+                                    id(item), item.pos()
                                 )
                             self._drag_handle_index = -1
                             for i, info in enumerate(self._handle_infos):
@@ -461,11 +589,25 @@ class InputHandlerMixin:
                         for item in self._selection_items:
                             self._drag_item_orig_positions[id(item)] = item.pos()
                 if _can_start_drag:
+                    drag_positions = {}
+                    if self._drag_takeoff_uid and self._drag_orig_position:
+                        drag_positions[self._drag_takeoff_uid] = (
+                            self._drag_orig_position
+                        )
+                    elif self._drag_multi_orig_positions:
+                        drag_positions = self._drag_multi_orig_positions
+                    self.begin_intelligent_paste_drag_if_pending(drag_positions)
                     self._update_cursor(vp_pos)
+                else:
+                    self.finish_intelligent_paste_placement()
                 event.accept()
-            elif self._cursor_mode == "pan" and self._ctrl_held:
+            elif (
+                self._cursor_mode == "pan"
+                and self._ctrl_held
+                and advanced_mouse_controls
+            ):
                 self._zoom_press_ctrl = True
-                self._select_band_origin = self.mapToScene(event.pos())
+                self._select_band_origin = self.mapToScene(vp_pos)
                 self._select_band_active = False
                 self._select_band_dragged = False
                 event.accept()
@@ -475,7 +617,7 @@ class InputHandlerMixin:
                 self._update_cursor()
                 event.accept()
             else:
-                scene_pos = self.mapToScene(event.pos())
+                scene_pos = self.mapToScene(vp_pos)
                 hotlink_info = self.find_hotlink_at(scene_pos)
                 if hotlink_info:
                     self.hotlink_clicked.emit(hotlink_info)
@@ -488,6 +630,7 @@ class InputHandlerMixin:
     def mouseMoveEvent(self, event: QMouseEvent):
         cur_vp = event.position().toPoint()
         self._last_mouse_vp_pos = cur_vp
+        self._request_crosshair_repaint()
         if self._cursor_mode == "place":
             if self._panning and self._last_pan_point:
                 delta = cur_vp - self._last_pan_point
@@ -643,6 +786,7 @@ class InputHandlerMixin:
                 sdx = scene_cur.x() - self._select_band_origin.x()
                 sdy = scene_cur.y() - self._select_band_origin.y()
                 ost_dx, ost_dy = self.scene_to_ost_delta(sdx, sdy)
+                ost_dx, ost_dy = self.apply_intelligent_paste_axis_snap(ost_dx, ost_dy)
                 _drag_ann = self._current_annotations.get(self._drag_takeoff_uid)
                 if (
                     _drag_ann
@@ -687,6 +831,7 @@ class InputHandlerMixin:
                 sdx = scene_cur.x() - self._select_band_origin.x()
                 sdy = scene_cur.y() - self._select_band_origin.y()
                 ost_dx, ost_dy = self.scene_to_ost_delta(sdx, sdy)
+                ost_dx, ost_dy = self.apply_intelligent_paste_axis_snap(ost_dx, ost_dy)
                 self._update_snapped_multi_drag_preview(sdx, sdy, ost_dx, ost_dy)
                 event.accept()
                 return
@@ -788,7 +933,7 @@ class InputHandlerMixin:
                     scene_rect = self.mapToScene(rect).boundingRect()
                     new_uids = set()
                     for item in self._scene.items(
-                        scene_rect, Qt.ItemSelectionMode.IntersectsItemShape
+                        scene_rect, self._roping_item_selection_mode()
                     ):
                         uid = item.data(0)
                         if uid and self._is_selectable(uid):
@@ -805,6 +950,7 @@ class InputHandlerMixin:
                         self._selected_uids ^= new_uids
                     else:
                         self._selected_uids = new_uids
+                    self._on_selection_changed()
                     self.update_selection_visuals()
                     self._update_cursor()
                 event.accept()
@@ -832,6 +978,9 @@ class InputHandlerMixin:
                         sdx = release_scene.x() - origin.x()
                         sdy = release_scene.y() - origin.y()
                         ost_dx, ost_dy = self.scene_to_ost_delta(sdx, sdy)
+                        ost_dx, ost_dy = self.apply_intelligent_paste_axis_snap(
+                            ost_dx, ost_dy
+                        )
                         _drag_ann = self._current_annotations.get(
                             self._drag_takeoff_uid
                         )
@@ -939,6 +1088,9 @@ class InputHandlerMixin:
                         sdx = release_scene.x() - origin.x()
                         sdy = release_scene.y() - origin.y()
                         ost_dx, ost_dy = self.scene_to_ost_delta(sdx, sdy)
+                        ost_dx, ost_dy = self.apply_intelligent_paste_axis_snap(
+                            ost_dx, ost_dy
+                        )
                         for uid, orig_pos in self._drag_multi_orig_positions.items():
                             new_pos = self._compute_snapped_multi_drag_position(
                                 uid, orig_pos, ost_dx, ost_dy
@@ -962,6 +1114,7 @@ class InputHandlerMixin:
                                     )
                     self._flush_dirty_positions()
                     self._clear_drag_tracking()
+                    self.finish_intelligent_paste_placement()
                     self._update_cursor()
                     event.accept()
                     return
@@ -1000,11 +1153,13 @@ class InputHandlerMixin:
                             if uid not in self._selected_uids:
                                 self._flush_dirty_positions()
                             self._selected_uids = {uid}
+                        self._on_selection_changed()
                         self.update_selection_visuals()
                     else:
                         if not multi:
                             self._flush_dirty_positions()
                             self._selected_uids.clear()
+                        self._on_selection_changed()
                         self.update_selection_visuals()
                 if self._cursor_mode == "rotate" and len(self._selected_uids) == 1:
                     if not self._create_rotate_handle(next(iter(self._selected_uids))):
@@ -1498,7 +1653,21 @@ class InputHandlerMixin:
             self.cursor_mode_change_requested.emit("select")
 
     def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key.Key_Control and not event.isAutoRepeat():
+        if (
+            event.key() == Qt.Key.Key_Escape
+            and self.is_text_annotation_inline_edit_active()
+        ):
+            self._finish_active_inline_text_edit(commit=False)
+            event.accept()
+            return
+        if self.is_text_annotation_inline_edit_active():
+            super().keyPressEvent(event)
+            return
+        if (
+            self._advanced_mouse_controls_active()
+            and event.key() == Qt.Key.Key_Control
+            and not event.isAutoRepeat()
+        ):
             self._ctrl_held = True
             self._update_cursor()
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -1548,11 +1717,18 @@ class InputHandlerMixin:
             self.cursor_mode_change_requested.emit("select")
             event.accept()
             return
+        if self._intelligent_paste_active and event.key() == Qt.Key.Key_Escape:
+            self._clear_drag_tracking(restore_preview=True)
+            self.finish_intelligent_paste_placement()
+            self._update_cursor()
+            event.accept()
+            return
         if self._cursor_mode == "paste_backout" and event.key() == Qt.Key.Key_Escape:
             self.cancel_paste_backout()
             event.accept()
             return
         if self._cursor_mode == "place" and event.key() == Qt.Key.Key_Escape:
+            self.finish_intelligent_paste_placement()
             if self._place_points:
                 self._place_points.pop()
                 self.clear_place_preview()
@@ -1579,6 +1755,7 @@ class InputHandlerMixin:
         ):
             uids = list(self._selected_uids)
             self._selected_uids.clear()
+            self._on_selection_changed()
             self.update_selection_visuals()
             self._invalidate_snap_index()
             self.elements_deleted.emit(uids)
@@ -1677,7 +1854,8 @@ class InputHandlerMixin:
             self._select_band_origin is not None or self._rotation_drag_active
         )
         if (
-            self._ctrl_held
+            self._advanced_mouse_controls_active()
+            and self._ctrl_held
             and self._cursor_mode not in ("rotate", "slope_rotate")
             and not active_press
         ):
@@ -1906,6 +2084,8 @@ class InputHandlerMixin:
     def leaveEvent(self, event) -> None:
         if self._selection_enabled and self._cursor_mode == "select":
             self.setCursor(Qt.CursorShape.ArrowCursor)
+        self._last_mouse_vp_pos = None
+        self.viewport().update()
         super().leaveEvent(event)
 
     def changeEvent(self, event):

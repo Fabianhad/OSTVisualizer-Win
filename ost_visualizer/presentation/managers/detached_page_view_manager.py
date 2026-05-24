@@ -3,6 +3,7 @@ from typing import Callable, List, Optional, Tuple
 from PySide6 import QtWidgets
 from PySide6.QtCore import QByteArray, QObject, Qt, Signal
 from ...application.dtos.page_view_dto import PageViewDto
+from ...application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_color_service import IColorService
 from ...application.interfaces.i_coordinate_transformer_factory import (
@@ -319,6 +320,7 @@ class DetachedPageViewManager(IShutdownAware):
         undo_svc = UndoRedoService()
         if bid_ref:
             undo_svc.set_active_bid(bid_ref)
+        snap_preferences = SnapPreferencesDto.from_config(self.config_model)
         self._window = self._window_factory(
             icon_provider=self.icon_provider,
             view=view,
@@ -339,6 +341,26 @@ class DetachedPageViewManager(IShutdownAware):
             initial_geometry=initial_geometry,
             initial_is_maximized=initial_is_maximized,
             navigation_source=navigation_source,
+            show_page_index=self.config_model.display_page_index_with_sheet_name,
+            show_sheet_number=self.config_model.display_sheet_number_with_sheet_name,
+            roping_selection_method=self.config_model.roping_selection_method,
+            disable_high_resolution_images=(
+                self.config_model.disable_high_resolution_images
+            ),
+            intelligent_paste_enabled=self.config_model.enable_intelligent_paste,
+            advanced_mouse_controls_enabled=(
+                self.config_model.enable_advanced_mouse_controls
+            ),
+            default_auto_zoom_level=self.config_model.default_auto_zoom_level,
+            show_right_angle_line_indicator=(
+                self.config_model.show_right_angle_line_indicator
+            ),
+            use_full_window_crosshairs=self.config_model.use_full_window_crosshairs,
+            crosshair_color=self.config_model.crosshair_color,
+            crosshair_line_thickness=self.config_model.crosshair_line_thickness,
+            mouse_unpressed_snap_angle=self.config_model.mouse_unpressed_snap_angle,
+            mouse_pressed_snap_angle=self.config_model.mouse_pressed_snap_angle,
+            **snap_preferences.to_kwargs(),
             parent=self.parent_window,
         )
         self._window.set_read_only(self._is_read_only())

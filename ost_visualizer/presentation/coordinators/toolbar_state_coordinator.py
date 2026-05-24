@@ -131,12 +131,13 @@ class ToolbarStateCoordinator:
             else:
                 self._paste_action.setEnabled(bid_paste_allowed)
         if self._delete_action:
-            if not self._access.is_allowed(Feature.DELETE_BID):
-                self._delete_action.setEnabled(False)
-            elif on_takeoff_tab:
+            if on_takeoff_tab:
                 self._delete_action.setEnabled(
-                    bool(self.plan_view and self.plan_view.has_selection)
+                    self._access.is_allowed(Feature.SELECT_TAKEOFFS)
+                    and bool(self.plan_view and self.plan_view.has_selection)
                 )
+            elif not self._access.is_allowed(Feature.DELETE_BID):
+                self._delete_action.setEnabled(False)
             elif self._ui_state.get_selected_bid_ref():
                 self._delete_action.setEnabled(True)
             elif self._ui_state.selected_project_uid:

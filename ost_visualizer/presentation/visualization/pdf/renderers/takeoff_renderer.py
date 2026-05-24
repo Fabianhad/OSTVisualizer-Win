@@ -1,12 +1,17 @@
 from typing import Any, List, Optional, Tuple
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen
-from PySide6.QtWidgets import QGraphicsPathItem
+from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsTextItem
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....domain.entities import pattern as pt
 from .....domain.entities import shape as shapes
+from .....domain.entities.annotation import int_color_to_hex
 from .....domain.entities.condition import Condition
 from .....domain.entities.takeoff import Takeoff
+from .....domain.services.uom_service import (
+    calculate_condition_quantities,
+    get_uom_label,
+)
 from ...core.geometry.ost_linear_geom import (
     gen_curve_pts,
     gen_thick_curve_offsets,
@@ -45,7 +50,9 @@ class TakeoffRenderer:
         uid: str,
         condition_uid: str,
         is_negative: bool = False,
-    ) -> QGraphicsPathItem | list[QGraphicsPathItem]:
+        takeoff: Takeoff | None = None,
+        hole_positions: list[list[float]] | None = None,
+    ) -> QGraphicsItem | list[QGraphicsItem]:
         pattern_type = condition.pattern if condition.pattern else 1
         qcolor = QColor(color)
         pen = QPen(qcolor)
@@ -58,8 +65,18 @@ class TakeoffRenderer:
             item.setBrush(fill_brush)
         item.setData(0, uid)
         item.setData(1, condition_uid)
-        items: list[QGraphicsPathItem] = [item]
-        if pattern_type in pt.LINE_PATTERNS:
+        items: list[QGraphicsItem] = [item]
+        if condition.is_area and condition.grid:
+            spacing_x, spacing_y = self._grid_spacing(condition)
+            pattern_items = pr.create_grid_items(
+                path, qcolor, spacing_x, spacing_y, line_width, self._cs
+            )
+            if pattern_items:
+                for pitem in pattern_items:
+                    pitem.setData(0, uid)
+                    pitem.setData(1, condition_uid)
+                items.extend(pattern_items)
+        elif pattern_type in pt.LINE_PATTERNS:
             spacing = condition.spacing if condition.spacing else 4.0
             pattern_items = pr.create_pattern_items(
                 path, pattern_type, qcolor, spacing, line_width, self._cs
@@ -81,7 +98,246 @@ class TakeoffRenderer:
                     neg_indicator.setData(0, uid)
                     neg_indicator.setData(1, condition_uid)
                     items.append(neg_indicator)
+        label_items = self._create_condition_label_items(
+            path, condition, qcolor, uid, takeoff, hole_positions
+        )
+        items.extend(label_items)
         return items if len(items) > 1 else items[0]
+
+    def _grid_spacing(self, condition) -> tuple[float, float]:
+        spacing_x = condition.grid_size1 if condition.grid_size1 > 0 else 0.0
+        spacing_y = condition.grid_size2 if condition.grid_size2 > 0 else 0.0
+        if condition.gap > 0:
+            spacing_x += condition.gap if spacing_x > 0 else 0.0
+            spacing_y += condition.gap if spacing_y > 0 else 0.0
+        fallback = condition.spacing if condition.spacing > 0 else 4.0
+        return spacing_x or fallback, spacing_y or fallback
+
+    def _create_condition_label_items(
+        self,
+        path: QPainterPath,
+        condition,
+        color: QColor,
+        uid: str,
+        takeoff: Takeoff | None,
+        hole_positions: list[list[float]] | None,
+    ) -> list[QGraphicsTextItem]:
+        labels: list[QGraphicsTextItem] = []
+        dimension_label: QGraphicsTextItem | None = None
+        if condition.is_area and condition.display_dimension:
+            text = self._dimension_label_text(condition, takeoff, hole_positions)
+            if text:
+                dimension_label = self._create_centered_condition_text_item(
+                    path,
+                    text,
+                    color,
+                    uid,
+                    condition.uid,
+                    "display_dimension",
+                    takeoff,
+                )
+                labels.append(dimension_label)
+        if condition.display_name and condition.name:
+            if condition.is_area:
+                if dimension_label is not None:
+                    labels.append(
+                        self._create_condition_text_item_below_item(
+                            dimension_label,
+                            condition.name,
+                            color,
+                            uid,
+                            condition.uid,
+                            "display_name",
+                            takeoff,
+                            y_offset=4.0,
+                        )
+                    )
+                else:
+                    labels.append(
+                        self._create_centered_condition_text_item(
+                            path,
+                            condition.name,
+                            color,
+                            uid,
+                            condition.uid,
+                            "display_name",
+                            takeoff,
+                        )
+                    )
+            else:
+                labels.append(
+                    self._create_condition_text_item(
+                        path,
+                        condition.name,
+                        color,
+                        uid,
+                        condition.uid,
+                        "display_name",
+                        takeoff,
+                        y_offset=4.0,
+                    )
+                )
+        return labels
+
+    def _make_condition_text_item(
+        self,
+        text: str,
+        color: QColor,
+        uid: str,
+        condition_uid: str,
+        label_kind: str,
+        takeoff: Takeoff | None,
+    ) -> QGraphicsTextItem:
+        item = QGraphicsTextItem(text)
+        style = self._takeoff_label_style(takeoff, label_kind)
+        has_label_style = any(value is not None for value in style[:3]) or any(
+            bool(value) for value in style[3:]
+        )
+        label_color = (
+            QColor(int_color_to_hex(style[1]))
+            if has_label_style and style[1] is not None
+            else color
+        )
+        item.setDefaultTextColor(label_color)
+        font = QFont()
+        font.setFamily(style[0] or font.family())
+        font.setPointSize(style[2] or 9)
+        font.setBold(bool(style[3]))
+        font.setItalic(bool(style[4]))
+        font.setUnderline(bool(style[5]))
+        item.setFont(font)
+        item.setData(0, uid)
+        item.setData(1, condition_uid)
+        item.setData(2, "condition_label")
+        item.setData(3, label_kind)
+        item.setZValue(20)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        return item
+
+    def _takeoff_label_style(
+        self, takeoff: Takeoff | None, label_kind: str
+    ) -> tuple[Optional[str], Optional[int], Optional[int], bool, bool, bool]:
+        if takeoff is None:
+            return None, None, None, False, False, False
+        if label_kind == "display_dimension":
+            return (
+                takeoff.dimension_font_name,
+                takeoff.dimension_font_color,
+                takeoff.dimension_font_size,
+                takeoff.dimension_font_bold,
+                takeoff.dimension_font_italic,
+                takeoff.dimension_font_underline,
+            )
+        return (
+            takeoff.name_font_name,
+            takeoff.name_font_color,
+            takeoff.name_font_size,
+            takeoff.name_font_bold,
+            takeoff.name_font_italic,
+            takeoff.name_font_underline,
+        )
+
+    def _create_condition_text_item(
+        self,
+        path: QPainterPath,
+        text: str,
+        color: QColor,
+        uid: str,
+        condition_uid: str,
+        label_kind: str,
+        takeoff: Takeoff | None,
+        y_offset: float,
+    ) -> QGraphicsTextItem:
+        item = self._make_condition_text_item(
+            text, color, uid, condition_uid, label_kind, takeoff
+        )
+        bounds = path.boundingRect()
+        text_bounds = item.boundingRect()
+        item.setPos(
+            bounds.center().x() - text_bounds.width() / 2.0,
+            bounds.bottom() + y_offset,
+        )
+        return item
+
+    def _create_centered_condition_text_item(
+        self,
+        path: QPainterPath,
+        text: str,
+        color: QColor,
+        uid: str,
+        condition_uid: str,
+        label_kind: str,
+        takeoff: Takeoff | None,
+    ) -> QGraphicsTextItem:
+        item = self._make_condition_text_item(
+            text, color, uid, condition_uid, label_kind, takeoff
+        )
+        center = self._path_centroid(path)
+        if center is None:
+            bounds_center = path.boundingRect().center()
+            center = bounds_center.x(), bounds_center.y()
+        text_bounds = item.boundingRect()
+        item.setPos(
+            center[0] - text_bounds.width() / 2.0,
+            center[1] - text_bounds.height() / 2.0,
+        )
+        return item
+
+    def _create_condition_text_item_below_item(
+        self,
+        anchor_item: QGraphicsTextItem,
+        text: str,
+        color: QColor,
+        uid: str,
+        condition_uid: str,
+        label_kind: str,
+        takeoff: Takeoff | None,
+        y_offset: float,
+    ) -> QGraphicsTextItem:
+        item = self._make_condition_text_item(
+            text, color, uid, condition_uid, label_kind, takeoff
+        )
+        anchor_bounds = anchor_item.boundingRect()
+        anchor_center_x = anchor_item.pos().x() + anchor_bounds.width() / 2.0
+        text_bounds = item.boundingRect()
+        item.setPos(
+            anchor_center_x - text_bounds.width() / 2.0,
+            anchor_item.pos().y() + anchor_bounds.height() + y_offset,
+        )
+        return item
+
+    def _dimension_label_text(
+        self,
+        condition,
+        takeoff: Takeoff | None,
+        hole_positions: list[list[float]] | None,
+    ) -> str:
+        if takeoff is None:
+            return ""
+        q1, q2, q3 = calculate_condition_quantities(
+            condition_type=condition.condition_type,
+            calc_type1=condition.calc_type1,
+            calc_type2=condition.calc_type2,
+            calc_type3=condition.calc_type3,
+            uom1=condition.uom1,
+            uom2=condition.uom2,
+            uom3=condition.uom3,
+            width=condition.width,
+            height=condition.height,
+            depth=condition.depth,
+            thickness=condition.thickness,
+            position=takeoff.position,
+            hole_positions=hole_positions,
+            rise=condition.rise,
+            run=condition.run,
+            grid_size1=condition.grid_size1,
+            grid_size2=condition.grid_size2,
+            gap=condition.gap,
+            round_quantity=condition.round_quantity,
+            round_up=condition.round_up,
+        )
+        values = ((q1, condition.uom1), (q2, condition.uom2), (q3, condition.uom3))
+        return "\n".join(f"{value:.2f} {get_uom_label(uom)}" for value, uom in values)
 
     def build_pattern_fill(
         self,
@@ -103,14 +359,10 @@ class TakeoffRenderer:
     def _create_negative_indicator(
         self, path: QPainterPath
     ) -> QGraphicsPathItem | list[QGraphicsPathItem] | None:
-        points = []
-        for i in range(path.elementCount()):
-            elem = path.elementAt(i)
-            if elem.type.value in (0, 1):
-                points.append((elem.x, elem.y))
-        if len(points) < 3:
+        center = self._path_centroid(path)
+        if center is None:
             return None
-        cx, cy = self._calculate_polygon_centroid(points)
+        cx, cy = center
         rect_w, rect_h = 12.0, 12.0
         minus_w, minus_h = 6.0, 1.5
         rect_path = QPainterPath()
@@ -134,6 +386,16 @@ class TakeoffRenderer:
             QGraphicsPathItem.GraphicsItemFlag.ItemIgnoresTransformations
         )
         return [rect_item, minus_item]
+
+    def _path_centroid(self, path: QPainterPath) -> tuple[float, float] | None:
+        points = []
+        for i in range(path.elementCount()):
+            elem = path.elementAt(i)
+            if elem.type.value in (0, 1):
+                points.append((elem.x, elem.y))
+        if len(points) < 3:
+            return None
+        return self._calculate_polygon_centroid(points)
 
     def _calculate_polygon_centroid(
         self, points: list[tuple[float, float]]
@@ -179,6 +441,8 @@ class TakeoffRenderer:
             takeoff.uid,
             takeoff.condition_uid,
             is_negative,
+            takeoff=takeoff,
+            hole_positions=None,
         )
 
     def _create_path(
@@ -409,4 +673,6 @@ class TakeoffRenderer:
             takeoff.uid,
             takeoff.condition_uid,
             is_negative,
+            takeoff=takeoff,
+            hole_positions=[hole.position for hole in holes if hole.position],
         )

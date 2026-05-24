@@ -96,7 +96,7 @@ ICON_SPECS: Dict[IconId, IconSpec] = {
     IconId.COVER_SHEET: IconSpec("book_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
     IconId.LAYERS_SIDEBAR: IconSpec("stack_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
     IconId.CONDITIONS_SIDEBAR: IconSpec(
-        "format_align_left_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+        "lists_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
     ),
     IconId.SELECT_ALL: IconSpec(
         "select_check_box_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"

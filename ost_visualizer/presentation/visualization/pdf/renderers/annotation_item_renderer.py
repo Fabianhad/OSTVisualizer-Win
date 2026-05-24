@@ -11,6 +11,11 @@ from PySide6.QtWidgets import (
 from .....application.dtos.hotlink_dto import HotlinkDto
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....domain.entities.annotation import BidAnnotation
+from ....components.plan_view.components.graphics_items import (
+    ClippedTextGraphicsItem,
+    NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
+    NAMED_VIEW_LABEL_ITEM_KIND,
+)
 from .annotation_renderer import (
     calculate_annotation_geometry,
     create_cloud_path_points,
@@ -108,7 +113,10 @@ class AnnotationItemRenderer:
         font.setUnderline(text_info.get("font_underline", False))
         metrics = QFontMetrics(font)
         final_text = process_text_for_box(content, scaled_box_width, 0, metrics)
-        text_item = QGraphicsTextItem(final_text)
+        scaled_box_height = self._cs.ost_to_screen_pixels(box_height)
+        text_item = ClippedTextGraphicsItem(
+            final_text, QRectF(0.0, 0.0, scaled_box_width, scaled_box_height)
+        )
         text_item.setFont(font)
         text_item.setDefaultTextColor(QColor(color))
         text_item.setTextWidth(scaled_box_width)
@@ -123,7 +131,6 @@ class AnnotationItemRenderer:
         else:
             option.setAlignment(Qt.AlignmentFlag.AlignLeft)
         doc.setDefaultTextOption(option)
-        scaled_box_height = self._cs.ost_to_screen_pixels(box_height)
         text_item.setPos(screen_x, screen_y)
         if rotation != 0:
             text_item.setTransformOriginPoint(
@@ -295,12 +302,14 @@ class AnnotationItemRenderer:
             bg_item.setBrush(green_color)
             bg_item.setPen(Qt.PenStyle.NoPen)
             bg_item.setZValue(3)
+            bg_item.setData(2, NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND)
             results.append((bg_item, None))
             text_item = QGraphicsTextItem(content)
             text_item.setFont(font)
             text_item.setDefaultTextColor(QColor("white"))
             text_item.setPos(text_x - 4, text_y - 4)
             text_item.setZValue(4)
+            text_item.setData(2, NAMED_VIEW_LABEL_ITEM_KIND)
             results.append((text_item, None))
         return results
 

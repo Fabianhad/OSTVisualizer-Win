@@ -5,6 +5,7 @@ from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.events.app_events import AppEvents
 from ...domain.entities.takeoff import Takeoff
+from ..managers.ui_access_manager import Feature
 from ..resolvers.entity_resolver import EntityResolver
 from ..services.selection_clipboard_service import SelectionClipboardService
 from ..services.selection_commands import (
@@ -29,6 +30,7 @@ class PlanViewActionHandler:
         page_settings_bar,
         undo_svc,
         event_bus,
+        ui_access_manager=None,
     ):
         self._plan_view = plan_view
         self._ui_state = ui_state_manager
@@ -38,8 +40,15 @@ class PlanViewActionHandler:
         self._page_settings_bar = page_settings_bar
         self._undo_svc = undo_svc
         self._event_bus = event_bus
+        self._ui_access_manager = ui_access_manager
         self._clipboard_svc = SelectionClipboardService()
         self._resolver = EntityResolver(plan_view, project_data_svc)
+
+    def _is_allowed(self, feature: Feature) -> bool:
+        return bool(
+            self._ui_access_manager is None
+            or self._ui_access_manager.is_allowed(feature)
+        )
 
     def connect_signals(self) -> None:
         pv = self._plan_view
@@ -48,6 +57,15 @@ class PlanViewActionHandler:
         pv.set_negative_requested.connect(self.on_set_negative)
         pv.set_curved_requested.connect(self.on_set_curved)
         pv.positions_flushed.connect(self.on_positions_flushed)
+        pv.annotation_text_properties_flushed.connect(
+            self.on_annotation_text_properties_flushed
+        )
+        pv.annotation_text_and_positions_flushed.connect(
+            self.on_annotation_text_and_positions_flushed
+        )
+        pv.condition_text_properties_flushed.connect(
+            self.on_condition_text_properties_flushed
+        )
         pv.rotations_flushed.connect(self.on_rotations_flushed)
         pv.group_rotation_flushed.connect(self.on_group_rotation_flushed)
         pv.takeoff_created.connect(self.on_takeoff_created)
@@ -60,6 +78,8 @@ class PlanViewActionHandler:
         pv.paste_backouts_placed.connect(self.on_paste_backouts_placed)
 
     def can_paste_to_current_bid(self) -> bool:
+        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+            return False
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not self._clipboard_svc.has_content():
             return False
@@ -68,6 +88,25 @@ class PlanViewActionHandler:
         if self._clipboard_svc.source_bid_uid == bid_ref.bid_uid:
             return True
         return bool(self._clipboard_svc.items)
+
+    def on_condition_text_properties_flushed(self, changes: list) -> None:
+        if not changes or not self._is_allowed(Feature.EDIT_CONDITION):
+            return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if not bid_ref:
+            return
+        new_updates = [
+            (takeoff_uid, dict(new_props))
+            for takeoff_uid, _label_kind, _old_props, new_props in changes
+        ]
+        if not self._write_svc.save_takeoff_text_properties(
+            bid_ref.file_path, new_updates, reload_database=False
+        ):
+            return
+        page_uids = self._data_svc.update_takeoff_text_properties(new_updates)
+        self._publish_takeoffs_changed_for_pages(
+            page_uids, [uid for uid, _props in new_updates]
+        )
 
     def _takeoff_uids_only(self, uids: list) -> list:
         return [u for u in uids if self._resolver.resolve_takeoff(u)]
@@ -171,6 +210,8 @@ class PlanViewActionHandler:
         return new_uids
 
     def on_assign_to_area(self, uids: list) -> None:
+        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+            return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
         if not db_path or not takeoff_uids:
@@ -179,6 +220,8 @@ class PlanViewActionHandler:
         self._write_svc.save_takeoffs_area(db_path, takeoff_uids, area_uid)
 
     def on_reassign_condition(self, uids: list, condition_uid: str) -> None:
+        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+            return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
         if (
@@ -192,6 +235,8 @@ class PlanViewActionHandler:
         )
 
     def on_set_negative(self, uids: list, is_negative: bool) -> None:
+        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+            return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
         if not db_path or not takeoff_uids:
@@ -199,6 +244,8 @@ class PlanViewActionHandler:
         self._write_svc.set_takeoffs_negative(db_path, takeoff_uids, is_negative)
 
     def on_set_curved(self, uids: list, make_curved: bool) -> None:
+        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+            return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
         if not db_path or not takeoff_uids:
@@ -226,6 +273,10 @@ class PlanViewActionHandler:
                 )
 
     def on_positions_flushed(self, takeoff_changes: list, ann_changes: list) -> None:
+        if (takeoff_changes or ann_changes) and not self._is_allowed(
+            Feature.SELECT_TAKEOFFS
+        ):
+            return
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path or (not takeoff_changes and not ann_changes):
             return
@@ -276,7 +327,88 @@ class PlanViewActionHandler:
 
         self._undo_svc.push(_undo_move, _redo_move)
 
+    def on_annotation_text_properties_flushed(self, changes: list) -> None:
+        if not self._is_allowed(Feature.EDIT_ANNOTATION_TEXT):
+            return
+        db_path = self._data_svc.get_current_bid_file_path()
+        if not db_path or not changes:
+            return
+        new_updates = [
+            (uid, ann_type, dict(new_props))
+            for uid, ann_type, _old_props, new_props in changes
+        ]
+        success = self._ann_write_svc.save_annotation_text_properties(
+            db_path, new_updates
+        )
+        if not success:
+            return
+        old_updates = [
+            (uid, ann_type, dict(old_props))
+            for uid, ann_type, old_props, _new_props in changes
+            if old_props
+        ]
+        if not old_updates:
+            return
+        ann_write_svc = self._ann_write_svc
+
+        def _undo_text_properties():
+            ann_write_svc.save_annotation_text_properties(db_path, old_updates)
+
+        def _redo_text_properties():
+            ann_write_svc.save_annotation_text_properties(db_path, new_updates)
+
+        self._undo_svc.push(_undo_text_properties, _redo_text_properties)
+
+    def on_annotation_text_and_positions_flushed(
+        self, text_changes: list, ann_position_changes: list
+    ) -> None:
+        if not self._is_allowed(Feature.EDIT_ANNOTATION_TEXT):
+            return
+        db_path = self._data_svc.get_current_bid_file_path()
+        if not db_path or (not text_changes and not ann_position_changes):
+            return
+        new_updates = [
+            (uid, ann_type, dict(new_props))
+            for uid, ann_type, _old_props, new_props in text_changes
+        ]
+        new_positions = [
+            (uid, ann_type, list(new_pos))
+            for uid, ann_type, _old_pos, new_pos in ann_position_changes
+        ]
+        success = self._ann_write_svc.save_annotation_text_properties_and_positions(
+            db_path, new_updates, new_positions
+        )
+        if not success:
+            return
+        old_updates = [
+            (uid, ann_type, dict(old_props))
+            for uid, ann_type, old_props, _new_props in text_changes
+            if old_props
+        ]
+        old_positions = [
+            (uid, ann_type, list(old_pos))
+            for uid, ann_type, old_pos, _new_pos in ann_position_changes
+            if old_pos
+        ]
+        if not (old_updates or old_positions):
+            return
+        ann_write_svc = self._ann_write_svc
+
+        def _undo_text_and_position():
+            ann_write_svc.save_annotation_text_properties_and_positions(
+                db_path, old_updates, old_positions
+            )
+
+        def _redo_text_and_position():
+            ann_write_svc.save_annotation_text_properties_and_positions(
+                db_path, new_updates, new_positions
+            )
+
+        self._undo_svc.push(_undo_text_and_position, _redo_text_and_position)
+
     def on_rotations_flushed(self, rotation_changes: list) -> None:
+        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+            return
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path or not rotation_changes:
             return
@@ -299,6 +431,10 @@ class PlanViewActionHandler:
     def on_group_rotation_flushed(
         self, takeoff_changes: list, ann_changes: list, rotation_changes: list
     ) -> None:
+        if (
+            takeoff_changes or ann_changes or rotation_changes
+        ) and not self._is_allowed(Feature.SELECT_TAKEOFFS):
+            return
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path:
             return
@@ -353,6 +489,8 @@ class PlanViewActionHandler:
     def on_takeoff_created(
         self, condition_uid: str, position: list, page_uid: str
     ) -> None:
+        if not self._is_allowed(Feature.PLACE_TAKEOFF):
+            return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not condition_uid or not page_uid:
             return
@@ -389,6 +527,8 @@ class PlanViewActionHandler:
     def on_hole_created(
         self, condition_uid: str, position: list, page_uid: str, parent_uid: str
     ) -> None:
+        if not self._is_allowed(Feature.PLACE_TAKEOFF):
+            return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not condition_uid or not page_uid or not parent_uid:
             return
@@ -405,6 +545,8 @@ class PlanViewActionHandler:
         self._insert_takeoffs_with_undo(bid_ref, [spec], fast_refresh=True)
 
     def on_paste_backouts_placed(self, placements: list, source_bid_uid) -> None:
+        if not self._is_allowed(Feature.PLACE_TAKEOFF):
+            return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not placements:
             return
@@ -434,7 +576,7 @@ class PlanViewActionHandler:
 
     def _insert_takeoffs_with_undo(
         self, bid_ref, specs: List[InsertTakeoffSpec], fast_refresh: bool = False
-    ) -> None:
+    ) -> bool:
         use_fast_refresh = fast_refresh and all(not spec.raw_extras for spec in specs)
         new_uids = self._write_svc.insert_takeoffs(
             bid_ref.file_path,
@@ -443,7 +585,7 @@ class PlanViewActionHandler:
             reload_database=not use_fast_refresh,
         )
         if not new_uids:
-            return
+            return False
         if use_fast_refresh:
             self._add_inserted_takeoffs_to_model(new_uids, specs)
             page_uids = []
@@ -468,7 +610,7 @@ class PlanViewActionHandler:
                     self._plan_view.set_selected_uids(set(redone_uids))
 
             self._undo_svc.push(_undo_insert, _redo_insert)
-            return
+            return True
         cmd = InsertTakeoffsCommand(
             uids=new_uids,
             bid_ref=bid_ref,
@@ -477,6 +619,7 @@ class PlanViewActionHandler:
             plan_view=self._plan_view,
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
+        return True
 
     def _add_inserted_takeoffs_to_model(
         self, new_uids: List[str], specs: List[InsertTakeoffSpec]
@@ -499,6 +642,8 @@ class PlanViewActionHandler:
         self._data_svc.add_takeoffs(takeoffs)
 
     def on_elements_deleted(self, uids: list) -> None:
+        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+            return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not uids:
             return
@@ -619,6 +764,8 @@ class PlanViewActionHandler:
         self._undo_svc.push(_undo, _redo)
 
     def on_copy_requested(self, uids: list) -> None:
+        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+            return
         takeoffs = []
         annotations = []
         for uid in uids:
@@ -681,6 +828,8 @@ class PlanViewActionHandler:
         return uid_map
 
     def on_paste_requested(self) -> None:
+        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+            return
         if not self._clipboard_svc.has_content():
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
@@ -690,11 +839,6 @@ class PlanViewActionHandler:
         if not page_uid:
             return
         area_uid = self._page_settings_bar.get_current_area_uid()
-        step = (
-            self._plan_view.snap_increments
-            if self._plan_view.snap_increments > 0
-            else 1.0
-        )
         source_bid_uid = self._clipboard_svc.source_bid_uid
         source_file_path = self._clipboard_svc.source_file_path
         all_items = list(self._clipboard_svc.items)
@@ -705,6 +849,8 @@ class PlanViewActionHandler:
         regulars = [t for t in all_items if not t.is_hole]
         holes = [t for t in all_items if t.is_hole]
         if holes and not regulars:
+            if not self._plan_view.intelligent_paste_enabled:
+                return
             extras_by_uid = {
                 h.uid: dict(self._clipboard_svc.get_extras(h.uid)) for h in holes
             }
@@ -715,6 +861,9 @@ class PlanViewActionHandler:
         )
         if condition_uid_map is None:
             return
+        paste_dx, paste_dy, intelligent_source_anchor = self._paste_translation(
+            regulars
+        )
         regular_specs = [
             InsertTakeoffSpec(
                 condition_uid=condition_uid_map.get(
@@ -722,7 +871,7 @@ class PlanViewActionHandler:
                 ),
                 page_uid=page_uid,
                 area_uid=area_uid,
-                position=[v + step for v in t.position],
+                position=self._translate_position(t.position, paste_dx, paste_dy),
                 parent_uid=t.parent_uid,
                 curve=t.curve,
                 rotation=t.rotation,
@@ -750,7 +899,7 @@ class PlanViewActionHandler:
                 ),
                 page_uid=page_uid,
                 area_uid=area_uid,
-                position=[v + step for v in t.position],
+                position=self._translate_position(t.position, paste_dx, paste_dy),
                 parent_uid=parent_remap.get(str(t.parent_uid), t.parent_uid),
                 curve=t.curve,
                 rotation=t.rotation,
@@ -798,20 +947,7 @@ class PlanViewActionHandler:
         clipboard_anns = self._clipboard_svc.annotations
         ann_specs = []
         for a in clipboard_anns:
-            pos = list(a.position)
-            if a.is_text and len(pos) >= 4:
-                pos[0] += step
-                pos[1] += step
-            elif a.is_ink:
-                start = 1 if len(pos) % 2 == 1 else 0
-                for i in range(start, len(pos) - 1, 2):
-                    pos[i] += step
-                    pos[i + 1] += step
-            else:
-                n = len(pos) // 2
-                for i in range(n):
-                    pos[i * 2] += step
-                    pos[i * 2 + 1] += step
+            pos = self._translate_annotation_position(a, paste_dx, paste_dy)
             ann_specs.append(
                 InsertAnnotationSpec(
                     page_uid=page_uid,
@@ -841,6 +977,10 @@ class PlanViewActionHandler:
         if not all_new_keys:
             return
         self._plan_view.set_selected_uids(all_new_keys)
+        if intelligent_source_anchor and new_takeoff_uids:
+            self._plan_view.mark_intelligent_paste_drag_pending(
+                list(new_takeoff_uids), intelligent_source_anchor
+            )
         paste_cmds = []
         takeoff_cmd = None
         if pasted_takeoffs:
@@ -882,6 +1022,54 @@ class PlanViewActionHandler:
                 self._plan_view.set_selected_uids(combined)
 
             self._undo_svc.push(_undo, _redo)
+
+    def _paste_translation(
+        self, regulars: list
+    ) -> tuple[float, float, Optional[tuple]]:
+        step = (
+            self._plan_view.snap_increments
+            if self._plan_view.snap_increments > 0
+            else 1.0
+        )
+        if (
+            not self._plan_view.intelligent_paste_enabled
+            or not regulars
+            or len(regulars[0].position) < 2
+        ):
+            return step, step, None
+        source_anchor = (float(regulars[0].position[0]), float(regulars[0].position[1]))
+        mouse_anchor = self._plan_view.current_mouse_ost_position()
+        if mouse_anchor is None:
+            return 0.0, 0.0, source_anchor
+        return (
+            mouse_anchor[0] - source_anchor[0],
+            mouse_anchor[1] - source_anchor[1],
+            source_anchor,
+        )
+
+    def _translate_position(self, position: list, dx: float, dy: float) -> list:
+        translated = list(position)
+        for i in range(0, len(translated) - 1, 2):
+            translated[i] += dx
+            translated[i + 1] += dy
+        return translated
+
+    def _translate_annotation_position(self, annotation, dx: float, dy: float) -> list:
+        pos = list(annotation.position)
+        if annotation.is_text and len(pos) >= 4:
+            pos[0] += dx
+            pos[1] += dy
+        elif annotation.is_ink:
+            start = 1 if len(pos) % 2 == 1 else 0
+            for i in range(start, len(pos) - 1, 2):
+                pos[i] += dx
+                pos[i + 1] += dy
+        else:
+            n = len(pos) // 2
+            for i in range(n):
+                pos[i * 2] += dx
+                pos[i * 2 + 1] += dy
+        return pos
 
     def _is_condition_placeable(self, condition_uid: str) -> bool:
         condition = self._data_svc.get_bid_conditions().get(condition_uid)

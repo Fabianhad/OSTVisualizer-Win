@@ -5,6 +5,8 @@ from typing import Optional, Tuple
 @dataclass
 class BidPageInfo:
     name: str
+    sheet_no: str = ""
+    sequence: int = 0
     image_path: Optional[str] = None
     width_pts: float = 0.0
     height_pts: float = 0.0

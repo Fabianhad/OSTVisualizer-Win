@@ -16,6 +16,18 @@ class Takeoff:
     curve: int = -1
     parent_uid: str = "0"
     is_negative: bool = False
+    dimension_font_name: Optional[str] = None
+    dimension_font_color: Optional[int] = None
+    dimension_font_size: Optional[int] = None
+    dimension_font_bold: bool = False
+    dimension_font_italic: bool = False
+    dimension_font_underline: bool = False
+    name_font_name: Optional[str] = None
+    name_font_color: Optional[int] = None
+    name_font_size: Optional[int] = None
+    name_font_bold: bool = False
+    name_font_italic: bool = False
+    name_font_underline: bool = False
 
     def is_visible(self, conditions: dict) -> bool:
         if not self.condition_uid:

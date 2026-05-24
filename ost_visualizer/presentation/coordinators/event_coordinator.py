@@ -21,6 +21,8 @@ class EventCoordinator:
             self.register(event_type, callback)
 
     def cleanup(self) -> None:
-        for event_type, callback in self._subscriptions:
-            self.event_bus.unsubscribe(event_type, callback)
+        if self.event_bus is not None:
+            for event_type, callback in self._subscriptions:
+                self.event_bus.unsubscribe(event_type, callback)
         self._subscriptions.clear()
+        self.event_bus = None

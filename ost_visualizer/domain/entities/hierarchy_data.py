@@ -8,7 +8,8 @@ from .identity_refs import BidRef
 class HierarchyPageInfo:
     uid: str
     name: str
-    sheet_no: int = 0
+    sheet_no: str = ""
+    sequence: int = 0
     image_path: Optional[str] = None
     width: float = 0.0
     height: float = 0.0

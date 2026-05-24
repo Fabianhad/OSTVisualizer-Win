@@ -468,5 +468,13 @@ class LayersDialog(QtWidgets.QDialog):
     def cleanup(self) -> None:
         self._disconnect_pending_new_editor_signal()
         self.icon_provider = None
+        self._reload_fn = None
+        self._insert_fn = None
+        self._delete_fn = None
+        self._update_show_fn = None
+        self._update_all_show_fn = None
+        self._update_name_fn = None
+        self._move_fn = None
         self._layers.clear()
+        self._used_uids.clear()
         self._checkboxes.clear()

@@ -73,7 +73,7 @@ class MainWindowWorkspaceState:
 
 @dataclass
 class TakeoffWorkspaceState:
-    VALID_ACTIVE_VIEWS: ClassVar[set[str]] = {"2d", "3d"}
+    VALID_ACTIVE_VIEWS: ClassVar[frozenset[str]] = frozenset({"2d", "3d"})
     active_view: str = "3d"
     view_2d_tab_visible: bool = True
     view_3d_tab_visible: bool = True

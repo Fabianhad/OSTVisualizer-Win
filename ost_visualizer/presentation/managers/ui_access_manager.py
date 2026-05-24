@@ -23,6 +23,7 @@ class Feature(Enum):
     EDIT_BID_JOB_STATUS = auto()
     CREATE_DATABASE = auto()
     EDIT_MASTER_DATA = auto()
+    EDIT_ANNOTATION_TEXT = auto()
 
 
 _OST_BLOCKED: FrozenSet[Feature] = frozenset(
@@ -40,6 +41,7 @@ _OST_BLOCKED: FrozenSet[Feature] = frozenset(
         Feature.EDIT_CONDITION,
         Feature.EDIT_BID_JOB_STATUS,
         Feature.EDIT_MASTER_DATA,
+        Feature.EDIT_ANNOTATION_TEXT,
     }
 )
 _LOCK_BLOCKED: FrozenSet[Feature] = frozenset(
@@ -50,6 +52,7 @@ _LOCK_BLOCKED: FrozenSet[Feature] = frozenset(
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
+        Feature.EDIT_ANNOTATION_TEXT,
     }
 )
 _LICENSE_REQUIRED: FrozenSet[Feature] = frozenset(
@@ -71,6 +74,7 @@ _LICENSE_REQUIRED: FrozenSet[Feature] = frozenset(
         Feature.EDIT_BID_JOB_STATUS,
         Feature.CREATE_DATABASE,
         Feature.EDIT_MASTER_DATA,
+        Feature.EDIT_ANNOTATION_TEXT,
     }
 )
 _REQUIRES_BID: FrozenSet[Feature] = frozenset(
@@ -85,6 +89,7 @@ _REQUIRES_BID: FrozenSet[Feature] = frozenset(
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
         Feature.EDIT_BID_JOB_STATUS,
+        Feature.EDIT_ANNOTATION_TEXT,
     }
 )
 _REQUIRES_ANY_SELECTION: FrozenSet[Feature] = frozenset(
@@ -116,6 +121,28 @@ _PLACEMENT_BLOCKED: FrozenSet[Feature] = frozenset(
         Feature.EDIT_BID_JOB_STATUS,
         Feature.CREATE_DATABASE,
         Feature.EDIT_MASTER_DATA,
+        Feature.EDIT_ANNOTATION_TEXT,
+    }
+)
+_TEXT_EDIT_BLOCKED: FrozenSet[Feature] = frozenset(
+    {
+        Feature.DELETE_BID,
+        Feature.DUPLICATE_BID,
+        Feature.CREATE_FOLDER,
+        Feature.IMPORT,
+        Feature.COVER_SHEET,
+        Feature.EDIT_PAGE_SETTINGS,
+        Feature.SELECT_TAKEOFFS,
+        Feature.EXPORT,
+        Feature.EXPORT_BID_FILE,
+        Feature.PLACE_TAKEOFF,
+        Feature.DUPLICATE_CONDITION,
+        Feature.DELETE_CONDITION,
+        Feature.EDIT_CONDITION,
+        Feature.UNLOAD_FILE,
+        Feature.EDIT_BID_JOB_STATUS,
+        Feature.CREATE_DATABASE,
+        Feature.EDIT_MASTER_DATA,
     }
 )
 
@@ -136,6 +163,7 @@ class UIAccessManager:
         self._ui_state_manager = ui_state_manager
         self._ost_active: bool = False
         self._area_placement_active: bool = False
+        self._text_annotation_edit_active: bool = False
         self._placement_coordinator = None
         self._subscriptions: List[Tuple] = []
         self._subscribe(AppEvents.OST_STATUS_CHANGED, self._on_ost_status_changed)
@@ -195,7 +223,12 @@ class UIAccessManager:
     def set_area_placement_active(self, active: bool) -> None:
         self._area_placement_active = active
 
+    def set_text_annotation_edit_active(self, active: bool) -> None:
+        self._text_annotation_edit_active = bool(active)
+
     def is_allowed(self, feature: Feature) -> bool:
+        if self._text_annotation_edit_active and feature in _TEXT_EDIT_BLOCKED:
+            return False
         if self._area_placement_active and feature in _PLACEMENT_BLOCKED:
             return False
         if self._ost_active and feature in _OST_BLOCKED:

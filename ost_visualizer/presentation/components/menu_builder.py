@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 from PySide6 import QtGui, QtWidgets
+from ..config import MAIN_TOOLBAR_LABEL, TAKEOFF_TOOLS_TOOLBAR_LABEL, VIEW_TOOLBAR_LABEL
 from ..managers.icon_manager import IconManager
 from ..managers.shortcut_manager import ShortcutManager
 
@@ -117,19 +118,19 @@ class MenuBuilder:
                     [
                         (
                             "check",
-                            "Main",
+                            MAIN_TOOLBAR_LABEL,
                             "main_toolbar_visible",
                             "toggle_main_toolbar",
                         ),
                         (
                             "check",
-                            "View",
+                            VIEW_TOOLBAR_LABEL,
                             "view_toolbar_visible",
                             "toggle_view_toolbar",
                         ),
                         (
                             "check",
-                            "Takeoff Tools",
+                            TAKEOFF_TOOLS_TOOLBAR_LABEL,
                             "takeoff_tools_toolbar_visible",
                             "toggle_takeoff_tools_toolbar",
                         ),
@@ -144,18 +145,24 @@ class MenuBuilder:
                             "Transparent",
                             "color_mode",
                             "Transparent",
-                            "set_color_mode",
+                            "set_takeoff_color_mode",
                         ),
-                        ("radio", "Solid", "color_mode", "Solid", "set_color_mode"),
+                        (
+                            "radio",
+                            "Solid",
+                            "color_mode",
+                            "Solid",
+                            "set_takeoff_color_mode",
+                        ),
                         (
                             "radio",
                             "Original",
                             "color_mode",
                             "Original",
-                            "set_color_mode",
+                            "set_takeoff_color_mode",
                         ),
                         ("sep",),
-                        ("check", "Grayscale", "grayscale", "toggle_grayscale"),
+                        ("check", "Grayscale", "grayscale", "toggle_takeoff_grayscale"),
                     ],
                 ),
                 (
@@ -187,7 +194,7 @@ class MenuBuilder:
                 ("sep",),
                 ("shared", "backout_mode"),
                 ("sep",),
-                ("cmd", "MCP Setup...", "mcp_setup"),
+                ("cmd", "Options...", "options"),
             ],
             "Image": [
                 ("cmd", "Adjust Images", "adjust_images"),

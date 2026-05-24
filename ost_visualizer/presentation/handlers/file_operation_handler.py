@@ -49,7 +49,7 @@ class FileOperationHandler:
             if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
                 file_entries = dialog.get_file_entries()
         finally:
-            dialog.file_entries = []
+            dialog.cleanup()
             dialog.deleteLater()
         if file_entries is not None:
             new_checked_entries = {

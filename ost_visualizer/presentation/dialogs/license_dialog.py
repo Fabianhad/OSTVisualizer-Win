@@ -31,6 +31,7 @@ class LicenseDialog(QtWidgets.QDialog):
         self.event_bus = event_bus
         self.status_changed_callback = status_changed_callback
         self._subscriptions = []
+        self._cleaned_up = False
         self._setup_ui()
         self._setup_event_subscriptions()
         self._update_display()
@@ -101,8 +102,12 @@ class LicenseDialog(QtWidgets.QDialog):
         super().done(result)
 
     def _cleanup_subscriptions(self) -> None:
-        for event_name, handler in self._subscriptions:
-            self.event_bus.unsubscribe(event_name, handler)
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+        if self.event_bus is not None:
+            for event_name, handler in self._subscriptions:
+                self.event_bus.unsubscribe(event_name, handler)
         self._subscriptions.clear()
         if self.action_button:
             try:
@@ -125,6 +130,8 @@ class LicenseDialog(QtWidgets.QDialog):
         self.icon_provider = None
 
     def _update_display(self) -> None:
+        if self._cleaned_up:
+            return
         view_model: LicenseViewModelDto = self.license_orchestrator.get_view_model()
         has_license = view_model.has_license
         self.status_label.setText(
@@ -167,7 +174,7 @@ class LicenseDialog(QtWidgets.QDialog):
         self._set_busy(True)
 
         def on_complete(success: bool, message: str) -> None:
-            if not self.isVisible():
+            if self._cleaned_up or not self.isVisible():
                 return
             self._set_busy(False)
             self._notify_status_changed()
@@ -196,7 +203,7 @@ class LicenseDialog(QtWidgets.QDialog):
         self._set_busy(True)
 
         def on_complete(success: bool, message: str) -> None:
-            if not self.isVisible():
+            if self._cleaned_up or not self.isVisible():
                 return
             self._set_busy(False)
             self._notify_status_changed()
@@ -219,10 +226,12 @@ class LicenseDialog(QtWidgets.QDialog):
             self._on_deactivate()
 
     def _on_license_status_changed(self, **_):
+        if self._cleaned_up:
+            return
         self._update_display()
 
     def _notify_status_changed(self) -> None:
-        if self.status_changed_callback:
+        if not self._cleaned_up and self.status_changed_callback:
             self.status_changed_callback()
 
     def closeEvent(self, event) -> None:

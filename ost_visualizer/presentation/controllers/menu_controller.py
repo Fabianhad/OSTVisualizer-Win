@@ -7,7 +7,7 @@ from ...domain.entities.cover_sheet import CoverSheetData, CoverSheetPage
 from ..components.menu_builder import MenuBuilder
 from ..dialogs.about_dialog import AboutDialog
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
-from ..dialogs.mcp_setup_dialog import McpSetupDialog
+from ..dialogs.options.dialog import OptionsDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.image_show_mode import mode_to_flags
 from ..utils.messagebox import DB_LOCKED_HINT, show_critical
@@ -31,7 +31,7 @@ class MenuController:
         self,
         window,
         icon_provider: IWindowIconProvider,
-        preferences_controller,
+        config_service,
         ui_state_manager,
         handlers,
         ui_access_manager,
@@ -47,7 +47,7 @@ class MenuController:
     ):
         self.window = window
         self.icon_provider = icon_provider
-        self.preferences_controller = preferences_controller
+        self.config_service = config_service
         self.ui_state_manager = ui_state_manager
         self.handlers = handlers
         self.ui_access_manager = ui_access_manager
@@ -105,8 +105,8 @@ class MenuController:
             ),
             "export_as_ost": lambda: self.handlers.export.export_as_ost(),
             "export_as_osp": lambda: self.handlers.export.export_as_osp(),
-            "set_color_mode": self.preferences_controller.set_color_mode,
-            "toggle_grayscale": self.preferences_controller.toggle_grayscale,
+            "set_takeoff_color_mode": self._set_takeoff_color_mode,
+            "toggle_takeoff_grayscale": self._toggle_takeoff_grayscale,
             "toggle_main_toolbar": self._set_main_toolbar_visible,
             "toggle_view_toolbar": self._set_view_toolbar_visible,
             "toggle_takeoff_tools_toolbar": self._set_takeoff_tools_toolbar_visible,
@@ -144,7 +144,7 @@ class MenuController:
             "set_scale": lambda: self.handlers.ui_event.open_set_scale_dialog(),
             "rename_page": lambda: self.handlers.ui_event.open_rename_page_dialog(),
             "adjust_images": lambda: self.handlers.ui_event.open_adjust_images_dialog(),
-            "mcp_setup": self._show_mcp_setup_dialog,
+            "options": self._show_options_dialog,
             "show_about": self._show_about_dialog,
         }
         for fmt in self._export_formats:
@@ -175,6 +175,16 @@ class MenuController:
             "takeoff_2d_tab_visible": self.window.is_takeoff_2d_tab_visible,
             "takeoff_3d_tab_visible": self.window.is_takeoff_3d_tab_visible,
         }
+
+    def _set_takeoff_color_mode(self, color_mode: str) -> None:
+        self.config_service.update_app_options({"color_mode": color_mode})
+
+    def _toggle_takeoff_grayscale(self, _checked=False) -> bool:
+        config = self.config_service.get_config_snapshot()
+        self.config_service.update_app_options(
+            {"grayscale_enabled": not config.grayscale_enabled}
+        )
+        return self.config_service.get_config_snapshot().grayscale_enabled
 
     def _workspace_toolbar_visible(self, key: str) -> bool:
         return self.window.get_workspace_toolbar_visibility_state().get(key, True)
@@ -379,7 +389,7 @@ class MenuController:
 
     def trigger_menu_callback(self, command_key: str) -> None:
         callback = self._get_menu_callbacks().get(command_key)
-        if callback:
+        if callback and self.is_context_command_enabled(command_key):
             callback()
 
     def is_context_command_enabled(self, command_key: str) -> bool:
@@ -456,7 +466,7 @@ class MenuController:
         backout_action = self._actions.get("backout_mode")
         if backout_action:
             self._tool_action_enabled_state.pop("backout_mode", None)
-            refresh_enabled = getattr(backout_action, "_refresh_enabled", None)
+            refresh_enabled = backout_action.property("refresh_enabled")
             if callable(refresh_enabled):
                 refresh_enabled()
             else:
@@ -526,20 +536,18 @@ class MenuController:
         return self.project_data.get_page(page_uid)
 
     def _active_page_invert(self) -> bool:
-        return self._active_page_flag("invert")
+        page = self._active_page()
+        return bool(page and page.invert)
 
     def _active_page_bitonal(self) -> bool:
-        return self._active_page_flag("bitonal")
+        page = self._active_page()
+        return bool(page and page.bitonal)
 
     def _active_page_overlay_flags(self) -> tuple[bool, bool]:
         page = self._active_page()
         if not page:
             return (False, False)
         return mode_to_flags(page.image_show_mode)
-
-    def _active_page_flag(self, field_name: str) -> bool:
-        page = self._active_page()
-        return bool(page and getattr(page, field_name))
 
     def _should_enable_page_image_action(self) -> bool:
         return (
@@ -781,12 +789,15 @@ class MenuController:
             dialog.cleanup()
             dialog.deleteLater()
 
-    def _show_mcp_setup_dialog(self) -> None:
-        dialog = McpSetupDialog(self.icon_provider, self.window)
+    def _show_options_dialog(self) -> None:
+        dialog = OptionsDialog(
+            self.config_service.get_config_snapshot(),
+            self.window,
+            apply_callback=self.config_service.update_app_options,
+        )
         try:
             dialog.exec()
         finally:
-            dialog.cleanup()
             dialog.deleteLater()
 
     def _on_quit(self) -> None:

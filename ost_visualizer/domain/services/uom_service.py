@@ -613,6 +613,8 @@ def calculate_condition_quantities(
     grid_size2: float = 0.0,
     gap: float = 0.0,
     curve: int = -1,
+    round_quantity: bool = False,
+    round_up: float = 0.0,
 ) -> Tuple[float, float, float]:
     pos = position or []
     slope = _calc_slope_factor(
@@ -654,5 +656,10 @@ def calculate_condition_quantities(
                 bbox_w,
                 bbox_h,
             )
-        results.append(convert_to_uom(raw, uom))
+        value = convert_to_uom(raw, uom)
+        if round_quantity and round_up > 0:
+            increment = convert_to_uom(round_up, uom)
+            if increment > 0:
+                value = math.ceil(value / increment) * increment
+        results.append(value)
     return (results[0], results[1], results[2])

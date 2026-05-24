@@ -18,10 +18,10 @@ from ...domain.services.condition_quantity_service import compute_page_quantitie
 from ...domain.services.takeoff_domain_service import is_takeoff_visible
 from ...domain.services.uom_service import get_uom_label
 from ..dtos.mcp_context_dtos import (
-    McpBidDto,
-    McpBidQuantitySummaryDto,
     McpAreaDto,
     McpAreaSummaryDto,
+    McpBidDto,
+    McpBidQuantitySummaryDto,
     McpConditionDto,
     McpConditionQuantitySummaryDto,
     McpConditionSummaryDto,

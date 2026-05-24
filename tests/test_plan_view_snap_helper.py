@@ -3,11 +3,16 @@ import sys
 import types
 import unittest
 from types import SimpleNamespace
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPainterPath
+from PySide6.QtWidgets import QGraphicsPathItem
 from ost_visualizer.domain.entities import shape as shapes
+from ost_visualizer.domain.entities.config import Config
 
 SNAP_MODULE_NAME = (
     "ost_visualizer.presentation.components.plan_view.components.snap_index"
 )
+SCREEN_PX_PER_OST = 8.0
 GEOMETRY_MODULE_NAME = (
     "ost_visualizer.presentation.components.plan_view.components.geometry_utils"
 )
@@ -36,12 +41,14 @@ class FakeSnapIndex:
 
     def __init__(self):
         self.build_calls = []
+        self.query_calls = []
         FakeSnapIndex.instances.append(self)
 
     def build(self, segments):
         self.build_calls.append(list(segments))
 
-    def query(self, _x, _y, _radius):
+    def query(self, x, y, radius):
+        self.query_calls.append((x, y, radius))
         return FakeSnapIndex.query_result
 
     def size(self):
@@ -120,6 +127,7 @@ def _install_fake_native_modules():
 
 
 _install_fake_native_modules()
+sys.modules.pop(PLACEMENT_MODULE_NAME, None)
 placement_mode = importlib.import_module(PLACEMENT_MODULE_NAME)
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.page import Page
@@ -163,16 +171,37 @@ class PlacementHarness(placement_mode.PlacementModeMixin):
                 layer_visible=True,
             )
         }
-        self._snap_index = None
-        self._snap_index_dirty = True
+        self._takeoff_snap_index = None
+        self._pdf_snap_index = None
+        self._takeoff_snap_index_dirty = True
+        self._pdf_snap_index_dirty = True
         self._pdf_snap_segments_cache_key = None
         self._pdf_snap_segments_cache = []
         self._snap_increments = 1.0
+        self._mouse_unpressed_snap_angle = 15
+        self._mouse_pressed_snap_angle = 0
+        self._show_right_angle_line_indicator = False
+        self._right_angle_indicator_threshold_px = Config.DEFAULT_SNAP_THRESHOLD_PX
+        self._snap_to_grid_enabled = True
+        self._snap_to_grid_threshold_px = Config.DEFAULT_SNAP_THRESHOLD_PX
+        self._snap_to_pdf_lines_enabled = True
+        self._snap_to_pdf_lines_threshold_px = Config.DEFAULT_SNAP_THRESHOLD_PX
+        self._snap_to_takeoffs_enabled = True
+        self._snap_to_takeoffs_threshold_px = Config.DEFAULT_SNAP_THRESHOLD_PX
+        self._place_points = []
 
-    def _snap_radius_ost(self):
-        return 1.0
+    def _screen_px_to_ost_radius(self, threshold_px):
+        return float(threshold_px) / SCREEN_PX_PER_OST
 
     def _scene_pos_to_ost(self, point):
+        return point
+
+    def _ost_to_scene_pos(self, x, y):
+        from PySide6 import QtCore
+
+        return QtCore.QPointF(x, y)
+
+    def mapFromScene(self, point):
         return point
 
     def snap_ost(self, value):
@@ -185,6 +214,27 @@ class FakeScene:
 
     def removeItem(self, _item):
         pass
+
+
+class RecordingScene(FakeScene):
+    def __init__(self):
+        self.items = []
+
+    def addItem(self, item):
+        self.items.append(item)
+
+
+class PatternPreviewSceneBuilder(FakeSceneBuilder):
+    def __init__(self):
+        self.pattern_fill_calls = 0
+
+    def build_pattern_fill(self, path, _pattern_type, _color, _opacity, _spacing, _lw):
+        self.pattern_fill_calls += 1
+        bounds = path.boundingRect()
+        pattern_path = QPainterPath()
+        pattern_path.moveTo(bounds.left(), bounds.center().y())
+        pattern_path.lineTo(bounds.right(), bounds.center().y())
+        return None, [QGraphicsPathItem(pattern_path)]
 
 
 class FakeColorService:
@@ -202,7 +252,6 @@ class PreviewHarness(PlacementHarness):
         self._backout_parent_uid = None
         self._backout_active_uid = None
         self._place_session_uid = "linear"
-        self._place_points = []
         self._place_linear_dragging = False
         self._place_area_rect_dragging = False
         self._backout_last_valid_ost = None
@@ -257,20 +306,18 @@ class SnapSegmentCacheTests(unittest.TestCase):
 
     def test_pdf_segments_are_cached_across_takeoff_rebuilds(self):
         harness = PlacementHarness()
-        harness._ensure_snap_index()
+        harness._ensure_pdf_snap_index()
         harness._current_takeoffs["t1"] = Takeoff(
             uid="t1",
             condition_uid="linear",
             position=[10.0, 20.0, 30.0, 40.0],
         )
         harness._invalidate_snap_index()
-        harness._ensure_snap_index()
-        snap_index = FakeSnapIndex.instances[-1]
+        harness._ensure_pdf_snap_index()
+        takeoff_snap_index = harness._ensure_takeoff_snap_index()
         self.assertEqual(FakePDFRenderer.extract_calls, 1)
-        self.assertEqual(len(snap_index.build_calls), 2)
-        self.assertEqual(len(snap_index.build_calls[-1]), 3)
         self.assertEqual(
-            snap_index.build_calls[-1][-2:],
+            takeoff_snap_index.build_calls[-1],
             [
                 (
                     9.646446609406727,
@@ -412,9 +459,9 @@ class SnapSegmentCacheTests(unittest.TestCase):
         FakePDFRenderer.open_ok = False
         harness = PlacementHarness()
         with self.assertLogs(placement_mode.logger, level="WARNING"):
-            harness._ensure_snap_index()
+            harness._ensure_pdf_snap_index()
         harness._invalidate_snap_index()
-        harness._ensure_snap_index()
+        harness._ensure_pdf_snap_index()
         self.assertEqual(FakePDFRenderer.open_calls, 1)
         self.assertEqual(FakePDFRenderer.extract_calls, 0)
 
@@ -429,12 +476,85 @@ class SnapSegmentCacheTests(unittest.TestCase):
         self.assertEqual((ost_x, ost_y), (10, 21))
         self.assertEqual(snap_kind, placement_mode.GRID)
 
+    def test_snap_priority_uses_takeoffs_before_pdf_and_grid(self):
+        from PySide6 import QtCore
+
+        harness = PlacementHarness()
+        harness._query_takeoff_snap = lambda *_args: (
+            1.0,
+            2.0,
+            placement_mode.ENDPOINT,
+            0,
+        )
+        harness._query_pdf_line_snap = lambda *_args: self.fail(
+            "PDF snap should not run after takeoff hit"
+        )
+        ost_x, ost_y, _cx, _cy, snap_kind = harness._placement_snap_from_scene(
+            QtCore.QPointF(10.4, 20.6)
+        )
+        self.assertEqual((ost_x, ost_y), (1.0, 2.0))
+        self.assertEqual(snap_kind, placement_mode.ENDPOINT)
+
+    def test_snap_priority_uses_pdf_before_grid_when_takeoff_misses(self):
+        from PySide6 import QtCore
+
+        harness = PlacementHarness()
+        harness._query_takeoff_snap = lambda *_args: None
+        harness._query_pdf_line_snap = lambda *_args: (
+            3.0,
+            4.0,
+            placement_mode.PERPENDICULAR,
+            0,
+        )
+        ost_x, ost_y, _cx, _cy, snap_kind = harness._placement_snap_from_scene(
+            QtCore.QPointF(10.4, 20.6)
+        )
+        self.assertEqual((ost_x, ost_y), (3.0, 4.0))
+        self.assertEqual(snap_kind, placement_mode.PERPENDICULAR)
+
+    def test_disabling_snap_sources_returns_unsnapped_cursor_position(self):
+        from PySide6 import QtCore
+
+        harness = PlacementHarness()
+        harness._snap_to_takeoffs_enabled = False
+        harness._snap_to_pdf_lines_enabled = False
+        harness._snap_to_grid_enabled = False
+        ost_x, ost_y, _cx, _cy, snap_kind = harness._placement_snap_from_scene(
+            QtCore.QPointF(10.4, 20.6)
+        )
+        self.assertEqual((ost_x, ost_y), (10.4, 20.6))
+        self.assertEqual(snap_kind, placement_mode.NONE)
+
+    def test_zero_grid_threshold_disables_grid_snap(self):
+        from PySide6 import QtCore
+
+        harness = PlacementHarness()
+        harness._current_page.image_path = None
+        harness._snap_to_takeoffs_enabled = False
+        harness._snap_to_pdf_lines_enabled = False
+        harness._snap_to_grid_threshold_px = 0
+        ost_x, ost_y, _cx, _cy, snap_kind = harness._placement_snap_from_scene(
+            QtCore.QPointF(10.4, 20.6)
+        )
+        self.assertEqual((ost_x, ost_y), (10.4, 20.6))
+        self.assertEqual(snap_kind, placement_mode.NONE)
+
+    def test_takeoff_snap_threshold_is_screen_pixel_based(self):
+        from PySide6 import QtCore
+
+        harness = PlacementHarness()
+        harness._snap_to_takeoffs_threshold_px = 16
+        harness._placement_snap_from_scene(QtCore.QPointF(10.4, 20.6))
+        takeoff_snap_index = FakeSnapIndex.instances[0]
+        self.assertEqual(takeoff_snap_index.query_calls[-1], (10.4, 20.6, 2.0))
+
     def test_native_line_hit_returns_exact_hit_without_increment_quantizing(self):
         from PySide6 import QtCore
 
         FakeSnapIndex.query_result = (10.4, 20.6, placement_mode.PERPENDICULAR, 0)
         harness = PlacementHarness()
         harness._current_page.image_path = None
+        harness._snap_to_takeoffs_enabled = False
         ost_x, ost_y, cx, cy, snap_kind = harness._placement_snap_from_scene(
             QtCore.QPointF(10.4, 20.6)
         )
@@ -452,6 +572,84 @@ class SnapSegmentCacheTests(unittest.TestCase):
         )
         self.assertEqual((grid_x, grid_y), (10.0, 0.0))
         self.assertEqual((line_x, line_y), (10.4, 0.0))
+
+    def test_default_mouse_snap_angles_are_15_unpressed_and_off_when_pressed(self):
+        from PySide6.QtCore import Qt
+
+        harness = PlacementHarness()
+        x, y = harness._snap_angle(0.0, 0.0, 10.0, 3.0)
+        length = (10.0**2 + 3.0**2) ** 0.5
+        self.assertAlmostEqual(x, length * 0.9659258263, places=5)
+        self.assertAlmostEqual(y, length * 0.2588190451, places=5)
+        original = placement_mode.QGuiApplication
+        try:
+            placement_mode.QGuiApplication = type(
+                "FakeGuiApplication",
+                (),
+                {
+                    "keyboardModifiers": staticmethod(
+                        lambda: Qt.KeyboardModifier.ShiftModifier
+                    )
+                },
+            )
+            self.assertEqual(
+                harness._snap_angle(0.0, 0.0, 10.0, 3.0),
+                (10.0, 3.0),
+            )
+        finally:
+            placement_mode.QGuiApplication = original
+
+    def test_zero_mouse_snap_angle_disables_angle_snap(self):
+        harness = PlacementHarness()
+        harness._mouse_unpressed_snap_angle = 0
+        self.assertEqual(harness._snap_angle(0.0, 0.0, 10.0, 3.0), (10.0, 3.0))
+
+    def test_configured_pressed_mouse_snap_angle_uses_shift_state(self):
+        from PySide6.QtCore import Qt
+
+        harness = PlacementHarness()
+        harness._mouse_pressed_snap_angle = 90
+        original = placement_mode.QGuiApplication
+        try:
+            placement_mode.QGuiApplication = type(
+                "FakeGuiApplication",
+                (),
+                {
+                    "keyboardModifiers": staticmethod(
+                        lambda: Qt.KeyboardModifier.ShiftModifier
+                    )
+                },
+            )
+            x, y = harness._snap_angle(0.0, 0.0, 3.0, 10.0)
+        finally:
+            placement_mode.QGuiApplication = original
+        self.assertAlmostEqual(x, 0.0, places=5)
+        self.assertAlmostEqual(y, (3.0**2 + 10.0**2) ** 0.5, places=5)
+
+    def test_right_angle_indicator_snaps_area_point_near_first_point_axis(self):
+        harness = PlacementHarness()
+        harness._show_right_angle_line_indicator = True
+        harness._place_points = [(10.0, 10.0)]
+        x, y, active = harness._right_angle_snap_from_first_point(10.5, 20.0)
+        self.assertTrue(active)
+        self.assertEqual((x, y), (10.0, 20.0))
+
+    def test_right_angle_indicator_threshold_controls_snap_distance(self):
+        harness = PlacementHarness()
+        harness._show_right_angle_line_indicator = True
+        harness._right_angle_indicator_threshold_px = 0
+        harness._place_points = [(10.0, 10.0)]
+        x, y, active = harness._right_angle_snap_from_first_point(10.5, 20.0)
+        self.assertFalse(active)
+        self.assertEqual((x, y), (10.5, 20.0))
+
+    def test_right_angle_indicator_disabled_does_not_snap_area_point(self):
+        harness = PlacementHarness()
+        harness._show_right_angle_line_indicator = False
+        harness._place_points = [(10.0, 10.0)]
+        x, y, active = harness._right_angle_snap_from_first_point(10.5, 20.0)
+        self.assertFalse(active)
+        self.assertEqual((x, y), (10.5, 20.0))
 
     def test_odd_length_takeoff_position_is_ignored_safely(self):
         harness = PlacementHarness()
@@ -474,7 +672,7 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness = PlacementHarness()
         harness._pdf_width_pts = 2592.0
         harness._pdf_height_pts = 1728.0
-        harness._ensure_snap_index()
+        harness._ensure_pdf_snap_index()
         snap_index = FakeSnapIndex.instances[-1]
         self.assertEqual(
             snap_index.build_calls[-1][0],
@@ -539,6 +737,31 @@ class SnapSegmentCacheTests(unittest.TestCase):
         self.assertIn((0.0, 0.0, 4.0), harness.handle_points)
         self.assertIn((5.0, 0.0, 4.0), harness.handle_points)
         self.assertIn((5.0, 5.0, 4.0), harness.handle_points)
+
+    def test_display_pattern_while_drawing_off_uses_outline_only_preview(self):
+        harness = PlacementHarness()
+        harness._scene = RecordingScene()
+        harness._scene_builder = PatternPreviewSceneBuilder()
+        harness._place_preview_items = []
+        path = QPainterPath()
+        path.addRect(0.0, 0.0, 12.0, 12.0)
+        item = QGraphicsPathItem(path)
+        condition = Condition(
+            uid="area",
+            condition_type=Condition.TYPE_AREA,
+            display_grid_while_drawing=False,
+        )
+        harness._apply_pattern_preview(
+            item,
+            path,
+            condition,
+            QColor("#123456"),
+            0.5,
+            None,
+        )
+        self.assertEqual(harness._scene_builder.pattern_fill_calls, 0)
+        self.assertEqual(harness._place_preview_items, [item])
+        self.assertEqual(item.brush().style(), Qt.BrushStyle.NoBrush)
 
     def test_snap_cursor_marker_remains_line_snap_only(self):
         harness = PreviewHarness()

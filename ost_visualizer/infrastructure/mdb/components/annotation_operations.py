@@ -1,3 +1,4 @@
+from types import MappingProxyType
 from typing import Dict, List, Optional, Tuple
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.paste_ref_remap_dto import PasteRefRemap
@@ -5,20 +6,33 @@ from .constants import encode_position, hex_to_color_int
 
 
 class AnnotationOperationsMixin:
-    _ANNOTATION_TABLE = {
-        "line": "BidALines",
-        "arrow": "BidArrows",
-        "cloud": "BidAnnotationClouds",
-        "polygon": "BidAnnotationPolygons",
-        "rect": "BidAnnotationRects",
-        "oval": "BidAnnotationOvals",
-        "ink": "BidAnnoInk",
-        "text": "BidTexts",
-        "highlight": "BidHighlights",
-        "namedview": "BidNamedViews",
-        "hotlink": "BidHotLinks",
-        "callout": "BidCallOuts",
-    }
+    _TEXT_PROPERTY_COLUMNS = (
+        "UID",
+        "Name",
+        "FontName",
+        "FontColor",
+        "FontSize",
+        "FontBold",
+        "FontItalic",
+        "FontUnderline",
+        "TextAlign",
+    )
+    _ANNOTATION_TABLE = MappingProxyType(
+        {
+            "line": "BidALines",
+            "arrow": "BidArrows",
+            "cloud": "BidAnnotationClouds",
+            "polygon": "BidAnnotationPolygons",
+            "rect": "BidAnnotationRects",
+            "oval": "BidAnnotationOvals",
+            "ink": "BidAnnoInk",
+            "text": "BidTexts",
+            "highlight": "BidHighlights",
+            "namedview": "BidNamedViews",
+            "hotlink": "BidHotLinks",
+            "callout": "BidCallOuts",
+        }
+    )
 
     def save_annotation_positions(
         self, db_path: str, positions: List[Tuple[str, str, List[float]]]
@@ -51,6 +65,90 @@ class AnnotationOperationsMixin:
                 "Failed to bulk save annotation positions in %s", db_path
             )
             return False
+
+    def save_annotation_text_properties(
+        self, db_path: str, updates: List[Tuple[str, str, Dict[str, object]]]
+    ) -> bool:
+        if not updates:
+            return True
+        try:
+            with self._connection(db_path) as conn:
+                schema = self._schema(conn)
+                cursor = conn.cursor()
+                for uid, annotation_type, properties in updates:
+                    if annotation_type == "namedview":
+                        table = self._ANNOTATION_TABLE[annotation_type]
+                        if schema.optional_table_missing(table):
+                            continue
+                        self._require_write_columns(schema, table, ("UID", "Name"))
+                        cursor.execute(
+                            f"UPDATE [{table}] SET [Name]=? WHERE [UID]=?",
+                            self._named_view_name_value(properties),
+                            int(uid),
+                        )
+                        continue
+                    if annotation_type not in ("text", "callout"):
+                        continue
+                    table = self._ANNOTATION_TABLE[annotation_type]
+                    if schema.optional_table_missing(table):
+                        continue
+                    self._require_write_columns(
+                        schema, table, self._TEXT_PROPERTY_COLUMNS
+                    )
+                    values = self._text_property_update_values(uid, properties)
+                    cursor.execute(
+                        f"""
+                        UPDATE [{table}]
+                           SET [Name]=?,
+                               [FontName]=?,
+                               [FontColor]=?,
+                               [FontSize]=?,
+                               [FontBold]=?,
+                               [FontItalic]=?,
+                               [FontUnderline]=?,
+                               [TextAlign]=?
+                         WHERE [UID]=?
+                        """,
+                        *values,
+                    )
+                return True
+        except Exception:
+            self.logger.exception(
+                "Failed to bulk save annotation text properties in %s", db_path
+            )
+            return False
+
+    @staticmethod
+    def _text_annotation_name_value(properties: Dict[str, object]):
+        text_content = properties.get("Text", "")
+        if isinstance(text_content, str):
+            return text_content.encode("latin-1", errors="replace")
+        return text_content
+
+    @staticmethod
+    def _named_view_name_value(properties: Dict[str, object]) -> str:
+        return str(properties.get("Text", "") or "")
+
+    def _text_property_update_values(
+        self, uid: str, properties: Dict[str, object]
+    ) -> Tuple[object, str, int, int, bool, bool, bool, int, int]:
+        return (
+            self._text_annotation_name_value(properties),
+            str(properties.get("FontName", "Arial") or "Arial"),
+            self._text_property_color_int(properties),
+            int(properties.get("FontSize", 12) or 12),
+            bool(properties.get("FontBold", False)),
+            bool(properties.get("FontItalic", False)),
+            bool(properties.get("FontUnderline", False)),
+            int(properties.get("TextAlign", 0) or 0),
+            int(uid),
+        )
+
+    def _text_property_color_int(self, properties: Dict[str, object]) -> int:
+        color = properties.get("FontColor", 0)
+        if isinstance(color, str):
+            return hex_to_color_int(color)
+        return int(color or 0)
 
     def insert_annotations(
         self,

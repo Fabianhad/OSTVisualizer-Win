@@ -219,16 +219,21 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
 
     def get_pdf_page_sizes(self, path: str) -> list:
         sizes = []
+        renderer = None
+        opened = False
         try:
             renderer = _ost_pdf.PDFRenderer()
-            if renderer.open(path):
+            opened = renderer.open(path)
+            if opened:
                 for pi in range(max(1, renderer.page_count())):
                     pts_w, pts_h = renderer.page_size(pi)
                     label = renderer.page_label(pi)
                     sizes.append((pts_w / 72.0, pts_h / 72.0, label))
-                renderer.close()
         except Exception:
             self.logger.exception("Failed to read PDF page sizes for %s", path)
+        finally:
+            if opened and renderer is not None:
+                renderer.close()
         return sizes
 
     def create_plan_view_renderers(

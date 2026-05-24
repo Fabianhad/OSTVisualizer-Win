@@ -34,6 +34,7 @@ from ..config import (
     NO_MARGINS,
 )
 from ..utils.button_policy import apply_no_highlight_button_policy
+from ..utils.color_swatch import rounded_color_swatch
 from ..utils.messagebox import (
     confirm_not_found,
     confirm_save_discard_cancel,
@@ -130,8 +131,6 @@ TYPE_DEFAULTS = {
 }
 _DEFAULT_COUNT_WIDTH_IN = 12.0
 _DEFAULT_COUNT_WIDTH_MM = 300.0
-_DEFAULT_TOLERANCE_IN = 6.0
-_DEFAULT_TOLERANCE_MM = 150.0
 
 
 def _flbl(text: str) -> QtWidgets.QLabel:
@@ -181,9 +180,9 @@ class _ColorButton(QtWidgets.QPushButton):
         return QtGui.QColor(r, g, b)
 
     def _update_icon(self) -> None:
-        pixmap = QtGui.QPixmap(_COLOR_BOX_SIZE, _COLOR_BOX_SIZE)
-        pixmap.fill(self._to_qcolor())
-        self.setIcon(QtGui.QIcon(pixmap))
+        self.setIcon(
+            QtGui.QIcon(rounded_color_swatch(self._to_qcolor(), _COLOR_BOX_SIZE))
+        )
         self.setIconSize(QtCore.QSize(_COLOR_BOX_SIZE, _COLOR_BOX_SIZE))
 
     def _pick_color(self) -> None:
@@ -226,10 +225,12 @@ class EditConditionDialog(QtWidgets.QDialog):
         read_service=None,
         read_only: bool = False,
         metric: bool = False,
+        default_auto_dimension_lines: bool = False,
     ) -> None:
         super().__init__(parent)
         self._read_service = read_service
         self._metric = metric
+        self._default_auto_dimension_lines = bool(default_auto_dimension_lines)
         self._display_to_inches = (
             (lambda t: read_service.display_to_inches(t, metric))
             if read_service
@@ -287,8 +288,6 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._round_to_edit: Optional[_DimensionLineEdit] = None
         self._drop_run_check: Optional[QtWidgets.QCheckBox] = None
         self._add_length_edit: Optional[_DimensionLineEdit] = None
-        self._connect_check: Optional[QtWidgets.QCheckBox] = None
-        self._tolerance_edit: Optional[_DimensionLineEdit] = None
         self._trim_check: Optional[QtWidgets.QCheckBox] = None
         self._curved_check: Optional[QtWidgets.QCheckBox] = None
         self._grid_check: Optional[QtWidgets.QCheckBox] = None
@@ -298,7 +297,6 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._display_pattern_check: Optional[QtWidgets.QCheckBox] = None
         self._display_dim_check: Optional[QtWidgets.QCheckBox] = None
         self._display_name_check: Optional[QtWidgets.QCheckBox] = None
-        self._snap_linear_check: Optional[QtWidgets.QCheckBox] = None
         self._setup_ui()
         self._load_condition(condition)
         self.set_interactive(not self._read_only and self._has_license)
@@ -412,6 +410,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         btn_layout.addWidget(self._next_btn)
         btn_layout.addStretch()
         self._ok_btn = QtWidgets.QPushButton("OK")
+        self._ok_btn.setDefault(True)
         self._cancel_btn = QtWidgets.QPushButton("Cancel")
         self._apply_btn = QtWidgets.QPushButton("Apply")
         self._ok_btn.clicked.connect(self._on_ok)
@@ -671,20 +670,9 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._gap_edit = None
             self._display_pattern_check = None
             self._display_dim_check = None
-            self._snap_linear_check = None
             props_group = QtWidgets.QGroupBox("Properties")
             props_layout = QtWidgets.QVBoxLayout(props_group)
             props_layout.setSpacing(COMPACT_SPACING)
-            conn_row = QtWidgets.QHBoxLayout()
-            self._connect_check = QtWidgets.QCheckBox("Connect")
-            conn_row.addWidget(self._connect_check)
-            conn_row.addWidget(_flbl("Tolerance"))
-            self._tolerance_edit = _DimensionLineEdit(
-                self._display_to_inches, self._inches_to_display
-            )
-            self._tolerance_edit.setMaximumWidth(80)
-            conn_row.addWidget(self._tolerance_edit)
-            props_layout.addLayout(conn_row)
             self._display_name_check = QtWidgets.QCheckBox("Display Name")
             props_layout.addWidget(self._display_name_check)
             props_layout.addStretch()
@@ -692,8 +680,6 @@ class EditConditionDialog(QtWidgets.QDialog):
             empty_group.setStyleSheet("QGroupBox { border: none; }")
             layout.addWidget(empty_group, 1)
             layout.addWidget(props_group, 1)
-            self._connect_check.stateChanged.connect(self._mark_dirty)
-            self._tolerance_edit.textChanged.connect(self._mark_dirty)
             self._display_name_check.stateChanged.connect(self._mark_dirty)
         elif condition_type == Condition.TYPE_LINEAR:
             left_group = QtWidgets.QGroupBox("Measurement")
@@ -724,16 +710,6 @@ class EditConditionDialog(QtWidgets.QDialog):
             right_group = QtWidgets.QGroupBox("Properties")
             right_layout = QtWidgets.QVBoxLayout(right_group)
             right_layout.setSpacing(COMPACT_SPACING)
-            conn_row = QtWidgets.QHBoxLayout()
-            self._connect_check = QtWidgets.QCheckBox("Connect")
-            conn_row.addWidget(self._connect_check)
-            conn_row.addWidget(_flbl("Tolerance"))
-            self._tolerance_edit = _DimensionLineEdit(
-                self._display_to_inches, self._inches_to_display
-            )
-            self._tolerance_edit.setMaximumWidth(80)
-            conn_row.addWidget(self._tolerance_edit)
-            right_layout.addLayout(conn_row)
             self._trim_check = QtWidgets.QCheckBox("Trim")
             right_layout.addWidget(self._trim_check)
             self._curved_check = QtWidgets.QCheckBox("Set as Curved Segment")
@@ -747,15 +723,12 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._display_pattern_check = None
             self._display_dim_check = None
             self._display_name_check = None
-            self._snap_linear_check = None
             self._round_qty_check.stateChanged.connect(self._mark_dirty)
             self._round_to_edit.textChanged.connect(self._mark_dirty)
             self._drop_run_check.stateChanged.connect(self._mark_dirty)
             self._add_length_edit.textChanged.connect(self._mark_dirty)
-            self._connect_check.stateChanged.connect(self._mark_dirty)
-            self._tolerance_edit.textChanged.connect(self._mark_dirty)
-            self._trim_check.stateChanged.connect(self._mark_dirty)
-            self._curved_check.stateChanged.connect(self._mark_dirty)
+            self._trim_check.stateChanged.connect(self._on_trim_changed)
+            self._curved_check.stateChanged.connect(self._on_curved_changed)
         else:
             left_group = QtWidgets.QGroupBox("Measurement")
             left_layout = QtWidgets.QVBoxLayout(left_group)
@@ -774,8 +747,6 @@ class EditConditionDialog(QtWidgets.QDialog):
             layout.addWidget(left_group)
             self._drop_run_check = None
             self._add_length_edit = None
-            self._connect_check = None
-            self._tolerance_edit = None
             self._trim_check = None
             self._curved_check = None
             right_group = QtWidgets.QGroupBox("Properties")
@@ -812,8 +783,6 @@ class EditConditionDialog(QtWidgets.QDialog):
             right_layout.addWidget(self._display_dim_check)
             self._display_name_check = QtWidgets.QCheckBox("Display Name")
             right_layout.addWidget(self._display_name_check)
-            self._snap_linear_check = QtWidgets.QCheckBox("Snap to Linear")
-            right_layout.addWidget(self._snap_linear_check)
             right_layout.addStretch()
             layout.addWidget(right_group)
             self._round_qty_check.stateChanged.connect(self._mark_dirty)
@@ -825,7 +794,6 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._display_pattern_check.stateChanged.connect(self._mark_dirty)
             self._display_dim_check.stateChanged.connect(self._mark_dirty)
             self._display_name_check.stateChanged.connect(self._mark_dirty)
-            self._snap_linear_check.stateChanged.connect(self._mark_dirty)
 
     def _clear_tab(self, tab: QtWidgets.QWidget) -> None:
         layout = tab.layout()
@@ -912,22 +880,15 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self._refresh_uom_combo(i, calc, uom)
             self._notes_edit.setPlainText(cond.notes or "")
             if ct in _COUNT_LIKE_TYPES:
-                self._connect_check.setChecked(cond.connect)
-                self._tolerance_edit.setText(
-                    self._inches_to_display(cond.connect_tolerance)
-                )
                 self._display_name_check.setChecked(cond.display_name)
             elif ct == Condition.TYPE_LINEAR:
                 self._round_qty_check.setChecked(cond.round_quantity)
                 self._round_to_edit.setText(self._inches_to_display(cond.round_up))
                 self._drop_run_check.setChecked(cond.drop_run)
                 self._add_length_edit.setText(self._inches_to_display(cond.drop_value))
-                self._connect_check.setChecked(cond.connect)
-                self._tolerance_edit.setText(
-                    self._inches_to_display(cond.connect_tolerance)
-                )
                 self._trim_check.setChecked(cond.trim)
                 self._curved_check.setChecked(cond.is_curved_segment)
+                self._sync_linear_trim_curved_state()
             else:
                 self._round_qty_check.setChecked(cond.round_quantity)
                 self._round_to_edit.setText(self._inches_to_display(cond.round_up))
@@ -938,7 +899,6 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self._display_pattern_check.setChecked(cond.display_grid_while_drawing)
                 self._display_dim_check.setChecked(cond.display_dimension)
                 self._display_name_check.setChecked(cond.display_name)
-                self._snap_linear_check.setChecked(cond.snap_to_linear != -1)
             self._update_nav_buttons()
             self._dirty = False
             self._saved_form_state = self._current_form_state()
@@ -974,8 +934,6 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._line_edit_text(self._round_to_edit),
             self._checkbox_state(self._drop_run_check),
             self._line_edit_text(self._add_length_edit),
-            self._checkbox_state(self._connect_check),
-            self._line_edit_text(self._tolerance_edit),
             self._checkbox_state(self._trim_check),
             self._checkbox_state(self._curved_check),
             self._checkbox_state(self._grid_check),
@@ -985,7 +943,6 @@ class EditConditionDialog(QtWidgets.QDialog):
             self._checkbox_state(self._display_pattern_check),
             self._checkbox_state(self._display_dim_check),
             self._checkbox_state(self._display_name_check),
-            self._checkbox_state(self._snap_linear_check),
         )
 
     @staticmethod
@@ -1209,13 +1166,11 @@ class EditConditionDialog(QtWidgets.QDialog):
                 default_spacing = mm_to_inches(td.get("spacing_metric", 100.0))
                 default_thickness = mm_to_inches(td.get("thickness_metric", 100.0))
                 default_width = mm_to_inches(_DEFAULT_COUNT_WIDTH_MM)
-                default_tolerance = mm_to_inches(_DEFAULT_TOLERANCE_MM)
                 default_uom1 = td.get("uom1_metric", 0)
             else:
                 default_spacing = td.get("spacing", 4.0)
                 default_thickness = td.get("thickness", 4.0)
                 default_width = _DEFAULT_COUNT_WIDTH_IN
-                default_tolerance = _DEFAULT_TOLERANCE_IN
                 default_uom1 = td.get("uom1", 0)
             default_calc1 = td.get("calc_type1", 0)
             default_shape = td.get("shape", -1)
@@ -1249,18 +1204,15 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self._refresh_uom_combo(i, 0, 0)
             self._notes_edit.setPlainText("")
             if condition_type in _COUNT_LIKE_TYPES:
-                self._connect_check.setChecked(True)
-                self._tolerance_edit.setText(self._inches_to_display(default_tolerance))
                 self._display_name_check.setChecked(False)
             elif condition_type == Condition.TYPE_LINEAR:
                 self._round_qty_check.setChecked(False)
                 self._round_to_edit.setText("")
                 self._drop_run_check.setChecked(False)
                 self._add_length_edit.setText("")
-                self._connect_check.setChecked(True)
-                self._tolerance_edit.setText(self._inches_to_display(default_tolerance))
                 self._trim_check.setChecked(False)
                 self._curved_check.setChecked(False)
+                self._sync_linear_trim_curved_state()
             else:
                 self._round_qty_check.setChecked(False)
                 self._round_to_edit.setText("")
@@ -1269,11 +1221,38 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self._tile2_edit.setText("")
                 self._gap_edit.setText("")
                 self._display_pattern_check.setChecked(default_dgwd)
-                self._display_dim_check.setChecked(False)
+                self._display_dim_check.setChecked(self._default_auto_dimension_lines)
                 self._display_name_check.setChecked(False)
-                self._snap_linear_check.setChecked(False)
         finally:
             self._building = False
+
+    def _on_trim_changed(self) -> None:
+        self._sync_linear_trim_curved_state()
+        self._mark_dirty()
+
+    def _on_curved_changed(self) -> None:
+        if self._building:
+            return
+        if self._curved_check and self._curved_check.isChecked() and self._trim_check:
+            self._set_checkbox_checked_blocking(self._trim_check, False)
+        self._sync_linear_trim_curved_state()
+        self._mark_dirty()
+
+    def _sync_linear_trim_curved_state(self) -> None:
+        if not self._trim_check or not self._curved_check:
+            return
+        trim_enabled = self._trim_check.isChecked()
+        if trim_enabled and self._curved_check.isChecked():
+            self._set_checkbox_checked_blocking(self._curved_check, False)
+        self._curved_check.setEnabled(not trim_enabled)
+
+    @staticmethod
+    def _set_checkbox_checked_blocking(
+        check: QtWidgets.QCheckBox, checked: bool
+    ) -> None:
+        check.blockSignals(True)
+        check.setChecked(checked)
+        check.blockSignals(False)
 
     def _on_qty_changed(self, idx: int) -> None:
         if self._building:
@@ -1528,26 +1507,12 @@ class EditConditionDialog(QtWidgets.QDialog):
         if notes != (cond.notes or ""):
             dto.set("notes", notes)
         if ct in _COUNT_LIKE_TYPES:
-            conn = self._connect_check.isChecked()
-            if conn != cond.connect:
-                dto.set("connect", conn)
-            tol = self._parse_dimension_field(self._tolerance_edit, "Tolerance")
-            if tol is None:
-                return None
-            if tol != cond.connect_tolerance:
-                dto.set("connect_tolerance", tol)
             dn = self._display_name_check.isChecked()
             if dn != cond.display_name:
                 dto.set("display_name", dn)
         elif ct == Condition.TYPE_LINEAR:
-            rq = self._round_qty_check.isChecked()
-            if rq != cond.round_quantity:
-                dto.set("round_quantity", rq)
-            round_up = self._parse_dimension_field(self._round_to_edit, "Round to")
-            if round_up is None:
+            if not self._collect_rounding_changes(dto, cond):
                 return None
-            if round_up != cond.round_up:
-                dto.set("round_up", round_up)
             dr = self._drop_run_check.isChecked()
             if dr != cond.drop_run:
                 dto.set("drop_run", dr)
@@ -1556,14 +1521,6 @@ class EditConditionDialog(QtWidgets.QDialog):
                 return None
             if dv != cond.drop_value:
                 dto.set("drop_value", dv)
-            conn = self._connect_check.isChecked()
-            if conn != cond.connect:
-                dto.set("connect", conn)
-            tol = self._parse_dimension_field(self._tolerance_edit, "Tolerance")
-            if tol is None:
-                return None
-            if tol != cond.connect_tolerance:
-                dto.set("connect_tolerance", tol)
             trim = self._trim_check.isChecked()
             if trim != cond.trim:
                 dto.set("trim", trim)
@@ -1571,14 +1528,8 @@ class EditConditionDialog(QtWidgets.QDialog):
             if curved != cond.is_curved_segment:
                 dto.set("is_curved_segment", curved)
         else:
-            rq = self._round_qty_check.isChecked()
-            if rq != cond.round_quantity:
-                dto.set("round_quantity", rq)
-            round_up = self._parse_dimension_field(self._round_to_edit, "Round to")
-            if round_up is None:
+            if not self._collect_rounding_changes(dto, cond):
                 return None
-            if round_up != cond.round_up:
-                dto.set("round_up", round_up)
             grid = self._grid_check.isChecked()
             if grid != cond.grid:
                 dto.set("grid", grid)
@@ -1606,10 +1557,20 @@ class EditConditionDialog(QtWidgets.QDialog):
             dn = self._display_name_check.isChecked()
             if dn != cond.display_name:
                 dto.set("display_name", dn)
-            stl = 0 if self._snap_linear_check.isChecked() else -1
-            if stl != cond.snap_to_linear:
-                dto.set("snap_to_linear", stl)
         return dto
+
+    def _collect_rounding_changes(
+        self, dto: UpdateConditionDto, cond: Condition
+    ) -> bool:
+        round_quantity = self._round_qty_check.isChecked()
+        if round_quantity != cond.round_quantity:
+            dto.set("round_quantity", round_quantity)
+        round_up = self._parse_dimension_field(self._round_to_edit, "Round to")
+        if round_up is None:
+            return False
+        if round_up != cond.round_up:
+            dto.set("round_up", round_up)
+        return True
 
     def _apply_changes(self) -> bool:
         if not self._dirty:

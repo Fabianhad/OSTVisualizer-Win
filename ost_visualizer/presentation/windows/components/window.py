@@ -9,17 +9,30 @@ from ....application.interfaces.i_coordinate_transformer import ICoordinateTrans
 from ....application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ....domain.entities.annotation_view import AnnotationView
 from ....domain.entities.bid import Bid
+from ....domain.entities.config import Config
 from ...adapters.hotlink_event_adapter import HotlinkEventAdapter
 from ...components.page_combo import SinglePageComboBox
 from ...components.plan_view.view import TakeoffPlanView
 from ...components.resizable_combo import ResizableComboBox
 from ...components.viewer_cursors import make_zoom_cursor
 from ...config import (
+    ACTION_NEXT_PAGE_TOOLTIP,
+    ACTION_PAN_TOOLTIP,
+    ACTION_PREVIOUS_PAGE_TOOLTIP,
+    ACTION_RESET_VIEW_TOOLTIP,
+    ACTION_SELECT_TOOLTIP,
+    ACTION_ZOOM_IN_TOOLTIP,
+    ACTION_ZOOM_OUT_TOOLTIP,
+    ACTION_ZOOM_TOOLTIP,
     COMPACT_MARGINS,
     COMPACT_SPACING,
     DEFAULT_ICON_SIZE,
+    NAMED_VIEWS_TOOLTIP,
     NO_MARGINS,
     NO_SPACING,
+    SCALE_LABEL,
+    SCALE_TOOLTIP,
+    VIEW_LABEL,
 )
 from ...managers.icon_manager import IconId, IconManager
 from ...services.selection_commands import DeleteAnnotationsCommand
@@ -65,6 +78,26 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         initial_geometry: Optional[QtCore.QByteArray] = None,
         initial_is_maximized: bool = True,
         navigation_source: str = "unknown",
+        show_page_index: bool = False,
+        show_sheet_number: bool = False,
+        roping_selection_method: str = "touching",
+        disable_high_resolution_images: bool = False,
+        intelligent_paste_enabled: bool = True,
+        advanced_mouse_controls_enabled: bool = True,
+        default_auto_zoom_level: int = 0,
+        show_right_angle_line_indicator: bool = False,
+        use_full_window_crosshairs: bool = False,
+        crosshair_color: str = "#00ff00",
+        crosshair_line_thickness: int = 1,
+        mouse_unpressed_snap_angle: int = 15,
+        mouse_pressed_snap_angle: int = 0,
+        snap_to_grid_enabled: bool = True,
+        snap_to_grid_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
+        snap_to_pdf_lines_enabled: bool = True,
+        snap_to_pdf_lines_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
+        snap_to_takeoffs_enabled: bool = True,
+        snap_to_takeoffs_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
+        right_angle_indicator_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
         parent: Optional[QtWidgets.QWidget] = None,
     ):
         super().__init__(parent)
@@ -101,6 +134,28 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._initial_geometry = QtCore.QByteArray()
         self._initial_show_maximized = True
         self._navigation_source = navigation_source
+        self._show_page_index = bool(show_page_index)
+        self._show_sheet_number = bool(show_sheet_number)
+        self._roping_selection_method = roping_selection_method
+        self._disable_high_resolution_images = bool(disable_high_resolution_images)
+        self._intelligent_paste_enabled = bool(intelligent_paste_enabled)
+        self._advanced_mouse_controls_enabled = bool(advanced_mouse_controls_enabled)
+        self._default_auto_zoom_level = int(default_auto_zoom_level)
+        self._show_right_angle_line_indicator = bool(show_right_angle_line_indicator)
+        self._use_full_window_crosshairs = bool(use_full_window_crosshairs)
+        self._crosshair_color = crosshair_color
+        self._crosshair_line_thickness = int(crosshair_line_thickness)
+        self._mouse_unpressed_snap_angle = int(mouse_unpressed_snap_angle)
+        self._mouse_pressed_snap_angle = int(mouse_pressed_snap_angle)
+        self._snap_to_grid_enabled = bool(snap_to_grid_enabled)
+        self._snap_to_grid_threshold_px = int(snap_to_grid_threshold_px)
+        self._snap_to_pdf_lines_enabled = bool(snap_to_pdf_lines_enabled)
+        self._snap_to_pdf_lines_threshold_px = int(snap_to_pdf_lines_threshold_px)
+        self._snap_to_takeoffs_enabled = bool(snap_to_takeoffs_enabled)
+        self._snap_to_takeoffs_threshold_px = int(snap_to_takeoffs_threshold_px)
+        self._right_angle_indicator_threshold_px = int(
+            right_angle_indicator_threshold_px
+        )
         self._scale_combo: Optional[QtWidgets.QComboBox] = None
         self._btn_select: Optional[QtWidgets.QToolButton] = None
         self.setWindowTitle(config.window_title)
@@ -163,7 +218,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         IconManager.apply(self._btn_prev, IconId.PREVIOUS_PAGE)
         self._btn_prev.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
         self._btn_prev.setFixedWidth(28)
-        self._btn_prev.setToolTip("Previous page")
+        self._btn_prev.setToolTip(ACTION_PREVIOUS_PAGE_TOOLTIP)
         self._btn_prev.clicked.connect(self._go_prev_page)
         self._page_combo = SinglePageComboBox()
         self._page_combo.setSizeAdjustPolicy(
@@ -174,27 +229,27 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         IconManager.apply(self._btn_next, IconId.NEXT_PAGE)
         self._btn_next.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
         self._btn_next.setFixedWidth(28)
-        self._btn_next.setToolTip("Next page")
+        self._btn_next.setToolTip(ACTION_NEXT_PAGE_TOOLTIP)
         self._btn_next.clicked.connect(self._go_next_page)
         self._named_view_combo = ResizableComboBox()
         self._named_view_combo.setSizeAdjustPolicy(
             QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
         self._named_view_combo.setMinimumWidth(100)
-        self._named_view_combo.setToolTip("Named views")
+        self._named_view_combo.setToolTip(NAMED_VIEWS_TOOLTIP)
         nav_layout.addWidget(self._btn_prev)
         nav_layout.addWidget(self._page_combo, 1)
         nav_layout.addWidget(self._btn_next)
-        nav_layout.addWidget(QtWidgets.QLabel("View"))
+        nav_layout.addWidget(QtWidgets.QLabel(VIEW_LABEL))
         nav_layout.addWidget(self._named_view_combo, 1)
         if self._config.show_scale_combo:
             self._scale_combo = QtWidgets.QComboBox()
             self._scale_combo.setFixedWidth(120)
-            self._scale_combo.setToolTip("Scale")
+            self._scale_combo.setToolTip(SCALE_TOOLTIP)
             for sf1, sf2, label in ALL_SCALES:
                 self._scale_combo.addItem(label, (sf1, sf2))
             self._scale_combo.setCurrentIndex(-1)
-            nav_layout.addWidget(QtWidgets.QLabel("Scale"))
+            nav_layout.addWidget(QtWidgets.QLabel(SCALE_LABEL))
             nav_layout.addWidget(self._scale_combo)
         btn_size = QtCore.QSize(*DEFAULT_ICON_SIZE)
         self._cursor_group = QtWidgets.QButtonGroup(nav_bar)
@@ -204,35 +259,35 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             IconManager.apply(self._btn_select, IconId.SELECT_TOOL)
             self._btn_select.setIconSize(btn_size)
             self._btn_select.setCheckable(True)
-            self._btn_select.setToolTip("Select")
+            self._btn_select.setToolTip(ACTION_SELECT_TOOLTIP)
             self._cursor_group.addButton(self._btn_select)
             nav_layout.addWidget(self._btn_select)
         self._btn_pan = QtWidgets.QToolButton()
         IconManager.apply(self._btn_pan, IconId.PAN_TOOL)
         self._btn_pan.setIconSize(btn_size)
         self._btn_pan.setCheckable(True)
-        self._btn_pan.setToolTip("Pan")
+        self._btn_pan.setToolTip(ACTION_PAN_TOOLTIP)
         self._cursor_group.addButton(self._btn_pan)
         nav_layout.addWidget(self._btn_pan)
         self._btn_zoom_mode = QtWidgets.QToolButton()
         IconManager.apply(self._btn_zoom_mode, IconId.ZOOM_TOOL)
         self._btn_zoom_mode.setIconSize(btn_size)
         self._btn_zoom_mode.setCheckable(True)
-        self._btn_zoom_mode.setToolTip("Zoom")
+        self._btn_zoom_mode.setToolTip(ACTION_ZOOM_TOOLTIP)
         self._cursor_group.addButton(self._btn_zoom_mode)
         nav_layout.addWidget(self._btn_zoom_mode)
         self._btn_fit = QtWidgets.QToolButton()
         IconManager.apply(self._btn_fit, IconId.RESET_VIEW)
         self._btn_fit.setIconSize(btn_size)
-        self._btn_fit.setToolTip("Reset view")
+        self._btn_fit.setToolTip(ACTION_RESET_VIEW_TOOLTIP)
         self._btn_zoom_in = QtWidgets.QToolButton()
         IconManager.apply(self._btn_zoom_in, IconId.ZOOM_IN)
         self._btn_zoom_in.setIconSize(btn_size)
-        self._btn_zoom_in.setToolTip("Zoom in")
+        self._btn_zoom_in.setToolTip(ACTION_ZOOM_IN_TOOLTIP)
         self._btn_zoom_out = QtWidgets.QToolButton()
         IconManager.apply(self._btn_zoom_out, IconId.ZOOM_OUT)
         self._btn_zoom_out.setIconSize(btn_size)
-        self._btn_zoom_out.setToolTip("Zoom out")
+        self._btn_zoom_out.setToolTip(ACTION_ZOOM_OUT_TOOLTIP)
         nav_layout.addWidget(self._btn_fit)
         nav_layout.addWidget(self._btn_zoom_in)
         nav_layout.addWidget(self._btn_zoom_out)
@@ -249,10 +304,41 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.plan_view.set_annotation_only_selection(
             self._config.allow_annotation_editing
         )
+        self.plan_view.set_text_annotation_inline_edit_enabled(
+            self._selection_enabled()
+        )
+        self.plan_view.set_roping_selection_method(self._roping_selection_method)
+        self.plan_view.set_disable_high_resolution_images(
+            self._disable_high_resolution_images
+        )
+        self.plan_view.set_intelligent_paste_enabled(self._intelligent_paste_enabled)
+        self.plan_view.set_advanced_mouse_controls_enabled(
+            self._advanced_mouse_controls_enabled
+        )
+        self.plan_view.set_default_auto_zoom_level(self._default_auto_zoom_level)
+        self.plan_view.set_right_angle_line_indicator_enabled(
+            self._show_right_angle_line_indicator
+        )
+        self.plan_view.set_full_window_crosshairs(
+            self._use_full_window_crosshairs,
+            self._crosshair_color,
+            self._crosshair_line_thickness,
+        )
+        self.plan_view.set_mouse_snap_angles(
+            self._mouse_unpressed_snap_angle,
+            self._mouse_pressed_snap_angle,
+        )
+        self._apply_plan_view_snap_preferences()
         main_layout.addWidget(self.plan_view, 1)
         self._hotlink_adapter = HotlinkEventAdapter(self.event_bus)
         self._hotlink_adapter.set_plan_view(self.plan_view)
         self.plan_view.positions_flushed.connect(self._on_positions_flushed)
+        self.plan_view.annotation_text_properties_flushed.connect(
+            self._on_annotation_text_properties_flushed
+        )
+        self.plan_view.annotation_text_and_positions_flushed.connect(
+            self._on_annotation_text_and_positions_flushed
+        )
         self.plan_view.elements_deleted.connect(self._on_elements_deleted)
         if self._undo_svc is not None:
             self.plan_view.undo_requested.connect(self._undo_svc.undo)
@@ -296,6 +382,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         return self._config.allow_annotation_editing and not self._read_only
 
     def _populate_page_combo(self, bid: Bid) -> None:
+        self._page_combo.set_label_options(
+            self._show_page_index, self._show_sheet_number
+        )
         self._page_combo.load_bid(bid, pages_with_takeoffs=self._pages_with_takeoffs)
 
     def _current_page_has_takeoffs(self) -> set[str]:
@@ -602,6 +691,99 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._scale_combo.setEnabled(not read_only)
         if self.plan_view:
             self.plan_view.set_selection_enabled(self._selection_enabled())
+            self.plan_view.set_text_annotation_inline_edit_enabled(
+                self._selection_enabled()
+            )
+
+    def apply_config_preferences(
+        self,
+        *,
+        show_page_index: bool,
+        show_sheet_number: bool,
+        roping_selection_method: str,
+        disable_high_resolution_images: bool,
+        intelligent_paste_enabled: bool,
+        advanced_mouse_controls_enabled: bool,
+        default_auto_zoom_level: int,
+        show_right_angle_line_indicator: bool,
+        use_full_window_crosshairs: bool,
+        crosshair_color: str,
+        crosshair_line_thickness: int,
+        mouse_unpressed_snap_angle: int,
+        mouse_pressed_snap_angle: int,
+        snap_to_grid_enabled: bool,
+        snap_to_grid_threshold_px: int,
+        snap_to_pdf_lines_enabled: bool,
+        snap_to_pdf_lines_threshold_px: int,
+        snap_to_takeoffs_enabled: bool,
+        snap_to_takeoffs_threshold_px: int,
+        right_angle_indicator_threshold_px: int,
+    ) -> None:
+        self._show_page_index = bool(show_page_index)
+        self._show_sheet_number = bool(show_sheet_number)
+        self._roping_selection_method = roping_selection_method
+        self._disable_high_resolution_images = bool(disable_high_resolution_images)
+        self._intelligent_paste_enabled = bool(intelligent_paste_enabled)
+        self._advanced_mouse_controls_enabled = bool(advanced_mouse_controls_enabled)
+        self._default_auto_zoom_level = int(default_auto_zoom_level)
+        self._show_right_angle_line_indicator = bool(show_right_angle_line_indicator)
+        self._use_full_window_crosshairs = bool(use_full_window_crosshairs)
+        self._crosshair_color = crosshair_color
+        self._crosshair_line_thickness = int(crosshair_line_thickness)
+        self._mouse_unpressed_snap_angle = int(mouse_unpressed_snap_angle)
+        self._mouse_pressed_snap_angle = int(mouse_pressed_snap_angle)
+        self._snap_to_grid_enabled = bool(snap_to_grid_enabled)
+        self._snap_to_grid_threshold_px = int(snap_to_grid_threshold_px)
+        self._snap_to_pdf_lines_enabled = bool(snap_to_pdf_lines_enabled)
+        self._snap_to_pdf_lines_threshold_px = int(snap_to_pdf_lines_threshold_px)
+        self._snap_to_takeoffs_enabled = bool(snap_to_takeoffs_enabled)
+        self._snap_to_takeoffs_threshold_px = int(snap_to_takeoffs_threshold_px)
+        self._right_angle_indicator_threshold_px = int(
+            right_angle_indicator_threshold_px
+        )
+        self._page_combo.set_label_options(
+            self._show_page_index,
+            self._show_sheet_number,
+        )
+        if self.plan_view is None:
+            return
+        self.plan_view.set_roping_selection_method(self._roping_selection_method)
+        self.plan_view.set_disable_high_resolution_images(
+            self._disable_high_resolution_images
+        )
+        self.plan_view.set_intelligent_paste_enabled(self._intelligent_paste_enabled)
+        self.plan_view.set_advanced_mouse_controls_enabled(
+            self._advanced_mouse_controls_enabled
+        )
+        self.plan_view.set_default_auto_zoom_level(self._default_auto_zoom_level)
+        self.plan_view.set_right_angle_line_indicator_enabled(
+            self._show_right_angle_line_indicator
+        )
+        self.plan_view.set_full_window_crosshairs(
+            self._use_full_window_crosshairs,
+            self._crosshair_color,
+            self._crosshair_line_thickness,
+        )
+        self.plan_view.set_mouse_snap_angles(
+            self._mouse_unpressed_snap_angle,
+            self._mouse_pressed_snap_angle,
+        )
+        self._apply_plan_view_snap_preferences()
+
+    def _apply_plan_view_snap_preferences(self) -> None:
+        if self.plan_view is None:
+            return
+        self.plan_view.set_snap_preferences(
+            snap_to_grid_enabled=self._snap_to_grid_enabled,
+            snap_to_grid_threshold_px=self._snap_to_grid_threshold_px,
+            snap_to_pdf_lines_enabled=self._snap_to_pdf_lines_enabled,
+            snap_to_pdf_lines_threshold_px=self._snap_to_pdf_lines_threshold_px,
+            snap_to_takeoffs_enabled=self._snap_to_takeoffs_enabled,
+            snap_to_takeoffs_threshold_px=self._snap_to_takeoffs_threshold_px,
+            right_angle_indicator_threshold_px=(
+                self._right_angle_indicator_threshold_px
+            ),
+        )
 
     def _sync_current_page_takeoff_indicator(self) -> None:
         page = self.page_data.page if self.page_data else None
@@ -659,6 +841,97 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             ann_write_svc.save_annotation_positions(db_path, new_changes)
 
         self._undo_svc.push(_undo_move, _redo_move)
+
+    def _on_annotation_text_properties_flushed(self, changes: list) -> None:
+        if not self._config.allow_annotation_editing or self._read_only:
+            return
+        if self._is_closing or self._ann_write_svc is None or not changes:
+            return
+        db_path = self._get_db_path()
+        if not db_path:
+            return
+        new_updates = [
+            (uid, ann_type, dict(new_props))
+            for uid, ann_type, _old_props, new_props in changes
+        ]
+        success = self._ann_write_svc.save_annotation_text_properties(
+            db_path, new_updates
+        )
+        if not success:
+            return
+        if self._undo_svc is None:
+            return
+        old_updates = [
+            (uid, ann_type, dict(old_props))
+            for uid, ann_type, old_props, _new_props in changes
+            if old_props
+        ]
+        if not old_updates:
+            return
+        ann_write_svc = self._ann_write_svc
+
+        def _undo_text_properties():
+            ann_write_svc.save_annotation_text_properties(db_path, old_updates)
+
+        def _redo_text_properties():
+            ann_write_svc.save_annotation_text_properties(db_path, new_updates)
+
+        self._undo_svc.push(_undo_text_properties, _redo_text_properties)
+
+    def _on_annotation_text_and_positions_flushed(
+        self, text_changes: list, ann_position_changes: list
+    ) -> None:
+        if not self._config.allow_annotation_editing or self._read_only:
+            return
+        if (
+            self._is_closing
+            or self._ann_write_svc is None
+            or (not text_changes and not ann_position_changes)
+        ):
+            return
+        db_path = self._get_db_path()
+        if not db_path:
+            return
+        new_updates = [
+            (uid, ann_type, dict(new_props))
+            for uid, ann_type, _old_props, new_props in text_changes
+        ]
+        new_positions = [
+            (uid, ann_type, list(new_pos))
+            for uid, ann_type, _old_pos, new_pos in ann_position_changes
+        ]
+        success = self._ann_write_svc.save_annotation_text_properties_and_positions(
+            db_path, new_updates, new_positions
+        )
+        if not success:
+            return
+        if self._undo_svc is None:
+            return
+        old_updates = [
+            (uid, ann_type, dict(old_props))
+            for uid, ann_type, old_props, _new_props in text_changes
+            if old_props
+        ]
+        old_positions = [
+            (uid, ann_type, list(old_pos))
+            for uid, ann_type, old_pos, _new_pos in ann_position_changes
+            if old_pos
+        ]
+        if not (old_updates or old_positions):
+            return
+        ann_write_svc = self._ann_write_svc
+
+        def _undo_text_and_position():
+            ann_write_svc.save_annotation_text_properties_and_positions(
+                db_path, old_updates, old_positions
+            )
+
+        def _redo_text_and_position():
+            ann_write_svc.save_annotation_text_properties_and_positions(
+                db_path, new_updates, new_positions
+            )
+
+        self._undo_svc.push(_undo_text_and_position, _redo_text_and_position)
 
     def _on_elements_deleted(self, uids: list) -> None:
         if not self._config.allow_annotation_editing or self._read_only:
@@ -718,6 +991,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self.plan_view.page_geometry_ready.disconnect(self._on_page_geometry_ready)
             self.plan_view.page_fully_loaded.disconnect(self._on_page_loaded)
             self.plan_view.positions_flushed.disconnect(self._on_positions_flushed)
+            self.plan_view.annotation_text_properties_flushed.disconnect(
+                self._on_annotation_text_properties_flushed
+            )
+            self.plan_view.annotation_text_and_positions_flushed.disconnect(
+                self._on_annotation_text_and_positions_flushed
+            )
             self.plan_view.elements_deleted.disconnect(self._on_elements_deleted)
             if self._undo_svc is not None:
                 self.plan_view.undo_requested.disconnect(self._undo_svc.undo)

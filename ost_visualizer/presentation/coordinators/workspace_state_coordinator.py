@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional, cast
+from typing import Callable, Dict, Optional, cast
 from PySide6 import QtCore, QtWidgets
 from ...domain.entities.workspace_state import (
     DetachedWindowState,
@@ -31,11 +31,18 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         super().__init__(main_window)
         self._host_window = main_window
         self._shell = cast(IWorkspaceShell, main_window)
+        self._cleaned_up = False
         self.workspace_state_model = workspace_state_model
         self.logger = logger_ or logging.getLogger(__name__)
         self._state = workspace_state_model.state
         self._tracked_toolbars = tuple(self._shell.get_workspace_toolbars())
+        self._tracked_headers = (
+            self._shell.get_project_header(),
+            self._shell.get_conditions_header(),
+            self._shell.get_layers_header(),
+        )
         self._tracked_detached_windows: Dict[str, QtWidgets.QWidget] = {}
+        self._tracked_detached_destroy_callbacks: Dict[str, Callable] = {}
         self._detached_restore_applied: Dict[str, bool] = {}
         self._pending_mesh_restore = False
         self._pending_annotation_restore = False
@@ -59,9 +66,8 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         self._host_window.installEventFilter(self)
         for toolbar in self._tracked_toolbars:
             toolbar.installEventFilter(self)
-        self._connect_header_tracking(self._shell.get_project_header())
-        self._connect_header_tracking(self._shell.get_conditions_header())
-        self._connect_header_tracking(self._shell.get_layers_header())
+        for header in self._tracked_headers:
+            self._connect_header_tracking(header)
         self._shell.get_conditions_sidebar().group_by_type_changed.connect(
             self.request_save
         )
@@ -227,8 +233,93 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             self._save_timer.stop()
         self._save_now()
 
+    def cleanup(self) -> None:
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+        if self._save_timer is not None:
+            self._save_timer.stop()
+            self._disconnect(self._save_timer.timeout, self._save_now)
+            self._save_timer.deleteLater()
+            self._save_timer = None
+        if self._host_window is not None:
+            self._host_window.removeEventFilter(self)
+        for toolbar in self._tracked_toolbars:
+            toolbar.removeEventFilter(self)
+        for header in self._tracked_headers:
+            self._disconnect(header.sectionMoved, self.request_save)
+            self._disconnect(header.sectionResized, self.request_save)
+            self._disconnect(header.sortIndicatorChanged, self.request_save)
+        self._disconnect(
+            self._shell.get_conditions_sidebar().group_by_type_changed,
+            self.request_save,
+        )
+        self._disconnect(self._shell.get_project_tree().itemExpanded, self.request_save)
+        self._disconnect(
+            self._shell.get_project_tree().itemCollapsed, self.request_save
+        )
+        self._disconnect(
+            self._shell.get_project_tree().itemSelectionChanged, self.request_save
+        )
+        self._disconnect(self._shell.get_view_stack().currentChanged, self.request_save)
+        self._disconnect(
+            self._shell.get_takeoff_splitter().splitterMoved, self.request_save
+        )
+        self._disconnect(
+            self._shell.get_left_splitter().splitterMoved, self.request_save
+        )
+        self._disconnect(
+            self._shell.takeoff_sidebar.popup_size_changed, self.request_save
+        )
+        self._disconnect(
+            self._shell.get_page_settings_bar().dropdown_size_changed,
+            self.request_save,
+        )
+        self._disconnect(
+            self._shell.get_layers_toggle_action().toggled, self.request_save
+        )
+        self._disconnect(
+            self._shell.get_conditions_toggle_action().toggled, self.request_save
+        )
+        self._disconnect(self._shell.get_status_bar_action().toggled, self.request_save)
+        self._disconnect(
+            self._shell.get_mesh_window_action().toggled,
+            self._on_mesh_window_toggled,
+        )
+        self._disconnect(
+            self._shell.get_annotation_window_action().toggled,
+            self._on_annotation_window_toggled,
+        )
+        self._disconnect(
+            self._shell.get_view_window_action().toggled,
+            self._on_view_window_toggled,
+        )
+        self._disconnect(
+            self._shell.takeoff_sidebar.active_page_changed,
+            self._on_active_page_changed,
+        )
+        self._disconnect(
+            self._shell.get_takeoff_plan_view().page_fully_loaded,
+            self._on_takeoff_page_fully_loaded,
+        )
+        self._clear_tracked_detached_windows()
+        self._tracked_toolbars = ()
+        self._tracked_headers = ()
+        self._host_window = None
+        self._shell = None
+        self.workspace_state_model = None
+        self._state = None
+
+    @staticmethod
+    def _disconnect(signal, slot) -> None:
+        try:
+            signal.disconnect(slot)
+        except (RuntimeError, TypeError):
+            pass
+
     def request_save(self, *_args) -> None:
-        self._save_timer.start()
+        if self._save_timer is not None:
+            self._save_timer.start()
 
     def eventFilter(self, watched, event) -> bool:
         event_type = event.type()
@@ -406,10 +497,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                 self._apply_restore_for_tracked_window(key, window)
             return
         if previous is not None:
-            try:
-                previous.removeEventFilter(self)
-            except RuntimeError:
-                pass
+            self._untrack_detached_window(key, previous)
         self._tracked_detached_windows[key] = window
         self._detached_restore_applied[key] = False
         window.installEventFilter(self)
@@ -418,11 +506,11 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                 window.dropdown_size_changed.connect(self.request_save)
             except RuntimeError:
                 pass
-        window.destroyed.connect(
-            lambda *_args, window_key=key, widget=window: self._on_tracked_window_destroyed(
-                window_key, widget
-            )
+        destroyed_callback = (
+            lambda *_args, window_key=key: self._on_tracked_window_destroyed(window_key)
         )
+        self._tracked_detached_destroy_callbacks[key] = destroyed_callback
+        window.destroyed.connect(destroyed_callback)
         if key == self._DETACHED_MESH:
             QtCore.QTimer.singleShot(
                 0,
@@ -432,11 +520,35 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             self._complete_detached_window_tracking(key, window)
         self.request_save()
 
-    def _on_tracked_window_destroyed(self, key: str, window: QtWidgets.QWidget) -> None:
-        if self._tracked_detached_windows.get(key) is window:
-            self._tracked_detached_windows.pop(key, None)
-            self._detached_restore_applied.pop(key, None)
+    def _on_tracked_window_destroyed(self, key: str) -> None:
+        self._tracked_detached_windows.pop(key, None)
+        self._tracked_detached_destroy_callbacks.pop(key, None)
+        self._detached_restore_applied.pop(key, None)
         self.request_save()
+
+    def _clear_tracked_detached_windows(self) -> None:
+        for key, window in list(self._tracked_detached_windows.items()):
+            self._untrack_detached_window(key, window)
+        self._tracked_detached_windows.clear()
+        self._tracked_detached_destroy_callbacks.clear()
+        self._detached_restore_applied.clear()
+
+    def _untrack_detached_window(self, key: str, window: QtWidgets.QWidget) -> None:
+        try:
+            window.removeEventFilter(self)
+        except RuntimeError:
+            pass
+        if key in (self._DETACHED_ANNOTATION, self._DETACHED_VIEW):
+            try:
+                window.dropdown_size_changed.disconnect(self.request_save)
+            except (RuntimeError, TypeError):
+                pass
+        callback = self._tracked_detached_destroy_callbacks.pop(key, None)
+        if callback is not None:
+            try:
+                window.destroyed.disconnect(callback)
+            except (RuntimeError, TypeError):
+                pass
 
     def _apply_saved_mesh_window_state(self, window: QtWidgets.QWidget) -> None:
         key = self._DETACHED_MESH

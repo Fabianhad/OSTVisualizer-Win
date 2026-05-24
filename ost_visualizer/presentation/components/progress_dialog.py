@@ -50,6 +50,7 @@ class ProgressDialog(QtWidgets.QDialog):
         self._action_text = action_text
         self._result: Any = None
         self._error: Optional[Exception] = None
+        self._cleaned_up = False
         self._setup_ui(filename)
         self._start()
 
@@ -89,6 +90,8 @@ class ProgressDialog(QtWidgets.QDialog):
         self._thread.start()
 
     def _on_progress(self, description: str) -> None:
+        if self._cleaned_up or self._label is None:
+            return
         self._label.setText(f"{self._action_text} <b>{description}</b>...")
 
     def _on_finished(self, result: Any, error: Optional[Exception]) -> None:
@@ -108,13 +111,22 @@ class ProgressDialog(QtWidgets.QDialog):
         return self._error
 
     def cleanup(self) -> None:
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
         if self._thread and self._thread.isRunning():
             self._thread.wait(5000)
         if self._reporter:
-            self._reporter.progress.disconnect(self._on_progress)
+            try:
+                self._reporter.progress.disconnect(self._on_progress)
+            except (TypeError, RuntimeError):
+                pass
+        self._task_fn = None
         self._worker = None
         self._thread = None
         self._reporter = None
+        self._label = None
+        self._progress = None
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         event.ignore()

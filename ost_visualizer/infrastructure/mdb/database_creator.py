@@ -1119,6 +1119,7 @@ class DatabaseCreator:
             "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};"
         )
         conn = pyodbc.connect(conn_str, autocommit=False)
+        cursor = None
         try:
             cursor = conn.cursor()
             for ddl in _TABLE_DDL:
@@ -1143,6 +1144,8 @@ class DatabaseCreator:
             conn.rollback()
             raise
         finally:
+            if cursor is not None:
+                cursor.close()
             conn.close()
 
     def _insert_seed_data(self, db_path: Path, name: str) -> None:
@@ -1150,6 +1153,7 @@ class DatabaseCreator:
             "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};"
         )
         conn = pyodbc.connect(conn_str, autocommit=False)
+        cursor = None
         try:
             cursor = conn.cursor()
             now = datetime.now()
@@ -1195,4 +1199,6 @@ class DatabaseCreator:
             conn.rollback()
             raise
         finally:
+            if cursor is not None:
+                cursor.close()
             conn.close()

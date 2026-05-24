@@ -124,6 +124,7 @@ class AdjustImagesDialog(QtWidgets.QDialog):
         button_layout = QtWidgets.QHBoxLayout()
         button_layout.addStretch()
         self._ok_btn = QtWidgets.QPushButton("OK")
+        self._ok_btn.setDefault(True)
         self._cancel_btn = QtWidgets.QPushButton("Cancel")
         self._apply_btn = QtWidgets.QPushButton("Apply")
         self._ok_btn.clicked.connect(self._on_ok)

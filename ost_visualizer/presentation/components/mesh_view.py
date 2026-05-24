@@ -5,6 +5,7 @@ from typing import Optional, Sequence, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QTimer, Signal
 from ...domain.entities.identity_refs import BidRef
+from ..config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ..managers.context_menu_manager import ContextMenuManager
 from ..utils.overlay_context_menu import resolve_overlay_menu_action
 from ..utils.theme import set_palette_background
@@ -21,7 +22,6 @@ from . import ost_renderer
 logger = logging.getLogger(__name__)
 _CLICK_DRAG_THRESHOLD_PX = 3
 _ZOOM_CLICK_WHEEL_DELTA = 120
-RIGHT_CLICK_CONTEXT_MENU_MAX_MS = 250
 
 
 class OpenGLViewer(QtWidgets.QWidget):
@@ -788,6 +788,13 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._current_bid_ref = None
         self._pending_camera_reset = False
         self._render_suspended = True
+        self._negative_check_fn = lambda _uids: False
+        self._curved_check_fn = lambda _uids: (False, False)
+        self._selected_context_state_fn = None
+        self._context_menu_command_trigger = None
+        self._context_menu_action_state = None
+        self._context_menu_conditions_fn = lambda: {}
+        self._zoom_cursor = None
         if self._animation_timer:
             self._animation_timer.stop()
             self._animation_timer.timeout.disconnect(self._on_animation_frame)

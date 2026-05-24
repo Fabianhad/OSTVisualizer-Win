@@ -91,10 +91,14 @@ class AnnotationViewBuilder:
     def _build_use_cases(self) -> None:
         def create_open_view_use_case():
             manager = self.container.get("annotation_view_manager")
+            view_window_manager = self.container.get("view_window_manager")
             project_data_service = self.container.get("project_data_service")
+            config_model = self.container.get("config_model")
             return OpenAnnotationViewUseCase(
                 view_manager=manager,
                 project_data=project_data_service,
+                config_model=config_model,
+                view_window_manager=view_window_manager,
                 logger=self.logger.getChild("OpenAnnotationViewUseCase"),
             )
 

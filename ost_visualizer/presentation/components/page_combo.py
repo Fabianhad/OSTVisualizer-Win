@@ -10,9 +10,23 @@ from .tree_popup_combo import TreePopupComboBoxBase
 _ITEM_ROLE_KIND = QtCore.Qt.ItemDataRole.UserRole
 _ITEM_ROLE_UID = QtCore.Qt.ItemDataRole.UserRole + 1
 _ITEM_ROLE_PRECHECK_ICON = QtCore.Qt.ItemDataRole.UserRole + 2
+_ITEM_ROLE_PAGE = QtCore.Qt.ItemDataRole.UserRole + 3
 _TAKEOFF_INDICATOR_SVG = "draft_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
 _TAKEOFF_INDICATOR_DEFAULT_COLOR = "#808080"
 _TAKEOFF_INDICATOR_ACTIVE_COLOR = "#00BCD4"
+
+
+def _format_page_label(
+    page: Page, show_page_index: bool, show_sheet_number: bool
+) -> str:
+    parts = []
+    if show_page_index and page.sequence > 0:
+        parts.append(str(page.sequence))
+    if show_sheet_number and page.sheet_no:
+        parts.append(str(page.sheet_no))
+    if page.name:
+        parts.append(page.name)
+    return " - ".join(parts) if parts else page.uid
 
 
 class _PageComboItemDelegate(QtWidgets.QStyledItemDelegate):
@@ -107,6 +121,8 @@ class PageComboBox(TreePopupComboBoxBase):
         self._selected_uids: List[str] = []
         self._active_uid: Optional[str] = None
         self._block_signals: bool = False
+        self._show_page_index: bool = False
+        self._show_sheet_number: bool = False
         self._page_delegate = _PageComboItemDelegate(self._tree)
         self._tree.setItemDelegate(self._page_delegate)
         self._model.itemChanged.connect(self._on_item_changed)
@@ -183,9 +199,12 @@ class PageComboBox(TreePopupComboBoxBase):
             self._add_page_item(item, page)
 
     def _add_page_item(self, parent: QtGui.QStandardItem, page: Page) -> None:
-        item = QtGui.QStandardItem(page.name)
+        item = QtGui.QStandardItem(
+            _format_page_label(page, self._show_page_index, self._show_sheet_number)
+        )
         item.setData("page", _ITEM_ROLE_KIND)
         item.setData(page.uid, _ITEM_ROLE_UID)
+        item.setData(page, _ITEM_ROLE_PAGE)
         item.setCheckable(True)
         item.setCheckState(QtCore.Qt.CheckState.Unchecked)
         item.setData(
@@ -198,6 +217,19 @@ class PageComboBox(TreePopupComboBoxBase):
         )
         parent.appendRow(item)
         self._page_items[page.uid] = item
+
+    def set_label_options(self, show_page_index: bool, show_sheet_number: bool) -> None:
+        self._show_page_index = bool(show_page_index)
+        self._show_sheet_number = bool(show_sheet_number)
+        for item in self._page_items.values():
+            page = item.data(_ITEM_ROLE_PAGE)
+            if page is not None:
+                item.setText(
+                    _format_page_label(
+                        page, self._show_page_index, self._show_sheet_number
+                    )
+                )
+        self._update_display_text()
 
     def _on_item_changed(self, item: QtGui.QStandardItem) -> None:
         if self._block_signals:
@@ -381,6 +413,8 @@ class SinglePageComboBox(TreePopupComboBoxBase):
         self._pages_with_takeoffs: Set[str] = set()
         self._selected_uid: str = ""
         self._block_signals: bool = False
+        self._show_page_index: bool = False
+        self._show_sheet_number: bool = False
         self._page_delegate = _PageComboItemDelegate(self._tree)
         self._tree.setItemDelegate(self._page_delegate)
         self._tree.clicked.connect(self._on_tree_clicked)
@@ -429,9 +463,12 @@ class SinglePageComboBox(TreePopupComboBoxBase):
             self._add_page_item(item, page)
 
     def _add_page_item(self, parent: QtGui.QStandardItem, page: Page) -> None:
-        item = QtGui.QStandardItem(page.name)
+        item = QtGui.QStandardItem(
+            _format_page_label(page, self._show_page_index, self._show_sheet_number)
+        )
         item.setData("page", _ITEM_ROLE_KIND)
         item.setData(page.uid, _ITEM_ROLE_UID)
+        item.setData(page, _ITEM_ROLE_PAGE)
         item.setEditable(False)
         item.setData(
             (
@@ -443,6 +480,19 @@ class SinglePageComboBox(TreePopupComboBoxBase):
         )
         parent.appendRow(item)
         self._page_items[page.uid] = item
+
+    def set_label_options(self, show_page_index: bool, show_sheet_number: bool) -> None:
+        self._show_page_index = bool(show_page_index)
+        self._show_sheet_number = bool(show_sheet_number)
+        for item in self._page_items.values():
+            page = item.data(_ITEM_ROLE_PAGE)
+            if page is not None:
+                item.setText(
+                    _format_page_label(
+                        page, self._show_page_index, self._show_sheet_number
+                    )
+                )
+        self._update_display_text()
 
     def set_page_has_takeoffs(self, page_uid: str, has_takeoffs: bool = True) -> None:
         if not page_uid or page_uid not in self._page_items:

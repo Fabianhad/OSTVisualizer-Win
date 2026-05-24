@@ -12,8 +12,6 @@ class ContextActionId(Enum):
     SELECT_OVERLAY_IMAGE = "select_overlay_image"
     SHOW_OVERLAY_IMAGE = "show_overlay_image"
     SHOW_ORIGINAL_IMAGE = "show_original_image"
-    RENAME_PAGE = "rename_page"
-    DELETE_PAGE = "delete_page"
 
 
 @dataclass(frozen=True)

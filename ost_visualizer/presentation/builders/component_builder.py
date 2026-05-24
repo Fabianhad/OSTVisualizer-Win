@@ -12,13 +12,47 @@ from ..components.project_tree_view import ProjectView
 from ..components.status_panel import StatusPanel
 from ..components.viewer_cursors import make_rotate_cursor, make_zoom_cursor
 from ..config import (
+    ACTION_NEXT_PAGE_LABEL,
+    ACTION_NEXT_PAGE_TOOLTIP,
+    ACTION_PAN_LABEL,
+    ACTION_PAN_TOOLTIP,
+    ACTION_PREVIOUS_PAGE_LABEL,
+    ACTION_PREVIOUS_PAGE_TOOLTIP,
+    ACTION_RESET_VIEW_LABEL,
+    ACTION_RESET_VIEW_TOOLTIP,
+    ACTION_SELECT_LABEL,
+    ACTION_SELECT_TOOLTIP,
+    ACTION_TAKEOFF_LABEL,
+    ACTION_TAKEOFF_TOOLTIP,
+    ACTION_ZOOM_IN_LABEL,
+    ACTION_ZOOM_IN_TOOLTIP,
+    ACTION_ZOOM_LABEL,
+    ACTION_ZOOM_OUT_LABEL,
+    ACTION_ZOOM_OUT_TOOLTIP,
+    ACTION_ZOOM_TOOLTIP,
+    ANNOTATION_VIEW_WINDOW_ACTION_LABEL,
+    ANNOTATION_WINDOW_TITLE,
     COMPACT_SPACING,
     DEFAULT_ICON_SIZE,
+    DETACH_3D_VIEW_TOOLTIP,
     INLINE_MARGINS,
+    MAIN_TOOLBAR_LABEL,
     NO_MARGINS,
     NO_SPACING,
     SIDEBAR_MIN_WIDTH,
     TAB_INDEX_TAKEOFF,
+    TAKEOFF_TOOLS_TOOLBAR_LABEL,
+    VIEW_LABEL,
+    VIEW_TOOLBAR_LABEL,
+    VIEW_WINDOW_TITLE,
+    VIEWER_2D_LABEL,
+    VIEWER_2D_TOOLTIP,
+    VIEWER_3D_LABEL,
+    VIEWER_3D_TOOLTIP,
+    VIEWER_ZOOM_COMBO_WIDTH,
+    VIEWER_ZOOM_FACTOR,
+    VIEWER_ZOOM_LEVELS,
+    VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS,
 )
 from ..controllers.menu_controller import MenuController
 from ..handlers.plan_view_action_handler import PlanViewActionHandler
@@ -188,14 +222,14 @@ class ComponentBuilder:
         view_toolbar.setFloatable(False)
         view_toolbar.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
         btn_3d = QtWidgets.QToolButton()
-        btn_3d.setText("3D View")
+        btn_3d.setText(VIEWER_3D_LABEL)
         btn_3d.setCheckable(True)
         btn_3d.setChecked(True)
-        btn_3d.setToolTip("3D mesh view")
+        btn_3d.setToolTip(VIEWER_3D_TOOLTIP)
         btn_2d = QtWidgets.QToolButton()
-        btn_2d.setText("2D View")
+        btn_2d.setText(VIEWER_2D_LABEL)
         btn_2d.setCheckable(True)
-        btn_2d.setToolTip("2D plan view")
+        btn_2d.setToolTip(VIEWER_2D_TOOLTIP)
         view_group = QtWidgets.QButtonGroup(takeoff_tab)
         view_group.addButton(btn_3d, 0)
         view_group.addButton(btn_2d, 1)
@@ -228,6 +262,10 @@ class ComponentBuilder:
             renderers.linear_geometry,
             viewer_frame_2d,
         )
+        if ui_access_manager:
+            plan_view.set_text_annotation_inline_edit_allowed_fn(
+                lambda: ui_access_manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT)
+            )
         plan_view.setContentsMargins(*NO_MARGINS)
         viewer_layout_2d.addWidget(plan_view)
         hotlink_adapter = HotlinkEventAdapter(event_bus)
@@ -243,19 +281,21 @@ class ComponentBuilder:
         main_toolbar.setFloatable(False)
         main_toolbar.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
         main_toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
-        previous_page_action = QtGui.QAction("Previous Page", viewer_container)
+        previous_page_action = QtGui.QAction(
+            ACTION_PREVIOUS_PAGE_LABEL, viewer_container
+        )
         IconManager.apply(previous_page_action, IconId.PREVIOUS_PAGE)
-        previous_page_action.setToolTip("Previous page")
+        previous_page_action.setToolTip(ACTION_PREVIOUS_PAGE_TOOLTIP)
         previous_page_action.triggered.connect(page_combo.go_prev)
         btn_prev_page = QtWidgets.QToolButton()
         btn_prev_page.setDefaultAction(previous_page_action)
         btn_prev_page.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
         main_toolbar.addWidget(btn_prev_page)
         main_toolbar.addWidget(page_combo)
-        next_page_action = QtGui.QAction("Next Page", viewer_container)
+        next_page_action = QtGui.QAction(ACTION_NEXT_PAGE_LABEL, viewer_container)
         IconManager.apply(next_page_action, IconId.NEXT_PAGE)
-        next_page_action.setToolTip("Next page")
-        next_page_action.triggered.connect(page_combo.go_next)
+        next_page_action.setToolTip(ACTION_NEXT_PAGE_TOOLTIP)
+        next_page_action.triggered.connect(self.window.go_next_takeoff_page)
         btn_next_page = QtWidgets.QToolButton()
         btn_next_page.setDefaultAction(next_page_action)
         btn_next_page.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
@@ -266,7 +306,13 @@ class ComponentBuilder:
             active_uid = page_combo.get_active_page_uid()
             active_index = order.index(active_uid) if active_uid in order else -1
             can_go_prev = active_index > 0
-            can_go_next = active_index >= 0 and active_index < len(order) - 1
+            can_go_next = active_index >= 0 and (
+                active_index < len(order) - 1
+                or (
+                    active_index == len(order) - 1
+                    and self.window.can_add_page_from_takeoff_tab()
+                )
+            )
             previous_page_action.setEnabled(can_go_prev)
             next_page_action.setEnabled(can_go_next)
 
@@ -277,53 +323,54 @@ class ComponentBuilder:
         main_toolbar.addWidget(page_nav_spacer)
         cursor_group = QtGui.QActionGroup(viewer_container)
         cursor_group.setExclusive(True)
-        select_action = QtGui.QAction("Select", viewer_container)
+        select_action = QtGui.QAction(ACTION_SELECT_LABEL, viewer_container)
         IconManager.apply(select_action, IconId.SELECT_TOOL)
         select_action.setCheckable(True)
         select_action.setChecked(True)
-        select_action.setToolTip("Select")
+        select_action.setToolTip(ACTION_SELECT_TOOLTIP)
         cursor_group.addAction(select_action)
         main_toolbar.addAction(select_action)
-        place_action = QtGui.QAction("Takeoff", viewer_container)
+        place_action = QtGui.QAction(ACTION_TAKEOFF_LABEL, viewer_container)
         IconManager.apply(place_action, IconId.TAKEOFF_TOOL)
         place_action.setCheckable(True)
-        place_action.setToolTip("Takeoff")
+        place_action.setToolTip(ACTION_TAKEOFF_TOOLTIP)
         cursor_group.addAction(place_action)
         main_toolbar.addAction(place_action)
-        pan_action = QtGui.QAction("Pan", viewer_container)
+        pan_action = QtGui.QAction(ACTION_PAN_LABEL, viewer_container)
         IconManager.apply(pan_action, IconId.PAN_TOOL)
         pan_action.setCheckable(True)
-        pan_action.setToolTip("Pan")
+        pan_action.setToolTip(ACTION_PAN_TOOLTIP)
         cursor_group.addAction(pan_action)
         main_toolbar.addAction(pan_action)
-        zoom_mode_action = QtGui.QAction("Zoom", viewer_container)
+        zoom_mode_action = QtGui.QAction(ACTION_ZOOM_LABEL, viewer_container)
         IconManager.apply(zoom_mode_action, IconId.ZOOM_TOOL)
         zoom_mode_action.setCheckable(True)
-        zoom_mode_action.setToolTip("Zoom")
+        zoom_mode_action.setToolTip(ACTION_ZOOM_TOOLTIP)
         cursor_group.addAction(zoom_mode_action)
         main_toolbar.addAction(zoom_mode_action)
         _zoom_cursor = make_zoom_cursor()
         plan_view.set_zoom_cursor(_zoom_cursor)
         canvas.set_zoom_cursor(_zoom_cursor)
         plan_view.set_rotate_cursor(make_rotate_cursor())
-        fit_action = QtGui.QAction("Reset View", viewer_container)
+        fit_action = QtGui.QAction(ACTION_RESET_VIEW_LABEL, viewer_container)
         IconManager.apply(fit_action, IconId.RESET_VIEW)
-        fit_action.setToolTip("Reset view")
+        fit_action.setToolTip(ACTION_RESET_VIEW_TOOLTIP)
         main_toolbar.addAction(fit_action)
-        zoom_in_action = QtGui.QAction("Zoom In", viewer_container)
+        zoom_in_action = QtGui.QAction(ACTION_ZOOM_IN_LABEL, viewer_container)
         IconManager.apply(zoom_in_action, IconId.ZOOM_IN)
-        zoom_in_action.setToolTip("Zoom in")
+        zoom_in_action.setToolTip(ACTION_ZOOM_IN_TOOLTIP)
         main_toolbar.addAction(zoom_in_action)
-        zoom_out_action = QtGui.QAction("Zoom Out", viewer_container)
+        zoom_out_action = QtGui.QAction(ACTION_ZOOM_OUT_LABEL, viewer_container)
         IconManager.apply(zoom_out_action, IconId.ZOOM_OUT)
-        zoom_out_action.setToolTip("Zoom out")
+        zoom_out_action.setToolTip(ACTION_ZOOM_OUT_TOOLTIP)
         main_toolbar.addAction(zoom_out_action)
-        _ZOOM_LEVELS = [5, 10, 25, 50, 75, 100, 150, 200, 250, 300, 400, 800, 1600]
-        zoom_combo = PopupTrackingComboBox(popup_hidden_delay_ms=100)
+        zoom_combo = PopupTrackingComboBox(
+            popup_hidden_delay_ms=VIEWER_ZOOM_POPUP_HIDDEN_DELAY_MS
+        )
         zoom_combo.setEditable(True)
         zoom_combo.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
-        zoom_combo.setFixedWidth(80)
-        for _lvl in _ZOOM_LEVELS:
+        zoom_combo.setFixedWidth(VIEWER_ZOOM_COMBO_WIDTH)
+        for _lvl in VIEWER_ZOOM_LEVELS:
             zoom_combo.addItem(f"{_lvl}%", _lvl)
         zoom_combo.setCurrentIndex(-1)
         zoom_combo.setEditText("100%")
@@ -352,9 +399,9 @@ class ComponentBuilder:
             page_settings_bar=page_settings_bar,
             undo_svc=_undo_svc,
             event_bus=event_bus,
+            ui_access_manager=ui_access_manager,
         )
         _plan_view_handler.connect_signals()
-        _ZOOM_FACTOR_3D = 1.15
         _last_2d_zoom = [1.0]
         _popup_open = [False]
         zoom_combo.popup_shown.connect(lambda: _popup_open.__setitem__(0, True))
@@ -417,7 +464,7 @@ class ComponentBuilder:
 
         def _on_zoom_in() -> None:
             if view_stack.currentIndex() == 0:
-                pct = canvas.get_zoom_percent() * _ZOOM_FACTOR_3D
+                pct = canvas.get_zoom_percent() * VIEWER_ZOOM_FACTOR
                 canvas.set_zoom_percent(pct)
                 _update_combo(pct / 100.0)
             else:
@@ -425,7 +472,7 @@ class ComponentBuilder:
 
         def _on_zoom_out() -> None:
             if view_stack.currentIndex() == 0:
-                pct = canvas.get_zoom_percent() / _ZOOM_FACTOR_3D
+                pct = canvas.get_zoom_percent() / VIEWER_ZOOM_FACTOR
                 canvas.set_zoom_percent(pct)
                 _update_combo(pct / 100.0)
             else:
@@ -506,7 +553,7 @@ class ComponentBuilder:
         zoom_out_action.triggered.connect(_on_zoom_out)
         takeoff_tools_toolbar = _TakeoffRibbonToolBar(self.window)
         takeoff_tools_toolbar.setObjectName("takeoffToolsToolbar")
-        takeoff_tools_toolbar.setWindowTitle("Takeoff Tools")
+        takeoff_tools_toolbar.setWindowTitle(TAKEOFF_TOOLS_TOOLBAR_LABEL)
         takeoff_tools_toolbar.setMovable(True)
         takeoff_tools_toolbar.setFloatable(True)
         takeoff_tools_toolbar.setOrientation(QtCore.Qt.Orientation.Vertical)
@@ -520,7 +567,7 @@ class ComponentBuilder:
         )
         workspace_view_toolbar = _TakeoffRibbonToolBar(self.window)
         workspace_view_toolbar.setObjectName("viewToolbar")
-        workspace_view_toolbar.setWindowTitle("View")
+        workspace_view_toolbar.setWindowTitle(VIEW_TOOLBAR_LABEL)
         workspace_view_toolbar.setMovable(True)
         workspace_view_toolbar.setFloatable(True)
         workspace_view_toolbar.setOrientation(QtCore.Qt.Orientation.Vertical)
@@ -532,21 +579,23 @@ class ComponentBuilder:
             QtWidgets.QSizePolicy.Policy.Fixed,
             QtWidgets.QSizePolicy.Policy.MinimumExpanding,
         )
-        ann_action = QtGui.QAction("Annotation and View Window", viewer_container)
+        ann_action = QtGui.QAction(
+            ANNOTATION_VIEW_WINDOW_ACTION_LABEL, viewer_container
+        )
         IconManager.apply(ann_action, IconId.ANNOTATION_WINDOW)
         ann_action.setCheckable(True)
-        ann_action.setToolTip("Annotation Window")
+        ann_action.setToolTip(ANNOTATION_WINDOW_TITLE)
         ann_action.toggled.connect(self.window.set_annotation_window_visible)
-        view_window_action = QtGui.QAction("View", viewer_container)
+        view_window_action = QtGui.QAction(VIEW_LABEL, viewer_container)
         IconManager.apply(view_window_action, IconId.VIEW_WINDOW)
         view_window_action.setCheckable(True)
         view_window_action.setEnabled(False)
-        view_window_action.setToolTip("View Window")
+        view_window_action.setToolTip(VIEW_WINDOW_TITLE)
         view_window_action.toggled.connect(self.window.set_view_window_visible)
-        mesh_window_action = QtGui.QAction("3D View", viewer_container)
+        mesh_window_action = QtGui.QAction(VIEWER_3D_LABEL, viewer_container)
         IconManager.apply(mesh_window_action, IconId.VIEW_3D)
         mesh_window_action.setCheckable(True)
-        mesh_window_action.setToolTip("Detach 3D View")
+        mesh_window_action.setToolTip(DETACH_3D_VIEW_TOOLTIP)
         mesh_window_action.toggled.connect(self.window.set_mesh_window_visible)
         ui_event_handler.set_mesh_window_action(mesh_window_action)
         backout_action = QtGui.QAction("Backout Mode", viewer_container)
@@ -602,7 +651,7 @@ class ComponentBuilder:
             )
             _set_backout_checked_silent(False)
 
-        backout_action._refresh_enabled = _refresh_backout_action_state
+        backout_action.setProperty("refresh_enabled", _refresh_backout_action_state)
 
         def _on_backout_toggled(checked: bool):
             if checked:
@@ -645,7 +694,7 @@ class ComponentBuilder:
         )
         _refresh_backout_action_state()
         workspace_main_toolbar = QtWidgets.QToolBar(self.window)
-        workspace_main_toolbar.setWindowTitle("Main")
+        workspace_main_toolbar.setWindowTitle(MAIN_TOOLBAR_LABEL)
         workspace_main_toolbar.setMovable(True)
         workspace_main_toolbar.setFloatable(True)
         workspace_main_toolbar.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
@@ -931,7 +980,7 @@ class ComponentBuilder:
 
     def create_menu(
         self,
-        preferences_service,
+        config_service,
         ui_state_manager,
         handlers,
         ui_access_manager,
@@ -948,7 +997,7 @@ class ComponentBuilder:
         menu_controller = MenuController(
             self.window,
             self.window.icon_provider,
-            preferences_service,
+            config_service,
             ui_state_manager,
             handlers,
             ui_access_manager,

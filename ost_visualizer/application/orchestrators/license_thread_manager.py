@@ -27,8 +27,12 @@ class LicenseThreadManager:
                 def wrapped_callback(s: bool, m: str) -> None:
                     on_main_thread(s, m, extra_data)
 
-                callback_bridge.request_callback(wrapped_callback, success, message)
-                self._remove_thread(thread)
+                try:
+                    callback_bridge.request_callback(wrapped_callback, success, message)
+                except Exception as exc:
+                    self._logger.exception("Error dispatching thread callback: %s", exc)
+                finally:
+                    self._remove_thread(thread)
 
         thread = threading.Thread(target=run_operation, daemon=True)
         self._active_threads.append(thread)

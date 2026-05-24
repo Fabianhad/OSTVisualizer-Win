@@ -125,13 +125,16 @@ class PageLoaderMixin:
     def _resolve_pending_render(
         self, result: RenderResult, render_type: str
     ) -> Optional[dict]:
+        if result.request_id in self._current_render_requests:
+            self._current_render_requests.remove(result.request_id)
+        else:
+            return None
         if not result.success or not result.image:
             logger.warning("%s render failed: %s", render_type, result.error)
             return None
         data = self._pending_page_data
-        if not data or result.request_id not in self._current_render_requests:
+        if not data:
             return None
-        self._current_render_requests.remove(result.request_id)
         if not self._is_current_async_result(
             data.get("load_token"), data.get("render_identity")
         ):
@@ -190,7 +193,7 @@ class PageLoaderMixin:
     def _target_base_raster_scale(
         self, default_scale: float, view_m11: Optional[float] = None
     ) -> float:
-        if not self._can_zoom_rerender:
+        if not self._can_zoom_rerender or self._disable_high_resolution_images:
             return default_scale
         view_transform_scale = (
             view_m11 if view_m11 and view_m11 > 0 else self.transform().m11()
@@ -712,6 +715,7 @@ class PageLoaderMixin:
     ) -> None:
         if (
             not self._can_zoom_rerender
+            or self._disable_high_resolution_images
             or self._is_composite_mode
             or not self._current_page
             or not self._background_item
@@ -746,6 +750,10 @@ class PageLoaderMixin:
 
     def _update_tile_coverage(self, view_m11: float) -> None:
         if not self._can_zoom_rerender or not self._current_page:
+            return
+        if self._disable_high_resolution_images:
+            self._clear_tiles()
+            self._cancel_optional_base_correction()
             return
         generation_id = self._advance_render_generation()
         raw_scale = self._compute_tile_scale(view_m11)

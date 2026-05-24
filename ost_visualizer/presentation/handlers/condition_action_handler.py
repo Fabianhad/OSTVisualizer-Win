@@ -1,5 +1,6 @@
 import logging
 from dataclasses import fields as dataclass_fields
+from dataclasses import replace
 from PySide6.QtCore import QSignalBlocker
 from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
 from ...application.dtos.update_condition_dto import (
@@ -30,12 +31,14 @@ class ConditionActionHandler:
         project_read_service,
         project_data,
         ui_state_manager,
+        config_model,
     ):
         self._coordinator = coordinator
         self._write_service = project_write_service
         self._read_service = project_read_service
         self._project_data = project_data
         self._ui_state = ui_state_manager
+        self._config_model = config_model
 
     def _get_bid_ref_and_write_service(self):
         bid_ref = self._ui_state.get_selected_bid_ref()
@@ -141,12 +144,12 @@ class ConditionActionHandler:
             grid_size1=0.0,
             grid_size2=0.0,
             gap=0.0,
-            connect=True,
+            connect=self._config_model.connect_linear_takeoff,
             connect_tolerance=6.0,
             trim=False,
             is_curved_segment=False,
             snap_to_linear=-1,
-            display_dimension=False,
+            display_dimension=self._config_model.enable_auto_dimension_lines,
             display_name=False,
             display_grid_while_drawing=False,
         )
@@ -169,11 +172,23 @@ class ConditionActionHandler:
                 calc_type1=td.get("calc_type1", 0),
                 display_grid_while_drawing=td.get("display_grid_while_drawing", False),
                 backout=td.get("backout", False),
+                connect=(
+                    self._config_model.connect_linear_takeoff
+                    if cond_type == Condition.TYPE_LINEAR
+                    else True
+                ),
+                display_dimension=(
+                    self._config_model.enable_auto_dimension_lines
+                    if cond_type == Condition.TYPE_AREA
+                    else False
+                ),
             )
             spec_field_names = {f.name for f in dataclass_fields(CreateConditionSpec)}
-            for key, val in changes.items():
-                if key in spec_field_names:
-                    setattr(spec, key, val)
+            spec_updates = {
+                key: val for key, val in changes.items() if key in spec_field_names
+            }
+            if spec_updates:
+                spec = replace(spec, **spec_updates)
             spec.folder_uid = folder_uid or None
             with QSignalBlocker(sidebar):
                 new_uid = write_service.create_condition(
@@ -203,6 +218,9 @@ class ConditionActionHandler:
             read_service=self._read_service,
             read_only=False,
             metric=self._is_metric(),
+            default_auto_dimension_lines=(
+                self._config_model.enable_auto_dimension_lines
+            ),
         )
         dialog._dirty = True
         try:

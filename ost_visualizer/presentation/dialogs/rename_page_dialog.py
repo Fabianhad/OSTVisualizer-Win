@@ -60,6 +60,7 @@ class RenamePageDialog(QtWidgets.QDialog):
         self._old_name_edit.setReadOnly(True)
         form.addWidget(self._old_name_edit, 0, 1)
         self._ok_btn = QtWidgets.QPushButton("OK")
+        self._ok_btn.setDefault(True)
         self._ok_btn.clicked.connect(self._on_ok)
         form.addWidget(self._ok_btn, 0, 2)
         form.addWidget(

@@ -2,9 +2,11 @@ import math
 from dataclasses import dataclass
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QPainter
-from PySide6.QtWidgets import QGraphicsItem
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsTextItem
 
 _SMOOTHING_SCALE_TOLERANCE = 0.01
+NAMED_VIEW_LABEL_ITEM_KIND = "namedview_label"
+NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND = "namedview_label_bg"
 
 
 class _ImageGraphicsItem(QGraphicsItem):
@@ -89,3 +91,29 @@ class TileGraphicsItem(_ImageGraphicsItem):
             source_rect=source_rect,
             smooth_when_not_upscaled=False,
         )
+
+
+class ClippedTextGraphicsItem(QGraphicsTextItem):
+    def __init__(self, text: str, clip_rect: QRectF):
+        super().__init__(text)
+        self._clip_rect = QRectF(clip_rect)
+
+    def boundingRect(self) -> QRectF:
+        return QRectF(self._clip_rect)
+
+    def text_bounding_rect(self) -> QRectF:
+        return QGraphicsTextItem.boundingRect(self)
+
+    def clip_rect(self) -> QRectF:
+        return QRectF(self._clip_rect)
+
+    def set_clip_rect(self, rect: QRectF) -> None:
+        self.prepareGeometryChange()
+        self._clip_rect = QRectF(rect)
+        self.update()
+
+    def paint(self, painter, option, widget=None):
+        painter.save()
+        painter.setClipRect(self._clip_rect)
+        super().paint(painter, option, widget)
+        painter.restore()

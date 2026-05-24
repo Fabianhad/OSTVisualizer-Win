@@ -3,8 +3,14 @@ import math
 from typing import List, Optional, Set
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsRectItem
+from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen, QPolygonF
+from PySide6.QtWidgets import (
+    QGraphicsItem,
+    QGraphicsPathItem,
+    QGraphicsPolygonItem,
+    QGraphicsRectItem,
+    QGraphicsTextItem,
+)
 from .....application.dtos.hotlink_dto import HotlinkDto
 from .geometry_utils import (
     HandleInfo,
@@ -12,14 +18,20 @@ from .geometry_utils import (
     point_to_segment_distance,
     resize_cursor_for_edge,
 )
+from .graphics_items import ClippedTextGraphicsItem
 from .handle_style import apply_takeoff_handle_style
 
 logger = logging.getLogger(__name__)
+_TEXT_SELECTION_OUTLINE_COLOR = QColor(128, 128, 128)
 
 
 class SelectionManagerMixin:
     _CORNER_HALF = 4.0
     _MID_HALF = 2.0
+    _TEXT_ANNOTATION_HIT_TOLERANCE_PX = 4.0
+
+    def _on_selection_changed(self) -> None:
+        pass
 
     def _is_selectable(self, uid: str) -> bool:
         if self._annotation_only_selection:
@@ -35,7 +47,21 @@ class SelectionManagerMixin:
         result: List[str] = []
         for item in self._scene.items(scene_pos):
             uid = item.data(0)
-            if uid and uid not in seen and self._is_selectable(uid):
+            if not uid or uid in seen or not self._is_selectable(uid):
+                continue
+            ann = self._current_annotations.get(uid)
+            if ann is not None and ann.is_text:
+                if not self._text_annotation_contains_scene_point(uid, scene_pos):
+                    continue
+            seen.add(uid)
+            result.append(uid)
+        for uid, ann in self._current_annotations.items():
+            if (
+                uid not in seen
+                and ann.is_text
+                and ann.is_interactive
+                and self._text_annotation_contains_scene_point(uid, scene_pos)
+            ):
                 seen.add(uid)
                 result.append(uid)
         return result
@@ -55,6 +81,8 @@ class SelectionManagerMixin:
         for uid, ann in uid_ann_pairs:
             if not ann.is_interactive:
                 continue
+            if ann.annotation_type not in ann.LINEAR_TYPES:
+                continue
             tx = cs.transform_vertices_to_2d(ann.position)
             if (
                 len(tx) >= 4
@@ -64,6 +92,43 @@ class SelectionManagerMixin:
                 <= hit_dist
             ):
                 yield uid, tx
+
+    def _scene_tolerance_for_text_annotation(self) -> float:
+        m11 = self.transform().m11()
+        return (
+            self._TEXT_ANNOTATION_HIT_TOLERANCE_PX / m11
+            if m11 > 0
+            else self._TEXT_ANNOTATION_HIT_TOLERANCE_PX
+        )
+
+    def _text_annotation_contains_scene_point(
+        self, uid: str, scene_pos: QtCore.QPointF
+    ) -> bool:
+        tolerance = self._scene_tolerance_for_text_annotation()
+        for item in self._uid_to_items.get(uid, []):
+            if not isinstance(item, QGraphicsTextItem):
+                continue
+            if item.data(2) == "condition_label":
+                continue
+            local = item.mapFromScene(scene_pos)
+            bounds = item.boundingRect()
+            if isinstance(item, ClippedTextGraphicsItem):
+                bounds = item.text_bounding_rect().intersected(item.clip_rect())
+            if bounds.adjusted(-tolerance, -tolerance, tolerance, tolerance).contains(
+                local
+            ):
+                return True
+        return False
+
+    def find_text_annotation_at(self, scene_pos: QtCore.QPointF) -> Optional[str]:
+        for uid, ann in self._current_annotations.items():
+            if (
+                ann.is_text
+                and ann.is_interactive
+                and self._text_annotation_contains_scene_point(uid, scene_pos)
+            ):
+                return uid
+        return None
 
     def find_linear_annotation_near(self, scene_pos) -> Optional[str]:
         for uid, _tx in self._iter_ann_hits(scene_pos):
@@ -130,6 +195,7 @@ class SelectionManagerMixin:
         if not self._selected_uids:
             return
         self._selected_uids.clear()
+        self._on_selection_changed()
         self.update_selection_visuals(emit=emit)
 
     def get_selected_takeoff_uids(self) -> List[str]:
@@ -141,6 +207,7 @@ class SelectionManagerMixin:
         if self._selected_uids == uids:
             return
         self._selected_uids = set(uids)
+        self._on_selection_changed()
         self.update_selection_visuals(emit=emit)
 
     def select_takeoffs_in_area(self, area_uid: Optional[str]) -> None:
@@ -323,27 +390,8 @@ class SelectionManagerMixin:
                             ),
                         ]
             return []
-        if atype == "text" and len(pos) >= 4:
-            cx_o, cy_o, w_o, h_o = pos[0], pos[1], pos[2], pos[3]
-            rot_rad = ann.stored_rotation_rad
-            hw, hh = w_o / 2, h_o / 2
-            offsets = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
-            corners_ost = []
-            if rot_rad != 0.0:
-                cos_r, sin_r = math.cos(rot_rad), math.sin(rot_rad)
-                for dx, dy in offsets:
-                    corners_ost.extend(
-                        [
-                            cx_o + dx * cos_r - dy * sin_r,
-                            cy_o + dx * sin_r + dy * cos_r,
-                        ]
-                    )
-            else:
-                for dx, dy in offsets:
-                    corners_ost.extend([cx_o + dx, cy_o + dy])
-            tx = cs.transform_vertices_to_2d(corners_ost)
-            pts = [self._pt_to_scene(tx[i], tx[i + 1]) for i in range(0, len(tx), 2)]
-            return self._make_bbox_handles(pts)
+        if atype == "text":
+            return self._make_text_annotation_selection_items(ann, uid, cs)
         corners_ost = self._get_ann_corners_ost(ann)
         if corners_ost and atype in ("rect", "oval", "highlight", "namedview"):
             tx = cs.transform_vertices_to_2d(corners_ost)
@@ -377,6 +425,54 @@ class SelectionManagerMixin:
                 )
             return handles
         return []
+
+    def _text_annotation_resize_box_points(self, ann, cs) -> List:
+        pos = ann.position
+        if len(pos) < 4:
+            return []
+        cx_o, cy_o, w_o, h_o = pos[0], pos[1], pos[2], pos[3]
+        rot_rad = ann.stored_rotation_rad
+        hw, hh = w_o / 2, h_o / 2
+        offsets = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
+        corners_ost = []
+        if rot_rad != 0.0:
+            cos_r, sin_r = math.cos(rot_rad), math.sin(rot_rad)
+            for dx, dy in offsets:
+                corners_ost.extend(
+                    [
+                        cx_o + dx * cos_r - dy * sin_r,
+                        cy_o + dx * sin_r + dy * cos_r,
+                    ]
+                )
+        else:
+            for dx, dy in offsets:
+                corners_ost.extend([cx_o + dx, cy_o + dy])
+        tx = cs.transform_vertices_to_2d(corners_ost)
+        return [self._pt_to_scene(tx[i], tx[i + 1]) for i in range(0, len(tx), 2)]
+
+    def _make_text_annotation_selection_items(self, ann, uid: str, cs) -> List:
+        pts = self._text_annotation_resize_box_points(ann, cs)
+        if len(pts) < 4:
+            return []
+        polygon = QPolygonF(pts)
+        if polygon.count() < 4:
+            return []
+        outline = self._make_text_annotation_outline_item(uid, polygon)
+        return [outline] + self._make_bbox_handles(pts)
+
+    def _make_text_annotation_outline_item(
+        self, uid: str, polygon: QPolygonF
+    ) -> QGraphicsPolygonItem:
+        outline_pen = QPen(_TEXT_SELECTION_OUTLINE_COLOR)
+        outline_pen.setWidthF(2.0)
+        outline_pen.setCosmetic(True)
+        outline_pen.setStyle(Qt.PenStyle.DashLine)
+        outline = QGraphicsPolygonItem(polygon)
+        outline.setPen(outline_pen)
+        outline.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        outline.setZValue(14)
+        outline.setData(0, uid)
+        return outline
 
     @staticmethod
     def _get_ann_corners_ost(ann) -> list:
@@ -443,37 +539,12 @@ class SelectionManagerMixin:
         cs = self._scene_builder.get_coordinate_system()
         for uid in uids:
             ann = self._current_annotations.get(uid)
-            if ann and ann.is_text and len(ann.position) >= 4:
-                pos = ann.position
-                cx_o, cy_o, w_o, h_o = pos[0], pos[1], pos[2], pos[3]
-                rot_rad = ann.stored_rotation_rad
-                hw, hh = w_o / 2, h_o / 2
-                offsets = [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]
-                corners_ost = []
-                if rot_rad != 0.0:
-                    cos_r, sin_r = math.cos(rot_rad), math.sin(rot_rad)
-                    for dx, dy in offsets:
-                        corners_ost.extend(
-                            [
-                                cx_o + dx * cos_r - dy * sin_r,
-                                cy_o + dx * sin_r + dy * cos_r,
-                            ]
-                        )
-                else:
-                    for dx, dy in offsets:
-                        corners_ost.extend([cx_o + dx, cy_o + dy])
-                tx = cs.transform_vertices_to_2d(corners_ost)
-                path = QPainterPath()
-                p0 = self._pt_to_scene(tx[0], tx[1])
-                path.moveTo(p0)
-                for i in range(2, len(tx), 2):
-                    path.lineTo(self._pt_to_scene(tx[i], tx[i + 1]))
-                path.closeSubpath()
-                border = QGraphicsPathItem(path)
-                border.setPen(yellow_pen)
-                border.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-                border.setZValue(14)
-                border.setData(0, uid)
+            if ann and ann.is_text:
+                pts = self._text_annotation_resize_box_points(ann, cs)
+                if len(pts) < 4:
+                    continue
+                polygon = QPolygonF(pts)
+                border = self._make_text_annotation_outline_item(uid, polygon)
                 borders.append(border)
                 continue
             for item in self._uid_to_items.get(uid, []):
@@ -516,6 +587,11 @@ class SelectionManagerMixin:
                 return info.cursor
         scene_pos = self.mapToScene(vp_pos)
         for uid in self._selected_uids:
+            ann = self._current_annotations.get(uid)
+            if ann is not None and ann.is_text:
+                if self._text_annotation_contains_scene_point(uid, scene_pos):
+                    return Qt.CursorShape.SizeAllCursor
+                continue
             for item in self._uid_to_items.get(uid, []):
                 local = item.mapFromScene(scene_pos)
                 if isinstance(item, QGraphicsPathItem):

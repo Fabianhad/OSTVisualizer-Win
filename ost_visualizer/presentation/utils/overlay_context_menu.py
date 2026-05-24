@@ -30,41 +30,6 @@ def _overlay_checked_state(
     return show_original, show_overlay
 
 
-def add_overlay_submenu(
-    menu: QtWidgets.QMenu,
-    current_mode: int,
-    has_overlay_image: bool = True,
-    show_original_enabled: bool = True,
-    show_overlay_enabled: bool = True,
-) -> tuple[QtGui.QAction, QtGui.QAction]:
-    show_original, show_overlay = _overlay_checked_state(
-        current_mode, has_overlay_image
-    )
-    _submenu, actions = ContextMenuManager.add_submenu(
-        menu,
-        "Overlay",
-        (
-            ContextMenuManager.action_spec(
-                ContextActionId.SHOW_OVERLAY_IMAGE,
-                "Show Overlay Image",
-                enabled=show_overlay_enabled and has_overlay_image,
-                checkable=True,
-                checked=show_overlay,
-            ),
-            ContextMenuManager.action_spec(
-                ContextActionId.SHOW_ORIGINAL_IMAGE,
-                "Show Original Image",
-                enabled=show_original_enabled,
-                checkable=True,
-                checked=show_original,
-            ),
-        ),
-    )
-    overlay_action = actions[ContextActionId.SHOW_OVERLAY_IMAGE]
-    original_action = actions[ContextActionId.SHOW_ORIGINAL_IMAGE]
-    return (overlay_action, original_action)
-
-
 def add_overlay_submenu_with_select(
     menu: QtWidgets.QMenu,
     current_mode: int,

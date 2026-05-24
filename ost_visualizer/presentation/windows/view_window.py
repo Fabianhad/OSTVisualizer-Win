@@ -1,7 +1,8 @@
+from ..config import VIEW_WINDOW_TITLE
 from .components.window import DetachedPageViewWindow, DetachedPageViewWindowConfig
 
 _VIEW_WINDOW_CONFIG = DetachedPageViewWindowConfig(
-    window_title="View Window",
+    window_title=VIEW_WINDOW_TITLE,
     show_scale_combo=False,
     show_select_tool=False,
     default_cursor_mode="pan",

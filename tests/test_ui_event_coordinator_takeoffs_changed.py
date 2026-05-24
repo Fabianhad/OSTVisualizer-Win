@@ -2,6 +2,7 @@ import unittest
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyData
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
+    _MainThreadSignaler,
 )
 
 
@@ -209,6 +210,16 @@ class FakeVisualization:
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_main_thread_signaler_cleanup_releases_callback(self):
+        calls = []
+        signaler = _MainThreadSignaler()
+        callback = lambda: calls.append("called")
+        signaler.set_callback(callback)
+        signaler.cleanup()
+        signaler.request_update()
+        self.assertEqual(calls, [])
+        self.assertIsNone(signaler._callback)
+
     def test_takeoffs_changed_refreshes_page_indicator_and_area_usage(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = FakeUiState()

@@ -130,11 +130,11 @@ Claude Desktop / Cursor style configuration:
 
 The MCP server uses an internal stdlib stdio implementation. There is no
 separate MCP dependency install or extra MCP setup step. Production builds
-include a lightweight `ostv-mcp.exe` helper. Use `Tools > MCP Setup...` in the
-desktop app to copy client configuration for the packaged helper. The setup
-dialog only generates and copies text; it does not edit Claude Desktop, Cursor,
-or Codex configuration files. After adding the configuration, restart or reload
-your MCP client so it launches the helper:
+include a lightweight `ostv-mcp.exe` helper. Use `Tools > Options... > MCP Setup`
+in the desktop app to copy client configuration for the packaged helper. The
+setup tab only generates and copies text; it does not edit Claude Desktop,
+Cursor, or Codex configuration files. After adding the configuration, restart or
+reload your MCP client so it launches the helper:
 
 ```json
 {

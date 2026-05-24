@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 from PySide6.QtGui import QBrush, QColor, QPainterPath
-from PySide6.QtWidgets import QGraphicsPathItem
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem
 from ...application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ...domain.entities.condition import Condition
 from ...domain.entities.takeoff import Takeoff
@@ -18,7 +18,7 @@ class ITakeoffRenderer(Protocol):
         opacity: float = 0.5,
         page_info: Optional[Dict[str, Any]] = None,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
-    ) -> List[Tuple[str, QGraphicsPathItem | List[QGraphicsPathItem]]]: ...
+    ) -> List[Tuple[str, QGraphicsItem | List[QGraphicsItem]]]: ...
     def build_pattern_fill(
         self,
         path: QPainterPath,

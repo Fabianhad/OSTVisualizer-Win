@@ -1,7 +1,7 @@
 import json
 import unittest
 from pathlib import Path
-from ost_visualizer.presentation.dialogs.mcp_setup_config import (
+from ost_visualizer.application.services.mcp_setup_config import (
     MCP_HELPER_EXE_NAME,
     MCP_SERVER_NAME,
     build_claude_desktop_config,
