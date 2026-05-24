@@ -3,9 +3,15 @@ name: Architecture Check
 on:
   push:
     branches: [main]
-    paths: ["ost_visualizer/**/*.py", "tools/check_architecture.py"]
+    paths:
+      - "ost_visualizer/**/*.py"
+      - "tools/check_architecture.py"
+      - ".github/workflows/architecture.yml"
   pull_request:
-    paths: ["ost_visualizer/**/*.py", "tools/check_architecture.py"]
+    paths:
+      - "ost_visualizer/**/*.py"
+      - "tools/check_architecture.py"
+      - ".github/workflows/architecture.yml"
 
 jobs:
   check:
