@@ -365,15 +365,58 @@ namespace ost_pdf_writer
             << "(" << area_text << ") Tj ET Q ";
         return oss.str();
     }
+    static void add_bbox_point(std::array<double, 4> &bb, double x, double y)
+    {
+        if (x < bb[0])
+            bb[0] = x;
+        if (x > bb[2])
+            bb[2] = x;
+        if (y < bb[1])
+            bb[1] = y;
+        if (y > bb[3])
+            bb[3] = y;
+    }
+    struct ArrowGeometry
+    {
+        double left_x;
+        double left_y;
+        double right_x;
+        double right_y;
+    };
+    static ArrowGeometry compute_arrow_geometry(const BluebeamArrow &arrow)
+    {
+        double head_length = arrow.width * 8.0;
+        double head_width = arrow.width * 6.0;
+        double angle = std::atan2(arrow.y2 - arrow.y1, arrow.x2 - arrow.x1);
+        double back_x = arrow.x2 - head_length * std::cos(angle);
+        double back_y = arrow.y2 - head_length * std::sin(angle);
+        return {
+            back_x - head_width * std::sin(angle),
+            back_y + head_width * std::cos(angle),
+            back_x + head_width * std::sin(angle),
+            back_y - head_width * std::cos(angle)};
+    }
+    std::array<double, 4> compute_arrow_rect(const BluebeamArrow &arrow)
+    {
+        ArrowGeometry head = compute_arrow_geometry(arrow);
+        std::array<double, 4> bb{
+            std::min(arrow.x1, arrow.x2),
+            std::min(arrow.y1, arrow.y2),
+            std::max(arrow.x1, arrow.x2),
+            std::max(arrow.y1, arrow.y2)};
+        add_bbox_point(bb, head.left_x, head.left_y);
+        add_bbox_point(bb, head.right_x, head.right_y);
+        double padding = std::max(2.0, arrow.width);
+        bb[0] -= padding;
+        bb[1] -= padding;
+        bb[2] += padding;
+        bb[3] += padding;
+        return bb;
+    }
     std::string generate_bluebeam_arrow_dict(const BluebeamArrow &arrow)
     {
         std::ostringstream oss;
-        double padding_x = 22.0 + arrow.width * 1.5;
-        double padding_y = 6.0 + arrow.width * 0.75;
-        double rect_x1 = std::min(arrow.x1, arrow.x2) - padding_x;
-        double rect_y1 = std::min(arrow.y1, arrow.y2) - padding_y;
-        double rect_x2 = std::max(arrow.x1, arrow.x2) + padding_x;
-        double rect_y2 = std::max(arrow.y1, arrow.y2) + padding_y;
+        std::array<double, 4> rect = compute_arrow_rect(arrow);
         auto [stroke_r, stroke_g, stroke_b] = color_to_rgb(arrow.color);
         std::string pdf_date = arrow.created_date.empty() ? generate_pdf_date() : arrow.created_date;
         std::string nm = generate_nm();
@@ -385,12 +428,11 @@ namespace ost_pdf_writer
         oss << "/IC [ " << stroke_r << " " << stroke_g << " " << stroke_b << " ]\n";
         oss << "/IT /LineArrow\n";
         oss << "/L [ " << arrow.x1 << " " << arrow.y1 << " " << arrow.x2 << " " << arrow.y2 << " ]\n";
-        oss << "/LE [ /None /OpenArrow ]\n";
+        oss << "/LE [ /None /ClosedArrow ]\n";
         oss << "/M (" << pdf_date << ")\n";
         oss << "/NM (" << nm << ")\n";
-        oss << "/P 5 0 R\n";
         oss << "/PitchRun 12\n";
-        oss << "/Rect [ " << rect_x1 << " " << rect_y1 << " " << rect_x2 << " " << rect_y2 << " ]\n";
+        oss << "/Rect [ " << rect[0] << " " << rect[1] << " " << rect[2] << " " << rect[3] << " ]\n";
         oss << "/SlopeType 0\n";
         oss << "/Subj (Arrow)\n";
         oss << "/Subtype /Line\n";
@@ -402,28 +444,16 @@ namespace ost_pdf_writer
     std::string generate_arrow_appearance_stream(const BluebeamArrow &arrow)
     {
         auto [stroke_r, stroke_g, stroke_b] = color_to_rgb(arrow.color);
-        double arrow_head_length = arrow.width * 8.0;
-        double arrow_head_width = arrow.width * 6.0;
-        double dx = arrow.x2 - arrow.x1;
-        double dy = arrow.y2 - arrow.y1;
-        double angle = std::atan2(dy, dx);
-        double arrow_tip_x = arrow.x2;
-        double arrow_tip_y = arrow.y2;
-        double arrow_back_x = arrow_tip_x - arrow_head_length * std::cos(angle);
-        double arrow_back_y = arrow_tip_y - arrow_head_length * std::sin(angle);
-        double left_x = arrow_back_x - arrow_head_width * std::sin(angle);
-        double left_y = arrow_back_y + arrow_head_width * std::cos(angle);
-        double right_x = arrow_back_x + arrow_head_width * std::sin(angle);
-        double right_y = arrow_back_y - arrow_head_width * std::cos(angle);
+        ArrowGeometry head = compute_arrow_geometry(arrow);
         std::ostringstream oss;
         oss << stroke_r << " " << stroke_g << " " << stroke_b << " RG ";
         oss << stroke_r << " " << stroke_g << " " << stroke_b << " rg ";
         oss << arrow.width << " w ";
         oss << arrow.x1 << " " << arrow.y1 << " m ";
         oss << arrow.x2 << " " << arrow.y2 << " l S ";
-        oss << left_x << " " << left_y << " m ";
-        oss << arrow_tip_x << " " << arrow_tip_y << " l ";
-        oss << right_x << " " << right_y << " l b ";
+        oss << head.left_x << " " << head.left_y << " m ";
+        oss << arrow.x2 << " " << arrow.y2 << " l ";
+        oss << head.right_x << " " << head.right_y << " l b ";
         return oss.str();
     }
     std::string generate_bluebeam_rect_dict(const BluebeamRect &rect)
@@ -439,7 +469,6 @@ namespace ost_pdf_writer
         oss << "/F 4\n";
         oss << "/M (" << pdf_date << ")\n";
         oss << "/NM (" << nm << ")\n";
-        oss << "/P 5 0 R\n";
         oss << "/RD [ 2 2 2 2 ]\n";
         oss << "/Rect [ " << rect.min_x << " " << rect.min_y << " " << rect.max_x << " " << rect.max_y << " ]\n";
         oss << "/Subj (Rectangle)\n";
@@ -465,14 +494,19 @@ namespace ost_pdf_writer
         oss << x << " " << y << " " << w << " " << h << " re S ";
         return oss.str();
     }
+    std::array<double, 4> compute_line_rect(const BluebeamLine &line)
+    {
+        double padding = 5.0 + line.width;
+        return {
+            std::min(line.x1, line.x2) - padding,
+            std::min(line.y1, line.y2) - padding,
+            std::max(line.x1, line.x2) + padding,
+            std::max(line.y1, line.y2) + padding};
+    }
     std::string generate_bluebeam_line_dict(const BluebeamLine &line)
     {
         std::ostringstream oss;
-        double padding = 5.0 + line.width;
-        double rect_x1 = std::min(line.x1, line.x2) - padding;
-        double rect_y1 = std::min(line.y1, line.y2) - padding;
-        double rect_x2 = std::max(line.x1, line.x2) + padding;
-        double rect_y2 = std::max(line.y1, line.y2) + padding;
+        std::array<double, 4> rect = compute_line_rect(line);
         auto [stroke_r, stroke_g, stroke_b] = color_to_rgb(line.color);
         std::string pdf_date = line.created_date.empty() ? generate_pdf_date() : line.created_date;
         std::string nm = generate_nm();
@@ -485,9 +519,8 @@ namespace ost_pdf_writer
         oss << "/LE [ /None /None ]\n";
         oss << "/M (" << pdf_date << ")\n";
         oss << "/NM (" << nm << ")\n";
-        oss << "/P 5 0 R\n";
         oss << "/PitchRun 12\n";
-        oss << "/Rect [ " << rect_x1 << " " << rect_y1 << " " << rect_x2 << " " << rect_y2 << " ]\n";
+        oss << "/Rect [ " << rect[0] << " " << rect[1] << " " << rect[2] << " " << rect[3] << " ]\n";
         oss << "/SlopeType 0\n";
         oss << "/Subj (Line)\n";
         oss << "/Subtype /Line\n";
@@ -549,17 +582,6 @@ namespace ost_pdf_writer
             ny,
             dimension_text_width(dimension),
             font_size * 0.65};
-    }
-    static void add_bbox_point(std::array<double, 4> &bb, double x, double y)
-    {
-        if (x < bb[0])
-            bb[0] = x;
-        if (x > bb[2])
-            bb[2] = x;
-        if (y < bb[1])
-            bb[1] = y;
-        if (y > bb[3])
-            bb[3] = y;
     }
     std::array<double, 4> compute_dimension_rect(const BluebeamDimension &dimension)
     {
@@ -645,7 +667,6 @@ namespace ost_pdf_writer
         oss << "/M (" << pdf_date << ")\n";
         oss << "/MeasurementTypes 130\n";
         oss << "/NM (" << nm << ")\n";
-        oss << "/P 5 0 R\n";
         oss << "/PitchRun 12\n";
         oss << "/RC (<?xml version=\"1.0\"?>"
             << "<body xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\" "
@@ -719,7 +740,6 @@ namespace ost_pdf_writer
         oss << "/F 4\n";
         oss << "/M (" << pdf_date << ")\n";
         oss << "/NM (" << nm << ")\n";
-        oss << "/P 5 0 R\n";
         oss << "/RD [ 0.5 0.5 0.5 0.5 ]\n";
         oss << "/Rect [ " << oval.min_x << " " << oval.min_y << " " << oval.max_x << " " << oval.max_y << " ]\n";
         oss << "/Subj (Ellipse)\n";
@@ -783,7 +803,6 @@ namespace ost_pdf_writer
         }
         oss << "/M (" << pdf_date << ")\n";
         oss << "/NM (" << nm << ")\n";
-        oss << "/P 5 0 R\n";
         oss << "/Rect [ " << rect_x1 << " " << rect_y1 << " " << rect_x2 << " " << rect_y2 << " ]\n";
         oss << "/Subj (" << subject << ")\n";
         oss << "/Subtype /Polygon\n";
@@ -835,7 +854,6 @@ namespace ost_pdf_writer
         oss << "]\n";
         oss << "/M (" << pdf_date << ")\n";
         oss << "/NM (" << nm << ")\n";
-        oss << "/P 5 0 R\n";
         oss << "/Rect [ " << rect_x1 << " " << rect_y1 << " " << rect_x2 << " " << rect_y2 << " ]\n";
         oss << "/Subj (Pen)\n";
         oss << "/Subtype /Ink\n";
@@ -902,6 +920,18 @@ namespace ost_pdf_writer
         }
         return result;
     }
+    static int text_align_to_pdf_q(const std::string &align)
+    {
+        if (align == "center")
+        {
+            return 1;
+        }
+        if (align == "right")
+        {
+            return 2;
+        }
+        return 0;
+    }
     std::string generate_bluebeam_text_dict(const BluebeamText &text)
     {
         auto [r, g, b] = color_to_rgb(text.color);
@@ -927,6 +957,7 @@ namespace ost_pdf_writer
         oss << "/F 4\n";
         oss << "/M (" << pdf_date << ")\n";
         oss << "/NM (" << nm << ")\n";
+        oss << "/Q " << text_align_to_pdf_q(align) << "\n";
         oss << "/RC (<?xml version=\"1.0\"?>"
             << "<body xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\" "
             << "xfa:contentType=\"text/html\" "
@@ -949,7 +980,16 @@ namespace ost_pdf_writer
     {
         auto [r, g, b] = color_to_rgb(text.color);
         std::string escaped_content = escape_pdf_string(text.content);
+        double text_width = static_cast<double>(text.content.size()) * text.font_size * 0.55;
         double x_text = text.min_x + 3.0;
+        if (text.text_align == "center")
+        {
+            x_text = (text.min_x + text.max_x - text_width) / 2.0;
+        }
+        else if (text.text_align == "right")
+        {
+            x_text = text.max_x - text_width - 3.0;
+        }
         double y_text = text.min_y + 3.0 + text.font_size * 0.25;
         std::ostringstream oss;
         oss << "q 1 0 0 1 0 0 cm 1 1 1 rg "

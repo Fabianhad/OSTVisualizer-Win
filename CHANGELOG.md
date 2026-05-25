@@ -11,7 +11,7 @@
 - Added read-only MCP area context with area names on takeoffs/current context plus `list_areas` and `get_area_summary`.
 - Added separate Options controls for grid, PDF-line, takeoff, and right-angle snap thresholds.
 - Added embedded PDF text selection in the plan view with I-beam hover, drag-range highlighting, and copy support.
-- Added 2D rendering and Bluebeam-style PDF LineDimension export for imported BidDimensions annotations, including end ticks, feet/inches labels, text-label formatting, and measurement metadata for PDF tools.
+- Added 2D rendering and Bluebeam-style PDF LineDimension export for imported BidDimensions annotations, including end ticks, feet/inches labels, text-label formatting, measurement metadata, and corrected PDF appearance bounds.
 
 ### Changed
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.
@@ -30,6 +30,7 @@
 - Replaced the separate right-angle indicator preference with the `Snap to right angle` Snap Settings option and threshold while preserving configured mouse angle snapping.
 - Improved composite page rendering by preserving antialias coverage when tinting layered images.
 - Prioritized enabled overlay PDF layers for composite/overlay PDF snapping and embedded text selection, with overlay-only PDF rendering using dynamic base and tile refresh.
+- Improved native PDF export for line, arrow, shape, ink, and text annotations to better match Bluebeam/Revu markups and render line-based appearances correctly on first open.
 
 ### Fixed
 - Included the standalone `ostv-mcp.exe` helper and its runtime files in the desktop distribution so production MCP client config points to an installed executable.

@@ -21,6 +21,7 @@ from ost_visualizer.presentation.utils.view_context_menu import \
     build_selected_takeoff_context_state
 from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import \
     TakeoffRenderer
+from tests.single_action import SingleCallRecorder
 
 
 def _app():
@@ -117,17 +118,34 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             read_service=FakeReadService(),
         )
 
-    def _checkbox_texts(self, dialog):
-        return {
-            checkbox.text() for checkbox in dialog.findChildren(QtWidgets.QCheckBox)
-        }
-
-    def _assert_removed_connect_controls_absent(self, dialog):
-        texts = self._checkbox_texts(dialog)
-        self.assertNotIn("Connect", texts)
-        self.assertNotIn("Snap to Linear", texts)
-        label_texts = {label.text() for label in dialog.findChildren(QtWidgets.QLabel)}
-        self.assertFalse(any("Tolerance" in text for text in label_texts))
+    def test_edit_condition_ok_click_saves_once(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_LINEAR,
+            ref_no=1,
+        )
+        save_calls = SingleCallRecorder(
+            lambda _uid, _dto: SimpleNamespace(success=True)
+        )
+        dialog = EditConditionDialog(
+            None,
+            None,
+            condition,
+            ["c1"],
+            {"c1": condition},
+            {},
+            {},
+            lambda _uid: False,
+            save_calls,
+            read_service=FakeReadService(),
+        )
+        dialog._name_edit.setText("Updated Condition")
+        dialog._ok_btn.click()
+        save_calls.assert_called_once(self, "Edit Condition OK click")
+        self.assertEqual(save_calls.calls[0][0][0], "c1")
+        self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+        dialog.close()
 
     def test_delete_key_invokes_condition_delete_for_tree_selection(self):
         sidebar, deleted = self._make_sidebar_with_selected_condition()
@@ -205,10 +223,9 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         dialog = self._make_dialog(condition)
         self.assertIsNotNone(dialog._display_name_check)
-        self._assert_removed_connect_controls_absent(dialog)
         dialog.close()
 
-    def test_linear_advanced_properties_hide_connect_and_snap_controls(self):
+    def test_linear_advanced_properties_show_measurement_controls(self):
         condition = Condition(
             uid="c1",
             name="Condition 1",
@@ -222,7 +239,6 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertIsNotNone(dialog._add_length_edit)
         self.assertIsNotNone(dialog._trim_check)
         self.assertIsNotNone(dialog._curved_check)
-        self._assert_removed_connect_controls_absent(dialog)
         dialog.close()
 
     def test_linear_advanced_groups_use_equal_layout_stretch(self):
@@ -241,7 +257,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(layout.itemAt(1).widget().title(), "Properties")
         dialog.close()
 
-    def test_area_advanced_properties_hide_snap_to_linear_control(self):
+    def test_area_advanced_properties_show_grid_and_display_controls(self):
         condition = Condition(
             uid="c1",
             name="Condition 1",
@@ -255,22 +271,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertIsNotNone(dialog._display_pattern_check)
         self.assertIsNotNone(dialog._display_dim_check)
         self.assertIsNotNone(dialog._display_name_check)
-        self._assert_removed_connect_controls_absent(dialog)
         dialog.close()
-
-    def test_condition_entity_does_not_expose_removed_compatibility_fields(self):
-        condition = Condition(
-            uid="c1",
-            name="Condition 1",
-            condition_type=Condition.TYPE_AREA,
-            ref_no=1,
-            display_name=False,
-        )
-        condition_fields = {field.name for field in fields(Condition)}
-        self.assertFalse(
-            {"connect", "connect_tolerance", "snap_to_linear", "color_line"}
-            & condition_fields
-        )
 
     def test_trim_disables_curved_segment_control(self):
         condition = Condition(

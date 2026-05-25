@@ -70,19 +70,25 @@ class FakeProgressDialog:
         self.error = None
         self.cleaned_up = False
         self.deleted = False
+        self.exec_calls = 0
+        self.cleanup_calls = 0
+        self.delete_calls = 0
         self.messages = []
         if reporter is not None:
             reporter.progress.connect(self.messages.append)
         FakeProgressDialog.instances.append(self)
 
     def exec(self):
+        self.exec_calls += 1
         self.result = self.task_fn()
         return self.result_code
 
     def cleanup(self):
+        self.cleanup_calls += 1
         self.cleaned_up = True
 
     def deleteLater(self):
+        self.delete_calls += 1
         self.deleted = True
 
 
@@ -176,6 +182,9 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertEqual(dialog.action_text, "Creating database")
         self.assertEqual(window.app_controller.calls, [(None, True)])
         self.assertEqual(dialog.messages, ["schema tables"])
+        self.assertEqual(dialog.exec_calls, 1)
+        self.assertEqual(dialog.cleanup_calls, 1)
+        self.assertEqual(dialog.delete_calls, 1)
         self.assertTrue(dialog.cleaned_up)
         self.assertTrue(dialog.deleted)
 
@@ -197,6 +206,9 @@ class DialogLifecycleTests(unittest.TestCase):
 
         dialog = FakeProgressDialog.instances[0]
         self.assertIsNone(result)
+        self.assertEqual(dialog.exec_calls, 1)
+        self.assertEqual(dialog.cleanup_calls, 1)
+        self.assertEqual(dialog.delete_calls, 1)
         self.assertTrue(dialog.cleaned_up)
         self.assertTrue(dialog.deleted)
 

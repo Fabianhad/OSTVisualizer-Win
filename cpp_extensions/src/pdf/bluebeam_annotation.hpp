@@ -57,6 +57,7 @@ namespace ost_pdf_writer
     };
     std::string generate_bluebeam_arrow_dict(const BluebeamArrow &arrow);
     std::string generate_arrow_appearance_stream(const BluebeamArrow &arrow);
+    std::array<double, 4> compute_arrow_rect(const BluebeamArrow &arrow);
     struct BluebeamRect
     {
         double min_x;
@@ -93,6 +94,7 @@ namespace ost_pdf_writer
     };
     std::string generate_bluebeam_line_dict(const BluebeamLine &line);
     std::string generate_line_appearance_stream(const BluebeamLine &line);
+    std::array<double, 4> compute_line_rect(const BluebeamLine &line);
     struct BluebeamDimension
     {
         double x1;

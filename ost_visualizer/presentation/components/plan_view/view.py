@@ -59,6 +59,13 @@ from ...utils.color_swatch import rounded_color_swatch
 from ...utils.theme import set_palette_background
 from ...utils.themed_icon import apply_themed_icon, current_text_hex, recolor_svg
 from ...utils.zoom_debouncer import ZoomDebouncer
+from ...visualization.pdf.renderers.annotation_item_renderer import (
+    DIMENSION_FONT_SIZE_ADJUSTMENT,
+    update_dimension_text_item,
+)
+from ...visualization.pdf.renderers.annotation_renderer import (
+    calculate_dimension_geometry,
+)
 from ...visualization.utils.image_effects import page_effect_paper_color
 from ..viewer_cursors import OUTLINE_OFFSETS, recolor_pixmap
 from .components.drag_handler import DragHandlerMixin
@@ -78,13 +85,6 @@ from .components.pdf_text import PdfTextChar, PdfTextRect, PdfTextRun, PdfTextSe
 from .components.placement_mode import PlacementModeMixin
 from .components.selection_manager import SelectionManagerMixin
 from .components.zoom_handler import ZoomHandlerMixin
-from ...visualization.pdf.renderers.annotation_item_renderer import (
-    DIMENSION_FONT_SIZE_ADJUSTMENT,
-    update_dimension_text_item,
-)
-from ...visualization.pdf.renderers.annotation_renderer import (
-    calculate_dimension_geometry,
-)
 
 SLOPE_ROTATE_HANDLE_HEX = "#2f9e44"
 SLOPE_ROTATE_HANDLE_RGB = (47, 158, 68)

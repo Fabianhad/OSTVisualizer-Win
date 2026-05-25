@@ -933,6 +933,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         handler._clipboard_svc = FakeClipboard([source])
         handler.on_paste_requested()
+        self.assertEqual(len(write.calls), 1)
         self.assertEqual(write.calls[0][2][0].position, [50.0, 75.0, 54.0, 75.0])
         self.assertEqual(plan_view.intelligent_paste_calls, [(["100"], (10.0, 20.0))])
 
@@ -959,6 +960,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         handler._clipboard_svc = FakeClipboard([source])
         handler.on_paste_requested()
+        self.assertEqual(len(write.calls), 1)
         self.assertEqual(write.calls[0][2][0].position, [11.0, 21.0, 15.0, 21.0])
         self.assertEqual(plan_view.intelligent_paste_calls, [])
 
@@ -973,6 +975,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
         handler.on_paste_requested()
 
+        self.assertEqual(len(ann_write.insert_calls), 1)
         specs = ann_write.insert_calls[0][2]
         self.assertEqual(specs[0].position, [50.0, 75.0, 54.0, 75.0])
         self.assertEqual(plan_view.selected, {"ann-1"})
@@ -992,6 +995,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
         handler.on_paste_requested()
 
+        self.assertEqual(len(ann_write.insert_calls), 1)
         specs = ann_write.insert_calls[0][2]
         self.assertEqual(specs[0].position, [11.0, 21.0, 15.0, 21.0])
         self.assertEqual(plan_view.selected, {"ann-1"})
@@ -1012,6 +1016,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
         handler.on_paste_requested()
 
+        self.assertEqual(len(write.calls), 1)
+        self.assertEqual(len(ann_write.insert_calls), 1)
         self.assertEqual(write.calls[0][2][0].position, [50.0, 75.0, 54.0, 75.0])
         self.assertEqual(
             ann_write.insert_calls[0][2][0].position,
@@ -1038,6 +1044,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
         handler.on_paste_requested()
 
+        self.assertEqual(len(write.calls), 1)
+        self.assertEqual(len(ann_write.insert_calls), 1)
         self.assertEqual(write.calls[0][2][0].position, [11.0, 21.0, 15.0, 21.0])
         self.assertEqual(
             ann_write.insert_calls[0][2][0].position,
@@ -1062,6 +1070,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
         handler.on_paste_requested()
 
+        self.assertEqual(len(ann_write.insert_calls), 1)
         self.assertEqual(
             ann_write.insert_calls[0][2][0].position,
             [50.0, 75.0, 100.0, 50.0],

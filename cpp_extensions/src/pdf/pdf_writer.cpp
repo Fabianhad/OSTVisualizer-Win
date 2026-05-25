@@ -416,12 +416,9 @@ namespace ost_pdf_writer
             QPDFObjectHandle annot_obj = QPDFObjectHandle::parse(&output, annot_dict_str);
             annot_obj.replaceKey("/P", page_dict);
             std::string ap_content = generate_arrow_appearance_stream(arrow);
-            double padding = 5.0 + arrow.width * 2.0;
+            std::array<double, 4> rect = compute_arrow_rect(arrow);
             attach_appearance_stream(output, annot_obj, ap_content,
-                                     std::min(arrow.x1, arrow.x2) - padding,
-                                     std::min(arrow.y1, arrow.y2) - padding,
-                                     std::max(arrow.x1, arrow.x2) + padding,
-                                     std::max(arrow.y1, arrow.y2) + padding);
+                                     rect[0], rect[1], rect[2], rect[3]);
             QPDFObjectHandle annot = output.makeIndirectObject(annot_obj);
             annots.appendItem(annot);
         }
@@ -478,12 +475,9 @@ namespace ost_pdf_writer
             QPDFObjectHandle annot_obj = QPDFObjectHandle::parse(&output, annot_dict_str);
             annot_obj.replaceKey("/P", page_dict);
             std::string ap_content = generate_line_appearance_stream(line);
-            double padding = 5.0 + line.width;
+            std::array<double, 4> rect = compute_line_rect(line);
             attach_appearance_stream(output, annot_obj, ap_content,
-                                     std::min(line.x1, line.x2) - padding,
-                                     std::min(line.y1, line.y2) - padding,
-                                     std::max(line.x1, line.x2) + padding,
-                                     std::max(line.y1, line.y2) + padding);
+                                     rect[0], rect[1], rect[2], rect[3]);
             QPDFObjectHandle annot = output.makeIndirectObject(annot_obj);
             annots.appendItem(annot);
         }

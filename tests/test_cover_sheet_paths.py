@@ -1,8 +1,7 @@
 import unittest
 
-from ost_visualizer.infrastructure.mdb.components.settings_operations import (
-    SettingsOperationsMixin,
-)
+from ost_visualizer.infrastructure.mdb.components.settings_operations import \
+    SettingsOperationsMixin
 
 
 class _FakeSchema:
@@ -109,6 +108,10 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         )
 
         self.assertTrue(success)
+        self.assertEqual(
+            [update["table"] for update in ops.updates],
+            ["Bids", "BidPages"],
+        )
         bid_update = next(update for update in ops.updates if update["table"] == "Bids")
         page_update = next(
             update for update in ops.updates if update["table"] == "BidPages"

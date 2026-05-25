@@ -646,6 +646,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(label.toPlainText(), "21' - 3\"")
         self.assertEqual(annotation.properties["FontSize"], 24)
         self.assertFalse(view._condition_text_toolbar.isHidden())
+        self.assertEqual(len(emitted), 1)
         self.assertEqual(emitted[-1][1], "dimension")
         self.assertNotIn("Text", emitted[-1][3])
         self.assertNotIn("TextAlign", emitted[-1][3])
@@ -668,6 +669,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(annotation.color, "#445566")
         self.assertEqual(label.defaultTextColor().name(), "#445566")
         self.assertFalse(view._condition_text_toolbar.isHidden())
+        self.assertEqual(len(emitted), 1)
         self.assertEqual(emitted[-1][1], "dimension")
         self.assertEqual(emitted[-1][3]["FontColor"], 0x665544)
         self.assertNotIn("TextAlign", emitted[-1][3])
@@ -763,7 +765,11 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         item.setPlainText("After")
         view._finish_text_annotation_edit(commit=True)
         self.assertEqual(annotation.properties["Text"], "After")
-        self.assertEqual(emitted[-1][3]["Text"], "After")
+        self.assertEqual(len(emitted), 1)
+        self.assertEqual(emitted[0][0], "a1")
+        self.assertEqual(emitted[0][1], "text")
+        self.assertEqual(emitted[0][2]["Text"], "Before")
+        self.assertEqual(emitted[0][3]["Text"], "After")
         view.cleanup()
 
     def test_named_view_rename_uses_inline_edit_without_text_toolbar(self):
@@ -944,6 +950,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         size_index = view._condition_text_size_combo.findData(18)
         self.assertGreaterEqual(size_index, 0)
         view._condition_text_size_combo.setCurrentIndex(size_index)
+        self.assertEqual(len(emitted), 1)
+        self.assertEqual(emitted[-1][3]["FontSize"], 18)
         view._condition_text_size_combo.setFocus()
         QApplication.processEvents()
         view._on_scene_focus_item_changed(
@@ -954,7 +962,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(annotation.properties["FontSize"], 18)
         self.assertEqual(item.font().pointSize(), 54)
         self.assertTrue(annotation.properties["FontBold"])
-        self.assertEqual(emitted[-1][3]["FontSize"], 18)
+        self.assertEqual(len(emitted), 2)
+        self.assertEqual(emitted[-1][3]["FontBold"], True)
         view.cleanup()
 
     def test_selected_text_annotation_toolbar_restores_after_overlay_rebuild(self):

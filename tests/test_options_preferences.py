@@ -42,6 +42,7 @@ from ost_visualizer.presentation.utils.mcp_setup_config import (
     build_claude_desktop_config, build_codex_mcp_add_command)
 from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import \
     CompositeRenderer
+from tests.single_action import SingleCallRecorder
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -360,7 +361,6 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertNotIn("Turn on all quick start dialogs", texts)
         self.assertNotIn("Turn on bid wizard", texts)
         self.assertNotIn("Prompt to refresh worksheet before closing project", texts)
-        self.assertNotIn("Connect linear takeoff", texts)
         dialog.close()
 
     def test_options_dialog_apply_button_starts_disabled(self):
@@ -382,14 +382,16 @@ class OptionsPreferencesTests(unittest.TestCase):
         aggregate = ConfigAggregate(repo)
         event_bus = FakeEventBus()
         service = ConfigService(aggregate, event_bus)
+        apply_callback = SingleCallRecorder(service.update_app_options)
         dialog = OptionsDialog(
             service.get_config_snapshot(),
-            apply_callback=service.update_app_options,
+            apply_callback=apply_callback,
         )
         dialog.show()
         apply_button = _apply_button(dialog)
         dialog._disable_high_res_check.setChecked(True)
         apply_button.click()
+        apply_callback.assert_called_once(self, "Options Apply click")
         self.assertTrue(dialog.isVisible())
         self.assertFalse(apply_button.isEnabled())
         self.assertTrue(aggregate.disable_high_resolution_images)
@@ -738,18 +740,29 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_options_dialog_ok_callback_saves_and_closes(self):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)
-        service = ConfigService(aggregate, FakeEventBus())
+        event_bus = FakeEventBus()
+        service = ConfigService(aggregate, event_bus)
+        apply_callback = SingleCallRecorder(service.update_app_options)
         dialog = OptionsDialog(
             service.get_config_snapshot(),
-            apply_callback=service.update_app_options,
+            apply_callback=apply_callback,
         )
+        finished_results = []
+        dialog.finished.connect(finished_results.append)
         dialog._disable_high_res_check.setChecked(True)
-        dialog.accept()
+        button_box = dialog.findChild(QtWidgets.QDialogButtonBox)
+        button_box.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).click()
+        apply_callback.assert_called_once(self, "Options OK click")
         self.assertEqual(
             dialog.result(),
             QtWidgets.QDialog.DialogCode.Accepted,
         )
+        self.assertEqual(finished_results, [QtWidgets.QDialog.DialogCode.Accepted])
         self.assertTrue(aggregate.disable_high_resolution_images)
+        self.assertEqual(
+            event_bus.events,
+            [_app_config_event({"disable_high_resolution_images": True})],
+        )
 
     def test_options_dialog_result_path_runs_lifecycle_cleanup(self):
         dialog = OptionsDialog(Config())

@@ -15,17 +15,17 @@ from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.layer import Layer
 from ost_visualizer.domain.services.coordinate_transformation_service import \
     OSTCoordinateSystem
-from ost_visualizer.infrastructure.mdb.components.annotation_reader import \
-    AnnotationReaderMixin
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import \
     AnnotationOperationsMixin
+from ost_visualizer.infrastructure.mdb.components.annotation_reader import \
+    AnnotationReaderMixin
 from ost_visualizer.infrastructure.mdb.components.constants import \
     encode_position
+from ost_visualizer.presentation.components.plan_view.components.graphics_items import \
+    DIMENSION_LABEL_ITEM_KIND
 from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 from ost_visualizer.presentation.visualization.exporters.pdf_exporter import \
     PDFExporter
-from ost_visualizer.presentation.components.plan_view.components.graphics_items import \
-    DIMENSION_LABEL_ITEM_KIND
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import \
     AnnotationItemRenderer
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import (
@@ -396,6 +396,145 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertIn("/VP [", pdf_text)
         self.assertIn("/Type /Viewport", pdf_text)
 
+    def test_native_pdf_export_dimension_page_reference_matches_page_object(self):
+        pdf_text = self._write_native_pdf_with_dimension(
+            self._native_dimension(10.0, 20.0, 265.0, 20.0, "21' - 3\"")
+        )
+        page_to_annots = self._page_annotation_refs(pdf_text)
+        self.assertEqual(len(page_to_annots), 1)
+        page_object, annot_objects = next(iter(page_to_annots.items()))
+        self.assertEqual(len(annot_objects), 1)
+        annot_block = self._object_block(pdf_text, annot_objects[0])
+        self.assertIn("/IT /LineDimension", annot_block)
+        self.assertRegex(annot_block, rf"/P\s+{page_object}\s+0\s+R")
+
+    def test_native_pdf_export_dimensions_on_multiple_pages_reference_their_pages(self):
+        first = self._blank_page(400.0, 300.0)
+        first.dimensions = [
+            self._native_dimension(10.0, 20.0, 265.0, 20.0, "21' - 3\"")
+        ]
+        second = self._blank_page(500.0, 350.0)
+        second.dimensions = [
+            self._native_dimension(20.0, 30.0, 220.0, 30.0, "16' - 8\"")
+        ]
+
+        pdf_text = self._write_native_pdf_pages([first, second])
+
+        page_to_annots = self._page_annotation_refs(pdf_text)
+        self.assertEqual(len(page_to_annots), 2)
+        for page_object, annot_objects in page_to_annots.items():
+            self.assertEqual(len(annot_objects), 1)
+            annot_block = self._object_block(pdf_text, annot_objects[0])
+            self.assertIn("/IT /LineDimension", annot_block)
+            self.assertRegex(annot_block, rf"/P\s+{page_object}\s+0\s+R")
+
+    def test_native_pdf_export_supported_annotations_reference_their_pages(self):
+        first = self._blank_page(400.0, 300.0)
+        first.arrows = [self._native_arrow()]
+        first.rects = [self._native_rect()]
+        first.lines = [self._native_line()]
+        first.texts = [self._native_text("First page", "center")]
+
+        second = self._blank_page(500.0, 350.0)
+        second.ovals = [self._native_oval()]
+        second.polygons = [self._native_polygon()]
+        second.inks = [self._native_ink()]
+        second.texts = [self._native_text("Second page", "right")]
+
+        pdf_text = self._write_native_pdf_pages([first, second])
+
+        page_to_annots = self._page_annotation_refs(pdf_text)
+        self.assertEqual(len(page_to_annots), 2)
+        for page_object, annot_objects in page_to_annots.items():
+            self.assertGreater(len(annot_objects), 0)
+            for annot_object in annot_objects:
+                annot_block = self._object_block(pdf_text, annot_object)
+                self.assertRegex(annot_block, rf"/P\s+{page_object}\s+0\s+R")
+
+    def test_native_pdf_export_writes_bluebeam_like_supported_annotation_fields(self):
+        pdf_text = self._write_native_pdf(
+            arrows=[self._native_arrow()],
+            rects=[self._native_rect()],
+            lines=[self._native_line()],
+            ovals=[self._native_oval()],
+            polygons=[self._native_polygon()],
+            inks=[self._native_ink()],
+            texts=[self._native_text("Centered note", "center")],
+        )
+
+        arrow_block = self._annot_block_by_subject(pdf_text, "Arrow")
+        self.assertIn("/Subtype /Line", arrow_block)
+        self.assertIn("/IT /LineArrow", arrow_block)
+        self.assertIn("/LE [ /None /ClosedArrow ]", arrow_block)
+
+        line_block = self._annot_block_by_subject(pdf_text, "Line")
+        self.assertIn("/Subtype /Line", line_block)
+        self.assertIn("/LE [ /None /None ]", line_block)
+        self.assertNotIn("/IT /LineDimension", line_block)
+
+        rect_block = self._annot_block_by_subject(pdf_text, "Rectangle")
+        self.assertIn("/Subtype /Square", rect_block)
+        self.assertIn("/RD [ 2 2 2 2 ]", rect_block)
+
+        oval_block = self._annot_block_by_subject(pdf_text, "Ellipse")
+        self.assertIn("/Subtype /Circle", oval_block)
+        self.assertIn("/RD [ 0.5 0.5 0.5 0.5 ]", oval_block)
+
+        polygon_block = self._annot_block_by_subject(pdf_text, "Polygon")
+        self.assertIn("/Subtype /Polygon", polygon_block)
+        self.assertIn("/Vertices [", polygon_block)
+
+        ink_block = self._annot_block_by_subject(pdf_text, "Pen")
+        self.assertIn("/Subtype /Ink", ink_block)
+        self.assertIn("/InkList [", ink_block)
+
+        text_block = self._annot_block_by_subject(pdf_text, "Text Box")
+        self.assertIn("/Subtype /FreeText", text_block)
+        self.assertIn("/Contents (Centered note)", text_block)
+        self.assertIn("/RC (<?xml", text_block)
+        self.assertIn("/Q 1", text_block)
+        self.assertIn("text-align:center", text_block)
+        self.assertGreaterEqual(pdf_text.count("/AP <<"), 7)
+
+    def test_native_pdf_export_arrow_ap_bounds_include_drawn_arrowhead(self):
+        arrow = self._native_arrow()
+        arrow.x1 = 10.0
+        arrow.y1 = 20.0
+        arrow.x2 = 265.0
+        arrow.y2 = 20.0
+        arrow.width = 4.0
+        pdf_text = self._write_native_pdf(arrows=[arrow])
+
+        arrow_block = self._annot_block_by_subject(pdf_text, "Arrow")
+        rect = self._array_values(arrow_block, "Rect")
+        ap_block = self._ap_block_for_annotation(pdf_text, arrow_block)
+        bbox = self._array_values(ap_block, "BBox")
+
+        self.assertEqual(rect, bbox)
+        self.assertLessEqual(rect[0], 10.0)
+        self.assertLessEqual(rect[1], -4.0)
+        self.assertGreaterEqual(rect[2], 265.0)
+        self.assertGreaterEqual(rect[3], 44.0)
+        self.assertIn("/Matrix [ 1 0 0 1 ", ap_block)
+
+    def test_native_pdf_export_dimension_ap_bounds_match_rect_and_ticks(self):
+        dimension = self._native_dimension(10.0, 20.0, 265.0, 20.0, "21' - 3\"")
+        dimension.width = 4.0
+        dimension.font_size = 12.0
+        pdf_text = self._write_native_pdf_with_dimension(dimension)
+
+        dimension_block = self._annot_block_by_subject(pdf_text, "Length Measurement")
+        rect = self._array_values(dimension_block, "Rect")
+        ap_block = self._ap_block_for_annotation(pdf_text, dimension_block)
+        bbox = self._array_values(ap_block, "BBox")
+
+        self.assertEqual(rect, bbox)
+        self.assertLessEqual(rect[0], 10.0)
+        self.assertLessEqual(rect[1], 15.0)
+        self.assertGreaterEqual(rect[2], 265.0)
+        self.assertGreaterEqual(rect[3], 25.0)
+        self.assertIn("/Matrix [ 1 0 0 1 ", ap_block)
+
     def test_native_pdf_export_writes_bluebeam_style_dimension_measure_scale(self):
         dimension = self._native_dimension(10.0, 20.0, 265.0, 20.0, "21' - 3\"")
         dimension.scale_factor1 = 0.09375
@@ -432,32 +571,17 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertLess(rect_values[1], rect_values[3])
 
     def test_native_pdf_export_leaves_bid_aline_as_plain_line_annotation(self):
-        line = ost_pdf_writer.LineAnnotationData()
-        line.x1 = 10.0
-        line.y1 = 20.0
-        line.x2 = 265.0
-        line.y2 = 20.0
-        line.color = [255, 0, 0]
-        line.width = 1.0
-        pdf_text = self._write_native_pdf(lines=[line])
+        pdf_text = self._write_native_pdf(lines=[self._native_line()])
         self.assertIn("/Subtype /Line", pdf_text)
         self.assertIn("/Subj (Line)", pdf_text)
         self.assertIn("/LE [ /None /None ]", pdf_text)
         self.assertNotIn("/IT /LineDimension", pdf_text)
 
     def test_native_pdf_export_leaves_text_annotation_unchanged(self):
-        text = ost_pdf_writer.TextAnnotationData()
-        text.min_x = 10.0
-        text.min_y = 20.0
-        text.max_x = 150.0
-        text.max_y = 45.0
-        text.content = "Note"
-        text.font_size = 12.0
-        text.color = [0, 0, 0]
-        text.text_align = "left"
-        pdf_text = self._write_native_pdf(texts=[text])
+        pdf_text = self._write_native_pdf(texts=[self._native_text("Note", "left")])
         self.assertIn("/Subtype /FreeText", pdf_text)
         self.assertIn("/Subj (Text Box)", pdf_text)
+        self.assertIn("/Q 0", pdf_text)
         self.assertNotIn("/IT /LineDimension", pdf_text)
 
     def test_dimension_geometry_is_ignored_when_position_is_invalid(self):
@@ -481,18 +605,97 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         dimension.scale_factor2 = 72.0
         return dimension
 
+    def _native_arrow(self):
+        arrow = ost_pdf_writer.ArrowAnnotationData()
+        arrow.x1 = 10.0
+        arrow.y1 = 20.0
+        arrow.x2 = 110.0
+        arrow.y2 = 80.0
+        arrow.color = [255, 0, 0]
+        arrow.width = 1.5
+        return arrow
+
+    def _native_rect(self):
+        rect = ost_pdf_writer.RectAnnotationData()
+        rect.min_x = 25.0
+        rect.min_y = 30.0
+        rect.max_x = 125.0
+        rect.max_y = 90.0
+        rect.color = [0, 128, 255]
+        rect.width = 2.0
+        return rect
+
+    def _native_line(self):
+        line = ost_pdf_writer.LineAnnotationData()
+        line.x1 = 10.0
+        line.y1 = 20.0
+        line.x2 = 265.0
+        line.y2 = 20.0
+        line.color = [255, 0, 0]
+        line.width = 1.0
+        return line
+
+    def _native_oval(self):
+        oval = ost_pdf_writer.OvalAnnotationData()
+        oval.min_x = 35.0
+        oval.min_y = 40.0
+        oval.max_x = 135.0
+        oval.max_y = 100.0
+        oval.color = [0, 180, 90]
+        oval.width = 1.0
+        return oval
+
+    def _native_polygon(self):
+        polygon = ost_pdf_writer.PolygonAnnotationAnnotData()
+        polygon.vertices = [[30.0, 30.0], [90.0, 35.0], [70.0, 95.0]]
+        polygon.color = [128, 64, 255]
+        polygon.width = 1.0
+        polygon.is_cloud = False
+        return polygon
+
+    def _native_ink(self):
+        ink = ost_pdf_writer.InkAnnotationData()
+        ink.strokes = [[[20.0, 20.0], [40.0, 45.0], [70.0, 30.0]]]
+        ink.color = [50, 50, 50]
+        ink.width = 1.0
+        return ink
+
+    def _native_text(self, content, align):
+        text = ost_pdf_writer.TextAnnotationData()
+        text.min_x = 10.0
+        text.min_y = 20.0
+        text.max_x = 170.0
+        text.max_y = 55.0
+        text.content = content
+        text.font_size = 12.0
+        text.color = [0, 0, 0]
+        text.text_align = align
+        return text
+
     def _write_native_pdf_with_dimension(self, dimension):
         return self._write_native_pdf(dimensions=[dimension])
 
-    def _write_native_pdf(self, dimensions=None, lines=None, texts=None):
+    def _write_native_pdf(
+        self,
+        dimensions=None,
+        arrows=None,
+        rects=None,
+        lines=None,
+        ovals=None,
+        polygons=None,
+        inks=None,
+        texts=None,
+    ):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "dimension_export.pdf"
-            page = ost_pdf_writer.PageExportData()
-            page.is_blank = True
-            page.page_width = 400.0
-            page.page_height = 300.0
+            page = self._blank_page(400.0, 300.0)
             page.dimensions = dimensions or []
+            page.arrows = arrows or []
+            page.rects = rects or []
             page.lines = lines or []
+            page.ovals = ovals or []
+            page.polygons = polygons or []
+            page.inks = inks or []
             page.texts = texts or []
             writer = ost_pdf_writer.PDFWriter()
             self.assertTrue(
@@ -501,10 +704,77 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             )
             return output_path.read_bytes().decode("latin-1", errors="ignore")
 
+    def _blank_page(self, width, height):
+        page = ost_pdf_writer.PageExportData()
+        page.is_blank = True
+        page.page_width = width
+        page.page_height = height
+        return page
+
+    def _write_native_pdf_pages(self, pages):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "dimension_export.pdf"
+            writer = ost_pdf_writer.PDFWriter()
+            self.assertTrue(
+                writer.merge_pages_with_annotations(pages, str(output_path)),
+                writer.get_last_error(),
+            )
+            return output_path.read_bytes().decode("latin-1", errors="ignore")
+
     def _first_rect(self, pdf_text):
         match = re.search(r"/Rect \[\s*([^\]]+)\]", pdf_text)
         self.assertIsNotNone(match)
         return [float(value) for value in match.group(1).split()]
+
+    def _object_block(self, pdf_text, object_number):
+        match = re.search(
+            rf"{object_number}\s+0\s+obj\s*(.*?)\s*endobj",
+            pdf_text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        return match.group(1)
+
+    def _ap_block_for_annotation(self, pdf_text, annot_block):
+        match = re.search(r"/AP\s+<<\s*/N\s+(\d+)\s+0\s+R\s*>>", annot_block)
+        self.assertIsNotNone(match)
+        return self._object_block(pdf_text, int(match.group(1)))
+
+    def _array_values(self, object_block, key):
+        match = re.search(rf"/{key}\s+\[\s*([^\]]+)\]", object_block)
+        self.assertIsNotNone(match)
+        return [float(value) for value in match.group(1).split()]
+
+    def _annot_block_by_subject(self, pdf_text, subject):
+        for annot_block in self._annotation_blocks(pdf_text):
+            if f"/Subj ({subject})" in annot_block:
+                return annot_block
+        self.fail(f"Annotation with subject {subject!r} was not found")
+
+    def _annotation_blocks(self, pdf_text):
+        blocks = []
+        for match in re.finditer(r"\d+\s+0\s+obj\s*(.*?)\s*endobj", pdf_text, re.DOTALL):
+            object_body = match.group(1)
+            if "/Type /Annot" in object_body:
+                blocks.append(object_body)
+        return blocks
+
+    def _page_annotation_refs(self, pdf_text):
+        page_to_annots = {}
+        for match in re.finditer(r"(\d+)\s+0\s+obj\s*(.*?)\s*endobj", pdf_text, re.DOTALL):
+            object_number = int(match.group(1))
+            object_body = match.group(2)
+            if "/Type /Page" not in object_body or "/Type /Pages" in object_body:
+                continue
+            annots_match = re.search(r"/Annots\s+\[\s*([^\]]*)\]", object_body)
+            if annots_match is None:
+                continue
+            refs = [
+                int(ref)
+                for ref in re.findall(r"(\d+)\s+0\s+R", annots_match.group(1))
+            ]
+            page_to_annots[object_number] = refs
+        return page_to_annots
 
 
 if __name__ == "__main__":
