@@ -30,11 +30,13 @@ class EmployeesDialog(QtWidgets.QDialog):
         initial_first_name: Optional[str] = None,
         save_fn=None,
         pay_classes_save_fn=None,
+        menu_mode: bool = False,
     ):
         super().__init__(parent)
         self.icon_provider = icon_provider
         self._save_fn = save_fn
         self._pay_classes_save_fn = pay_classes_save_fn
+        self._menu_mode = menu_mode
         self._save_done: bool = False
         self._employees: List[EmployeeRecord] = []
         self._new_counter: int = 0
@@ -88,16 +90,18 @@ class EmployeesDialog(QtWidgets.QDialog):
         content_row.addWidget(self.tree, 1)
         btn_layout = QtWidgets.QVBoxLayout()
         btn_layout.setSpacing(COMPACT_SPACING)
-        self.btn_select = QtWidgets.QPushButton("Select")
+        self.btn_select = QtWidgets.QPushButton("OK" if self._menu_mode else "Select")
         self.btn_select.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
         self.btn_select.setDefault(True)
-        self.btn_select.setEnabled(False)
-        self.btn_select.clicked.connect(self._on_select)
+        self.btn_select.setEnabled(self._menu_mode)
+        self.btn_select.clicked.connect(self._on_accept_clicked)
         btn_layout.addWidget(self.btn_select)
-        self.btn_cancel = QtWidgets.QPushButton("Cancel")
-        self.btn_cancel.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
-        self.btn_cancel.clicked.connect(self.reject)
-        btn_layout.addWidget(self.btn_cancel)
+        self.btn_cancel = None
+        if not self._menu_mode:
+            self.btn_cancel = QtWidgets.QPushButton("Cancel")
+            self.btn_cancel.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
+            self.btn_cancel.clicked.connect(self.reject)
+            btn_layout.addWidget(self.btn_cancel)
         btn_layout.addSpacing(RELAXED_SPACING)
         self.btn_new = QtWidgets.QPushButton("New")
         self.btn_new.setFixedWidth(EMPLOYEES_BUTTON_WIDTH)
@@ -172,7 +176,7 @@ class EmployeesDialog(QtWidgets.QDialog):
             return
         selected = self.tree.selectedItems()
         count = len(selected)
-        self.btn_select.setEnabled(count == 1)
+        self.btn_select.setEnabled(self._menu_mode or count == 1)
         self.btn_change.setEnabled(count == 1)
         self.btn_delete.setEnabled(count > 0)
 
@@ -187,6 +191,12 @@ class EmployeesDialog(QtWidgets.QDialog):
         if selected:
             self._selected_uid = selected.data(0, self._UID_ROLE)
         self.accept()
+
+    def _on_accept_clicked(self) -> None:
+        if self._menu_mode:
+            self.accept()
+        else:
+            self._on_select()
 
     def _on_new(self) -> None:
         self._on_new_with_first_name("")

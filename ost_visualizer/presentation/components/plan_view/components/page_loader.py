@@ -2,8 +2,8 @@ import logging
 import math
 import weakref
 from typing import Any, Optional, Set
-from PySide6.QtCore import QRectF
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QPixmap, QTransform
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem
 from .....application.dtos.render_result_dto import RenderResult
 from .....domain.entities.page import Page
@@ -14,9 +14,11 @@ _RENDER_PRIORITY_REQUIRED_PAGE = 0
 _RENDER_PRIORITY_VISIBLE_TILE = 1
 _RENDER_PRIORITY_BUFFERED_TILE = 2
 _RENDER_PRIORITY_OPTIONAL_BASE = 3
-_SHOW_MODE_OVERLAY_ONLY = 2
+_SHOW_MODE_OVERLAY_ONLY = 1
 _PDF_TILE_TRANSITION_Z = 0.3
 _PDF_TILE_CURRENT_Z = 0.35
+_OVERLAY_TILE_TRANSITION_Z = 0.6
+_OVERLAY_TILE_CURRENT_Z = 0.65
 _TILE_BLEED_PX = 1
 _TILE_SCALE_LOG_STEP = 0.125
 _BASE_RASTER_SCALE_STEP = 0.25
@@ -107,7 +109,13 @@ class PageLoaderMixin:
         self._current_render_requests.append(request_id)
 
     def load_overlay_async(
-        self, page: Page, bid_ref, view_scale: float, show_mode: int, rotation: int
+        self,
+        page: Page,
+        bid_ref,
+        view_scale: float,
+        show_mode: int,
+        rotation: int,
+        render_scale: Optional[float] = None,
     ):
         if not page.overlay_image_path:
             return
@@ -119,6 +127,7 @@ class PageLoaderMixin:
             rotation=rotation,
             callback=self._on_overlay_loaded,
             priority=_RENDER_PRIORITY_REQUIRED_PAGE,
+            render_scale=render_scale,
         )
         self._current_render_requests.append(request_id)
 
@@ -172,7 +181,7 @@ class PageLoaderMixin:
         return max(1.0, float(self.devicePixelRatioF()))
 
     def _max_base_raster_scale(self) -> float:
-        raster_width_pts, raster_height_pts = self._rendered_pdf_page_dimensions()
+        raster_width_pts, raster_height_pts = self._active_tile_raster_dimensions()
         if raster_width_pts <= 0 or raster_height_pts <= 0:
             return _BASE_RASTER_MAX_SCALE
         budget_scale = math.sqrt(
@@ -222,6 +231,41 @@ class PageLoaderMixin:
             self._pdf_height_pts if pdf_height_pts is None else pdf_height_pts
         )
         return width, height
+
+    def _is_overlay_only_pdf_visual(self) -> bool:
+        page = self._current_page
+        return bool(
+            page
+            and self._loaded_visual_kind == "overlay"
+            and page.image_show_mode == _SHOW_MODE_OVERLAY_ONLY
+            and page.overlay_image_path
+            and page.overlay_image_path.lower().endswith(".pdf")
+        )
+
+    def _uses_dynamic_tile_coverage(self) -> bool:
+        return self._can_zoom_rerender or self._is_overlay_only_pdf_visual()
+
+    def _active_tile_raster_dimensions(self) -> tuple[float, float]:
+        if self._is_overlay_only_pdf_visual():
+            width = self._overlay_pdf_width_pts
+            height = self._overlay_pdf_height_pts
+            if width > 0.0 and height > 0.0:
+                return width, height
+        return self._rendered_pdf_page_dimensions()
+
+    def _overlay_pdf_tile_transform(self) -> QTransform:
+        page = self._current_page
+        transform = QTransform()
+        if page is None:
+            return transform
+        transform.translate(
+            page.overlay_offset_x * 72.0 * self._scene_scale,
+            page.overlay_offset_y * 72.0 * self._scene_scale,
+        )
+        total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
+        if total_rotation != 0:
+            transform.rotate(math.degrees(total_rotation))
+        return transform
 
     def _logical_page_scene_dimensions(
         self, data: dict, result: Optional[RenderResult] = None
@@ -315,15 +359,24 @@ class PageLoaderMixin:
         page = data["page"]
         view_scale = data["view_scale"]
         show_mode = data["show_mode"]
+        render_scale = data.get("overlay_render_scale", view_scale)
+        if (
+            page.overlay_image_path
+            and page.overlay_image_path.lower().endswith(".pdf")
+            and render_scale > 0
+        ):
+            self._overlay_pdf_width_pts = float(result.image.width()) / render_scale
+            self._overlay_pdf_height_pts = float(result.image.height()) / render_scale
         overlay_pixmap = QPixmap.fromImage(result.image)
         item = self._create_overlay_graphics_item(
-            overlay_pixmap, page, view_scale, show_mode
+            overlay_pixmap, page, view_scale, show_mode, render_scale
         )
         if item:
             self._clear_overlay_items()
             self._scene.addItem(item)
             self._overlay_items.append(item)
             self._loaded_visual_kind = "overlay"
+            self._base_raster_scale = data.get("base_raster_scale", render_scale)
             self._mark_load_geometry_ready()
 
     def _create_overlay_graphics_item(
@@ -332,6 +385,7 @@ class PageLoaderMixin:
         page: Page,
         view_scale: float,
         show_mode: int,
+        render_scale: float,
     ):
         item = QGraphicsPixmapItem(overlay_pixmap)
         item.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
@@ -342,10 +396,15 @@ class PageLoaderMixin:
         overlay_width = overlay_pixmap.width()
         overlay_height = overlay_pixmap.height()
         is_pdf = page.overlay_image_path.lower().endswith(".pdf")
-        if overlay_width > 0 and overlay_height > 0 and not is_pdf:
-            scale_x = expected_width / overlay_width
-            scale_y = expected_height / overlay_height
-            overlay_scale = min(scale_x, scale_y)
+        if is_pdf:
+            item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+        if overlay_width > 0 and overlay_height > 0:
+            if is_pdf:
+                overlay_scale = view_scale / render_scale if render_scale > 0 else 1.0
+            else:
+                scale_x = expected_width / overlay_width
+                scale_y = expected_height / overlay_height
+                overlay_scale = min(scale_x, scale_y)
             item.setScale(overlay_scale)
         offset_x_screen = page.overlay_offset_x * 72 * view_scale
         offset_y_screen = page.overlay_offset_y * 72 * view_scale
@@ -376,7 +435,7 @@ class PageLoaderMixin:
         if self._pdf_width_pts <= 0 or self._pdf_height_pts <= 0:
             return set()
         view_scale = self._scene_scale
-        raster_width_pts, raster_height_pts = self._rendered_pdf_page_dimensions()
+        raster_width_pts, raster_height_pts = self._active_tile_raster_dimensions()
         page_px_w = raster_width_pts * tile_scale
         page_px_h = raster_height_pts * tile_scale
         num_cols = math.ceil(page_px_w / self.TILE_SIZE_PX)
@@ -403,11 +462,7 @@ class PageLoaderMixin:
         view_scale = self._scene_scale
         tile_x, tile_y, tile_w, tile_h = self._get_tile_px_rect(key)
         bleed_left, bleed_top, bleed_right, bleed_bottom = self._get_tile_bleed_offsets(
-            tile_x,
-            tile_y,
-            tile_w,
-            tile_h,
-            key,
+            tile_x, tile_y, tile_w, tile_h, key
         )
         render_x = tile_x - bleed_left
         render_y = tile_y - bleed_top
@@ -422,7 +477,7 @@ class PageLoaderMixin:
 
     def _get_tile_local_rect(self, key: TileKey) -> QRectF:
         view_scale = self._scene_scale
-        raster_width_pts, raster_height_pts = self._rendered_pdf_page_dimensions()
+        raster_width_pts, raster_height_pts = self._active_tile_raster_dimensions()
         page_px_w = raster_width_pts * key.scale
         page_px_h = raster_height_pts * key.scale
         tile_x_px = key.col * self.TILE_SIZE_PX
@@ -436,7 +491,7 @@ class PageLoaderMixin:
         return QRectF(scene_x, scene_y, scene_w, scene_h)
 
     def _get_tile_px_rect(self, key: TileKey) -> tuple:
-        raster_width_pts, raster_height_pts = self._rendered_pdf_page_dimensions()
+        raster_width_pts, raster_height_pts = self._active_tile_raster_dimensions()
         page_px_w = int(raster_width_pts * key.scale)
         page_px_h = int(raster_height_pts * key.scale)
         tile_x = key.col * self.TILE_SIZE_PX
@@ -448,7 +503,7 @@ class PageLoaderMixin:
     def _get_tile_bleed_offsets(
         self, tile_x: int, tile_y: int, tile_w: int, tile_h: int, key: TileKey
     ) -> tuple:
-        raster_width_pts, raster_height_pts = self._rendered_pdf_page_dimensions()
+        raster_width_pts, raster_height_pts = self._active_tile_raster_dimensions()
         page_px_w = int(raster_width_pts * key.scale)
         page_px_h = int(raster_height_pts * key.scale)
         return (
@@ -490,9 +545,14 @@ class PageLoaderMixin:
                 self._remove_tile_item(item)
 
     def _demote_old_scale_tiles(self) -> None:
+        transition_z = (
+            _OVERLAY_TILE_TRANSITION_Z
+            if self._is_overlay_only_pdf_visual()
+            else _PDF_TILE_TRANSITION_Z
+        )
         for key, item in self._tile_items.items():
             if key.scale != self._tile_scale:
-                item.setZValue(_PDF_TILE_TRANSITION_Z)
+                item.setZValue(transition_z)
 
     def _tile_keys_local_rect(self, keys: Set[TileKey]) -> QRectF:
         rect = QRectF()
@@ -572,6 +632,21 @@ class PageLoaderMixin:
                 callback=on_tile_loaded,
                 priority=priority,
             )
+        elif self._is_overlay_only_pdf_visual():
+            req_id = self._rendering_service.render_region_async(
+                file_path=page.overlay_image_path,
+                page_index=0,
+                scale=key.scale,
+                rotation=_PLAN_VIEW_RASTER_ROTATION,
+                tile_x=tile_x,
+                tile_y=tile_y,
+                tile_w=tile_w,
+                tile_h=tile_h,
+                callback=on_tile_loaded,
+                priority=priority,
+                invert=page.invert,
+                bitonal=page.bitonal,
+            )
         else:
             req_id = self._rendering_service.render_region_async(
                 file_path=page.image_path,
@@ -622,11 +697,15 @@ class PageLoaderMixin:
                 float(result.image.height()),
             ),
         )
-        item.setZValue(_PDF_TILE_CURRENT_Z)
-        raster_width_pts, raster_height_pts = self._rendered_pdf_page_dimensions()
-        W = raster_width_pts * self._scene_scale
-        H = raster_height_pts * self._scene_scale
-        item.setTransform(self._get_page_transform(W, H))
+        if self._is_overlay_only_pdf_visual():
+            item.setZValue(_OVERLAY_TILE_CURRENT_Z)
+            item.setTransform(self._overlay_pdf_tile_transform())
+        else:
+            item.setZValue(_PDF_TILE_CURRENT_Z)
+            raster_width_pts, raster_height_pts = self._rendered_pdf_page_dimensions()
+            W = raster_width_pts * self._scene_scale
+            H = raster_height_pts * self._scene_scale
+            item.setTransform(self._get_page_transform(W, H))
         self._scene.addItem(item)
         self._tile_items[key] = item
         if not self._tile_requests:
@@ -663,6 +742,42 @@ class PageLoaderMixin:
             priority=_RENDER_PRIORITY_OPTIONAL_BASE,
             invert=page.invert,
             bitonal=page.bitonal,
+        )
+        self._base_raster_request_id = request_id
+        self._base_raster_request_scale = base_raster_scale
+        self._base_correction_request_generation_id = generation_id
+
+    def _request_optional_overlay_base_correction(
+        self, base_raster_scale: float, generation_id: int
+    ) -> None:
+        page = self._current_page
+        if not page or not page.overlay_image_path or not self._current_render_identity:
+            return
+        if self._tiles_active():
+            return
+        self._cancel_optional_base_correction()
+        load_token = self._current_load_token
+        render_identity = dict(self._current_render_identity)
+        weak_self = weakref.ref(self)
+
+        def on_base_loaded(
+            result: RenderResult, _scale: float = base_raster_scale
+        ) -> None:
+            view = weak_self()
+            if view is not None:
+                view._on_optional_overlay_base_correction_loaded(
+                    result, _scale, load_token, render_identity, generation_id
+                )
+
+        request_id = self._rendering_service.render_overlay_async(
+            page=page,
+            bid_ref=self._current_bid_ref,
+            view_scale=self._scene_scale,
+            show_mode=page.image_show_mode,
+            rotation=_PLAN_VIEW_RASTER_ROTATION,
+            callback=on_base_loaded,
+            priority=_RENDER_PRIORITY_OPTIONAL_BASE,
+            render_scale=base_raster_scale,
         )
         self._base_raster_request_id = request_id
         self._base_raster_request_scale = base_raster_scale
@@ -710,6 +825,35 @@ class PageLoaderMixin:
         self._apply_page_transform_to_items()
         self._update_scene_rect()
 
+    def _on_optional_overlay_base_correction_loaded(
+        self,
+        result: RenderResult,
+        base_raster_scale: float,
+        load_token: str,
+        render_identity: dict,
+        generation_id: int,
+    ) -> None:
+        if result.request_id != self._base_raster_request_id:
+            return
+        self._base_raster_request_id = None
+        self._base_raster_request_scale = 0.0
+        self._base_correction_request_generation_id = 0
+        if (
+            not result.success
+            or not result.image
+            or not self._is_current_async_result(load_token, render_identity)
+            or self._current_page is None
+            or self._is_stale_generation(generation_id)
+        ):
+            return
+        data = {
+            "page": self._current_page,
+            "view_scale": self._scene_scale,
+            "show_mode": self._current_page.image_show_mode,
+            "overlay_render_scale": base_raster_scale,
+        }
+        self._apply_overlay_result(data, result)
+
     def _update_optional_base_coverage(
         self, view_m11: float, generation_id: int
     ) -> None:
@@ -739,6 +883,35 @@ class PageLoaderMixin:
             return
         self._request_optional_base_correction(target_scale, generation_id)
 
+    def _update_optional_overlay_base_coverage(
+        self, view_m11: float, generation_id: int
+    ) -> None:
+        if (
+            not self._is_overlay_only_pdf_visual()
+            or self._pending_page_data is not None
+        ):
+            return
+        if self._disable_high_resolution_images:
+            target_scale = self._scene_scale
+        else:
+            view_transform_scale = view_m11 if view_m11 and view_m11 > 0 else 1.0
+            target_scale = self._quantize_base_raster_scale(
+                self._scene_scale * view_transform_scale * self._device_pixel_ratio()
+            )
+        active_request_scale = self._base_raster_request_scale
+        if (
+            active_request_scale
+            and abs(active_request_scale - target_scale) < 1e-6
+            and self._base_correction_request_generation_id == generation_id
+        ):
+            return
+        if (
+            self._base_raster_scale
+            and abs(self._base_raster_scale - target_scale) < 1e-6
+        ):
+            return
+        self._request_optional_overlay_base_correction(target_scale, generation_id)
+
     def _evict_tile_keys(self, keys) -> None:
         for key in keys:
             item = self._tile_items.pop(key, None)
@@ -749,11 +922,22 @@ class PageLoaderMixin:
                 self._rendering_service.cancel_request(req_id)
 
     def _update_tile_coverage(self, view_m11: float) -> None:
-        if not self._can_zoom_rerender or not self._current_page:
+        if not self._current_page:
+            return
+        overlay_only_pdf = self._is_overlay_only_pdf_visual()
+        if not (self._can_zoom_rerender or overlay_only_pdf):
             return
         if self._disable_high_resolution_images:
             self._clear_tiles()
             self._cancel_optional_base_correction()
+            if (
+                overlay_only_pdf
+                and abs((self._base_raster_scale or 0.0) - self._scene_scale) > 1e-6
+            ):
+                self._request_optional_overlay_base_correction(
+                    self._scene_scale,
+                    self._advance_render_generation(),
+                )
             return
         generation_id = self._advance_render_generation()
         raw_scale = self._compute_tile_scale(view_m11)
@@ -761,17 +945,23 @@ class PageLoaderMixin:
         base_scale = self._base_raster_scale or self._scene_scale
         if tile_scale <= base_scale * self._TILE_ACTIVATE_RATIO:
             self._clear_tiles()
-            self._update_optional_base_coverage(view_m11, generation_id)
+            if overlay_only_pdf:
+                self._update_optional_overlay_base_coverage(view_m11, generation_id)
+            else:
+                self._update_optional_base_coverage(view_m11, generation_id)
             return
         if tile_scale != self._tile_scale:
             self._tile_scale = tile_scale
             self._demote_old_scale_tiles()
         self._cancel_tile_requests()
         self._cancel_optional_base_correction()
-        raster_width_pts, raster_height_pts = self._rendered_pdf_page_dimensions()
-        W = raster_width_pts * self._scene_scale
-        H = raster_height_pts * self._scene_scale
-        T = self._get_page_transform(W, H)
+        if overlay_only_pdf:
+            T = self._overlay_pdf_tile_transform()
+        else:
+            raster_width_pts, raster_height_pts = self._rendered_pdf_page_dimensions()
+            W = raster_width_pts * self._scene_scale
+            H = raster_height_pts * self._scene_scale
+            T = self._get_page_transform(W, H)
         T_inv, invertible = T.inverted()
         viewport_polygon = self.mapToScene(self.viewport().rect())
         if invertible:
@@ -808,6 +998,7 @@ class PageLoaderMixin:
         for request_id in self._current_render_requests:
             self._rendering_service.cancel_request(request_id)
         self._current_render_requests.clear()
+        self._cancel_pdf_text_extraction()
         self._pending_page_data = None
         self._deferred_page_visual_result = None
         self._cancel_tile_requests()

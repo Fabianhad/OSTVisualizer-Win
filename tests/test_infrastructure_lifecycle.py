@@ -1,21 +1,20 @@
 import logging
+import tempfile
 import unittest
 from contextlib import contextmanager
+from pathlib import Path
 from types import MappingProxyType
+
 from ost_visualizer.infrastructure import providers
 from ost_visualizer.infrastructure.mdb import database_creator
-from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
-    AnnotationOperationsMixin,
-)
-from ost_visualizer.infrastructure.mdb.components.condition_operations import (
-    ConditionOperationsMixin,
-)
-from ost_visualizer.infrastructure.mdb.components.page_operations import (
-    PageOperationsMixin,
-)
-from ost_visualizer.infrastructure.services.license_validation_scheduler import (
-    LicenseValidationScheduler,
-)
+from ost_visualizer.infrastructure.mdb.components.annotation_operations import \
+    AnnotationOperationsMixin
+from ost_visualizer.infrastructure.mdb.components.condition_operations import \
+    ConditionOperationsMixin
+from ost_visualizer.infrastructure.mdb.components.page_operations import \
+    PageOperationsMixin
+from ost_visualizer.infrastructure.services.license_validation_scheduler import \
+    LicenseValidationScheduler
 
 
 class InfrastructureLifecycleTests(unittest.TestCase):
@@ -105,6 +104,42 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         self.assertTrue(fake_connection.cursor_instance.closed)
         self.assertTrue(fake_connection.rolled_back)
         self.assertTrue(fake_connection.closed)
+
+    def test_database_creator_reports_major_progress_stages(self):
+        class FakeDatabaseCreator(database_creator.DatabaseCreator):
+            def _create_blank_mdb(self, db_path):
+                Path(db_path).touch()
+
+            def _create_schema(self, db_path, progress_callback=None):
+                self._report_progress(progress_callback, "schema tables")
+                self._report_progress(progress_callback, "schema indexes")
+                self._report_progress(progress_callback, "schema relationships")
+
+            def _insert_seed_data(self, db_path, name, progress_callback=None):
+                self._report_progress(progress_callback, "default data")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "created.mdb"
+            reports = []
+            creator = FakeDatabaseCreator()
+            self.assertTrue(
+                creator.create_database(
+                    db_path,
+                    "Created",
+                    progress_callback=reports.append,
+                )
+            )
+        self.assertEqual(
+            reports,
+            [
+                "database file",
+                "schema tables",
+                "schema indexes",
+                "schema relationships",
+                "default data",
+                "finalizing",
+            ],
+        )
 
     def test_static_mdb_lookup_tables_are_immutable(self):
         self.assertIsInstance(

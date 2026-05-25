@@ -372,6 +372,8 @@ class DragHandlerMixin:
                     self._update_parent_hole_path(takeoff.parent_uid, uid, new_path)
                 elif self._has_child_holes(uid):
                     self._rebuild_parent_with_holes(uid, new_path)
+                else:
+                    self._refresh_condition_text_labels_for_takeoff(uid)
         elif len(tx) >= 2 and n_h >= 1:
             self._handle_infos[0].item.setPos(self._pt_to_scene(tx[0], tx[1]))
         if self._drag_handle_index >= 0 and len(tx) >= 4:
@@ -658,6 +660,7 @@ class DragHandlerMixin:
                     self._refresh_takeoff_pattern_preview(
                         parent_uid, item, combined, parent_condition
                     )
+                self._refresh_condition_text_labels_for_takeoff(parent_uid)
                 break
 
     def _has_child_holes(self, parent_uid: str) -> bool:
@@ -698,6 +701,7 @@ class DragHandlerMixin:
                     self._refresh_takeoff_pattern_preview(
                         parent_uid, item, combined, parent_condition
                     )
+                self._refresh_condition_text_labels_for_takeoff(parent_uid)
                 break
 
     def _validate_parent_contains_holes(

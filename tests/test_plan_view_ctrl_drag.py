@@ -6,27 +6,21 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainterPath, QPen, QTransform
-from PySide6.QtWidgets import (
-    QApplication,
-    QGraphicsPathItem,
-    QGraphicsScene,
-    QGraphicsTextItem,
-)
+from PySide6.QtWidgets import (QApplication, QGraphicsPathItem, QGraphicsScene,
+                               QGraphicsTextItem)
+
+from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.presentation.components.plan_view.components.drag_handler import (
-    DragHandlerMixin,
-)
-from ost_visualizer.presentation.components.plan_view.components.input_handler import (
-    InputHandlerMixin,
-)
-from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
-    NAMED_VIEW_LABEL_ITEM_KIND,
-)
-from ost_visualizer.presentation.components.plan_view.components.selection_manager import (
-    SelectionManagerMixin,
-)
+from ost_visualizer.presentation.components.plan_view.components.drag_handler import \
+    DragHandlerMixin
+from ost_visualizer.presentation.components.plan_view.components.graphics_items import \
+    NAMED_VIEW_LABEL_ITEM_KIND
+from ost_visualizer.presentation.components.plan_view.components.input_handler import \
+    InputHandlerMixin
+from ost_visualizer.presentation.components.plan_view.components.selection_manager import \
+    SelectionManagerMixin
 
 
 def _app():
@@ -93,6 +87,48 @@ class InputHandlerHarness(
     def _active_inline_text_editor_contains_scene_point(self, _scene_pos):
         return False
 
+    def _refresh_condition_text_labels_for_takeoff(self, takeoff_uid):
+        path_item = None
+        dimension_item = None
+        name_item = None
+        for item in self._uid_to_items.get(takeoff_uid, []):
+            if (
+                isinstance(item, QGraphicsPathItem)
+                and item.data(2) != "condition_label"
+            ):
+                path_item = item
+            elif (
+                isinstance(item, QGraphicsTextItem)
+                and item.data(2) == "condition_label"
+            ):
+                if item.data(3) == "display_dimension":
+                    dimension_item = item
+                elif item.data(3) == "display_name":
+                    name_item = item
+        if path_item is None:
+            return
+        center = path_item.path().boundingRect().center()
+        if dimension_item is not None:
+            bounds = dimension_item.boundingRect()
+            dimension_item.setPos(
+                center.x() - bounds.width() / 2.0,
+                center.y() - bounds.height() / 2.0,
+            )
+        if name_item is not None:
+            bounds = name_item.boundingRect()
+            if dimension_item is not None:
+                dim_bounds = dimension_item.boundingRect()
+                dim_center_x = dimension_item.pos().x() + dim_bounds.width() / 2.0
+                name_item.setPos(
+                    dim_center_x - bounds.width() / 2.0,
+                    dimension_item.pos().y() + dim_bounds.height() + 4.0,
+                )
+            else:
+                name_item.setPos(
+                    center.x() - bounds.width() / 2.0,
+                    center.y() - bounds.height() / 2.0,
+                )
+
 
 class FakeMouseEvent:
     def __init__(
@@ -135,6 +171,14 @@ class FakeKeyEvent:
 
     def isAutoRepeat(self):
         return False
+
+
+class FakeSignal:
+    def __init__(self):
+        self.emitted = []
+
+    def emit(self, *args):
+        self.emitted.append(args)
 
 
 class FakeItem:
@@ -232,7 +276,7 @@ class CtrlDragTests(unittest.TestCase):
         view._drag_uid_orig_items = {}
         view._drag_multi_orig_positions = {}
         view._drag_last_valid_new_pos = []
-        view._selected_uids = set(selected_uids or {"t1"})
+        view._selected_uids = set({"t1"} if selected_uids is None else selected_uids)
         view._handle_infos = []
         view._selection_items = []
         view._current_takeoffs = {
@@ -240,6 +284,7 @@ class CtrlDragTests(unittest.TestCase):
             "t2": SimpleNamespace(position=[20.0, 0.0, 30.0, 0.0], condition_uid="c"),
         }
         view._current_annotations = {}
+        view._hotlink_items = []
         view._current_conditions = {}
         view._uid_to_items = {"t1": [FakeItem(1.0, 2.0)], "t2": [FakeItem(3.0, 4.0)]}
         view._takeoff_items = []
@@ -282,6 +327,58 @@ class CtrlDragTests(unittest.TestCase):
         del view.find_takeoffs_at
         return view, item
 
+    def _make_hotlink_view(self, *, selected: bool):
+        view = self._make_view({"h1"} if selected else set())
+        view.hotlink_clicked = FakeSignal()
+        view._current_takeoffs = {}
+        view._current_annotations = {
+            "h1": BidAnnotation(
+                uid="h1",
+                annotation_type="hotlink",
+                position=[10.0, 10.0],
+                properties={"BidPageViewUID": "view-1"},
+            )
+        }
+        path = QPainterPath()
+        path.addEllipse(QtCore.QPointF(10.0, 10.0), 5.0, 5.0)
+        item = QGraphicsPathItem(path)
+        item.setData(0, "h1")
+        view._uid_to_items = {"h1": [item]}
+        view._hotlink_items = [
+            (
+                item,
+                HotlinkDto(
+                    uid="h1",
+                    bid_page_uid="page-1",
+                    target_view_uid="view-1",
+                    center_x=10.0,
+                    center_y=10.0,
+                    radius=5.0,
+                ),
+            )
+        ]
+        view.find_takeoff_at = lambda _scene_pos: None
+        view.find_takeoffs_at = lambda _scene_pos: []
+        view.mapToScene = lambda _point: QtCore.QPointF(10.0, 10.0)
+        return view
+
+    def _make_selected_path_takeoff_view(self):
+        view = self._make_view({"t1"})
+        view._scene = QGraphicsScene()
+        view._annotation_only_selection = False
+        path = QPainterPath()
+        path.addRect(0.0, 0.0, 10.0, 10.0)
+        item = QGraphicsPathItem(path)
+        item.setData(0, "t1")
+        view._scene.addItem(item)
+        view._uid_to_items = {"t1": [item]}
+        view.mapToScene = lambda point: QtCore.QPointF(point)
+        view.mapFromScene = lambda point: QtCore.QPoint(int(point.x()), int(point.y()))
+        view.transform = lambda: QTransform()
+        del view.find_takeoff_at
+        del view.find_takeoffs_at
+        return view
+
     def test_ctrl_left_press_uses_zoom_even_if_cached_ctrl_state_is_false(self):
         view = self._make_view()
         event = FakeMouseEvent(Qt.KeyboardModifier.ControlModifier)
@@ -291,6 +388,51 @@ class CtrlDragTests(unittest.TestCase):
         self.assertIsNone(view._drag_takeoff_uid)
         self.assertEqual(view._drag_handle_index, -2)
         self.assertEqual(view._drag_item_orig_positions, {})
+
+    def test_single_click_hotlink_does_not_select_it(self):
+        view = self._make_hotlink_view(selected=False)
+        view.find_takeoff_at = lambda _scene_pos: "h1"
+        event = FakeMouseEvent()
+        view.mousePressEvent(event)
+        self.assertTrue(event.accepted)
+        self.assertEqual(view._selected_uids, set())
+        self.assertIsNone(view._drag_takeoff_uid)
+
+    def test_selected_hotlink_center_press_does_not_start_drag(self):
+        view = self._make_hotlink_view(selected=True)
+        event = FakeMouseEvent()
+        view.mousePressEvent(event)
+        self.assertTrue(event.accepted)
+        self.assertIsNone(view._drag_takeoff_uid)
+        self.assertEqual(view._drag_orig_position, [])
+
+    def test_unselected_hotlink_release_still_activates_hotlink(self):
+        view = self._make_hotlink_view(selected=False)
+        press = FakeMouseEvent()
+        view.mousePressEvent(press)
+        release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(release)
+        self.assertTrue(release.accepted)
+        self.assertEqual(len(view.hotlink_clicked.emitted), 1)
+        self.assertEqual(view._selected_uids, set())
+
+    def test_selected_takeoff_hover_far_away_does_not_use_move_cursor(self):
+        view = self._make_selected_path_takeoff_view()
+        cursor = view._resolve_select_cursor(QtCore.QPoint(100, 100))
+        self.assertEqual(cursor, Qt.CursorShape.ArrowCursor)
+
+    def test_selected_takeoff_hover_on_hit_area_uses_move_cursor(self):
+        view = self._make_selected_path_takeoff_view()
+        cursor = view._resolve_select_cursor(QtCore.QPoint(5, 5))
+        self.assertEqual(cursor, Qt.CursorShape.SizeAllCursor)
+
+    def test_stale_move_drag_index_does_not_force_move_cursor_without_active_press(
+        self,
+    ):
+        view = self._make_selected_path_takeoff_view()
+        view._drag_handle_index = -1
+        cursor = view._resolve_cursor(QtCore.QPoint(100, 100))
+        self.assertEqual(cursor, Qt.CursorShape.ArrowCursor)
 
     def test_ctrl_left_press_blocks_multi_select_drag_setup(self):
         view = self._make_view({"t1", "t2"})
@@ -352,10 +494,8 @@ class CtrlDragTests(unittest.TestCase):
         view._drag_orig_position = [0.0, 0.0, 10.0, 0.0]
         view._drag_item_orig_positions = {id(overlay): overlay_orig}
         view._select_band_origin = QtCore.QPointF(10.0, 10.0)
-
         move = FakeMouseEvent(x=200, y=200, buttons=Qt.MouseButton.NoButton)
         view.mouseMoveEvent(move)
-
         self.assertIsNone(view._drag_takeoff_uid)
         self.assertEqual(view._drag_handle_index, -2)
         self.assertIsNone(view._select_band_origin)
@@ -448,6 +588,32 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(border1.pos(), QtCore.QPointF(307.0, 307.0))
         self.assertEqual(border2.pos(), QtCore.QPointF(408.0, 408.0))
 
+    def test_rotation_preview_does_not_rotate_condition_label_items(self):
+        view = self._make_view({"t1"})
+        view._cursor_mode = "rotate"
+        view._rotate_handle_item = QGraphicsPathItem()
+        view._rotate_handle_item.setPos(10.0, 0.0)
+        view._rotate_center_scene = QtCore.QPointF(0.0, 0.0)
+        view._rotate_handle_uid = "t1"
+        view._rotate_handle_radius = 10.0
+        view._rotate_handle_start_angle_deg = 0.0
+        view._is_rotatable_uid = lambda uid: uid == "t1"
+        view._current_takeoffs["t1"].rotation = 0.0
+        view._current_takeoffs["t1"].is_hole = False
+        path = QGraphicsPathItem()
+        path.setData(0, "t1")
+        label = QGraphicsTextItem("Display Name")
+        label.setData(0, "t1")
+        label.setData(2, "condition_label")
+        label.setData(3, "display_name")
+        view._uid_to_items = {"t1": [path, label]}
+        press = FakeMouseEvent(x=10, y=0)
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        self.assertTrue(view._rotation_drag_active)
+        self.assertIn(path, view._rotation_drag_preview_items)
+        self.assertNotIn(label, view._rotation_drag_preview_items)
+
     def _make_pattern_resize_view(self, condition_type):
         view = InputHandlerHarness()
         view._scene = QGraphicsScene()
@@ -517,6 +683,40 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(main_item.path().boundingRect().right(), 20.0)
         self.assertEqual(
             view._uid_to_items["t1"][1].path().boundingRect().right(), 20.0
+        )
+
+    def test_area_resize_preview_recenters_condition_labels(self):
+        view, main_item, _old_pattern = self._make_pattern_resize_view(
+            Condition.TYPE_AREA
+        )
+        dimension_label = QGraphicsTextItem("10 SF")
+        dimension_label.setData(0, "t1")
+        dimension_label.setData(2, "condition_label")
+        dimension_label.setData(3, "display_dimension")
+        dimension_label.setPos(200.0, 200.0)
+        name_label = QGraphicsTextItem("Area")
+        name_label.setData(0, "t1")
+        name_label.setData(2, "condition_label")
+        name_label.setData(3, "display_name")
+        name_label.setPos(200.0, 240.0)
+        view._scene.addItem(dimension_label)
+        view._scene.addItem(name_label)
+        view._uid_to_items["t1"].extend([dimension_label, name_label])
+        view.update_drag_handle_positions(
+            [0.0, 0.0, 20.0, 0.0, 20.0, 12.0, 0.0, 12.0], "t1"
+        )
+        dimension_bounds = dimension_label.boundingRect()
+        dimension_center = QtCore.QPointF(
+            dimension_label.pos().x() + dimension_bounds.width() / 2.0,
+            dimension_label.pos().y() + dimension_bounds.height() / 2.0,
+        )
+        name_bounds = name_label.boundingRect()
+        name_center_x = name_label.pos().x() + name_bounds.width() / 2.0
+        self.assertEqual(main_item.path().boundingRect().center(), dimension_center)
+        self.assertAlmostEqual(name_center_x, dimension_center.x())
+        self.assertEqual(
+            name_label.pos().y(),
+            dimension_label.pos().y() + dimension_bounds.height() + 4.0,
         )
 
     def test_linear_pattern_preview_refreshes_during_resize_drag(self):

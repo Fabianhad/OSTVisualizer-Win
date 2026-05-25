@@ -8,7 +8,7 @@ from ..repositories.i_config_repository import IConfigRepository
 class ConfigAggregate:
     VALID_COLOR_MODES = frozenset({"Solid", "Original", "Transparent"})
     VALID_ROPING_SELECTION_METHODS = frozenset({"touching", "inclusive"})
-    VALID_HOTLINK_TARGETS = frozenset({"annotation", "view"})
+    VALID_HOTLINK_TARGETS = frozenset({"annotation", "view", "main"})
     MIN_AUTO_ZOOM_LEVEL = 0
     MAX_AUTO_ZOOM_LEVEL = 1600
     VALID_MOUSE_SNAP_ANGLES = frozenset({0, 1, 2, 3, 4, 5, 10, 15, 30, 45, 90})
@@ -72,14 +72,6 @@ class ConfigAggregate:
         return self._config.default_auto_zoom_level
 
     @property
-    def show_right_angle_line_indicator(self) -> bool:
-        return self._config.show_right_angle_line_indicator
-
-    @property
-    def connect_linear_takeoff(self) -> bool:
-        return self._config.connect_linear_takeoff
-
-    @property
     def use_full_window_crosshairs(self) -> bool:
         return self._config.use_full_window_crosshairs
 
@@ -94,10 +86,6 @@ class ConfigAggregate:
     @property
     def allow_add_page_from_takeoff_tab(self) -> bool:
         return self._config.allow_add_page_from_takeoff_tab
-
-    @property
-    def enable_auto_dimension_lines(self) -> bool:
-        return self._config.enable_auto_dimension_lines
 
     @property
     def mouse_unpressed_snap_angle(self) -> int:
@@ -132,8 +120,12 @@ class ConfigAggregate:
         return self._config.snap_to_takeoffs_threshold_px
 
     @property
-    def right_angle_indicator_threshold_px(self) -> int:
-        return self._config.right_angle_indicator_threshold_px
+    def snap_to_right_angle_enabled(self) -> bool:
+        return self._config.snap_to_right_angle_enabled
+
+    @property
+    def snap_to_right_angle_threshold_px(self) -> int:
+        return self._config.snap_to_right_angle_threshold_px
 
     def snapshot(self) -> Config:
         return replace(self._config)
@@ -232,17 +224,12 @@ class ConfigAggregate:
             enable_intelligent_paste=bool(config.enable_intelligent_paste),
             enable_advanced_mouse_controls=bool(config.enable_advanced_mouse_controls),
             default_auto_zoom_level=auto_zoom_level,
-            show_right_angle_line_indicator=bool(
-                config.show_right_angle_line_indicator
-            ),
-            connect_linear_takeoff=bool(config.connect_linear_takeoff),
             use_full_window_crosshairs=bool(config.use_full_window_crosshairs),
             crosshair_color=crosshair_color,
             crosshair_line_thickness=crosshair_line_thickness,
             allow_add_page_from_takeoff_tab=bool(
                 config.allow_add_page_from_takeoff_tab
             ),
-            enable_auto_dimension_lines=bool(config.enable_auto_dimension_lines),
             mouse_unpressed_snap_angle=mouse_unpressed_snap_angle,
             mouse_pressed_snap_angle=mouse_pressed_snap_angle,
             snap_to_grid_enabled=bool(config.snap_to_grid_enabled),
@@ -255,8 +242,9 @@ class ConfigAggregate:
             snap_to_takeoffs_threshold_px=(
                 snap_thresholds["snap_to_takeoffs_threshold_px"]
             ),
-            right_angle_indicator_threshold_px=(
-                snap_thresholds["right_angle_indicator_threshold_px"]
+            snap_to_right_angle_enabled=bool(config.snap_to_right_angle_enabled),
+            snap_to_right_angle_threshold_px=(
+                snap_thresholds["snap_to_right_angle_threshold_px"]
             ),
         )
         self._config = validated
@@ -327,8 +315,8 @@ class ConfigAggregate:
             "snap_to_grid_threshold_px": config.snap_to_grid_threshold_px,
             "snap_to_pdf_lines_threshold_px": config.snap_to_pdf_lines_threshold_px,
             "snap_to_takeoffs_threshold_px": config.snap_to_takeoffs_threshold_px,
-            "right_angle_indicator_threshold_px": (
-                config.right_angle_indicator_threshold_px
+            "snap_to_right_angle_threshold_px": (
+                config.snap_to_right_angle_threshold_px
             ),
         }
         validated = {}

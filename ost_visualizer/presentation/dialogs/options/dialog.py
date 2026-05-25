@@ -87,25 +87,26 @@ class OptionsDialog(QtWidgets.QDialog):
         self._roping_inclusive_radio = tab.roping_inclusive_radio
         self._hotlink_view_radio = tab.hotlink_view_radio
         self._hotlink_annotation_radio = tab.hotlink_annotation_radio
+        self._hotlink_main_radio = tab.hotlink_main_radio
         self._page_index_check = tab.page_index_check
         self._sheet_number_check = tab.sheet_number_check
         self._disable_high_res_check = tab.disable_high_res_check
         self._intelligent_paste_check = tab.intelligent_paste_check
         self._advanced_mouse_controls_check = tab.advanced_mouse_controls_check
-        self._right_angle_indicator_check = tab.right_angle_indicator_check
-        self._connect_linear_takeoff_check = tab.connect_linear_takeoff_check
         self._full_window_crosshairs_check = tab.full_window_crosshairs_check
         self._crosshair_color_button = tab.crosshair_color_button
         self._crosshair_line_thickness_spin = tab.crosshair_line_thickness_spin
         self._allow_add_page_from_takeoff_check = tab.allow_add_page_from_takeoff_check
-        self._auto_dimension_lines_check = tab.auto_dimension_lines_check
         self._snap_to_grid_check = tab.snap_to_grid_check
         self._snap_to_grid_threshold_spin = tab.snap_to_grid_threshold_spin
         self._snap_to_pdf_lines_check = tab.snap_to_pdf_lines_check
         self._snap_to_pdf_lines_threshold_spin = tab.snap_to_pdf_lines_threshold_spin
         self._snap_to_takeoffs_check = tab.snap_to_takeoffs_check
         self._snap_to_takeoffs_threshold_spin = tab.snap_to_takeoffs_threshold_spin
-        self._right_angle_threshold_spin = tab.right_angle_threshold_spin
+        self._snap_to_right_angle_check = tab.snap_to_right_angle_check
+        self._snap_to_right_angle_threshold_spin = (
+            tab.snap_to_right_angle_threshold_spin
+        )
         self._mouse_unpressed_snap_angle_combo = tab.mouse_unpressed_snap_angle_combo
         self._mouse_pressed_snap_angle_combo = tab.mouse_pressed_snap_angle_combo
         self._auto_zoom_spin = tab.auto_zoom_spin
@@ -140,6 +141,9 @@ class OptionsDialog(QtWidgets.QDialog):
         self._hotlink_annotation_radio.setChecked(
             self._applied_config.hotlink_target == "annotation"
         )
+        self._hotlink_main_radio.setChecked(
+            self._applied_config.hotlink_target == "main"
+        )
         self._page_index_check.setChecked(
             self._applied_config.display_page_index_with_sheet_name
         )
@@ -156,12 +160,6 @@ class OptionsDialog(QtWidgets.QDialog):
             self._applied_config.enable_advanced_mouse_controls
         )
         self._auto_zoom_spin.setValue(self._applied_config.default_auto_zoom_level)
-        self._right_angle_indicator_check.setChecked(
-            self._applied_config.show_right_angle_line_indicator
-        )
-        self._connect_linear_takeoff_check.setChecked(
-            self._applied_config.connect_linear_takeoff
-        )
         self._full_window_crosshairs_check.setChecked(
             self._applied_config.use_full_window_crosshairs
         )
@@ -171,9 +169,6 @@ class OptionsDialog(QtWidgets.QDialog):
         )
         self._allow_add_page_from_takeoff_check.setChecked(
             self._applied_config.allow_add_page_from_takeoff_tab
-        )
-        self._auto_dimension_lines_check.setChecked(
-            self._applied_config.enable_auto_dimension_lines
         )
         self._snap_to_grid_check.setChecked(self._applied_config.snap_to_grid_enabled)
         self._snap_to_grid_threshold_spin.setValue(
@@ -191,8 +186,11 @@ class OptionsDialog(QtWidgets.QDialog):
         self._snap_to_takeoffs_threshold_spin.setValue(
             self._applied_config.snap_to_takeoffs_threshold_px
         )
-        self._right_angle_threshold_spin.setValue(
-            self._applied_config.right_angle_indicator_threshold_px
+        self._snap_to_right_angle_check.setChecked(
+            self._applied_config.snap_to_right_angle_enabled
+        )
+        self._snap_to_right_angle_threshold_spin.setValue(
+            self._applied_config.snap_to_right_angle_threshold_px
         )
         self._set_combo_by_data(
             self._mouse_unpressed_snap_angle_combo,
@@ -214,19 +212,18 @@ class OptionsDialog(QtWidgets.QDialog):
             self._roping_inclusive_radio,
             self._hotlink_view_radio,
             self._hotlink_annotation_radio,
+            self._hotlink_main_radio,
             self._page_index_check,
             self._sheet_number_check,
             self._disable_high_res_check,
             self._intelligent_paste_check,
             self._advanced_mouse_controls_check,
-            self._right_angle_indicator_check,
-            self._connect_linear_takeoff_check,
             self._full_window_crosshairs_check,
             self._allow_add_page_from_takeoff_check,
-            self._auto_dimension_lines_check,
             self._snap_to_grid_check,
             self._snap_to_pdf_lines_check,
             self._snap_to_takeoffs_check,
+            self._snap_to_right_angle_check,
         )
         for button in buttons:
             button.toggled.connect(self._update_apply_enabled)
@@ -249,7 +246,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._snap_to_takeoffs_threshold_spin.valueChanged.connect(
             self._update_apply_enabled
         )
-        self._right_angle_threshold_spin.valueChanged.connect(
+        self._snap_to_right_angle_threshold_spin.valueChanged.connect(
             self._update_apply_enabled
         )
         self._auto_zoom_spin.valueChanged.connect(self._update_apply_enabled)
@@ -268,9 +265,7 @@ class OptionsDialog(QtWidgets.QDialog):
             roping_selection_method=(
                 "inclusive" if self._roping_inclusive_radio.isChecked() else "touching"
             ),
-            hotlink_target=(
-                "view" if self._hotlink_view_radio.isChecked() else "annotation"
-            ),
+            hotlink_target=self._selected_hotlink_target(),
             display_page_index_with_sheet_name=self._page_index_check.isChecked(),
             display_sheet_number_with_sheet_name=self._sheet_number_check.isChecked(),
             disable_high_resolution_images=self._disable_high_res_check.isChecked(),
@@ -279,17 +274,12 @@ class OptionsDialog(QtWidgets.QDialog):
                 self._advanced_mouse_controls_check.isChecked()
             ),
             default_auto_zoom_level=self._auto_zoom_spin.value(),
-            show_right_angle_line_indicator=(
-                self._right_angle_indicator_check.isChecked()
-            ),
-            connect_linear_takeoff=self._connect_linear_takeoff_check.isChecked(),
             use_full_window_crosshairs=self._full_window_crosshairs_check.isChecked(),
             crosshair_color=self._crosshair_color_button.color(),
             crosshair_line_thickness=self._crosshair_line_thickness_spin.value(),
             allow_add_page_from_takeoff_tab=(
                 self._allow_add_page_from_takeoff_check.isChecked()
             ),
-            enable_auto_dimension_lines=self._auto_dimension_lines_check.isChecked(),
             mouse_unpressed_snap_angle=(
                 self._mouse_unpressed_snap_angle_combo.currentData()
             ),
@@ -304,8 +294,18 @@ class OptionsDialog(QtWidgets.QDialog):
             snap_to_takeoffs_threshold_px=(
                 self._snap_to_takeoffs_threshold_spin.value()
             ),
-            right_angle_indicator_threshold_px=self._right_angle_threshold_spin.value(),
+            snap_to_right_angle_enabled=self._snap_to_right_angle_check.isChecked(),
+            snap_to_right_angle_threshold_px=(
+                self._snap_to_right_angle_threshold_spin.value()
+            ),
         )
+
+    def _selected_hotlink_target(self) -> str:
+        if self._hotlink_view_radio.isChecked():
+            return "view"
+        if self._hotlink_main_radio.isChecked():
+            return "main"
+        return "annotation"
 
     def _set_combo_by_data(self, combo: QtWidgets.QComboBox, data: int) -> None:
         index = combo.findData(data)

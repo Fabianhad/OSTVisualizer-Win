@@ -148,6 +148,37 @@ Update docs in the same change when behavior changes:
 
 Keep `CHANGELOG.md` focused on the current unreleased section. Do not carry old released notes into a new unreleased section.
 
+Changelog entries are release-facing. They should describe the meaningful user-facing or maintainer-facing difference between the last released version and the next released version, not every intermediate development step.
+
+- Use `Added` for new user-visible features or capabilities.
+- Use `Changed` for user-visible behavior changes to existing features.
+- Use `Fixed` only for bugs or regressions that existed in a previous release or in a build users already received.
+- Use `Removed` for user-visible features, options, or workflows that were removed.
+- Use `Internal` or `Developer` only if the project already has that section and the change matters after release.
+
+If a bug is introduced and fixed entirely inside the same `Unreleased` cycle, do not add a separate `Fixed` entry. Update the original `Added` or `Changed` entry so it describes the final behavior.
+
+Example:
+
+```text
+Bad:
+- Added: Text annotation toolbar.
+- Fixed: Text annotation toolbar closed when changing font size.
+
+Better:
+- Added: Text annotation toolbar with persistent font, color, and alignment controls.
+```
+
+Do not add changelog entries for test cleanup, refactors, temporary debug logging, failed attempts, fixes to same-cycle unreleased bugs, architecture cleanup, dead-code removal, or formatting unless the result is directly user-facing or important for maintainers.
+
+Before editing `CHANGELOG.md`, ask:
+
+- Did this affect a released version or a build users already received?
+- Is this user-visible or maintainer-facing after release?
+- Is this only correcting a feature already listed under `Unreleased`?
+- Should an existing `Unreleased` entry be rewritten instead of adding another entry?
+- Would this entry still make sense after release?
+
 ## Static Analysis Notes
 
 Run `vulture ost_visualizer` after significant implementation work, but do not delete findings blindly. Common false positives include:

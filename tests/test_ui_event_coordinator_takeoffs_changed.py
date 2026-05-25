@@ -1,9 +1,8 @@
 import unittest
+
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyData
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-    _MainThreadSignaler,
-)
+    UIEventCoordinator, _MainThreadSignaler)
 
 
 class FakeUiState:
@@ -209,6 +208,38 @@ class FakeVisualization:
         self.monitoring_started += 1
 
 
+class FakeNav:
+    def __init__(self):
+        self.state = None
+
+    def transition_to(self, state):
+        self.state = state
+
+
+class FakeRefreshSnapshot:
+    def __init__(
+        self,
+        *,
+        bid_ref=None,
+        project_uid=None,
+        database_selected=False,
+        selected_file_path="active.mdb",
+    ):
+        self.bid_ref = bid_ref
+        self.project_uid = project_uid
+        self.database_selected = database_selected
+        self.selected_file_path = selected_file_path
+
+
+class FakeRefreshNav:
+    def __init__(self, snapshot):
+        self.refresh_snapshot = snapshot
+        self.state = None
+
+    def finish_refresh(self, state):
+        self.state = state
+
+
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
     def test_main_thread_signaler_cleanup_releases_callback(self):
         calls = []
@@ -230,6 +261,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._sidebar = FakeSidebar()
         coordinator._toolbar = FakeToolbar()
         coordinator.main_window = FakeMainWindow()
+        coordinator._pending_hotlink_page_uid = None
+        coordinator._pending_hotlink_named_view = None
         coordinator._on_takeoffs_changed(page_uid="page-1", takeoff_uids=["t-1"])
         self.assertEqual(coordinator.takeoff_sidebar.calls, [("page-1", True)])
         self.assertEqual(
@@ -259,11 +292,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.visualization_service = FakeVisualization()
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._toolbar = FakeToolbar()
-        coordinator._nav = type(
-            "FakeNav",
-            (),
-            {"transition_to": lambda self, state: setattr(self, "state", state)},
-        )()
+        coordinator._nav = FakeNav()
         coordinator._bid_data_cache = {}
         coordinator._takeoff_workspace_bid_ref = None
         coordinator._pending_takeoff_page_uids = None
@@ -315,24 +344,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=0)
         coordinator._reset_takeoff_workspace_state = lambda: None
         coordinator._update_export_menu_state = lambda: None
-        snapshot = type(
-            "Snapshot",
-            (),
-            {
-                "bid_ref": None,
-                "project_uid": None,
-                "database_selected": True,
-                "selected_file_path": "active.mdb",
-            },
-        )()
-        coordinator._nav = type(
-            "FakeNav",
-            (),
-            {
-                "refresh_snapshot": snapshot,
-                "finish_refresh": lambda self, state: setattr(self, "state", state),
-            },
-        )()
+        snapshot = FakeRefreshSnapshot(database_selected=True)
+        coordinator._nav = FakeRefreshNav(snapshot)
         coordinator._finish_refresh()
         self.assertEqual(
             coordinator.main_window.project_view.restored_file,
@@ -348,23 +361,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=0)
         coordinator._reset_takeoff_workspace_state = lambda: None
         coordinator._update_export_menu_state = lambda: None
-        snapshot = type(
-            "Snapshot",
-            (),
-            {
-                "bid_ref": None,
-                "project_uid": "project-1",
-                "selected_file_path": "active.mdb",
-            },
-        )()
-        coordinator._nav = type(
-            "FakeNav",
-            (),
-            {
-                "refresh_snapshot": snapshot,
-                "finish_refresh": lambda self, state: setattr(self, "state", state),
-            },
-        )()
+        snapshot = FakeRefreshSnapshot(project_uid="project-1")
+        coordinator._nav = FakeRefreshNav(snapshot)
         coordinator._finish_refresh()
         self.assertEqual(
             coordinator.main_window.project_view.restored_project,

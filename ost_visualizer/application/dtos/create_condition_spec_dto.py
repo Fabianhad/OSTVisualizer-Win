@@ -20,7 +20,6 @@ class CreateConditionSpec:
     pattern: int = 0
     spacing: float = 4.0
     color_fill: int = 0
-    color_line: int = 0
     uom1: int = 0
     uom2: int = -1
     uom3: int = -1
@@ -32,8 +31,6 @@ class CreateConditionSpec:
     drop_value: float = 0.0
     round_quantity: bool = False
     round_up: float = 0.0
-    connect: bool = True
-    connect_tolerance: float = 6.0
     trim: bool = False
     is_curved_segment: bool = False
     grid: bool = False
@@ -43,5 +40,4 @@ class CreateConditionSpec:
     display_dimension: bool = False
     display_name: bool = False
     display_grid_while_drawing: bool = False
-    snap_to_linear: int = -1
     folder_uid: Optional[str] = None

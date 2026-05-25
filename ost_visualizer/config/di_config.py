@@ -15,6 +15,7 @@ from ..infrastructure.providers import (
     RepositoryProvider,
 )
 from ..presentation.managers.annotation_view_manager import QtAnnotationViewManager
+from ..presentation.managers.main_hotlink_view_manager import QtMainHotlinkViewManager
 from ..presentation.managers.view_window_manager import QtViewWindowManager
 from ..presentation.services.qt_scene_notifier import QtSceneNotifier
 from ..presentation.utils.qt_callback_bridge import OstSignaler, QtCallbackBridge
@@ -58,9 +59,12 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
     ):
         coord_factory = infrastructure_provider.get_coordinate_transformer_factory()
         color_service = infrastructure_provider.get_color_service()
+        resolved_view_kind = str(view_kind).lower()
+        if resolved_view_kind == "main":
+            return QtMainHotlinkViewManager(parent_window)
         manager_cls = (
             QtAnnotationViewManager
-            if str(view_kind).lower() == "annotation"
+            if resolved_view_kind == "annotation"
             else QtViewWindowManager
         )
         return manager_cls(

@@ -3,7 +3,7 @@ import subprocess
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 import pyodbc
 
 _TABLE_DDL = [
@@ -1068,16 +1068,27 @@ class DatabaseCreator:
     def __init__(self, logger: Optional[logging.Logger] = None) -> None:
         self._logger = logger or logging.getLogger(__name__)
 
-    def create_database(self, db_path: Path, name: str) -> bool:
+    def create_database(
+        self,
+        db_path: Path,
+        name: str,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> bool:
         db_path = Path(db_path)
         if db_path.exists():
             self._logger.error("Database already exists: %s", db_path)
             return False
         try:
             db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._report_progress(progress_callback, "database file")
             self._create_blank_mdb(db_path)
-            self._create_schema(db_path)
-            self._insert_seed_data(db_path, name)
+            self._create_schema(db_path, progress_callback=progress_callback)
+            self._insert_seed_data(
+                db_path,
+                name,
+                progress_callback=progress_callback,
+            )
+            self._report_progress(progress_callback, "finalizing")
             return True
         except Exception as exc:
             self._logger.exception("Failed to create database %s: %s", db_path, exc)
@@ -1087,6 +1098,14 @@ class DatabaseCreator:
                 except OSError:
                     pass
             return False
+
+    def _report_progress(
+        self,
+        progress_callback: Optional[Callable[[str], None]],
+        description: str,
+    ) -> None:
+        if progress_callback is not None:
+            progress_callback(description)
 
     def _create_blank_mdb(self, db_path: Path) -> None:
         vbs_script = (
@@ -1114,7 +1133,11 @@ class DatabaseCreator:
             if vbs_path.exists():
                 vbs_path.unlink()
 
-    def _create_schema(self, db_path: Path) -> None:
+    def _create_schema(
+        self,
+        db_path: Path,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> None:
         conn_str = (
             "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};"
         )
@@ -1122,8 +1145,10 @@ class DatabaseCreator:
         cursor = None
         try:
             cursor = conn.cursor()
+            self._report_progress(progress_callback, "schema tables")
             for ddl in _TABLE_DDL:
                 cursor.execute(ddl)
+            self._report_progress(progress_callback, "schema indexes")
             for table, column in _FK_INDEXES:
                 cursor.execute(
                     f"CREATE INDEX [{table}_{column}] " f"ON [{table}] ([{column}])"
@@ -1132,6 +1157,7 @@ class DatabaseCreator:
             cursor.execute(
                 "CREATE UNIQUE INDEX [UI_Locking] " "ON [Locking] ([Essence], [Owner])"
             )
+            self._report_progress(progress_callback, "schema relationships")
             for child, child_col, parent, parent_col in _FK_RELATIONSHIPS:
                 cursor.execute(
                     f"ALTER TABLE [{child}] "
@@ -1148,7 +1174,12 @@ class DatabaseCreator:
                 cursor.close()
             conn.close()
 
-    def _insert_seed_data(self, db_path: Path, name: str) -> None:
+    def _insert_seed_data(
+        self,
+        db_path: Path,
+        name: str,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> None:
         conn_str = (
             "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};"
         )
@@ -1156,6 +1187,7 @@ class DatabaseCreator:
         cursor = None
         try:
             cursor = conn.cursor()
+            self._report_progress(progress_callback, "default data")
             now = datetime.now()
             cursor.execute(
                 "INSERT INTO [Settings] ([Name], [Created], [NextBidNo], "

@@ -3,11 +3,17 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
-from ost_visualizer.application.dtos.license_view_model_dto import LicenseViewModelDto
+
+from ost_visualizer.application.dtos.license_view_model_dto import \
+    LicenseViewModelDto
 from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.presentation.components.progress_dialog import ProgressDialog
-from ost_visualizer.presentation.coordinators.event_coordinator import EventCoordinator
+from ost_visualizer.presentation import main_window as main_window_module
+from ost_visualizer.presentation.components.progress_dialog import \
+    ProgressDialog
+from ost_visualizer.presentation.coordinators.event_coordinator import \
+    EventCoordinator
 from ost_visualizer.presentation.dialogs.license_dialog import LicenseDialog
+from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.dialog import BaseListDialog
 
 
@@ -41,6 +47,43 @@ class FakeLicenseOrchestrator:
 
     def has_valid_license(self):
         return False
+
+
+class FakeProgressDialog:
+    instances = []
+    result_code = QtWidgets.QDialog.DialogCode.Accepted
+
+    def __init__(
+        self,
+        filename,
+        task_fn,
+        parent=None,
+        reporter=None,
+        action_text="Processing",
+    ):
+        self.filename = filename
+        self.task_fn = task_fn
+        self.parent = parent
+        self.reporter = reporter
+        self.action_text = action_text
+        self.result = None
+        self.error = None
+        self.cleaned_up = False
+        self.deleted = False
+        self.messages = []
+        if reporter is not None:
+            reporter.progress.connect(self.messages.append)
+        FakeProgressDialog.instances.append(self)
+
+    def exec(self):
+        self.result = self.task_fn()
+        return self.result_code
+
+    def cleanup(self):
+        self.cleaned_up = True
+
+    def deleteLater(self):
+        self.deleted = True
 
 
 class DialogLifecycleTests(unittest.TestCase):
@@ -104,6 +147,58 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertIsNone(dialog._reporter)
         self.assertIsNone(dialog._label)
         self.assertIsNone(dialog._progress)
+
+    def test_create_database_uses_progress_dialog_worker_task(self):
+        class FakeAppController:
+            def __init__(self):
+                self.calls = []
+
+            def create_new_database(self, name=None, progress_callback=None):
+                self.calls.append((name, progress_callback is not None))
+                if progress_callback is not None:
+                    progress_callback("schema tables")
+                return "created.mdb"
+
+        window = MainWindow.__new__(MainWindow)
+        window.app_controller = FakeAppController()
+        original_dialog = main_window_module.ProgressDialog
+        FakeProgressDialog.instances = []
+        FakeProgressDialog.result_code = QtWidgets.QDialog.DialogCode.Accepted
+        try:
+            main_window_module.ProgressDialog = FakeProgressDialog
+            result = MainWindow._create_database_with_progress(window)
+        finally:
+            main_window_module.ProgressDialog = original_dialog
+
+        dialog = FakeProgressDialog.instances[0]
+        self.assertEqual(result, "created.mdb")
+        self.assertEqual(dialog.filename, "new database")
+        self.assertEqual(dialog.action_text, "Creating database")
+        self.assertEqual(window.app_controller.calls, [(None, True)])
+        self.assertEqual(dialog.messages, ["schema tables"])
+        self.assertTrue(dialog.cleaned_up)
+        self.assertTrue(dialog.deleted)
+
+    def test_create_database_progress_dialog_failure_cleans_up(self):
+        class FakeAppController:
+            def create_new_database(self, name=None, progress_callback=None):
+                return None
+
+        window = MainWindow.__new__(MainWindow)
+        window.app_controller = FakeAppController()
+        original_dialog = main_window_module.ProgressDialog
+        FakeProgressDialog.instances = []
+        FakeProgressDialog.result_code = QtWidgets.QDialog.DialogCode.Rejected
+        try:
+            main_window_module.ProgressDialog = FakeProgressDialog
+            result = MainWindow._create_database_with_progress(window)
+        finally:
+            main_window_module.ProgressDialog = original_dialog
+
+        dialog = FakeProgressDialog.instances[0]
+        self.assertIsNone(result)
+        self.assertTrue(dialog.cleaned_up)
+        self.assertTrue(dialog.deleted)
 
 
 if __name__ == "__main__":

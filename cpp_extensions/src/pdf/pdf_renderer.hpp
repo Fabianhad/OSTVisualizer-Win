@@ -24,6 +24,25 @@ namespace ost_pdf
         int intrinsic_rotation;
         std::string page_label;
     };
+    struct PDFTextChar
+    {
+        std::string text;
+        double left;
+        double right;
+        double bottom;
+        double top;
+        int page_index;
+    };
+    struct PDFTextRun
+    {
+        std::string text;
+        double left;
+        double right;
+        double bottom;
+        double top;
+        int page_index;
+        std::vector<PDFTextChar> chars;
+    };
     class PDFRenderer
     {
     public:
@@ -44,6 +63,7 @@ namespace ost_pdf
         std::vector<PageInfo> all_page_info() const;
         std::vector<std::tuple<float, float, float, float>> extract_path_segments(
             int page_index) const;
+        std::vector<PDFTextRun> extract_text_runs(int page_index) const;
         std::optional<RenderedPage> render_page(
             int page_index,
             float scale = 1.0f,

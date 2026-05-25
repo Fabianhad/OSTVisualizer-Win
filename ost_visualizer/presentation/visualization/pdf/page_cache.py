@@ -40,6 +40,7 @@ class PageCache:
         self._page_info_cache: Dict[str, Dict] = {}
         self._page_count_cache: Dict[str, int] = {}
         self._page_size_cache: Dict[str, tuple] = {}
+        self._text_runs_cache: Dict[str, list] = {}
         self._lock = threading.Lock()
         self._local = threading.local()
         self._renderers: List[PageRenderer] = []
@@ -231,6 +232,17 @@ class PageCache:
             self._page_size_cache[cache_key] = size
         return size
 
+    def get_text_runs(self, file_path: str, page_index: int = 0) -> list:
+        cache_key = f"{file_path}:{page_index}"
+        with self._lock:
+            if cache_key in self._text_runs_cache:
+                return list(self._text_runs_cache[cache_key])
+        renderer = self._get_renderer()
+        text_runs = renderer.extract_text_runs(file_path, page_index)
+        with self._lock:
+            self._text_runs_cache[cache_key] = list(text_runs)
+        return list(text_runs)
+
     def clear(self):
         with self._lock:
             self._cache.clear()
@@ -238,6 +250,7 @@ class PageCache:
             self._page_info_cache.clear()
             self._page_count_cache.clear()
             self._page_size_cache.clear()
+            self._text_runs_cache.clear()
         with self._renderers_lock:
             for renderer in self._renderers:
                 renderer.close()

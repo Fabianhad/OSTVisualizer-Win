@@ -2,7 +2,7 @@ import logging
 import threading
 from pathlib import Path
 from typing import Dict, Optional
-from PySide6.QtCore import Qt as Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QImageReader
 from .. import ost_pdf
 
@@ -210,6 +210,16 @@ class PageRenderer:
             info["pdf_width"] = width
             info["pdf_height"] = height
         return info
+
+    def extract_text_runs(self, file_path: str, page_index: int = 0) -> list:
+        path = Path(file_path)
+        if not path.exists() or path.suffix.lower() != ".pdf":
+            return []
+        with self._pdfium_lock:
+            renderer = self._ensure_pdf_open_locked(file_path)
+            if not renderer:
+                return []
+            return list(renderer.extract_text_runs(page_index))
 
     def close(self):
         with self._pdfium_lock:

@@ -3,8 +3,10 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
+
 from ost_visualizer.domain.entities.cover_sheet import JobStatus
-from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
+from ost_visualizer.presentation.dialogs.job_statuses_dialog import \
+    JobStatusesDialog
 
 
 def _app():

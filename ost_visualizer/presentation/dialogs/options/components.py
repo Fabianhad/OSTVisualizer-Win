@@ -17,12 +17,10 @@ from ...config import (
     OPTIONS_GROUP_SNAP_ANGLE,
     OPTIONS_LABEL_ADVANCED_MOUSE_CONTROLS,
     OPTIONS_LABEL_ALLOW_ADD_PAGE_FROM_TAKEOFF,
-    OPTIONS_LABEL_AUTO_DIMENSION_LINES,
     OPTIONS_LABEL_AUTO_ZOOM_OFF,
     OPTIONS_LABEL_COLOR_ORIGINAL,
     OPTIONS_LABEL_COLOR_SOLID,
     OPTIONS_LABEL_COLOR_TRANSPARENT,
-    OPTIONS_LABEL_CONNECT_LINEAR_TAKEOFF,
     OPTIONS_LABEL_CROSSHAIR_COLOR,
     OPTIONS_LABEL_CROSSHAIR_LINE_THICKNESS,
     OPTIONS_LABEL_DISABLE_HIGH_RESOLUTION_IMAGES,
@@ -34,8 +32,6 @@ from ...config import (
     OPTIONS_LABEL_HOTLINK_VIEW,
     OPTIONS_LABEL_INTELLIGENT_PASTE,
     OPTIONS_LABEL_PAGE_INDEX,
-    OPTIONS_LABEL_RIGHT_ANGLE_INDICATOR,
-    OPTIONS_LABEL_RIGHT_ANGLE_THRESHOLD,
     OPTIONS_LABEL_ROPING_INCLUSIVE,
     OPTIONS_LABEL_ROPING_METHOD,
     OPTIONS_LABEL_ROPING_TOUCHING,
@@ -44,6 +40,7 @@ from ...config import (
     OPTIONS_LABEL_SNAP_THRESHOLD_PX,
     OPTIONS_LABEL_SNAP_TO_GRID,
     OPTIONS_LABEL_SNAP_TO_PDF_LINES,
+    OPTIONS_LABEL_SNAP_TO_RIGHT_ANGLE,
     OPTIONS_LABEL_SNAP_TO_TAKEOFFS,
     OPTIONS_LABEL_TAKEOFF_COLOR_MODE,
     OPTIONS_MOUSE_SNAP_ANGLE_LABELS,
@@ -53,13 +50,13 @@ from ...config import (
     RELAXED_MARGINS,
     RELAXED_SPACING,
 )
+from ...utils.color_swatch import rounded_color_swatch
 from ...utils.mcp_setup_config import (
     build_claude_desktop_config,
     build_codex_mcp_add_command,
     default_file_state_path,
     default_mcp_helper_path,
 )
-from ...utils.color_swatch import rounded_color_swatch
 from ...utils.theme import get_dialog_header_font
 from ...utils.windows import remove_minimize_maximize
 
@@ -71,13 +68,6 @@ def disabled_check(label: str) -> QtWidgets.QCheckBox:
     check.setEnabled(False)
     check.setToolTip(OPTIONS_DEFERRED_TOOLTIP)
     return check
-
-
-def disabled_radio(label: str) -> QtWidgets.QRadioButton:
-    radio = QtWidgets.QRadioButton(label)
-    radio.setEnabled(False)
-    radio.setToolTip(OPTIONS_DEFERRED_TOOLTIP)
-    return radio
 
 
 class _ColorButton(QtWidgets.QPushButton):
@@ -194,7 +184,7 @@ class OptionsTab(QtWidgets.QWidget):
         self.hotlink_annotation_radio = QtWidgets.QRadioButton(
             OPTIONS_LABEL_HOTLINK_ANNOTATION
         )
-        self.hotlink_main_radio = disabled_radio(OPTIONS_LABEL_HOTLINK_MAIN)
+        self.hotlink_main_radio = QtWidgets.QRadioButton(OPTIONS_LABEL_HOTLINK_MAIN)
         self.hotlink_group = QtWidgets.QButtonGroup(self)
         self.hotlink_group.addButton(self.hotlink_view_radio)
         self.hotlink_group.addButton(self.hotlink_annotation_radio)
@@ -212,11 +202,11 @@ class OptionsTab(QtWidgets.QWidget):
         left_column.addWidget(self.page_index_check)
         self.sheet_number_check = QtWidgets.QCheckBox(OPTIONS_LABEL_SHEET_NUMBER)
         left_column.addWidget(self.sheet_number_check)
+        left_column.addStretch()
         self.disable_high_res_check = QtWidgets.QCheckBox(
             OPTIONS_LABEL_DISABLE_HIGH_RESOLUTION_IMAGES
         )
-        left_column.addWidget(self.disable_high_res_check)
-        left_column.addStretch()
+        right_column.addWidget(self.disable_high_res_check)
         self.intelligent_paste_check = QtWidgets.QCheckBox(
             OPTIONS_LABEL_INTELLIGENT_PASTE
         )
@@ -225,14 +215,6 @@ class OptionsTab(QtWidgets.QWidget):
             OPTIONS_LABEL_ADVANCED_MOUSE_CONTROLS
         )
         right_column.addWidget(self.advanced_mouse_controls_check)
-        self.right_angle_indicator_check = QtWidgets.QCheckBox(
-            OPTIONS_LABEL_RIGHT_ANGLE_INDICATOR
-        )
-        right_column.addWidget(self.right_angle_indicator_check)
-        self.connect_linear_takeoff_check = QtWidgets.QCheckBox(
-            OPTIONS_LABEL_CONNECT_LINEAR_TAKEOFF
-        )
-        right_column.addWidget(self.connect_linear_takeoff_check)
         self.full_window_crosshairs_check = QtWidgets.QCheckBox(
             OPTIONS_LABEL_FULL_WINDOW_CROSSHAIRS
         )
@@ -257,10 +239,6 @@ class OptionsTab(QtWidgets.QWidget):
             OPTIONS_LABEL_ALLOW_ADD_PAGE_FROM_TAKEOFF
         )
         right_column.addWidget(self.allow_add_page_from_takeoff_check)
-        self.auto_dimension_lines_check = QtWidgets.QCheckBox(
-            OPTIONS_LABEL_AUTO_DIMENSION_LINES
-        )
-        right_column.addWidget(self.auto_dimension_lines_check)
         for label in OPTIONS_DEFERRED_PREFERENCE_CHECKS:
             right_column.addWidget(disabled_check(label))
         right_column.addStretch()
@@ -326,11 +304,15 @@ class OptionsTab(QtWidgets.QWidget):
                 self.snap_to_takeoffs_threshold_spin, OPTIONS_LABEL_SNAP_THRESHOLD_PX
             ),
         )
-        self.right_angle_threshold_spin = self._build_snap_threshold_spin()
+        self.snap_to_right_angle_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_SNAP_TO_RIGHT_ANGLE
+        )
+        self.snap_to_right_angle_threshold_spin = self._build_snap_threshold_spin()
         layout.addRow(
-            OPTIONS_LABEL_RIGHT_ANGLE_THRESHOLD,
+            self.snap_to_right_angle_check,
             self._with_suffix(
-                self.right_angle_threshold_spin, OPTIONS_LABEL_SNAP_THRESHOLD_PX
+                self.snap_to_right_angle_threshold_spin,
+                OPTIONS_LABEL_SNAP_THRESHOLD_PX,
             ),
         )
         self.mouse_unpressed_snap_angle_combo = self._build_snap_angle_combo()

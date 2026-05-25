@@ -35,6 +35,7 @@ class IPageRenderingService(Protocol):
         rotation: int,
         callback: Callable[[RenderResult], None],
         priority: int = 0,
+        render_scale: float | None = None,
     ) -> str: ...
     def render_region_async(
         self,
@@ -63,6 +64,13 @@ class IPageRenderingService(Protocol):
         tile_h: int,
         callback: Callable[[RenderResult], None],
         priority: int = 1,
+    ) -> str: ...
+    def extract_pdf_text_async(
+        self,
+        file_path: str,
+        page_index: int,
+        callback: Callable[[RenderResult], None],
+        priority: int = 2,
     ) -> str: ...
     def cancel_request(self, request_id: str) -> None: ...
     def shutdown(self) -> None: ...

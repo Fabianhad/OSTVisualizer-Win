@@ -3,6 +3,7 @@ import logging
 import tempfile
 import unittest
 from pathlib import Path
+
 from ost_visualizer.mcp_server.registry import DatabaseRegistry
 
 

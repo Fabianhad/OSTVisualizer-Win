@@ -43,6 +43,9 @@ class AnnotationViewBuilder:
         self.container.register_singleton(
             "view_window_manager", self._create_view_manager
         )
+        self.container.register_singleton(
+            "main_hotlink_view_manager", self._create_main_hotlink_manager
+        )
 
     def _create_manager(self) -> IAnnotationViewManager:
         repository = self.container.get("annotation_view_repository")
@@ -58,6 +61,12 @@ class AnnotationViewBuilder:
         return self._create_shared_manager(
             repository=repository,
             view_kind="view",
+        )
+
+    def _create_main_hotlink_manager(self):
+        return self._create_shared_manager(
+            repository=None,
+            view_kind="main",
         )
 
     def _create_shared_manager(
@@ -92,6 +101,7 @@ class AnnotationViewBuilder:
         def create_open_view_use_case():
             manager = self.container.get("annotation_view_manager")
             view_window_manager = self.container.get("view_window_manager")
+            main_view_manager = self.container.get("main_hotlink_view_manager")
             project_data_service = self.container.get("project_data_service")
             config_model = self.container.get("config_model")
             return OpenAnnotationViewUseCase(
@@ -99,6 +109,7 @@ class AnnotationViewBuilder:
                 project_data=project_data_service,
                 config_model=config_model,
                 view_window_manager=view_window_manager,
+                main_view_manager=main_view_manager,
                 logger=self.logger.getChild("OpenAnnotationViewUseCase"),
             )
 

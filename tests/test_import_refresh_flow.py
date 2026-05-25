@@ -1,12 +1,13 @@
 import unittest
+
 from PySide6 import QtWidgets
+
 from ost_visualizer.application.services.import_service import ImportService
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
 from ost_visualizer.infrastructure.persistence.repositories.file_project_repository import (
-    FileProjectRepository,
-    _LoadedFileCache,
-)
-from ost_visualizer.presentation.handlers import import_handler as import_handler_module
+    FileProjectRepository, _LoadedFileCache)
+from ost_visualizer.presentation.handlers import \
+    import_handler as import_handler_module
 from ost_visualizer.presentation.handlers.import_handler import ImportHandler
 
 

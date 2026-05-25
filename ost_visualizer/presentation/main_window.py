@@ -6,6 +6,7 @@ from PySide6.QtCore import Signal
 from ..application.events.app_events import AppEvents
 from ..domain.entities.file_state import normalize_path
 from .builders.component_builder import ComponentBuilder
+from .components.progress_dialog import ProgressDialog, ProgressReporter
 from .config import (
     DEFAULT_WINDOW_HEIGHT,
     DEFAULT_WINDOW_WIDTH,
@@ -57,6 +58,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._needs_create_database_prompt = False
         self.splash_screen = splash_screen
         self.app_controller = app_controller
+        app_controller.container.register_instance("main_window", self)
         self.event_bus = app_controller.get_service("event_bus")
         self.license_orchestrator = app_controller.get_service("license_orchestrator")
         self._config_model = app_controller.get_service("config_model")
@@ -491,7 +493,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
         finally:
             dialog.deleteLater()
-        db_path = self.app_controller.create_new_database()
+        db_path = self._create_database_with_progress()
         if not db_path:
             show_warning(
                 self,
@@ -505,6 +507,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 AppEvents.FILE_OPENED,
                 file_path=result.file_path,
             )
+
+    def _create_database_with_progress(self) -> str | None:
+        reporter = ProgressReporter()
+        progress = ProgressDialog(
+            "new database",
+            lambda: self.app_controller.create_new_database(
+                progress_callback=reporter.report
+            ),
+            parent=self,
+            reporter=reporter,
+            action_text="Creating database",
+        )
+        try:
+            rc = progress.exec()
+            result = progress.result
+            worker_error = progress.error
+        finally:
+            progress.cleanup()
+            progress.deleteLater()
+        if rc == QtWidgets.QDialog.DialogCode.Accepted and result:
+            return result
+        if worker_error is not None:
+            logger.error(
+                "Create database worker raised: %s",
+                worker_error,
+                exc_info=True,
+            )
+        return None
 
     def _sync_database_monitoring(self) -> None:
         if self._project_data_service.has_loaded_files():
@@ -930,6 +960,11 @@ class MainWindow(QtWidgets.QMainWindow):
         index = 1 if str(active_view).lower() == "2d" else 0
         if self._view_stack.currentIndex() != index:
             self._view_stack.setCurrentIndex(index)
+
+    def navigate_to_hotlink_page(self, page_uid: str, named_view_uid: str = "") -> None:
+        self.handlers.ui_event.navigate_to_takeoff_page(page_uid, named_view_uid)
+        self.set_active_takeoff_view("2d")
+        self.handlers.ui_event.apply_pending_hotlink_view_focus()
 
     def is_takeoff_2d_tab_visible(self) -> bool:
         return self._view_2d_action.isVisible()

@@ -342,6 +342,7 @@ class PlanViewActionHandler:
         )
         if not success:
             return
+        self._publish_named_view_renames(new_updates)
         old_updates = [
             (uid, ann_type, dict(old_props))
             for uid, ann_type, old_props, _new_props in changes
@@ -352,12 +353,30 @@ class PlanViewActionHandler:
         ann_write_svc = self._ann_write_svc
 
         def _undo_text_properties():
-            ann_write_svc.save_annotation_text_properties(db_path, old_updates)
+            if ann_write_svc.save_annotation_text_properties(db_path, old_updates):
+                self._publish_named_view_renames(old_updates)
 
         def _redo_text_properties():
-            ann_write_svc.save_annotation_text_properties(db_path, new_updates)
+            if ann_write_svc.save_annotation_text_properties(db_path, new_updates):
+                self._publish_named_view_renames(new_updates)
 
         self._undo_svc.push(_undo_text_properties, _redo_text_properties)
+
+    def _publish_named_view_renames(self, updates: list) -> None:
+        renames = [
+            (str(uid), str(properties["Text"] or ""))
+            for uid, ann_type, properties in updates
+            if ann_type == "namedview" and "Text" in properties
+        ]
+        if not renames:
+            return
+        self._data_svc.update_named_view_names(renames)
+        for uid, name in renames:
+            self._event_bus.publish(
+                AppEvents.NAMED_VIEW_RENAMED,
+                named_view_uid=uid,
+                name=name,
+            )
 
     def on_annotation_text_and_positions_flushed(
         self, text_changes: list, ann_position_changes: list

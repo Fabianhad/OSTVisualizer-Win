@@ -25,13 +25,10 @@ class Config:
     enable_intelligent_paste: bool = True
     enable_advanced_mouse_controls: bool = True
     default_auto_zoom_level: int = DEFAULT_AUTO_ZOOM_LEVEL
-    show_right_angle_line_indicator: bool = False
-    connect_linear_takeoff: bool = True
     use_full_window_crosshairs: bool = False
     crosshair_color: str = DEFAULT_CROSSHAIR_COLOR
     crosshair_line_thickness: int = DEFAULT_CROSSHAIR_LINE_THICKNESS
     allow_add_page_from_takeoff_tab: bool = False
-    enable_auto_dimension_lines: bool = False
     mouse_unpressed_snap_angle: int = DEFAULT_MOUSE_UNPRESSED_SNAP_ANGLE
     mouse_pressed_snap_angle: int = DEFAULT_MOUSE_PRESSED_SNAP_ANGLE
     snap_to_grid_enabled: bool = True
@@ -40,7 +37,8 @@ class Config:
     snap_to_pdf_lines_threshold_px: int = DEFAULT_SNAP_THRESHOLD_PX
     snap_to_takeoffs_enabled: bool = True
     snap_to_takeoffs_threshold_px: int = DEFAULT_SNAP_THRESHOLD_PX
-    right_angle_indicator_threshold_px: int = DEFAULT_SNAP_THRESHOLD_PX
+    snap_to_right_angle_enabled: bool = False
+    snap_to_right_angle_threshold_px: int = DEFAULT_SNAP_THRESHOLD_PX
 
     def to_dict(self) -> dict:
         return {
@@ -59,13 +57,10 @@ class Config:
             "enable_intelligent_paste": self.enable_intelligent_paste,
             "enable_advanced_mouse_controls": self.enable_advanced_mouse_controls,
             "default_auto_zoom_level": self.default_auto_zoom_level,
-            "show_right_angle_line_indicator": self.show_right_angle_line_indicator,
-            "connect_linear_takeoff": self.connect_linear_takeoff,
             "use_full_window_crosshairs": self.use_full_window_crosshairs,
             "crosshair_color": self.crosshair_color,
             "crosshair_line_thickness": self.crosshair_line_thickness,
             "allow_add_page_from_takeoff_tab": self.allow_add_page_from_takeoff_tab,
-            "enable_auto_dimension_lines": self.enable_auto_dimension_lines,
             "mouse_unpressed_snap_angle": self.mouse_unpressed_snap_angle,
             "mouse_pressed_snap_angle": self.mouse_pressed_snap_angle,
             "snap_to_grid_enabled": self.snap_to_grid_enabled,
@@ -74,9 +69,8 @@ class Config:
             "snap_to_pdf_lines_threshold_px": self.snap_to_pdf_lines_threshold_px,
             "snap_to_takeoffs_enabled": self.snap_to_takeoffs_enabled,
             "snap_to_takeoffs_threshold_px": self.snap_to_takeoffs_threshold_px,
-            "right_angle_indicator_threshold_px": (
-                self.right_angle_indicator_threshold_px
-            ),
+            "snap_to_right_angle_enabled": self.snap_to_right_angle_enabled,
+            "snap_to_right_angle_threshold_px": self.snap_to_right_angle_threshold_px,
         }
 
     @classmethod
@@ -114,12 +108,6 @@ class Config:
             )
         if "default_auto_zoom_level" in data:
             config.default_auto_zoom_level = int(data["default_auto_zoom_level"])
-        if "show_right_angle_line_indicator" in data:
-            config.show_right_angle_line_indicator = bool(
-                data["show_right_angle_line_indicator"]
-            )
-        if "connect_linear_takeoff" in data:
-            config.connect_linear_takeoff = bool(data["connect_linear_takeoff"])
         if "use_full_window_crosshairs" in data:
             config.use_full_window_crosshairs = bool(data["use_full_window_crosshairs"])
         if "crosshair_color" in data:
@@ -129,10 +117,6 @@ class Config:
         if "allow_add_page_from_takeoff_tab" in data:
             config.allow_add_page_from_takeoff_tab = bool(
                 data["allow_add_page_from_takeoff_tab"]
-            )
-        if "enable_auto_dimension_lines" in data:
-            config.enable_auto_dimension_lines = bool(
-                data["enable_auto_dimension_lines"]
             )
         if "mouse_unpressed_snap_angle" in data:
             config.mouse_unpressed_snap_angle = int(data["mouse_unpressed_snap_angle"])
@@ -154,8 +138,12 @@ class Config:
             config.snap_to_takeoffs_threshold_px = int(
                 data["snap_to_takeoffs_threshold_px"]
             )
-        if "right_angle_indicator_threshold_px" in data:
-            config.right_angle_indicator_threshold_px = int(
-                data["right_angle_indicator_threshold_px"]
+        if "snap_to_right_angle_enabled" in data:
+            config.snap_to_right_angle_enabled = bool(
+                data["snap_to_right_angle_enabled"]
+            )
+        if "snap_to_right_angle_threshold_px" in data:
+            config.snap_to_right_angle_threshold_px = int(
+                data["snap_to_right_angle_threshold_px"]
             )
         return config

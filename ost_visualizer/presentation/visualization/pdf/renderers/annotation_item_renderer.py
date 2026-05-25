@@ -12,9 +12,9 @@ from .....application.dtos.hotlink_dto import HotlinkDto
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....domain.entities.annotation import BidAnnotation
 from ....components.plan_view.components.graphics_items import (
-    ClippedTextGraphicsItem,
     NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
     NAMED_VIEW_LABEL_ITEM_KIND,
+    ClippedTextGraphicsItem,
 )
 from .annotation_renderer import (
     calculate_annotation_geometry,

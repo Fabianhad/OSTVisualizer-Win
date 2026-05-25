@@ -624,7 +624,6 @@ class BidDataReaderMixin:
                 schema.optional_column("BidConditions", "Run", "0"),
                 schema.optional_column("BidConditions", "Shape", "0"),
                 schema.optional_column("BidConditions", "ColorFill", "0"),
-                schema.optional_column("BidConditions", "ColorLine", "0"),
                 schema.optional_column("BidConditions", "CdnTypeUID", "NULL"),
                 schema.optional_column("BidConditions", "Pattern", "0"),
                 schema.optional_column("BidConditions", "Spacing", "0"),
@@ -645,8 +644,6 @@ class BidDataReaderMixin:
                 schema.optional_column("BidConditions", "Notes", "NULL"),
                 schema.optional_column("BidConditions", "RoundQuantity", "0"),
                 schema.optional_column("BidConditions", "RoundUp", "0"),
-                schema.optional_column("BidConditions", "Connect", "0"),
-                schema.optional_column("BidConditions", "ConnectTolerance", "6"),
                 schema.optional_column("BidConditions", "Trim", "0"),
                 schema.optional_column("BidConditions", "IsCurvedSegment", "0"),
                 schema.optional_column("BidConditions", "Grid", "0"),
@@ -656,7 +653,6 @@ class BidDataReaderMixin:
                 schema.optional_column("BidConditions", "DisplayDimension", "0"),
                 schema.optional_column("BidConditions", "DisplayName", "0"),
                 schema.optional_column("BidConditions", "DisplayGridWhileDrawing", "0"),
-                schema.optional_column("BidConditions", "SnapToLinear", "-1"),
             ]
         )
         with connection.cursor() as cursor:
@@ -680,7 +676,6 @@ class BidDataReaderMixin:
                 run = float(row.Run) if row.Run is not None else 0.0
                 shape = int(row.Shape) if row.Shape is not None else 0
                 color_fill = int(row.ColorFill) if row.ColorFill is not None else 0
-                color_line = int(row.ColorLine) if row.ColorLine is not None else 0
                 z_value, is_top = extract_z_value_from_name(name)
                 pattern = int(row.Pattern) if row.Pattern is not None else 0
                 spacing = float(row.Spacing) if row.Spacing is not None else 0.0
@@ -717,12 +712,6 @@ class BidDataReaderMixin:
                     bool(row.RoundQuantity) if row.RoundQuantity is not None else False
                 )
                 round_up = float(row.RoundUp) if row.RoundUp is not None else 0.0
-                connect = bool(row.Connect) if row.Connect is not None else False
-                connect_tolerance = (
-                    float(row.ConnectTolerance)
-                    if row.ConnectTolerance is not None
-                    else 6.0
-                )
                 trim = bool(row.Trim) if row.Trim is not None else False
                 is_curved_segment = (
                     bool(row.IsCurvedSegment)
@@ -746,9 +735,6 @@ class BidDataReaderMixin:
                     if row.DisplayGridWhileDrawing is not None
                     else False
                 )
-                snap_to_linear = (
-                    int(row.SnapToLinear) if row.SnapToLinear is not None else -1
-                )
                 bid_conditions[uid] = Condition(
                     uid=uid,
                     name=name,
@@ -761,7 +747,6 @@ class BidDataReaderMixin:
                     run=run,
                     shape=shape,
                     color_fill=color_fill,
-                    color_line=color_line,
                     z_value=z_value,
                     is_top=is_top,
                     cdn_type_uid=cdn_type_uid,
@@ -784,8 +769,6 @@ class BidDataReaderMixin:
                     layer_uid=bid_layer_uid,
                     round_quantity=round_quantity,
                     round_up=round_up,
-                    connect=connect,
-                    connect_tolerance=connect_tolerance,
                     trim=trim,
                     is_curved_segment=is_curved_segment,
                     grid=grid_flag,
@@ -795,7 +778,6 @@ class BidDataReaderMixin:
                     display_dimension=display_dimension,
                     display_name=display_name_flag,
                     display_grid_while_drawing=display_grid_while_drawing,
-                    snap_to_linear=snap_to_linear,
                 )
             return bid_conditions
 

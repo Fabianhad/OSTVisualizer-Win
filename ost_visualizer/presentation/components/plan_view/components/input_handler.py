@@ -73,6 +73,7 @@ class InputHandlerMixin:
     _advanced_mouse_controls_enabled: bool = True
     _intelligent_paste_active: bool = False
     _use_full_window_crosshairs: bool = False
+    _pdf_text_drag_anchor: Optional[tuple] = None
 
     def _request_crosshair_repaint(self) -> None:
         if not self._use_full_window_crosshairs:
@@ -294,6 +295,7 @@ class InputHandlerMixin:
         if event.button() == Qt.MouseButton.LeftButton and self._cursor_mode != "place":
             text_label = self._condition_text_label_at(vp_pos)
             if text_label is not None:
+                self._clear_pdf_text_selection()
                 self._select_condition_text_label(text_label)
                 event.accept()
                 return
@@ -304,6 +306,7 @@ class InputHandlerMixin:
                 else None
             )
             if text_uid is not None:
+                self._clear_pdf_text_selection()
                 self._select_text_annotation_label(text_uid)
         if event.button() == Qt.MouseButton.MiddleButton:
             if not advanced_mouse_controls:
@@ -431,6 +434,8 @@ class InputHandlerMixin:
                         item.setTransformOriginPoint(0, 0)
 
                 def _register_preview_item(item):
+                    if item.data(2) == "condition_label":
+                        return
                     key = id(item)
                     if key in seen_preview_items:
                         return
@@ -504,7 +509,14 @@ class InputHandlerMixin:
                             _can_start_drag = True
                             break
                 if not _can_start_drag:
-                    hit_uid = self.find_takeoff_at(scene_pos)
+                    hit_uid = self.find_selected_movable_at(scene_pos)
+                    if not hit_uid:
+                        hit_uid = self.find_takeoff_at(scene_pos)
+                    hit_ann = (
+                        self._current_annotations.get(hit_uid) if hit_uid else None
+                    )
+                    if hit_ann and hit_ann.is_hotlink:
+                        hit_uid = None
                     if hit_uid:
                         if hit_uid in self._selected_uids:
                             _can_start_drag = True
@@ -629,6 +641,16 @@ class InputHandlerMixin:
                     self._update_cursor(vp_pos)
                 else:
                     self.finish_intelligent_paste_placement()
+                    if (
+                        not multi
+                        and not self.find_hotlink_at(scene_pos)
+                        and self._begin_pdf_text_selection(scene_pos)
+                    ):
+                        self._select_band_origin = None
+                        self._select_band_active = False
+                        self._select_band_dragged = False
+                        event.accept()
+                        return
                 event.accept()
             elif (
                 self._cursor_mode == "pan"
@@ -770,6 +792,10 @@ class InputHandlerMixin:
                         self._update_parent_hole_path(
                             takeoff.parent_uid, takeoff.uid, hole_path
                         )
+            event.accept()
+            return
+        if self._pdf_text_drag_anchor is not None:
+            self._update_pdf_text_selection_drag(self.mapToScene(cur_vp))
             event.accept()
             return
         if self._select_band_origin is not None:
@@ -936,6 +962,18 @@ class InputHandlerMixin:
                 else:
                     self._apply_multi_rotation(snapped_deg)
             self._restore_rotation_handles_if_needed()
+            self._update_cursor()
+            event.accept()
+            return
+        if (
+            self._pdf_text_drag_anchor is not None
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            self._update_pdf_text_selection_drag(self.mapToScene(vp_pos))
+            self._finish_pdf_text_selection_drag()
+            self._selected_uids.clear()
+            self._on_selection_changed()
+            self.update_selection_visuals()
             self._update_cursor()
             event.accept()
             return
@@ -1169,10 +1207,12 @@ class InputHandlerMixin:
                         cycle_uid = current_uid
                 hotlink_info = self.find_hotlink_at(scene_pos)
                 if hotlink_info:
+                    self._clear_pdf_text_selection()
                     self.hotlink_clicked.emit(hotlink_info)
                 else:
                     uid = self.find_takeoff_at(scene_pos, cycle_from_uid=cycle_uid)
                     if uid:
+                        self._clear_pdf_text_selection()
                         if multi:
                             if uid in self._selected_uids:
                                 self._flush_dirty_positions()
@@ -1186,11 +1226,14 @@ class InputHandlerMixin:
                         self._on_selection_changed()
                         self.update_selection_visuals()
                     else:
+                        selected_pdf_text = self.select_pdf_text_at(scene_pos)
                         if not multi:
                             self._flush_dirty_positions()
                             self._selected_uids.clear()
                         self._on_selection_changed()
                         self.update_selection_visuals()
+                        if not selected_pdf_text:
+                            self._clear_pdf_text_selection()
                 if self._cursor_mode == "rotate" and len(self._selected_uids) == 1:
                     if not self._create_rotate_handle(next(iter(self._selected_uids))):
                         self._apply_cursor_mode("select")
@@ -1709,6 +1752,9 @@ class InputHandlerMixin:
                 self.redo_requested.emit()
                 event.accept()
                 return
+            if event.key() == Qt.Key.Key_C and self.copy_selected_pdf_text():
+                event.accept()
+                return
             if event.key() == Qt.Key.Key_C and self._selected_uids:
                 self.copy_requested.emit(list(self._selected_uids))
                 event.accept()
@@ -1869,13 +1915,14 @@ class InputHandlerMixin:
             return Qt.CursorShape.CrossCursor
         if self._zoom_press_ctrl:
             return self._zoom_cursor
-        if self._drag_handle_index == -1:
-            return Qt.CursorShape.SizeAllCursor
-        if 0 <= self._drag_handle_index < len(self._handle_infos):
-            return self._handle_infos[self._drag_handle_index].cursor
         active_press = (
             self._select_band_origin is not None or self._rotation_drag_active
         )
+        if active_press:
+            if self._drag_handle_index == -1:
+                return Qt.CursorShape.SizeAllCursor
+            if 0 <= self._drag_handle_index < len(self._handle_infos):
+                return self._handle_infos[self._drag_handle_index].cursor
         if (
             self._advanced_mouse_controls_active()
             and self._ctrl_held
@@ -2005,12 +2052,46 @@ class InputHandlerMixin:
             action, current_mode, overlay_action, original_action
         )
 
+    def _add_pdf_text_context_clipboard_actions(self, menu: QMenu) -> None:
+        ContextMenuManager.add_action(
+            menu,
+            ContextMenuManager.action_spec(
+                None,
+                "Copy",
+                callback=self.copy_selected_pdf_text,
+                enabled=self.has_selected_pdf_text(),
+                action_key="copy",
+            ),
+        )
+        self._add_context_command(menu, "Paste", "paste")
+
+    def _show_pdf_text_context_menu(self, event) -> None:
+        menu = QMenu(self)
+        current_mode, overlay_action, original_action = (
+            self._add_common_context_submenus(menu)
+        )
+        menu.addSeparator()
+        self._add_pdf_text_context_clipboard_actions(menu)
+        menu.addSeparator()
+        self._add_context_page_actions(menu, separate_delete=True)
+        self.reset_ctrl_held()
+        action = menu.exec(event.globalPos())
+        if action is None:
+            return
+        self._resolve_context_overlay_action(
+            action, current_mode, overlay_action, original_action
+        )
+
     def contextMenuEvent(self, event) -> None:
         if self._right_pan_active or self._suppress_next_context_menu:
             self._suppress_next_context_menu = False
             event.accept()
             return
         selected_state = self._selected_takeoff_context_state()
+        if not selected_state.takeoff_uids and self.has_selected_pdf_text():
+            self._show_pdf_text_context_menu(event)
+            event.accept()
+            return
         if not selected_state.takeoff_uids:
             self._show_background_context_menu(event)
             event.accept()

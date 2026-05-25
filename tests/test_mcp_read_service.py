@@ -1,18 +1,13 @@
 import unittest
+
 from ost_visualizer.application.services.mcp_read_service import (
-    McpDatabaseRef,
-    McpReadError,
-    McpReadService,
-)
+    McpDatabaseRef, McpReadError, McpReadService)
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.file_results import BidLoadResult, FileLoadResult
+from ost_visualizer.domain.entities.file_results import (BidLoadResult,
+                                                         FileLoadResult)
 from ost_visualizer.domain.entities.hierarchy_data import (
-    HierarchyBidInfo,
-    HierarchyData,
-    HierarchyFileEntry,
-    HierarchyProjectInfo,
-)
+    HierarchyBidInfo, HierarchyData, HierarchyFileEntry, HierarchyProjectInfo)
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.uom_service import CALC_COUNT, UOM_EACH

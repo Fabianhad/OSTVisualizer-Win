@@ -7,6 +7,7 @@ from ...domain.entities.bid import Bid
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.loaded_file import LoadedFile
+from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.project_factory import build_loaded_files
 from ..config import TAB_INDEX_PROJECTS, TAB_INDEX_TAKEOFF
 from ..dialogs.adjust_images_dialog import AdjustImagesDialog, ImageAdjustmentSettings
@@ -28,6 +29,7 @@ from ..utils.messagebox import (
     show_critical,
     show_warning,
 )
+from ..utils.named_view_focus import focus_plan_view_on_named_view
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.overlay_context_menu import (
     resolve_overlay_visibility_mode,
@@ -126,7 +128,6 @@ class UIEventCoordinator:
             project_read_service=project_read_service,
             project_data=self.project_data,
             ui_state_manager=ui_state_manager,
-            config_model=main_window._config_model,
         )
         self._view_stack = None
         self._status_panel = None
@@ -147,6 +148,8 @@ class UIEventCoordinator:
         self._pending_takeoff_selected_area_uid: str = ""
         self._pending_takeoff_place_condition_uid: Optional[str] = None
         self._pending_takeoff_place_condition_uids: List[str] = []
+        self._pending_hotlink_page_uid: Optional[str] = None
+        self._pending_hotlink_named_view: Optional[NamedView] = None
         self._plan_view_signaler = _MainThreadSignaler(main_window)
         self._plan_view_signaler.set_callback(self._update_plan_view_for_active)
         self._menu_state_signaler = _MainThreadSignaler(main_window)
@@ -429,6 +432,7 @@ class UIEventCoordinator:
         view.text_annotation_edit_mode_changed.connect(
             self._on_text_annotation_edit_mode_changed
         )
+        view.page_fully_loaded.connect(self._on_plan_view_page_fully_loaded)
         view.overlay_display_mode_requested.connect(
             self._on_overlay_display_mode_requested
         )
@@ -598,6 +602,82 @@ class UIEventCoordinator:
         self._clear_page_info_status()
         self._update_export_menu_state()
 
+    def navigate_to_takeoff_page(self, page_uid: str, named_view_uid: str = "") -> None:
+        if not page_uid or not self.project_data.get_page(page_uid):
+            self._clear_pending_hotlink_named_view_focus()
+            return
+        self._stage_hotlink_named_view_focus(page_uid, named_view_uid)
+        self._stage_takeoff_restore([page_uid], page_uid)
+        self._set_takeoff_tab_visible(True)
+        if self._tab_widget and self._tab_widget.currentIndex() != TAB_INDEX_TAKEOFF:
+            self._tab_widget.setCurrentIndex(TAB_INDEX_TAKEOFF)
+        else:
+            self._activate_takeoff_workspace()
+
+    def apply_pending_hotlink_view_focus(self) -> None:
+        self._apply_pending_hotlink_named_view_focus(require_stable=True)
+
+    def _stage_hotlink_named_view_focus(
+        self, page_uid: str, named_view_uid: str
+    ) -> None:
+        named_view = self._resolve_hotlink_named_view(page_uid, named_view_uid)
+        if named_view is None:
+            self._clear_pending_hotlink_named_view_focus()
+            return
+        self._pending_hotlink_page_uid = page_uid
+        self._pending_hotlink_named_view = named_view
+        if self._should_defer_hotlink_page_visual(page_uid):
+            self.plan_view.set_page_visual_reveal_deferred(True)
+
+    def _resolve_hotlink_named_view(
+        self, page_uid: str, named_view_uid: str
+    ) -> Optional[NamedView]:
+        if not named_view_uid:
+            return None
+        for annotation in self.project_data.get_page_annotations(page_uid):
+            named_view = build_named_view_from_annotation(annotation)
+            if named_view and named_view.uid == named_view_uid:
+                return named_view
+        return None
+
+    def _should_defer_hotlink_page_visual(self, page_uid: str) -> bool:
+        if not self.plan_view:
+            return False
+        same_loaded_page = (
+            self.plan_view.current_page_uid == page_uid
+            and self.plan_view.is_view_state_stable
+        )
+        return not same_loaded_page
+
+    def _clear_pending_hotlink_named_view_focus(self) -> None:
+        self._pending_hotlink_page_uid = None
+        self._pending_hotlink_named_view = None
+        if self.plan_view:
+            self.plan_view.reveal_deferred_page_visual()
+
+    def _on_plan_view_page_fully_loaded(self) -> None:
+        self._apply_pending_hotlink_named_view_focus(require_stable=True)
+
+    def _apply_pending_hotlink_named_view_focus(self, require_stable: bool) -> bool:
+        named_view = self._pending_hotlink_named_view
+        page_uid = self._pending_hotlink_page_uid
+        if not named_view or not page_uid or not self.plan_view:
+            return False
+        current_page_uid = self.plan_view.current_page_uid
+        if current_page_uid != page_uid:
+            if current_page_uid:
+                self._clear_pending_hotlink_named_view_focus()
+            return False
+        if require_stable and not self.plan_view.is_view_state_stable:
+            return False
+        if not self.plan_view.isVisible():
+            return False
+        focus_plan_view_on_named_view(self.plan_view, named_view)
+        self._pending_hotlink_page_uid = None
+        self._pending_hotlink_named_view = None
+        self.plan_view.reveal_deferred_page_visual()
+        return True
+
     def highlight_sidebar(self, uids: set) -> None:
         if self._nav.is_refreshing:
             return
@@ -758,6 +838,7 @@ class UIEventCoordinator:
             pay_classes_save_fn=lambda changes: self._save_master_pay_classes(
                 file_path, changes
             ),
+            menu_mode=True,
         )
         try:
             exec_with_ost_blocking(dialog, self.event_bus)
@@ -816,6 +897,7 @@ class UIEventCoordinator:
                 self._project_read_service.get_cdn_types(file_path).values()
             ),
             has_license=True,
+            menu_mode=True,
         )
         try:
             exec_with_ost_blocking(dialog, self.event_bus)
@@ -841,6 +923,7 @@ class UIEventCoordinator:
             pay_classes=pay_classes,
             used_pay_class_uids=used_pay_class_uids,
             save_fn=lambda changes: self._save_master_pay_classes(file_path, changes),
+            menu_mode=True,
         )
         try:
             exec_with_ost_blocking(dialog, self.event_bus)
@@ -1477,10 +1560,12 @@ class UIEventCoordinator:
 
     def _update_plan_view_for_active(self) -> None:
         self._viewer.update_plan_view_for_active()
+        self._apply_pending_hotlink_named_view_focus(require_stable=True)
         self._sidebar.update_conditions_quantities()
 
     def _update_plan_view(self, page_uid: Optional[str]) -> None:
         self._viewer.update_plan_view(page_uid)
+        self._apply_pending_hotlink_named_view_focus(require_stable=True)
         self._sidebar.update_conditions_quantities()
 
     def _on_condition_selected(self, condition_uid: str) -> None:

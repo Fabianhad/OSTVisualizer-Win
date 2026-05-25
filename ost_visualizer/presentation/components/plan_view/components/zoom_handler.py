@@ -17,7 +17,7 @@ class ZoomHandlerMixin:
             self.refresh_place_preview_after_view_change()
         if self._paste_backout_active:
             self.refresh_paste_backout_preview_after_view_change()
-        if self._can_zoom_rerender:
+        if self._uses_dynamic_tile_coverage():
             self._zoom_debouncer.handle_scale_changed(self.transform().m11())
 
     def fit_to_page(self):
@@ -183,6 +183,8 @@ class ZoomHandlerMixin:
         for item in self._takeoff_items:
             item.setTransform(transform)
         for item in self._selection_items:
+            item.setTransform(transform)
+        for item in self._pdf_text_highlight_items:
             item.setTransform(transform)
 
     def _current_page_transform(self):

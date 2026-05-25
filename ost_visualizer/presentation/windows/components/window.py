@@ -4,6 +4,7 @@ from typing import Callable, List, Optional, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
 from ....application.dtos.page_view_dto import PageViewDto
 from ....application.dtos.plan_view_renderers_dto import PlanViewRenderers
+from ....application.events.app_events import AppEvents
 from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....application.interfaces.i_window_icon_provider import IWindowIconProvider
@@ -36,6 +37,7 @@ from ...config import (
 )
 from ...managers.icon_manager import IconId, IconManager
 from ...services.selection_commands import DeleteAnnotationsCommand
+from ...utils.named_view_focus import focus_plan_view_on_named_view
 from ...utils.scales import ALL_SCALES
 
 NamedViewEntry = Tuple[str, str, str, str]
@@ -85,7 +87,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         intelligent_paste_enabled: bool = True,
         advanced_mouse_controls_enabled: bool = True,
         default_auto_zoom_level: int = 0,
-        show_right_angle_line_indicator: bool = False,
         use_full_window_crosshairs: bool = False,
         crosshair_color: str = "#00ff00",
         crosshair_line_thickness: int = 1,
@@ -97,7 +98,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         snap_to_pdf_lines_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
         snap_to_takeoffs_enabled: bool = True,
         snap_to_takeoffs_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
-        right_angle_indicator_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
+        snap_to_right_angle_enabled: bool = False,
+        snap_to_right_angle_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
         parent: Optional[QtWidgets.QWidget] = None,
     ):
         super().__init__(parent)
@@ -141,7 +143,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._intelligent_paste_enabled = bool(intelligent_paste_enabled)
         self._advanced_mouse_controls_enabled = bool(advanced_mouse_controls_enabled)
         self._default_auto_zoom_level = int(default_auto_zoom_level)
-        self._show_right_angle_line_indicator = bool(show_right_angle_line_indicator)
         self._use_full_window_crosshairs = bool(use_full_window_crosshairs)
         self._crosshair_color = crosshair_color
         self._crosshair_line_thickness = int(crosshair_line_thickness)
@@ -153,9 +154,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._snap_to_pdf_lines_threshold_px = int(snap_to_pdf_lines_threshold_px)
         self._snap_to_takeoffs_enabled = bool(snap_to_takeoffs_enabled)
         self._snap_to_takeoffs_threshold_px = int(snap_to_takeoffs_threshold_px)
-        self._right_angle_indicator_threshold_px = int(
-            right_angle_indicator_threshold_px
-        )
+        self._snap_to_right_angle_enabled = bool(snap_to_right_angle_enabled)
+        self._snap_to_right_angle_threshold_px = int(snap_to_right_angle_threshold_px)
         self._scale_combo: Optional[QtWidgets.QComboBox] = None
         self._btn_select: Optional[QtWidgets.QToolButton] = None
         self.setWindowTitle(config.window_title)
@@ -316,9 +316,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._advanced_mouse_controls_enabled
         )
         self.plan_view.set_default_auto_zoom_level(self._default_auto_zoom_level)
-        self.plan_view.set_right_angle_line_indicator_enabled(
-            self._show_right_angle_line_indicator
-        )
         self.plan_view.set_full_window_crosshairs(
             self._use_full_window_crosshairs,
             self._crosshair_color,
@@ -411,6 +408,30 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 self._named_view_combo.addItem(name, userData=(page_uid, nv_uid))
         self._named_view_combo.setCurrentIndex(-1)
         self._named_view_combo.blockSignals(False)
+
+    def update_named_view_name(self, named_view_uid: str, name: str) -> None:
+        if self._is_closing:
+            return
+        uid = str(named_view_uid)
+        text = str(name)
+        changed = False
+        updated: List[NamedViewEntry] = []
+        for nv_uid, page_uid, page_name, view_name in self._named_views:
+            if nv_uid == uid:
+                updated.append((nv_uid, page_uid, page_name, text))
+                changed = changed or view_name != text
+            else:
+                updated.append((nv_uid, page_uid, page_name, view_name))
+        if not changed:
+            return
+        self._named_views = updated
+        if self.page_data is not None:
+            for annotation in self.page_data.annotations:
+                if annotation.uid == uid and annotation.is_namedview:
+                    annotation.properties["Text"] = text
+        if self.plan_view is not None:
+            self.plan_view.update_named_view_label_text(uid, text)
+        self._populate_named_view_combo()
 
     def _on_named_view_combo_changed(self, index: int) -> None:
         if self._is_closing or not self._on_named_view_selected or index < 0:
@@ -555,13 +576,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if not named_view:
             return
         try:
-            self.plan_view.zoom_to_rect(
-                named_view.min_x,
-                named_view.min_y,
-                named_view.max_x,
-                named_view.max_y,
-                margin=0.1,
-            )
+            focus_plan_view_on_named_view(self.plan_view, named_view)
         except Exception:
             self.logger.exception("Error focusing on named view")
 
@@ -705,7 +720,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         intelligent_paste_enabled: bool,
         advanced_mouse_controls_enabled: bool,
         default_auto_zoom_level: int,
-        show_right_angle_line_indicator: bool,
         use_full_window_crosshairs: bool,
         crosshair_color: str,
         crosshair_line_thickness: int,
@@ -717,7 +731,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         snap_to_pdf_lines_threshold_px: int,
         snap_to_takeoffs_enabled: bool,
         snap_to_takeoffs_threshold_px: int,
-        right_angle_indicator_threshold_px: int,
+        snap_to_right_angle_enabled: bool,
+        snap_to_right_angle_threshold_px: int,
     ) -> None:
         self._show_page_index = bool(show_page_index)
         self._show_sheet_number = bool(show_sheet_number)
@@ -726,7 +741,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._intelligent_paste_enabled = bool(intelligent_paste_enabled)
         self._advanced_mouse_controls_enabled = bool(advanced_mouse_controls_enabled)
         self._default_auto_zoom_level = int(default_auto_zoom_level)
-        self._show_right_angle_line_indicator = bool(show_right_angle_line_indicator)
         self._use_full_window_crosshairs = bool(use_full_window_crosshairs)
         self._crosshair_color = crosshair_color
         self._crosshair_line_thickness = int(crosshair_line_thickness)
@@ -738,9 +752,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._snap_to_pdf_lines_threshold_px = int(snap_to_pdf_lines_threshold_px)
         self._snap_to_takeoffs_enabled = bool(snap_to_takeoffs_enabled)
         self._snap_to_takeoffs_threshold_px = int(snap_to_takeoffs_threshold_px)
-        self._right_angle_indicator_threshold_px = int(
-            right_angle_indicator_threshold_px
-        )
+        self._snap_to_right_angle_enabled = bool(snap_to_right_angle_enabled)
+        self._snap_to_right_angle_threshold_px = int(snap_to_right_angle_threshold_px)
         self._page_combo.set_label_options(
             self._show_page_index,
             self._show_sheet_number,
@@ -756,9 +769,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._advanced_mouse_controls_enabled
         )
         self.plan_view.set_default_auto_zoom_level(self._default_auto_zoom_level)
-        self.plan_view.set_right_angle_line_indicator_enabled(
-            self._show_right_angle_line_indicator
-        )
         self.plan_view.set_full_window_crosshairs(
             self._use_full_window_crosshairs,
             self._crosshair_color,
@@ -780,9 +790,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             snap_to_pdf_lines_threshold_px=self._snap_to_pdf_lines_threshold_px,
             snap_to_takeoffs_enabled=self._snap_to_takeoffs_enabled,
             snap_to_takeoffs_threshold_px=self._snap_to_takeoffs_threshold_px,
-            right_angle_indicator_threshold_px=(
-                self._right_angle_indicator_threshold_px
-            ),
+            snap_to_right_angle_enabled=self._snap_to_right_angle_enabled,
+            snap_to_right_angle_threshold_px=(self._snap_to_right_angle_threshold_px),
         )
 
     def _sync_current_page_takeoff_indicator(self) -> None:
@@ -859,6 +868,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         )
         if not success:
             return
+        self._publish_named_view_renames(new_updates)
         if self._undo_svc is None:
             return
         old_updates = [
@@ -871,12 +881,25 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         ann_write_svc = self._ann_write_svc
 
         def _undo_text_properties():
-            ann_write_svc.save_annotation_text_properties(db_path, old_updates)
+            if ann_write_svc.save_annotation_text_properties(db_path, old_updates):
+                self._publish_named_view_renames(old_updates)
 
         def _redo_text_properties():
-            ann_write_svc.save_annotation_text_properties(db_path, new_updates)
+            if ann_write_svc.save_annotation_text_properties(db_path, new_updates):
+                self._publish_named_view_renames(new_updates)
 
         self._undo_svc.push(_undo_text_properties, _redo_text_properties)
+
+    def _publish_named_view_renames(self, updates: list) -> None:
+        for uid, ann_type, properties in updates:
+            if ann_type != "namedview" or "Text" not in properties:
+                continue
+            name = str(properties["Text"] or "")
+            self.event_bus.publish(
+                AppEvents.NAMED_VIEW_RENAMED,
+                named_view_uid=str(uid),
+                name=name,
+            )
 
     def _on_annotation_text_and_positions_flushed(
         self, text_changes: list, ann_position_changes: list

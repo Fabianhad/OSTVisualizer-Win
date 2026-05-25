@@ -33,6 +33,33 @@ class SelectionManagerMixin:
     def _on_selection_changed(self) -> None:
         pass
 
+    def _pdf_text_run_at(self, _scene_pos: QtCore.QPointF):
+        return None
+
+    def _pdf_text_char_at(self, _scene_pos: QtCore.QPointF):
+        return None
+
+    def _clear_pdf_text_selection(self) -> None:
+        pass
+
+    def select_pdf_text_at(self, _scene_pos: QtCore.QPointF) -> bool:
+        return False
+
+    def _begin_pdf_text_selection(self, _scene_pos: QtCore.QPointF) -> bool:
+        return False
+
+    def _update_pdf_text_selection_drag(self, _scene_pos: QtCore.QPointF) -> bool:
+        return False
+
+    def _finish_pdf_text_selection_drag(self) -> bool:
+        return False
+
+    def copy_selected_pdf_text(self) -> bool:
+        return False
+
+    def has_selected_pdf_text(self) -> bool:
+        return False
+
     def _is_selectable(self, uid: str) -> bool:
         if self._annotation_only_selection:
             ann = self._current_annotations.get(uid)
@@ -150,14 +177,45 @@ class SelectionManagerMixin:
             return uids[(idx + 1) % len(uids)]
         return uids[0]
 
+    def _hotlink_item_contains_scene_point(
+        self, item: QGraphicsItem, link_info: HotlinkDto, scene_pos: QtCore.QPointF
+    ) -> bool:
+        local = item.mapFromScene(scene_pos)
+        if isinstance(item, QGraphicsPathItem):
+            if item.shape().contains(local) or item.path().contains(local):
+                return True
+        elif item.contains(local):
+            return True
+        dx = local.x() - link_info.center_x
+        dy = local.y() - link_info.center_y
+        return (dx * dx + dy * dy) ** 0.5 <= link_info.radius
+
+    def find_selected_movable_at(self, scene_pos: QtCore.QPointF) -> Optional[str]:
+        for uid in self._selected_uids:
+            ann = self._current_annotations.get(uid)
+            if ann is not None and ann.is_text:
+                if self._text_annotation_contains_scene_point(uid, scene_pos):
+                    return uid
+        for uid in self.find_takeoffs_at(scene_pos):
+            if uid in self._selected_uids:
+                return uid
+        selected_ann_pairs = []
+        for uid in self._selected_uids:
+            ann = self._current_annotations.get(uid)
+            if (
+                ann is not None
+                and ann.is_interactive
+                and ann.annotation_type in ann.LINEAR_TYPES
+            ):
+                selected_ann_pairs.append((uid, ann))
+        if selected_ann_pairs:
+            for uid, _tx in self._iter_ann_hits(scene_pos, selected_ann_pairs):
+                return uid
+        return None
+
     def find_hotlink_at(self, scene_pos) -> Optional[HotlinkDto]:
         for item, link_info in self._hotlink_items:
-            if item.contains(scene_pos):
-                return link_info
-            dx = scene_pos.x() - link_info.center_x
-            dy = scene_pos.y() - link_info.center_y
-            distance = (dx * dx + dy * dy) ** 0.5
-            if distance <= link_info.radius:
+            if self._hotlink_item_contains_scene_point(item, link_info, scene_pos):
                 return link_info
         return None
 
@@ -574,7 +632,16 @@ class SelectionManagerMixin:
         return borders
 
     def _resolve_select_cursor(self, vp_pos: QtCore.QPoint) -> Qt.CursorShape:
+        scene_pos = self.mapToScene(vp_pos)
         if not self._selected_uids:
+            if (
+                self.find_takeoffs_at(scene_pos)
+                or self.find_text_annotation_at(scene_pos) is not None
+                or self.find_hotlink_at(scene_pos) is not None
+            ):
+                return Qt.CursorShape.ArrowCursor
+            if self._pdf_text_run_at(scene_pos) is not None:
+                return Qt.CursorShape.IBeamCursor
             return Qt.CursorShape.ArrowCursor
         for info in self._handle_infos:
             center = info.item.mapToScene(QtCore.QPointF(0.0, 0.0))
@@ -585,25 +652,14 @@ class SelectionManagerMixin:
                 and abs(vp_pos.y() - handle_vp.y()) <= half + 2
             ):
                 return info.cursor
-        scene_pos = self.mapToScene(vp_pos)
-        for uid in self._selected_uids:
-            ann = self._current_annotations.get(uid)
-            if ann is not None and ann.is_text:
-                if self._text_annotation_contains_scene_point(uid, scene_pos):
-                    return Qt.CursorShape.SizeAllCursor
-                continue
-            for item in self._uid_to_items.get(uid, []):
-                local = item.mapFromScene(scene_pos)
-                if isinstance(item, QGraphicsPathItem):
-                    if item.path().contains(local):
-                        return Qt.CursorShape.SizeAllCursor
-                elif item.contains(local):
-                    return Qt.CursorShape.SizeAllCursor
-        selected_ann_pairs = [
-            (uid, ann)
-            for uid in self._selected_uids
-            if (ann := self._current_annotations.get(uid)) is not None
-        ]
-        for uid, _tx in self._iter_ann_hits(scene_pos, selected_ann_pairs):
+        if self.find_selected_movable_at(scene_pos):
             return Qt.CursorShape.SizeAllCursor
+        if (
+            self.find_takeoffs_at(scene_pos)
+            or self.find_text_annotation_at(scene_pos) is not None
+            or self.find_hotlink_at(scene_pos) is not None
+        ):
+            return Qt.CursorShape.ArrowCursor
+        if self._pdf_text_run_at(scene_pos) is not None:
+            return Qt.CursorShape.IBeamCursor
         return Qt.CursorShape.ArrowCursor

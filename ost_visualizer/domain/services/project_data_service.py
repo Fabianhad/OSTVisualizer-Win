@@ -124,6 +124,25 @@ class ProjectDataService:
     def get_all_annotations(self) -> List[BidAnnotation]:
         return self.model.get_all_annotations()
 
+    def update_named_view_names(self, updates: Iterable[Tuple[str, str]]) -> List[str]:
+        changes = [(str(uid), str(name)) for uid, name in updates]
+        by_uid = {uid: name for uid, name in changes}
+        page_uids: List[str] = []
+        seen_pages = set()
+        if not by_uid:
+            return page_uids
+        for annotation in self.model.get_all_annotations():
+            if not annotation.is_namedview:
+                continue
+            name = by_uid.get(annotation.uid)
+            if name is None:
+                continue
+            annotation.properties["Text"] = name
+            if annotation.page_uid and annotation.page_uid not in seen_pages:
+                page_uids.append(annotation.page_uid)
+                seen_pages.add(annotation.page_uid)
+        return page_uids
+
     def find_hotlinks_targeting(
         self, namedview_uids: Iterable[str]
     ) -> List[BidAnnotation]:

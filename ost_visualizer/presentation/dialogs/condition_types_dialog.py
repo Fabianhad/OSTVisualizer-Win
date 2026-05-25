@@ -26,6 +26,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         save_fn: Optional[Callable[[dict], Dict[str, str]]] = None,
         reload_fn: Optional[Callable[[], List[CdnType]]] = None,
         has_license: bool = True,
+        menu_mode: bool = False,
     ) -> None:
         super().__init__(parent)
         self.icon_provider = icon_provider
@@ -36,6 +37,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._selected_name: str = ""
         self._has_license: bool = has_license
         self._is_interactive: bool = has_license
+        self._menu_mode = menu_mode
         self._building = False
         self._pending_new_item: Optional[QtWidgets.QTreeWidgetItem] = None
         self._pending_new_prev_uid: Optional[str] = None
@@ -78,11 +80,15 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         content_row.addWidget(self.tree, 1)
         btn_layout = QtWidgets.QVBoxLayout()
         btn_layout.setSpacing(COMPACT_SPACING)
-        self.btn_select = self._button("Select", self._on_select)
-        self.btn_select.setEnabled(False)
+        self.btn_select = self._button(
+            "OK" if self._menu_mode else "Select", self._on_accept_clicked
+        )
+        self.btn_select.setEnabled(self._menu_mode and self._is_interactive)
         btn_layout.addWidget(self.btn_select)
-        self.btn_cancel = self._button("Cancel", self.reject)
-        btn_layout.addWidget(self.btn_cancel)
+        self.btn_cancel = None
+        if not self._menu_mode:
+            self.btn_cancel = self._button("Cancel", self.reject)
+            btn_layout.addWidget(self.btn_cancel)
         btn_layout.addSpacing(RELAXED_SPACING)
         self.btn_new = self._button("New", self._on_new)
         btn_layout.addWidget(self.btn_new)
@@ -330,6 +336,12 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._selected_name = item.text(0)
         self.accept()
 
+    def _on_accept_clicked(self) -> None:
+        if self._menu_mode:
+            self.accept()
+        else:
+            self._on_select()
+
     def _update_button_states(self) -> None:
         if not self._is_interactive:
             self.btn_select.setEnabled(False)
@@ -341,7 +353,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             for item in self.tree.selectedItems()
             if not item.isHidden() and item.data(0, self._UID_ROLE) is not None
         ]
-        self.btn_select.setEnabled(len(selected) == 1)
+        self.btn_select.setEnabled(self._menu_mode or len(selected) == 1)
         self.btn_new.setEnabled(True)
         self.btn_delete.setEnabled(bool(selected))
 

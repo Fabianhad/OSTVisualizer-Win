@@ -1,13 +1,11 @@
 import math
 import unittest
+
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.services.uom_service import (
-    UOM_SQUARE_FEET,
-    calculate_condition_quantities,
-)
-from ost_visualizer.presentation.visualization.core.geometry.area import (
-    calc_area_mesh_verts,
-)
+    UOM_SQUARE_FEET, calculate_condition_quantities)
+from ost_visualizer.presentation.visualization.core.geometry.area import \
+    calc_area_mesh_verts
 
 
 class AreaSlopeBehaviorTests(unittest.TestCase):

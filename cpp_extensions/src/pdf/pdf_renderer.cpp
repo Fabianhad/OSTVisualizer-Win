@@ -2,10 +2,11 @@
 #include <fpdfview.h>
 #include <fpdf_doc.h>
 #include <fpdf_edit.h>
+#include <fpdf_text.h>
+#include <algorithm>
 #include <mutex>
 #include <atomic>
 #include <cstring>
-#include <iostream>
 namespace ost_pdf
 {
 #define DOC() (static_cast<FPDF_DOCUMENT>(doc_))
@@ -27,6 +28,41 @@ namespace ost_pdf
     }
     namespace
     {
+        void append_utf8(std::string &text, unsigned int codepoint)
+        {
+            if (codepoint <= 0x7F)
+            {
+                text.push_back(static_cast<char>(codepoint));
+            }
+            else if (codepoint <= 0x7FF)
+            {
+                text.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+                text.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+            }
+            else if (codepoint <= 0xFFFF)
+            {
+                text.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+                text.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+                text.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+            }
+            else if (codepoint <= 0x10FFFF)
+            {
+                text.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+                text.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+                text.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+                text.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+            }
+        }
+
+        bool is_text_separator(unsigned int codepoint)
+        {
+            return codepoint == 0 ||
+                   codepoint == '\t' ||
+                   codepoint == '\n' ||
+                   codepoint == '\r' ||
+                   codepoint == ' ';
+        }
+
         struct PDFiumCleanup
         {
             ~PDFiumCleanup() { shutdown_pdfium(); }
@@ -307,6 +343,104 @@ namespace ost_pdf
         FPDF_ClosePage(page);
         return result;
     }
+
+    std::vector<PDFTextRun> PDFRenderer::extract_text_runs(int page_index) const
+    {
+        std::vector<PDFTextRun> result;
+        if (!doc_ || page_index < 0 || page_index >= page_count())
+        {
+            return result;
+        }
+        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        if (!page)
+        {
+            return result;
+        }
+        FPDF_TEXTPAGE text_page = FPDFText_LoadPage(page);
+        if (!text_page)
+        {
+            FPDF_ClosePage(page);
+            return result;
+        }
+
+        PDFTextRun current;
+        current.page_index = page_index;
+        bool has_current = false;
+
+        auto finish_run = [&]()
+        {
+            if (has_current && !current.text.empty())
+            {
+                result.push_back(current);
+            }
+            current = PDFTextRun{};
+            current.page_index = page_index;
+            has_current = false;
+        };
+
+        const int char_count = FPDFText_CountChars(text_page);
+        for (int char_index = 0; char_index < char_count; ++char_index)
+        {
+            const unsigned int codepoint = FPDFText_GetUnicode(text_page, char_index);
+            if (is_text_separator(codepoint))
+            {
+                finish_run();
+                continue;
+            }
+
+            double left = 0.0;
+            double right = 0.0;
+            double bottom = 0.0;
+            double top = 0.0;
+            if (!FPDFText_GetCharBox(text_page, char_index, &left, &right, &bottom, &top))
+            {
+                finish_run();
+                continue;
+            }
+            if (right <= left || top <= bottom)
+            {
+                finish_run();
+                continue;
+            }
+
+            if (!has_current)
+            {
+                current.text.clear();
+                current.chars.clear();
+                current.left = left;
+                current.right = right;
+                current.bottom = bottom;
+                current.top = top;
+                current.page_index = page_index;
+                has_current = true;
+            }
+            else
+            {
+                current.left = std::min(current.left, left);
+                current.right = std::max(current.right, right);
+                current.bottom = std::min(current.bottom, bottom);
+                current.top = std::max(current.top, top);
+            }
+            std::string char_text;
+            append_utf8(char_text, codepoint);
+            current.text += char_text;
+            current.chars.push_back(
+                PDFTextChar{
+                    char_text,
+                    left,
+                    right,
+                    bottom,
+                    top,
+                    page_index,
+                });
+        }
+        finish_run();
+
+        FPDFText_ClosePage(text_page);
+        FPDF_ClosePage(page);
+        return result;
+    }
+
     static int normalize_user_rotation_deg(int rotation_deg)
     {
         int r = ((rotation_deg % 360) + 360) % 360;

@@ -10,6 +10,7 @@
 - Added MCP setup controls to the Options dialog for copying Claude Desktop/Cursor config and Codex setup commands.
 - Added read-only MCP area context with area names on takeoffs/current context plus `list_areas` and `get_area_summary`.
 - Added separate Options controls for grid, PDF-line, takeoff, and right-angle snap thresholds.
+- Added embedded PDF text selection in the plan view with I-beam hover, drag-range highlighting, and copy support.
 
 ### Changed
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.
@@ -21,9 +22,17 @@
 - Simplified Edit Condition advanced properties by hiding compatibility-only Connect/Snap fields and wiring visible display, pattern, grid, trim, and rounding behavior.
 - Text annotations now reuse the text-format toolbar and support inline editing with persisted text/style updates.
 - Removed the obsolete `BidConditions.NameFont*` condition-label formatting path; generated label styles now use only `BidTakeoffs`.
+- Removed the misleading Options preference for auto dimension lines; Display Dimension remains a per-condition setting.
+- Enabled the Options `Main` hotlink target so hotlinks can navigate the main takeoff view to the target page and named-view zoom instead of opening a detached window.
+- Adjusted hotlink selection so clicks activate hotlinks while rubber-band selection controls move selection.
+- Matched menu-opened Employees, Bid Areas, Condition Types, and Payroll Classes dialogs to the OK-only master-data dialog button layout.
+- Replaced the separate right-angle indicator preference with the `Snap to right angle` Snap Settings option and threshold while preserving configured mouse angle snapping.
+- Improved composite page rendering by preserving antialias coverage when tinting layered images.
+- Prioritized enabled overlay PDF layers for composite/overlay PDF snapping and embedded text selection, with overlay-only PDF rendering using dynamic base and tile refresh.
 
 ### Fixed
 - Included the standalone `ostv-mcp.exe` helper and its runtime files in the desktop distribution so production MCP client config points to an installed executable.
+- Kept the UI responsive while creating new databases by running database creation through the existing progress dialog workflow.
 - Tightened MCP JSON-RPC request validation and removed an arbitrary hierarchy fallback for unmatched database files.
 - Fixed Intelligent Paste so copied takeoffs paste at the cursor, support temporary original-axis snap guides only during the first drag, and stop using that snap state after release or cancel.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.
@@ -40,3 +49,5 @@
 - Kept the text-format toolbar open after formatting generated Display Name and Display Dimension labels across overlay refreshes.
 - Added rename-only inline editing for named view labels without showing the text-format toolbar.
 - Fixed named view renames so `BidNamedViews.Name` is written as plain text instead of text-annotation encoded bytes.
+- Refreshed detached annotation/view window named-view combo boxes immediately after named view renames.
+- Fixed placement live previews so disabling full-window crosshairs no longer disables mouse tracking needed for preview updates.

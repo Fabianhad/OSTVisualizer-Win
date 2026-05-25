@@ -3,8 +3,6 @@ from ...application.dtos.snap_preferences_dto import SnapPreferencesDto
 
 
 class AppConfigPresentationManager:
-    """Applies app-config preferences to live presentation components."""
-
     _CONDITION_DISPLAY_REFRESH_KEYS = frozenset(
         {
             "color_mode",
@@ -54,9 +52,6 @@ class AppConfigPresentationManager:
             config_model.enable_advanced_mouse_controls
         )
         plan_view.set_default_auto_zoom_level(config_model.default_auto_zoom_level)
-        plan_view.set_right_angle_line_indicator_enabled(
-            config_model.show_right_angle_line_indicator
-        )
         plan_view.set_full_window_crosshairs(
             config_model.use_full_window_crosshairs,
             config_model.crosshair_color,
@@ -82,9 +77,6 @@ class AppConfigPresentationManager:
             intelligent_paste_enabled=config_model.enable_intelligent_paste,
             advanced_mouse_controls_enabled=config_model.enable_advanced_mouse_controls,
             default_auto_zoom_level=config_model.default_auto_zoom_level,
-            show_right_angle_line_indicator=(
-                config_model.show_right_angle_line_indicator
-            ),
             use_full_window_crosshairs=config_model.use_full_window_crosshairs,
             crosshair_color=config_model.crosshair_color,
             crosshair_line_thickness=config_model.crosshair_line_thickness,

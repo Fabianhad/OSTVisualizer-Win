@@ -19,7 +19,6 @@ class Condition:
     run: float = 0.0
     shape: int = 0
     color_fill: int = 0
-    color_line: int = 0
     z_value: float = 0.0
     is_top: bool = False
     cdn_type_uid: Optional[str] = None
@@ -42,8 +41,6 @@ class Condition:
     layer_uid: Optional[str] = None
     round_quantity: bool = False
     round_up: float = 0.0
-    connect: bool = False
-    connect_tolerance: float = 6.0
     trim: bool = False
     is_curved_segment: bool = False
     grid: bool = False
@@ -53,7 +50,6 @@ class Condition:
     display_dimension: bool = False
     display_name: bool = False
     display_grid_while_drawing: bool = False
-    snap_to_linear: int = -1
 
     @property
     def is_linear(self) -> bool:

@@ -2,6 +2,7 @@ import logging
 import math
 import os
 import weakref
+from typing import NamedTuple
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QGuiApplication, QPainterPath, QPen
@@ -20,6 +21,16 @@ from .handle_style import apply_takeoff_handle_style
 from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
 
 logger = logging.getLogger(__name__)
+_RIGHT_ANGLE_ALIGNMENT_TOLERANCE = 1e-6
+
+
+class AreaPlacementEndpoint(NamedTuple):
+    final_x: float
+    final_y: float
+    right_angle_candidate_x: float
+    right_angle_candidate_y: float
+    right_angle_candidate_active: bool
+    right_angle_indicator_active: bool
 
 
 class PlacementModeMixin:
@@ -45,17 +56,17 @@ class PlacementModeMixin:
             snapped
         )
 
-    def _right_angle_snap_from_first_point(
+    def _right_angle_target_from_first_point(
         self, target_x: float, target_y: float
     ) -> tuple[float, float, bool]:
-        if not self._show_right_angle_line_indicator or not self._place_points:
+        if not self._snap_to_right_angle_enabled or not self._place_points:
             return target_x, target_y, False
         first_x, first_y = self._place_points[0]
         first_scene = self._ost_to_scene_pos(first_x, first_y)
         target_scene = self._ost_to_scene_pos(target_x, target_y)
         first_vp = self.mapFromScene(first_scene)
         target_vp = self.mapFromScene(target_scene)
-        threshold_px = float(self._right_angle_indicator_threshold_px)
+        threshold_px = float(self._snap_to_right_angle_threshold_px)
         if threshold_px <= 0.0:
             return target_x, target_y, False
         snap_x = abs(target_vp.x() - first_vp.x()) <= threshold_px
@@ -65,6 +76,47 @@ class PlacementModeMixin:
         if snap_y:
             target_y = first_y
         return target_x, target_y, snap_x or snap_y
+
+    def _is_right_angle_aligned_to_first_point(
+        self, target_x: float, target_y: float
+    ) -> bool:
+        if not self._place_points:
+            return False
+        first_x, first_y = self._place_points[0]
+        return (
+            abs(target_x - first_x) <= _RIGHT_ANGLE_ALIGNMENT_TOLERANCE
+            or abs(target_y - first_y) <= _RIGHT_ANGLE_ALIGNMENT_TOLERANCE
+        )
+
+    def _area_final_endpoint_for_placement(
+        self,
+        origin_x: float,
+        origin_y: float,
+        target_x: float,
+        target_y: float,
+        snap_kind: int,
+    ) -> AreaPlacementEndpoint:
+        right_x, right_y, right_angle_candidate_active = (
+            self._right_angle_target_from_first_point(target_x, target_y)
+        )
+        candidate_x, candidate_y = target_x, target_y
+        if right_angle_candidate_active:
+            candidate_x, candidate_y = right_x, right_y
+        final_x, final_y = self._snap_angle_for_placement(
+            origin_x, origin_y, candidate_x, candidate_y, snap_kind
+        )
+        right_angle_indicator_active = (
+            right_angle_candidate_active
+            and self._is_right_angle_aligned_to_first_point(final_x, final_y)
+        )
+        return AreaPlacementEndpoint(
+            final_x=final_x,
+            final_y=final_y,
+            right_angle_candidate_x=right_x,
+            right_angle_candidate_y=right_y,
+            right_angle_candidate_active=right_angle_candidate_active,
+            right_angle_indicator_active=right_angle_indicator_active,
+        )
 
     def _snap_angle_for_placement(
         self,
@@ -109,27 +161,44 @@ class PlacementModeMixin:
         self._takeoff_snap_index_dirty = True
         self._pdf_snap_index_dirty = True
 
-    def _pdf_snap_cache_key(self):
+    def _pdf_intelligence_source(self):
         page = self._current_page
-        if (
-            not page
-            or not page.layer_visible
-            or not page.image_path
-            or not page.image_path.lower().endswith(".pdf")
-        ):
+        if not page or not page.layer_visible:
             return None
+        overlay_enabled = (
+            page.image_show_mode in (1, 2)
+            and bool(page.overlay_image_path)
+            and page.overlay_image_path.lower().endswith(".pdf")
+        )
+        if overlay_enabled:
+            return ("overlay", page.overlay_image_path, 0)
+        if page.image_path and page.image_path.lower().endswith(".pdf"):
+            return ("main", page.image_path, int(page.page_index or 0))
+        return None
+
+    def _pdf_snap_cache_key(self):
+        source = self._pdf_intelligence_source()
+        if source is None:
+            return None
+        layer, file_path, page_index = source
         try:
-            image_mtime = os.path.getmtime(page.image_path)
+            image_mtime = os.path.getmtime(file_path)
         except OSError:
             image_mtime = None
         ratio = self._scene_builder.get_coordinate_system().scale_ratio
+        page = self._current_page
         return (
             page.uid,
-            page.image_path,
+            layer,
+            file_path,
             image_mtime,
-            int(page.page_index or 0),
+            page_index,
             float(self._pdf_width_pts or page.width_pts or 0.0),
             float(self._pdf_height_pts or page.height_pts or 0.0),
+            float(page.overlay_offset_x),
+            float(page.overlay_offset_y),
+            float(page.overlay_rotation),
+            float(page.deskew_rotation_overlay),
             float(ratio),
         )
 
@@ -149,6 +218,43 @@ class PlacementModeMixin:
         if rotation == 270:
             return raw_height_pts - y, raw_width_pts - x
         return x, raw_height_pts - y
+
+    def _pdf_intelligence_point_to_page_point(
+        self,
+        source_layer: str,
+        x: float,
+        y: float,
+        source_width_pts: float,
+        source_height_pts: float,
+    ) -> tuple[float, float]:
+        if source_layer != "overlay":
+            return x, y
+        page = self._current_page
+        if page is None:
+            return x, y
+        page_width = float(self._pdf_width_pts or page.width_pts or 0.0)
+        page_height = float(self._pdf_height_pts or page.height_pts or 0.0)
+        if (
+            page_width <= 0.0
+            or page_height <= 0.0
+            or source_width_pts <= 0.0
+            or source_height_pts <= 0.0
+        ):
+            return x, y
+        scale = min(page_width / source_width_pts, page_height / source_height_pts)
+        offset_x = float(page.overlay_offset_x) * 72.0
+        offset_y = float(page.overlay_offset_y) * 72.0
+        total_rotation = float(page.overlay_rotation + page.deskew_rotation_overlay)
+        scaled_x = x * scale
+        scaled_y = y * scale
+        if abs(total_rotation) <= 1e-12:
+            return offset_x + scaled_x, offset_y + scaled_y
+        cos_a = math.cos(total_rotation)
+        sin_a = math.sin(total_rotation)
+        return (
+            offset_x + scaled_x * cos_a - scaled_y * sin_a,
+            offset_y + scaled_x * sin_a + scaled_y * cos_a,
+        )
 
     def _build_takeoff_snap_segments(self) -> list:
         segments = []
@@ -253,25 +359,31 @@ class PlacementModeMixin:
         if cache_key == self._pdf_snap_segments_cache_key:
             return list(self._pdf_snap_segments_cache)
         page = self._current_page
+        source_layer, file_path, page_index = self._pdf_intelligence_source()
         renderer = ost_pdf.PDFRenderer()
         try:
-            if not renderer.open(page.image_path):
+            if not renderer.open(file_path):
                 logger.warning(
                     "Could not open PDF for snap vector extraction: %s",
-                    page.image_path,
+                    file_path,
                 )
                 self._pdf_snap_segments_cache_key = cache_key
                 self._pdf_snap_segments_cache = []
                 return []
-            raw_segments = renderer.extract_path_segments(int(page.page_index or 0))
-            page_info = renderer.page_info(int(page.page_index or 0))
-            page_width_pts = float(self._pdf_width_pts or page.width_pts or 0.0)
-            page_height_pts = float(self._pdf_height_pts or page.height_pts or 0.0)
+            raw_segments = renderer.extract_path_segments(page_index)
+            page_info = renderer.page_info(page_index)
+            page_width_pts = 0.0
+            page_height_pts = 0.0
             if page_info is not None:
+                page_width_pts = float(page_info.effective_width_pts)
+                page_height_pts = float(page_info.effective_height_pts)
+            if source_layer != "overlay":
                 if page_width_pts <= 0.0:
-                    page_width_pts = float(page_info.effective_width_pts)
+                    page_width_pts = float(self._pdf_width_pts or page.width_pts or 0.0)
                 if page_height_pts <= 0.0:
-                    page_height_pts = float(page_info.effective_height_pts)
+                    page_height_pts = float(
+                        self._pdf_height_pts or page.height_pts or 0.0
+                    )
             if page_width_pts <= 0.0 or page_height_pts <= 0.0:
                 self._pdf_snap_segments_cache_key = cache_key
                 self._pdf_snap_segments_cache = []
@@ -304,6 +416,20 @@ class PlacementModeMixin:
                     raw_width_pts,
                     raw_height_pts,
                     intrinsic_rotation,
+                )
+                px1, py1 = self._pdf_intelligence_point_to_page_point(
+                    source_layer,
+                    px1,
+                    py1,
+                    page_width_pts,
+                    page_height_pts,
+                )
+                px2, py2 = self._pdf_intelligence_point_to_page_point(
+                    source_layer,
+                    px2,
+                    py2,
+                    page_width_pts,
+                    page_height_pts,
                 )
                 segments.append(
                     (
@@ -665,16 +791,14 @@ class PlacementModeMixin:
                 (flat_scene[i], flat_scene[i + 1]) for i in range(0, len(flat_scene), 2)
             ]
             last_sx, last_sy = scene_pts[-1]
-            right_ost_x, right_ost_y, right_angle_active = (
-                self._right_angle_snap_from_first_point(ost_x, ost_y)
+            last_ost_x, last_ost_y = pts[-1]
+            endpoint = self._area_final_endpoint_for_placement(
+                last_ost_x, last_ost_y, ost_x, ost_y, snap_kind
             )
-            if right_angle_active:
-                snapped_scene = cs.transform_vertices_to_2d([right_ost_x, right_ost_y])
-                snapped_end = (snapped_scene[0], snapped_scene[1])
-            else:
-                snapped_end = self._snap_angle_for_placement(
-                    last_sx, last_sy, cx, cy, snap_kind
-                )
+            snapped_scene = cs.transform_vertices_to_2d(
+                [endpoint.final_x, endpoint.final_y]
+            )
+            snapped_end = (snapped_scene[0], snapped_scene[1])
             polyline_pts = scene_pts + [snapped_end]
             is_invalid = polyline_self_intersects(polyline_pts)
             fill_color = QColor(200, 0, 0) if is_invalid else qcolor
@@ -724,7 +848,7 @@ class PlacementModeMixin:
                 border.setTransform(page_transform)
             self._scene.addItem(border)
             self._place_preview_items.append(border)
-            if right_angle_active:
+            if endpoint.right_angle_indicator_active:
                 indicator_pen = QPen(QColor("#1f9d45"))
                 indicator_pen.setWidthF(2.0)
                 indicator_pen.setCosmetic(True)
@@ -851,15 +975,10 @@ class PlacementModeMixin:
                             )
                 else:
                     last_ox, last_oy = self._place_points[-1]
-                    right_ost_x, right_ost_y, right_angle_active = (
-                        self._right_angle_snap_from_first_point(ost_x, ost_y)
+                    endpoint = self._area_final_endpoint_for_placement(
+                        last_ox, last_oy, ost_x, ost_y, snap_kind
                     )
-                    if right_angle_active:
-                        ost_x, ost_y = right_ost_x, right_ost_y
-                    else:
-                        ost_x, ost_y = self._snap_angle_for_placement(
-                            last_ox, last_oy, ost_x, ost_y, snap_kind
-                        )
+                    ost_x, ost_y = endpoint.final_x, endpoint.final_y
                     candidate = self._place_points + [(ost_x, ost_y)]
                     if polyline_self_intersects(candidate):
                         flash_uid = self._backout_active_uid or self._place_session_uid

@@ -101,9 +101,16 @@ class AppController:
         except Exception:
             return False
 
-    def create_new_database(self, name: Optional[str] = None) -> Optional[str]:
+    def create_new_database(
+        self,
+        name: Optional[str] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> Optional[str]:
         try:
-            db_path = self._working_directory_service.create_database(name)
+            db_path = self._working_directory_service.create_database(
+                name,
+                progress_callback=progress_callback,
+            )
             if db_path is None:
                 return None
             db_str = str(db_path)

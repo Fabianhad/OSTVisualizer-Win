@@ -1,21 +1,19 @@
 import unittest
 from types import SimpleNamespace
-from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
-    InsertAnnotationSpec,
-)
-from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+
+from ost_visualizer.application.dtos.insert_annotation_spec_dto import \
+    InsertAnnotationSpec
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import \
+    InsertTakeoffSpec
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.presentation.handlers.plan_view_action_handler import (
-    PlanViewActionHandler,
-)
+from ost_visualizer.presentation.handlers.plan_view_action_handler import \
+    PlanViewActionHandler
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.services.selection_commands import (
-    PasteAnnotationsCommand,
-    PasteTakeoffsCommand,
-)
+    PasteAnnotationsCommand, PasteTakeoffsCommand)
 
 
 class FakePlanView:
@@ -75,6 +73,7 @@ class FakeProjectData:
         self.added_takeoffs = []
         self.takeoffs = {}
         self.extras = {}
+        self.named_view_updates = []
         self.conditions = {
             "42": SimpleNamespace(layer_visible=True, condition_type="linear"),
             "c1": SimpleNamespace(layer_visible=True, condition_type="area"),
@@ -150,6 +149,10 @@ class FakeProjectData:
             if takeoff.page_uid not in page_uids:
                 page_uids.append(takeoff.page_uid)
         return page_uids
+
+    def update_named_view_names(self, updates):
+        self.named_view_updates.extend(list(updates))
+        return []
 
     def remove_takeoffs(self, uids):
         page_uids = []
@@ -609,6 +612,33 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [
                 ("bid.mdb", [("a1", "text", {"Text": "Old", "FontBold": False})]),
                 ("bid.mdb", [("a1", "text", {"Text": "New", "FontBold": True})]),
+            ],
+        )
+
+    def test_named_view_rename_publishes_combo_refresh_event(self):
+        data = FakeProjectData()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+        )
+        handler.on_annotation_text_properties_flushed(
+            [("nv1", "namedview", {"Text": "Old"}, {"Text": "New"})]
+        )
+        self.assertEqual(data.named_view_updates, [("nv1", "New")])
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.NAMED_VIEW_RENAMED,
+                    {"named_view_uid": "nv1", "name": "New"},
+                )
             ],
         )
 

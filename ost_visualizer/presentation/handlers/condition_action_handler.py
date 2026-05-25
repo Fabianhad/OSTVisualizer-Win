@@ -31,14 +31,12 @@ class ConditionActionHandler:
         project_read_service,
         project_data,
         ui_state_manager,
-        config_model,
     ):
         self._coordinator = coordinator
         self._write_service = project_write_service
         self._read_service = project_read_service
         self._project_data = project_data
         self._ui_state = ui_state_manager
-        self._config_model = config_model
 
     def _get_bid_ref_and_write_service(self):
         bid_ref = self._ui_state.get_selected_bid_ref()
@@ -127,7 +125,6 @@ class ConditionActionHandler:
             run=0.0,
             spacing=4.0,
             color_fill=13353215,
-            color_line=0,
             shape=-1,
             layer_uid=default_layer_uid,
             uom1=2,
@@ -144,12 +141,9 @@ class ConditionActionHandler:
             grid_size1=0.0,
             grid_size2=0.0,
             gap=0.0,
-            connect=self._config_model.connect_linear_takeoff,
-            connect_tolerance=6.0,
             trim=False,
             is_curved_segment=False,
-            snap_to_linear=-1,
-            display_dimension=self._config_model.enable_auto_dimension_lines,
+            display_dimension=False,
             display_name=False,
             display_grid_while_drawing=False,
         )
@@ -172,16 +166,7 @@ class ConditionActionHandler:
                 calc_type1=td.get("calc_type1", 0),
                 display_grid_while_drawing=td.get("display_grid_while_drawing", False),
                 backout=td.get("backout", False),
-                connect=(
-                    self._config_model.connect_linear_takeoff
-                    if cond_type == Condition.TYPE_LINEAR
-                    else True
-                ),
-                display_dimension=(
-                    self._config_model.enable_auto_dimension_lines
-                    if cond_type == Condition.TYPE_AREA
-                    else False
-                ),
+                display_dimension=False,
             )
             spec_field_names = {f.name for f in dataclass_fields(CreateConditionSpec)}
             spec_updates = {
@@ -218,9 +203,6 @@ class ConditionActionHandler:
             read_service=self._read_service,
             read_only=False,
             metric=self._is_metric(),
-            default_auto_dimension_lines=(
-                self._config_model.enable_auto_dimension_lines
-            ),
         )
         dialog._dirty = True
         try:

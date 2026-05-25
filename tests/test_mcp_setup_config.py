@@ -1,13 +1,10 @@
 import json
 import unittest
 from pathlib import Path
+
 from ost_visualizer.presentation.utils.mcp_setup_config import (
-    MCP_HELPER_EXE_NAME,
-    MCP_SERVER_NAME,
-    build_claude_desktop_config,
-    build_codex_mcp_add_command,
-    default_mcp_helper_path,
-)
+    MCP_HELPER_EXE_NAME, MCP_SERVER_NAME, build_claude_desktop_config,
+    build_codex_mcp_add_command, default_mcp_helper_path)
 
 
 class McpSetupConfigTests(unittest.TestCase):

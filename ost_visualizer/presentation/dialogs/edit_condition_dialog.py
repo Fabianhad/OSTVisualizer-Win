@@ -225,12 +225,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         read_service=None,
         read_only: bool = False,
         metric: bool = False,
-        default_auto_dimension_lines: bool = False,
     ) -> None:
         super().__init__(parent)
         self._read_service = read_service
         self._metric = metric
-        self._default_auto_dimension_lines = bool(default_auto_dimension_lines)
         self._display_to_inches = (
             (lambda t: read_service.display_to_inches(t, metric))
             if read_service
@@ -1221,7 +1219,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 self._tile2_edit.setText("")
                 self._gap_edit.setText("")
                 self._display_pattern_check.setChecked(default_dgwd)
-                self._display_dim_check.setChecked(self._default_auto_dimension_lines)
+                self._display_dim_check.setChecked(False)
                 self._display_name_check.setChecked(False)
         finally:
             self._building = False
@@ -1473,7 +1471,6 @@ class EditConditionDialog(QtWidgets.QDialog):
         color = self._color_btn.get_color()
         if color != cond.color_fill:
             dto.set("color_fill", color)
-            dto.set("color_line", color)
         pattern = self._pattern_combo.currentData()
         if pattern is not None and pattern != cond.pattern:
             dto.set("pattern", pattern)

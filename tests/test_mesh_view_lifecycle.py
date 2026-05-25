@@ -1,4 +1,5 @@
 import unittest
+
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
 from ost_visualizer.presentation.windows.mesh_view_window import MeshViewWindow
 

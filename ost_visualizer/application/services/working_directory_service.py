@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 from ...domain.entities.file_state import FileEntry, normalize_path
 from ..interfaces.i_database_creator import IDatabaseCreator
 
@@ -43,7 +43,11 @@ class WorkingDirectoryService:
                 merged.append(FileEntry(file_path=str(db_path), is_checked=True))
         return merged
 
-    def create_database(self, name: Optional[str] = None) -> Optional[Path]:
+    def create_database(
+        self,
+        name: Optional[str] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> Optional[Path]:
         self.ensure_working_dir()
         if not name:
             name = self._generate_default_name()
@@ -52,7 +56,11 @@ class WorkingDirectoryService:
         if db_path.exists():
             self._logger.warning("Database already exists: %s", db_path)
             return None
-        success = self._database_creator.create_database(db_path, name)
+        success = self._database_creator.create_database(
+            db_path,
+            name,
+            progress_callback=progress_callback,
+        )
         return db_path if success else None
 
     def _generate_default_name(self) -> str:

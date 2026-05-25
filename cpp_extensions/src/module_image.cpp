@@ -29,7 +29,7 @@ NB_MODULE(ost_image, m)
           nb::arg("r"), nb::arg("g"), nb::arg("b"),
           nb::arg("paper_threshold") = 235,
           R"doc(
-Tint a grayscale image with a color.
+Tint a grayscale image with a color while preserving antialias coverage.
 Args:
     grayscale_data: bytes containing grayscale pixel data (1 byte per pixel)
     width: Image width in pixels
@@ -37,9 +37,10 @@ Args:
     r: Red component of tint color (0-255)
     g: Green component of tint color (0-255)
     b: Blue component of tint color (0-255)
-    paper_threshold: Grayscale value above which pixels are white (default: 235)
+    paper_threshold: Grayscale value at or above which pixels are transparent (default: 235)
 Returns:
-    TintedImage with BGRA pixel data
+    TintedImage with BGRA pixel data. Dark pixels are opaque and gray edge pixels
+    become partially transparent tinted pixels.
 Example:
     import ost_image
     result = ost_image.tint_grayscale(gray_bytes, w, h, 255, 80, 80)

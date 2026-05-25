@@ -3,9 +3,11 @@ import sys
 import types
 import unittest
 from types import SimpleNamespace
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainterPath
-from PySide6.QtWidgets import QGraphicsPathItem
+from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsPathItem
+
 from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.config import Config
 
@@ -57,6 +59,7 @@ class FakeSnapIndex:
 
 class FakePDFRenderer:
     open_calls = 0
+    open_paths = []
     extract_calls = 0
     page_info_calls = 0
     open_ok = True
@@ -69,8 +72,9 @@ class FakePDFRenderer:
     crop_height = 0.0
     intrinsic_rotation = 0
 
-    def open(self, _path):
+    def open(self, path):
         FakePDFRenderer.open_calls += 1
+        FakePDFRenderer.open_paths.append(path)
         return FakePDFRenderer.open_ok
 
     def extract_path_segments(self, _page_index):
@@ -180,8 +184,8 @@ class PlacementHarness(placement_mode.PlacementModeMixin):
         self._snap_increments = 1.0
         self._mouse_unpressed_snap_angle = 15
         self._mouse_pressed_snap_angle = 0
-        self._show_right_angle_line_indicator = False
-        self._right_angle_indicator_threshold_px = Config.DEFAULT_SNAP_THRESHOLD_PX
+        self._snap_to_right_angle_enabled = False
+        self._snap_to_right_angle_threshold_px = Config.DEFAULT_SNAP_THRESHOLD_PX
         self._snap_to_grid_enabled = True
         self._snap_to_grid_threshold_px = Config.DEFAULT_SNAP_THRESHOLD_PX
         self._snap_to_pdf_lines_enabled = True
@@ -287,11 +291,37 @@ class PreviewHarness(PlacementHarness):
         self.handle_points.append((x, y, half))
 
 
+def _area_preview_harness(
+    points: list[tuple[float, float]],
+    snap_result: tuple[float, float, float, float, int],
+) -> PreviewHarness:
+    harness = PreviewHarness()
+    harness._scene = RecordingScene()
+    harness._current_conditions["area"] = Condition(
+        uid="area",
+        condition_type=Condition.TYPE_AREA,
+        layer_visible=True,
+    )
+    harness._place_session_uid = "area"
+    harness._place_points = points
+    harness._snap_to_right_angle_enabled = True
+    harness._snap_to_right_angle_threshold_px = 1
+    harness.snap_result = snap_result
+    return harness
+
+
+def _indicator_lines(harness: PreviewHarness) -> list[QGraphicsLineItem]:
+    return [
+        item for item in harness._scene.items if isinstance(item, QGraphicsLineItem)
+    ]
+
+
 class SnapSegmentCacheTests(unittest.TestCase):
     def setUp(self):
         FakeSnapIndex.instances.clear()
         FakeSnapIndex.query_result = None
         FakePDFRenderer.open_calls = 0
+        FakePDFRenderer.open_paths = []
         FakePDFRenderer.extract_calls = 0
         FakePDFRenderer.page_info_calls = 0
         FakePDFRenderer.open_ok = True
@@ -626,30 +656,186 @@ class SnapSegmentCacheTests(unittest.TestCase):
         self.assertAlmostEqual(x, 0.0, places=5)
         self.assertAlmostEqual(y, (3.0**2 + 10.0**2) ** 0.5, places=5)
 
-    def test_right_angle_indicator_snaps_area_point_near_first_point_axis(self):
+    def test_right_angle_target_uses_first_point_axis_when_snap_enabled(self):
         harness = PlacementHarness()
-        harness._show_right_angle_line_indicator = True
+        harness._snap_to_right_angle_enabled = True
         harness._place_points = [(10.0, 10.0)]
-        x, y, active = harness._right_angle_snap_from_first_point(10.5, 20.0)
+        x, y, active = harness._right_angle_target_from_first_point(10.5, 20.0)
         self.assertTrue(active)
         self.assertEqual((x, y), (10.0, 20.0))
 
-    def test_right_angle_indicator_threshold_controls_snap_distance(self):
+    def test_right_angle_snap_threshold_controls_target_distance(self):
         harness = PlacementHarness()
-        harness._show_right_angle_line_indicator = True
-        harness._right_angle_indicator_threshold_px = 0
+        harness._snap_to_right_angle_enabled = True
+        harness._snap_to_right_angle_threshold_px = 0
         harness._place_points = [(10.0, 10.0)]
-        x, y, active = harness._right_angle_snap_from_first_point(10.5, 20.0)
+        x, y, active = harness._right_angle_target_from_first_point(10.5, 20.0)
         self.assertFalse(active)
         self.assertEqual((x, y), (10.5, 20.0))
 
-    def test_right_angle_indicator_disabled_does_not_snap_area_point(self):
+    def test_right_angle_target_disabled_when_snap_is_off(self):
         harness = PlacementHarness()
-        harness._show_right_angle_line_indicator = False
         harness._place_points = [(10.0, 10.0)]
-        x, y, active = harness._right_angle_snap_from_first_point(10.5, 20.0)
+        x, y, active = harness._right_angle_target_from_first_point(10.5, 20.0)
         self.assertFalse(active)
         self.assertEqual((x, y), (10.5, 20.0))
+
+    def test_right_angle_snap_disabled_uses_area_angle_snap(self):
+        from PySide6 import QtCore
+
+        harness = PreviewHarness()
+        harness._current_conditions["area"] = Condition(
+            uid="area",
+            condition_type=Condition.TYPE_AREA,
+            layer_visible=True,
+        )
+        harness._place_session_uid = "area"
+        harness._place_points = [(10.0, 10.0), (20.0, 10.0)]
+        harness._snap_to_right_angle_enabled = False
+        harness.snap_result = (10.5, 20.0, 10.5, 20.0, placement_mode.NONE)
+        harness.update_place_preview(QtCore.QPointF(10.5, 20.0))
+        expected = harness._snap_angle(20.0, 10.0, 10.5, 20.0)
+        endpoint_handle = harness.handle_points[2]
+        self.assertAlmostEqual(endpoint_handle[0], expected[0], places=5)
+        self.assertAlmostEqual(endpoint_handle[1], expected[1], places=5)
+        self.assertNotEqual(endpoint_handle[:2], (10.0, 20.0))
+
+    def test_snap_to_right_angle_can_snap_area_point_to_first_point_axis(self):
+        from PySide6 import QtCore
+
+        harness = PreviewHarness()
+        harness._current_conditions["area"] = Condition(
+            uid="area",
+            condition_type=Condition.TYPE_AREA,
+            layer_visible=True,
+        )
+        harness._place_session_uid = "area"
+        harness._place_points = [(10.0, 10.0), (20.0, 10.0)]
+        harness._snap_to_right_angle_enabled = True
+        harness._snap_to_right_angle_threshold_px = 1
+        harness.snap_result = (10.5, 20.0, 10.5, 20.0, placement_mode.NONE)
+        harness.update_place_preview(QtCore.QPointF(10.5, 20.0))
+        endpoint_handle = harness.handle_points[2]
+        self.assertEqual(endpoint_handle[:2], (10.0, 20.0))
+
+    def test_snap_to_right_angle_hides_indicator_when_final_endpoint_is_not_right_angle(self):
+        from PySide6 import QtCore
+
+        harness = _area_preview_harness(
+            points=[(10.0, 10.0), (20.0, 10.0)],
+            snap_result=(10.5, 16.0, 10.5, 16.0, placement_mode.NONE),
+        )
+        harness.update_place_preview(QtCore.QPointF(10.5, 16.0))
+        endpoint_handle = harness.handle_points[2]
+        self.assertNotEqual(
+            (round(endpoint_handle[0], 5), round(endpoint_handle[1], 5)),
+            (10.0, 16.0),
+        )
+        self.assertEqual(_indicator_lines(harness), [])
+
+    def test_snap_to_right_angle_indicator_shows_for_final_x_axis_alignment(self):
+        from PySide6 import QtCore
+
+        harness = _area_preview_harness(
+            points=[(10.0, 10.0), (20.0, 10.0)],
+            snap_result=(10.5, 20.0, 10.5, 20.0, placement_mode.NONE),
+        )
+        harness.update_place_preview(QtCore.QPointF(10.5, 20.0))
+        indicator_lines = _indicator_lines(harness)
+        self.assertEqual(len(indicator_lines), 1)
+        endpoint_handle = harness.handle_points[2]
+        self.assertEqual(endpoint_handle[:2], (10.0, 20.0))
+        indicator = indicator_lines[0].line()
+        self.assertAlmostEqual(indicator.x2(), endpoint_handle[0])
+        self.assertAlmostEqual(indicator.y2(), endpoint_handle[1])
+
+    def test_snap_to_right_angle_indicator_shows_for_final_y_axis_alignment(self):
+        from PySide6 import QtCore
+
+        harness = _area_preview_harness(
+            points=[(10.0, 10.0), (10.0, 20.0)],
+            snap_result=(20.0, 10.5, 20.0, 10.5, placement_mode.NONE),
+        )
+        harness.update_place_preview(QtCore.QPointF(20.0, 10.5))
+        indicator_lines = _indicator_lines(harness)
+        self.assertEqual(len(indicator_lines), 1)
+        endpoint_handle = harness.handle_points[2]
+        self.assertAlmostEqual(endpoint_handle[0], 20.0)
+        self.assertAlmostEqual(endpoint_handle[1], 10.0)
+        indicator = indicator_lines[0].line()
+        self.assertAlmostEqual(indicator.x2(), endpoint_handle[0])
+        self.assertAlmostEqual(indicator.y2(), endpoint_handle[1])
+
+    def test_snap_to_right_angle_disabled_hides_indicator(self):
+        from PySide6 import QtCore
+
+        harness = _area_preview_harness(
+            points=[(10.0, 10.0), (20.0, 10.0)],
+            snap_result=(10.5, 20.0, 10.5, 20.0, placement_mode.NONE),
+        )
+        harness._snap_to_right_angle_enabled = False
+        harness.update_place_preview(QtCore.QPointF(10.5, 20.0))
+        self.assertEqual(_indicator_lines(harness), [])
+
+    def test_snap_to_right_angle_candidate_still_uses_mouse_angle_snap(self):
+        harness = PlacementHarness()
+        harness._place_points = [(10.0, 10.0), (20.0, 10.0)]
+        harness._snap_to_right_angle_enabled = True
+        harness._snap_to_right_angle_threshold_px = 1
+        endpoint = harness._area_final_endpoint_for_placement(
+            20.0, 10.0, 10.5, 16.0, placement_mode.NONE
+        )
+        expected = harness._snap_angle(
+            20.0,
+            10.0,
+            endpoint.right_angle_candidate_x,
+            endpoint.right_angle_candidate_y,
+        )
+        self.assertTrue(endpoint.right_angle_candidate_active)
+        self.assertFalse(endpoint.right_angle_indicator_active)
+        self.assertEqual(
+            (endpoint.right_angle_candidate_x, endpoint.right_angle_candidate_y),
+            (10.0, 16.0),
+        )
+        self.assertAlmostEqual(endpoint.final_x, expected[0], places=5)
+        self.assertAlmostEqual(endpoint.final_y, expected[1], places=5)
+        self.assertNotEqual(
+            (round(endpoint.final_x, 5), round(endpoint.final_y, 5)), (10.0, 16.0)
+        )
+
+    def test_snap_to_right_angle_respects_zero_pressed_mouse_snap_angle(self):
+        from PySide6.QtCore import Qt
+
+        harness = PlacementHarness()
+        harness._place_points = [(10.0, 10.0), (20.0, 10.0)]
+        harness._snap_to_right_angle_enabled = True
+        harness._snap_to_right_angle_threshold_px = 1
+        harness._mouse_pressed_snap_angle = 0
+        original = placement_mode.QGuiApplication
+        try:
+            placement_mode.QGuiApplication = type(
+                "FakeGuiApplication",
+                (),
+                {
+                    "keyboardModifiers": staticmethod(
+                        lambda: Qt.KeyboardModifier.ShiftModifier
+                    )
+                },
+            )
+            endpoint = (
+                harness._area_final_endpoint_for_placement(
+                    20.0, 10.0, 10.5, 16.0, placement_mode.NONE
+                )
+            )
+        finally:
+            placement_mode.QGuiApplication = original
+        self.assertTrue(endpoint.right_angle_candidate_active)
+        self.assertTrue(endpoint.right_angle_indicator_active)
+        self.assertEqual(
+            (endpoint.right_angle_candidate_x, endpoint.right_angle_candidate_y),
+            (10.0, 16.0),
+        )
+        self.assertEqual((endpoint.final_x, endpoint.final_y), (10.0, 16.0))
 
     def test_odd_length_takeoff_position_is_ignored_safely(self):
         harness = PlacementHarness()
@@ -709,6 +895,24 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._pdf_width_pts = 300.0
         second_key = harness._pdf_snap_cache_key()
         self.assertNotEqual(first_key, second_key)
+
+    def test_composite_pdf_snap_uses_overlay_source(self):
+        harness = PlacementHarness()
+        harness._current_page.overlay_image_path = "overlay.pdf"
+        harness._current_page.image_show_mode = 2
+
+        harness._ensure_pdf_snap_index()
+
+        self.assertEqual(FakePDFRenderer.open_paths, ["overlay.pdf"])
+
+    def test_raster_overlay_falls_back_to_main_pdf_snap_source(self):
+        harness = PlacementHarness()
+        harness._current_page.overlay_image_path = "overlay.tif"
+        harness._current_page.image_show_mode = 2
+
+        harness._ensure_pdf_snap_index()
+
+        self.assertEqual(FakePDFRenderer.open_paths, ["drawing.pdf"])
 
     def test_linear_preview_adds_start_and_current_endpoint_handles(self):
         from PySide6 import QtCore

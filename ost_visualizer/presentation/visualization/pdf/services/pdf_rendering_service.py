@@ -194,13 +194,17 @@ class PDFRenderingService:
         rotation: int,
         callback: Callable[[RenderResult], None],
         priority: int = 0,
+        render_scale: Optional[float] = None,
     ) -> str:
+        scale = render_scale
+        if scale is None:
+            scale = 2.0 if page.overlay_image_path.lower().endswith(".pdf") else 1.0
         request = RenderRequest(
             request_id=str(uuid.uuid4()),
             request_type="overlay",
             file_path=page.overlay_image_path,
             page_index=0,
-            scale=2.0 if page.overlay_image_path.lower().endswith(".pdf") else 1.0,
+            scale=scale,
             rotation=rotation,
             tint_rgb=(80, 80, 255) if show_mode == 2 else None,
             invert=page.invert,
@@ -252,6 +256,33 @@ class PDFRenderingService:
         )
         return self._enqueue_request(request)
 
+    def extract_pdf_text_async(
+        self,
+        file_path: str,
+        page_index: int,
+        callback: Callable[[RenderResult], None],
+        priority: int = 2,
+    ) -> str:
+        request = RenderRequest(
+            request_id=str(uuid.uuid4()),
+            request_type="pdf_text",
+            file_path=file_path,
+            page_index=page_index,
+            scale=1.0,
+            rotation=0,
+            tint_rgb=None,
+            invert=False,
+            bitonal=False,
+            priority=priority,
+            page_entity=None,
+            bid_ref=None,
+            view_scale=None,
+            show_mode=None,
+            cancelled=threading.Event(),
+            callback=callback,
+        )
+        return self._enqueue_request(request)
+
     def cancel_request(self, request_id: str) -> None:
         with self._lock:
             request = self._active_requests.get(request_id)
@@ -298,6 +329,8 @@ class PDFRenderingService:
                 return self._execute_region_render(request)
             elif request.request_type == "composite_region":
                 return self._execute_composite_region(request)
+            elif request.request_type == "pdf_text":
+                return self._execute_pdf_text(request)
             else:
                 return RenderResult(
                     request.request_id,
@@ -359,6 +392,22 @@ class PDFRenderingService:
             request.request_id,
             True,
             self._apply_image_effects(request, composited),
+            None,
+        )
+
+    def _execute_pdf_text(self, request: RenderRequest) -> RenderResult:
+        text_runs = self._page_cache.get_text_runs(
+            request.file_path, request.page_index
+        )
+        page_info = self._page_cache.get_page_info(
+            request.file_path, request.page_index
+        )
+        if request.cancelled.is_set():
+            return RenderResult(request.request_id, False, None, "Cancelled")
+        return RenderResult(
+            request.request_id,
+            True,
+            {"text_runs": text_runs, "page_info": page_info},
             None,
         )
 

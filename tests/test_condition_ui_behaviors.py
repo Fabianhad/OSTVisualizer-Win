@@ -8,21 +8,19 @@ from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
+
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.domain.services.condition_quantity_service import (
-    compute_page_quantities,
-)
-from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
-from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
-    EditConditionDialog,
-)
-from ost_visualizer.presentation.utils.view_context_menu import (
-    build_selected_takeoff_context_state,
-)
-from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
-    TakeoffRenderer,
-)
+from ost_visualizer.domain.services.condition_quantity_service import \
+    compute_page_quantities
+from ost_visualizer.presentation.components.conditions_sidebar import \
+    ConditionsSidebar
+from ost_visualizer.presentation.dialogs.edit_condition_dialog import \
+    EditConditionDialog
+from ost_visualizer.presentation.utils.view_context_menu import \
+    build_selected_takeoff_context_state
+from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import \
+    TakeoffRenderer
 
 
 def _app():
@@ -260,27 +258,19 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self._assert_removed_connect_controls_absent(dialog)
         dialog.close()
 
-    def test_hidden_connect_fields_round_trip_by_not_writing_dialog_changes(self):
+    def test_condition_entity_does_not_expose_removed_compatibility_fields(self):
         condition = Condition(
             uid="c1",
             name="Condition 1",
             condition_type=Condition.TYPE_AREA,
             ref_no=1,
-            connect=True,
-            connect_tolerance=9.0,
-            snap_to_linear=3,
             display_name=False,
         )
-        dialog = self._make_dialog(condition)
-        dialog._display_name_check.setChecked(True)
-        dto = dialog._validate_and_build_dto()
-        changes = dto.get_changes()
-        self.assertTrue(changes["display_name"])
-        self.assertNotIn("connect", changes)
-        self.assertNotIn("connect_tolerance", changes)
-        self.assertNotIn("snap_to_linear", changes)
-        dialog._dirty = False
-        dialog.close()
+        condition_fields = {field.name for field in fields(Condition)}
+        self.assertFalse(
+            {"connect", "connect_tolerance", "snap_to_linear", "color_line"}
+            & condition_fields
+        )
 
     def test_trim_disables_curved_segment_control(self):
         condition = Condition(
@@ -309,7 +299,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         self.assertFalse(state.show_curved)
 
-    def test_new_area_condition_uses_auto_dimension_default(self):
+    def test_new_area_condition_does_not_enable_display_dimension_by_default(self):
         condition = Condition(
             uid="c1",
             name="Condition 1",
@@ -327,10 +317,9 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             lambda _uid: False,
             lambda _uid, _dto: True,
             read_service=FakeReadService(),
-            default_auto_dimension_lines=True,
         )
         dialog._populate_defaults_for_type(Condition.TYPE_AREA)
-        self.assertTrue(dialog._display_dim_check.isChecked())
+        self.assertFalse(dialog._display_dim_check.isChecked())
         dialog.close()
 
     def test_round_quantity_rounds_linear_and_area_results_without_mutating_geometry(

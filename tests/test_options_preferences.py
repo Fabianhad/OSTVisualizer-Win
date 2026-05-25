@@ -5,14 +5,12 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
+
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
-from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
+from ost_visualizer.application.dtos.snap_preferences_dto import \
+    SnapPreferencesDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.config_service import ConfigService
-from ost_visualizer.presentation.utils.mcp_setup_config import (
-    build_claude_desktop_config,
-    build_codex_mcp_add_command,
-)
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.config import Config
@@ -20,27 +18,30 @@ from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
 from ost_visualizer.domain.entities.page_info import BidPageInfo
 from ost_visualizer.presentation.components.menu_builder import MenuBuilder
 from ost_visualizer.presentation.components.page_combo import (
-    PageComboBox,
-    SinglePageComboBox,
-)
-from ost_visualizer.presentation.components.plan_view.components.zoom_handler import (
-    ZoomHandlerMixin,
-)
-from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
-from ost_visualizer.presentation.config import (
-    OPTIONS_TAB_MCP_SETUP,
-    OPTIONS_TAB_OPTIONS,
-    OPTIONS_WINDOW_HEIGHT,
-    OPTIONS_WINDOW_WIDTH,
-)
-from ost_visualizer.presentation.controllers.menu_controller import MenuController
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-)
-from ost_visualizer.presentation.dialogs.options import components as options_components
+    PageComboBox, SinglePageComboBox)
+from ost_visualizer.presentation.components.plan_view.components.graphics_items import \
+    TileKey
+from ost_visualizer.presentation.components.plan_view.components.zoom_handler import \
+    ZoomHandlerMixin
+from ost_visualizer.presentation.components.plan_view.view import \
+    TakeoffPlanView
+from ost_visualizer.presentation.config import (OPTIONS_TAB_MCP_SETUP,
+                                                OPTIONS_TAB_OPTIONS,
+                                                OPTIONS_WINDOW_HEIGHT,
+                                                OPTIONS_WINDOW_WIDTH)
+from ost_visualizer.presentation.controllers.menu_controller import \
+    MenuController
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import \
+    UIEventCoordinator
+from ost_visualizer.presentation.dialogs.options import \
+    components as options_components
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.color_swatch import rounded_color_swatch
+from ost_visualizer.presentation.utils.mcp_setup_config import (
+    build_claude_desktop_config, build_codex_mcp_add_command)
+from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import \
+    CompositeRenderer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -86,7 +87,8 @@ SNAP_PREF_UPDATE = SnapPreferencesDto(
     snap_to_pdf_lines_threshold_px=12,
     snap_to_takeoffs_enabled=False,
     snap_to_takeoffs_threshold_px=16,
-    right_angle_indicator_threshold_px=20,
+    snap_to_right_angle_enabled=True,
+    snap_to_right_angle_threshold_px=20,
 ).to_kwargs()
 SNAP_PREF_CHANGED_KEYS = list(SNAP_PREF_UPDATE)
 
@@ -117,8 +119,12 @@ def _assert_snap_pref_update_applied(test_case, aggregate):
         SNAP_PREF_UPDATE["snap_to_takeoffs_threshold_px"],
     )
     test_case.assertEqual(
-        aggregate.right_angle_indicator_threshold_px,
-        SNAP_PREF_UPDATE["right_angle_indicator_threshold_px"],
+        aggregate.snap_to_right_angle_enabled,
+        SNAP_PREF_UPDATE["snap_to_right_angle_enabled"],
+    )
+    test_case.assertEqual(
+        aggregate.snap_to_right_angle_threshold_px,
+        SNAP_PREF_UPDATE["snap_to_right_angle_threshold_px"],
     )
 
 
@@ -136,6 +142,32 @@ def _visible_texts(dialog):
 def _apply_button(dialog):
     buttons = dialog.findChild(QtWidgets.QDialogButtonBox)
     return buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Apply)
+
+
+class FakeTrackingViewport:
+    def __init__(self):
+        self.tracking = []
+        self.updates = 0
+
+    def setMouseTracking(self, enabled):
+        self.tracking.append(enabled)
+
+    def update(self):
+        self.updates += 1
+
+
+def _plan_view_with_tracking_viewport(cursor_mode="select"):
+    viewport = FakeTrackingViewport()
+    view = TakeoffPlanView.__new__(TakeoffPlanView)
+    view.viewport = lambda: viewport
+    view._cursor_mode = cursor_mode
+    view._use_full_window_crosshairs = False
+    view._pdf_text_runs = []
+    view._persistent_cursor_mode = cursor_mode
+    view._right_pan_active = False
+    view._pre_zoom_persistent_mode = None
+    view._update_cursor = lambda: None
+    return view, viewport
 
 
 class OptionsPreferencesTests(unittest.TestCase):
@@ -159,13 +191,10 @@ class OptionsPreferencesTests(unittest.TestCase):
                 disable_high_resolution_images=True,
                 enable_intelligent_paste=False,
                 enable_advanced_mouse_controls=False,
-                show_right_angle_line_indicator=True,
-                connect_linear_takeoff=False,
                 use_full_window_crosshairs=True,
                 crosshair_color="#123456",
                 crosshair_line_thickness=3,
                 allow_add_page_from_takeoff_tab=True,
-                enable_auto_dimension_lines=True,
                 mouse_unpressed_snap_angle=30,
                 mouse_pressed_snap_angle=45,
                 snap_to_grid_enabled=False,
@@ -174,7 +203,8 @@ class OptionsPreferencesTests(unittest.TestCase):
                 snap_to_pdf_lines_threshold_px=13,
                 snap_to_takeoffs_enabled=False,
                 snap_to_takeoffs_threshold_px=14,
-                right_angle_indicator_threshold_px=15,
+                snap_to_right_angle_enabled=True,
+                snap_to_right_angle_threshold_px=15,
                 default_auto_zoom_level=150,
             )
         )
@@ -184,17 +214,16 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertTrue(dialog._page_index_check.isChecked())
         self.assertTrue(dialog._sheet_number_check.isChecked())
         self.assertTrue(dialog._hotlink_view_radio.isChecked())
+        self.assertFalse(dialog._hotlink_main_radio.isChecked())
+        self.assertTrue(dialog._hotlink_main_radio.isEnabled())
         self.assertTrue(dialog._toolbar_text_check.isChecked())
         self.assertTrue(dialog._disable_high_res_check.isChecked())
         self.assertFalse(dialog._intelligent_paste_check.isChecked())
         self.assertFalse(dialog._advanced_mouse_controls_check.isChecked())
-        self.assertTrue(dialog._right_angle_indicator_check.isChecked())
-        self.assertFalse(dialog._connect_linear_takeoff_check.isChecked())
         self.assertTrue(dialog._full_window_crosshairs_check.isChecked())
         self.assertEqual(dialog._crosshair_color_button.color(), "#123456")
         self.assertEqual(dialog._crosshair_line_thickness_spin.value(), 3)
         self.assertTrue(dialog._allow_add_page_from_takeoff_check.isChecked())
-        self.assertTrue(dialog._auto_dimension_lines_check.isChecked())
         self.assertEqual(dialog._mouse_unpressed_snap_angle_combo.currentData(), 30)
         self.assertEqual(dialog._mouse_pressed_snap_angle_combo.currentData(), 45)
         self.assertFalse(dialog._snap_to_grid_check.isChecked())
@@ -203,7 +232,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(dialog._snap_to_pdf_lines_threshold_spin.value(), 13)
         self.assertFalse(dialog._snap_to_takeoffs_check.isChecked())
         self.assertEqual(dialog._snap_to_takeoffs_threshold_spin.value(), 14)
-        self.assertEqual(dialog._right_angle_threshold_spin.value(), 15)
+        self.assertTrue(dialog._snap_to_right_angle_check.isChecked())
+        self.assertEqual(dialog._snap_to_right_angle_threshold_spin.value(), 15)
         self.assertEqual(dialog._auto_zoom_spin.value(), 150)
         dialog.close()
 
@@ -216,6 +246,15 @@ class OptionsPreferencesTests(unittest.TestCase):
         button.set_color("#abcdef")
         self.assertEqual(button.color(), "#abcdef")
         self.assertEqual(button.styleSheet(), "")
+        dialog.close()
+
+    def test_options_dialog_does_not_show_auto_dimension_lines_preference(self):
+        dialog = OptionsDialog(Config())
+        labels = {
+            checkbox.text() for checkbox in dialog.findChildren(QtWidgets.QCheckBox)
+        }
+        self.assertNotIn("Enable auto dimension lines", labels)
+        self.assertNotIn("Show right angle line indicator", labels)
         dialog.close()
 
     def test_color_preview_swatch_has_rounded_transparent_corners(self):
@@ -321,6 +360,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertNotIn("Turn on all quick start dialogs", texts)
         self.assertNotIn("Turn on bid wizard", texts)
         self.assertNotIn("Prompt to refresh worksheet before closing project", texts)
+        self.assertNotIn("Connect linear takeoff", texts)
         dialog.close()
 
     def test_options_dialog_apply_button_starts_disabled(self):
@@ -506,6 +546,41 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(changed, [])
         self.assertEqual(event_bus.events, [])
 
+    def test_options_dialog_loads_and_saves_main_hotlink_target(self):
+        dialog = OptionsDialog(Config(hotlink_target="main"))
+        self.assertTrue(dialog._hotlink_main_radio.isChecked())
+        self.assertTrue(dialog._hotlink_main_radio.isEnabled())
+        dialog.close()
+        repo = FakeConfigRepository()
+        aggregate = ConfigAggregate(repo)
+        event_bus = FakeEventBus()
+        service = ConfigService(aggregate, event_bus)
+        dialog = OptionsDialog(
+            service.get_config_snapshot(),
+            apply_callback=service.update_app_options,
+        )
+        dialog._hotlink_main_radio.setChecked(True)
+        _apply_button(dialog).click()
+        self.assertEqual(aggregate.hotlink_target, "main")
+        self.assertEqual(
+            event_bus.events,
+            [_app_config_event({"hotlink_target": "main"})],
+        )
+        dialog.close()
+
+    def test_update_app_options_accepts_main_hotlink_target(self):
+        repo = FakeConfigRepository()
+        aggregate = ConfigAggregate(repo)
+        event_bus = FakeEventBus()
+        service = ConfigService(aggregate, event_bus)
+        changed = service.update_app_options({"hotlink_target": "main"})
+        self.assertEqual(changed, ["hotlink_target"])
+        self.assertEqual(aggregate.hotlink_target, "main")
+        self.assertEqual(
+            event_bus.events,
+            [_app_config_event({"hotlink_target": "main"})],
+        )
+
     def test_menu_color_mode_uses_general_app_config_update_path(self):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)
@@ -603,13 +678,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog._disable_high_res_check.setChecked(True)
         dialog._intelligent_paste_check.setChecked(False)
         dialog._advanced_mouse_controls_check.setChecked(False)
-        dialog._right_angle_indicator_check.setChecked(True)
-        dialog._connect_linear_takeoff_check.setChecked(False)
         dialog._full_window_crosshairs_check.setChecked(True)
         dialog._crosshair_color_button.set_color("#123456")
         dialog._crosshair_line_thickness_spin.setValue(4)
         dialog._allow_add_page_from_takeoff_check.setChecked(True)
-        dialog._auto_dimension_lines_check.setChecked(True)
         dialog._mouse_unpressed_snap_angle_combo.setCurrentIndex(
             dialog._mouse_unpressed_snap_angle_combo.findData(30)
         )
@@ -632,8 +704,11 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog._snap_to_takeoffs_threshold_spin.setValue(
             SNAP_PREF_UPDATE["snap_to_takeoffs_threshold_px"]
         )
-        dialog._right_angle_threshold_spin.setValue(
-            SNAP_PREF_UPDATE["right_angle_indicator_threshold_px"]
+        dialog._snap_to_right_angle_check.setChecked(
+            SNAP_PREF_UPDATE["snap_to_right_angle_enabled"]
+        )
+        dialog._snap_to_right_angle_threshold_spin.setValue(
+            SNAP_PREF_UPDATE["snap_to_right_angle_threshold_px"]
         )
         dialog._auto_zoom_spin.setValue(125)
         dialog.accept()
@@ -649,13 +724,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertTrue(aggregate.disable_high_resolution_images)
         self.assertFalse(aggregate.enable_intelligent_paste)
         self.assertFalse(aggregate.enable_advanced_mouse_controls)
-        self.assertTrue(aggregate.show_right_angle_line_indicator)
-        self.assertFalse(aggregate.connect_linear_takeoff)
         self.assertTrue(aggregate.use_full_window_crosshairs)
         self.assertEqual(aggregate.crosshair_color, "#123456")
         self.assertEqual(aggregate.crosshair_line_thickness, 4)
         self.assertTrue(aggregate.allow_add_page_from_takeoff_tab)
-        self.assertTrue(aggregate.enable_auto_dimension_lines)
         self.assertEqual(aggregate.mouse_unpressed_snap_angle, 30)
         self.assertEqual(aggregate.mouse_pressed_snap_angle, 45)
         _assert_snap_pref_update_applied(self, aggregate)
@@ -776,13 +848,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertFalse(config.disable_high_resolution_images)
         self.assertTrue(config.enable_intelligent_paste)
         self.assertTrue(config.enable_advanced_mouse_controls)
-        self.assertFalse(config.show_right_angle_line_indicator)
-        self.assertTrue(config.connect_linear_takeoff)
         self.assertFalse(config.use_full_window_crosshairs)
         self.assertEqual(config.crosshair_color, "#00ff00")
         self.assertEqual(config.crosshair_line_thickness, 1)
         self.assertFalse(config.allow_add_page_from_takeoff_tab)
-        self.assertFalse(config.enable_auto_dimension_lines)
         self.assertEqual(config.mouse_unpressed_snap_angle, 15)
         self.assertEqual(config.mouse_pressed_snap_angle, 0)
         self.assertTrue(config.snap_to_grid_enabled)
@@ -797,26 +866,14 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(
             config.snap_to_takeoffs_threshold_px, Config.DEFAULT_SNAP_THRESHOLD_PX
         )
+        self.assertFalse(config.snap_to_right_angle_enabled)
         self.assertEqual(
-            config.right_angle_indicator_threshold_px, Config.DEFAULT_SNAP_THRESHOLD_PX
+            config.snap_to_right_angle_threshold_px, Config.DEFAULT_SNAP_THRESHOLD_PX
         )
         self.assertEqual(config.default_auto_zoom_level, 0)
 
     def test_crosshair_preference_updates_plan_view_overlay_state(self):
-        class FakeViewport:
-            def __init__(self):
-                self.tracking = []
-                self.updates = 0
-
-            def setMouseTracking(self, enabled):
-                self.tracking.append(enabled)
-
-            def update(self):
-                self.updates += 1
-
-        viewport = FakeViewport()
-        view = TakeoffPlanView.__new__(TakeoffPlanView)
-        view.viewport = lambda: viewport
+        view, viewport = _plan_view_with_tracking_viewport()
         TakeoffPlanView.set_full_window_crosshairs(view, True, "#123456", 4)
         self.assertTrue(view._use_full_window_crosshairs)
         self.assertEqual(view._crosshair_color, "#123456")
@@ -827,6 +884,21 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertFalse(view._use_full_window_crosshairs)
         self.assertEqual(viewport.tracking, [True, False])
         self.assertEqual(viewport.updates, 2)
+
+    def test_crosshair_disabled_keeps_mouse_tracking_on_during_placement(self):
+        view, viewport = _plan_view_with_tracking_viewport("place")
+        TakeoffPlanView.set_full_window_crosshairs(view, False, "#123456", 4)
+        self.assertFalse(view._use_full_window_crosshairs)
+        self.assertEqual(viewport.tracking, [True])
+        self.assertEqual(viewport.updates, 1)
+
+    def test_cursor_mode_changes_refresh_preview_mouse_tracking(self):
+        view, viewport = _plan_view_with_tracking_viewport()
+        TakeoffPlanView._apply_cursor_mode(view, "place")
+        TakeoffPlanView._apply_cursor_mode(view, "paste_backout")
+        TakeoffPlanView._apply_cursor_mode(view, "select")
+        self.assertEqual(viewport.tracking, [True, True, False])
+        self.assertEqual(viewport.updates, 3)
 
     def test_crosshair_repaints_on_vertical_and_horizontal_scroll(self):
         class FakeViewport:
@@ -858,6 +930,9 @@ class OptionsPreferencesTests(unittest.TestCase):
                 if self._use_full_window_crosshairs:
                     self._viewport.update()
 
+            def _uses_dynamic_tile_coverage(self):
+                return self._can_zoom_rerender
+
         view = FakeScrollView()
         view.scrollContentsBy(0, 12)
         view.scrollContentsBy(15, 0)
@@ -866,6 +941,46 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._use_full_window_crosshairs = False
         view.scrollContentsBy(3, 4)
         self.assertEqual(view._viewport.updates, 2)
+
+    def test_overlay_only_pdf_panning_refreshes_tile_coverage(self):
+        class BaseScrollView:
+            def scrollContentsBy(self, dx, dy):
+                self.base_scrolls.append((dx, dy))
+
+        class FakeZoomDebouncer:
+            def __init__(self):
+                self.scales = []
+
+            def handle_scale_changed(self, scale):
+                self.scales.append(scale)
+
+        class FakeScrollView(ZoomHandlerMixin, BaseScrollView):
+            def __init__(self):
+                self.base_scrolls = []
+                self._use_full_window_crosshairs = False
+                self._selected_uids = set()
+                self._cursor_mode = "select"
+                self._place_preview_items = []
+                self._paste_backout_active = False
+                self._zoom_debouncer = FakeZoomDebouncer()
+
+            def viewport(self):
+                return SimpleNamespace(update=lambda: None)
+
+            def transform(self):
+                return SimpleNamespace(m11=lambda: 4.0)
+
+            def _request_crosshair_repaint(self):
+                return None
+
+            def _uses_dynamic_tile_coverage(self):
+                return True
+
+        view = FakeScrollView()
+        view.scrollContentsBy(8, 0)
+
+        self.assertEqual(view.base_scrolls, [(8, 0)])
+        self.assertEqual(view._zoom_debouncer.scales, [4.0])
 
     def test_takeoff_next_page_allows_add_only_on_last_page_when_enabled(self):
         class FakePageCombo:
@@ -926,6 +1041,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._can_zoom_rerender = True
         view._disable_high_resolution_images = True
+        view._current_page = None
+        view._loaded_visual_kind = None
         self.assertEqual(view._target_base_raster_scale(1.0, view_m11=4.0), 1.0)
         view._disable_high_resolution_images = False
         view._scene_scale = 2.0
@@ -940,6 +1057,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._can_zoom_rerender = True
         view._disable_high_resolution_images = True
         view._current_page = object()
+        view._loaded_visual_kind = None
         view._clear_tiles = lambda: calls.append("clear")
         view._cancel_optional_base_correction = lambda: calls.append("cancel")
         view._update_tile_coverage(4.0)
@@ -949,6 +1067,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         calls = []
         view._current_page = object()
+        view._loaded_visual_kind = None
         view._disable_high_resolution_images = False
         view._can_zoom_rerender = True
         view._is_composite_mode = False
@@ -968,6 +1087,267 @@ class OptionsPreferencesTests(unittest.TestCase):
             ["clear", "cancel", ("base", 2.0, 7), "viewport"],
         )
 
+    def test_composite_base_pdf_overlay_uses_stable_overlay_scale(self):
+        class FakePageCache:
+            def __init__(self):
+                self.calls = []
+
+            def get_tinted_page(
+                self, file_path, page_index, scale, rotation, tint_rgb
+            ):
+                self.calls.append((file_path, page_index, scale, rotation, tint_rgb))
+                return QtGui.QImage(300, 300, QtGui.QImage.Format.Format_ARGB32)
+
+        page_cache = FakePageCache()
+        renderer = CompositeRenderer(page_cache)
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            page_index=0,
+            width_pts=100.0,
+            height_pts=100.0,
+        )
+
+        renderer.render_composite(
+            page,
+            bid_ref=None,
+            render_scale=3.0,
+            raster_rotation=0,
+        )
+
+        self.assertEqual(page_cache.calls[0][2], 3.0)
+        self.assertEqual(page_cache.calls[1][2], 2.0)
+
+    def test_composite_tile_pdf_overlay_uses_tile_scale(self):
+        class FakePageCache:
+            def __init__(self):
+                self.calls = []
+
+            def render_region_uncached(
+                self,
+                file_path,
+                page_index,
+                scale,
+                tile_x,
+                tile_y,
+                tile_w,
+                tile_h,
+                rotation,
+            ):
+                self.calls.append(
+                    (file_path, page_index, scale, tile_x, tile_y, tile_w, tile_h)
+                )
+                return QtGui.QImage(tile_w, tile_h, QtGui.QImage.Format.Format_ARGB32)
+
+        page_cache = FakePageCache()
+        renderer = CompositeRenderer(page_cache)
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            page_index=0,
+            width_pts=100.0,
+            height_pts=100.0,
+        )
+
+        renderer.render_composite_region(
+            page,
+            scale=4.0,
+            tile_x=100,
+            tile_y=120,
+            tile_w=256,
+            tile_h=256,
+            rotation=0,
+        )
+
+        self.assertEqual(page_cache.calls[0][2], 4.0)
+        self.assertEqual(page_cache.calls[1][2], 4.0)
+
+    def test_overlay_pdf_item_keeps_scene_size_when_rendered_above_view_scale(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            overlay_image_path="overlay.pdf",
+            width_pts=100.0,
+            height_pts=100.0,
+            image_show_mode=1,
+        )
+        pixmap = QtGui.QPixmap(400, 200)
+
+        item = view._create_overlay_graphics_item(
+            pixmap,
+            page,
+            view_scale=2.0,
+            show_mode=1,
+            render_scale=4.0,
+        )
+
+        self.assertEqual(item.scale(), 0.5)
+        self.assertEqual(
+            item.transformationMode(),
+            QtCore.Qt.TransformationMode.SmoothTransformation,
+        )
+
+    def test_overlay_raster_item_keeps_default_transformation_mode(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            overlay_image_path="overlay.png",
+            width_pts=100.0,
+            height_pts=100.0,
+            image_show_mode=1,
+        )
+        pixmap = QtGui.QPixmap(200, 200)
+
+        item = view._create_overlay_graphics_item(
+            pixmap,
+            page,
+            view_scale=2.0,
+            show_mode=1,
+            render_scale=2.0,
+        )
+
+        self.assertEqual(
+            item.transformationMode(),
+            QtCore.Qt.TransformationMode.FastTransformation,
+        )
+
+    def test_overlay_only_pdf_zoom_requests_dynamic_tile_coverage(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        calls = []
+        view._current_page = Page(
+            uid="page-1",
+            name="Page 1",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=1,
+            width_pts=100.0,
+            height_pts=100.0,
+        )
+        view._loaded_visual_kind = "overlay"
+        view._can_zoom_rerender = False
+        view._disable_high_resolution_images = False
+        view._pending_page_data = None
+        view._base_raster_scale = 2.0
+        view._base_raster_request_scale = 0.0
+        view._base_correction_request_generation_id = 0
+        view._page_render_generation_id = 0
+        view._scene_scale = 2.0
+        view._pdf_width_pts = 100.0
+        view._pdf_height_pts = 100.0
+        view._overlay_pdf_width_pts = 100.0
+        view._overlay_pdf_height_pts = 100.0
+        view._tile_scale = 0.0
+        view._tile_items = {}
+        view._tile_requests = {}
+        view._device_pixel_ratio = lambda: 1.0
+        view._cancel_tile_requests = lambda: calls.append("cancel_tiles")
+        view._cancel_optional_base_correction = lambda: calls.append("cancel_base")
+        view._demote_old_scale_tiles = lambda: calls.append("demote")
+        view._overlay_pdf_tile_transform = lambda: QtGui.QTransform()
+        view.mapToScene = lambda _rect: QtGui.QPolygonF(QtCore.QRectF(0, 0, 50, 50))
+        view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
+        view._partition_visible_and_buffered_tiles = (
+            lambda _rect, _scale: ({TileKey(0, 0, 8.0)}, set())
+        )
+        view._tile_keys_local_rect = lambda _keys: QtCore.QRectF(0, 0, 50, 50)
+        view._evict_old_scale_tiles_outside = lambda _rect: calls.append("evict_old")
+        view._evict_tiles_at_scale = lambda _scale, _keys: calls.append("evict_scale")
+        view._request_tile = (
+            lambda key, generation, priority: calls.append(
+                ("tile", key.scale, generation, priority)
+            )
+        )
+
+        view._update_tile_coverage(4.0)
+
+        self.assertEqual(
+            calls,
+            [
+                "demote",
+                "cancel_tiles",
+                "cancel_base",
+                "evict_old",
+                "evict_scale",
+                ("tile", 8.0, 1, 1),
+            ],
+        )
+
+    def test_overlay_only_pdf_tile_request_renders_overlay_source(self):
+        class FakeRenderingService:
+            def __init__(self):
+                self.calls = []
+
+            def render_region_async(self, **kwargs):
+                self.calls.append(kwargs)
+                return "tile-request"
+
+        rendering_service = FakeRenderingService()
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._current_page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=1,
+            width_pts=100.0,
+            height_pts=100.0,
+            invert=True,
+            bitonal=True,
+        )
+        view._loaded_visual_kind = "overlay"
+        view._is_composite_mode = False
+        view._scene_scale = 2.0
+        view._overlay_pdf_width_pts = 100.0
+        view._overlay_pdf_height_pts = 100.0
+        view._tile_items = {}
+        view._tile_requests = {}
+        view._current_load_token = "load-1"
+        view._current_render_identity = {"page": "page-1"}
+        view._current_bid_ref = None
+        view._rendering_service = rendering_service
+
+        view._request_tile(TileKey(0, 0, 4.0), generation_id=1, priority=2)
+
+        self.assertEqual(len(rendering_service.calls), 1)
+        call = rendering_service.calls[0]
+        self.assertEqual(call["file_path"], "overlay.pdf")
+        self.assertEqual(call["page_index"], 0)
+        self.assertEqual(call["scale"], 4.0)
+        self.assertTrue(call["invert"])
+        self.assertTrue(call["bitonal"])
+
+    def test_overlay_only_pdf_high_resolution_disabled_requests_low_scale_base(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        calls = []
+        view._current_page = Page(
+            uid="page-1",
+            name="Page 1",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=1,
+            width_pts=100.0,
+            height_pts=100.0,
+        )
+        view._loaded_visual_kind = "overlay"
+        view._can_zoom_rerender = False
+        view._disable_high_resolution_images = True
+        view._base_raster_scale = 3.0
+        view._scene_scale = 2.0
+        view._clear_tiles = lambda: calls.append("clear")
+        view._cancel_optional_base_correction = lambda: calls.append("cancel")
+        view._advance_render_generation = lambda: 5
+        view._request_optional_overlay_base_correction = (
+            lambda scale, generation: calls.append(("overlay_base", scale, generation))
+        )
+
+        view._update_tile_coverage(4.0)
+
+        self.assertEqual(calls, ["clear", "cancel", ("overlay_base", 2.0, 5)])
+
     def test_high_resolution_reenabled_requests_current_tile_coverage(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         calls = []
@@ -986,6 +1366,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         calls = []
         view._current_page = Page(uid="blank", name="Blank")
+        view._loaded_visual_kind = None
         view._disable_high_resolution_images = False
         view._can_zoom_rerender = False
         view._clear_tiles = lambda: calls.append("clear")
@@ -1347,9 +1728,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             def set_default_auto_zoom_level(self, value):
                 self.calls.append(("auto_zoom", value))
 
-            def set_right_angle_line_indicator_enabled(self, value):
-                self.calls.append(("right_angle", value))
-
             def set_full_window_crosshairs(self, enabled, color, line_thickness):
                 self.calls.append(("crosshair", enabled, color, line_thickness))
 
@@ -1382,7 +1760,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             disable_high_resolution_images=True,
             enable_intelligent_paste=False,
             enable_advanced_mouse_controls=False,
-            show_right_angle_line_indicator=True,
             use_full_window_crosshairs=True,
             crosshair_color="#123456",
             crosshair_line_thickness=4,
@@ -1400,7 +1777,6 @@ class OptionsPreferencesTests(unittest.TestCase):
                 ("paste", False),
                 ("mouse", False),
                 ("auto_zoom", 125),
-                ("right_angle", True),
                 ("crosshair", True, "#123456", 4),
                 ("snap_angles", 30, 45),
                 (
@@ -1417,7 +1793,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             "intelligent_paste_enabled": False,
             "advanced_mouse_controls_enabled": False,
             "default_auto_zoom_level": 125,
-            "show_right_angle_line_indicator": True,
             "use_full_window_crosshairs": True,
             "crosshair_color": "#123456",
             "crosshair_line_thickness": 4,

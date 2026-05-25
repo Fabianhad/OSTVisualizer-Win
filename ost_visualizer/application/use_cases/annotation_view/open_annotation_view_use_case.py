@@ -13,12 +13,14 @@ class OpenAnnotationViewUseCase:
         project_data: ProjectDataService,
         config_model=None,
         view_window_manager: Optional[IAnnotationViewManager] = None,
+        main_view_manager: Optional[IAnnotationViewManager] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.view_manager = view_manager
         self.project_data = project_data
         self.config_model = config_model
         self.view_window_manager = view_window_manager
+        self.main_view_manager = main_view_manager
 
     def execute_from_hotlink(self, event: AppEvents.HOTLINK_CLICKED) -> str:
         bid_ref = self.project_data.get_current_bid_ref()
@@ -39,6 +41,12 @@ class OpenAnnotationViewUseCase:
         )
 
     def _hotlink_view_manager(self) -> IAnnotationViewManager:
+        if (
+            self.config_model is not None
+            and self.config_model.hotlink_target == "main"
+            and self.main_view_manager is not None
+        ):
+            return self.main_view_manager
         if (
             self.config_model is not None
             and self.config_model.hotlink_target == "view"

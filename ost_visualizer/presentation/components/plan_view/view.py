@@ -1,4 +1,5 @@
 import math
+import os
 import uuid
 from typing import Dict, List, Optional, Set, Tuple
 from PySide6 import QtCore, QtSvg
@@ -62,15 +63,16 @@ from ..viewer_cursors import OUTLINE_OFFSETS, recolor_pixmap
 from .components.drag_handler import DragHandlerMixin
 from .components.geometry_utils import HandleInfo, polygon_centroid
 from .components.graphics_items import (
-    ClippedTextGraphicsItem,
-    ImageBackgroundItem,
     NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
     NAMED_VIEW_LABEL_ITEM_KIND,
+    ClippedTextGraphicsItem,
+    ImageBackgroundItem,
     TileGraphicsItem,
     TileKey,
 )
 from .components.input_handler import InputHandlerMixin
 from .components.page_loader import PageLoaderMixin
+from .components.pdf_text import PdfTextChar, PdfTextRect, PdfTextRun, PdfTextSelection
 from .components.placement_mode import PlacementModeMixin
 from .components.selection_manager import SelectionManagerMixin
 from .components.zoom_handler import ZoomHandlerMixin
@@ -134,6 +136,7 @@ def _rects_nearly_equal(
 
 
 _SCENE_RECT_MARGIN = 50.0
+_PASSIVE_MOUSE_TRACKING_CURSOR_MODES = frozenset({"place", "paste_backout"})
 
 
 class TakeoffPlanView(
@@ -217,6 +220,8 @@ class TakeoffPlanView(
         self._loaded_visual_kind: Optional[str] = None
         self._pdf_width_pts: float = 0.0
         self._pdf_height_pts: float = 0.0
+        self._overlay_pdf_width_pts: float = 0.0
+        self._overlay_pdf_height_pts: float = 0.0
         self._tile_items: Dict[TileKey, TileGraphicsItem] = {}
         self._tile_requests: Dict[TileKey, str] = {}
         self._tile_scale: float = 0.0
@@ -295,8 +300,6 @@ class TakeoffPlanView(
         self._roping_selection_method: str = "touching"
         self._disable_high_resolution_images: bool = False
         self._intelligent_paste_enabled: bool = True
-        self._show_right_angle_line_indicator: bool = False
-        self._right_angle_indicator_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX
         self._use_full_window_crosshairs: bool = False
         self._crosshair_color: str = "#00ff00"
         self._crosshair_line_thickness: int = 1
@@ -308,6 +311,8 @@ class TakeoffPlanView(
         self._snap_to_pdf_lines_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX
         self._snap_to_takeoffs_enabled: bool = True
         self._snap_to_takeoffs_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX
+        self._snap_to_right_angle_enabled: bool = False
+        self._snap_to_right_angle_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX
         self._intelligent_paste_pending_uids: List[str] = []
         self._intelligent_paste_pending_source_anchor_ost: Optional[
             Tuple[float, float]
@@ -344,6 +349,14 @@ class TakeoffPlanView(
         self._pdf_snap_index_dirty: bool = True
         self._pdf_snap_segments_cache_key = None
         self._pdf_snap_segments_cache: List[tuple] = []
+        self._pdf_text_runs: List[PdfTextRun] = []
+        self._pdf_text_cache_key = None
+        self._pdf_text_request_id: Optional[str] = None
+        self._pdf_text_request_source = None
+        self._pdf_text_highlight_items: List[QGraphicsRectItem] = []
+        self._selected_pdf_text_selection: Optional[PdfTextSelection] = None
+        self._pdf_text_drag_anchor: Optional[Tuple[int, int]] = None
+        self._pdf_text_drag_focus: Optional[Tuple[int, int]] = None
         self._backout_parent_uid: Optional[str] = None
         self._backout_active_uid: Optional[str] = None
         self._backout_mode_active: bool = False
@@ -822,6 +835,18 @@ class TakeoffPlanView(
             return False
         return item.boundingRect().contains(item.mapFromScene(scene_pos))
 
+    def update_named_view_label_text(self, uid: str, text: str) -> None:
+        ann = self._current_annotations.get(uid)
+        if ann is not None and ann.is_namedview:
+            ann.properties["Text"] = text
+        if self._editing_named_view_uid == uid:
+            return
+        item = self._named_view_label_item(uid)
+        if item is None:
+            return
+        item.setPlainText(text)
+        self._refresh_named_view_label_background(uid)
+
     def _select_text_annotation_label(self, uid: str) -> bool:
         item = self._text_annotation_item(uid)
         ann = self._current_annotations.get(uid)
@@ -1187,27 +1212,32 @@ class TakeoffPlanView(
         if item.data(2) != "condition_label":
             return
         takeoff_uid = item.data(0)
-        label_kind = item.data(3)
+        self._refresh_condition_text_labels_for_takeoff(str(takeoff_uid))
+        item.setSelected(True)
+        item.update()
+        self.viewport().update()
+
+    def _refresh_condition_text_labels_for_takeoff(self, takeoff_uid: str) -> None:
         path_item = self._condition_label_takeoff_path_item(str(takeoff_uid))
         if path_item is None:
             return
         path = path_item.path()
         condition = self._condition_label_condition(str(takeoff_uid))
-        self._position_condition_text_label(item, path, condition)
-        if (
-            label_kind == "display_dimension"
-            and condition is not None
-            and condition.is_area
-        ):
-            name_item = self._condition_label_text_item(
-                str(takeoff_uid), "display_name"
-            )
-            if name_item is not None:
-                self._position_condition_text_label(name_item, path, condition)
-                name_item.update()
-        item.setSelected(True)
-        item.update()
-        self.viewport().update()
+        refreshed = False
+        dimension_item = self._condition_label_text_item(
+            str(takeoff_uid), "display_dimension"
+        )
+        if dimension_item is not None:
+            self._position_condition_text_label(dimension_item, path, condition)
+            dimension_item.update()
+            refreshed = True
+        name_item = self._condition_label_text_item(str(takeoff_uid), "display_name")
+        if name_item is not None:
+            self._position_condition_text_label(name_item, path, condition)
+            name_item.update()
+            refreshed = True
+        if refreshed:
+            self.viewport().update()
 
     def _position_condition_text_label(
         self,
@@ -1689,6 +1719,381 @@ class TakeoffPlanView(
     def is_view_state_stable(self) -> bool:
         return self._load_view_applied and self._scene.sceneRect().isValid()
 
+    def _pdf_text_extraction_cache_key(self):
+        source = self._pdf_intelligence_source()
+        if source is None:
+            return None
+        layer, file_path, page_index = source
+        try:
+            image_mtime = os.path.getmtime(file_path)
+        except OSError:
+            image_mtime = None
+        page = self._current_page
+        return (
+            page.uid,
+            layer,
+            file_path,
+            image_mtime,
+            page_index,
+            float(self._pdf_width_pts or page.width_pts or 0.0),
+            float(self._pdf_height_pts or page.height_pts or 0.0),
+            float(page.overlay_offset_x),
+            float(page.overlay_offset_y),
+            float(page.overlay_rotation),
+            float(page.deskew_rotation_overlay),
+            float(self._scene_scale),
+        )
+
+    def _cancel_pdf_text_extraction(self) -> None:
+        if self._pdf_text_request_id is None:
+            return
+        self._rendering_service.cancel_request(self._pdf_text_request_id)
+        self._pdf_text_request_id = None
+        self._pdf_text_request_source = None
+
+    def _clear_pdf_text_selection(self) -> None:
+        self._selected_pdf_text_selection = None
+        self._pdf_text_drag_anchor = None
+        self._pdf_text_drag_focus = None
+        self._clear_pdf_text_highlights()
+
+    def _clear_pdf_text_highlights(self) -> None:
+        for item in self._pdf_text_highlight_items:
+            if item.scene() is self._scene:
+                self._scene.removeItem(item)
+        self._pdf_text_highlight_items = []
+
+    def _clear_pdf_text_cache(self) -> None:
+        self._cancel_pdf_text_extraction()
+        self._clear_pdf_text_selection()
+        self._pdf_text_runs = []
+        self._pdf_text_cache_key = None
+        self._pdf_text_request_source = None
+        self._update_viewport_mouse_tracking()
+
+    def _request_pdf_text_extraction(self) -> None:
+        cache_key = self._pdf_text_extraction_cache_key()
+        if cache_key is None or cache_key == self._pdf_text_cache_key:
+            return
+        self._clear_pdf_text_cache()
+        self._pdf_text_cache_key = cache_key
+        source = self._pdf_intelligence_source()
+        if source is None:
+            return
+        self._pdf_text_request_source = source
+        _layer, file_path, page_index = source
+        request_id = self._rendering_service.extract_pdf_text_async(
+            file_path=file_path,
+            page_index=page_index,
+            callback=self._on_pdf_text_extracted,
+            priority=2,
+        )
+        self._pdf_text_request_id = request_id
+
+    def _on_pdf_text_extracted(self, result) -> None:
+        if result.request_id != self._pdf_text_request_id:
+            return
+        source = self._pdf_text_request_source
+        self._pdf_text_request_id = None
+        self._pdf_text_request_source = None
+        if not result.success or result.image is None:
+            self._pdf_text_runs = []
+            return
+        payload = result.image
+        self._pdf_text_runs = self._map_pdf_text_runs(
+            payload["text_runs"],
+            payload["page_info"],
+            source,
+        )
+        self._update_viewport_mouse_tracking()
+
+    def _map_pdf_text_runs(
+        self, raw_runs: list, page_info: dict, source=None
+    ) -> List[PdfTextRun]:
+        page = self._current_page
+        if page is None:
+            return []
+        source_layer = "main"
+        if source is not None:
+            source_layer = source[0]
+        page_width_pts = float(self._pdf_width_pts or page.width_pts or 0.0)
+        page_height_pts = float(self._pdf_height_pts or page.height_pts or 0.0)
+        if source_layer == "overlay":
+            page_width_pts = 0.0
+            page_height_pts = 0.0
+            if page_info["pdf_width"] and page_info["pdf_height"]:
+                page_width_pts = float(page_info["pdf_width"])
+                page_height_pts = float(page_info["pdf_height"])
+        if page_width_pts <= 0.0 or page_height_pts <= 0.0:
+            return []
+        intrinsic_rotation = int(page_info["intrinsic_rotation"] or 0)
+        raw_width_pts = page_width_pts
+        raw_height_pts = page_height_pts
+        if page_info["crop_width_pts"] and page_info["crop_height_pts"]:
+            raw_width_pts = float(page_info["crop_width_pts"])
+            raw_height_pts = float(page_info["crop_height_pts"])
+        elif page_info["media_width_pts"] and page_info["media_height_pts"]:
+            raw_width_pts = float(page_info["media_width_pts"])
+            raw_height_pts = float(page_info["media_height_pts"])
+        view_scale = self._scene_scale
+        mapped_runs: List[PdfTextRun] = []
+        for run in raw_runs:
+            rect = self._pdf_text_raw_box_to_page_rect(
+                float(run.left),
+                float(run.right),
+                float(run.bottom),
+                float(run.top),
+                raw_width_pts,
+                raw_height_pts,
+                intrinsic_rotation,
+                view_scale,
+                source_layer,
+                page_width_pts,
+                page_height_pts,
+            )
+            if rect is None or not run.text:
+                continue
+            left, top, right, bottom = rect
+            chars: List[PdfTextChar] = []
+            for raw_char in run.chars:
+                char_rect = self._pdf_text_raw_box_to_page_rect(
+                    float(raw_char.left),
+                    float(raw_char.right),
+                    float(raw_char.bottom),
+                    float(raw_char.top),
+                    raw_width_pts,
+                    raw_height_pts,
+                    intrinsic_rotation,
+                    view_scale,
+                    source_layer,
+                    page_width_pts,
+                    page_height_pts,
+                )
+                if char_rect is None or not raw_char.text:
+                    continue
+                char_left, char_top, char_right, char_bottom = char_rect
+                chars.append(
+                    PdfTextChar(
+                        left=char_left,
+                        top=char_top,
+                        right=char_right,
+                        bottom=char_bottom,
+                        text=str(raw_char.text),
+                    )
+                )
+            if not chars:
+                continue
+            mapped_runs.append(
+                PdfTextRun(
+                    left=left,
+                    top=top,
+                    right=right,
+                    bottom=bottom,
+                    text=str(run.text),
+                    chars=tuple(chars),
+                )
+            )
+        return mapped_runs
+
+    def _pdf_text_raw_box_to_page_rect(
+        self,
+        left: float,
+        right: float,
+        bottom: float,
+        top: float,
+        raw_width_pts: float,
+        raw_height_pts: float,
+        intrinsic_rotation: int,
+        view_scale: float,
+        source_layer: str = "main",
+        source_width_pts: float = 0.0,
+        source_height_pts: float = 0.0,
+    ) -> Optional[Tuple[float, float, float, float]]:
+        if right <= left or top <= bottom:
+            return None
+        corners = (
+            self._pdf_raw_point_to_page_point(
+                left, bottom, raw_width_pts, raw_height_pts, intrinsic_rotation
+            ),
+            self._pdf_raw_point_to_page_point(
+                right, bottom, raw_width_pts, raw_height_pts, intrinsic_rotation
+            ),
+            self._pdf_raw_point_to_page_point(
+                left, top, raw_width_pts, raw_height_pts, intrinsic_rotation
+            ),
+            self._pdf_raw_point_to_page_point(
+                right, top, raw_width_pts, raw_height_pts, intrinsic_rotation
+            ),
+        )
+        if source_layer == "overlay":
+            corners = tuple(
+                self._pdf_intelligence_point_to_page_point(
+                    source_layer,
+                    x,
+                    y,
+                    source_width_pts,
+                    source_height_pts,
+                )
+                for x, y in corners
+            )
+        xs = [point[0] * view_scale for point in corners]
+        ys = [point[1] * view_scale for point in corners]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def _pdf_text_page_local_point(self, scene_pos: QtCore.QPointF) -> QtCore.QPointF:
+        page_transform = self._current_page_transform()
+        if page_transform is None:
+            return scene_pos
+        inverse, ok = page_transform.inverted()
+        return inverse.map(scene_pos) if ok else scene_pos
+
+    def _pdf_text_run_at(self, scene_pos: QtCore.QPointF) -> Optional[PdfTextRun]:
+        if (
+            not self._selection_enabled
+            or not self._pdf_text_runs
+            or self._cursor_mode != "select"
+        ):
+            return None
+        local = self._pdf_text_page_local_point(scene_pos)
+        for run in reversed(self._pdf_text_runs):
+            if run.contains(local.x(), local.y()):
+                return run
+        return None
+
+    def _pdf_text_char_at(self, scene_pos: QtCore.QPointF) -> Optional[Tuple[int, int]]:
+        if (
+            not self._selection_enabled
+            or not self._pdf_text_runs
+            or self._cursor_mode != "select"
+        ):
+            return None
+        local = self._pdf_text_page_local_point(scene_pos)
+        for run_index in range(len(self._pdf_text_runs) - 1, -1, -1):
+            run = self._pdf_text_runs[run_index]
+            if not run.contains(local.x(), local.y()):
+                continue
+            for char_index in range(len(run.chars) - 1, -1, -1):
+                if run.chars[char_index].contains(local.x(), local.y()):
+                    return run_index, char_index
+        return None
+
+    def select_pdf_text_at(self, scene_pos: QtCore.QPointF) -> bool:
+        char_ref = self._pdf_text_char_at(scene_pos)
+        if char_ref is None:
+            self._clear_pdf_text_selection()
+            return False
+        selection = self._pdf_text_selection_between(char_ref, char_ref)
+        if selection is None:
+            self._clear_pdf_text_selection()
+            return False
+        self._show_pdf_text_selection(selection)
+        return True
+
+    def _pdf_text_selection_between(
+        self, anchor: Tuple[int, int], focus: Tuple[int, int]
+    ) -> Optional[PdfTextSelection]:
+        start_run, start_char = anchor
+        end_run, end_char = focus
+        if (end_run, end_char) < (start_run, start_char):
+            start_run, start_char, end_run, end_char = (
+                end_run,
+                end_char,
+                start_run,
+                start_char,
+            )
+        if start_run < 0 or end_run >= len(self._pdf_text_runs):
+            return None
+        text_parts: List[str] = []
+        rects: List[PdfTextRect] = []
+        for run_index in range(start_run, end_run + 1):
+            run = self._pdf_text_runs[run_index]
+            first_char = start_char if run_index == start_run else 0
+            last_char = end_char if run_index == end_run else len(run.chars) - 1
+            if first_char < 0 or last_char >= len(run.chars) or first_char > last_char:
+                continue
+            selected_chars = run.chars[first_char : last_char + 1]
+            text = "".join(char.text for char in selected_chars)
+            if text:
+                text_parts.append(text)
+            rects.append(
+                PdfTextRect(
+                    left=min(char.left for char in selected_chars),
+                    top=min(char.top for char in selected_chars),
+                    right=max(char.right for char in selected_chars),
+                    bottom=max(char.bottom for char in selected_chars),
+                )
+            )
+        selected_text = " ".join(part for part in text_parts if part)
+        if not selected_text or not rects:
+            return None
+        return PdfTextSelection(selected_text, tuple(rects))
+
+    def _begin_pdf_text_selection(self, scene_pos: QtCore.QPointF) -> bool:
+        char_ref = self._pdf_text_char_at(scene_pos)
+        if char_ref is None:
+            return False
+        self._pdf_text_drag_anchor = char_ref
+        self._pdf_text_drag_focus = char_ref
+        selection = self._pdf_text_selection_between(char_ref, char_ref)
+        if selection is None:
+            self._clear_pdf_text_selection()
+            return False
+        self._show_pdf_text_selection(selection)
+        return True
+
+    def _update_pdf_text_selection_drag(self, scene_pos: QtCore.QPointF) -> bool:
+        if self._pdf_text_drag_anchor is None:
+            return False
+        char_ref = self._pdf_text_char_at(scene_pos)
+        if char_ref is None:
+            return True
+        self._pdf_text_drag_focus = char_ref
+        selection = self._pdf_text_selection_between(
+            self._pdf_text_drag_anchor, self._pdf_text_drag_focus
+        )
+        if selection is not None:
+            self._show_pdf_text_selection(selection)
+        return True
+
+    def _finish_pdf_text_selection_drag(self) -> bool:
+        if self._pdf_text_drag_anchor is None:
+            return False
+        self._pdf_text_drag_anchor = None
+        self._pdf_text_drag_focus = None
+        return self._selected_pdf_text_selection is not None
+
+    def has_selected_pdf_text(self) -> bool:
+        selection = self._selected_pdf_text_selection
+        return selection is not None and not selection.is_empty
+
+    def _show_pdf_text_selection(self, selection: PdfTextSelection) -> None:
+        self._clear_pdf_text_highlights()
+        self._selected_pdf_text_selection = selection
+        page_transform = self._current_page_transform()
+        for rect in selection.rects:
+            item = QGraphicsRectItem(
+                QtCore.QRectF(
+                    rect.left,
+                    rect.top,
+                    max(0.0, rect.right - rect.left),
+                    max(0.0, rect.bottom - rect.top),
+                )
+            )
+            item.setPen(QPen(Qt.PenStyle.NoPen))
+            item.setBrush(QBrush(QColor(80, 140, 255, 80)))
+            item.setZValue(0.75)
+            if page_transform is not None:
+                item.setTransform(page_transform)
+            self._scene.addItem(item)
+            self._pdf_text_highlight_items.append(item)
+
+    def copy_selected_pdf_text(self) -> bool:
+        selection = self._selected_pdf_text_selection
+        if selection is None or selection.is_empty:
+            return False
+        QApplication.clipboard().setText(selection.text)
+        return True
+
     @property
     def place_condition_uid(self) -> Optional[str]:
         return self._place_session_uid
@@ -1799,13 +2204,16 @@ class TakeoffPlanView(
             return
         self._clear_tiles()
         self._cancel_optional_base_correction()
-        if not self._can_zoom_rerender:
+        if not self._uses_dynamic_tile_coverage():
             self.viewport().update()
             return
-        if self._disable_high_resolution_images:
+        if (
+            self._disable_high_resolution_images
+            and not self._is_overlay_only_pdf_visual()
+        ):
             if (
-                not self._is_composite_mode
-                and self._background_item is not None
+                self._background_item is not None
+                and not self._is_composite_mode
                 and abs(self._base_raster_scale - self._scene_scale) > 1e-6
             ):
                 self._request_optional_base_correction(
@@ -2061,20 +2469,28 @@ class TakeoffPlanView(
     def set_default_auto_zoom_level(self, percent: int) -> None:
         self._default_auto_zoom_level = max(0, min(1600, int(percent)))
 
-    def set_right_angle_line_indicator_enabled(self, enabled: bool) -> None:
-        self._show_right_angle_line_indicator = bool(enabled)
-        self.viewport().update()
-
     def set_full_window_crosshairs(
         self, enabled: bool, color: str, line_thickness: int
     ) -> None:
         self._use_full_window_crosshairs = bool(enabled)
         self._crosshair_color = str(color)
         self._crosshair_line_thickness = int(line_thickness)
+        self._update_viewport_mouse_tracking()
+
+    def _cursor_mode_needs_passive_mouse_tracking(self) -> bool:
+        return self._cursor_mode in _PASSIVE_MOUSE_TRACKING_CURSOR_MODES or (
+            self._cursor_mode == "select" and bool(self._pdf_text_runs)
+        )
+
+    def _update_viewport_mouse_tracking(self) -> None:
         viewport = self.viewport()
-        if viewport is not None:
-            viewport.setMouseTracking(self._use_full_window_crosshairs)
-            viewport.update()
+        if viewport is None:
+            return
+        viewport.setMouseTracking(
+            self._use_full_window_crosshairs
+            or self._cursor_mode_needs_passive_mouse_tracking()
+        )
+        viewport.update()
 
     def set_mouse_snap_angles(self, unpressed_angle: int, pressed_angle: int) -> None:
         self._mouse_unpressed_snap_angle = int(unpressed_angle)
@@ -2089,7 +2505,8 @@ class TakeoffPlanView(
         snap_to_pdf_lines_threshold_px: int,
         snap_to_takeoffs_enabled: bool,
         snap_to_takeoffs_threshold_px: int,
-        right_angle_indicator_threshold_px: int,
+        snap_to_right_angle_enabled: bool,
+        snap_to_right_angle_threshold_px: int,
     ) -> None:
         self._snap_to_grid_enabled = bool(snap_to_grid_enabled)
         self._snap_to_grid_threshold_px = int(snap_to_grid_threshold_px)
@@ -2097,9 +2514,8 @@ class TakeoffPlanView(
         self._snap_to_pdf_lines_threshold_px = int(snap_to_pdf_lines_threshold_px)
         self._snap_to_takeoffs_enabled = bool(snap_to_takeoffs_enabled)
         self._snap_to_takeoffs_threshold_px = int(snap_to_takeoffs_threshold_px)
-        self._right_angle_indicator_threshold_px = int(
-            right_angle_indicator_threshold_px
-        )
+        self._snap_to_right_angle_enabled = bool(snap_to_right_angle_enabled)
+        self._snap_to_right_angle_threshold_px = int(snap_to_right_angle_threshold_px)
 
     def drawForeground(self, painter: QPainter, rect: QtCore.QRectF) -> None:
         super().drawForeground(painter, rect)
@@ -2159,6 +2575,8 @@ class TakeoffPlanView(
         self.paste_requested.emit()
 
     def copy_selected(self) -> None:
+        if self.copy_selected_pdf_text():
+            return
         if not self._selection_enabled or not self._selected_uids:
             return
         self.copy_requested.emit(list(self._selected_uids))
@@ -2509,6 +2927,7 @@ class TakeoffPlanView(
                 page_area_selections,
                 resolved_bid_ref,
             )
+            self._request_pdf_text_extraction()
             self._mark_load_geometry_ready()
             return True
         self._cancel_pending_renders()
@@ -2601,6 +3020,7 @@ class TakeoffPlanView(
             self._current_annotations = {}
             self._ann_db_uid_map = {}
         self._apply_page_transform_to_items()
+        self._request_pdf_text_extraction()
         if self._defer_page_visual_reveal:
             self._set_page_overlay_items_visible(False)
         self._update_scene_rect()
@@ -2647,12 +3067,22 @@ class TakeoffPlanView(
                         page.bitonal,
                     )
             elif strategy.load_overlay:
+                overlay_render_scale = strategy.view_scale
+                if page.overlay_image_path and page.overlay_image_path.lower().endswith(
+                    ".pdf"
+                ):
+                    overlay_render_scale = self._target_base_raster_scale(
+                        strategy.view_scale
+                    )
+                self._pending_page_data["overlay_render_scale"] = overlay_render_scale
+                self._pending_page_data["base_raster_scale"] = overlay_render_scale
                 self.load_overlay_async(
                     page,
                     resolved_bid_ref,
                     strategy.view_scale,
                     page.image_show_mode,
                     rotation,
+                    overlay_render_scale,
                 )
         else:
             self._loaded_visual_kind = expected_visual_kind
@@ -2913,6 +3343,9 @@ class TakeoffPlanView(
         self._loaded_visual_kind = None
         self._pdf_width_pts = 0.0
         self._pdf_height_pts = 0.0
+        self._overlay_pdf_width_pts = 0.0
+        self._overlay_pdf_height_pts = 0.0
+        self._clear_pdf_text_cache()
         self._load_geometry_ready = False
         self._load_view_applied = False
         self._load_waiting_for_visibility = False
@@ -3091,6 +3524,7 @@ class TakeoffPlanView(
         self._persistent_cursor_mode = mode
         if mode != "zoom" and not self._right_pan_active:
             self._pre_zoom_persistent_mode = None
+        self._update_viewport_mouse_tracking()
         self._update_cursor()
 
     def _set_palette_background(self):

@@ -97,11 +97,17 @@ class DetachedPageViewManager(IShutdownAware):
         self.event_bus.subscribe(
             AppEvents.NATIVE_SCENE_UPDATED, self._on_native_scene_updated
         )
+        self.event_bus.subscribe(
+            AppEvents.NAMED_VIEW_RENAMED, self._on_named_view_renamed
+        )
 
     def shutdown(self) -> None:
         if self.event_bus is not None:
             self.event_bus.unsubscribe(
                 AppEvents.NATIVE_SCENE_UPDATED, self._on_native_scene_updated
+            )
+            self.event_bus.unsubscribe(
+                AppEvents.NAMED_VIEW_RENAMED, self._on_named_view_renamed
             )
         if self._refresh_signaler is not None:
             self._refresh_signaler.cleanup()
@@ -134,6 +140,11 @@ class DetachedPageViewManager(IShutdownAware):
         if not self.is_view_open():
             return
         self._refresh_signaler.request_refresh()
+
+    def _on_named_view_renamed(self, named_view_uid: str, name: str) -> None:
+        self.project_data.update_named_view_names([(named_view_uid, name)])
+        if self._window is not None:
+            self._window.update_named_view_name(named_view_uid, name)
 
     def set_ui_access_manager(self, manager) -> None:
         self._ui_access_manager = manager
@@ -352,9 +363,6 @@ class DetachedPageViewManager(IShutdownAware):
                 self.config_model.enable_advanced_mouse_controls
             ),
             default_auto_zoom_level=self.config_model.default_auto_zoom_level,
-            show_right_angle_line_indicator=(
-                self.config_model.show_right_angle_line_indicator
-            ),
             use_full_window_crosshairs=self.config_model.use_full_window_crosshairs,
             crosshair_color=self.config_model.crosshair_color,
             crosshair_line_thickness=self.config_model.crosshair_line_thickness,
