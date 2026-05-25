@@ -64,6 +64,7 @@ from ..viewer_cursors import OUTLINE_OFFSETS, recolor_pixmap
 from .components.drag_handler import DragHandlerMixin
 from .components.geometry_utils import HandleInfo, polygon_centroid
 from .components.graphics_items import (
+    DIMENSION_LABEL_ITEM_KIND,
     NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
     NAMED_VIEW_LABEL_ITEM_KIND,
     ClippedTextGraphicsItem,
@@ -77,6 +78,13 @@ from .components.pdf_text import PdfTextChar, PdfTextRect, PdfTextRun, PdfTextSe
 from .components.placement_mode import PlacementModeMixin
 from .components.selection_manager import SelectionManagerMixin
 from .components.zoom_handler import ZoomHandlerMixin
+from ...visualization.pdf.renderers.annotation_item_renderer import (
+    DIMENSION_FONT_SIZE_ADJUSTMENT,
+    update_dimension_text_item,
+)
+from ...visualization.pdf.renderers.annotation_renderer import (
+    calculate_dimension_geometry,
+)
 
 SLOPE_ROTATE_HANDLE_HEX = "#2f9e44"
 SLOPE_ROTATE_HANDLE_RGB = (47, 158, 68)
@@ -336,6 +344,7 @@ class TakeoffPlanView(
         self._drag_orig_position: List[float] = []
         self._drag_item_orig_positions: Dict[int, QtCore.QPointF] = {}
         self._drag_item_orig_paths: Dict[int, QPainterPath] = {}
+        self._drag_item_orig_text_states: Dict[int, tuple] = {}
         self._drag_uid_orig_items: Dict[str, List] = {}
         self._drag_multi_orig_positions: Dict[str, List[float]] = {}
         self._drag_last_valid_new_pos: List[float] = []
@@ -521,6 +530,20 @@ class TakeoffPlanView(
             return item
         return None
 
+    def _dimension_text_label_at(
+        self, viewport_pos: QtCore.QPoint
+    ) -> Optional[QGraphicsTextItem]:
+        item = self.itemAt(viewport_pos)
+        if self._is_dimension_text_label_item(item):
+            return item
+        return None
+
+    def _is_dimension_text_label_item(self, item) -> bool:
+        return (
+            isinstance(item, QGraphicsTextItem)
+            and item.data(2) == DIMENSION_LABEL_ITEM_KIND
+        )
+
     def _named_view_label_at(
         self, viewport_pos: QtCore.QPoint
     ) -> Optional[QGraphicsTextItem]:
@@ -535,6 +558,17 @@ class TakeoffPlanView(
     def _select_condition_text_label(self, item: QGraphicsTextItem) -> None:
         self._finish_active_inline_text_edit(commit=True)
         self._show_text_toolbar_for_item(item, annotation_uid=None)
+
+    def _select_dimension_text_label(self, item: QGraphicsTextItem) -> bool:
+        uid = item.data(0)
+        if uid is None:
+            return False
+        ann = self._current_annotations.get(str(uid))
+        if ann is None or not ann.is_dimension:
+            return False
+        self._finish_active_inline_text_edit(commit=True)
+        self._show_text_toolbar_for_item(item, annotation_uid=str(uid))
+        return True
 
     def _show_text_toolbar_for_item(
         self, item: QGraphicsTextItem, annotation_uid: Optional[str]
@@ -556,7 +590,9 @@ class TakeoffPlanView(
             if annotation_uid is not None
             else 1.0
         )
-        item.setSelected(annotation_uid is None)
+        item.setSelected(
+            annotation_uid is None or self._is_dimension_text_label_item(item)
+        )
         self._sync_condition_text_controls(item)
         self._condition_text_toolbar.show()
         self._condition_text_toolbar.raise_()
@@ -603,10 +639,17 @@ class TakeoffPlanView(
         alignment = item.document().defaultTextOption().alignment()
         self._sync_condition_text_alignment_buttons(alignment)
         self._set_condition_text_alignment_buttons_enabled(
-            self._selected_text_annotation_uid is not None
+            self._selected_text_target_allows_alignment()
         )
         self._update_condition_text_color_swatch(item.defaultTextColor())
         self._set_condition_text_control_signals_blocked(False)
+
+    def _selected_text_target_allows_alignment(self) -> bool:
+        uid = self._selected_text_annotation_uid
+        if uid is None:
+            return False
+        ann = self._current_annotations.get(uid)
+        return bool(ann is not None and ann.is_text)
 
     def _set_condition_text_alignment_buttons_enabled(self, enabled: bool) -> None:
         for button in (
@@ -653,6 +696,8 @@ class TakeoffPlanView(
         if uid is None:
             self._refresh_condition_text_label_layout(item)
         self._persist_selected_text_annotation()
+        if uid is not None:
+            self._refresh_dimension_text_label_layout(uid, item)
         self._refresh_selected_text_annotation_selection_visuals()
 
     def _pick_condition_text_color(self) -> None:
@@ -667,10 +712,12 @@ class TakeoffPlanView(
             if uid is None:
                 self._refresh_condition_text_label_layout(item)
             self._persist_selected_text_annotation(autosize=False)
+            if uid is not None:
+                self._refresh_dimension_text_label_layout(uid, item)
 
     def _set_condition_text_alignment(self, alignment: Qt.AlignmentFlag) -> None:
         item = self._selected_text_item
-        if item is None or self._selected_text_annotation_uid is None:
+        if item is None or not self._selected_text_target_allows_alignment():
             return
         option = QTextOption(item.document().defaultTextOption())
         option.setAlignment(alignment)
@@ -864,6 +911,26 @@ class TakeoffPlanView(
             return
         self._select_text_annotation_label(uid)
 
+    def _selected_dimension_text_label_target(self) -> Optional[str]:
+        item = self._selected_text_item
+        uid = self._selected_text_annotation_uid
+        if item is None or uid is None or not self._is_dimension_text_label_item(item):
+            return None
+        ann = self._current_annotations.get(uid)
+        if ann is None or not ann.is_dimension:
+            return None
+        return uid
+
+    def _restore_selected_dimension_text_label_toolbar(
+        self, uid: Optional[str]
+    ) -> None:
+        if uid is None:
+            return
+        item = self._dimension_label_text_item(uid)
+        if item is None:
+            return
+        self._show_text_toolbar_for_item(item, annotation_uid=uid)
+
     def _selected_condition_text_label_target(
         self,
     ) -> Optional[Tuple[str, str]]:
@@ -890,6 +957,12 @@ class TakeoffPlanView(
         if item is None:
             return
         self._show_text_toolbar_for_item(item, annotation_uid=None)
+
+    def _dimension_label_text_item(self, uid: str) -> Optional[QGraphicsTextItem]:
+        for item in self._uid_to_items.get(uid, []):
+            if self._is_dimension_text_label_item(item):
+                return item
+        return None
 
     def _begin_text_annotation_edit(self, uid: str) -> bool:
         if not self._can_begin_text_annotation_inline_edit():
@@ -1207,7 +1280,34 @@ class TakeoffPlanView(
         if uid is None:
             self._persist_selected_condition_text_label(item)
             return
+        ann = self._current_annotations.get(uid)
+        if ann is not None and ann.is_dimension:
+            self._persist_selected_dimension_text_label(uid, item)
+            return
         self._persist_text_annotation(uid, item, text_override, autosize=autosize)
+
+    def _refresh_dimension_text_label_layout(
+        self, uid: str, item: QGraphicsTextItem
+    ) -> None:
+        ann = self._current_annotations.get(uid)
+        if ann is None or not ann.is_dimension:
+            return
+        cs = self._scene_builder.get_coordinate_system()
+        dimension = calculate_dimension_geometry(
+            ann, ann.position, cs.transform_vertices_to_2d
+        )
+        if not dimension:
+            return
+        if update_dimension_text_item(
+            item,
+            dimension,
+            ann.color,
+            cs,
+            DIMENSION_FONT_SIZE_ADJUSTMENT,
+        ):
+            item.setSelected(True)
+            item.update()
+            self.viewport().update()
 
     def _refresh_condition_text_label_layout(self, item: QGraphicsTextItem) -> None:
         if item.data(2) != "condition_label":
@@ -1359,6 +1459,42 @@ class TakeoffPlanView(
         self._apply_takeoff_text_style_values(takeoff, new_props)
         self.condition_text_properties_flushed.emit(
             [(takeoff.uid, str(label_kind), old_props, dict(new_props))]
+        )
+
+    def _persist_selected_dimension_text_label(
+        self, uid: str, item: QGraphicsTextItem
+    ) -> None:
+        ann = self._current_annotations.get(uid)
+        if ann is None or not ann.is_dimension:
+            return
+        font = item.font()
+        color = item.defaultTextColor()
+        font_color = color.red() | (color.green() << 8) | (color.blue() << 16)
+        new_props = {
+            "FontName": font.family(),
+            "FontColor": font_color,
+            "FontSize": int(self._selected_text_model_font_size or 10),
+            "FontBold": bool(font.bold()),
+            "FontItalic": bool(font.italic()),
+            "FontUnderline": bool(font.underline()),
+        }
+        keys = tuple(new_props.keys())
+        old_props = {key: ann.properties.get(key) for key in keys}
+        old_props["FontColor"] = self._annotation_font_color_int(ann)
+        props_changed = any(old_props.get(key) != new_props.get(key) for key in keys)
+        if not props_changed:
+            return
+        ann.properties.update(new_props)
+        ann.color = int_color_to_hex(font_color)
+        self.annotation_text_properties_flushed.emit(
+            [
+                (
+                    self._ann_db_uid_map.get(uid, uid),
+                    ann.annotation_type,
+                    old_props,
+                    dict(new_props),
+                )
+            ]
         )
 
     def _takeoff_text_style_value(self, takeoff: Takeoff, key: str):
@@ -3122,6 +3258,7 @@ class TakeoffPlanView(
     ) -> None:
         self._flush_dirty_positions()
         saved_text_annotation_uid = self._selected_text_annotation_uid
+        saved_dimension_label_uid = self._selected_dimension_text_label_target()
         saved_condition_label_target = self._selected_condition_text_label_target()
         self._clear_text_selection()
         self.clear_selection_items()
@@ -3132,6 +3269,7 @@ class TakeoffPlanView(
         self._drag_orig_position = []
         self._drag_item_orig_positions = {}
         self._drag_item_orig_paths = {}
+        self._drag_item_orig_text_states = {}
         self._drag_uid_orig_items = {}
         self._drag_multi_orig_positions = {}
         self._drag_last_valid_new_pos = []
@@ -3205,6 +3343,7 @@ class TakeoffPlanView(
         if self._selected_uids or saved_selection:
             self.update_selection_visuals()
         self._restore_selected_text_annotation_toolbar(saved_text_annotation_uid)
+        self._restore_selected_dimension_text_label_toolbar(saved_dimension_label_uid)
         self._restore_selected_condition_text_label_toolbar(
             saved_condition_label_target
         )
@@ -3297,6 +3436,7 @@ class TakeoffPlanView(
         self._drag_handle_corner_count = 0
         self._drag_item_orig_positions = {}
         self._drag_item_orig_paths = {}
+        self._drag_item_orig_text_states = {}
         self._drag_uid_orig_items = {}
         self._drag_multi_orig_positions = {}
         self._drag_last_valid_new_pos = []

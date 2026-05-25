@@ -12,12 +12,14 @@ from .....application.dtos.hotlink_dto import HotlinkDto
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....domain.entities.annotation import BidAnnotation
 from ....components.plan_view.components.graphics_items import (
+    DIMENSION_LABEL_ITEM_KIND,
     NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
     NAMED_VIEW_LABEL_ITEM_KIND,
     ClippedTextGraphicsItem,
 )
 from .annotation_renderer import (
     calculate_annotation_geometry,
+    calculate_dimension_segments,
     create_cloud_path_points,
     process_text_for_box,
 )
@@ -26,10 +28,91 @@ AnnotationItemResult = Tuple[QGraphicsItem, Optional[HotlinkDto]]
 AnnotationItemsResult = Tuple[
     "List[AnnotationItemResult]", "Dict[str, List[QGraphicsItem]]"
 ]
+DIMENSION_FONT_SIZE_ADJUSTMENT = 0.75
+
+
+def build_dimension_path(dimension: Dict, coord_system) -> QPainterPath:
+    x1 = dimension["x1"]
+    y1 = dimension["y1"]
+    x2 = dimension["x2"]
+    y2 = dimension["y2"]
+    font_size = float(dimension.get("font_size") or 10.0)
+    tick_length = max(10.0, coord_system.pdf_points_to_screen_pixels(font_size) * 0.8)
+    segments = calculate_dimension_segments(x1, y1, x2, y2, tick_length)
+    path = QPainterPath()
+    for sx1, sy1, sx2, sy2 in segments:
+        path.moveTo(sx1, sy1)
+        path.lineTo(sx2, sy2)
+    return path
+
+
+def update_dimension_text_item(
+    text_item: QGraphicsTextItem,
+    dimension: Dict,
+    color: str,
+    coord_system,
+    font_size_adjustment: float,
+) -> bool:
+    label = dimension.get("label", "")
+    if not label:
+        return False
+    x1 = dimension["x1"]
+    y1 = dimension["y1"]
+    x2 = dimension["x2"]
+    y2 = dimension["y2"]
+    dx = x2 - x1
+    dy = y2 - y1
+    length = math.hypot(dx, dy)
+    if length <= 1e-9:
+        return False
+    font_size = float(dimension.get("font_size") or 10.0)
+    scaled_font_size = max(
+        6.0,
+        coord_system.pdf_points_to_screen_pixels(font_size) * font_size_adjustment,
+    )
+    font = QFont(dimension.get("font_name", "Arial"), int(scaled_font_size))
+    font.setBold(dimension.get("font_bold", False))
+    font.setItalic(dimension.get("font_italic", False))
+    font.setUnderline(dimension.get("font_underline", False))
+    metrics = QFontMetrics(font)
+    text_width = max(1.0, float(metrics.horizontalAdvance(label)))
+    text_height = max(1.0, float(metrics.height()))
+    nx = -dy / length
+    ny = dx / length
+    offset = max(6.0, min(18.0, text_height * 0.45))
+    center_x = (x1 + x2) / 2.0 - nx * offset
+    center_y = (y1 + y2) / 2.0 - ny * offset
+    angle = math.degrees(math.atan2(dy, dx))
+    if angle > 90.0 or angle < -90.0:
+        angle += 180.0
+    text_item.setPlainText(label)
+    text_item.document().setDocumentMargin(0.0)
+    text_item.setFont(font)
+    text_item.setDefaultTextColor(QColor(color))
+    text_item.setTextWidth(text_width)
+    text_item.setPos(center_x - text_width / 2.0, center_y - text_height / 2.0)
+    text_item.setTransformOriginPoint(text_width / 2.0, text_height / 2.0)
+    text_item.setRotation(angle)
+    text_item.setZValue(3)
+    return True
+
+
+def create_dimension_text_item(
+    dimension: Dict,
+    color: str,
+    coord_system,
+    font_size_adjustment: float,
+) -> Optional[QGraphicsTextItem]:
+    text_item = QGraphicsTextItem()
+    if not update_dimension_text_item(
+        text_item, dimension, color, coord_system, font_size_adjustment
+    ):
+        return None
+    return text_item
 
 
 class AnnotationItemRenderer:
-    FONT_SIZE_ADJUSTMENT = 0.75
+    FONT_SIZE_ADJUSTMENT = DIMENSION_FONT_SIZE_ADJUSTMENT
 
     def __init__(self, coord_system: ICoordinateTransformer):
         self._cs = coord_system
@@ -82,6 +165,8 @@ class AnnotationItemRenderer:
             return self._render_shape(anno_type, geom["bounds"], color, width)
         elif anno_type in ("line", "arrow") and "line" in geom:
             return self._render_line(anno_type, geom["line"], color, width)
+        elif anno_type == "dimension" and "dimension" in geom:
+            return self._render_dimension(geom["dimension"], color, width)
         elif anno_type == "highlight" and "bounds" in geom:
             return self._render_highlight(geom["bounds"], color)
         elif anno_type == "namedview" and "namedview" in geom:
@@ -248,6 +333,30 @@ class AnnotationItemRenderer:
         if item is None:
             return []
         return [(item, None)]
+
+    def _build_dimension_path(self, dimension: Dict) -> QPainterPath:
+        return build_dimension_path(dimension, self._cs)
+
+    def _render_dimension(
+        self, dimension: Dict, color: str, width: float
+    ) -> List[AnnotationItemResult]:
+        path = self._build_dimension_path(dimension)
+        if path.isEmpty():
+            return []
+        path_item = self._create_path_item(path, color, width)
+        if path_item is None:
+            return []
+        results: List[AnnotationItemResult] = [(path_item, None)]
+        label = dimension.get("label", "")
+        if label:
+            text_item = create_dimension_text_item(
+                dimension, color, self._cs, self.FONT_SIZE_ADJUSTMENT
+            )
+            if text_item is not None:
+                text_item.setData(2, DIMENSION_LABEL_ITEM_KIND)
+                text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+                results.append((text_item, None))
+        return results
 
     def _render_highlight(self, bounds: Dict, color: str) -> List[AnnotationItemResult]:
         min_x = bounds["min_x"]

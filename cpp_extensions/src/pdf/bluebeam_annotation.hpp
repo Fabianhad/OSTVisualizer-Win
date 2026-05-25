@@ -93,6 +93,33 @@ namespace ost_pdf_writer
     };
     std::string generate_bluebeam_line_dict(const BluebeamLine &line);
     std::string generate_line_appearance_stream(const BluebeamLine &line);
+    struct BluebeamDimension
+    {
+        double x1;
+        double y1;
+        double x2;
+        double y2;
+        std::array<uint8_t, 3> color;
+        double width;
+        std::string content;
+        double font_size;
+        double scale_factor1;
+        double scale_factor2;
+        std::string author;
+        std::string created_date;
+        BluebeamDimension()
+            : x1(0), y1(0), x2(0), y2(0),
+              color{255, 0, 0},
+              width(1.0),
+              content(""),
+              font_size(10.0),
+              scale_factor1(1.0),
+              scale_factor2(1.0),
+              author("OST Visualizer") {}
+    };
+    std::string generate_bluebeam_dimension_dict(const BluebeamDimension &dimension);
+    std::string generate_dimension_appearance_stream(const BluebeamDimension &dimension);
+    std::array<double, 4> compute_dimension_rect(const BluebeamDimension &dimension);
     struct BluebeamOval
     {
         double min_x;

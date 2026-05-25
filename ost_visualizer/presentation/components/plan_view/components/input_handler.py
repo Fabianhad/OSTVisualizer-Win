@@ -3,7 +3,13 @@ from typing import List, Optional
 from PySide6 import QtCore
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QMouseEvent, QPainterPath, QTransform, QWheelEvent
-from PySide6.QtWidgets import QApplication, QGraphicsPathItem, QMenu, QRubberBand
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsPathItem,
+    QGraphicsTextItem,
+    QMenu,
+    QRubberBand,
+)
 from ....config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ....managers.context_menu_manager import ContextMenuManager
 from ....utils.overlay_context_menu import resolve_overlay_menu_action
@@ -108,6 +114,7 @@ class InputHandlerMixin:
         if (
             not self._drag_item_orig_positions
             and not self._drag_item_orig_paths
+            and not self._drag_item_orig_text_states
             and not self._drag_uid_orig_items
         ):
             return
@@ -138,6 +145,22 @@ class InputHandlerMixin:
                 orig_path = self._drag_item_orig_paths.get(id(item))
                 if orig_path is not None and isinstance(item, QGraphicsPathItem):
                     item.setPath(orig_path)
+                orig_text_state = self._drag_item_orig_text_states.get(id(item))
+                if orig_text_state is not None and isinstance(item, QGraphicsTextItem):
+                    (
+                        text,
+                        text_width,
+                        rotation,
+                        transform_origin,
+                        font,
+                        color,
+                    ) = orig_text_state
+                    item.setPlainText(text)
+                    item.setTextWidth(text_width)
+                    item.setRotation(rotation)
+                    item.setTransformOriginPoint(transform_origin)
+                    item.setFont(font)
+                    item.setDefaultTextColor(color)
         for item in self._selection_items:
             orig = self._drag_item_orig_positions.get(id(item))
             if orig is not None:
@@ -152,6 +175,7 @@ class InputHandlerMixin:
         self._drag_handle_corner_count = 0
         self._drag_item_orig_positions = {}
         self._drag_item_orig_paths = {}
+        self._drag_item_orig_text_states = {}
         self._drag_uid_orig_items = {}
         self._drag_multi_orig_positions = {}
         self._drag_last_valid_new_pos = []
@@ -293,6 +317,13 @@ class InputHandlerMixin:
                 return
             self._finish_active_inline_text_edit(commit=True)
         if event.button() == Qt.MouseButton.LeftButton and self._cursor_mode != "place":
+            dimension_label = self._dimension_text_label_at(vp_pos)
+            if dimension_label is not None and self._select_dimension_text_label(
+                dimension_label
+            ):
+                self._clear_pdf_text_selection()
+                event.accept()
+                return
             text_label = self._condition_text_label_at(vp_pos)
             if text_label is not None:
                 self._clear_pdf_text_selection()
@@ -554,6 +585,18 @@ class InputHandlerMixin:
                                 id(item): QPainterPath(item.path())
                                 for item in self._uid_to_items.get(uid, [])
                                 if isinstance(item, QGraphicsPathItem)
+                            }
+                            self._drag_item_orig_text_states = {
+                                id(item): (
+                                    item.toPlainText(),
+                                    item.textWidth(),
+                                    item.rotation(),
+                                    item.transformOriginPoint(),
+                                    item.font(),
+                                    item.defaultTextColor(),
+                                )
+                                for item in self._uid_to_items.get(uid, [])
+                                if isinstance(item, QGraphicsTextItem)
                             }
                             self._drag_uid_orig_items = {
                                 uid: list(self._uid_to_items.get(uid, []))
@@ -1142,6 +1185,10 @@ class InputHandlerMixin:
                         elif uid in self._current_annotations:
                             ann = self._current_annotations.get(uid)
                             if ann:
+                                if ann.is_dimension:
+                                    self.update_drag_handle_positions(
+                                        new_pos, uid, sdx, sdy
+                                    )
                                 ann.position = new_pos
                                 if uid not in self._position_before_edit:
                                     self._position_before_edit[uid] = list(
@@ -1361,7 +1408,7 @@ class InputHandlerMixin:
                 handle_idx,
                 corner_count,
             )
-        if atype in ("line", "arrow"):
+        if atype in ("line", "arrow", "dimension"):
             return self.compute_new_position(
                 orig_pos,
                 ost_dx,

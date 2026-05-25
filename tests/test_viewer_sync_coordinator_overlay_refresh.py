@@ -18,8 +18,8 @@ from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
-    NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND, NAMED_VIEW_LABEL_ITEM_KIND,
-    ClippedTextGraphicsItem)
+    DIMENSION_LABEL_ITEM_KIND, NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
+    NAMED_VIEW_LABEL_ITEM_KIND, ClippedTextGraphicsItem)
 from ost_visualizer.presentation.components.plan_view.view import \
     TakeoffPlanView
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import \
@@ -83,6 +83,9 @@ class FakeCoordinateSystem:
     def ost_to_screen_pixels(self, value):
         return value
 
+    def pdf_points_to_screen_pixels(self, value):
+        return value
+
     def transform_to_2d(self, x, y):
         return x, y
 
@@ -113,6 +116,32 @@ class FakeAnnotationRenderer:
         results = []
         uid_to_items = {}
         for uid, annotation in annotations:
+            if annotation.is_dimension:
+                item = QGraphicsTextItem("21' - 3\"")
+                item.setData(0, uid)
+                item.setData(2, DIMENSION_LABEL_ITEM_KIND)
+                font = QFont(
+                    str(annotation.properties.get("FontName", "Arial")),
+                    int(annotation.properties.get("FontSize", 10) or 10),
+                )
+                font.setBold(bool(annotation.properties.get("FontBold", False)))
+                font.setItalic(bool(annotation.properties.get("FontItalic", False)))
+                font.setUnderline(
+                    bool(annotation.properties.get("FontUnderline", False))
+                )
+                item.setFont(font)
+                color = int(annotation.properties.get("FontColor", 0) or 0)
+                item.setDefaultTextColor(
+                    QColor(color & 0xFF, (color >> 8) & 0xFF, (color >> 16) & 0xFF)
+                )
+                if len(annotation.position) >= 4:
+                    item.setPos(
+                        (annotation.position[0] + annotation.position[2]) / 2.0,
+                        (annotation.position[1] + annotation.position[3]) / 2.0,
+                    )
+                results.append((item, None))
+                uid_to_items[uid] = [item]
+                continue
             if not annotation.is_text:
                 continue
             width = annotation.position[2] if len(annotation.position) >= 4 else 80.0
@@ -592,6 +621,58 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(emitted[-1][3]["FontColor"], 0x332211)
         view.cleanup()
 
+    def test_bid_dimension_label_uses_toolbar_without_alignment_or_bidtext_target(self):
+        view = self._make_plan_view()
+        annotation, label = self._add_dimension_label_annotation(view)
+        emitted = []
+        view.annotation_text_properties_flushed.connect(
+            lambda changes: emitted.extend(changes)
+        )
+        self.assertTrue(view._select_dimension_text_label(label))
+        self.assertIs(view._selected_text_item, label)
+        self.assertEqual(view._selected_text_annotation_uid, "d1")
+        self.assertFalse(annotation.is_text)
+        self.assertFalse(view._condition_text_toolbar.isHidden())
+        self.assertTrue(label.isSelected())
+        self.assertFalse(view._condition_text_align_left_btn.isEnabled())
+        self.assertFalse(view._condition_text_align_center_btn.isEnabled())
+        self.assertFalse(view._condition_text_align_right_btn.isEnabled())
+        old_rect = label.mapToScene(label.boundingRect()).boundingRect()
+        size_index = view._condition_text_size_combo.findData(24)
+        self.assertGreaterEqual(size_index, 0)
+        view._condition_text_size_combo.setCurrentIndex(size_index)
+        new_rect = label.mapToScene(label.boundingRect()).boundingRect()
+        self.assertGreater(new_rect.height(), old_rect.height())
+        self.assertEqual(label.toPlainText(), "21' - 3\"")
+        self.assertEqual(annotation.properties["FontSize"], 24)
+        self.assertFalse(view._condition_text_toolbar.isHidden())
+        self.assertEqual(emitted[-1][1], "dimension")
+        self.assertNotIn("Text", emitted[-1][3])
+        self.assertNotIn("TextAlign", emitted[-1][3])
+        view.cleanup()
+
+    def test_bid_dimension_label_color_change_persists_and_toolbar_stays_visible(self):
+        view = self._make_plan_view()
+        annotation, label = self._add_dimension_label_annotation(
+            view, {"FontName": "Arial", "FontColor": 0, "FontSize": 10}
+        )
+        label.setDefaultTextColor(QColor("#000000"))
+        emitted = []
+        view.annotation_text_properties_flushed.connect(
+            lambda changes: emitted.extend(changes)
+        )
+        self.assertTrue(view._select_dimension_text_label(label))
+        with patch.object(QColorDialog, "getColor", return_value=QColor("#445566")):
+            view._pick_condition_text_color()
+        self.assertEqual(annotation.properties["FontColor"], 0x665544)
+        self.assertEqual(annotation.color, "#445566")
+        self.assertEqual(label.defaultTextColor().name(), "#445566")
+        self.assertFalse(view._condition_text_toolbar.isHidden())
+        self.assertEqual(emitted[-1][1], "dimension")
+        self.assertEqual(emitted[-1][3]["FontColor"], 0x665544)
+        self.assertNotIn("TextAlign", emitted[-1][3])
+        view.cleanup()
+
     def test_text_annotation_alignment_changes_do_not_resize_box(self):
         view = self._make_plan_view()
         page = Page(uid="page-1", name="Page 1")
@@ -900,6 +981,36 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIs(view._selected_text_item, new_item)
         self.assertEqual(view._selected_text_annotation_uid, "a1")
         self.assertFalse(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
+    def test_selected_bid_dimension_label_toolbar_restores_after_overlay_rebuild(self):
+        view = self._make_plan_view()
+        _annotation, old_label = self._add_dimension_label_annotation(
+            view, {"FontName": "Arial", "FontColor": 0, "FontSize": 10}
+        )
+        self.assertTrue(view._select_dimension_text_label(old_label))
+        size_index = view._condition_text_size_combo.findData(24)
+        self.assertGreaterEqual(size_index, 0)
+        view._condition_text_size_combo.setCurrentIndex(size_index)
+        saved_uid = view._selected_dimension_text_label_target()
+        view._clear_text_selection()
+        new_label = QGraphicsTextItem("21' - 3\"")
+        new_label.setData(0, "d1")
+        new_label.setData(2, DIMENSION_LABEL_ITEM_KIND)
+        new_label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        new_label.setFont(QFont("Arial", 24))
+        view._scene.addItem(new_label)
+        view._uid_to_items = {"d1": [new_label]}
+        view._restore_selected_dimension_text_label_toolbar(saved_uid)
+        self.assertIs(view._selected_text_item, new_label)
+        self.assertEqual(view._selected_text_annotation_uid, "d1")
+        self.assertTrue(new_label.isSelected())
+        self.assertFalse(old_label.isSelected())
+        self.assertFalse(view._condition_text_toolbar.isHidden())
+        self.assertFalse(view._condition_text_align_left_btn.isEnabled())
+        self.assertFalse(view._condition_text_align_center_btn.isEnabled())
+        self.assertFalse(view._condition_text_align_right_btn.isEnabled())
+        self.assertEqual(view._condition_text_size_combo.currentData(), 24)
         view.cleanup()
 
     def test_selected_display_name_toolbar_restores_after_label_rebuild(self):
@@ -1669,6 +1780,34 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             linear_geometry=FakeLinearGeometry(),
         )
         return view
+
+    def _add_dimension_label_annotation(self, view, properties=None):
+        annotation = BidAnnotation(
+            uid="d1",
+            annotation_type="dimension",
+            position=[0.0, 0.0, 255.0, 0.0],
+            color="#000000",
+            properties=dict(
+                properties
+                or {
+                    "FontName": "Arial",
+                    "FontColor": 0,
+                    "FontSize": 10,
+                    "FontBold": False,
+                    "FontItalic": False,
+                    "FontUnderline": False,
+                }
+            ),
+        )
+        label = QGraphicsTextItem("21' - 3\"")
+        label.setData(0, annotation.uid)
+        label.setData(2, DIMENSION_LABEL_ITEM_KIND)
+        label.setFont(QFont("Arial", int(annotation.properties.get("FontSize", 10))))
+        label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        view._scene.addItem(label)
+        view._uid_to_items = {annotation.uid: [label]}
+        view._current_annotations = {annotation.uid: annotation}
+        return annotation, label
 
     def _make_condition_label_path_item(self, uid):
         path = QPainterPath()

@@ -75,6 +75,29 @@ NB_MODULE(ost_pdf_writer, m)
                     "RGB color as [r, g, b] (0-255)")
             .def_rw("width", &PDFWriter::LineAnnotationData::width,
                     "Line width in PDF points");
+        nb::class_<PDFWriter::DimensionAnnotationData>(m, "DimensionAnnotationData",
+                                                       "Data for a line dimension annotation")
+            .def(nb::init<>())
+            .def_rw("x1", &PDFWriter::DimensionAnnotationData::x1,
+                    "Start X coordinate in PDF points")
+            .def_rw("y1", &PDFWriter::DimensionAnnotationData::y1,
+                    "Start Y coordinate in PDF points")
+            .def_rw("x2", &PDFWriter::DimensionAnnotationData::x2,
+                    "End X coordinate in PDF points")
+            .def_rw("y2", &PDFWriter::DimensionAnnotationData::y2,
+                    "End Y coordinate in PDF points")
+            .def_rw("color", &PDFWriter::DimensionAnnotationData::color,
+                    "RGB color as [r, g, b] (0-255)")
+            .def_rw("width", &PDFWriter::DimensionAnnotationData::width,
+                    "Line width in PDF points")
+            .def_rw("content", &PDFWriter::DimensionAnnotationData::content,
+                    "Formatted measurement label")
+            .def_rw("font_size", &PDFWriter::DimensionAnnotationData::font_size,
+                    "Font size in PDF points")
+            .def_rw("scale_factor1", &PDFWriter::DimensionAnnotationData::scale_factor1,
+                    "Plan scale factor for measurement metadata")
+            .def_rw("scale_factor2", &PDFWriter::DimensionAnnotationData::scale_factor2,
+                    "Plan scale denominator for measurement metadata");
         nb::class_<PDFWriter::OvalAnnotationData>(m, "OvalAnnotationData",
                                                   "Data for a single oval/circle annotation")
             .def(nb::init<>())
@@ -144,6 +167,8 @@ NB_MODULE(ost_pdf_writer, m)
                     "List of rectangle annotations (RectAnnotationData) for this page")
             .def_rw("lines", &PDFWriter::PageExportData::lines,
                     "List of line annotations (LineAnnotationData) for this page")
+            .def_rw("dimensions", &PDFWriter::PageExportData::dimensions,
+                    "List of line dimension annotations (DimensionAnnotationData) for this page")
             .def_rw("ovals", &PDFWriter::PageExportData::ovals,
                     "List of oval annotations (OvalAnnotationData) for this page")
             .def_rw("polygons", &PDFWriter::PageExportData::polygons,

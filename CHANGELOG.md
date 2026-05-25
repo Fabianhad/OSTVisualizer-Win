@@ -11,6 +11,7 @@
 - Added read-only MCP area context with area names on takeoffs/current context plus `list_areas` and `get_area_summary`.
 - Added separate Options controls for grid, PDF-line, takeoff, and right-angle snap thresholds.
 - Added embedded PDF text selection in the plan view with I-beam hover, drag-range highlighting, and copy support.
+- Added 2D rendering and Bluebeam-style PDF LineDimension export for imported BidDimensions annotations, including end ticks, feet/inches labels, text-label formatting, and measurement metadata for PDF tools.
 
 ### Changed
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.
@@ -34,7 +35,8 @@
 - Included the standalone `ostv-mcp.exe` helper and its runtime files in the desktop distribution so production MCP client config points to an installed executable.
 - Kept the UI responsive while creating new databases by running database creation through the existing progress dialog workflow.
 - Tightened MCP JSON-RPC request validation and removed an arbitrary hierarchy fallback for unmatched database files.
-- Fixed Intelligent Paste so copied takeoffs paste at the cursor, support temporary original-axis snap guides only during the first drag, and stop using that snap state after release or cancel.
+- Fixed Intelligent Paste so copied takeoffs and annotations paste at the cursor, support temporary original-axis snap guides only during the first drag, and stop using that snap state after release or cancel.
+- Fixed Cover Sheet page image paths so saved `BidPages.ImagePath` values use Windows backslashes for OST compatibility.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.
 - Fixed text annotation selected/edit outlines to use the real textbox resize bounds and clipped overflowing text to the textbox.
 - Centered area Display Dimension labels inside the takeoff while keeping Display Name labels below the takeoff.

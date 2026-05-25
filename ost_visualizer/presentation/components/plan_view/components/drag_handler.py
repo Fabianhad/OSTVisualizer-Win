@@ -9,6 +9,15 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsTextItem,
 )
+from ....visualization.pdf.renderers.annotation_item_renderer import (
+    DIMENSION_FONT_SIZE_ADJUSTMENT,
+    build_dimension_path,
+    create_dimension_text_item,
+    update_dimension_text_item,
+)
+from ....visualization.pdf.renderers.annotation_renderer import (
+    calculate_dimension_geometry,
+)
 from .geometry_utils import polygon_is_valid, signed_area
 from .graphics_items import ClippedTextGraphicsItem
 
@@ -31,6 +40,49 @@ def _line_line_intersect(
 
 
 class DragHandlerMixin:
+    def _update_dimension_preview_items(self, ann, uid: str, new_pos, cs) -> None:
+        dimension = calculate_dimension_geometry(
+            ann, new_pos, cs.transform_vertices_to_2d
+        )
+        if not dimension:
+            return
+        items = self._uid_to_items.get(uid, [])
+        if not items or not isinstance(items[0], QGraphicsPathItem):
+            return
+        path_item = items[0]
+        path_item.setPos(0.0, 0.0)
+        path_item.setPath(build_dimension_path(dimension, cs))
+        text_item = None
+        for item in items[1:]:
+            if isinstance(item, QGraphicsTextItem):
+                text_item = item
+                break
+        if text_item is None:
+            text_item = create_dimension_text_item(
+                dimension,
+                ann.color,
+                cs,
+                DIMENSION_FONT_SIZE_ADJUSTMENT,
+            )
+            if text_item is None:
+                return
+            text_item.setData(0, uid)
+            transform = self._current_page_transform()
+            if transform is not None:
+                text_item.setTransform(transform)
+            self._scene.addItem(text_item)
+            items.append(text_item)
+            if text_item not in self._takeoff_items:
+                self._takeoff_items.append(text_item)
+        else:
+            update_dimension_text_item(
+                text_item,
+                dimension,
+                ann.color,
+                cs,
+                DIMENSION_FONT_SIZE_ADJUSTMENT,
+            )
+
     def _drag_preview_color_for_condition(self, condition):
         color_entry = self._current_color_map.get(condition.uid)
         if color_entry is not None:
@@ -386,22 +438,25 @@ class DragHandlerMixin:
             )
             if path_item is not None:
                 if is_ann:
-                    new_path = QPainterPath()
-                    new_path.moveTo(x1, y1)
-                    new_path.lineTo(x2, y2)
-                    if ann.annotation_type == "arrow":
-                        arrow_size = max(ann.width * 20, 24.0)
-                        angle = math.atan2(y2 - y1, x2 - x1)
-                        arrow_angle = math.radians(30)
-                        lx = x2 - arrow_size * math.cos(angle - arrow_angle)
-                        ly = y2 - arrow_size * math.sin(angle - arrow_angle)
-                        rx = x2 - arrow_size * math.cos(angle + arrow_angle)
-                        ry = y2 - arrow_size * math.sin(angle + arrow_angle)
-                        new_path.moveTo(lx, ly)
+                    if ann.is_dimension:
+                        self._update_dimension_preview_items(ann, uid, new_pos, cs)
+                    else:
+                        new_path = QPainterPath()
+                        new_path.moveTo(x1, y1)
                         new_path.lineTo(x2, y2)
-                        new_path.lineTo(rx, ry)
-                    path_item.setPos(0.0, 0.0)
-                    path_item.setPath(new_path)
+                        if ann.annotation_type == "arrow":
+                            arrow_size = max(ann.width * 20, 24.0)
+                            angle = math.atan2(y2 - y1, x2 - x1)
+                            arrow_angle = math.radians(30)
+                            lx = x2 - arrow_size * math.cos(angle - arrow_angle)
+                            ly = y2 - arrow_size * math.sin(angle - arrow_angle)
+                            rx = x2 - arrow_size * math.cos(angle + arrow_angle)
+                            ry = y2 - arrow_size * math.sin(angle + arrow_angle)
+                            new_path.moveTo(lx, ly)
+                            new_path.lineTo(x2, y2)
+                            new_path.lineTo(rx, ry)
+                        path_item.setPos(0.0, 0.0)
+                        path_item.setPath(new_path)
                 elif condition.is_linear:
                     thickness_ost = condition.thickness if condition.thickness else 1.0
                     thickness_px = max(cs.ost_to_screen_pixels(thickness_ost), 2.0)

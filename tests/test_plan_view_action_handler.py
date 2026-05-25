@@ -6,6 +6,7 @@ from ost_visualizer.application.dtos.insert_annotation_spec_dto import \
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import \
     InsertTakeoffSpec
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
@@ -28,6 +29,7 @@ class FakePlanView:
         self.paste_backout_calls = []
         self.mouse_ost_position = (100.0, 200.0)
         self.intelligent_paste_calls = []
+        self.annotation_key_map = {}
 
     def set_selected_uids(self, uids):
         self.selected = set(uids)
@@ -44,8 +46,12 @@ class FakePlanView:
     def get_annotation(self, _uid):
         return None
 
-    def find_annotation_keys_by_uid_type(self, _uid_type_set):
-        return set()
+    def find_annotation_keys_by_uid_type(self, uid_type_set):
+        return {
+            self.annotation_key_map[(uid, ann_type)]
+            for uid, ann_type in uid_type_set
+            if (uid, ann_type) in self.annotation_key_map
+        }
 
     def cancel_place_mode(self):
         self.cancel_place_mode_calls += 1
@@ -279,12 +285,13 @@ class FakeClipboard:
     def __init__(
         self,
         items,
+        annotations=None,
         extras=None,
         source_bid_uid="7",
         source_file_path="bid.mdb",
     ):
         self.items = items
-        self.annotations = []
+        self.annotations = list(annotations or [])
         self.source_bid_uid = source_bid_uid
         self.source_file_path = source_file_path
         self._extras = extras or {}
@@ -313,6 +320,52 @@ class FakeAccess:
 
 
 class PlanViewActionHandlerTests(unittest.TestCase):
+    def _paste_handler(
+        self,
+        plan_view=None,
+        write=None,
+        ann_write=None,
+    ):
+        return PlanViewActionHandler(
+            plan_view=FakePlanView() if plan_view is None else plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService() if write is None else write,
+            annotation_write_svc=(
+                FakeAnnotationWriteService() if ann_write is None else ann_write
+            ),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+        )
+
+    def _copied_takeoff(self, position=None):
+        copied_position = [10.0, 20.0, 14.0, 20.0] if position is None else position
+        return Takeoff(
+            uid="source",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=list(copied_position),
+            parent_uid="0",
+        )
+
+    def _copied_annotation(
+        self,
+        annotation_type="line",
+        position=None,
+        uid="source-ann",
+        color="#ff0000",
+    ):
+        copied_position = [10.0, 20.0, 14.0, 20.0] if position is None else position
+        return BidAnnotation(
+            uid=uid,
+            annotation_type=annotation_type,
+            page_uid="source-page",
+            position=list(copied_position),
+            color=color,
+            width=1.0,
+        )
+
     def test_denied_takeoff_selection_access_blocks_plan_view_write_signals(self):
         data = FakeProjectData()
         takeoff = Takeoff(
@@ -908,6 +961,111 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_paste_requested()
         self.assertEqual(write.calls[0][2][0].position, [11.0, 21.0, 15.0, 21.0])
         self.assertEqual(plan_view.intelligent_paste_calls, [])
+
+    def test_intelligent_paste_enabled_pastes_annotation_at_mouse(self):
+        source = self._copied_annotation()
+        plan_view = FakePlanView()
+        plan_view.mouse_ost_position = (50.0, 75.0)
+        plan_view.annotation_key_map = {("ann-1", "line"): "ann-1"}
+        ann_write = FakeAnnotationWriteService()
+        handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
+        handler._clipboard_svc = FakeClipboard([], annotations=[source])
+
+        handler.on_paste_requested()
+
+        specs = ann_write.insert_calls[0][2]
+        self.assertEqual(specs[0].position, [50.0, 75.0, 54.0, 75.0])
+        self.assertEqual(plan_view.selected, {"ann-1"})
+        self.assertEqual(
+            plan_view.intelligent_paste_calls,
+            [(["ann-1"], (10.0, 20.0))],
+        )
+
+    def test_intelligent_paste_disabled_pastes_annotation_with_legacy_offset(self):
+        source = self._copied_annotation()
+        plan_view = FakePlanView()
+        plan_view.intelligent_paste_enabled = False
+        plan_view.annotation_key_map = {("ann-1", "line"): "ann-1"}
+        ann_write = FakeAnnotationWriteService()
+        handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
+        handler._clipboard_svc = FakeClipboard([], annotations=[source])
+
+        handler.on_paste_requested()
+
+        specs = ann_write.insert_calls[0][2]
+        self.assertEqual(specs[0].position, [11.0, 21.0, 15.0, 21.0])
+        self.assertEqual(plan_view.selected, {"ann-1"})
+        self.assertEqual(plan_view.intelligent_paste_calls, [])
+
+    def test_intelligent_paste_enabled_pastes_mixed_clipboard_at_mouse(self):
+        takeoff = self._copied_takeoff()
+        annotation = self._copied_annotation(position=[20.0, 30.0, 24.0, 30.0])
+        plan_view = FakePlanView()
+        plan_view.mouse_ost_position = (50.0, 75.0)
+        plan_view.annotation_key_map = {("ann-1", "line"): "ann-1"}
+        write = FakeWriteService()
+        ann_write = FakeAnnotationWriteService()
+        handler = self._paste_handler(
+            plan_view=plan_view, write=write, ann_write=ann_write
+        )
+        handler._clipboard_svc = FakeClipboard([takeoff], annotations=[annotation])
+
+        handler.on_paste_requested()
+
+        self.assertEqual(write.calls[0][2][0].position, [50.0, 75.0, 54.0, 75.0])
+        self.assertEqual(
+            ann_write.insert_calls[0][2][0].position,
+            [60.0, 85.0, 64.0, 85.0],
+        )
+        self.assertEqual(plan_view.selected, {"100", "ann-1"})
+        self.assertEqual(
+            plan_view.intelligent_paste_calls,
+            [(["100", "ann-1"], (10.0, 20.0))],
+        )
+
+    def test_intelligent_paste_disabled_pastes_mixed_clipboard_with_legacy_offset(self):
+        takeoff = self._copied_takeoff()
+        annotation = self._copied_annotation(position=[20.0, 30.0, 24.0, 30.0])
+        plan_view = FakePlanView()
+        plan_view.intelligent_paste_enabled = False
+        plan_view.annotation_key_map = {("ann-1", "line"): "ann-1"}
+        write = FakeWriteService()
+        ann_write = FakeAnnotationWriteService()
+        handler = self._paste_handler(
+            plan_view=plan_view, write=write, ann_write=ann_write
+        )
+        handler._clipboard_svc = FakeClipboard([takeoff], annotations=[annotation])
+
+        handler.on_paste_requested()
+
+        self.assertEqual(write.calls[0][2][0].position, [11.0, 21.0, 15.0, 21.0])
+        self.assertEqual(
+            ann_write.insert_calls[0][2][0].position,
+            [21.0, 31.0, 25.0, 31.0],
+        )
+        self.assertEqual(plan_view.selected, {"100", "ann-1"})
+        self.assertEqual(plan_view.intelligent_paste_calls, [])
+
+    def test_intelligent_paste_text_annotation_moves_center_only(self):
+        source = self._copied_annotation(
+            uid="source-text",
+            annotation_type="text",
+            position=[10.0, 20.0, 100.0, 50.0],
+            color="#000000",
+        )
+        plan_view = FakePlanView()
+        plan_view.mouse_ost_position = (50.0, 75.0)
+        plan_view.annotation_key_map = {("ann-1", "text"): "ann-1"}
+        ann_write = FakeAnnotationWriteService()
+        handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
+        handler._clipboard_svc = FakeClipboard([], annotations=[source])
+
+        handler.on_paste_requested()
+
+        self.assertEqual(
+            ann_write.insert_calls[0][2][0].position,
+            [50.0, 75.0, 100.0, 50.0],
+        )
 
     def test_intelligent_paste_off_blocks_holes_only_backout_paste(self):
         hole = Takeoff(

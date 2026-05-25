@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsTextItem
 _SMOOTHING_SCALE_TOLERANCE = 0.01
 NAMED_VIEW_LABEL_ITEM_KIND = "namedview_label"
 NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND = "namedview_label_bg"
+DIMENSION_LABEL_ITEM_KIND = "dimension_label"
 
 
 class _ImageGraphicsItem(QGraphicsItem):

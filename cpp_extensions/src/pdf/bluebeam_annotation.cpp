@@ -4,47 +4,9 @@
 #include <ctime>
 #include <cmath>
 #include <algorithm>
-#include <numeric>
 #include <random>
-#include <limits>
 namespace ost_pdf_writer
 {
-    static std::string decimal_to_fraction(double decimal, int max_denominator = 64)
-    {
-        if (decimal <= 0)
-            return "0";
-        double intpart;
-        double frac = std::modf(decimal, &intpart);
-        if (frac < 1e-10)
-        {
-            return std::to_string(static_cast<int>(intpart));
-        }
-        double best_error = std::numeric_limits<double>::max();
-        int best_num = 0, best_den = 1;
-        for (int den = 1; den <= max_denominator; ++den)
-        {
-            int num = static_cast<int>(std::round(decimal * den));
-            if (num <= 0)
-                continue;
-            double error = std::abs(static_cast<double>(num) / den - decimal);
-            if (error < best_error)
-            {
-                best_error = error;
-                best_num = num;
-                best_den = den;
-            }
-        }
-        int gcd = std::gcd(best_num, best_den);
-        best_num /= gcd;
-        best_den /= gcd;
-        std::ostringstream oss;
-        if (intpart > 0)
-        {
-            oss << static_cast<int>(intpart) << " ";
-        }
-        oss << best_num << "/" << best_den;
-        return oss.str();
-    }
     std::string generate_nm()
     {
         static std::mt19937 rng(std::random_device{}());
@@ -120,6 +82,8 @@ namespace ost_pdf_writer
     {
         return {c[0] / 255.0, c[1] / 255.0, c[2] / 255.0};
     }
+    static std::string escape_pdf_string(const std::string &s);
+    static std::string escape_xml(const std::string &s);
     static std::array<double, 4> compute_bbox(
         const std::vector<std::array<double, 2>> &verts)
     {
@@ -176,17 +140,32 @@ namespace ost_pdf_writer
             }
         return {min_x, min_y, max_x, max_y};
     }
+    static std::string format_bluebeam_scale_text(double scale_factor)
+    {
+        std::ostringstream scale_value;
+        scale_value << std::fixed << std::setprecision(8) << scale_factor;
+        std::string scale_text = scale_value.str();
+        while (scale_text.size() > 1 && scale_text.back() == '0')
+        {
+            scale_text.pop_back();
+        }
+        if (!scale_text.empty() && scale_text.back() == '.')
+        {
+            scale_text.pop_back();
+        }
+        std::replace(scale_text.begin(), scale_text.end(), '.', ',');
+        return scale_text;
+    }
     static std::string make_measure_dict(double scale_factor1,
                                          const std::string &d_entry,
                                          const std::string &v_entry)
     {
         double c_x = 1.0 / (scale_factor1 * 72.0);
-        std::string scale_fraction = decimal_to_fraction(scale_factor1);
         std::ostringstream oss;
         oss << "<<\n";
         oss << "/Type /Measure\n";
         oss << "/Subtype /RL\n";
-        oss << "/R (" << scale_fraction << "\" = 1'0\")\n";
+        oss << "/R (" << format_bluebeam_scale_text(scale_factor1) << " in = 1 ft' in\")\n";
         oss << "/X [<< /Type /NumberFormat /U (') /C " << c_x << " /F /F /D 4 /FD true /SS () >>]\n";
         oss << d_entry;
         oss << "/A [<< /Type /NumberFormat /U (sf) /C 1 /D 100 /FD true /SS () >>]\n";
@@ -525,6 +504,207 @@ namespace ost_pdf_writer
         oss << line.width << " w ";
         oss << line.x1 << " " << line.y1 << " m ";
         oss << line.x2 << " " << line.y2 << " l S ";
+        return oss.str();
+    }
+    static double dimension_text_width(const BluebeamDimension &dimension)
+    {
+        double font_size = std::max(1.0, dimension.font_size);
+        return std::max(font_size * 2.0,
+                        static_cast<double>(dimension.content.size()) * font_size * 0.55);
+    }
+    struct DimensionTextLayout
+    {
+        double center_x;
+        double center_y;
+        double ux;
+        double uy;
+        double nx;
+        double ny;
+        double text_width;
+        double text_half_height;
+    };
+    static DimensionTextLayout calculate_dimension_text_layout(
+        const BluebeamDimension &dimension,
+        double dx,
+        double dy)
+    {
+        double font_size = std::max(1.0, dimension.font_size);
+        double angle = std::atan2(dy, dx);
+        constexpr double pi = 3.14159265358979323846;
+        if (angle > pi / 2.0 || angle < -pi / 2.0)
+        {
+            angle += pi;
+        }
+        double ux = std::cos(angle);
+        double uy = std::sin(angle);
+        double nx = -uy;
+        double ny = ux;
+        double offset = std::max(4.0, font_size * 0.35);
+        return {
+            (dimension.x1 + dimension.x2) / 2.0 + nx * offset,
+            (dimension.y1 + dimension.y2) / 2.0 + ny * offset,
+            ux,
+            uy,
+            nx,
+            ny,
+            dimension_text_width(dimension),
+            font_size * 0.65};
+    }
+    static void add_bbox_point(std::array<double, 4> &bb, double x, double y)
+    {
+        if (x < bb[0])
+            bb[0] = x;
+        if (x > bb[2])
+            bb[2] = x;
+        if (y < bb[1])
+            bb[1] = y;
+        if (y > bb[3])
+            bb[3] = y;
+    }
+    std::array<double, 4> compute_dimension_rect(const BluebeamDimension &dimension)
+    {
+        std::array<double, 4> bb{
+            std::min(dimension.x1, dimension.x2),
+            std::min(dimension.y1, dimension.y2),
+            std::max(dimension.x1, dimension.x2),
+            std::max(dimension.y1, dimension.y2)};
+        double dx = dimension.x2 - dimension.x1;
+        double dy = dimension.y2 - dimension.y1;
+        double length = std::hypot(dx, dy);
+        double font_size = std::max(1.0, dimension.font_size);
+        double text_width = dimension_text_width(dimension);
+        if (length > 1e-9)
+        {
+            double ux = dx / length;
+            double uy = dy / length;
+            double nx = -uy;
+            double ny = ux;
+            double tick_half = std::max(5.0, font_size * 0.4);
+            add_bbox_point(bb, dimension.x1 + nx * tick_half, dimension.y1 + ny * tick_half);
+            add_bbox_point(bb, dimension.x1 - nx * tick_half, dimension.y1 - ny * tick_half);
+            add_bbox_point(bb, dimension.x2 + nx * tick_half, dimension.y2 + ny * tick_half);
+            add_bbox_point(bb, dimension.x2 - nx * tick_half, dimension.y2 - ny * tick_half);
+
+            DimensionTextLayout text = calculate_dimension_text_layout(dimension, dx, dy);
+            double along_x = text.ux * text.text_width / 2.0;
+            double along_y = text.uy * text.text_width / 2.0;
+            double normal_x = text.nx * text.text_half_height;
+            double normal_y = text.ny * text.text_half_height;
+            add_bbox_point(bb, text.center_x + along_x + normal_x, text.center_y + along_y + normal_y);
+            add_bbox_point(bb, text.center_x + along_x - normal_x, text.center_y + along_y - normal_y);
+            add_bbox_point(bb, text.center_x - along_x + normal_x, text.center_y - along_y + normal_y);
+            add_bbox_point(bb, text.center_x - along_x - normal_x, text.center_y - along_y - normal_y);
+        }
+        else
+        {
+            double text_padding = std::max(12.0, text_width / 2.0);
+            bb[0] -= text_padding;
+            bb[2] += text_padding;
+            bb[1] -= font_size;
+            bb[3] += font_size;
+        }
+        double padding = std::max(6.0, dimension.width + 3.0);
+        bb[0] -= padding;
+        bb[1] -= padding;
+        bb[2] += padding;
+        bb[3] += padding;
+        return bb;
+    }
+    std::string generate_bluebeam_dimension_dict(const BluebeamDimension &dimension)
+    {
+        std::ostringstream oss;
+        auto [stroke_r, stroke_g, stroke_b] = color_to_rgb(dimension.color);
+        std::string hex_color = rgb_to_hex(dimension.color);
+        std::string pdf_date = dimension.created_date.empty() ? generate_pdf_date() : dimension.created_date;
+        std::string nm = generate_nm();
+        std::string escaped_content = escape_pdf_string(dimension.content);
+        std::string xml_content = escape_xml(dimension.content);
+        std::array<double, 4> rect = compute_dimension_rect(dimension);
+        double font_size = std::max(1.0, dimension.font_size);
+        double line_height = font_size * 1.15;
+        std::ostringstream lh_str;
+        lh_str << std::fixed << std::setprecision(5) << line_height;
+        oss << "<<\n";
+        oss << "/BS << /S /S /Type /Border /W " << dimension.width << " >>\n";
+        oss << "/C [ " << stroke_r << " " << stroke_g << " " << stroke_b << " ]\n";
+        oss << "/Cap true\n";
+        oss << "/Contents (" << escaped_content << ")\n";
+        oss << "/CreationDate (" << pdf_date << ")\n";
+        oss << "/DA (" << stroke_r << " " << stroke_g << " " << stroke_b << " rg /Helv " << font_size << " Tf)\n";
+        oss << "/DS (font: Helvetica " << font_size << "pt; text-align:center; line-height:"
+            << lh_str.str() << "pt; color:" << hex_color << ")\n";
+        oss << "/DepthUnit [ << /Type /NumberFormat /U (mm) /C 0.3527778 /D 100 /FD true /SS () >> ]\n";
+        oss << "/F 4\n";
+        oss << "/IC [ " << stroke_r << " " << stroke_g << " " << stroke_b << " ]\n";
+        oss << "/IT /LineDimension\n";
+        oss << "/L [ " << dimension.x1 << " " << dimension.y1 << " " << dimension.x2 << " " << dimension.y2 << " ]\n";
+        oss << "/Label ()\n";
+        oss << "/LE [ /ClosedArrow /ClosedArrow ]\n";
+        oss << "/LL 10\n";
+        oss << "/LLE 2\n";
+        oss << "/M (" << pdf_date << ")\n";
+        oss << "/MeasurementTypes 130\n";
+        oss << "/NM (" << nm << ")\n";
+        oss << "/P 5 0 R\n";
+        oss << "/PitchRun 12\n";
+        oss << "/RC (<?xml version=\"1.0\"?>"
+            << "<body xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\" "
+            << "xfa:contentType=\"text/html\" "
+            << "xfa:APIVersion=\"BluebeamPDFRevu:2018\" "
+            << "xfa:spec=\"2.2.0\" "
+            << "style=\"font:Helvetica " << font_size << "pt; text-align:center; line-height:"
+            << lh_str.str() << "pt; color:" << hex_color << "\" "
+            << "xmlns=\"http://www.w3.org/1999/xhtml\">"
+            << "<p>" << xml_content << "</p>"
+            << "</body>)\n";
+        oss << "/Rect [ " << rect[0] << " " << rect[1] << " " << rect[2] << " " << rect[3] << " ]\n";
+        oss << "/SlopeType 1\n";
+        oss << "/Subj (Length Measurement)\n";
+        oss << "/Subtype /Line\n";
+        oss << "/T (" << escape_pdf_string(dimension.author) << ")\n";
+        oss << "/Type /Annot\n";
+        oss << ">>";
+        return oss.str();
+    }
+    std::string generate_dimension_appearance_stream(const BluebeamDimension &dimension)
+    {
+        auto [stroke_r, stroke_g, stroke_b] = color_to_rgb(dimension.color);
+        double dx = dimension.x2 - dimension.x1;
+        double dy = dimension.y2 - dimension.y1;
+        double length = std::hypot(dx, dy);
+        if (length <= 1e-9)
+        {
+            return "";
+        }
+        double font_size = std::max(1.0, dimension.font_size);
+        double ux = dx / length;
+        double uy = dy / length;
+        double nx = -uy;
+        double ny = ux;
+        double tick_half = std::max(5.0, font_size * 0.4);
+        std::ostringstream oss;
+        oss << stroke_r << " " << stroke_g << " " << stroke_b << " RG ";
+        oss << stroke_r << " " << stroke_g << " " << stroke_b << " rg ";
+        oss << dimension.width << " w ";
+        oss << dimension.x1 << " " << dimension.y1 << " m ";
+        oss << dimension.x2 << " " << dimension.y2 << " l S ";
+        oss << dimension.x1 + nx * tick_half << " " << dimension.y1 + ny * tick_half << " m ";
+        oss << dimension.x1 - nx * tick_half << " " << dimension.y1 - ny * tick_half << " l S ";
+        oss << dimension.x2 + nx * tick_half << " " << dimension.y2 + ny * tick_half << " m ";
+        oss << dimension.x2 - nx * tick_half << " " << dimension.y2 - ny * tick_half << " l S ";
+        if (!dimension.content.empty())
+        {
+            DimensionTextLayout text = calculate_dimension_text_layout(dimension, dx, dy);
+            double text_x = text.center_x - text.ux * text.text_width / 2.0 - text.nx * font_size * 0.35;
+            double text_y = text.center_y - text.uy * text.text_width / 2.0 - text.ny * font_size * 0.35;
+            oss << "q BT "
+                << stroke_r << " " << stroke_g << " " << stroke_b << " rg "
+                << "/Helv " << font_size << " Tf "
+                << text.ux << " " << text.uy << " " << -text.uy << " " << text.ux << " "
+                << text_x << " " << text_y << " Tm "
+                << "(" << escape_pdf_string(dimension.content) << ") Tj "
+                << "ET Q ";
+        }
         return oss.str();
     }
     std::string generate_bluebeam_oval_dict(const BluebeamOval &oval)

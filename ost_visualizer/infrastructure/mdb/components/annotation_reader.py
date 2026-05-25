@@ -206,6 +206,50 @@ class AnnotationReaderMixin:
                 cursor.execute(
                     """
                     SELECT UID, BidPageUID, BidTakeoffFromUID, BidTakeoffToUID,
+                           Position, FontName, FontColor, FontSize, FontBold,
+                           FontItalic, FontUnderline
+                    FROM BidDimensions
+                    WHERE BidUID = ?
+                    """,
+                    bid_uid,
+                )
+                for row in cursor.fetchall():
+                    position = parse_position_bytes(row.Position)
+                    if position:
+                        layer_uid, visible = _layer()
+                        props = {
+                            "FontName": (
+                                str(row.FontName) if row.FontName else "Arial"
+                            ),
+                            "FontColor": row.FontColor,
+                            "FontSize": (int(row.FontSize) if row.FontSize else 10),
+                            "FontBold": bool(row.FontBold),
+                            "FontItalic": bool(row.FontItalic),
+                            "FontUnderline": bool(row.FontUnderline),
+                        }
+                        if row.BidTakeoffFromUID is not None:
+                            props["BidTakeoffFromUID"] = str(row.BidTakeoffFromUID)
+                        if row.BidTakeoffToUID is not None:
+                            props["BidTakeoffToUID"] = str(row.BidTakeoffToUID)
+                        bid_annotations.append(
+                            BidAnnotation(
+                                uid=str(row.UID),
+                                annotation_type="dimension",
+                                page_uid=str(row.BidPageUID) if row.BidPageUID else "",
+                                layer_uid=layer_uid,
+                                position=position,
+                                color=_resolve_color(row.FontColor),
+                                width=1.0,
+                                properties=props,
+                                visible=visible,
+                            )
+                        )
+            except pyodbc.Error as e:
+                pass
+            try:
+                cursor.execute(
+                    """
+                    SELECT UID, BidPageUID, BidTakeoffFromUID, BidTakeoffToUID,
                            Position, Color, Width
                     FROM BidArrows
                     WHERE BidUID = ?

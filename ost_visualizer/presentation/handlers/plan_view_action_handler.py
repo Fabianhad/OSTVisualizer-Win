@@ -861,6 +861,7 @@ class PlanViewActionHandler:
         source_bid_uid = self._clipboard_svc.source_bid_uid
         source_file_path = self._clipboard_svc.source_file_path
         all_items = list(self._clipboard_svc.items)
+        clipboard_anns = self._clipboard_svc.annotations
         if not all_items and (
             source_bid_uid != bid_ref.bid_uid or source_file_path != bid_ref.file_path
         ):
@@ -881,7 +882,7 @@ class PlanViewActionHandler:
         if condition_uid_map is None:
             return
         paste_dx, paste_dy, intelligent_source_anchor = self._paste_translation(
-            regulars
+            regulars, clipboard_anns
         )
         regular_specs = [
             InsertTakeoffSpec(
@@ -963,7 +964,6 @@ class PlanViewActionHandler:
             )
             for i in range(len(new_takeoff_uids))
         }
-        clipboard_anns = self._clipboard_svc.annotations
         ann_specs = []
         for a in clipboard_anns:
             pos = self._translate_annotation_position(a, paste_dx, paste_dy)
@@ -996,9 +996,11 @@ class PlanViewActionHandler:
         if not all_new_keys:
             return
         self._plan_view.set_selected_uids(all_new_keys)
-        if intelligent_source_anchor and new_takeoff_uids:
+        pending_drag_uids = list(new_takeoff_uids)
+        pending_drag_uids.extend(sorted(ann_keys))
+        if intelligent_source_anchor and pending_drag_uids:
             self._plan_view.mark_intelligent_paste_drag_pending(
-                list(new_takeoff_uids), intelligent_source_anchor
+                pending_drag_uids, intelligent_source_anchor
             )
         paste_cmds = []
         takeoff_cmd = None
@@ -1043,20 +1045,18 @@ class PlanViewActionHandler:
             self._undo_svc.push(_undo, _redo)
 
     def _paste_translation(
-        self, regulars: list
+        self, regulars: list, annotations: list
     ) -> tuple[float, float, Optional[tuple]]:
         step = (
             self._plan_view.snap_increments
             if self._plan_view.snap_increments > 0
             else 1.0
         )
-        if (
-            not self._plan_view.intelligent_paste_enabled
-            or not regulars
-            or len(regulars[0].position) < 2
-        ):
+        if not self._plan_view.intelligent_paste_enabled:
             return step, step, None
-        source_anchor = (float(regulars[0].position[0]), float(regulars[0].position[1]))
+        source_anchor = self._paste_source_anchor(regulars, annotations)
+        if source_anchor is None:
+            return step, step, None
         mouse_anchor = self._plan_view.current_mouse_ost_position()
         if mouse_anchor is None:
             return 0.0, 0.0, source_anchor
@@ -1065,6 +1065,29 @@ class PlanViewActionHandler:
             mouse_anchor[1] - source_anchor[1],
             source_anchor,
         )
+
+    def _paste_source_anchor(
+        self, regulars: list, annotations: list
+    ) -> Optional[tuple]:
+        for takeoff in regulars:
+            if len(takeoff.position) >= 2:
+                return float(takeoff.position[0]), float(takeoff.position[1])
+        for annotation in annotations:
+            anchor = self._annotation_paste_anchor(annotation)
+            if anchor is not None:
+                return anchor
+        return None
+
+    def _annotation_paste_anchor(self, annotation) -> Optional[tuple]:
+        pos = list(annotation.position)
+        if annotation.is_ink:
+            start = 1 if len(pos) % 2 == 1 else 0
+            if len(pos) >= start + 2:
+                return float(pos[start]), float(pos[start + 1])
+            return None
+        if len(pos) >= 2:
+            return float(pos[0]), float(pos[1])
+        return None
 
     def _translate_position(self, position: list, dx: float, dy: float) -> list:
         translated = list(position)

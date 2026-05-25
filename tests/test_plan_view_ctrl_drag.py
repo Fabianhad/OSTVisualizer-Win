@@ -21,6 +21,10 @@ from ost_visualizer.presentation.components.plan_view.components.input_handler i
     InputHandlerMixin
 from ost_visualizer.presentation.components.plan_view.components.selection_manager import \
     SelectionManagerMixin
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import \
+    AnnotationItemRenderer
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import \
+    format_dimension_distance
 
 
 def _app():
@@ -51,11 +55,17 @@ class InputHandlerHarness(
     def _condition_text_label_at(self, _vp_pos):
         return None
 
+    def _dimension_text_label_at(self, _vp_pos):
+        return None
+
     def _named_view_label_at(self, _vp_pos):
         return None
 
     def _select_condition_text_label(self, _item):
         pass
+
+    def _select_dimension_text_label(self, _item):
+        return False
 
     def _clear_text_selection(self):
         pass
@@ -212,6 +222,9 @@ class FakeCoordinateSystem:
     def ost_to_screen_pixels(self, value):
         return float(value)
 
+    def pdf_points_to_screen_pixels(self, value):
+        return float(value)
+
 
 class FakeColorService:
     def int_to_hex(self, _color):
@@ -273,6 +286,7 @@ class CtrlDragTests(unittest.TestCase):
         view._drag_handle_corner_count = 0
         view._drag_item_orig_positions = {}
         view._drag_item_orig_paths = {}
+        view._drag_item_orig_text_states = {}
         view._drag_uid_orig_items = {}
         view._drag_multi_orig_positions = {}
         view._drag_last_valid_new_pos = []
@@ -659,6 +673,7 @@ class CtrlDragTests(unittest.TestCase):
         view._drag_last_valid_new_pos = list(position)
         view._drag_item_orig_positions = {}
         view._drag_item_orig_paths = {}
+        view._drag_item_orig_text_states = {}
         view._drag_uid_orig_items = {}
         view._drag_multi_orig_positions = {}
         view._selection_items = []
@@ -668,6 +683,71 @@ class CtrlDragTests(unittest.TestCase):
         view._validate_parent_contains_holes = lambda *_args: True
         view._has_child_holes = lambda *_args: False
         return view, main_item, old_pattern
+
+    def _make_dimension_resize_view(self, position=None):
+        view = InputHandlerHarness()
+        view._scene = QGraphicsScene()
+        view._scene_builder = FakeSceneBuilder()
+        view._current_takeoffs = {}
+        view._current_conditions = {}
+        view._current_color_map = {}
+        view._takeoff_items = []
+        view._selection_items = []
+        view._drag_multi_orig_positions = {}
+        view._drag_last_valid_new_pos = []
+        view._pt_to_scene = lambda x, y: QtCore.QPointF(x, y)
+        view._current_page_transform = lambda: None
+        ann = BidAnnotation(
+            uid="d1",
+            annotation_type="dimension",
+            position=list(position or [0.0, 0.0, 120.0, 0.0]),
+            color="#ff0000",
+            properties={"FontName": "Arial", "FontSize": 10},
+        )
+        renderer = AnnotationItemRenderer(view._scene_builder.get_coordinate_system())
+        results, uid_to_items = renderer.create_all_annotation_items([("d1", ann)])
+        items = uid_to_items["d1"]
+        for item, _link in results:
+            view._scene.addItem(item)
+            view._takeoff_items.append(item)
+        view._current_annotations = {"d1": ann}
+        view._uid_to_items = {"d1": items}
+        view._handle_infos = [SimpleNamespace(item=FakeItem()) for _ in range(2)]
+        view._drag_takeoff_uid = "d1"
+        view._drag_handle_index = 1
+        view._drag_handle_corner_count = 0
+        view._drag_orig_position = list(ann.position)
+        view._drag_item_orig_positions = {id(item): item.pos() for item in items}
+        view._drag_item_orig_paths = {
+            id(item): QPainterPath(item.path())
+            for item in items
+            if isinstance(item, QGraphicsPathItem)
+        }
+        view._drag_item_orig_text_states = {
+            id(item): (
+                item.toPlainText(),
+                item.textWidth(),
+                item.rotation(),
+                item.transformOriginPoint(),
+                item.font(),
+                item.defaultTextColor(),
+            )
+            for item in items
+            if isinstance(item, QGraphicsTextItem)
+        }
+        view._drag_uid_orig_items = {"d1": list(items)}
+        return view, ann
+
+    def _dimension_label(self, view):
+        for item in view._uid_to_items["d1"]:
+            if isinstance(item, QGraphicsTextItem):
+                return item
+        self.fail("Dimension label item was not found")
+
+    def _dimension_path(self, view):
+        item = view._uid_to_items["d1"][0]
+        self.assertIsInstance(item, QGraphicsPathItem)
+        return item
 
     def test_area_pattern_preview_refreshes_during_resize_drag(self):
         view, main_item, old_pattern = self._make_pattern_resize_view(
@@ -732,6 +812,93 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(
             view._uid_to_items["t1"][1].path().boundingRect().right(), 20.0
         )
+
+    def test_horizontal_bid_dimension_resize_updates_label_live(self):
+        view, _ann = self._make_dimension_resize_view()
+        view.update_drag_handle_positions([0.0, 0.0, 255.0, 0.0], "d1")
+        label = self._dimension_label(view)
+        bounds = label.boundingRect()
+        label_center_x = label.pos().x() + bounds.width() / 2.0
+        self.assertEqual(label.toPlainText(), format_dimension_distance(255.0))
+        self.assertAlmostEqual(label_center_x, 127.5, delta=0.5)
+        self.assertEqual(self._dimension_path(view).path().elementCount(), 6)
+
+    def test_vertical_bid_dimension_resize_updates_label_live(self):
+        view, _ann = self._make_dimension_resize_view([0.0, 0.0, 0.0, 60.0])
+        view.update_drag_handle_positions([0.0, 0.0, 0.0, 120.0], "d1")
+        label = self._dimension_label(view)
+        self.assertEqual(label.toPlainText(), "10' - 0\"")
+        self.assertAlmostEqual(abs(label.rotation()), 90.0, delta=0.01)
+        path = self._dimension_path(view).path()
+        tick_start = path.elementAt(2)
+        tick_end = path.elementAt(3)
+        self.assertAlmostEqual(tick_start.y, tick_end.y)
+        self.assertNotAlmostEqual(tick_start.x, tick_end.x)
+
+    def test_angled_bid_dimension_resize_updates_label_rotation_live(self):
+        view, _ann = self._make_dimension_resize_view([0.0, 0.0, 36.0, 0.0])
+        view.update_drag_handle_positions([0.0, 0.0, 36.0, 48.0], "d1")
+        label = self._dimension_label(view)
+        bounds = label.boundingRect()
+        label_center = QtCore.QPointF(
+            label.pos().x() + bounds.width() / 2.0,
+            label.pos().y() + bounds.height() / 2.0,
+        )
+        self.assertEqual(label.toPlainText(), "5' - 0\"")
+        self.assertAlmostEqual(label.rotation(), 53.130102, places=3)
+        self.assertLess(abs(label_center.x() - 18.0), 12.0)
+        self.assertLess(abs(label_center.y() - 24.0), 12.0)
+
+    def test_bid_dimension_commit_text_matches_last_preview(self):
+        view, ann = self._make_dimension_resize_view()
+        new_pos = [0.0, 0.0, 255.0, 0.0]
+        view.update_drag_handle_positions(new_pos, "d1")
+        ann.position = new_pos
+        view._clear_drag_tracking()
+        self.assertEqual(self._dimension_label(view).toPlainText(), "21' - 3\"")
+        self.assertEqual(ann.position, new_pos)
+
+    def test_cancel_bid_dimension_resize_restores_label_and_path(self):
+        view, _ann = self._make_dimension_resize_view()
+        original_label = self._dimension_label(view).toPlainText()
+        original_path_bounds = self._dimension_path(view).path().boundingRect()
+        view.update_drag_handle_positions([0.0, 0.0, 255.0, 0.0], "d1")
+        self.assertEqual(self._dimension_label(view).toPlainText(), "21' - 3\"")
+        view._clear_drag_tracking(restore_preview=True)
+        self.assertEqual(self._dimension_label(view).toPlainText(), original_label)
+        self.assertEqual(
+            self._dimension_path(view).path().boundingRect(), original_path_bounds
+        )
+
+    def test_repeated_bid_dimension_resize_preview_reuses_label_item(self):
+        view, _ann = self._make_dimension_resize_view()
+        original_items = list(view._uid_to_items["d1"])
+        view.update_drag_handle_positions([0.0, 0.0, 180.0, 0.0], "d1")
+        view.update_drag_handle_positions([0.0, 0.0, 255.0, 0.0], "d1")
+        self.assertEqual(view._uid_to_items["d1"], original_items)
+        self.assertEqual(self._dimension_label(view).toPlainText(), "21' - 3\"")
+
+    def test_bid_aline_resize_preview_remains_path_only(self):
+        view, _ann = self._make_dimension_resize_view()
+        line = BidAnnotation(
+            uid="l1",
+            annotation_type="line",
+            position=[0.0, 0.0, 120.0, 0.0],
+            color="#ff0000",
+        )
+        line_path = QPainterPath()
+        line_path.moveTo(0.0, 0.0)
+        line_path.lineTo(120.0, 0.0)
+        line_item = QGraphicsPathItem(line_path)
+        line_item.setData(0, "l1")
+        view._scene.addItem(line_item)
+        view._current_annotations = {"l1": line}
+        view._uid_to_items = {"l1": [line_item]}
+        view._handle_infos = [SimpleNamespace(item=FakeItem()) for _ in range(2)]
+        view._drag_handle_index = 1
+        view.update_drag_handle_positions([0.0, 0.0, 255.0, 0.0], "l1")
+        self.assertEqual(view._uid_to_items["l1"], [line_item])
+        self.assertEqual(line_item.path().elementCount(), 2)
 
     def test_cancel_resize_restores_original_pattern_items(self):
         view, main_item, old_pattern = self._make_pattern_resize_view(

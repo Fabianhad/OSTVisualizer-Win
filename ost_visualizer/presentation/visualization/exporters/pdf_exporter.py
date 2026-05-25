@@ -23,6 +23,7 @@ from ..core.geometry.takeoff_geometry import (
     compute_curved_linear_vertices,
     compute_straight_linear_vertices,
 )
+from ..pdf.renderers.annotation_renderer import format_dimension_distance
 from . import ost_pdf_writer
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,9 @@ class PDFExporter:
                 line_data = self._collect_lines(
                     page.uid, bid_annotations or [], page_info
                 )
+                dimension_data = self._collect_dimensions(
+                    page.uid, bid_annotations or [], page_info
+                )
                 oval_data = self._collect_ovals(
                     page.uid, bid_annotations or [], page_info
                 )
@@ -122,6 +126,7 @@ class PDFExporter:
                 export_data.arrows = arrow_data
                 export_data.rects = rect_data
                 export_data.lines = line_data
+                export_data.dimensions = dimension_data
                 export_data.ovals = oval_data
                 export_data.polygons = polygon_data
                 export_data.inks = ink_data
@@ -496,7 +501,9 @@ class PDFExporter:
     ) -> List[Any]:
         lines = []
         for annotation in bid_annotations:
-            if not annotation.is_line or annotation.page_uid != page_uid:
+            if not annotation.is_line:
+                continue
+            if annotation.page_uid != page_uid:
                 continue
             line_coords = annotation.get_line_coords()
             if not line_coords:
@@ -518,6 +525,50 @@ class PDFExporter:
             line_data.width = annotation.width
             lines.append(line_data)
         return lines
+
+    def _collect_dimensions(
+        self,
+        page_uid: str,
+        bid_annotations: List[BidAnnotation],
+        page_info: PageRenderInfo,
+    ) -> List[Any]:
+        dimensions = []
+        scale_factor1 = float(page_info.get("scale_factor1", 0.0) or 0.0)
+        scale_factor2 = float(page_info.get("scale_factor2", 0.0) or 0.0)
+        for annotation in bid_annotations:
+            if not annotation.is_dimension or annotation.page_uid != page_uid:
+                continue
+            line_coords = annotation.get_line_coords()
+            if not line_coords:
+                continue
+            x1, y1, x2, y2 = line_coords
+            distance = math.hypot(x2 - x1, y2 - y1)
+            if distance <= 1e-9:
+                continue
+            label = format_dimension_distance(distance)
+            if not label:
+                continue
+            pdf_coords = self._coord_system.ost_to_pdf_coordinates(
+                [x1, y1, x2, y2], page_info
+            )
+            if len(pdf_coords) < 2:
+                continue
+            pdf_x1, pdf_y1 = pdf_coords[0]
+            pdf_x2, pdf_y2 = pdf_coords[1]
+            font_size = float(annotation.properties.get("FontSize") or 10.0)
+            dimension_data = ost_pdf_writer.DimensionAnnotationData()
+            dimension_data.x1 = pdf_x1
+            dimension_data.y1 = pdf_y1
+            dimension_data.x2 = pdf_x2
+            dimension_data.y2 = pdf_y2
+            dimension_data.color = self._color_service.hex_to_rgb_int(annotation.color)
+            dimension_data.width = annotation.width
+            dimension_data.content = label
+            dimension_data.font_size = font_size
+            dimension_data.scale_factor1 = scale_factor1
+            dimension_data.scale_factor2 = scale_factor2
+            dimensions.append(dimension_data)
+        return dimensions
 
     def _collect_ovals(
         self,

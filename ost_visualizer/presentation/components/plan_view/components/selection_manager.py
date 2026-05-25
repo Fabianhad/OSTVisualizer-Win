@@ -12,6 +12,9 @@ from PySide6.QtWidgets import (
     QGraphicsTextItem,
 )
 from .....application.dtos.hotlink_dto import HotlinkDto
+from ....visualization.pdf.renderers.annotation_renderer import (
+    calculate_dimension_segments,
+)
 from .geometry_utils import (
     HandleInfo,
     cursor_for_direction,
@@ -111,14 +114,26 @@ class SelectionManagerMixin:
             if ann.annotation_type not in ann.LINEAR_TYPES:
                 continue
             tx = cs.transform_vertices_to_2d(ann.position)
-            if (
-                len(tx) >= 4
-                and point_to_segment_distance(
-                    check_pos.x(), check_pos.y(), tx[0], tx[1], tx[2], tx[3]
+            if len(tx) < 4:
+                continue
+            segments = [(tx[0], tx[1], tx[2], tx[3])]
+            if ann.is_dimension:
+                segments = calculate_dimension_segments(
+                    tx[0],
+                    tx[1],
+                    tx[2],
+                    tx[3],
+                    max(10.0, float(ann.properties.get("FontSize", 10) or 10) * 0.8),
                 )
-                <= hit_dist
-            ):
-                yield uid, tx
+            for x1, y1, x2, y2 in segments:
+                if (
+                    point_to_segment_distance(
+                        check_pos.x(), check_pos.y(), x1, y1, x2, y2
+                    )
+                    <= hit_dist
+                ):
+                    yield uid, tx
+                    break
 
     def _scene_tolerance_for_text_annotation(self) -> float:
         m11 = self.transform().m11()
@@ -413,7 +428,7 @@ class SelectionManagerMixin:
     def _create_annotation_handles(self, ann, uid, cs) -> List:
         atype = ann.annotation_type
         pos = ann.position
-        if atype in ("line", "arrow"):
+        if atype in ("line", "arrow", "dimension"):
             return self._make_endpoint_handles(cs.transform_vertices_to_2d(pos))
         if atype == "hotlink":
             tx = cs.transform_vertices_to_2d(pos[:2])

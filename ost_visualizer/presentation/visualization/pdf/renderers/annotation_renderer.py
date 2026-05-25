@@ -2,8 +2,10 @@ import math
 from typing import Any, Dict, List, Optional, Tuple
 from .....domain.entities.annotation import BidAnnotation
 from .....domain.entities.hotlink import build_hotlink_from_annotation
+from .....domain.services.dimension_format_service import inches_to_display
 
 Point = Tuple[float, float]
+Segment = Tuple[float, float, float, float]
 
 
 def create_cloud_path_points(
@@ -73,6 +75,74 @@ def process_text_for_box(
         else:
             processed_words.append(word)
     return " ".join(processed_words)
+
+
+def format_dimension_distance(distance_inches: float) -> str:
+    display = inches_to_display(distance_inches, metric=False)
+    if not display:
+        return ""
+    if "'" not in display:
+        return display
+    feet_part, inch_part = display.split("'", 1)
+    inch_part = inch_part.strip()
+    if not inch_part:
+        return f"{feet_part}'"
+    return f"{feet_part}' - {inch_part}"
+
+
+def calculate_dimension_segments(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    tick_length: float,
+) -> List[Segment]:
+    length = math.hypot(x2 - x1, y2 - y1)
+    if length <= 1e-9:
+        return []
+    nx = -(y2 - y1) / length
+    ny = (x2 - x1) / length
+    half_tick = tick_length / 2.0
+    return [
+        (x1, y1, x2, y2),
+        (
+            x1 - nx * half_tick,
+            y1 - ny * half_tick,
+            x1 + nx * half_tick,
+            y1 + ny * half_tick,
+        ),
+        (
+            x2 - nx * half_tick,
+            y2 - ny * half_tick,
+            x2 + nx * half_tick,
+            y2 + ny * half_tick,
+        ),
+    ]
+
+
+def calculate_dimension_geometry(
+    annotation: BidAnnotation,
+    position: List[float],
+    transform_func,
+) -> Optional[Dict[str, Any]]:
+    if len(position) < 4:
+        return None
+    tx_position = transform_func(position)
+    if len(tx_position) < 4:
+        return None
+    distance = math.hypot(position[2] - position[0], position[3] - position[1])
+    return {
+        "x1": tx_position[0],
+        "y1": tx_position[1],
+        "x2": tx_position[2],
+        "y2": tx_position[3],
+        "label": format_dimension_distance(distance),
+        "font_name": annotation.properties.get("FontName", "Arial"),
+        "font_size": annotation.properties.get("FontSize", 10),
+        "font_bold": annotation.properties.get("FontBold", False),
+        "font_italic": annotation.properties.get("FontItalic", False),
+        "font_underline": annotation.properties.get("FontUnderline", False),
+    }
 
 
 def calculate_annotation_geometry(
@@ -153,6 +223,10 @@ def calculate_annotation_geometry(
                 "x2": tx_position[2],
                 "y2": tx_position[3],
             }
+    elif anno_type == "dimension":
+        dimension = calculate_dimension_geometry(annotation, position, transform_func)
+        if dimension:
+            result["dimension"] = dimension
     elif anno_type == "text":
         if len(position) >= 4:
             result["text"] = {

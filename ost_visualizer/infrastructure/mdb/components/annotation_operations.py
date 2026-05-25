@@ -17,10 +17,20 @@ class AnnotationOperationsMixin:
         "FontUnderline",
         "TextAlign",
     )
+    _DIMENSION_TEXT_PROPERTY_COLUMNS = (
+        "UID",
+        "FontName",
+        "FontColor",
+        "FontSize",
+        "FontBold",
+        "FontItalic",
+        "FontUnderline",
+    )
     _ANNOTATION_TABLE = MappingProxyType(
         {
             "line": "BidALines",
             "arrow": "BidArrows",
+            "dimension": "BidDimensions",
             "cloud": "BidAnnotationClouds",
             "polygon": "BidAnnotationPolygons",
             "rect": "BidAnnotationRects",
@@ -87,6 +97,30 @@ class AnnotationOperationsMixin:
                             int(uid),
                         )
                         continue
+                    if annotation_type == "dimension":
+                        table = self._ANNOTATION_TABLE[annotation_type]
+                        if schema.optional_table_missing(table):
+                            continue
+                        self._require_write_columns(
+                            schema, table, self._DIMENSION_TEXT_PROPERTY_COLUMNS
+                        )
+                        values = self._dimension_text_property_update_values(
+                            uid, properties
+                        )
+                        cursor.execute(
+                            f"""
+                            UPDATE [{table}]
+                               SET [FontName]=?,
+                                   [FontColor]=?,
+                                   [FontSize]=?,
+                                   [FontBold]=?,
+                                   [FontItalic]=?,
+                                   [FontUnderline]=?
+                             WHERE [UID]=?
+                            """,
+                            *values,
+                        )
+                        continue
                     if annotation_type not in ("text", "callout"):
                         continue
                     table = self._ANNOTATION_TABLE[annotation_type]
@@ -132,16 +166,30 @@ class AnnotationOperationsMixin:
     def _text_property_update_values(
         self, uid: str, properties: Dict[str, object]
     ) -> Tuple[object, str, int, int, bool, bool, bool, int, int]:
+        font_values = self._font_property_update_values(properties, 12)
         return (
             self._text_annotation_name_value(properties),
+            *font_values,
+            int(properties.get("TextAlign", 0) or 0),
+            int(uid),
+        )
+
+    def _dimension_text_property_update_values(
+        self, uid: str, properties: Dict[str, object]
+    ) -> Tuple[str, int, int, bool, bool, bool, int]:
+        font_values = self._font_property_update_values(properties, 10)
+        return (*font_values, int(uid))
+
+    def _font_property_update_values(
+        self, properties: Dict[str, object], default_size: int
+    ) -> Tuple[str, int, int, bool, bool, bool]:
+        return (
             str(properties.get("FontName", "Arial") or "Arial"),
             self._text_property_color_int(properties),
-            int(properties.get("FontSize", 12) or 12),
+            int(properties.get("FontSize", default_size) or default_size),
             bool(properties.get("FontBold", False)),
             bool(properties.get("FontItalic", False)),
             bool(properties.get("FontUnderline", False)),
-            int(properties.get("TextAlign", 0) or 0),
-            int(uid),
         )
 
     def _text_property_color_int(self, properties: Dict[str, object]) -> int:
@@ -256,6 +304,35 @@ class AnnotationOperationsMixin:
                 },
                 ("UID", "BidUID", "BidPageUID", "Position"),
                 f"insert_{annotation_type}_annotation",
+            )
+        elif annotation_type == "dimension":
+            from_uid_raw = properties.get("BidTakeoffFromUID")
+            to_uid_raw = properties.get("BidTakeoffToUID")
+            from_val = self._resolve_takeoff_fk(from_uid_raw, takeoff_remap)
+            to_val = self._resolve_takeoff_fk(to_uid_raw, takeoff_remap)
+            font_color = properties.get("FontColor", color_int)
+            if isinstance(font_color, str):
+                font_color = hex_to_color_int(font_color)
+            self._execute_insert_values(
+                cursor,
+                schema,
+                table,
+                {
+                    "UID": uid,
+                    "BidUID": bid_uid,
+                    "BidPageUID": page_uid,
+                    "BidTakeoffFromUID": from_val,
+                    "BidTakeoffToUID": to_val,
+                    "Position": position_val,
+                    "FontName": properties.get("FontName", "Arial"),
+                    "FontColor": int(font_color or 0),
+                    "FontSize": properties.get("FontSize", 10),
+                    "FontBold": properties.get("FontBold", False),
+                    "FontItalic": properties.get("FontItalic", False),
+                    "FontUnderline": properties.get("FontUnderline", False),
+                },
+                ("UID", "BidUID", "BidPageUID", "Position"),
+                "insert_dimension_annotation",
             )
         elif annotation_type == "text":
             text_content = properties.get("Text", "")

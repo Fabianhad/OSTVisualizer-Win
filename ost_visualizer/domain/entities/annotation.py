@@ -4,11 +4,12 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 @dataclass
 class BidAnnotation:
-    LINEAR_TYPES: ClassVar[frozenset] = frozenset({"line", "arrow"})
+    LINEAR_TYPES: ClassVar[frozenset] = frozenset({"line", "arrow", "dimension"})
     INTERACTIVE_TYPES: ClassVar[frozenset] = frozenset(
         {
             "line",
             "arrow",
+            "dimension",
             "rect",
             "oval",
             "highlight",
@@ -25,6 +26,7 @@ class BidAnnotation:
         {
             "line",
             "arrow",
+            "dimension",
             "rect",
             "oval",
             "highlight",
@@ -39,6 +41,7 @@ class BidAnnotation:
         {
             "line",
             "arrow",
+            "dimension",
             "rect",
             "oval",
             "highlight",
@@ -86,6 +89,10 @@ class BidAnnotation:
     @property
     def is_line(self) -> bool:
         return self.annotation_type == "line"
+
+    @property
+    def is_dimension(self) -> bool:
+        return self.annotation_type == "dimension"
 
     @property
     def is_namedview(self) -> bool:

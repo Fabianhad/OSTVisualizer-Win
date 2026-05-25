@@ -160,6 +160,61 @@ namespace ost_pdf_writer
         ap_dict.replaceKey("/N", ap_stream_ref);
         annot_obj.replaceKey("/AP", ap_dict);
     }
+    static bool has_valid_measure_scale(double scale_factor1, double scale_factor2)
+    {
+        return scale_factor1 > 0.0 && scale_factor2 > 0.0;
+    }
+    static QPDFObjectHandle make_page_measure_ref(QPDF &output,
+                                                  double scale_factor1,
+                                                  double scale_factor2)
+    {
+        std::string measure_str = generate_page_measure_dict(scale_factor1, scale_factor2);
+        QPDFObjectHandle measure_obj = QPDFObjectHandle::parse(&output, measure_str);
+        return output.makeIndirectObject(measure_obj);
+    }
+    static QPDFObjectHandle make_viewport_array(QPDF &output,
+                                                QPDFPageObjectHelper &page,
+                                                QPDFObjectHandle measure_ref)
+    {
+        QPDFObjectHandle media_box = page.getAttribute("/MediaBox", false);
+        double page_width = media_box.getArrayItem(2).getNumericValue() - media_box.getArrayItem(0).getNumericValue();
+        double page_height = media_box.getArrayItem(3).getNumericValue() - media_box.getArrayItem(1).getNumericValue();
+        QPDFObjectHandle viewport = QPDFObjectHandle::newDictionary();
+        viewport.replaceKey("/Type", QPDFObjectHandle::newName("/Viewport"));
+        QPDFObjectHandle bbox = QPDFObjectHandle::newArray();
+        bbox.appendItem(QPDFObjectHandle::newInteger(0));
+        bbox.appendItem(QPDFObjectHandle::newInteger(0));
+        bbox.appendItem(QPDFObjectHandle::newReal(page_width));
+        bbox.appendItem(QPDFObjectHandle::newReal(page_height));
+        viewport.replaceKey("/BBox", bbox);
+        viewport.replaceKey("/Measure", measure_ref);
+        viewport.replaceKey("/NM", QPDFObjectHandle::newString(generate_nm().c_str()));
+        QPDFObjectHandle viewport_indirect = output.makeIndirectObject(viewport);
+        QPDFObjectHandle vp_array = QPDFObjectHandle::newArray();
+        vp_array.appendItem(viewport_indirect);
+        return vp_array;
+    }
+    static void replace_page_viewport_measure(QPDF &output,
+                                              QPDFPageObjectHelper &page,
+                                              QPDFObjectHandle measure_ref)
+    {
+        page.getObjectHandle().replaceKey(
+            "/VP", make_viewport_array(output, page, measure_ref));
+    }
+    static void ensure_page_viewport_measure(QPDF &output,
+                                             QPDFPageObjectHelper &page,
+                                             double scale_factor1,
+                                             double scale_factor2)
+    {
+        QPDFObjectHandle page_dict = page.getObjectHandle();
+        if (!has_valid_measure_scale(scale_factor1, scale_factor2) ||
+            !page_dict.getKey("/VP").isNull())
+        {
+            return;
+        }
+        replace_page_viewport_measure(
+            output, page, make_page_measure_ref(output, scale_factor1, scale_factor2));
+    }
     PDFWriter::PDFWriter() : last_error_("") {}
     PDFWriter::~PDFWriter() {}
     void PDFWriter::set_error(const std::string &error)
@@ -282,36 +337,17 @@ namespace ost_pdf_writer
             }
         }
         QPDFObjectHandle helv_font_ref;
-        QPDFObjectHandle page_measure_ref;
         QPDFObjectHandle annot_measure_ref;
         if (has_measurements)
         {
-            QPDFObjectHandle media_box = page.getAttribute("/MediaBox", false);
-            double page_width = media_box.getArrayItem(2).getNumericValue() - media_box.getArrayItem(0).getNumericValue();
-            double page_height = media_box.getArrayItem(3).getNumericValue() - media_box.getArrayItem(1).getNumericValue();
             std::string font_dict_str = generate_helvetica_font_dict();
             QPDFObjectHandle font_obj = QPDFObjectHandle::parse(&output, font_dict_str);
             helv_font_ref = output.makeIndirectObject(font_obj);
-            std::string page_measure_str = generate_page_measure_dict(sf1, sf2);
-            QPDFObjectHandle page_measure_obj = QPDFObjectHandle::parse(&output, page_measure_str);
-            page_measure_ref = output.makeIndirectObject(page_measure_obj);
+            replace_page_viewport_measure(
+                output, page, make_page_measure_ref(output, sf1, sf2));
             std::string annot_measure_str = generate_annotation_measure_dict(sf1, sf2);
             QPDFObjectHandle annot_measure_obj = QPDFObjectHandle::parse(&output, annot_measure_str);
             annot_measure_ref = output.makeIndirectObject(annot_measure_obj);
-            QPDFObjectHandle viewport = QPDFObjectHandle::newDictionary();
-            viewport.replaceKey("/Type", QPDFObjectHandle::newName("/Viewport"));
-            QPDFObjectHandle bbox = QPDFObjectHandle::newArray();
-            bbox.appendItem(QPDFObjectHandle::newInteger(0));
-            bbox.appendItem(QPDFObjectHandle::newInteger(0));
-            bbox.appendItem(QPDFObjectHandle::newReal(page_width));
-            bbox.appendItem(QPDFObjectHandle::newReal(page_height));
-            viewport.replaceKey("/BBox", bbox);
-            viewport.replaceKey("/Measure", page_measure_ref);
-            viewport.replaceKey("/NM", QPDFObjectHandle::newString(generate_nm().c_str()));
-            QPDFObjectHandle viewport_indirect = output.makeIndirectObject(viewport);
-            QPDFObjectHandle vp_array = QPDFObjectHandle::newArray();
-            vp_array.appendItem(viewport_indirect);
-            page_dict.replaceKey("/VP", vp_array);
         }
         for (const auto &takeoff : takeoffs)
         {
@@ -448,6 +484,64 @@ namespace ost_pdf_writer
                                      std::min(line.y1, line.y2) - padding,
                                      std::max(line.x1, line.x2) + padding,
                                      std::max(line.y1, line.y2) + padding);
+            QPDFObjectHandle annot = output.makeIndirectObject(annot_obj);
+            annots.appendItem(annot);
+        }
+    }
+    static void add_dimensions_to_page(QPDF &output,
+                                       QPDFPageObjectHelper &page,
+                                       const std::vector<PDFWriter::DimensionAnnotationData> &dimensions)
+    {
+        if (dimensions.empty())
+        {
+            return;
+        }
+        QPDFObjectHandle page_dict = page.getObjectHandle();
+        QPDFObjectHandle annots = get_or_create_annots(page_dict);
+        std::string font_dict_str = generate_helvetica_font_dict();
+        QPDFObjectHandle font_obj = QPDFObjectHandle::parse(&output, font_dict_str);
+        QPDFObjectHandle helv_font_ref = output.makeIndirectObject(font_obj);
+        for (const auto &dimension_data : dimensions)
+        {
+            if (has_valid_measure_scale(dimension_data.scale_factor1, dimension_data.scale_factor2))
+            {
+                ensure_page_viewport_measure(output, page,
+                                             dimension_data.scale_factor1,
+                                             dimension_data.scale_factor2);
+                break;
+            }
+        }
+        for (const auto &dimension_data : dimensions)
+        {
+            BluebeamDimension dimension;
+            dimension.x1 = dimension_data.x1;
+            dimension.y1 = dimension_data.y1;
+            dimension.x2 = dimension_data.x2;
+            dimension.y2 = dimension_data.y2;
+            dimension.color = dimension_data.color;
+            dimension.width = dimension_data.width;
+            dimension.content = dimension_data.content;
+            dimension.font_size = dimension_data.font_size;
+            dimension.scale_factor1 = dimension_data.scale_factor1;
+            dimension.scale_factor2 = dimension_data.scale_factor2;
+            std::string annot_dict_str = generate_bluebeam_dimension_dict(dimension);
+            QPDFObjectHandle annot_obj = QPDFObjectHandle::parse(&output, annot_dict_str);
+            annot_obj.replaceKey("/P", page_dict);
+            if (has_valid_measure_scale(dimension.scale_factor1, dimension.scale_factor2))
+            {
+                QPDFObjectHandle measure_ref = make_page_measure_ref(
+                    output, dimension.scale_factor1, dimension.scale_factor2);
+                annot_obj.replaceKey("/Measure", measure_ref);
+            }
+            std::string ap_content = generate_dimension_appearance_stream(dimension);
+            QPDFObjectHandle extra_res = QPDFObjectHandle::newDictionary();
+            QPDFObjectHandle font_res = QPDFObjectHandle::newDictionary();
+            font_res.replaceKey("/Helv", helv_font_ref);
+            extra_res.replaceKey("/Font", font_res);
+            std::array<double, 4> rect = compute_dimension_rect(dimension);
+            attach_appearance_stream(output, annot_obj, ap_content,
+                                     rect[0], rect[1], rect[2], rect[3],
+                                     extra_res);
             QPDFObjectHandle annot = output.makeIndirectObject(annot_obj);
             annots.appendItem(annot);
         }
@@ -671,6 +765,7 @@ namespace ost_pdf_writer
                 add_arrows_to_page(output, last_page, page_data.arrows);
                 add_rects_to_page(output, last_page, page_data.rects);
                 add_lines_to_page(output, last_page, page_data.lines);
+                add_dimensions_to_page(output, last_page, page_data.dimensions);
                 add_ovals_to_page(output, last_page, page_data.ovals);
                 add_polygons_annot_to_page(output, last_page, page_data.polygons);
                 add_inks_to_page(output, last_page, page_data.inks);

@@ -63,6 +63,19 @@ namespace ost_pdf_writer
             std::array<uint8_t, 3> color;
             double width;
         };
+        struct DimensionAnnotationData
+        {
+            double x1;
+            double y1;
+            double x2;
+            double y2;
+            std::array<uint8_t, 3> color;
+            double width;
+            std::string content;
+            double font_size;
+            double scale_factor1;
+            double scale_factor2;
+        };
         struct OvalAnnotationData
         {
             double min_x;
@@ -104,6 +117,7 @@ namespace ost_pdf_writer
             std::vector<ArrowAnnotationData> arrows;
             std::vector<RectAnnotationData> rects;
             std::vector<LineAnnotationData> lines;
+            std::vector<DimensionAnnotationData> dimensions;
             std::vector<OvalAnnotationData> ovals;
             std::vector<PolygonAnnotationAnnotData> polygons;
             std::vector<InkAnnotationData> inks;

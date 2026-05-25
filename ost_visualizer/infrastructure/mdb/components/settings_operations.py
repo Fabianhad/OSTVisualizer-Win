@@ -6,6 +6,12 @@ from ...parsers.position_parser import convert_elevation_in_name
 
 
 class SettingsOperationsMixin:
+    @staticmethod
+    def _windows_path_separators(path) -> str:
+        if not path:
+            return ""
+        return str(path).replace("/", "\\")
+
     def save_cover_sheet(self, db_path: str, bid_uid: str, updates: dict) -> bool:
         try:
             with self._connection(db_path) as conn:
@@ -155,8 +161,12 @@ class SettingsOperationsMixin:
                                 "Index1": page.get("index") or 1,
                                 "Sequence": page.get("sequence") or 1,
                                 "MultiPageCount": page.get("multi_page_count") or 0,
-                                "ImagePath": page.get("image_path") or "",
-                                "OverlayImagePath": page.get("overlay_path") or "",
+                                "ImagePath": self._windows_path_separators(
+                                    page.get("image_path")
+                                ),
+                                "OverlayImagePath": self._windows_path_separators(
+                                    page.get("overlay_path")
+                                ),
                                 "BidPageFolderUID": folder_uid_val,
                             },
                             ("UID", "BidUID"),
@@ -179,8 +189,12 @@ class SettingsOperationsMixin:
                                 "SheetNo": page.get("sheet_no") or "",
                                 "Index1": page.get("index") or 1,
                                 "Name": page.get("name") or "",
-                                "ImagePath": page.get("image_path") or "",
-                                "OverlayImagePath": page.get("overlay_path") or "",
+                                "ImagePath": self._windows_path_separators(
+                                    page.get("image_path")
+                                ),
+                                "OverlayImagePath": self._windows_path_separators(
+                                    page.get("overlay_path")
+                                ),
                                 "BidPageFolderUID": folder_uid_val,
                                 "Sequence": page.get("sequence") or 1,
                             },
