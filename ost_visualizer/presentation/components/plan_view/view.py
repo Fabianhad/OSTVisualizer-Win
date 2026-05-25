@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRubberBand,
 )
+from shiboken6 import isValid
 from ....application.dtos.hotlink_dto import HotlinkDto
 from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_linear_geometry import ILinearGeometry
@@ -1759,7 +1760,7 @@ class TakeoffPlanView(
 
     def _clear_pdf_text_highlights(self) -> None:
         for item in self._pdf_text_highlight_items:
-            if item.scene() is self._scene:
+            if isValid(item) and item.scene() is self._scene:
                 self._scene.removeItem(item)
         self._pdf_text_highlight_items = []
 

@@ -527,6 +527,30 @@ class PdfTextSelectionTests(unittest.TestCase):
         self.assertEqual(view._rendering_service.cancelled, ["old-text-request"])
         self.assertEqual(view._pdf_text_runs, [])
 
+    def test_pdf_text_cache_clear_tolerates_scene_deleted_highlights(self):
+        view = self._make_view()
+        view._pdf_text_runs = view._map_pdf_text_runs(
+            [
+                _raw_run(
+                    "A",
+                    10.0,
+                    20.0,
+                    70.0,
+                    80.0,
+                    [_raw_char("A", 10.0, 20.0, 70.0, 80.0)],
+                )
+            ],
+            _page_info(),
+        )
+        self.assertTrue(view.select_pdf_text_at(QtCore.QPointF(21.0, 45.0)))
+        self.assertEqual(len(view._pdf_text_highlight_items), 1)
+
+        view._scene.clear()
+        view._clear_pdf_text_cache()
+
+        self.assertEqual(view._pdf_text_highlight_items, [])
+        self.assertIsNone(view._selected_pdf_text_selection)
+
     def test_pdf_text_extraction_result_ignores_stale_request(self):
         view = self._make_view()
         view._pdf_text_request_id = "current"
