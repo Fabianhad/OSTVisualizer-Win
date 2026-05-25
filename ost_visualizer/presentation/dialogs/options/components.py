@@ -386,32 +386,38 @@ class McpSetupTab(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(*RELAXED_MARGINS)
         layout.setSpacing(RELAXED_SPACING)
-        header = QtWidgets.QLabel("Configure MCP clients", self)
+        header = QtWidgets.QLabel("Connect AI tools", self)
         header.setFont(get_dialog_header_font())
         layout.addWidget(header)
+        summary = QtWidgets.QLabel(
+            "Copy one setup option below, then restart that AI tool.",
+            self,
+        )
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
         self.status_label = QtWidgets.QLabel(self._status_text(), self)
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
-        layout.addWidget(self._section_label("Claude Desktop / Cursor config"))
+        layout.addWidget(self._section_label("Claude Desktop or Cursor"))
         self.claude_config_edit = self._read_only_text_edit(
             build_claude_desktop_config(self.helper_path),
-            min_height=165,
+            min_height=135,
         )
         layout.addWidget(self.claude_config_edit)
-        self.copy_claude_button = QtWidgets.QPushButton("Copy Config", self)
+        self.copy_claude_button = QtWidgets.QPushButton("Copy Setup JSON", self)
         self.copy_claude_button.clicked.connect(self._copy_claude_config)
         layout.addWidget(
             self.copy_claude_button,
             alignment=QtCore.Qt.AlignmentFlag.AlignRight,
         )
-        layout.addWidget(self._section_label("Codex command"))
+        layout.addWidget(self._section_label("Codex CLI"))
         self.codex_command_edit = self._read_only_text_edit(
             build_codex_mcp_add_command(self.helper_path),
-            min_height=70,
+            min_height=55,
         )
         layout.addWidget(self.codex_command_edit)
         button_row = QtWidgets.QHBoxLayout()
-        self.copy_codex_button = QtWidgets.QPushButton("Copy Command", self)
+        self.copy_codex_button = QtWidgets.QPushButton("Copy Setup Command", self)
         self.copy_codex_button.clicked.connect(self._copy_codex_command)
         button_row.addWidget(self.copy_codex_button)
         button_row.addStretch(1)
@@ -423,18 +429,17 @@ class McpSetupTab(QtWidgets.QWidget):
             self.status_label.setText(self._status_text())
 
     def _status_text(self, feedback: str = "") -> str:
-        helper_status = "found" if self.helper_path.exists() else "not found"
-        file_state_status = "found" if self.file_state_path.exists() else "not found"
-        return (
-            f"MCP helper: {self.helper_path} ({helper_status})\n"
-            f"Database source: {self.file_state_path} ({file_state_status})\n"
-            "MCP uses checked OST Visualizer databases only. It does not accept "
-            "custom database paths.\n"
-            "Copy the config into your MCP client, then restart or reload that "
-            "client. This dialog does not edit client config files, and OST "
-            "Visualizer does not start the stdio server.\n"
-            f"{feedback or ' '}"
-        )
+        helper_ready = self.helper_path.exists()
+        file_state_ready = self.file_state_path.exists()
+        if helper_ready and file_state_ready:
+            status = "Ready to connect checked OST Visualizer files."
+        elif helper_ready:
+            status = "Ready after you check at least one OST Visualizer file."
+        else:
+            status = "MCP helper is not installed yet."
+        if feedback:
+            return f"{status}\n{feedback}"
+        return status
 
     def _section_label(self, text: str) -> QtWidgets.QLabel:
         label = QtWidgets.QLabel(text, self)

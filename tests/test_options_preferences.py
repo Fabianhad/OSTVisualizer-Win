@@ -436,9 +436,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog = OptionsDialog(Config(), mcp_helper_path=helper_path)
         tab = dialog._mcp_setup_tab
         texts = _visible_texts(dialog)
-        self.assertIn("Configure MCP clients", texts)
-        self.assertIn("Claude Desktop / Cursor config", texts)
-        self.assertIn("Codex command", texts)
+        self.assertIn("Connect AI tools", texts)
+        self.assertIn("Claude Desktop or Cursor", texts)
+        self.assertIn("Codex CLI", texts)
         self.assertEqual(
             tab.claude_config_edit.toPlainText(),
             build_claude_desktop_config(helper_path),
@@ -447,8 +447,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             tab.codex_command_edit.toPlainText(),
             build_codex_mcp_add_command(helper_path),
         )
-        self.assertEqual(tab.copy_claude_button.text(), "Copy Config")
-        self.assertEqual(tab.copy_codex_button.text(), "Copy Command")
+        self.assertEqual(tab.copy_claude_button.text(), "Copy Setup JSON")
+        self.assertEqual(tab.copy_codex_button.text(), "Copy Setup Command")
         dialog.close()
 
     def test_mcp_setup_tab_copy_action_preserves_options_apply_state(self):
