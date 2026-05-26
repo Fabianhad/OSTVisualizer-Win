@@ -230,9 +230,20 @@ class RecordingScene(FakeScene):
 class PatternPreviewSceneBuilder(FakeSceneBuilder):
     def __init__(self):
         self.pattern_fill_calls = 0
+        self.pattern_angles = []
 
-    def build_pattern_fill(self, path, _pattern_type, _color, _opacity, _spacing, _lw):
+    def build_pattern_fill(
+        self,
+        path,
+        _pattern_type,
+        _color,
+        _opacity,
+        _spacing,
+        _lw,
+        orientation_angle=None,
+    ):
         self.pattern_fill_calls += 1
+        self.pattern_angles.append(orientation_angle)
         bounds = path.boundingRect()
         pattern_path = QPainterPath()
         pattern_path.moveTo(bounds.left(), bounds.center().y())
@@ -262,6 +273,7 @@ class PreviewHarness(PlacementHarness):
         self._current_color_map = {}
         self._color_service = FakeColorService()
         self.handle_points = []
+        self.pattern_angles = []
         self.snap_result = (10.0, 0.0, 10.0, 0.0, placement_mode.GRID)
 
     def _placement_snap_from_scene(self, _cursor_scene):
@@ -276,9 +288,17 @@ class PreviewHarness(PlacementHarness):
         return None
 
     def _apply_pattern_preview(
-        self, item, _path, _condition, _qcolor, _preview_opacity, _page_transform
+        self,
+        item,
+        _path,
+        _condition,
+        _qcolor,
+        _preview_opacity,
+        _page_transform,
+        pattern_angle=None,
     ):
         self._place_preview_items.append(item)
+        self.pattern_angles.append(pattern_angle)
 
     def _add_secondary_condition_previews(self, *_args, **_kwargs):
         pass
@@ -936,6 +956,17 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness.update_place_preview(QtCore.QPointF(10.0, 0.0))
         self.assertIn((0.0, 0.0, 4.0), harness.handle_points)
         self.assertIn((10.0, 0.0, 4.0), harness.handle_points)
+        self.assertEqual(harness.pattern_angles, [0.0])
+
+    def test_diagonal_linear_preview_passes_line_direction_to_pattern(self):
+        from PySide6 import QtCore
+
+        harness = PreviewHarness()
+        harness._place_points = [(0.0, 0.0)]
+        harness._place_linear_dragging = True
+        harness.snap_result = (10.0, 10.0, 10.0, 10.0, placement_mode.GRID)
+        harness.update_place_preview(QtCore.QPointF(10.0, 10.0))
+        self.assertAlmostEqual(harness.pattern_angles[0], math.pi / 4.0)
 
     def test_area_preview_adds_current_endpoint_handle(self):
         from PySide6 import QtCore

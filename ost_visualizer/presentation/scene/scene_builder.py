@@ -38,9 +38,16 @@ class SceneBuilder:
         opacity: float,
         spacing: float,
         line_width: float,
+        orientation_angle: float | None = None,
     ) -> Tuple[Optional[QBrush], List[QGraphicsPathItem]]:
         return self._takeoff_renderer.build_pattern_fill(
-            path, pattern_type, color, opacity, spacing, line_width
+            path,
+            pattern_type,
+            color,
+            opacity,
+            spacing,
+            line_width,
+            orientation_angle,
         )
 
     def create_white_canvas(

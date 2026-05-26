@@ -1,3 +1,4 @@
+import math
 import os
 import unittest
 from dataclasses import fields
@@ -9,6 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
@@ -72,6 +74,53 @@ class FakeColorService:
 
 
 class ConditionUiBehaviorTests(unittest.TestCase):
+    def _path_line_angle(self, item):
+        path = item.path()
+        first = path.elementAt(0)
+        second = path.elementAt(1)
+        return math.atan2(second.y - first.y, second.x - first.x)
+
+    def _line_path_items(self, items):
+        return [
+            item
+            for item in items
+            if isinstance(item, QGraphicsPathItem) and item.path().elementCount() >= 2
+        ]
+
+    def _path_midpoint(self, item):
+        path = item.path()
+        first = path.elementAt(0)
+        second = path.elementAt(1)
+        return ((first.x + second.x) / 2.0, (first.y + second.y) / 2.0)
+
+    def _line_spacing(self, first_item, second_item):
+        line_angle = self._path_line_angle(first_item)
+        normal_angle = line_angle + math.pi / 2.0
+        first_projection = self._point_projection(
+            self._path_midpoint(first_item), normal_angle
+        )
+        second_projection = self._point_projection(
+            self._path_midpoint(second_item), normal_angle
+        )
+        return abs(second_projection - first_projection)
+
+    def _point_projection(self, point, angle):
+        return point[0] * math.cos(angle) + point[1] * math.sin(angle)
+
+    def _assert_parallel_angle(self, actual, expected):
+        diff = abs((actual - expected + math.pi / 2.0) % math.pi - math.pi / 2.0)
+        self.assertLess(diff, 0.01)
+
+    def _render_takeoff_items(self, condition, takeoff):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        rendered = renderer.create_all_path_items(
+            [takeoff],
+            {condition.uid: condition},
+            {condition.uid: SimpleNamespace(hex="#123456", opacity=1.0)},
+        )
+        items = rendered[0][1]
+        return items if isinstance(items, list) else [items]
+
     def test_condition_entity_does_not_expose_label_style_fields(self):
         condition_fields = {field.name for field in fields(Condition)}
         self.assertFalse(
@@ -412,6 +461,87 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertGreater(name_center.y(), dimension_center.y())
         self.assertNotEqual(name_center, dimension_center)
         self.assertGreater(len(grid_items), 1)
+
+    def test_linear_horizontal_pattern_follows_linear_direction(self):
+        condition = Condition(
+            uid="c1",
+            condition_type=Condition.TYPE_LINEAR,
+            color_fill=0,
+            pattern=pattern_values.HORIZONTAL,
+            spacing=2.0,
+            thickness=8.0,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 20.0, 20.0],
+        )
+        items = self._render_takeoff_items(condition, takeoff)
+        pattern_item = items[1]
+
+        self._assert_parallel_angle(self._path_line_angle(pattern_item), math.pi / 4.0)
+
+    def test_linear_vertical_pattern_is_perpendicular_to_linear_direction(self):
+        condition = Condition(
+            uid="c1",
+            condition_type=Condition.TYPE_LINEAR,
+            color_fill=0,
+            pattern=pattern_values.VERTICAL,
+            spacing=2.0,
+            thickness=8.0,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 20.0, 20.0],
+        )
+        items = self._render_takeoff_items(condition, takeoff)
+        pattern_item = items[1]
+
+        self._assert_parallel_angle(self._path_line_angle(pattern_item), -math.pi / 4.0)
+
+    def test_oriented_linear_diagonal_pattern_uses_configured_spacing(self):
+        condition = Condition(
+            uid="c1",
+            condition_type=Condition.TYPE_LINEAR,
+            color_fill=0,
+            pattern=pattern_values.BACKWARD_DIAG,
+            spacing=2.0,
+            thickness=12.0,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 20.0, 20.0],
+        )
+        items = self._render_takeoff_items(condition, takeoff)
+        pattern_items = self._line_path_items(items[1:])
+
+        self.assertGreaterEqual(len(pattern_items), 2)
+        self.assertAlmostEqual(
+            self._line_spacing(pattern_items[0], pattern_items[1]), 2.0, delta=0.01
+        )
+
+    def test_fixed_axis_area_diagonal_pattern_keeps_configured_spacing(self):
+        condition = Condition(
+            uid="c1",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0,
+            pattern=pattern_values.BACKWARD_DIAG,
+            spacing=2.0,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0, 0.0, 20.0],
+        )
+        items = self._render_takeoff_items(condition, takeoff)
+        pattern_items = self._line_path_items(items[1:])
+
+        self.assertGreaterEqual(len(pattern_items), 2)
+        self.assertAlmostEqual(
+            self._line_spacing(pattern_items[0], pattern_items[1]), 2.0, delta=0.01
+        )
 
     def test_area_display_name_uses_centroid_when_dimension_is_not_present(self):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())

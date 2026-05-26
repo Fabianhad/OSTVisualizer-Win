@@ -14,7 +14,10 @@ from PySide6.QtWidgets import (
 )
 from .....domain.entities import shape as shapes
 from .....domain.entities.condition import Condition
-from ....visualization.core.geometry.takeoff_geometry import compute_count_vertices
+from ....visualization.core.geometry.takeoff_geometry import (
+    compute_count_vertices,
+    compute_line_angle,
+)
 from ....visualization.pdf import ost_pdf
 from .geometry_utils import polygon_is_valid, polyline_self_intersects
 from .handle_style import apply_takeoff_handle_style
@@ -697,8 +700,15 @@ class PlacementModeMixin:
             path.closeSubpath()
             item = QGraphicsPathItem()
             item.setPath(path)
+            pattern_angle = compute_line_angle(x1, y1, x2, y2)
             self._apply_pattern_preview(
-                item, path, condition, qcolor, preview_opacity, page_transform
+                item,
+                path,
+                condition,
+                qcolor,
+                preview_opacity,
+                page_transform,
+                pattern_angle,
             )
             self._add_secondary_condition_previews(
                 path,
@@ -1153,6 +1163,7 @@ class PlacementModeMixin:
         qcolor: QColor,
         opacity: float,
         page_transform,
+        pattern_angle: float | None = None,
     ) -> None:
         fill_brush = None
         pattern_items = []
@@ -1160,7 +1171,13 @@ class PlacementModeMixin:
             pattern_type = condition.pattern if condition.pattern else 1
             spacing = condition.spacing if condition.spacing else 4.0
             fill_brush, pattern_items = self._scene_builder.build_pattern_fill(
-                path, pattern_type, qcolor, opacity, spacing, 2.0
+                path,
+                pattern_type,
+                qcolor,
+                opacity,
+                spacing,
+                2.0,
+                pattern_angle if condition.is_linear else None,
             )
         border_pen = QPen(qcolor)
         border_pen.setWidthF(2.0)
@@ -1212,12 +1229,20 @@ class PlacementModeMixin:
             if linear_endpoints and cs:
                 x1, y1, x2, y2 = linear_endpoints
                 cond_path = self._build_linear_path(cs, cond, x1, y1, x2, y2)
+                pattern_angle = compute_line_angle(x1, y1, x2, y2)
             else:
                 cond_path = path
+                pattern_angle = None
             item = QGraphicsPathItem()
             item.setPath(cond_path)
             self._apply_pattern_preview(
-                item, cond_path, cond, qcolor, opacity, page_transform
+                item,
+                cond_path,
+                cond,
+                qcolor,
+                opacity,
+                page_transform,
+                pattern_angle,
             )
 
     def _build_linear_path(self, cs, condition, x1, y1, x2, y2) -> QPainterPath:

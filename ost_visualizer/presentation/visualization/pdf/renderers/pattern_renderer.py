@@ -1,5 +1,5 @@
 import math
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsPathItem
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
@@ -23,11 +23,11 @@ def create_pattern_items(
     spacing: float,
     line_width: float,
     coord_system: ICoordinateTransformer | None = None,
+    orientation_angle: Optional[float] = None,
 ) -> List[QGraphicsPathItem]:
     if pattern_type not in pt.LINE_PATTERNS:
         return []
     pattern_spacing = _convert_spacing(spacing, coord_system)
-    diag_spacing = pattern_spacing * math.sqrt(2)
     bounds = base_path.boundingRect()
     min_x, min_y = bounds.left(), bounds.top()
     max_x, max_y = bounds.right(), bounds.bottom()
@@ -38,6 +38,15 @@ def create_pattern_items(
     pen = QPen(color)
     pen.setWidthF(line_width)
     pen.setCosmetic(True)
+    if orientation_angle is not None:
+        return _create_oriented_pattern_lines(
+            polygon_points,
+            pattern_type,
+            orientation_angle,
+            pattern_spacing,
+            pen,
+        )
+    diag_spacing = pattern_spacing * math.sqrt(2)
     if pattern_type == pt.HORIZONTAL:
         items.extend(
             _create_horizontal_lines(polygon_points, min_y, max_y, pattern_spacing, pen)
@@ -102,6 +111,55 @@ def create_pattern_items(
                 diag_spacing,
                 pen,
                 backward=False,
+            )
+        )
+    return items
+
+
+def _create_oriented_pattern_lines(
+    polygon: List[Tuple[float, float]],
+    pattern_type: int,
+    base_angle: float,
+    pattern_spacing: float,
+    pen: QPen,
+) -> List[QGraphicsPathItem]:
+    items: List[QGraphicsPathItem] = []
+    if pattern_type == pt.HORIZONTAL:
+        items.extend(_create_parallel_lines(polygon, base_angle, pattern_spacing, pen))
+    elif pattern_type == pt.VERTICAL:
+        items.extend(
+            _create_parallel_lines(
+                polygon, base_angle + math.pi / 2.0, pattern_spacing, pen
+            )
+        )
+    elif pattern_type == pt.BACKWARD_DIAG:
+        items.extend(
+            _create_parallel_lines(
+                polygon, base_angle + math.pi / 4.0, pattern_spacing, pen
+            )
+        )
+    elif pattern_type == pt.FORWARD_DIAG:
+        items.extend(
+            _create_parallel_lines(
+                polygon, base_angle - math.pi / 4.0, pattern_spacing, pen
+            )
+        )
+    elif pattern_type == pt.CROSSHATCH:
+        items.extend(_create_parallel_lines(polygon, base_angle, pattern_spacing, pen))
+        items.extend(
+            _create_parallel_lines(
+                polygon, base_angle + math.pi / 2.0, pattern_spacing, pen
+            )
+        )
+    elif pattern_type == pt.DIAG_CROSSHATCH:
+        items.extend(
+            _create_parallel_lines(
+                polygon, base_angle + math.pi / 4.0, pattern_spacing, pen
+            )
+        )
+        items.extend(
+            _create_parallel_lines(
+                polygon, base_angle - math.pi / 4.0, pattern_spacing, pen
             )
         )
     return items
@@ -207,6 +265,60 @@ def _create_vertical_lines(
             items.append(item)
         x += spacing
     return items
+
+
+def _create_parallel_lines(
+    polygon: List[Tuple[float, float]],
+    angle: float,
+    spacing: float,
+    pen: QPen,
+) -> List[QGraphicsPathItem]:
+    ux, uy = math.cos(angle), math.sin(angle)
+    nx, ny = -uy, ux
+    normal_values = [px * nx + py * ny for px, py in polygon]
+    min_n, max_n = min(normal_values), max(normal_values)
+    items: List[QGraphicsPathItem] = []
+    c = min_n + spacing
+    while c < max_n:
+        intersections = _find_parallel_line_intersections(c, ux, uy, nx, ny, polygon)
+        for i in range(0, len(intersections) - 1, 2):
+            s1, s2 = intersections[i], intersections[i + 1]
+            line_path = QPainterPath()
+            line_path.moveTo(ux * s1 + nx * c, uy * s1 + ny * c)
+            line_path.lineTo(ux * s2 + nx * c, uy * s2 + ny * c)
+            item = QGraphicsPathItem(line_path)
+            item.setPen(pen)
+            items.append(item)
+        c += spacing
+    return items
+
+
+def _find_parallel_line_intersections(
+    normal_value: float,
+    ux: float,
+    uy: float,
+    nx: float,
+    ny: float,
+    polygon: List[Tuple[float, float]],
+) -> List[float]:
+    intersections = []
+    n = len(polygon)
+    for i in range(n):
+        px, py = polygon[i]
+        qx, qy = polygon[(i + 1) % n]
+        p_normal = px * nx + py * ny
+        q_normal = qx * nx + qy * ny
+        if (p_normal <= normal_value < q_normal) or (
+            q_normal <= normal_value < p_normal
+        ):
+            denom = q_normal - p_normal
+            if abs(denom) > 1e-10:
+                t = (normal_value - p_normal) / denom
+                ix = px + t * (qx - px)
+                iy = py + t * (qy - py)
+                intersections.append(ix * ux + iy * uy)
+    intersections.sort()
+    return intersections
 
 
 def _find_horizontal_line_intersections(

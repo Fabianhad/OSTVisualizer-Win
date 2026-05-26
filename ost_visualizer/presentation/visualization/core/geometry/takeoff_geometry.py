@@ -21,6 +21,13 @@ def compute_straight_linear_vertices(
     ]
 
 
+def compute_line_angle(x1: float, y1: float, x2: float, y2: float) -> Optional[float]:
+    dx, dy = x2 - x1, y2 - y1
+    if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+        return None
+    return math.atan2(dy, dx)
+
+
 def compute_curved_linear_vertices(
     x1: float,
     y1: float,

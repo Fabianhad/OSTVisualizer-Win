@@ -35,6 +35,7 @@
 - Prioritized enabled overlay PDF layers for composite/overlay PDF snapping and embedded text selection, with overlay-only PDF rendering using dynamic base and tile refresh.
 - PDF export now follows enabled page image layers, exporting overlay-only pages directly from the overlay source and main+overlay pages as a flattened red/blue comparison background with annotations on top.
 - Improved native PDF export for line, arrow, shape, ink, and text annotations to better match Bluebeam/Revu markups and render line-based appearances correctly on first open.
+- Linear takeoff line patterns now rotate with the takeoff direction so horizontal, vertical, and diagonal hatches follow the line instead of the page axes.
 
 ### Fixed
 - Included the standalone `ostv-mcp.exe` helper and its runtime files in the desktop distribution so production MCP client config points to an installed executable.

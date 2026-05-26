@@ -27,4 +27,5 @@ class ITakeoffRenderer(Protocol):
         opacity: float,
         spacing: float,
         line_width: float,
+        orientation_angle: Optional[float] = None,
     ) -> Tuple[Optional[QBrush], List[QGraphicsPathItem]]: ...

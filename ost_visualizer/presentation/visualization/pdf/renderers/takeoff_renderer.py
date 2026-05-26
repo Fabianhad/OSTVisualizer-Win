@@ -20,6 +20,7 @@ from ...core.geometry.ost_linear_geom import (
 from ...core.geometry.takeoff_geometry import (
     compute_count_vertices,
     compute_curved_linear_vertices,
+    compute_line_angle,
     compute_straight_linear_vertices,
 )
 from ...pdf.renderers import pattern_renderer as pr
@@ -78,8 +79,19 @@ class TakeoffRenderer:
                 items.extend(pattern_items)
         elif pattern_type in pt.LINE_PATTERNS:
             spacing = condition.spacing if condition.spacing else 4.0
+            orientation_angle = (
+                self._linear_pattern_angle(takeoff)
+                if condition.is_linear and takeoff is not None
+                else None
+            )
             pattern_items = pr.create_pattern_items(
-                path, pattern_type, qcolor, spacing, line_width, self._cs
+                path,
+                pattern_type,
+                qcolor,
+                spacing,
+                line_width,
+                self._cs,
+                orientation_angle,
             )
             if pattern_items:
                 for pitem in pattern_items:
@@ -103,6 +115,15 @@ class TakeoffRenderer:
         )
         items.extend(label_items)
         return items if len(items) > 1 else items[0]
+
+    def _linear_pattern_angle(self, takeoff: Takeoff) -> float | None:
+        position = self._cs.parse_position(takeoff.position)
+        if not position or len(position) < 4:
+            return None
+        tx = self._cs.transform_vertices_to_2d(position[:4])
+        if len(tx) < 4:
+            return None
+        return compute_line_angle(tx[0], tx[1], tx[2], tx[3])
 
     def _grid_spacing(self, condition) -> tuple[float, float]:
         spacing_x = condition.grid_size1 if condition.grid_size1 > 0 else 0.0
@@ -347,12 +368,19 @@ class TakeoffRenderer:
         opacity: float,
         spacing: float,
         line_width: float,
+        orientation_angle: float | None = None,
     ) -> Tuple[Optional[QBrush], List[QGraphicsPathItem]]:
         fill_brush = pr.get_pattern_fill_brush(pattern_type, color, opacity)
         pattern_items: List[QGraphicsPathItem] = []
         if pattern_type in pt.LINE_PATTERNS:
             pattern_items = pr.create_pattern_items(
-                path, pattern_type, color, spacing, line_width, self._cs
+                path,
+                pattern_type,
+                color,
+                spacing,
+                line_width,
+                self._cs,
+                orientation_angle,
             )
         return fill_brush, pattern_items
 

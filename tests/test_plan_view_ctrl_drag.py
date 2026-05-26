@@ -1,3 +1,4 @@
+import math
 import os
 import unittest
 from types import SimpleNamespace
@@ -246,13 +247,22 @@ class FakeColorService:
 class FakeSceneBuilder:
     def __init__(self):
         self.cs = FakeCoordinateSystem()
+        self.pattern_angles = []
 
     def get_coordinate_system(self):
         return self.cs
 
     def build_pattern_fill(
-        self, path, _pattern_type, color, _opacity, _spacing, _line_width
+        self,
+        path,
+        _pattern_type,
+        color,
+        _opacity,
+        _spacing,
+        _line_width,
+        orientation_angle=None,
     ):
+        self.pattern_angles.append(orientation_angle)
         bounds = path.boundingRect()
         pattern_path = QPainterPath()
         pattern_path.moveTo(bounds.left(), bounds.center().y())
@@ -821,6 +831,14 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(
             view._uid_to_items["t1"][1].path().boundingRect().right(), 20.0
         )
+        self.assertEqual(view._scene_builder.pattern_angles, [0.0])
+
+    def test_diagonal_linear_pattern_preview_uses_drag_direction(self):
+        view, _main_item, _old_pattern = self._make_pattern_resize_view(
+            Condition.TYPE_LINEAR
+        )
+        view.update_drag_handle_positions([0.0, 0.0, 20.0, 20.0], "t1")
+        self.assertAlmostEqual(view._scene_builder.pattern_angles[-1], math.pi / 4.0)
 
     def test_horizontal_bid_dimension_resize_updates_label_live(self):
         view, _ann = self._make_dimension_resize_view()

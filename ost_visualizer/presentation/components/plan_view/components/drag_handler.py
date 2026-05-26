@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsTextItem,
 )
+from ....visualization.core.geometry.takeoff_geometry import compute_line_angle
 from ....visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
     build_dimension_path,
@@ -100,13 +101,14 @@ class DragHandlerMixin:
         path_item: QGraphicsPathItem,
         path: QPainterPath,
         condition,
+        pattern_angle: float | None = None,
     ) -> None:
         color_hex, opacity = self._drag_preview_color_for_condition(condition)
         qcolor = QColor(color_hex)
         pattern_type = condition.pattern if condition.pattern else 1
         spacing = condition.spacing if condition.spacing else 4.0
         fill_brush, pattern_items = self._scene_builder.build_pattern_fill(
-            path, pattern_type, qcolor, opacity, spacing, 2.0
+            path, pattern_type, qcolor, opacity, spacing, 2.0, pattern_angle
         )
         border_pen = QPen(qcolor)
         border_pen.setWidthF(2.0)
@@ -505,8 +507,9 @@ class DragHandlerMixin:
                     if new_path is not None:
                         path_item.setPos(0.0, 0.0)
                         path_item.setPath(new_path)
+                        pattern_angle = compute_line_angle(x1, y1, x2, y2)
                         self._refresh_takeoff_pattern_preview(
-                            uid, path_item, new_path, condition
+                            uid, path_item, new_path, condition, pattern_angle
                         )
         is_body_move = self._drag_handle_index == -1 or (
             not is_ann
