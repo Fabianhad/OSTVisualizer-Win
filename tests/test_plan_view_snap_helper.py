@@ -1,13 +1,12 @@
 import importlib
+import math
 import sys
 import types
 import unittest
 from types import SimpleNamespace
-
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainterPath
 from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsPathItem
-
 from ost_visualizer.domain.entities import shape as shapes
 from ost_visualizer.domain.entities.config import Config
 
@@ -718,7 +717,9 @@ class SnapSegmentCacheTests(unittest.TestCase):
         endpoint_handle = harness.handle_points[2]
         self.assertEqual(endpoint_handle[:2], (10.0, 20.0))
 
-    def test_snap_to_right_angle_hides_indicator_when_final_endpoint_is_not_right_angle(self):
+    def test_snap_to_right_angle_hides_indicator_when_final_endpoint_is_not_right_angle(
+        self,
+    ):
         from PySide6 import QtCore
 
         harness = _area_preview_harness(
@@ -822,10 +823,8 @@ class SnapSegmentCacheTests(unittest.TestCase):
                     )
                 },
             )
-            endpoint = (
-                harness._area_final_endpoint_for_placement(
-                    20.0, 10.0, 10.5, 16.0, placement_mode.NONE
-                )
+            endpoint = harness._area_final_endpoint_for_placement(
+                20.0, 10.0, 10.5, 16.0, placement_mode.NONE
             )
         finally:
             placement_mode.QGuiApplication = original
@@ -896,22 +895,35 @@ class SnapSegmentCacheTests(unittest.TestCase):
         second_key = harness._pdf_snap_cache_key()
         self.assertNotEqual(first_key, second_key)
 
+    def test_overlay_pdf_snap_points_map_through_overlay_scale_and_rotation(self):
+        harness = PlacementHarness()
+        harness._current_page.overlay_image_path = "overlay.pdf"
+        harness._current_page.image_show_mode = 2
+        harness._current_page.overlay_offset_x = 1.0
+        harness._current_page.overlay_offset_y = 0.5
+        harness._current_page.overlay_rotation = math.pi / 2.0
+        mapped = harness._pdf_intelligence_point_to_page_point(
+            "overlay",
+            10.0,
+            20.0,
+            100.0,
+            50.0,
+        )
+        self.assertAlmostEqual(mapped[0], 32.0)
+        self.assertAlmostEqual(mapped[1], 56.0)
+
     def test_composite_pdf_snap_uses_overlay_source(self):
         harness = PlacementHarness()
         harness._current_page.overlay_image_path = "overlay.pdf"
         harness._current_page.image_show_mode = 2
-
         harness._ensure_pdf_snap_index()
-
         self.assertEqual(FakePDFRenderer.open_paths, ["overlay.pdf"])
 
     def test_raster_overlay_falls_back_to_main_pdf_snap_source(self):
         harness = PlacementHarness()
         harness._current_page.overlay_image_path = "overlay.tif"
         harness._current_page.image_show_mode = 2
-
         harness._ensure_pdf_snap_index()
-
         self.assertEqual(FakePDFRenderer.open_paths, ["drawing.pdf"])
 
     def test_linear_preview_adds_start_and_current_endpoint_handles(self):

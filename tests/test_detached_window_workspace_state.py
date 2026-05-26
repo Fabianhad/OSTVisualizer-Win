@@ -1,23 +1,25 @@
 import unittest
 from types import SimpleNamespace
-
 from PySide6 import QtCore
-
 from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.application.use_cases.annotation_view.open_annotation_view_use_case import \
-    OpenAnnotationViewUseCase
+from ost_visualizer.application.use_cases.annotation_view.open_annotation_view_use_case import (
+    OpenAnnotationViewUseCase,
+)
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.workspace_state import WorkspaceState
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import \
-    UIEventCoordinator
-from ost_visualizer.presentation.coordinators.workspace_state_coordinator import \
-    WorkspaceStateCoordinator
-from ost_visualizer.presentation.managers.detached_page_view_manager import \
-    DetachedPageViewManager
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
+from ost_visualizer.presentation.coordinators.workspace_state_coordinator import (
+    WorkspaceStateCoordinator,
+)
+from ost_visualizer.presentation.managers.detached_page_view_manager import (
+    DetachedPageViewManager,
+)
 
 
 def _encoded_geometry(value: bytes = b"geometry") -> str:
@@ -409,8 +411,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(calls, [(("nv1", "Updated View"),)])
 
     def test_detached_window_named_view_combo_uses_renamed_text(self):
-        from ost_visualizer.presentation.windows.components.window import \
-            DetachedPageViewWindow
+        from ost_visualizer.presentation.windows.components.window import (
+            DetachedPageViewWindow,
+        )
 
         plan_view_calls = []
         annotation = BidAnnotation(

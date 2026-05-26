@@ -1,24 +1,27 @@
 import logging
 import unittest
 from types import SimpleNamespace
-
-from ost_visualizer.application.dtos.update_condition_dto import \
-    UpdateConditionDto
-from ost_visualizer.application.services.active_bid_write_guard import \
-    ActiveBidWriteGuard
-from ost_visualizer.application.services.project_write_service import \
-    ProjectWriteService
+from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
+from ost_visualizer.application.services.active_bid_write_guard import (
+    ActiveBidWriteGuard,
+)
+from ost_visualizer.application.services.project_write_service import (
+    ProjectWriteService,
+)
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
-from ost_visualizer.presentation.controllers.menu_controller import \
-    MenuController
-from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import \
-    ToolbarStateCoordinator
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import \
-    UIEventCoordinator
+from ost_visualizer.presentation.controllers.menu_controller import MenuController
+from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
+    ToolbarStateCoordinator,
+)
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.ui_access_manager import (
-    Feature, UIAccessManager)
+    Feature,
+    UIAccessManager,
+)
 
 
 class _EventBus:

@@ -1,10 +1,15 @@
 import unittest
-
 from ost_visualizer.application.dtos.mcp_context_dtos import (
-    McpAreaDto, McpAreaSummaryDto, McpConditionDto,
-    McpConditionQuantitySummaryDto, McpConditionSummaryDto,
-    McpPageTakeoffSummaryDto, McpResultMetaDto, McpSelectedTakeoffsSummaryDto,
-    McpTakeoffDto)
+    McpAreaDto,
+    McpAreaSummaryDto,
+    McpConditionDto,
+    McpConditionQuantitySummaryDto,
+    McpConditionSummaryDto,
+    McpPageTakeoffSummaryDto,
+    McpResultMetaDto,
+    McpSelectedTakeoffsSummaryDto,
+    McpTakeoffDto,
+)
 from ost_visualizer.mcp_server.serializers import error, ok
 
 

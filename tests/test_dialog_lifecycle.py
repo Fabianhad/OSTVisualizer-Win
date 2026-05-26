@@ -3,15 +3,11 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
-
-from ost_visualizer.application.dtos.license_view_model_dto import \
-    LicenseViewModelDto
+from ost_visualizer.application.dtos.license_view_model_dto import LicenseViewModelDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.presentation import main_window as main_window_module
-from ost_visualizer.presentation.components.progress_dialog import \
-    ProgressDialog
-from ost_visualizer.presentation.coordinators.event_coordinator import \
-    EventCoordinator
+from ost_visualizer.presentation.components.progress_dialog import ProgressDialog
+from ost_visualizer.presentation.coordinators.event_coordinator import EventCoordinator
 from ost_visualizer.presentation.dialogs.license_dialog import LicenseDialog
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.dialog import BaseListDialog
@@ -175,7 +171,6 @@ class DialogLifecycleTests(unittest.TestCase):
             result = MainWindow._create_database_with_progress(window)
         finally:
             main_window_module.ProgressDialog = original_dialog
-
         dialog = FakeProgressDialog.instances[0]
         self.assertEqual(result, "created.mdb")
         self.assertEqual(dialog.filename, "new database")
@@ -203,7 +198,6 @@ class DialogLifecycleTests(unittest.TestCase):
             result = MainWindow._create_database_with_progress(window)
         finally:
             main_window_module.ProgressDialog = original_dialog
-
         dialog = FakeProgressDialog.instances[0]
         self.assertIsNone(result)
         self.assertEqual(dialog.exec_calls, 1)

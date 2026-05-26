@@ -1,9 +1,11 @@
 import unittest
-
-from ost_visualizer.application.use_cases.project.unload_file_use_case import \
-    UnloadFileUseCase
-from ost_visualizer.domain.entities.hierarchy_data import (HierarchyData,
-                                                           HierarchyFileEntry)
+from ost_visualizer.application.use_cases.project.unload_file_use_case import (
+    UnloadFileUseCase,
+)
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyData,
+    HierarchyFileEntry,
+)
 from ost_visualizer.domain.entities.identity_refs import BidRef
 
 

@@ -8,19 +8,21 @@ from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
-
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.domain.services.condition_quantity_service import \
-    compute_page_quantities
-from ost_visualizer.presentation.components.conditions_sidebar import \
-    ConditionsSidebar
-from ost_visualizer.presentation.dialogs.edit_condition_dialog import \
-    EditConditionDialog
-from ost_visualizer.presentation.utils.view_context_menu import \
-    build_selected_takeoff_context_state
-from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import \
-    TakeoffRenderer
+from ost_visualizer.domain.services.condition_quantity_service import (
+    compute_page_quantities,
+)
+from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
+from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
+    EditConditionDialog,
+)
+from ost_visualizer.presentation.utils.view_context_menu import (
+    build_selected_takeoff_context_state,
+)
+from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
+    TakeoffRenderer,
+)
 from tests.single_action import SingleCallRecorder
 
 

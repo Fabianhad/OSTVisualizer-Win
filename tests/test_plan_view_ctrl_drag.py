@@ -6,25 +6,34 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainterPath, QPen, QTransform
-from PySide6.QtWidgets import (QApplication, QGraphicsPathItem, QGraphicsScene,
-                               QGraphicsTextItem)
-
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsPathItem,
+    QGraphicsScene,
+    QGraphicsTextItem,
+)
 from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.presentation.components.plan_view.components.drag_handler import \
-    DragHandlerMixin
-from ost_visualizer.presentation.components.plan_view.components.graphics_items import \
-    NAMED_VIEW_LABEL_ITEM_KIND
-from ost_visualizer.presentation.components.plan_view.components.input_handler import \
-    InputHandlerMixin
-from ost_visualizer.presentation.components.plan_view.components.selection_manager import \
-    SelectionManagerMixin
-from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import \
-    AnnotationItemRenderer
-from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import \
-    format_dimension_distance
+from ost_visualizer.presentation.components.plan_view.components.drag_handler import (
+    DragHandlerMixin,
+)
+from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
+    NAMED_VIEW_LABEL_ITEM_KIND,
+)
+from ost_visualizer.presentation.components.plan_view.components.input_handler import (
+    InputHandlerMixin,
+)
+from ost_visualizer.presentation.components.plan_view.components.selection_manager import (
+    SelectionManagerMixin,
+)
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
+    AnnotationItemRenderer,
+)
+from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import (
+    format_dimension_distance,
+)
 
 
 def _app():

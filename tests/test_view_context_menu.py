@@ -3,10 +3,10 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
-
 from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.presentation.utils.view_context_menu import \
-    add_reassign_condition_submenu
+from ost_visualizer.presentation.utils.view_context_menu import (
+    add_reassign_condition_submenu,
+)
 
 
 def _app():

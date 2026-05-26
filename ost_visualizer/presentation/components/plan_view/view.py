@@ -221,7 +221,7 @@ class TakeoffPlanView(
         self._deferred_page_visual_result: Optional[Tuple[str, Dict, object]] = None
         self._background_item: Optional[ImageBackgroundItem] = None
         self._overlay_items: List[QGraphicsPixmapItem] = []
-        self._zoom_debouncer = ZoomDebouncer(delay_ms=180, parent=self)
+        self._zoom_debouncer = ZoomDebouncer(parent=self)
         self._zoom_debouncer.zoom_settled.connect(self._update_tile_coverage)
         self._scene_scale: float = 2.0
         self._can_zoom_rerender: bool = False

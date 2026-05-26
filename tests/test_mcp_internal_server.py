@@ -5,7 +5,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-
 from ost_visualizer.mcp_server.registry import DatabaseRegistry
 from ost_visualizer.mcp_server.server import build_mcp_server
 

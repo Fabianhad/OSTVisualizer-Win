@@ -4,17 +4,20 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType
-
 from ost_visualizer.infrastructure import providers
 from ost_visualizer.infrastructure.mdb import database_creator
-from ost_visualizer.infrastructure.mdb.components.annotation_operations import \
-    AnnotationOperationsMixin
-from ost_visualizer.infrastructure.mdb.components.condition_operations import \
-    ConditionOperationsMixin
-from ost_visualizer.infrastructure.mdb.components.page_operations import \
-    PageOperationsMixin
-from ost_visualizer.infrastructure.services.license_validation_scheduler import \
-    LicenseValidationScheduler
+from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
+    AnnotationOperationsMixin,
+)
+from ost_visualizer.infrastructure.mdb.components.condition_operations import (
+    ConditionOperationsMixin,
+)
+from ost_visualizer.infrastructure.mdb.components.page_operations import (
+    PageOperationsMixin,
+)
+from ost_visualizer.infrastructure.services.license_validation_scheduler import (
+    LicenseValidationScheduler,
+)
 
 
 class InfrastructureLifecycleTests(unittest.TestCase):

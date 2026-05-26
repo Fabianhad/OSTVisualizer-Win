@@ -1,8 +1,8 @@
 import logging
 import unittest
-
-from ost_visualizer.infrastructure.mdb.components.takeoff_operations import \
-    TakeoffOperationsMixin
+from ost_visualizer.infrastructure.mdb.components.takeoff_operations import (
+    TakeoffOperationsMixin,
+)
 
 
 class _FakeConnection:

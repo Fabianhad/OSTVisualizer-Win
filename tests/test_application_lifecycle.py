@@ -2,22 +2,23 @@ import logging
 import time
 import unittest
 from types import SimpleNamespace
-
 from ost_visualizer.application.app_controller import AppController
-from ost_visualizer.application.builders.orchestrator_builder import \
-    AppOrchestrators
+from ost_visualizer.application.builders.orchestrator_builder import AppOrchestrators
 from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.application.interfaces.i_shutdown_aware import \
-    IShutdownAware
-from ost_visualizer.application.orchestrators.license_thread_manager import \
-    LicenseThreadManager
-from ost_visualizer.application.orchestrators.lifecycle_orchestrator import \
-    LifecycleOrchestrator
+from ost_visualizer.application.interfaces.i_shutdown_aware import IShutdownAware
+from ost_visualizer.application.orchestrators.license_thread_manager import (
+    LicenseThreadManager,
+)
+from ost_visualizer.application.orchestrators.lifecycle_orchestrator import (
+    LifecycleOrchestrator,
+)
 from ost_visualizer.application.service_container import ServiceContainer
-from ost_visualizer.application.services.annotation_view_event_handler import \
-    AnnotationViewEventHandler
-from ost_visualizer.application.services.visualization_service import \
-    VisualizationService
+from ost_visualizer.application.services.annotation_view_event_handler import (
+    AnnotationViewEventHandler,
+)
+from ost_visualizer.application.services.visualization_service import (
+    VisualizationService,
+)
 
 
 class FakeEventBus:

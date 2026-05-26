@@ -4,13 +4,27 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
-from PySide6.QtGui import (QColor, QFont, QImage, QKeyEvent, QMouseEvent,
-                           QPainter, QPainterPath, QTextCursor, QTextOption)
-from PySide6.QtWidgets import (QApplication, QColorDialog, QGraphicsItem,
-                               QGraphicsPathItem, QGraphicsPolygonItem,
-                               QGraphicsRectItem, QGraphicsTextItem,
-                               QStyleOptionGraphicsItem)
-
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QImage,
+    QKeyEvent,
+    QMouseEvent,
+    QPainter,
+    QPainterPath,
+    QTextCursor,
+    QTextOption,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QColorDialog,
+    QGraphicsItem,
+    QGraphicsPathItem,
+    QGraphicsPolygonItem,
+    QGraphicsRectItem,
+    QGraphicsTextItem,
+    QStyleOptionGraphicsItem,
+)
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.condition import Condition
@@ -18,14 +32,18 @@ from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
-    DIMENSION_LABEL_ITEM_KIND, NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
-    NAMED_VIEW_LABEL_ITEM_KIND, ClippedTextGraphicsItem)
-from ost_visualizer.presentation.components.plan_view.view import \
-    TakeoffPlanView
-from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import \
-    ViewerSyncCoordinator
-from ost_visualizer.presentation.windows.annotation_view_window import \
-    _ANNOTATION_WINDOW_CONFIG
+    DIMENSION_LABEL_ITEM_KIND,
+    NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
+    NAMED_VIEW_LABEL_ITEM_KIND,
+    ClippedTextGraphicsItem,
+)
+from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
+    ViewerSyncCoordinator,
+)
+from ost_visualizer.presentation.windows.annotation_view_window import (
+    _ANNOTATION_WINDOW_CONFIG,
+)
 from ost_visualizer.presentation.windows.view_window import _VIEW_WINDOW_CONFIG
 
 

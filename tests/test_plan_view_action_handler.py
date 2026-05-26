@@ -1,20 +1,22 @@
 import unittest
 from types import SimpleNamespace
-
-from ost_visualizer.application.dtos.insert_annotation_spec_dto import \
-    InsertAnnotationSpec
-from ost_visualizer.application.dtos.insert_takeoff_spec_dto import \
-    InsertTakeoffSpec
+from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+    InsertAnnotationSpec,
+)
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.presentation.handlers.plan_view_action_handler import \
-    PlanViewActionHandler
+from ost_visualizer.presentation.handlers.plan_view_action_handler import (
+    PlanViewActionHandler,
+)
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.services.selection_commands import (
-    PasteAnnotationsCommand, PasteTakeoffsCommand)
+    PasteAnnotationsCommand,
+    PasteTakeoffsCommand,
+)
 
 
 class FakePlanView:
@@ -972,9 +974,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         ann_write = FakeAnnotationWriteService()
         handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
         handler._clipboard_svc = FakeClipboard([], annotations=[source])
-
         handler.on_paste_requested()
-
         self.assertEqual(len(ann_write.insert_calls), 1)
         specs = ann_write.insert_calls[0][2]
         self.assertEqual(specs[0].position, [50.0, 75.0, 54.0, 75.0])
@@ -992,9 +992,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         ann_write = FakeAnnotationWriteService()
         handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
         handler._clipboard_svc = FakeClipboard([], annotations=[source])
-
         handler.on_paste_requested()
-
         self.assertEqual(len(ann_write.insert_calls), 1)
         specs = ann_write.insert_calls[0][2]
         self.assertEqual(specs[0].position, [11.0, 21.0, 15.0, 21.0])
@@ -1013,9 +1011,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             plan_view=plan_view, write=write, ann_write=ann_write
         )
         handler._clipboard_svc = FakeClipboard([takeoff], annotations=[annotation])
-
         handler.on_paste_requested()
-
         self.assertEqual(len(write.calls), 1)
         self.assertEqual(len(ann_write.insert_calls), 1)
         self.assertEqual(write.calls[0][2][0].position, [50.0, 75.0, 54.0, 75.0])
@@ -1041,9 +1037,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             plan_view=plan_view, write=write, ann_write=ann_write
         )
         handler._clipboard_svc = FakeClipboard([takeoff], annotations=[annotation])
-
         handler.on_paste_requested()
-
         self.assertEqual(len(write.calls), 1)
         self.assertEqual(len(ann_write.insert_calls), 1)
         self.assertEqual(write.calls[0][2][0].position, [11.0, 21.0, 15.0, 21.0])
@@ -1067,9 +1061,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         ann_write = FakeAnnotationWriteService()
         handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
         handler._clipboard_svc = FakeClipboard([], annotations=[source])
-
         handler.on_paste_requested()
-
         self.assertEqual(len(ann_write.insert_calls), 1)
         self.assertEqual(
             ann_write.insert_calls[0][2][0].position,

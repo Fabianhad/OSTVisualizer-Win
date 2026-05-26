@@ -1,5 +1,4 @@
 import unittest
-
 from ost_visualizer.presentation.visualization.utils import ost_image
 
 
@@ -19,9 +18,7 @@ class ImageTintTests(unittest.TestCase):
             40,
             235,
         )
-
         black, gray, near_paper, paper, white = _bgra_pixels(tinted)
-
         self.assertEqual(black, (40, 80, 255, 255))
         self.assertEqual(gray[:3], (40, 80, 255))
         self.assertEqual(near_paper[:3], (40, 80, 255))
@@ -34,7 +31,6 @@ class ImageTintTests(unittest.TestCase):
     def test_tint_red_and_blue_keep_alpha_coverage_behavior(self):
         red = _bgra_pixels(ost_image.tint_red(bytes([0, 128, 235]), 3, 1))
         blue = _bgra_pixels(ost_image.tint_blue(bytes([0, 128, 235]), 3, 1))
-
         self.assertEqual(red[0], (80, 80, 255, 255))
         self.assertEqual(blue[0], (255, 80, 80, 255))
         self.assertEqual(red[1][:3], red[0][:3])

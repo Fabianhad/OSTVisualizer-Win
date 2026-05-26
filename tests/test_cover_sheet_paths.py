@@ -1,7 +1,7 @@
 import unittest
-
-from ost_visualizer.infrastructure.mdb.components.settings_operations import \
-    SettingsOperationsMixin
+from ost_visualizer.infrastructure.mdb.components.settings_operations import (
+    SettingsOperationsMixin,
+)
 
 
 class _FakeSchema:
@@ -106,7 +106,6 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 ],
             },
         )
-
         self.assertTrue(success)
         self.assertEqual(
             [update["table"] for update in ops.updates],

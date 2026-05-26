@@ -1,8 +1,6 @@
 import unittest
-
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
-from ost_visualizer.domain.entities.workspace_state import \
-    TakeoffWorkspaceState
+from ost_visualizer.domain.entities.workspace_state import TakeoffWorkspaceState
 
 
 class DomainLifecycleTests(unittest.TestCase):

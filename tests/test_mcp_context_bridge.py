@@ -1,7 +1,5 @@
 import unittest
-
-from ost_visualizer.presentation.services.mcp_context_bridge import \
-    McpContextBridge
+from ost_visualizer.presentation.services.mcp_context_bridge import McpContextBridge
 
 
 class _FakePlanView:

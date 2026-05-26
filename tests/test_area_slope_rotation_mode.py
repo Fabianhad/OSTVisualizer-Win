@@ -5,8 +5,9 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.presentation.components.plan_view.components.input_handler import \
-    InputHandlerMixin
+from ost_visualizer.presentation.components.plan_view.components.input_handler import (
+    InputHandlerMixin,
+)
 
 
 class SlopeRotationHarness(InputHandlerMixin):

@@ -3,18 +3,20 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
-
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.employee import Employee
 from ost_visualizer.presentation.dialogs.areas_dialog import (
-    BidAreaPickerDialog, BidAreasDialog)
-from ost_visualizer.presentation.dialogs.condition_types_dialog import \
-    ConditionTypesDialog
-from ost_visualizer.presentation.dialogs.employees_dialog import \
-    EmployeesDialog
-from ost_visualizer.presentation.dialogs.payroll_class_dialog import \
-    PayrollClassListDialog
+    BidAreaPickerDialog,
+    BidAreasDialog,
+)
+from ost_visualizer.presentation.dialogs.condition_types_dialog import (
+    ConditionTypesDialog,
+)
+from ost_visualizer.presentation.dialogs.employees_dialog import EmployeesDialog
+from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
+    PayrollClassListDialog,
+)
 
 
 def _app():

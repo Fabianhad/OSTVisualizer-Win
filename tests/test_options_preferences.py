@@ -5,10 +5,8 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
-
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
-from ost_visualizer.application.dtos.snap_preferences_dto import \
-    SnapPreferencesDto
+from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.config_service import ConfigService
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
@@ -18,30 +16,44 @@ from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
 from ost_visualizer.domain.entities.page_info import BidPageInfo
 from ost_visualizer.presentation.components.menu_builder import MenuBuilder
 from ost_visualizer.presentation.components.page_combo import (
-    PageComboBox, SinglePageComboBox)
-from ost_visualizer.presentation.components.plan_view.components.graphics_items import \
-    TileKey
-from ost_visualizer.presentation.components.plan_view.components.zoom_handler import \
-    ZoomHandlerMixin
-from ost_visualizer.presentation.components.plan_view.view import \
-    TakeoffPlanView
-from ost_visualizer.presentation.config import (OPTIONS_TAB_MCP_SETUP,
-                                                OPTIONS_TAB_OPTIONS,
-                                                OPTIONS_WINDOW_HEIGHT,
-                                                OPTIONS_WINDOW_WIDTH)
-from ost_visualizer.presentation.controllers.menu_controller import \
-    MenuController
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import \
-    UIEventCoordinator
-from ost_visualizer.presentation.dialogs.options import \
-    components as options_components
+    PageComboBox,
+    SinglePageComboBox,
+)
+from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
+    ImageBackgroundItem,
+    TileGraphicsItem,
+    TileKey,
+)
+from ost_visualizer.presentation.components.plan_view.components.zoom_handler import (
+    ZoomHandlerMixin,
+)
+from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.config import (
+    OPTIONS_TAB_MCP_SETUP,
+    OPTIONS_TAB_OPTIONS,
+    OPTIONS_WINDOW_HEIGHT,
+    OPTIONS_WINDOW_WIDTH,
+)
+from ost_visualizer.presentation.controllers.menu_controller import MenuController
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
+from ost_visualizer.presentation.dialogs.options import components as options_components
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.color_swatch import rounded_color_swatch
 from ost_visualizer.presentation.utils.mcp_setup_config import (
-    build_claude_desktop_config, build_codex_mcp_add_command)
-from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import \
-    CompositeRenderer
+    build_claude_desktop_config,
+    build_codex_mcp_add_command,
+)
+from ost_visualizer.presentation.utils.zoom_debouncer import (
+    ZOOM_SETTLE_DELAY_MS,
+    ZoomDebouncer,
+)
+from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
+from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
+    CompositeRenderer,
+)
 from tests.single_action import SingleCallRecorder
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +87,26 @@ class FakeEventBus:
 
     def publish(self, event_type, **kwargs):
         self.events.append((event_type, kwargs))
+
+
+class _FakePaintDevice:
+    def __init__(self, device_pixel_ratio):
+        self._device_pixel_ratio = device_pixel_ratio
+
+    def devicePixelRatioF(self):
+        return self._device_pixel_ratio
+
+
+class _FakePainter:
+    def __init__(self, transform=None, device_pixel_ratio=1.0):
+        self._transform = transform or QtGui.QTransform()
+        self._device = _FakePaintDevice(device_pixel_ratio)
+
+    def worldTransform(self):
+        return self._transform
+
+    def device(self):
+        return self._device
 
 
 def _app_config_event(value):
@@ -991,9 +1023,22 @@ class OptionsPreferencesTests(unittest.TestCase):
 
         view = FakeScrollView()
         view.scrollContentsBy(8, 0)
-
         self.assertEqual(view.base_scrolls, [(8, 0)])
         self.assertEqual(view._zoom_debouncer.scales, [4.0])
+
+    def test_zoom_debouncer_uses_default_settle_delay_and_coalesces(self):
+        _app()
+        debouncer = ZoomDebouncer()
+        custom_debouncer = ZoomDebouncer(delay_ms=250)
+        settled = []
+        debouncer.zoom_settled.connect(settled.append)
+        self.assertEqual(debouncer._timer.interval(), ZOOM_SETTLE_DELAY_MS)
+        self.assertEqual(ZOOM_SETTLE_DELAY_MS, 125)
+        self.assertEqual(custom_debouncer._timer.interval(), 250)
+        debouncer.handle_scale_changed(1.25)
+        debouncer.handle_scale_changed(2.5)
+        debouncer._on_settled()
+        self.assertEqual(settled, [2.5])
 
     def test_takeoff_next_page_allows_add_only_on_last_page_when_enabled(self):
         class FakePageCombo:
@@ -1064,6 +1109,58 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._device_pixel_ratio = lambda: 1.0
         self.assertGreater(view._target_base_raster_scale(1.0, view_m11=4.0), 1.0)
 
+    def test_high_resolution_tile_scale_includes_view_scale_and_device_pixel_ratio(
+        self,
+    ):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._scene_scale = 2.0
+        view.MAX_ZOOM = 8.0
+        view._device_pixel_ratio = lambda: 1.5
+        self.assertEqual(view._compute_tile_scale(0.5), 1.5)
+        self.assertEqual(view._compute_tile_scale(10.0), 24.0)
+
+    def test_tile_scale_quantization_uses_stable_log_steps(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        self.assertEqual(view._quantize_tile_scale(0.75), 1.0)
+        self.assertEqual(view._quantize_tile_scale(1.0), 1.0)
+        self.assertAlmostEqual(
+            view._quantize_tile_scale(2.01),
+            2**1.125,
+            places=6,
+        )
+
+    def test_visible_tile_keys_carry_quantized_scale_identity(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._scene_scale = 2.0
+        view._pdf_width_pts = 256.0
+        view._pdf_height_pts = 256.0
+        view.TILE_SIZE_PX = 256
+        view._active_tile_raster_dimensions = lambda: (256.0, 256.0)
+        keys = view._compute_visible_tile_keys(
+            QtCore.QRectF(0.0, 0.0, 128.0, 128.0),
+            2.01,
+            buffer=0,
+        )
+        self.assertEqual({key.scale for key in keys}, {2**1.125})
+        self.assertEqual({(key.col, key.row) for key in keys}, {(0, 0)})
+
+    def test_tile_render_rect_includes_pdf_bleed_but_composite_rect_does_not(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._scene_scale = 2.0
+        view.TILE_SIZE_PX = 256
+        view._active_tile_raster_dimensions = lambda: (512.0, 512.0)
+        key = TileKey(1, 1, 2.0)
+        self.assertEqual(view._get_tile_px_rect(key), (256, 256, 256, 256))
+        self.assertEqual(view._get_tile_render_px_rect(key), (255, 255, 258, 258))
+        self.assertEqual(
+            view._get_tile_local_rect(key),
+            QtCore.QRectF(256.0, 256.0, 256.0, 256.0),
+        )
+        self.assertEqual(
+            view._get_tile_render_local_rect(key),
+            QtCore.QRectF(255.0, 255.0, 258.0, 258.0),
+        )
+
     def test_high_resolution_preference_disables_tiles(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         calls = []
@@ -1105,9 +1202,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def get_tinted_page(
-                self, file_path, page_index, scale, rotation, tint_rgb
-            ):
+            def get_tinted_page(self, file_path, page_index, scale, rotation, tint_rgb):
                 self.calls.append((file_path, page_index, scale, rotation, tint_rgb))
                 return QtGui.QImage(300, 300, QtGui.QImage.Format.Format_ARGB32)
 
@@ -1122,14 +1217,12 @@ class OptionsPreferencesTests(unittest.TestCase):
             width_pts=100.0,
             height_pts=100.0,
         )
-
         renderer.render_composite(
             page,
             bid_ref=None,
             render_scale=3.0,
             raster_rotation=0,
         )
-
         self.assertEqual(page_cache.calls[0][2], 3.0)
         self.assertEqual(page_cache.calls[1][2], 2.0)
 
@@ -1165,7 +1258,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             width_pts=100.0,
             height_pts=100.0,
         )
-
         renderer.render_composite_region(
             page,
             scale=4.0,
@@ -1175,7 +1267,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             tile_h=256,
             rotation=0,
         )
-
         self.assertEqual(page_cache.calls[0][2], 4.0)
         self.assertEqual(page_cache.calls[1][2], 4.0)
 
@@ -1190,7 +1281,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             image_show_mode=1,
         )
         pixmap = QtGui.QPixmap(400, 200)
-
         item = view._create_overlay_graphics_item(
             pixmap,
             page,
@@ -1198,7 +1288,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             show_mode=1,
             render_scale=4.0,
         )
-
         self.assertEqual(item.scale(), 0.5)
         self.assertEqual(
             item.transformationMode(),
@@ -1216,7 +1305,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             image_show_mode=1,
         )
         pixmap = QtGui.QPixmap(200, 200)
-
         item = view._create_overlay_graphics_item(
             pixmap,
             page,
@@ -1224,10 +1312,95 @@ class OptionsPreferencesTests(unittest.TestCase):
             show_mode=1,
             render_scale=2.0,
         )
-
         self.assertEqual(
             item.transformationMode(),
             QtCore.Qt.TransformationMode.FastTransformation,
+        )
+
+    def test_page_cache_keeps_low_and_high_resolution_scales_separate(self):
+        class FakeRenderer:
+            def __init__(self):
+                self.calls = []
+
+            def render(self, file_path, page_index, scale, rotation):
+                self.calls.append((file_path, page_index, scale, rotation))
+                return QtGui.QImage(
+                    int(scale * 10),
+                    int(scale * 10),
+                    QtGui.QImage.Format.Format_ARGB32,
+                )
+
+        renderer = FakeRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        low = cache.get_page("page.pdf", 0, 1.0, 0)
+        high = cache.get_page("page.pdf", 0, 2.0, 0)
+        low_again = cache.get_page("page.pdf", 0, 1.0, 0)
+        self.assertIs(low, low_again)
+        self.assertIsNot(low, high)
+        self.assertEqual(
+            renderer.calls,
+            [
+                ("page.pdf", 0, 1.0, 0),
+                ("page.pdf", 0, 2.0, 0),
+            ],
+        )
+
+    def test_page_cache_quantizes_scale_before_full_and_region_renders(self):
+        class FakeRenderer:
+            def __init__(self):
+                self.calls = []
+
+            def render(self, file_path, page_index, scale, rotation):
+                self.calls.append(("page", scale))
+                return QtGui.QImage(10, 10, QtGui.QImage.Format.Format_ARGB32)
+
+            def render_region(
+                self,
+                file_path,
+                page_index,
+                scale,
+                tile_x,
+                tile_y,
+                tile_w,
+                tile_h,
+                rotation,
+            ):
+                self.calls.append(("region", scale, tile_x, tile_y, tile_w, tile_h))
+                return QtGui.QImage(tile_w, tile_h, QtGui.QImage.Format.Format_ARGB32)
+
+        renderer = FakeRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        cache.render_uncached("page.pdf", 0, 1.23456, 0)
+        cache.render_region_uncached("page.pdf", 0, 1.23456, 1, 2, 3, 4, 0)
+        self.assertEqual(
+            renderer.calls,
+            [
+                ("page", 1.235),
+                ("region", 1.235, 1, 2, 3, 4),
+            ],
+        )
+
+    def test_background_images_smooth_but_high_resolution_tiles_stay_crisp_at_one_to_one(
+        self,
+    ):
+        image = QtGui.QImage(100, 100, QtGui.QImage.Format.Format_ARGB32)
+        background = ImageBackgroundItem(image, 100.0, 100.0)
+        tile = TileGraphicsItem(
+            image,
+            QtCore.QRectF(0.0, 0.0, 100.0, 100.0),
+            QtCore.QRectF(0.0, 0.0, 100.0, 100.0),
+        )
+        self.assertTrue(background._should_smooth_transform(_FakePainter()))
+        self.assertFalse(tile._should_smooth_transform(_FakePainter()))
+        self.assertTrue(
+            tile._should_smooth_transform(
+                _FakePainter(transform=QtGui.QTransform().scale(2.0, 2.0))
+            )
+        )
+        self.assertTrue(
+            tile._should_smooth_transform(_FakePainter(device_pixel_ratio=2.0))
         )
 
     def test_overlay_only_pdf_zoom_requests_dynamic_tile_coverage(self):
@@ -1264,20 +1437,17 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._overlay_pdf_tile_transform = lambda: QtGui.QTransform()
         view.mapToScene = lambda _rect: QtGui.QPolygonF(QtCore.QRectF(0, 0, 50, 50))
         view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
-        view._partition_visible_and_buffered_tiles = (
-            lambda _rect, _scale: ({TileKey(0, 0, 8.0)}, set())
+        view._partition_visible_and_buffered_tiles = lambda _rect, _scale: (
+            {TileKey(0, 0, 8.0)},
+            set(),
         )
         view._tile_keys_local_rect = lambda _keys: QtCore.QRectF(0, 0, 50, 50)
         view._evict_old_scale_tiles_outside = lambda _rect: calls.append("evict_old")
         view._evict_tiles_at_scale = lambda _scale, _keys: calls.append("evict_scale")
-        view._request_tile = (
-            lambda key, generation, priority: calls.append(
-                ("tile", key.scale, generation, priority)
-            )
+        view._request_tile = lambda key, generation, priority: calls.append(
+            ("tile", key.scale, generation, priority)
         )
-
         view._update_tile_coverage(4.0)
-
         self.assertEqual(
             calls,
             [
@@ -1323,9 +1493,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._current_render_identity = {"page": "page-1"}
         view._current_bid_ref = None
         view._rendering_service = rendering_service
-
         view._request_tile(TileKey(0, 0, 4.0), generation_id=1, priority=2)
-
         self.assertEqual(len(rendering_service.calls), 1)
         call = rendering_service.calls[0]
         self.assertEqual(call["file_path"], "overlay.pdf")
@@ -1356,9 +1524,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._request_optional_overlay_base_correction = (
             lambda scale, generation: calls.append(("overlay_base", scale, generation))
         )
-
         view._update_tile_coverage(4.0)
-
         self.assertEqual(calls, ["clear", "cancel", ("overlay_base", 2.0, 5)])
 
     def test_high_resolution_reenabled_requests_current_tile_coverage(self):

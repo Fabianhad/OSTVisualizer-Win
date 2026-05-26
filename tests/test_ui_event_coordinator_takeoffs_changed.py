@@ -1,8 +1,9 @@
 import unittest
-
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyData
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator, _MainThreadSignaler)
+    UIEventCoordinator,
+    _MainThreadSignaler,
+)
 
 
 class FakeUiState:

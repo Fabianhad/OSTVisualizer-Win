@@ -1,6 +1,5 @@
 import unittest
 from unittest.mock import patch
-
 from ost_visualizer.mcp_server.bridge_client import McpBridgeClient
 
 
