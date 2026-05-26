@@ -30,6 +30,7 @@
 - Replaced the separate right-angle indicator preference with the `Snap to right angle` Snap Settings option and threshold while preserving configured mouse angle snapping.
 - Improved composite page rendering by preserving antialias coverage when tinting layered images.
 - Prioritized enabled overlay PDF layers for composite/overlay PDF snapping and embedded text selection, with overlay-only PDF rendering using dynamic base and tile refresh.
+- PDF export now follows enabled page image layers, exporting overlay-only pages directly from the overlay source and main+overlay pages as a flattened red/blue comparison background with annotations on top.
 - Improved native PDF export for line, arrow, shape, ink, and text annotations to better match Bluebeam/Revu markups and render line-based appearances correctly on first open.
 
 ### Fixed
@@ -38,6 +39,7 @@
 - Tightened MCP JSON-RPC request validation and removed an arbitrary hierarchy fallback for unmatched database files.
 - Fixed Intelligent Paste so copied takeoffs and annotations paste at the cursor, support temporary original-axis snap guides only during the first drag, and stop using that snap state after release or cancel.
 - Fixed Cover Sheet page image paths so saved `BidPages.ImagePath` values use Windows backslashes for OST compatibility.
+- Fixed PDF export default filenames so page names that already end in `.pdf` do not produce `.pdf.pdf`.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.
 - Fixed text annotation selected/edit outlines to use the real textbox resize bounds and clipped overflowing text to the textbox.
 - Centered area Display Dimension labels inside the takeoff while keeping Display Name labels below the takeoff.

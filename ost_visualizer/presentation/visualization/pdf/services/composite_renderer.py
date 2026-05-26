@@ -97,13 +97,25 @@ class CompositeRenderer:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         painter.drawImage(0, 0, red)
+        self._draw_overlay_image(painter, blue, page, canvas_w, canvas_h)
+        painter.end()
+        return result
+
+    def _draw_overlay_image(
+        self,
+        painter: QPainter,
+        overlay: QImage,
+        page: Page,
+        canvas_w: int,
+        canvas_h: int,
+    ) -> None:
         pdf_width_pts = page.width_pts
         pdf_height_pts = page.height_pts
         view_scale = canvas_w / pdf_width_pts if pdf_width_pts > 0 else 1.0
         expected_width = pdf_width_pts * view_scale
         expected_height = pdf_height_pts * view_scale
         overlay_scale = self._calculate_overlay_scale(
-            blue.width(), blue.height(), expected_width, expected_height
+            overlay.width(), overlay.height(), expected_width, expected_height
         )
         offset_x = page.overlay_offset_x * 72 * view_scale
         offset_y = page.overlay_offset_y * 72 * view_scale
@@ -113,10 +125,8 @@ class CompositeRenderer:
         )
         painter.save()
         painter.setTransform(transform)
-        painter.drawImage(0, 0, blue)
+        painter.drawImage(0, 0, overlay)
         painter.restore()
-        painter.end()
-        return result
 
     def _calculate_overlay_scale(
         self, overlay_w: float, overlay_h: float, expected_w: float, expected_h: float

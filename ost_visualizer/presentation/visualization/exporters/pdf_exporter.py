@@ -1,6 +1,10 @@
 import logging
 import math
+import os
+import tempfile
 from typing import Any, Dict, List, Optional
+from PySide6.QtCore import QMarginsF, QRectF, QSizeF
+from PySide6.QtGui import QImage, QPageLayout, QPageSize, QPainter, QPdfWriter
 from ....application.dtos.export_dto import ExportErrorCode, ExportResultDto
 from ....application.dtos.page_export_data_dto import PageExportData
 from ....application.interfaces.i_color_service import IColorService
@@ -13,6 +17,7 @@ from ....domain.entities.annotation import BidAnnotation
 from ....domain.entities.condition import Condition
 from ....domain.entities.page import Page
 from ....domain.entities.takeoff import Takeoff
+from ...utils.image_show_mode import mode_to_flags
 from ..core.geometry.ost_linear_geom import (
     gen_curve_pts,
     gen_thick_curve_offsets,
@@ -24,6 +29,8 @@ from ..core.geometry.takeoff_geometry import (
     compute_straight_linear_vertices,
 )
 from ..pdf.renderers.annotation_renderer import format_dimension_distance
+from ..pdf.page_cache import PageCache
+from ..pdf.services.composite_renderer import CompositeRenderer
 from . import ost_pdf_writer
 
 logger = logging.getLogger(__name__)
@@ -36,6 +43,7 @@ _ATTACHMENT_CONDITION_TYPE = 3
 _DEFAULT_FILL_OPACITY = 0.5
 _GRAY_COLOR_HEX = "#808080"
 _INCHES_TO_FEET = 1.0 / 12.0
+_PDF_POINTS_PER_INCH = 72
 
 
 class PDFExporter:
@@ -51,6 +59,8 @@ class PDFExporter:
         self._takeoff_service = takeoff_service
         self._uom_service = uom_service
         self._writer = ost_pdf_writer.PDFWriter()
+        self._export_page_cache = PageCache()
+        self._export_composite_renderer = CompositeRenderer(self._export_page_cache)
 
     def export(
         self,
@@ -63,97 +73,88 @@ class PDFExporter:
         on_progress=None,
     ) -> ExportResultDto:
         try:
-            total = len(pages_data)
-            page_exports = []
-            for idx, page_data in enumerate(pages_data):
-                page: Page = page_data.page
-                if on_progress:
-                    on_progress(idx + 1, total, page.name or f"Page {idx + 1}")
-                bid_takeoffs = page_data.bid_takeoffs
-                bid_conditions = page_data.bid_conditions
-                page_info = self._build_page_info(page)
-                _, color_map = self._color_service.get_color_mapping(
-                    bid_conditions, bid_takeoffs, color_mode, grayscale_enabled
-                )
-                takeoff_data = self._collect_takeoffs(
-                    bid_takeoffs,
-                    bid_conditions,
-                    page_info,
-                    color_map,
-                    page_area_selections,
-                )
-                arrow_data = self._collect_arrows(
-                    page.uid, bid_annotations or [], page_info
-                )
-                rect_data = self._collect_rects(
-                    page.uid, bid_annotations or [], page_info
-                )
-                line_data = self._collect_lines(
-                    page.uid, bid_annotations or [], page_info
-                )
-                dimension_data = self._collect_dimensions(
-                    page.uid, bid_annotations or [], page_info
-                )
-                oval_data = self._collect_ovals(
-                    page.uid, bid_annotations or [], page_info
-                )
-                polygon_data = self._collect_polygons(
-                    page.uid, bid_annotations or [], page_info
-                )
-                ink_data = self._collect_inks(
-                    page.uid, bid_annotations or [], page_info
-                )
-                text_data = self._collect_texts(
-                    page.uid, bid_annotations or [], page_info
-                )
-                export_data = ost_pdf_writer.PageExportData()
-                image_path = page.image_path or ""
-                show_original = page.image_show_mode in (0, 2)
-                use_source_pdf = (
-                    image_path.lower().endswith(".pdf")
-                    and page.layer_visible
-                    and show_original
-                )
-                if use_source_pdf:
-                    export_data.source_pdf = image_path
-                    export_data.page_index = page.page_index or 0
-                else:
-                    export_data.is_blank = True
-                    export_data.page_width = page_info.get("width", 612.0)
-                    export_data.page_height = page_info.get("height", 792.0)
-                    export_data.rotation = page_info.get("rotation", 0)
-                export_data.takeoffs = takeoff_data
-                export_data.arrows = arrow_data
-                export_data.rects = rect_data
-                export_data.lines = line_data
-                export_data.dimensions = dimension_data
-                export_data.ovals = oval_data
-                export_data.polygons = polygon_data
-                export_data.inks = ink_data
-                export_data.texts = text_data
-                page_exports.append(export_data)
-            if not page_exports:
-                logger.error("No valid pages to export")
+            with tempfile.TemporaryDirectory(prefix="ost_pdf_export_") as temp_dir:
+                total = len(pages_data)
+                page_exports = []
+                for idx, page_data in enumerate(pages_data):
+                    page: Page = page_data.page
+                    if on_progress:
+                        on_progress(idx + 1, total, page.name or f"Page {idx + 1}")
+                    bid_takeoffs = page_data.bid_takeoffs
+                    bid_conditions = page_data.bid_conditions
+                    page_info = self._build_page_info(page)
+                    _, color_map = self._color_service.get_color_mapping(
+                        bid_conditions, bid_takeoffs, color_mode, grayscale_enabled
+                    )
+                    takeoff_data = self._collect_takeoffs(
+                        bid_takeoffs,
+                        bid_conditions,
+                        page_info,
+                        color_map,
+                        page_area_selections,
+                    )
+                    arrow_data = self._collect_arrows(
+                        page.uid, bid_annotations or [], page_info
+                    )
+                    rect_data = self._collect_rects(
+                        page.uid, bid_annotations or [], page_info
+                    )
+                    line_data = self._collect_lines(
+                        page.uid, bid_annotations or [], page_info
+                    )
+                    dimension_data = self._collect_dimensions(
+                        page.uid, bid_annotations or [], page_info
+                    )
+                    oval_data = self._collect_ovals(
+                        page.uid, bid_annotations or [], page_info
+                    )
+                    polygon_data = self._collect_polygons(
+                        page.uid, bid_annotations or [], page_info
+                    )
+                    ink_data = self._collect_inks(
+                        page.uid, bid_annotations or [], page_info
+                    )
+                    text_data = self._collect_texts(
+                        page.uid, bid_annotations or [], page_info
+                    )
+                    export_data = ost_pdf_writer.PageExportData()
+                    self._configure_page_background(
+                        export_data, page, page_info, temp_dir
+                    )
+                    export_data.takeoffs = takeoff_data
+                    export_data.arrows = arrow_data
+                    export_data.rects = rect_data
+                    export_data.lines = line_data
+                    export_data.dimensions = dimension_data
+                    export_data.ovals = oval_data
+                    export_data.polygons = polygon_data
+                    export_data.inks = ink_data
+                    export_data.texts = text_data
+                    page_exports.append(export_data)
+                if not page_exports:
+                    logger.error("No valid pages to export")
+                    return ExportResultDto(
+                        success=False,
+                        format_name="PDF",
+                        error_message="No valid pages to export.",
+                        error_code=ExportErrorCode.NO_DATA,
+                    )
+                if not self._writer.merge_pages_with_annotations(
+                    page_exports, output_path
+                ):
+                    err = self._writer.get_last_error()
+                    logger.error("Failed to merge pages: %s", err)
+                    return ExportResultDto(
+                        success=False,
+                        format_name="PDF",
+                        error_message=err or "Failed to write PDF.",
+                        error_code=ExportErrorCode.WRITE_FAILED,
+                    )
                 return ExportResultDto(
-                    success=False,
+                    success=True,
                     format_name="PDF",
-                    error_message="No valid pages to export.",
-                    error_code=ExportErrorCode.NO_DATA,
+                    page_count=len(page_exports),
                 )
-            if not self._writer.merge_pages_with_annotations(page_exports, output_path):
-                err = self._writer.get_last_error()
-                logger.error("Failed to merge pages: %s", err)
-                return ExportResultDto(
-                    success=False,
-                    format_name="PDF",
-                    error_message=err or "Failed to write PDF.",
-                    error_code=ExportErrorCode.WRITE_FAILED,
-                )
-            return ExportResultDto(
-                success=True,
-                format_name="PDF",
-                page_count=len(page_exports),
-            )
         except Exception as e:
             logger.exception("Error during PDF export: %s", e)
             return ExportResultDto(
@@ -162,6 +163,169 @@ class PDFExporter:
                 error_message=str(e),
                 error_code=ExportErrorCode.UNEXPECTED,
             )
+
+    def _configure_page_background(
+        self,
+        export_data: Any,
+        page: Page,
+        page_info: PageRenderInfo,
+        temp_dir: str,
+    ) -> None:
+        show_original, show_overlay = mode_to_flags(page.image_show_mode)
+        main_path = page.image_path or ""
+        overlay_path = page.overlay_image_path or ""
+        main_visible = bool(main_path and page.layer_visible and show_original)
+        overlay_visible = bool(overlay_path and show_overlay)
+        if main_visible and overlay_visible:
+            composite_pdf = self._create_composite_background_pdf(
+                page, page_info, temp_dir
+            )
+            if composite_pdf:
+                self._use_source_pdf(export_data, composite_pdf, 0)
+                return
+            if self._try_main_background(export_data, page, page_info, temp_dir):
+                return
+            if self._try_overlay_background(export_data, page, page_info, temp_dir):
+                return
+        elif overlay_visible:
+            if self._try_overlay_background(export_data, page, page_info, temp_dir):
+                return
+        elif main_visible:
+            if self._try_main_background(export_data, page, page_info, temp_dir):
+                return
+        self._use_blank_background(export_data, page_info)
+
+    def _try_main_background(
+        self,
+        export_data: Any,
+        page: Page,
+        page_info: PageRenderInfo,
+        temp_dir: str,
+    ) -> bool:
+        return self._try_single_source_background(
+            export_data,
+            page.image_path or "",
+            page.page_index or 0,
+            page_info,
+            temp_dir,
+            "image",
+        )
+
+    def _try_overlay_background(
+        self,
+        export_data: Any,
+        page: Page,
+        page_info: PageRenderInfo,
+        temp_dir: str,
+    ) -> bool:
+        return self._try_single_source_background(
+            export_data,
+            page.overlay_image_path or "",
+            0,
+            page_info,
+            temp_dir,
+            "overlay",
+        )
+
+    def _try_single_source_background(
+        self,
+        export_data: Any,
+        source_path: str,
+        page_index: int,
+        page_info: PageRenderInfo,
+        temp_dir: str,
+        prefix: str,
+    ) -> bool:
+        if not source_path:
+            return False
+        if self._is_pdf_path(source_path):
+            self._use_source_pdf(export_data, source_path, page_index)
+            return True
+        source_pdf = self._create_image_source_background_pdf(
+            source_path, page_index, page_info, temp_dir, prefix
+        )
+        if source_pdf:
+            self._use_source_pdf(export_data, source_pdf, 0)
+            return True
+        return False
+
+    def _create_composite_background_pdf(
+        self, page: Page, page_info: PageRenderInfo, temp_dir: str
+    ) -> Optional[str]:
+        image = self._export_composite_renderer.render_composite(
+            page,
+            bid_ref=None,
+            render_scale=_PDF_RENDER_SCALE,
+            raster_rotation=0,
+        )
+        return self._write_raster_background_pdf(
+            image, page_info, temp_dir, "composite"
+        )
+
+    def _create_image_source_background_pdf(
+        self,
+        source_path: str,
+        page_index: int,
+        page_info: PageRenderInfo,
+        temp_dir: str,
+        prefix: str,
+    ) -> Optional[str]:
+        image = self._export_page_cache.get_page(
+            source_path,
+            page_index,
+            _PDF_RENDER_SCALE,
+            0,
+        )
+        return self._write_raster_background_pdf(image, page_info, temp_dir, prefix)
+
+    def _write_raster_background_pdf(
+        self,
+        image: Optional[QImage],
+        page_info: PageRenderInfo,
+        temp_dir: str,
+        prefix: str,
+    ) -> Optional[str]:
+        if image is None or image.isNull():
+            return None
+        page_width = float(page_info.get("width", 612.0) or 612.0)
+        page_height = float(page_info.get("height", 792.0) or 792.0)
+        fd, output_path = tempfile.mkstemp(
+            prefix=f"{prefix}_", suffix=".pdf", dir=temp_dir
+        )
+        os.close(fd)
+        writer = QPdfWriter(output_path)
+        writer.setResolution(_PDF_POINTS_PER_INCH)
+        writer.setPageLayout(
+            QPageLayout(
+                QPageSize(QSizeF(page_width, page_height), QPageSize.Unit.Point),
+                QPageLayout.Orientation.Portrait,
+                QMarginsF(0.0, 0.0, 0.0, 0.0),
+                QPageLayout.Unit.Point,
+            )
+        )
+        painter = QPainter(writer)
+        if not painter.isActive():
+            return None
+        painter.drawImage(QRectF(0.0, 0.0, page_width, page_height), image)
+        painter.end()
+        return output_path
+
+    @staticmethod
+    def _is_pdf_path(path: str) -> bool:
+        return path.lower().endswith(".pdf")
+
+    @staticmethod
+    def _use_source_pdf(export_data: Any, source_pdf: str, page_index: int) -> None:
+        export_data.source_pdf = source_pdf
+        export_data.page_index = page_index
+        export_data.is_blank = False
+
+    @staticmethod
+    def _use_blank_background(export_data: Any, page_info: PageRenderInfo) -> None:
+        export_data.is_blank = True
+        export_data.page_width = page_info.get("width", 612.0)
+        export_data.page_height = page_info.get("height", 792.0)
+        export_data.rotation = page_info.get("rotation", 0)
 
     def _build_page_info(self, page: Page) -> PageRenderInfo:
         stored_width_pts = page.width_pts
