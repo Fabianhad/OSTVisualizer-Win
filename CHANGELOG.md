@@ -34,7 +34,7 @@
 - Improved composite page rendering by preserving antialias coverage when tinting layered images.
 - Prioritized enabled overlay PDF layers for composite/overlay PDF snapping and embedded text selection, with overlay-only PDF rendering using dynamic base and tile refresh.
 - PDF export now follows enabled page image layers, exporting overlay-only pages directly from the overlay source and main+overlay pages as a flattened red/blue comparison background with annotations on top.
-- Improved native PDF export for line, arrow, shape, ink, and text annotations to better match Bluebeam/Revu markups and render line-based appearances correctly on first open.
+- Improved native PDF export for line, arrow, shape, ink, and text annotations to better match Bluebeam/Revu markups, render line-based appearances correctly on first open, and keep exported text boxes wrapped inside their textbox bounds.
 - Linear takeoff line patterns now rotate with the takeoff direction so horizontal, vertical, and diagonal hatches follow the line instead of the page axes.
 
 ### Fixed

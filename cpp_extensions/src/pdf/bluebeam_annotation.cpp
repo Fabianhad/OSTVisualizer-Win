@@ -4,6 +4,7 @@
 #include <ctime>
 #include <cmath>
 #include <algorithm>
+#include <cctype>
 #include <random>
 namespace ost_pdf_writer
 {
@@ -932,6 +933,123 @@ namespace ost_pdf_writer
         }
         return 0;
     }
+
+    static double estimate_text_width(const std::string &text, double font_size)
+    {
+        double width = 0.0;
+        for (unsigned char c : text)
+        {
+            width += (std::isspace(c) ? 0.30 : 0.55) * font_size;
+        }
+        return width;
+    }
+
+    static std::vector<std::string> split_long_word(
+        const std::string &word,
+        double max_width,
+        double font_size)
+    {
+        std::vector<std::string> chunks;
+        std::string current;
+        for (char c : word)
+        {
+            std::string candidate = current + c;
+            if (!current.empty() && estimate_text_width(candidate, font_size) > max_width)
+            {
+                chunks.push_back(current);
+                current = std::string(1, c);
+            }
+            else
+            {
+                current = candidate;
+            }
+        }
+        if (!current.empty())
+        {
+            chunks.push_back(current);
+        }
+        return chunks;
+    }
+
+    static void append_wrapped_word(
+        std::vector<std::string> &lines,
+        std::string &current_line,
+        const std::string &word,
+        double max_width,
+        double font_size)
+    {
+        if (word.empty())
+        {
+            return;
+        }
+        std::string candidate = current_line.empty() ? word : current_line + " " + word;
+        if (estimate_text_width(candidate, font_size) <= max_width)
+        {
+            current_line = candidate;
+            return;
+        }
+        if (!current_line.empty())
+        {
+            lines.push_back(current_line);
+            current_line.clear();
+        }
+        if (estimate_text_width(word, font_size) <= max_width)
+        {
+            current_line = word;
+            return;
+        }
+        std::vector<std::string> chunks = split_long_word(word, max_width, font_size);
+        for (size_t i = 0; i < chunks.size(); ++i)
+        {
+            if (i + 1 == chunks.size())
+            {
+                current_line = chunks[i];
+            }
+            else
+            {
+                lines.push_back(chunks[i]);
+            }
+        }
+    }
+
+    static std::vector<std::string> wrap_text_lines(
+        const std::string &content,
+        double max_width,
+        double font_size)
+    {
+        std::vector<std::string> lines;
+        std::string current_line;
+        std::string current_word;
+        for (char c : content)
+        {
+            if (c == '\r')
+            {
+                continue;
+            }
+            if (c == '\n')
+            {
+                append_wrapped_word(lines, current_line, current_word, max_width, font_size);
+                current_word.clear();
+                lines.push_back(current_line);
+                current_line.clear();
+                continue;
+            }
+            if (std::isspace(static_cast<unsigned char>(c)))
+            {
+                append_wrapped_word(lines, current_line, current_word, max_width, font_size);
+                current_word.clear();
+                continue;
+            }
+            current_word += c;
+        }
+        append_wrapped_word(lines, current_line, current_word, max_width, font_size);
+        if (!current_line.empty() || lines.empty())
+        {
+            lines.push_back(current_line);
+        }
+        return lines;
+    }
+
     std::string generate_bluebeam_text_dict(const BluebeamText &text)
     {
         auto [r, g, b] = color_to_rgb(text.color);
@@ -979,27 +1097,42 @@ namespace ost_pdf_writer
     std::string generate_text_appearance_stream(const BluebeamText &text)
     {
         auto [r, g, b] = color_to_rgb(text.color);
-        std::string escaped_content = escape_pdf_string(text.content);
-        double text_width = static_cast<double>(text.content.size()) * text.font_size * 0.55;
-        double x_text = text.min_x + 3.0;
-        if (text.text_align == "center")
-        {
-            x_text = (text.min_x + text.max_x - text_width) / 2.0;
-        }
-        else if (text.text_align == "right")
-        {
-            x_text = text.max_x - text_width - 3.0;
-        }
-        double y_text = text.min_y + 3.0 + text.font_size * 0.25;
+        double margin = 3.0;
+        double box_width = std::max(1.0, text.max_x - text.min_x);
+        double box_height = std::max(1.0, text.max_y - text.min_y);
+        double max_text_width = std::max(1.0, box_width - margin * 2.0);
+        double line_height = std::max(1.0, text.font_size * 1.15);
+        std::vector<std::string> lines = wrap_text_lines(text.content, max_text_width, text.font_size);
+        double y_text = text.max_y - margin - text.font_size;
         std::ostringstream oss;
-        oss << "q 1 0 0 1 0 0 cm 1 1 1 rg "
+        oss << "q 1 0 0 1 0 0 cm "
+            << text.min_x << " " << text.min_y << " " << box_width << " " << box_height << " re W n "
+            << "1 1 1 rg "
             << r << " " << g << " " << b << " RG 0 w "
             << "BT "
             << r << " " << g << " " << b << " rg "
-            << "/Helv " << text.font_size << " Tf "
-            << "1 0 0 1 " << x_text << " " << y_text << " Tm "
-            << "(" << escaped_content << ") Tj "
-            << "ET Q";
+            << "/Helv " << text.font_size << " Tf ";
+        for (const std::string &line : lines)
+        {
+            if (y_text < text.min_y + margin)
+            {
+                break;
+            }
+            double line_width = estimate_text_width(line, text.font_size);
+            double x_text = text.min_x + margin;
+            if (text.text_align == "center")
+            {
+                x_text = text.min_x + (box_width - line_width) / 2.0;
+            }
+            else if (text.text_align == "right")
+            {
+                x_text = text.max_x - line_width - margin;
+            }
+            oss << "1 0 0 1 " << x_text << " " << y_text << " Tm "
+                << "(" << escape_pdf_string(line) << ") Tj ";
+            y_text -= line_height;
+        }
+        oss << "ET Q";
         return oss.str();
     }
 }

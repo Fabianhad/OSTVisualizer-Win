@@ -3,6 +3,7 @@ import re
 import sqlite3
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -329,8 +330,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
 
     def test_dimension_label_style_persists_to_bid_dimensions_font_columns(self):
         conn = sqlite3.connect(":memory:")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidDimensions (
                 UID INTEGER PRIMARY KEY,
                 FontName TEXT,
@@ -340,15 +340,12 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 FontItalic INTEGER,
                 FontUnderline INTEGER
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             INSERT INTO BidDimensions
                 (UID, FontName, FontColor, FontSize, FontBold, FontItalic, FontUnderline)
             VALUES (7, 'Arial', 0, 10, 0, 0, 0)
-            """
-        )
+            """)
         ops = _DimensionWriteOps(conn)
         self.assertTrue(
             ops.save_annotation_text_properties(
@@ -369,13 +366,11 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 ],
             )
         )
-        row = conn.execute(
-            """
+        row = conn.execute("""
             SELECT FontName, FontColor, FontSize, FontBold, FontItalic, FontUnderline
               FROM BidDimensions
              WHERE UID=7
-            """
-        ).fetchone()
+            """).fetchone()
         self.assertEqual(row, ("Calibri", 0x332211, 18, 1, 1, 1))
 
     def test_native_pdf_export_writes_horizontal_line_dimension_annotation(self):
@@ -592,6 +587,26 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertIn("/Q 0", pdf_text)
         self.assertNotIn("/IT /LineDimension", pdf_text)
 
+    def test_native_pdf_export_text_appearance_wraps_inside_textbox(self):
+        text = self._native_text(
+            "Alpha beta gamma delta epsilon zeta eta theta iota", "left"
+        )
+        text.max_x = 90.0
+        text.max_y = 110.0
+        pdf_text = self._write_native_pdf(texts=[text])
+        text_block = self._annot_block_by_subject(pdf_text, "Text Box")
+        ap_block = self._ap_block_for_annotation(pdf_text, text_block)
+        rect = self._array_values(text_block, "Rect")
+        bbox = self._array_values(ap_block, "BBox")
+        self._assert_ap_rect_bbox_and_matrix_match(rect, bbox, ap_block)
+        stream_text = self._stream_text(ap_block)
+        self.assertIn("10 20 80 90 re W n", stream_text)
+        self.assertGreaterEqual(stream_text.count(") Tj"), 3)
+        self.assertNotIn(
+            "(Alpha beta gamma delta epsilon zeta eta theta iota) Tj",
+            stream_text,
+        )
+
     def test_dimension_geometry_is_ignored_when_position_is_invalid(self):
         geometry = calculate_annotation_geometry(
             BidAnnotation(uid="bad", annotation_type="dimension", position=[0.0, 0.0]),
@@ -747,6 +762,16 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         match = re.search(r"/AP\s+<<\s*/N\s+(\d+)\s+0\s+R\s*>>", annot_block)
         self.assertIsNotNone(match)
         return self._object_block(pdf_text, int(match.group(1)))
+
+    def _stream_text(self, object_block):
+        match = re.search(r"stream\r?\n(.*?)\r?\n?endstream", object_block, re.DOTALL)
+        self.assertIsNotNone(match)
+        stream_data = match.group(1).encode("latin-1")
+        try:
+            stream_data = zlib.decompress(stream_data)
+        except zlib.error:
+            pass
+        return stream_data.decode("latin-1", errors="ignore")
 
     def _array_values(self, object_block, key):
         match = re.search(rf"/{key}\s+\[\s*([^\]]+)\]", object_block)
