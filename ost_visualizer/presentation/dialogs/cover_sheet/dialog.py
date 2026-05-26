@@ -48,8 +48,56 @@ from .context import CoverSheetContext
 logger = logging.getLogger(__name__)
 
 
+class _PathLineEdit(QtWidgets.QLineEdit):
+    pathCommitted = QtCore.Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._path = ""
+        self._editing_path = False
+        self.setReadOnly(True)
+        self.editingFinished.connect(self._finish_path_edit)
+
+    def set_path(self, path: str) -> None:
+        self._path = path or ""
+        if not self._editing_path:
+            self._show_display_text()
+
+    def begin_path_edit(self) -> None:
+        self._editing_path = True
+        self.setReadOnly(False)
+        self.setText(self._path)
+        self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+        self.selectAll()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        self.begin_path_edit()
+        event.accept()
+
+    def keyPressEvent(self, event) -> None:
+        if self._editing_path and event.key() == QtCore.Qt.Key.Key_Escape:
+            self._editing_path = False
+            self.setReadOnly(True)
+            self._show_display_text()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _finish_path_edit(self) -> None:
+        if not self._editing_path:
+            return
+        path = self.text()
+        self._editing_path = False
+        self.setReadOnly(True)
+        self.pathCommitted.emit(path)
+
+    def _show_display_text(self) -> None:
+        self.setText(Path(self._path).name if self._path else "")
+
+
 class CoverSheetDialog(QtWidgets.QDialog):
     _ITEM_ROLE = QtCore.Qt.ItemDataRole.UserRole
+    _MISSING_PATH_COLOR = "#b00020"
 
     def __init__(
         self,
@@ -527,6 +575,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
                     for col in (4, 5):
                         widget = self.plan_tree.itemWidget(child, col)
                         if widget:
+                            for editor in widget.findChildren(QtWidgets.QLineEdit):
+                                editor.setEnabled(editable)
                             for btn in widget.findChildren(QtWidgets.QPushButton):
                                 btn.setEnabled(editable)
                 _lock_widgets(child)
@@ -569,6 +619,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 if data and data[0] in ("page", "new_page"):
                     widget = self.plan_tree.itemWidget(child, 5)
                     if widget:
+                        for editor in widget.findChildren(QtWidgets.QLineEdit):
+                            editor.setEnabled(False)
                         for btn in widget.findChildren(QtWidgets.QPushButton):
                             btn.setEnabled(False)
                 _disable_overlay(child)
@@ -800,6 +852,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
     def _read_file_dimensions(
         self, path: str, page_index: int = 0
     ) -> Optional[Tuple[float, float]]:
+        if not self._is_existing_file_path(path):
+            return None
         if Path(path).suffix.lower() == ".pdf":
             sizes = self._read_pdf_page_sizes(path)
             if page_index < len(sizes):
@@ -828,10 +882,32 @@ class CoverSheetDialog(QtWidgets.QDialog):
         if size_combo:
             size_combo.setEnabled(not has_image)
 
+    @staticmethod
+    def _clean_image_path_text(path: str) -> str:
+        return (path or "").strip().strip("\"'")
+
+    @staticmethod
+    def _is_existing_file_path(path: str) -> bool:
+        path = CoverSheetDialog._clean_image_path_text(path)
+        return bool(path) and Path(path).is_file()
+
+    def _set_path_editor_state(
+        self, editor: _PathLineEdit, path: str, path_key: str
+    ) -> None:
+        editor.set_path(path)
+        if path and not self._is_existing_file_path(path):
+            editor.setStyleSheet(f"color: {self._MISSING_PATH_COLOR};")
+            label = "Image File" if path_key == "image_path" else "Overlay Image"
+            editor.setToolTip(f"{label} was not found:\n{path}")
+        else:
+            editor.setStyleSheet("")
+            editor.setToolTip(path)
+
     def _on_page_image_changed(self, uid: str, path_key: str, path: str) -> None:
+        path = self._clean_image_path_text(path)
         combos = self._page_combos.get(uid, {})
         item = combos.get("item")
-        if path_key == "image_path" and path and item:
+        if path_key == "image_path" and self._is_existing_file_path(path) and item:
             is_pdf = Path(path).suffix.lower() == ".pdf"
             page_sizes = self._read_pdf_page_sizes(path) if is_pdf else []
             if not page_sizes:
@@ -1300,8 +1376,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
         layout = QtWidgets.QHBoxLayout(container)
         layout.setContentsMargins(*INLINE_MARGINS)
         layout.setSpacing(COMPACT_SPACING)
-        label = QtWidgets.QLabel(Path(initial_path).name if initial_path else "")
-        label.setMinimumWidth(40)
+        editor = _PathLineEdit()
+        editor.setMinimumWidth(40)
+        editor.setClearButtonEnabled(False)
         btn = QtWidgets.QPushButton("...")
         apply_no_highlight_button_policy(btn)
         btn.setFixedWidth(24)
@@ -1309,9 +1386,16 @@ class CoverSheetDialog(QtWidgets.QDialog):
         IconManager.apply(clear_btn, IconId.DELETE)
         clear_btn.setIconSize(QtCore.QSize(14, 14))
         clear_btn.setFixedWidth(20)
-        layout.addWidget(label, 1)
+        layout.addWidget(editor, 1)
         layout.addWidget(btn)
         layout.addWidget(clear_btn)
+        self._set_path_editor_state(editor, initial_path or "", path_key)
+
+        def _set_path(path: str) -> None:
+            path = self._clean_image_path_text(path)
+            self._page_paths.setdefault(page_uid, {})[path_key] = path
+            self._set_path_editor_state(editor, path, path_key)
+            self._on_page_image_changed(page_uid, path_key, path)
 
         def _browse() -> None:
             current = self._page_paths.get(page_uid, {}).get(path_key, "") or ""
@@ -1322,16 +1406,12 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 IMAGE_FILE_FILTER,
             )
             if path:
-                label.setText(Path(path).name)
-                self._page_paths.setdefault(page_uid, {})[path_key] = path
-                self._on_page_image_changed(page_uid, path_key, path)
+                _set_path(path)
 
         def _clear() -> None:
-            label.setText("")
-            self._page_paths.setdefault(page_uid, {})[path_key] = ""
-            self._on_page_image_changed(page_uid, path_key, "")
-            self._update_page_size_lock(page_uid)
+            _set_path("")
 
+        editor.pathCommitted.connect(_set_path)
         btn.clicked.connect(_browse)
         clear_btn.clicked.connect(_clear)
         return container

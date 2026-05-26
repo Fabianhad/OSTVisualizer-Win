@@ -3,6 +3,7 @@ from typing import Callable, Dict, List, Optional
 from PySide6 import QtWidgets
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
+from ...domain.entities.config import Config
 from ...domain.entities.cover_sheet import CoverSheetData, CoverSheetPage
 from ..components.menu_builder import MenuBuilder
 from ..dialogs.about_dialog import AboutDialog
@@ -794,11 +795,18 @@ class MenuController:
             self.config_service.get_config_snapshot(),
             self.window,
             apply_callback=self.config_service.update_app_options,
+            reset_callback=self._reset_all_settings,
         )
         try:
             dialog.exec()
         finally:
             dialog.deleteLater()
+
+    def _reset_all_settings(self) -> Config:
+        default_config = Config()
+        self.config_service.update_app_options(default_config)
+        self.window.reset_workspace_state_to_defaults()
+        return self.config_service.get_config_snapshot()
 
     def _on_quit(self) -> None:
         self.window.close()

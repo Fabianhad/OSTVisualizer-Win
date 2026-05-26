@@ -6,6 +6,7 @@ from PySide6 import QtWidgets
 from ....domain.entities.config import Config
 from ...config import (
     OPTIONS_DIALOG_TITLE,
+    OPTIONS_LABEL_RESET_ALL_SETTINGS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_WINDOW_HEIGHT,
@@ -16,11 +17,18 @@ from .components import McpSetupTab, OptionsTab
 
 
 class OptionsDialog(QtWidgets.QDialog):
+    _RESET_ALL_SETTINGS_MESSAGE = (
+        "This will reset all the program options and window settings\n"
+        "to the original defaults.\n"
+        "This cannot be undone. Do you want to reset these now?"
+    )
+
     def __init__(
         self,
         config: Config,
         parent=None,
         apply_callback: Optional[Callable[[Config], object]] = None,
+        reset_callback: Optional[Callable[[], Config]] = None,
         mcp_helper_path: Optional[Path] = None,
     ):
         super().__init__(parent)
@@ -30,7 +38,9 @@ class OptionsDialog(QtWidgets.QDialog):
         self._applied_config = replace(config)
         self._config = replace(config)
         self._apply_callback = apply_callback
+        self._reset_callback = reset_callback
         self._apply_button: Optional[QtWidgets.QPushButton] = None
+        self._reset_all_button: Optional[QtWidgets.QPushButton] = None
         self._tabs: Optional[QtWidgets.QTabWidget] = None
         self._options_tab: Optional[OptionsTab] = None
         self._mcp_setup_tab: Optional[McpSetupTab] = None
@@ -74,7 +84,16 @@ class OptionsDialog(QtWidgets.QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         self._apply_button.clicked.connect(self._apply_pending_changes)
-        main_layout.addWidget(buttons)
+        button_row = QtWidgets.QHBoxLayout()
+        self._reset_all_button = QtWidgets.QPushButton(
+            OPTIONS_LABEL_RESET_ALL_SETTINGS,
+            self,
+        )
+        self._reset_all_button.clicked.connect(self._reset_all_settings)
+        button_row.addWidget(self._reset_all_button)
+        button_row.addStretch(1)
+        button_row.addWidget(buttons)
+        main_layout.addLayout(button_row)
 
     def _bind_options_tab_widgets(self) -> None:
         tab = self._options_tab
@@ -328,6 +347,23 @@ class OptionsDialog(QtWidgets.QDialog):
         self._applied_config = replace(next_config)
         self._update_apply_enabled()
         return self.get_config()
+
+    def _reset_all_settings(self) -> None:
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            OPTIONS_LABEL_RESET_ALL_SETTINGS,
+            self._RESET_ALL_SETTINGS_MESSAGE,
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        next_config = self._reset_callback() if self._reset_callback else Config()
+        self._config = replace(next_config)
+        self._applied_config = replace(next_config)
+        self._load_config()
+        self._update_apply_enabled()
 
     def cleanup(self) -> None:
         if self._cleaned_up:

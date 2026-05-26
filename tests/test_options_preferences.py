@@ -2,6 +2,7 @@ import os
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -29,6 +30,7 @@ from ost_visualizer.presentation.components.plan_view.components.zoom_handler im
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.config import (
+    OPTIONS_LABEL_RESET_ALL_SETTINGS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_WINDOW_HEIGHT,
@@ -120,7 +122,7 @@ SNAP_PREF_UPDATE = SnapPreferencesDto(
     snap_to_pdf_lines_threshold_px=12,
     snap_to_takeoffs_enabled=False,
     snap_to_takeoffs_threshold_px=16,
-    snap_to_right_angle_enabled=True,
+    snap_to_right_angle_enabled=False,
     snap_to_right_angle_threshold_px=20,
 ).to_kwargs()
 SNAP_PREF_CHANGED_KEYS = list(SNAP_PREF_UPDATE)
@@ -175,6 +177,15 @@ def _visible_texts(dialog):
 def _apply_button(dialog):
     buttons = dialog.findChild(QtWidgets.QDialogButtonBox)
     return buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Apply)
+
+
+def _reset_all_button(dialog):
+    matches = [
+        button
+        for button in dialog.findChildren(QtWidgets.QPushButton)
+        if button.text() == OPTIONS_LABEL_RESET_ALL_SETTINGS
+    ]
+    return matches[0] if matches else None
 
 
 class FakeTrackingViewport:
@@ -402,11 +413,81 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertFalse(apply_button.isEnabled())
         dialog.close()
 
+    def test_options_dialog_contains_reset_all_settings_button(self):
+        dialog = OptionsDialog(Config())
+        reset_button = _reset_all_button(dialog)
+        self.assertIsNotNone(reset_button)
+        self.assertEqual(reset_button.text(), OPTIONS_LABEL_RESET_ALL_SETTINGS)
+        dialog.close()
+
     def test_options_dialog_enables_apply_for_implemented_changes(self):
         dialog = OptionsDialog(Config())
         apply_button = _apply_button(dialog)
         dialog._disable_high_res_check.setChecked(True)
         self.assertTrue(apply_button.isEnabled())
+        dialog.close()
+
+    def test_options_dialog_reset_all_settings_restores_defaults(self):
+        reset_callback = SingleCallRecorder(lambda: Config())
+        dialog = OptionsDialog(
+            Config(
+                show_toolbar_text=False,
+                color_mode="Solid",
+                grayscale_enabled=True,
+                disable_high_resolution_images=True,
+                default_auto_zoom_level=125,
+                snap_to_right_angle_enabled=False,
+            ),
+            reset_callback=reset_callback,
+        )
+        dialog._disable_high_res_check.setChecked(False)
+        self.assertTrue(_apply_button(dialog).isEnabled())
+        with mock.patch.object(
+            QtWidgets.QMessageBox,
+            "question",
+            return_value=QtWidgets.QMessageBox.StandardButton.Yes,
+        ) as question:
+            _reset_all_button(dialog).click()
+        reset_callback.assert_called_once(self, "Options reset click")
+        question.assert_called_once()
+        args = question.call_args.args
+        self.assertIs(args[0], dialog)
+        self.assertEqual(args[1], OPTIONS_LABEL_RESET_ALL_SETTINGS)
+        self.assertEqual(
+            args[2],
+            (
+                "This will reset all the program options and window settings\n"
+                "to the original defaults.\n"
+                "This cannot be undone. Do you want to reset these now?"
+            ),
+        )
+        self.assertEqual(args[4], QtWidgets.QMessageBox.StandardButton.No)
+        self.assertEqual(dialog.get_config(), Config())
+        self.assertFalse(_apply_button(dialog).isEnabled())
+        self.assertTrue(dialog._toolbar_text_check.isChecked())
+        self.assertTrue(dialog._color_original_radio.isChecked())
+        self.assertFalse(dialog._grayscale_check.isChecked())
+        self.assertTrue(dialog._snap_to_right_angle_check.isChecked())
+        self.assertFalse(dialog._disable_high_res_check.isChecked())
+        self.assertEqual(dialog._auto_zoom_spin.value(), Config.DEFAULT_AUTO_ZOOM_LEVEL)
+        dialog.close()
+
+    def test_options_dialog_reset_all_settings_no_keeps_pending_changes(self):
+        reset_callback = SingleCallRecorder(lambda: Config())
+        initial = Config(show_toolbar_text=False)
+        dialog = OptionsDialog(initial, reset_callback=reset_callback)
+        dialog._disable_high_res_check.setChecked(True)
+        self.assertTrue(_apply_button(dialog).isEnabled())
+        with mock.patch.object(
+            QtWidgets.QMessageBox,
+            "question",
+            return_value=QtWidgets.QMessageBox.StandardButton.No,
+        ):
+            _reset_all_button(dialog).click()
+        self.assertEqual(reset_callback.call_count, 0)
+        self.assertNotEqual(dialog.get_config(), Config())
+        self.assertTrue(_apply_button(dialog).isEnabled())
+        self.assertTrue(dialog._disable_high_res_check.isChecked())
         dialog.close()
 
     def test_options_dialog_apply_saves_and_keeps_dialog_open(self):
@@ -512,13 +593,13 @@ class OptionsPreferencesTests(unittest.TestCase):
         aggregate = ConfigAggregate(repo)
         event_bus = FakeEventBus()
         service = ConfigService(aggregate, event_bus)
-        changed = service.update_app_options({"color_mode": "Original"})
+        changed = service.update_app_options({"color_mode": "Transparent"})
         self.assertEqual(changed, ["color_mode"])
-        self.assertEqual(aggregate.color_mode, "Original")
-        self.assertEqual(repo.saved[-1]["color_mode"], "Original")
+        self.assertEqual(aggregate.color_mode, "Transparent")
+        self.assertEqual(repo.saved[-1]["color_mode"], "Transparent")
         self.assertEqual(
             event_bus.events,
-            [_app_config_event({"color_mode": "Original"})],
+            [_app_config_event({"color_mode": "Transparent"})],
         )
 
     def test_update_app_options_updates_grayscale_and_publishes_changed_payload(self):
@@ -526,13 +607,13 @@ class OptionsPreferencesTests(unittest.TestCase):
         aggregate = ConfigAggregate(repo)
         event_bus = FakeEventBus()
         service = ConfigService(aggregate, event_bus)
-        changed = service.update_app_options({"grayscale_enabled": False})
+        changed = service.update_app_options({"grayscale_enabled": True})
         self.assertEqual(changed, ["grayscale_enabled"])
-        self.assertFalse(aggregate.grayscale_enabled)
-        self.assertFalse(repo.saved[-1]["grayscale_enabled"])
+        self.assertTrue(aggregate.grayscale_enabled)
+        self.assertTrue(repo.saved[-1]["grayscale_enabled"])
         self.assertEqual(
             event_bus.events,
-            [_app_config_event({"grayscale_enabled": False})],
+            [_app_config_event({"grayscale_enabled": True})],
         )
 
     def test_update_app_options_updates_snap_preferences_and_publishes_payload(self):
@@ -564,11 +645,11 @@ class OptionsPreferencesTests(unittest.TestCase):
         controller = MenuController.__new__(MenuController)
         controller.config_service = service
         result = controller._toggle_takeoff_grayscale()
-        self.assertFalse(result)
-        self.assertFalse(aggregate.grayscale_enabled)
+        self.assertTrue(result)
+        self.assertTrue(aggregate.grayscale_enabled)
         self.assertEqual(
             event_bus.events,
-            [_app_config_event({"grayscale_enabled": False})],
+            [_app_config_event({"grayscale_enabled": True})],
         )
 
     def test_grayscale_noop_does_not_publish(self):
@@ -576,7 +657,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         aggregate = ConfigAggregate(repo)
         event_bus = FakeEventBus()
         service = ConfigService(aggregate, event_bus)
-        changed = service.update_app_options({"grayscale_enabled": True})
+        changed = service.update_app_options({"grayscale_enabled": False})
         self.assertEqual(changed, [])
         self.assertEqual(event_bus.events, [])
 
@@ -622,11 +703,11 @@ class OptionsPreferencesTests(unittest.TestCase):
         service = ConfigService(aggregate, event_bus)
         controller = MenuController.__new__(MenuController)
         controller.config_service = service
-        controller._set_takeoff_color_mode("Original")
-        self.assertEqual(aggregate.color_mode, "Original")
+        controller._set_takeoff_color_mode("Transparent")
+        self.assertEqual(aggregate.color_mode, "Transparent")
         self.assertEqual(
             event_bus.events,
-            [_app_config_event({"color_mode": "Original"})],
+            [_app_config_event({"color_mode": "Transparent"})],
         )
 
     def test_update_app_options_does_not_publish_when_nothing_changed(self):
@@ -637,6 +718,38 @@ class OptionsPreferencesTests(unittest.TestCase):
         changed = service.update_app_options({"color_mode": aggregate.color_mode})
         self.assertEqual(changed, [])
         self.assertEqual(event_bus.events, [])
+
+    def test_menu_options_reset_uses_config_service_and_resets_workspace(self):
+        repo = FakeConfigRepository(
+            Config(
+                show_toolbar_text=False,
+                disable_high_resolution_images=True,
+            )
+        )
+        aggregate = ConfigAggregate(repo)
+        event_bus = FakeEventBus()
+        service = ConfigService(aggregate, event_bus)
+        workspace_resets = []
+        controller = MenuController.__new__(MenuController)
+        controller.config_service = service
+        controller.window = SimpleNamespace(
+            reset_workspace_state_to_defaults=lambda: workspace_resets.append("reset")
+        )
+        result = controller._reset_all_settings()
+        self.assertEqual(result, Config())
+        self.assertEqual(service.get_config_snapshot(), Config())
+        self.assertEqual(workspace_resets, ["reset"])
+        self.assertEqual(
+            event_bus.events,
+            [
+                _app_config_event(
+                    {
+                        "show_toolbar_text": True,
+                        "disable_high_resolution_images": False,
+                    }
+                )
+            ],
+        )
 
     def test_app_config_updated_is_published_only_by_config_service(self):
         publishers = []
@@ -812,12 +925,12 @@ class OptionsPreferencesTests(unittest.TestCase):
         aggregate = ConfigAggregate(repo)
         service = ConfigService(aggregate, FakeEventBus())
         dialog = OptionsDialog(service.get_config_snapshot())
-        dialog._color_original_radio.setChecked(True)
-        dialog._grayscale_check.setChecked(False)
+        dialog._color_transparent_radio.setChecked(True)
+        dialog._grayscale_check.setChecked(True)
         dialog._roping_inclusive_radio.setChecked(True)
         dialog.reject()
-        self.assertEqual(aggregate.color_mode, "Solid")
-        self.assertTrue(aggregate.grayscale_enabled)
+        self.assertEqual(aggregate.color_mode, "Original")
+        self.assertFalse(aggregate.grayscale_enabled)
         self.assertEqual(aggregate.roping_selection_method, "touching")
         self.assertEqual(repo.saved, [])
         dialog.close()
@@ -832,10 +945,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         dialog._page_index_check.setChecked(True)
         _apply_button(dialog).click()
-        dialog._grayscale_check.setChecked(False)
+        dialog._grayscale_check.setChecked(True)
         dialog.reject()
         self.assertTrue(aggregate.display_page_index_with_sheet_name)
-        self.assertTrue(aggregate.grayscale_enabled)
+        self.assertFalse(aggregate.grayscale_enabled)
         dialog.close()
 
     def test_options_dialog_disabled_controls_do_not_enable_apply(self):
@@ -858,7 +971,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         service = ConfigService(aggregate, event_bus)
         dialog = OptionsDialog(service.get_config_snapshot())
         dialog._color_transparent_radio.setChecked(True)
-        dialog._grayscale_check.setChecked(False)
+        dialog._grayscale_check.setChecked(True)
         dialog.accept()
         changed = service.update_app_options(dialog.get_config())
         self.assertEqual(changed, ["color_mode", "grayscale_enabled"])
@@ -868,7 +981,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 _app_config_event(
                     {
                         "color_mode": "Transparent",
-                        "grayscale_enabled": False,
+                        "grayscale_enabled": True,
                     }
                 )
             ],
@@ -890,6 +1003,9 @@ class OptionsPreferencesTests(unittest.TestCase):
 
     def test_config_defaults_preserve_existing_enabled_behaviors(self):
         config = Config()
+        self.assertTrue(config.show_toolbar_text)
+        self.assertEqual(config.color_mode, "Original")
+        self.assertFalse(config.grayscale_enabled)
         self.assertFalse(config.disable_high_resolution_images)
         self.assertTrue(config.enable_intelligent_paste)
         self.assertTrue(config.enable_advanced_mouse_controls)
@@ -911,7 +1027,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(
             config.snap_to_takeoffs_threshold_px, Config.DEFAULT_SNAP_THRESHOLD_PX
         )
-        self.assertFalse(config.snap_to_right_angle_enabled)
+        self.assertTrue(config.snap_to_right_angle_enabled)
         self.assertEqual(
             config.snap_to_right_angle_threshold_px, Config.DEFAULT_SNAP_THRESHOLD_PX
         )
@@ -1864,18 +1980,24 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(pages["p1"].sequence, 12)
         self.assertEqual(pages["p1"].page_index, 0)
 
-    def test_toolbar_text_preference_updates_workspace_toolbars(self):
+    def test_toolbar_text_preference_updates_cover_sheet_button_only(self):
         window = MainWindow.__new__(MainWindow)
         window._config_model = SimpleNamespace(show_toolbar_text=True)
         toolbars = [QtWidgets.QToolBar(), QtWidgets.QToolBar()]
+        cover_sheet_button = QtWidgets.QToolButton()
         window.get_workspace_toolbars = lambda: toolbars
+        window.get_toolbar_text_buttons = lambda: [cover_sheet_button]
         MainWindow.apply_toolbar_text_preference(window)
         self.assertTrue(
             all(
                 toolbar.toolButtonStyle()
-                == QtCore.Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+                == QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
                 for toolbar in toolbars
             )
+        )
+        self.assertEqual(
+            cover_sheet_button.toolButtonStyle(),
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon,
         )
         window._config_model = SimpleNamespace(show_toolbar_text=False)
         MainWindow.apply_toolbar_text_preference(window)
@@ -1885,6 +2007,10 @@ class OptionsPreferencesTests(unittest.TestCase):
                 == QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
                 for toolbar in toolbars
             )
+        )
+        self.assertEqual(
+            cover_sheet_button.toolButtonStyle(),
+            QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly,
         )
 
     def test_main_window_applies_new_plan_view_preferences(self):
@@ -1925,6 +2051,7 @@ class OptionsPreferencesTests(unittest.TestCase):
 
         window = MainWindow.__new__(MainWindow)
         window.get_workspace_toolbars = lambda: []
+        window._cover_sheet_button = QtWidgets.QToolButton()
         window.takeoff_sidebar = None
         window.plan_view = FakePlanView()
         annotation_window = FakeDetachedWindow()

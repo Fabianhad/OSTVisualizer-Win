@@ -3,13 +3,14 @@
 ## 1.2.3 - Unreleased
 
 ### Added
-- Added a first-pass OST-style Options dialog with persisted roping, page label, hotlink target, and toolbar text preferences.
+- Added a first-pass OST-style Options dialog with persisted roping, page label, hotlink target, and Cover Sheet toolbar text preferences.
 - Added takeoff color mode and grayscale controls to the Options dialog while keeping menu quick actions on the shared app-config path.
 - Added an optional read-only local MCP server for project, bid, page, condition, takeoff, quantity, selected-context, and scope-review context.
 - Added a local read-only MCP bridge for live desktop context such as active view, selected pages, highlighted conditions, and selected takeoffs.
 - Added MCP setup controls to the Options dialog for copying Claude Desktop/Cursor config and Codex setup commands.
 - Added read-only MCP area context with area names on takeoffs/current context plus `list_areas` and `get_area_summary`.
 - Added separate Options controls for grid, PDF-line, takeoff, and right-angle snap thresholds.
+- Added a Reset All Settings button to the Options dialog that restores app preferences and workspace layout state to defaults.
 - Added embedded PDF text selection in the plan view with I-beam hover, drag-range highlighting, and copy support.
 - Added 2D rendering and Bluebeam-style PDF LineDimension export for imported BidDimensions annotations, including end ticks, feet/inches labels, text-label formatting, measurement metadata, and corrected PDF appearance bounds.
 
@@ -28,6 +29,8 @@
 - Adjusted hotlink selection so clicks activate hotlinks while rubber-band selection controls move selection.
 - Matched menu-opened Employees, Bid Areas, Condition Types, and Payroll Classes dialogs to the OK-only master-data dialog button layout.
 - Replaced the separate right-angle indicator preference with the `Snap to right angle` Snap Settings option and threshold while preserving configured mouse angle snapping.
+- Changed the default Options settings to show Cover Sheet toolbar text, use original takeoff colors, keep grayscale off, and enable snap to right angle.
+- Updated Cover Sheet image path cells to show filenames by default, edit full paths on double-click, and highlight missing image files.
 - Improved composite page rendering by preserving antialias coverage when tinting layered images.
 - Prioritized enabled overlay PDF layers for composite/overlay PDF snapping and embedded text selection, with overlay-only PDF rendering using dynamic base and tile refresh.
 - PDF export now follows enabled page image layers, exporting overlay-only pages directly from the overlay source and main+overlay pages as a flattened red/blue comparison background with annotations on top.

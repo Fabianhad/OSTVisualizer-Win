@@ -34,13 +34,15 @@ class AppConfigPresentationManager:
         return bool(self._CONDITION_DISPLAY_REFRESH_KEYS.intersection(changed_values))
 
     def apply_toolbar_text(self, window, config_model) -> None:
-        style = (
-            QtCore.Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+        for toolbar in window.get_workspace_toolbars():
+            toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button_style = (
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
             if config_model.show_toolbar_text
             else QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
         )
-        for toolbar in window.get_workspace_toolbars():
-            toolbar.setToolButtonStyle(style)
+        for button in window.get_toolbar_text_buttons():
+            button.setToolButtonStyle(button_style)
 
     def apply_plan_view_config(self, plan_view, config_model) -> None:
         plan_view.set_roping_selection_method(config_model.roping_selection_method)

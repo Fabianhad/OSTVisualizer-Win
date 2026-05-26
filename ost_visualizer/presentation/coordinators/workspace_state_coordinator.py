@@ -233,6 +233,18 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             self._save_timer.stop()
         self._save_now()
 
+    def reset_to_defaults(self) -> None:
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+        self._state = WorkspaceState()
+        self._pending_takeoff_splitter_sizes = []
+        self._pending_splitter_sizes = []
+        self._pending_mesh_restore = False
+        self._pending_annotation_restore = False
+        self._pending_view_restore = False
+        self.workspace_state_model.update_state(self._state)
+        self.restore_initial_state()
+
     def cleanup(self) -> None:
         if self._cleaned_up:
             return

@@ -147,6 +147,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._takeoff_tools_toolbar = components.takeoff_tools_toolbar
         self._view_toolbar = components.view_toolbar
         self._main_toolbar = components.main_toolbar
+        self._cover_sheet_button = components.cover_sheet_button
         self._view_2d_action = components.view_2d_action
         self._view_3d_action = components.view_3d_action
         self._takeoff_splitter = components.takeoff_splitter
@@ -860,6 +861,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._view_toolbar,
         ]
 
+    def get_toolbar_text_buttons(self) -> list[QtWidgets.QToolButton]:
+        return [self._cover_sheet_button]
+
     def get_view_stack(self):
         return self._view_stack
 
@@ -982,6 +986,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _request_workspace_state_save(self) -> None:
         self._workspace_state_coordinator.request_save()
+
+    def reset_workspace_state_to_defaults(self) -> None:
+        self._workspace_state_coordinator.reset_to_defaults()
 
     def _set_takeoff_view_action_visible(
         self, action: QtGui.QAction, index: int, visible: bool

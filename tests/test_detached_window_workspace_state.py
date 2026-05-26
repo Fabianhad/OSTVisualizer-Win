@@ -70,6 +70,27 @@ class FakeHotlinkSidebar:
         self.quantity_updates += 1
 
 
+class FakeWorkspaceSaveTimer:
+    def __init__(self, active=True):
+        self._active = active
+        self.stopped = False
+
+    def isActive(self):
+        return self._active
+
+    def stop(self):
+        self.stopped = True
+        self._active = False
+
+
+class FakeWorkspaceStateModel:
+    def __init__(self):
+        self.updated_states = []
+
+    def update_state(self, state):
+        self.updated_states.append(state)
+
+
 class FakeHotlinkTabWidget:
     def currentIndex(self):
         return TAB_INDEX_TAKEOFF
@@ -293,6 +314,32 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
                 WorkspaceStateCoordinator._DETACHED_VIEW,
             ],
         )
+
+    def test_reset_to_defaults_persists_default_workspace_and_reapplies_state(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        timer = FakeWorkspaceSaveTimer(active=True)
+        model = FakeWorkspaceStateModel()
+        restored = []
+        coordinator._save_timer = timer
+        coordinator.workspace_state_model = model
+        coordinator._state = WorkspaceState()
+        coordinator._state.takeoff_workspace.active_view = "2d"
+        coordinator._pending_takeoff_splitter_sizes = [100, 200]
+        coordinator._pending_splitter_sizes = [30, 70]
+        coordinator._pending_mesh_restore = True
+        coordinator._pending_annotation_restore = True
+        coordinator._pending_view_restore = True
+        coordinator.restore_initial_state = lambda: restored.append("restore")
+        coordinator.reset_to_defaults()
+        self.assertTrue(timer.stopped)
+        self.assertEqual(model.updated_states, [WorkspaceState()])
+        self.assertEqual(coordinator._state, WorkspaceState())
+        self.assertEqual(coordinator._pending_takeoff_splitter_sizes, [])
+        self.assertEqual(coordinator._pending_splitter_sizes, [])
+        self.assertFalse(coordinator._pending_mesh_restore)
+        self.assertFalse(coordinator._pending_annotation_restore)
+        self.assertFalse(coordinator._pending_view_restore)
+        self.assertEqual(restored, ["restore"])
 
     def test_untracking_detached_window_releases_filters_and_callbacks(self):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)

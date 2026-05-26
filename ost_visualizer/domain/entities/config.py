@@ -5,7 +5,7 @@ from typing import ClassVar
 
 @dataclass
 class Config:
-    DEFAULT_COLOR_MODE: ClassVar[str] = "Solid"
+    DEFAULT_COLOR_MODE: ClassVar[str] = "Original"
     DEFAULT_ROPING_SELECTION_METHOD: ClassVar[str] = "touching"
     DEFAULT_HOTLINK_TARGET: ClassVar[str] = "annotation"
     DEFAULT_AUTO_ZOOM_LEVEL: ClassVar[int] = 0
@@ -15,12 +15,12 @@ class Config:
     DEFAULT_MOUSE_PRESSED_SNAP_ANGLE: ClassVar[int] = 0
     DEFAULT_SNAP_THRESHOLD_PX: ClassVar[int] = 8
     color_mode: str = DEFAULT_COLOR_MODE
-    grayscale_enabled: bool = True
+    grayscale_enabled: bool = False
     roping_selection_method: str = DEFAULT_ROPING_SELECTION_METHOD
     display_page_index_with_sheet_name: bool = False
     display_sheet_number_with_sheet_name: bool = False
     hotlink_target: str = DEFAULT_HOTLINK_TARGET
-    show_toolbar_text: bool = False
+    show_toolbar_text: bool = True
     disable_high_resolution_images: bool = False
     enable_intelligent_paste: bool = True
     enable_advanced_mouse_controls: bool = True
@@ -37,7 +37,7 @@ class Config:
     snap_to_pdf_lines_threshold_px: int = DEFAULT_SNAP_THRESHOLD_PX
     snap_to_takeoffs_enabled: bool = True
     snap_to_takeoffs_threshold_px: int = DEFAULT_SNAP_THRESHOLD_PX
-    snap_to_right_angle_enabled: bool = False
+    snap_to_right_angle_enabled: bool = True
     snap_to_right_angle_threshold_px: int = DEFAULT_SNAP_THRESHOLD_PX
 
     def to_dict(self) -> dict:
