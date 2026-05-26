@@ -80,6 +80,7 @@ class InputHandlerMixin:
     _intelligent_paste_active: bool = False
     _use_full_window_crosshairs: bool = False
     _pdf_text_drag_anchor: Optional[tuple] = None
+    _editing_text_annotation_uid: Optional[str] = None
 
     def _request_crosshair_repaint(self) -> None:
         if not self._use_full_window_crosshairs:
@@ -274,6 +275,7 @@ class InputHandlerMixin:
             event.accept()
             return
         vp_pos = event.position().toPoint()
+        self._last_mouse_vp_pos = vp_pos
         if (
             event.button() == Qt.MouseButton.LeftButton
             and self._cursor_mode != "zoom"
@@ -546,7 +548,11 @@ class InputHandlerMixin:
                     hit_ann = (
                         self._current_annotations.get(hit_uid) if hit_uid else None
                     )
-                    if hit_ann and hit_ann.is_hotlink:
+                    if (
+                        hit_ann
+                        and hit_ann.is_hotlink
+                        and hit_uid not in self._selected_uids
+                    ):
                         hit_uid = None
                     if hit_uid:
                         if hit_uid in self._selected_uids:
@@ -1981,6 +1987,14 @@ class InputHandlerMixin:
             return self._zoom_cursor
         if self._cursor_mode == "pan":
             return Qt.CursorShape.OpenHandCursor
+        if (
+            self._editing_text_annotation_uid is not None
+            and vp_pos is not None
+            and self._inline_text_annotation_box_contains_scene_point(
+                self.mapToScene(vp_pos)
+            )
+        ):
+            return Qt.CursorShape.IBeamCursor
         if self._cursor_mode in ("rotate", "slope_rotate"):
             if self._rotate_handle_item is not None and vp_pos is not None:
                 handle_vp = self.mapFromScene(self._rotate_handle_item.pos())

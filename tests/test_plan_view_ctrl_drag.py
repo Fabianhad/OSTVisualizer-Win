@@ -431,13 +431,37 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(view._selected_uids, set())
         self.assertIsNone(view._drag_takeoff_uid)
 
-    def test_selected_hotlink_center_press_does_not_start_drag(self):
+    def test_selected_hotlink_center_press_starts_drag(self):
         view = self._make_hotlink_view(selected=True)
         event = FakeMouseEvent()
         view.mousePressEvent(event)
         self.assertTrue(event.accepted)
-        self.assertIsNone(view._drag_takeoff_uid)
-        self.assertEqual(view._drag_orig_position, [])
+        self.assertEqual(view._drag_takeoff_uid, "h1")
+        self.assertEqual(view._drag_orig_position, [10.0, 10.0])
+        self.assertEqual(view._drag_handle_index, -1)
+
+    def test_selected_hotlink_drag_does_not_start_rubber_band(self):
+        view = self._make_hotlink_view(selected=True)
+        view.mapToScene = lambda point: QtCore.QPointF(point)
+        view._scene_builder = FakeSceneBuilder()
+        view._snap_increments = 1.0
+        view.scene_to_ost_delta = lambda dx, dy: (dx, dy)
+        view.ost_to_scene_delta = lambda dx, dy: (dx, dy)
+        press = FakeMouseEvent(x=10, y=10)
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        move = FakeMouseEvent(x=18, y=18)
+        view.mouseMoveEvent(move)
+        self.assertTrue(move.accepted)
+        self.assertEqual(view._drag_takeoff_uid, "h1")
+        self.assertFalse(view._select_band_active)
+        self.assertIsNone(view._rubber_band_origin)
+        self.assertEqual(view._uid_to_items["h1"][0].pos(), QtCore.QPointF(8.0, 8.0))
+
+    def test_selected_hotlink_hover_uses_move_cursor(self):
+        view = self._make_hotlink_view(selected=True)
+        cursor = view._resolve_select_cursor(QtCore.QPoint(10, 10))
+        self.assertEqual(cursor, Qt.CursorShape.SizeAllCursor)
 
     def test_unselected_hotlink_release_still_activates_hotlink(self):
         view = self._make_hotlink_view(selected=False)

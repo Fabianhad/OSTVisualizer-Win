@@ -26,7 +26,7 @@
 - Removed the obsolete `BidConditions.NameFont*` condition-label formatting path; generated label styles now use only `BidTakeoffs`.
 - Removed the misleading Options preference for auto dimension lines; Display Dimension remains a per-condition setting.
 - Enabled the Options `Main` hotlink target so hotlinks can navigate the main takeoff view to the target page and named-view zoom instead of opening a detached window.
-- Adjusted hotlink selection so clicks activate hotlinks while rubber-band selection controls move selection.
+- Adjusted hotlink selection so clicks activate hotlinks while rubber-band selection controls move selection, including moving selected hotlinks.
 - Matched menu-opened Employees, Bid Areas, Condition Types, and Payroll Classes dialogs to the OK-only master-data dialog button layout.
 - Replaced the separate right-angle indicator preference with the `Snap to right angle` Snap Settings option and threshold while preserving configured mouse angle snapping.
 - Changed the default Options settings to show Cover Sheet toolbar text, use original takeoff colors, keep grayscale off, and enable snap to right angle.
@@ -48,7 +48,7 @@
 - Fixed text annotation selected/edit outlines to use the real textbox resize bounds and clipped overflowing text to the textbox.
 - Centered area Display Dimension labels inside the takeoff while keeping Display Name labels below the takeoff.
 - Cleared stale condition text label selection outlines when selecting another label or text annotation.
-- Kept text annotation textbox resizing centered when font, style, or text edits change the box size.
+- Kept text annotation textbox resizing centered when font or style changes resize the box, while inline text edits preserve the existing textbox bounds, wrapping, and editor selection state.
 - Updated the shared text-format toolbar with formatting icons and a live text-color swatch.
 - Fixed text annotation style and autosized textbox updates so overlay refreshes keep the new formatting and centered box.
 - Fixed condition Display Name/Dimension label formatting so supported font style fields persist through overlay rebuilds instead of resetting after takeoff refreshes.

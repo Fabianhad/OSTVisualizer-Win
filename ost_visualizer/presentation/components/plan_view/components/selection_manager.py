@@ -211,6 +211,12 @@ class SelectionManagerMixin:
             if ann is not None and ann.is_text:
                 if self._text_annotation_contains_scene_point(uid, scene_pos):
                     return uid
+        for item, link_info in self._hotlink_items:
+            if (
+                link_info.uid in self._selected_uids
+                and self._hotlink_item_contains_scene_point(item, link_info, scene_pos)
+            ):
+                return link_info.uid
         for uid in self.find_takeoffs_at(scene_pos):
             if uid in self._selected_uids:
                 return uid

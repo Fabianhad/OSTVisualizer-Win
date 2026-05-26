@@ -763,18 +763,11 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
 
     def test_inline_text_annotation_edit_commits_text_property(self):
         view = self._make_plan_view()
-        annotation = BidAnnotation(
-            uid="a1",
-            annotation_type="text",
-            position=[0.0, 0.0],
-            properties={"Text": "Before", "FontColor": 0, "FontSize": 12},
+        annotation, item = self._add_text_annotation(
+            view,
+            text="Before",
+            position=[0.0, 0.0, 80.0, 24.0],
         )
-        item = QGraphicsTextItem("Before")
-        item.setData(0, "a1")
-        view._scene.addItem(item)
-        view._uid_to_items = {"a1": [item]}
-        view._current_annotations = {"a1": annotation}
-        view._selection_enabled = True
         emitted = []
         view.annotation_text_properties_flushed.connect(
             lambda changes: emitted.extend(changes)
@@ -788,6 +781,46 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(emitted[0][1], "text")
         self.assertEqual(emitted[0][2]["Text"], "Before")
         self.assertEqual(emitted[0][3]["Text"], "After")
+        view.cleanup()
+
+    def test_inline_text_annotation_commit_clears_text_cursor_selection(self):
+        view = self._make_plan_view()
+        annotation, item = self._add_text_annotation(
+            view,
+            text="Before",
+            position=[0.0, 0.0, 80.0, 24.0],
+        )
+        view._selected_uids = {"a1"}
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        item.setPlainText("After")
+        self._select_document_text(item)
+        self.assertTrue(item.textCursor().hasSelection())
+        view._finish_text_annotation_edit(commit=True)
+        self.assertFalse(item.textCursor().hasSelection())
+        self.assertEqual(item.textCursor().selectedText(), "")
+        self.assertEqual(annotation.properties["Text"], "After")
+        self.assertEqual(view._selected_uids, {"a1"})
+        view.cleanup()
+
+    def test_escape_cancel_inline_text_annotation_clears_text_cursor_selection(self):
+        view = self._make_plan_view()
+        annotation, item = self._add_text_annotation(view, text="Before")
+        view._selected_uids = {"a1"}
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        item.setPlainText("After")
+        self._select_document_text(item)
+        view.keyPressEvent(
+            QKeyEvent(
+                QtCore.QEvent.Type.KeyPress,
+                QtCore.Qt.Key.Key_Escape,
+                QtCore.Qt.KeyboardModifier.NoModifier,
+            )
+        )
+        self.assertFalse(item.textCursor().hasSelection())
+        self.assertEqual(item.textCursor().selectedText(), "")
+        self.assertEqual(item.toPlainText(), "Before")
+        self.assertEqual(annotation.properties["Text"], "Before")
+        self.assertEqual(view._selected_uids, {"a1"})
         view.cleanup()
 
     def test_named_view_rename_uses_inline_edit_without_text_toolbar(self):
@@ -833,19 +866,12 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
 
     def test_click_outside_inline_text_edit_commits_and_clears_access_lock(self):
         view = self._make_plan_view()
-        annotation = BidAnnotation(
-            uid="a1",
-            annotation_type="text",
-            position=[0.0, 0.0],
-            properties={"Text": "Before", "FontColor": 0, "FontSize": 12},
+        annotation, item = self._add_text_annotation(
+            view,
+            text="Before",
+            position=[0.0, 0.0, 80.0, 24.0],
         )
-        item = QGraphicsTextItem("Before")
-        item.setData(0, "a1")
         item.setPos(0, 0)
-        view._scene.addItem(item)
-        view._uid_to_items = {"a1": [item]}
-        view._current_annotations = {"a1": annotation}
-        view._selection_enabled = True
         view._selected_uids = {"a1"}
         view._cursor_mode = "select"
         edit_active_states = []
@@ -856,14 +882,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         self.assertTrue(view._begin_text_annotation_edit("a1"))
         item.setPlainText("After")
-        event = QMouseEvent(
-            QtCore.QEvent.Type.MouseButtonPress,
-            QtCore.QPointF(300, 300),
-            QtCore.QPointF(300, 300),
-            QtCore.Qt.MouseButton.LeftButton,
-            QtCore.Qt.MouseButton.LeftButton,
-            QtCore.Qt.KeyboardModifier.NoModifier,
-        )
+        event = self._left_press_event(300, 300)
         view.mousePressEvent(event)
         self.assertFalse(view.is_text_annotation_inline_edit_active())
         self.assertEqual(edit_active_states, [True, False])
@@ -874,6 +893,38 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             QtCore.Qt.TextInteractionFlag.NoTextInteraction,
         )
         self.assertFalse(item.hasFocus())
+        view.cleanup()
+
+    def test_click_outside_inline_text_edit_clears_text_cursor_selection(self):
+        view = self._make_plan_view()
+        annotation, item = self._add_text_annotation(view, text="Before")
+        item.setPos(0, 0)
+        view._selected_uids = {"a1"}
+        view._cursor_mode = "select"
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        item.setPlainText("After")
+        self._select_document_text(item)
+        event = self._left_press_event(300, 300)
+        view.mousePressEvent(event)
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+        self.assertFalse(item.textCursor().hasSelection())
+        self.assertEqual(item.textCursor().selectedText(), "")
+        self.assertEqual(annotation.properties["Text"], "After")
+        self.assertEqual(view._selected_uids, {"a1"})
+        view.cleanup()
+
+    def test_reenter_inline_text_annotation_edit_has_no_stale_text_selection(self):
+        view = self._make_plan_view()
+        _annotation, item = self._add_text_annotation(view, text="Before")
+        view._selected_uids = {"a1"}
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        self._select_document_text(item)
+        view._finish_text_annotation_edit(commit=True)
+        self.assertFalse(item.textCursor().hasSelection())
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        self.assertFalse(item.textCursor().hasSelection())
+        self.assertEqual(item.textCursor().selectedText(), "")
+        self.assertEqual(view._selected_uids, {"a1"})
         view.cleanup()
 
     def test_click_inside_inline_text_edit_stays_in_editor(self):
@@ -910,6 +961,65 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(
             item.textInteractionFlags(),
             QtCore.Qt.TextInteractionFlag.TextEditorInteraction,
+        )
+        view.cleanup()
+
+    def test_inline_text_annotation_edit_immediately_uses_ibeam_cursor(self):
+        view = self._make_plan_view()
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="text",
+            position=[100.0, 100.0, 80.0, 40.0],
+            properties={"Text": "Before", "FontColor": 0, "FontSize": 12},
+        )
+        item = ClippedTextGraphicsItem("Before", QtCore.QRectF(0.0, 0.0, 80.0, 40.0))
+        item.setData(0, "a1")
+        item.setPos(60.0, 80.0)
+        item.setTextWidth(80.0)
+        view._scene.addItem(item)
+        view._uid_to_items = {"a1": [item]}
+        view._current_annotations = {"a1": annotation}
+        view._selection_enabled = True
+        view._selected_uids = {"a1"}
+        view._last_mouse_vp_pos = view.mapFromScene(QtCore.QPointF(70.0, 90.0))
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        self.assertEqual(
+            view.viewport().cursor().shape(),
+            QtCore.Qt.CursorShape.IBeamCursor,
+        )
+        view.cleanup()
+
+    def test_inline_text_annotation_edit_ibeam_cursor_is_limited_to_textbox(self):
+        view = self._make_plan_view()
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="text",
+            position=[100.0, 100.0, 80.0, 40.0],
+            properties={"Text": "Before", "FontColor": 0, "FontSize": 12},
+        )
+        item = ClippedTextGraphicsItem("Before", QtCore.QRectF(0.0, 0.0, 80.0, 40.0))
+        item.setData(0, "a1")
+        item.setPos(60.0, 80.0)
+        item.setTextWidth(80.0)
+        view._scene.addItem(item)
+        view._uid_to_items = {"a1": [item]}
+        view._current_annotations = {"a1": annotation}
+        view._selection_enabled = True
+        view._selected_uids = {"a1"}
+        view._last_mouse_vp_pos = view.mapFromScene(QtCore.QPointF(70.0, 90.0))
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        self.assertEqual(
+            view._resolve_cursor(view.mapFromScene(QtCore.QPointF(70.0, 90.0))),
+            QtCore.Qt.CursorShape.IBeamCursor,
+        )
+        self.assertEqual(
+            view._resolve_cursor(view.mapFromScene(QtCore.QPointF(20.0, 20.0))),
+            QtCore.Qt.CursorShape.ArrowCursor,
+        )
+        view._finish_text_annotation_edit(commit=True)
+        self.assertEqual(
+            view._resolve_cursor(view.mapFromScene(QtCore.QPointF(70.0, 90.0))),
+            QtCore.Qt.CursorShape.SizeAllCursor,
         )
         view.cleanup()
 
@@ -1446,7 +1556,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(outline.height(), annotation.position[3])
         view.cleanup()
 
-    def test_text_annotation_text_edit_resizes_box_around_center(self):
+    def test_text_annotation_text_edit_preserves_box_and_wrapping(self):
         view = self._make_plan_view()
         annotation = BidAnnotation(
             uid="a1",
@@ -1462,17 +1572,72 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._selection_enabled = True
         view._selected_uids = {"a1"}
         view.update_selection_visuals(emit=False)
+        emitted_text, emitted_positions, emitted_combined = (
+            self._capture_annotation_flushes(view)
+        )
         old_position = list(annotation.position)
         self.assertTrue(view._begin_text_annotation_edit("a1"))
-        item.setPlainText("A much longer annotation")
+        item.setPlainText("A much longer annotation that should wrap inside the box")
         view._finish_text_annotation_edit(commit=True)
-        self.assertEqual(annotation.position[:2], old_position[:2])
-        self.assertGreater(annotation.position[2], old_position[2])
-        self.assertEqual(annotation.properties["Text"], "A much longer annotation")
+        self.assertEqual(annotation.position, old_position)
+        self.assertEqual(item.textWidth(), old_position[2])
+        self.assertEqual(
+            annotation.properties["Text"],
+            "A much longer annotation that should wrap inside the box",
+        )
+        self.assertEqual(emitted_positions, [])
+        self.assertEqual(emitted_combined, [])
+        self.assertEqual(emitted_text[-1][2]["Text"], "Short")
+        self.assertEqual(
+            emitted_text[-1][3]["Text"],
+            "A much longer annotation that should wrap inside the box",
+        )
         outline = self._first_selection_outline(view).polygon().boundingRect()
         self.assertEqual(outline.center(), QtCore.QPointF(100.0, 100.0))
-        self.assertEqual(outline.width(), annotation.position[2])
-        self.assertEqual(outline.height(), annotation.position[3])
+        self.assertEqual(outline.width(), old_position[2])
+        self.assertEqual(outline.height(), old_position[3])
+        self.assertLess(item.boundingRect().width(), 100.0)
+        view.cleanup()
+
+    def test_overlay_refresh_after_inline_text_edit_keeps_textbox_width(self):
+        view = self._make_plan_view()
+        page = Page(uid="page-1", name="Page 1")
+        bid_ref = BidRef(file_path="bid.mdb", bid_uid="bid-1")
+        annotation, item = self._add_text_annotation(
+            view,
+            text="Short",
+            page_uid=page.uid,
+            position=[100.0, 100.0, 52.0, 22.0],
+        )
+        view._current_bid_page_uid = page.uid
+        view._current_render_identity = view._build_render_identity(page, bid_ref)
+        view._selected_uids = {"a1"}
+        old_position = list(annotation.position)
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        item.setPlainText("Long text that must wrap after refresh too")
+        view._finish_text_annotation_edit(commit=True)
+        self.assertEqual(annotation.position, old_position)
+        self.assertTrue(
+            view.refresh_current_page_overlays(
+                page=page,
+                takeoffs=[],
+                conditions={},
+                color_map={},
+                bid_ref=bid_ref,
+                annotations=[annotation],
+                page_area_selections={},
+            )
+        )
+        rebuilt = view._text_annotation_item("a1")
+        self.assertIsInstance(rebuilt, ClippedTextGraphicsItem)
+        self.assertEqual(
+            rebuilt.toPlainText(),
+            "Long text that must wrap after refresh too",
+        )
+        self.assertEqual(rebuilt.textWidth(), old_position[2])
+        self.assertEqual(rebuilt.clip_rect().width(), old_position[2])
+        self.assertEqual(rebuilt.clip_rect().height(), old_position[3])
+        self.assertEqual(annotation.position, old_position)
         view.cleanup()
 
     def test_text_annotation_autosize_updates_clip_rect(self):
@@ -1685,14 +1850,18 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         annotation = BidAnnotation(
             uid="a1",
             annotation_type="text",
+            position=[100.0, 100.0, 80.0, 24.0],
             properties={"Text": "Before", "FontColor": 0, "FontSize": 12},
         )
         item = QGraphicsTextItem("Before")
         item.setData(0, "a1")
+        item.setTextWidth(80.0)
         view._scene.addItem(item)
         view._uid_to_items = {"a1": [item]}
         view._current_annotations = {"a1": annotation}
         view._selection_enabled = True
+        old_position = list(annotation.position)
+        old_text_width = item.textWidth()
         emitted = []
         view.annotation_text_properties_flushed.connect(
             lambda changes: emitted.extend(changes)
@@ -1702,7 +1871,24 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._finish_text_annotation_edit(commit=False)
         self.assertEqual(item.toPlainText(), "Before")
         self.assertEqual(annotation.properties["Text"], "Before")
+        self.assertEqual(annotation.position, old_position)
+        self.assertEqual(item.textWidth(), old_text_width)
         self.assertEqual(emitted, [])
+        view.cleanup()
+
+    def test_direct_cancel_inline_text_annotation_clears_text_cursor_selection(self):
+        view = self._make_plan_view()
+        annotation, item = self._add_text_annotation(view, text="Before")
+        view._selected_uids = {"a1"}
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        item.setPlainText("After")
+        self._select_document_text(item)
+        view._finish_text_annotation_edit(commit=False)
+        self.assertFalse(item.textCursor().hasSelection())
+        self.assertEqual(item.textCursor().selectedText(), "")
+        self.assertEqual(item.toPlainText(), "Before")
+        self.assertEqual(annotation.properties["Text"], "Before")
+        self.assertEqual(view._selected_uids, {"a1"})
         view.cleanup()
 
     def test_inline_text_annotation_edit_respects_enabled_capability(self):
@@ -1796,6 +1982,21 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             lambda text, positions: emitted_combined.append((text, positions))
         )
         return emitted_text, emitted_positions, emitted_combined
+
+    def _select_document_text(self, item):
+        cursor = item.textCursor()
+        cursor.select(QTextCursor.SelectionType.Document)
+        item.setTextCursor(cursor)
+
+    def _left_press_event(self, x, y):
+        return QMouseEvent(
+            QtCore.QEvent.Type.MouseButtonPress,
+            QtCore.QPointF(x, y),
+            QtCore.QPointF(x, y),
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
 
     def _make_plan_view(self):
         view = TakeoffPlanView(

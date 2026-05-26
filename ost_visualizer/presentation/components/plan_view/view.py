@@ -1,6 +1,7 @@
 import math
 import os
 import uuid
+from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 from PySide6 import QtCore, QtSvg
 from PySide6.QtCore import Qt, Signal
@@ -107,6 +108,11 @@ _TEXT_TOOL_ALIGN_CENTER_ICON = (
 _TEXT_TOOL_ALIGN_RIGHT_ICON = (
     "format_align_right_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
 )
+
+
+class TextAnnotationGeometryPolicy(Enum):
+    PRESERVE_BOX = "preserve_box"
+    AUTOSIZE_BOX = "autosize_box"
 
 
 def _build_annotation_dict(
@@ -695,7 +701,9 @@ class TakeoffPlanView(
         item.setFont(font)
         if uid is None:
             self._refresh_condition_text_label_layout(item)
-        self._persist_selected_text_annotation()
+        self._persist_selected_text_annotation(
+            geometry_policy=TextAnnotationGeometryPolicy.AUTOSIZE_BOX
+        )
         if uid is not None:
             self._refresh_dimension_text_label_layout(uid, item)
         self._refresh_selected_text_annotation_selection_visuals()
@@ -711,7 +719,9 @@ class TakeoffPlanView(
             self._update_condition_text_color_swatch(color)
             if uid is None:
                 self._refresh_condition_text_label_layout(item)
-            self._persist_selected_text_annotation(autosize=False)
+            self._persist_selected_text_annotation(
+                geometry_policy=TextAnnotationGeometryPolicy.PRESERVE_BOX
+            )
             if uid is not None:
                 self._refresh_dimension_text_label_layout(uid, item)
 
@@ -725,7 +735,9 @@ class TakeoffPlanView(
         self._set_condition_text_control_signals_blocked(True)
         self._sync_condition_text_alignment_buttons(alignment)
         self._set_condition_text_control_signals_blocked(False)
-        self._persist_selected_text_annotation(autosize=False)
+        self._persist_selected_text_annotation(
+            geometry_policy=TextAnnotationGeometryPolicy.PRESERVE_BOX
+        )
         self._refresh_selected_text_annotation_selection_visuals()
 
     def _refresh_selected_text_annotation_selection_visuals(self) -> None:
@@ -987,6 +999,7 @@ class TakeoffPlanView(
         item.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsFocusable, True)
         item.setFocus(Qt.FocusReason.MouseFocusReason)
+        self._update_cursor()
         if was_inactive:
             self.text_annotation_edit_mode_changed.emit(True)
         return True
@@ -1057,6 +1070,17 @@ class TakeoffPlanView(
             return False
         return self._text_annotation_contains_scene_point(uid, scene_pos)
 
+    def _inline_text_annotation_box_contains_scene_point(
+        self, scene_pos: QtCore.QPointF
+    ) -> bool:
+        uid = self._editing_text_annotation_uid
+        if uid is None:
+            return False
+        item = self._text_annotation_item(uid)
+        if item is None:
+            return False
+        return item.boundingRect().contains(item.mapFromScene(scene_pos))
+
     def _active_inline_text_editor_contains_scene_point(
         self, scene_pos: QtCore.QPointF
     ) -> bool:
@@ -1075,9 +1099,21 @@ class TakeoffPlanView(
             return self._editing_named_view_item
         return None
 
+    def _clear_inline_text_item_selection(
+        self, item: Optional[QGraphicsTextItem]
+    ) -> None:
+        if item is None:
+            return
+        cursor = item.textCursor()
+        if not cursor.hasSelection():
+            return
+        cursor.clearSelection()
+        item.setTextCursor(cursor)
+
     def _finish_active_inline_text_edit(self, commit: bool) -> None:
         if self._editing_named_view_uid is not None:
             self._finish_named_view_rename(commit)
+            return
         self._finish_text_annotation_edit(commit)
 
     def _finish_text_annotation_edit(self, commit: bool) -> None:
@@ -1096,16 +1132,23 @@ class TakeoffPlanView(
                 if commit and ann is not None:
                     text = item.toPlainText()
                     try:
-                        self._persist_text_annotation(uid, item, text_override=text)
+                        self._persist_text_annotation(
+                            uid,
+                            item,
+                            text_override=text,
+                            geometry_policy=TextAnnotationGeometryPolicy.PRESERVE_BOX,
+                        )
                     except Exception as exc:
                         error = exc
                 elif not commit:
                     item.setPlainText(self._editing_text_original)
+                self._clear_inline_text_item_selection(item)
                 item.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
                 item.clearFocus()
             self._clear_inline_text_document()
             self._editing_text_annotation_uid = None
             self._editing_text_original = ""
+            self._update_cursor()
             self.text_annotation_edit_mode_changed.emit(False)
         finally:
             self._finishing_text_annotation_edit = False
@@ -1124,6 +1167,7 @@ class TakeoffPlanView(
                     self._persist_named_view_name(uid, item.toPlainText())
                 elif not commit:
                     item.setPlainText(self._editing_text_original)
+                self._clear_inline_text_item_selection(item)
                 item.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
                 item.clearFocus()
         finally:
@@ -1271,7 +1315,12 @@ class TakeoffPlanView(
         }
 
     def _persist_selected_text_annotation(
-        self, text_override: Optional[str] = None, *, autosize: bool = True
+        self,
+        text_override: Optional[str] = None,
+        *,
+        geometry_policy: TextAnnotationGeometryPolicy = (
+            TextAnnotationGeometryPolicy.AUTOSIZE_BOX
+        ),
     ) -> None:
         uid = self._selected_text_annotation_uid
         item = self._selected_text_item
@@ -1284,7 +1333,12 @@ class TakeoffPlanView(
         if ann is not None and ann.is_dimension:
             self._persist_selected_dimension_text_label(uid, item)
             return
-        self._persist_text_annotation(uid, item, text_override, autosize=autosize)
+        self._persist_text_annotation(
+            uid,
+            item,
+            text_override,
+            geometry_policy=geometry_policy,
+        )
 
     def _refresh_dimension_text_label_layout(
         self, uid: str, item: QGraphicsTextItem
@@ -1558,17 +1612,21 @@ class TakeoffPlanView(
         item: QGraphicsTextItem,
         text_override: Optional[str] = None,
         *,
-        autosize: bool = True,
+        geometry_policy: TextAnnotationGeometryPolicy = (
+            TextAnnotationGeometryPolicy.AUTOSIZE_BOX
+        ),
     ) -> None:
         ann = self._current_annotations.get(uid)
         new_props = self._text_annotation_properties(uid, item, text_override)
         if ann is None or new_props is None:
             return
-        position_change = (
-            self._autosize_text_annotation_box(uid, item, text_override)
-            if autosize
-            else None
-        )
+        if geometry_policy == TextAnnotationGeometryPolicy.PRESERVE_BOX:
+            self._apply_text_annotation_box_to_item(ann, item)
+            position_change = None
+        else:
+            position_change = self._autosize_text_annotation_box(
+                uid, item, text_override
+            )
         keys = tuple(new_props.keys())
         old_props = {key: ann.properties.get(key) for key in keys}
         old_props["FontColor"] = self._annotation_font_color_int(ann)

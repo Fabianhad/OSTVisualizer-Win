@@ -478,7 +478,6 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         items = self._render_takeoff_items(condition, takeoff)
         pattern_item = items[1]
-
         self._assert_parallel_angle(self._path_line_angle(pattern_item), math.pi / 4.0)
 
     def test_linear_vertical_pattern_is_perpendicular_to_linear_direction(self):
@@ -497,7 +496,6 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         items = self._render_takeoff_items(condition, takeoff)
         pattern_item = items[1]
-
         self._assert_parallel_angle(self._path_line_angle(pattern_item), -math.pi / 4.0)
 
     def test_oriented_linear_diagonal_pattern_uses_configured_spacing(self):
@@ -516,7 +514,6 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         items = self._render_takeoff_items(condition, takeoff)
         pattern_items = self._line_path_items(items[1:])
-
         self.assertGreaterEqual(len(pattern_items), 2)
         self.assertAlmostEqual(
             self._line_spacing(pattern_items[0], pattern_items[1]), 2.0, delta=0.01
@@ -537,7 +534,6 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         items = self._render_takeoff_items(condition, takeoff)
         pattern_items = self._line_path_items(items[1:])
-
         self.assertGreaterEqual(len(pattern_items), 2)
         self.assertAlmostEqual(
             self._line_spacing(pattern_items[0], pattern_items[1]), 2.0, delta=0.01
