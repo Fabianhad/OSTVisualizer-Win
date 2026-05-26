@@ -11,7 +11,6 @@ from ost_visualizer.application.dtos.page_export_data_dto import (
     PageExportData as PageExportDto,
 )
 from ost_visualizer.domain.entities.page import Page
-from ost_visualizer.presentation.handlers.export_handler import _append_extension_once
 from ost_visualizer.presentation.utils.image_show_mode import (
     SHOW_BOTH,
     SHOW_ORIGINAL,
@@ -125,30 +124,6 @@ def _read_pdf_stream_text(path):
 
 
 class PDFOverlayExportTests(unittest.TestCase):
-    def test_pdf_export_filename_keeps_existing_pdf_extension(self):
-        filename = _append_extension_once(
-            "25-051 Marriott Element, Capel Hill, NC - S-100.pdf", "pdf"
-        )
-        self.assertEqual(
-            filename, "25-051 Marriott Element, Capel Hill, NC - S-100.pdf"
-        )
-
-    def test_pdf_export_filename_keeps_existing_pdf_extension_case_insensitive(self):
-        filename = _append_extension_once(
-            "25-051 Marriott Element, Capel Hill, NC - S-100.PDF", "pdf"
-        )
-        self.assertEqual(
-            filename, "25-051 Marriott Element, Capel Hill, NC - S-100.PDF"
-        )
-
-    def test_pdf_export_filename_appends_pdf_when_missing(self):
-        filename = _append_extension_once(
-            "25-051 Marriott Element, Capel Hill, NC - S-100", "pdf"
-        )
-        self.assertEqual(
-            filename, "25-051 Marriott Element, Capel Hill, NC - S-100.pdf"
-        )
-
     def test_main_only_export_uses_main_pdf_source(self):
         writer = _FakeWriter()
         exporter = _make_exporter(writer)

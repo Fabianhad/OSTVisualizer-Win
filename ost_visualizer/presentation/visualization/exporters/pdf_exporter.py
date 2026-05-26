@@ -28,8 +28,8 @@ from ..core.geometry.takeoff_geometry import (
     compute_curved_linear_vertices,
     compute_straight_linear_vertices,
 )
-from ..pdf.renderers.annotation_renderer import format_dimension_distance
 from ..pdf.page_cache import PageCache
+from ..pdf.renderers.annotation_renderer import format_dimension_distance
 from ..pdf.services.composite_renderer import CompositeRenderer
 from . import ost_pdf_writer
 

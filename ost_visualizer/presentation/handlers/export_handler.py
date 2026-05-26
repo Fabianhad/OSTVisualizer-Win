@@ -20,13 +20,6 @@ def _progress_callback(reporter: Optional[ProgressReporter]) -> Optional[Callabl
     return lambda _current, _total, description: reporter.report(description)
 
 
-def _append_extension_once(filename: str, extension: str) -> str:
-    suffix = f".{extension.lstrip('.')}"
-    if filename.lower().endswith(suffix.lower()):
-        return filename
-    return f"{filename}{suffix}"
-
-
 class ExportHandler:
     def __init__(
         self,
@@ -93,14 +86,12 @@ class ExportHandler:
         bid = self.project_data.get_current_bid()
         bid_name = bid.name if bid else "Bid"
         if len(pages_data) == 1:
-            default_filename = _append_extension_once(
-                f"{bid_name} - {first_page_name}", "pdf"
-            )
+            default_filename = f"{bid_name} - {first_page_name}"
+            if not default_filename.lower().endswith(".pdf"):
+                default_filename = f"{default_filename}.pdf"
             dialog_title = "Export Page as PDF"
         else:
-            default_filename = _append_extension_once(
-                f"{bid_name} - {len(pages_data)} Pages", "pdf"
-            )
+            default_filename = f"{bid_name} - {len(pages_data)} Pages.pdf"
             dialog_title = f"Export {len(pages_data)} Pages as PDF"
         filename, _ = QtWidgets.QFileDialog.getSaveFileName(
             self.window,
