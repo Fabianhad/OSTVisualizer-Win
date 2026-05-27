@@ -869,7 +869,7 @@ class PlanViewActionHandler:
         regulars = [t for t in all_items if not t.is_hole]
         holes = [t for t in all_items if t.is_hole]
         if holes and not regulars:
-            if not self._plan_view.intelligent_paste_enabled:
+            if not self._is_allowed(Feature.PLACE_TAKEOFF):
                 return
             extras_by_uid = {
                 h.uid: dict(self._clipboard_svc.get_extras(h.uid)) for h in holes

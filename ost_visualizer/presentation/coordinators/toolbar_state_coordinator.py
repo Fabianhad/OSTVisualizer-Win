@@ -3,6 +3,9 @@ from PySide6 import QtGui, QtWidgets
 from ..config import TAB_INDEX_TAKEOFF
 from ..managers.ui_access_manager import Feature
 
+_BACKOUT_ENABLED_TOOLTIP = "Create a backout in the selected area takeoff"
+_BACKOUT_DISABLED_TOOLTIP = "Select a visible area takeoff to create a backout."
+
 
 class ToolbarStateCoordinator:
     def __init__(self, ui_state_manager, ui_access_manager, project_data):
@@ -18,6 +21,7 @@ class ToolbarStateCoordinator:
         self._duplicate_action: Optional[QtGui.QAction] = None
         self._select_action: Optional[QtGui.QAction] = None
         self._select_all_action: Optional[QtGui.QAction] = None
+        self._backout_action: Optional[QtGui.QAction] = None
         self._cover_sheet_button: Optional[QtWidgets.QToolButton] = None
         self._page_settings_bar = None
         self._bid_layers_sidebar = None
@@ -29,6 +33,7 @@ class ToolbarStateCoordinator:
         self.opengl_viewer = None
         self.conditions_sidebar = None
         self._tab_widget = None
+        self._view_stack = None
 
     def set_copy_action(self, action: QtGui.QAction) -> None:
         self._copy_action = action
@@ -56,6 +61,9 @@ class ToolbarStateCoordinator:
 
     def set_select_all_action(self, action: QtGui.QAction) -> None:
         self._select_all_action = action
+
+    def set_backout_action(self, action: QtGui.QAction) -> None:
+        self._backout_action = action
 
     def set_cover_sheet_button(self, btn: QtWidgets.QToolButton) -> None:
         self._cover_sheet_button = btn
@@ -87,9 +95,60 @@ class ToolbarStateCoordinator:
     def set_tab_widget(self, tab_widget) -> None:
         self._tab_widget = tab_widget
 
+    def set_view_stack(self, view_stack) -> None:
+        self._view_stack = view_stack
+
     def _is_condition_placeable(self, condition_uid: str) -> bool:
         condition = self._project_data.get_bid_conditions().get(condition_uid)
         return bool(condition and condition.layer_visible)
+
+    def _set_backout_checked_silent(self, checked: bool) -> None:
+        if not self._backout_action:
+            return
+        if self._backout_action.isChecked() == checked:
+            return
+        self._backout_action.blockSignals(True)
+        self._backout_action.setChecked(checked)
+        self._backout_action.blockSignals(False)
+
+    def is_backout_context_available(self) -> bool:
+        if not self.plan_view:
+            return False
+        if not self._tab_widget or self._tab_widget.currentIndex() != TAB_INDEX_TAKEOFF:
+            return False
+        if not self._view_stack or self._view_stack.currentIndex() != 1:
+            return False
+        if not self._access.is_allowed(Feature.PLACE_TAKEOFF):
+            return False
+        return True
+
+    def current_backout_candidate_uid(self):
+        if not self.is_backout_context_available():
+            return None
+        return self.plan_view.backout_parent_candidate_uid()
+
+    def refresh_backout_action(self) -> None:
+        if not self._backout_action or not self.plan_view:
+            return
+        context_available = self.is_backout_context_available()
+        active = self.plan_view.backout_mode_active
+        if active and (
+            not context_available or not self.plan_view.is_backout_context_valid()
+        ):
+            self.plan_view.cancel_backout_mode()
+            active = False
+        if active:
+            self._backout_action.setEnabled(True)
+            self._backout_action.setToolTip(_BACKOUT_ENABLED_TOOLTIP)
+            self._set_backout_checked_silent(True)
+            return
+        parent_uid = self.current_backout_candidate_uid()
+        enabled = bool(parent_uid)
+        self._backout_action.setEnabled(enabled)
+        self._backout_action.setToolTip(
+            _BACKOUT_ENABLED_TOOLTIP if enabled else _BACKOUT_DISABLED_TOOLTIP
+        )
+        self._set_backout_checked_silent(False)
 
     def refresh(self) -> None:
         current_tab = self._tab_widget.currentIndex() if self._tab_widget else 0
@@ -254,6 +313,7 @@ class ToolbarStateCoordinator:
             self.conditions_sidebar.set_create_folder_enabled(
                 self._access.is_allowed(Feature.CREATE_FOLDER)
             )
+        self.refresh_backout_action()
 
     def cleanup(self) -> None:
         self._copy_action = None
@@ -265,6 +325,7 @@ class ToolbarStateCoordinator:
         self._duplicate_action = None
         self._select_action = None
         self._select_all_action = None
+        self._backout_action = None
         self._cover_sheet_button = None
         self._page_settings_bar = None
         self._bid_layers_sidebar = None
@@ -276,6 +337,7 @@ class ToolbarStateCoordinator:
         self.opengl_viewer = None
         self.conditions_sidebar = None
         self._tab_widget = None
+        self._view_stack = None
         self._ui_state = None
         self._access = None
         self._project_data = None

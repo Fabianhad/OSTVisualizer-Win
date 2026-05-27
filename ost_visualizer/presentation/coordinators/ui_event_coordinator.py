@@ -201,6 +201,14 @@ class UIEventCoordinator:
         self._toolbar.set_select_all_action(action)
         self._toolbar.refresh()
 
+    def set_backout_action(self, action: QtGui.QAction) -> None:
+        self._toolbar.set_backout_action(action)
+        action.toggled.connect(self._on_backout_toggled)
+        self._toolbar.refresh_backout_action()
+
+    def refresh_backout_action(self) -> None:
+        self._toolbar.refresh_backout_action()
+
     def set_cover_sheet_button(self, btn: QtWidgets.QToolButton) -> None:
         self._toolbar.set_cover_sheet_button(btn)
         self._toolbar.refresh()
@@ -283,13 +291,16 @@ class UIEventCoordinator:
     def set_view_stack(self, view_stack) -> None:
         self._view_stack = view_stack
         self._sidebar.set_view_stack(view_stack)
+        self._toolbar.set_view_stack(view_stack)
         view_stack.currentChanged.connect(self._on_view_stack_changed)
+        self._toolbar.refresh_backout_action()
 
     def _on_view_stack_changed(self, index: int) -> None:
         self._sidebar.update_conditions_quantities()
         if index == 1 and self.plan_view:
             self.plan_view.reset_ctrl_held()
         self._update_page_info_status()
+        self._toolbar.refresh()
 
     def set_opengl_viewer(self, viewer) -> None:
         self.opengl_viewer = viewer
@@ -428,6 +439,7 @@ class UIEventCoordinator:
         self._viewer.plan_view = view
         self._toolbar.set_plan_view(view)
         view.takeoff_selection_changed.connect(self._on_takeoff_selection_changed)
+        view.backout_mode_changed.connect(self._on_backout_mode_changed)
         view.clipboard_changed.connect(self._toolbar.refresh)
         view.text_annotation_edit_mode_changed.connect(
             self._on_text_annotation_edit_mode_changed
@@ -738,6 +750,34 @@ class UIEventCoordinator:
     def _on_takeoff_selection_changed(self, uids: list) -> None:
         self._sync_selection(self._SOURCE_2D, uids)
         self._restore_project_tree_bid_selection_if_needed()
+
+    def _on_backout_mode_changed(self, _active: bool) -> None:
+        self._toolbar.refresh_backout_action()
+
+    def _on_backout_toggled(self, checked: bool) -> None:
+        if not self.plan_view:
+            self._toolbar.refresh_backout_action()
+            return
+        if checked:
+            parent_uid = self._toolbar.current_backout_candidate_uid()
+            if not parent_uid:
+                self._toolbar.refresh_backout_action()
+                return
+            if not self.plan_view.enter_backout_mode(parent_uid):
+                self._toolbar.refresh_backout_action()
+                return
+            takeoff = self.plan_view.get_takeoff(parent_uid)
+            condition_uid = takeoff.condition_uid if takeoff else None
+            if not condition_uid or not self._placement.enter(
+                condition_uid, [condition_uid]
+            ):
+                self.plan_view.cancel_backout_mode()
+                self._toolbar.refresh_backout_action()
+                return
+            self._toolbar.refresh_backout_action()
+            return
+        self.plan_view.cancel_backout_mode()
+        self._toolbar.refresh_backout_action()
 
     def _on_text_annotation_edit_mode_changed(self, active: bool) -> None:
         self.ui_access_manager.set_text_annotation_edit_active(active)

@@ -18,6 +18,7 @@ SortValue = Union[int, float, datetime, str, None]
 _DELETED_PROJECT_UID = "1"
 _BID_COLUMN_COUNT = 11
 _RIGHT_ALIGNED_BID_COLS = frozenset({0, 6, 7})
+_UNASSIGNED_STATUS_LABEL = "(unassigned)"
 
 
 def _same_file_path(left: Optional[str], right: Optional[str]) -> bool:
@@ -382,7 +383,7 @@ class ProjectView(QtWidgets.QWidget):
         status_items: dict[str, QtWidgets.QTreeWidgetItem] = {}
 
         def status_label(status: str) -> str:
-            return status.strip() if status and status.strip() else "(unassigned)"
+            return self._display_status(status)
 
         def status_item_for(status: str) -> QtWidgets.QTreeWidgetItem:
             label = status_label(status)
@@ -491,7 +492,7 @@ class ProjectView(QtWidgets.QWidget):
         return [
             bid_no_display,
             bid.name or f"Bid {bid.uid}",
-            bid.status,
+            self._display_status(bid.status),
             bid_date_display,
             bid.job_id,
             bid.estimator,
@@ -501,6 +502,10 @@ class ProjectView(QtWidgets.QWidget):
             copy_from_display,
             copy_timestamp_display,
         ]
+
+    @staticmethod
+    def _display_status(status: str) -> str:
+        return status.strip() if status and status.strip() else _UNASSIGNED_STATUS_LABEL
 
     def _apply_bid_sort_values(self, item: SortableTreeWidgetItem, bid: Bid) -> None:
         def lc(value: Optional[str]) -> str:
@@ -900,10 +905,14 @@ class ProjectView(QtWidgets.QWidget):
         return None
 
     def _select_item(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        expanded_parent_keys: set[str] = set()
         self.top_tree.blockSignals(True)
         parent = item.parent()
         while parent is not None:
             parent.setExpanded(True)
+            key = self._get_node_key(parent)
+            if key:
+                expanded_parent_keys.add(key)
             parent = parent.parent()
         self.top_tree.setCurrentItem(item)
         index = self.top_tree.indexFromItem(item)
@@ -921,6 +930,9 @@ class ProjectView(QtWidgets.QWidget):
             item, QtWidgets.QAbstractItemView.ScrollHint.EnsureVisible
         )
         self.top_tree.blockSignals(False)
+        if expanded_parent_keys:
+            self._has_saved_expanded_nodes = True
+            self.expanded_nodes.update(expanded_parent_keys)
         kind, uid, file_path = self._get_item_info(item)
         self.current_bid_ref = (
             BidRef(file_path=file_path, bid_uid=uid)

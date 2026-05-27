@@ -251,6 +251,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handlers.ui_event.set_page_settings_bar(components.page_settings_bar)
         self.handlers.ui_event.set_select_action(components.select_action)
         self.handlers.ui_event.set_place_action(components.place_action)
+        self.handlers.ui_event.set_backout_action(components.backout_action)
         self.handlers.ui_event.set_conditions_sidebar(components.conditions_sidebar)
         self.handlers.ui_event.set_bid_layers_sidebar(components.bid_layers_sidebar)
         self.handlers.ui_event.set_undo_service(components.undo_service)

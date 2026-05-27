@@ -12,9 +12,14 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.config_service import ConfigService
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
 from ost_visualizer.domain.entities.page_info import BidPageInfo
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
+    PlacementModeMixin,
+)
 from ost_visualizer.presentation.components.menu_builder import MenuBuilder
 from ost_visualizer.presentation.components.page_combo import (
     PageComboBox,
@@ -35,14 +40,19 @@ from ost_visualizer.presentation.config import (
     OPTIONS_TAB_OPTIONS,
     OPTIONS_WINDOW_HEIGHT,
     OPTIONS_WINDOW_WIDTH,
+    TAB_INDEX_TAKEOFF,
 )
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
+from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
+    ToolbarStateCoordinator,
+)
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
 from ost_visualizer.presentation.dialogs.options import components as options_components
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.utils.color_swatch import rounded_color_swatch
 from ost_visualizer.presentation.utils.mcp_setup_config import (
     build_claude_desktop_config,
@@ -1060,6 +1070,289 @@ class OptionsPreferencesTests(unittest.TestCase):
         TakeoffPlanView._apply_cursor_mode(view, "select")
         self.assertEqual(viewport.tracking, [True, True, False])
         self.assertEqual(viewport.updates, 3)
+
+    def test_backout_action_state_matches_context_rules(self):
+        class FakeAccess:
+            def __init__(self, allowed: bool):
+                self.allowed = allowed
+
+            def is_allowed(self, feature):
+                return self.allowed and feature == Feature.PLACE_TAKEOFF
+
+        class FakeUiState:
+            def get_selected_bid_refs(self):
+                return []
+
+        class FakeProjectData:
+            def __init__(self, conditions):
+                self.conditions = conditions
+
+            def get_bid_conditions(self):
+                return dict(self.conditions)
+
+        class FakeIndexWidget:
+            def __init__(self, index):
+                self.index = index
+
+            def currentIndex(self):
+                return self.index
+
+        class FakeCoordinateSystem:
+            def parse_position(self, position):
+                return list(position)
+
+        class FakeSceneBuilder:
+            def get_coordinate_system(self):
+                return FakeCoordinateSystem()
+
+        class BackoutPlanView:
+            _valid_backout_parent_uid = TakeoffPlanView._valid_backout_parent_uid
+            backout_parent_candidate_uid = (
+                TakeoffPlanView.backout_parent_candidate_uid
+            )
+
+            def __init__(self, selected, takeoffs, conditions):
+                self._selected_uids = set(selected)
+                self._current_takeoffs = dict(takeoffs)
+                self._current_conditions = dict(conditions)
+                self._scene_builder = FakeSceneBuilder()
+                self.cancel_calls = 0
+
+            @property
+            def backout_mode_active(self):
+                return False
+
+            def is_backout_context_valid(self):
+                return False
+
+            def cancel_backout_mode(self):
+                self.cancel_calls += 1
+
+        area_condition = Condition(
+            uid="area-condition",
+            condition_type=Condition.TYPE_AREA,
+            layer_visible=True,
+        )
+        hidden_area = Condition(
+            uid="hidden-area",
+            condition_type=Condition.TYPE_AREA,
+            layer_visible=False,
+        )
+        linear_condition = Condition(
+            uid="linear-condition",
+            condition_type=Condition.TYPE_LINEAR,
+            layer_visible=True,
+        )
+        valid_area = Takeoff(
+            uid="area",
+            condition_uid="area-condition",
+            position=[0.0, 0.0, 4.0, 0.0, 4.0, 4.0],
+            parent_uid="0",
+        )
+        other_area = Takeoff(
+            uid="other",
+            condition_uid="area-condition",
+            position=[5.0, 5.0, 6.0, 5.0, 6.0, 6.0],
+            parent_uid="0",
+        )
+        conditions = {
+            condition.uid: condition
+            for condition in (area_condition, hidden_area, linear_condition)
+        }
+
+        def enabled_for(
+            selected,
+            takeoffs,
+            tab_index=TAB_INDEX_TAKEOFF,
+            view_index=1,
+            allowed=True,
+        ):
+            _app()
+            action = QtGui.QAction()
+            coordinator = ToolbarStateCoordinator(
+                FakeUiState(), FakeAccess(allowed), FakeProjectData(conditions)
+            )
+            coordinator.set_backout_action(action)
+            coordinator.set_tab_widget(FakeIndexWidget(tab_index))
+            coordinator.set_view_stack(FakeIndexWidget(view_index))
+            coordinator.set_plan_view(BackoutPlanView(selected, takeoffs, conditions))
+            coordinator.refresh_backout_action()
+            return action.isEnabled()
+
+        self.assertTrue(enabled_for({"area"}, {"area": valid_area}))
+        self.assertFalse(enabled_for(set(), {"area": valid_area}))
+        self.assertFalse(enabled_for({"area", "other"}, {"area": valid_area}))
+        self.assertFalse(
+            enabled_for(
+                {"hole"},
+                {
+                    "hole": Takeoff(
+                        uid="hole",
+                        condition_uid="area-condition",
+                        position=[1.0, 1.0, 2.0, 1.0, 2.0, 2.0],
+                        parent_uid="area",
+                    )
+                },
+            )
+        )
+        self.assertFalse(
+            enabled_for(
+                {"linear"},
+                {
+                    "linear": Takeoff(
+                        uid="linear",
+                        condition_uid="linear-condition",
+                        position=[0.0, 0.0, 4.0, 0.0, 4.0, 4.0],
+                        parent_uid="0",
+                    )
+                },
+            )
+        )
+        self.assertFalse(
+            enabled_for(
+                {"hidden"},
+                {
+                    "hidden": Takeoff(
+                        uid="hidden",
+                        condition_uid="hidden-area",
+                        position=[0.0, 0.0, 4.0, 0.0, 4.0, 4.0],
+                        parent_uid="0",
+                    )
+                },
+            )
+        )
+        self.assertFalse(
+            enabled_for(
+                {"short"},
+                {
+                    "short": Takeoff(
+                        uid="short",
+                        condition_uid="area-condition",
+                        position=[0.0, 0.0, 4.0, 0.0],
+                        parent_uid="0",
+                    )
+                },
+            )
+        )
+        self.assertFalse(enabled_for({"area"}, {"area": valid_area}, view_index=0))
+        self.assertFalse(enabled_for({"area"}, {"area": valid_area}, tab_index=0))
+        self.assertFalse(enabled_for({"area"}, {"area": valid_area}, allowed=False))
+
+    def test_menu_refresh_uses_explicit_backout_refresh_method(self):
+        _app()
+        action = QtGui.QAction()
+        explicit_refresh_calls = []
+        controller = MenuController.__new__(MenuController)
+        controller._actions = {"backout_mode": action}
+        controller._tool_action_enabled_state = {}
+        controller.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(
+                refresh_backout_action=lambda: explicit_refresh_calls.append(1)
+            )
+        )
+
+        MenuController._sync_tool_action_states(controller, True)
+
+        self.assertEqual(explicit_refresh_calls, [1])
+
+    def test_begin_paste_backout_requires_host_area(self):
+        class FakeSignal:
+            def __init__(self):
+                self.emitted = []
+
+            def emit(self, value):
+                self.emitted.append(value)
+
+        class FakePasteBackoutView:
+            def __init__(self):
+                self._current_conditions = {
+                    "area-condition": Condition(
+                        uid="area-condition",
+                        condition_type=Condition.TYPE_AREA,
+                    )
+                }
+                self._current_takeoffs = {}
+                self._paste_backout_active = False
+                self._paste_backout_sources = []
+                self._paste_backout_source_bid_uid = None
+                self._paste_backout_group_centroid = (0.0, 0.0)
+                self._last_mouse_vp_pos = None
+                self.cursor_mode_change_requested = FakeSignal()
+                self.finished_intelligent_paste = 0
+                self.cursor_modes = []
+
+            def finish_intelligent_paste_placement(self):
+                self.finished_intelligent_paste += 1
+
+            def _apply_cursor_mode(self, mode):
+                self.cursor_modes.append(mode)
+
+        view = FakePasteBackoutView()
+        hole = Takeoff(
+            uid="hole",
+            condition_uid="area-condition",
+            position=[1.0, 1.0, 2.0, 1.0, 2.0, 2.0],
+            parent_uid="source-parent",
+        )
+
+        self.assertFalse(TakeoffPlanView.begin_paste_backout(view, [hole], {}, "7"))
+        self.assertFalse(view._paste_backout_active)
+        self.assertEqual(view.cursor_modes, [])
+
+        view._current_takeoffs["host"] = Takeoff(
+            uid="host",
+            condition_uid="area-condition",
+            position=[0.0, 0.0, 4.0, 0.0, 4.0, 4.0],
+            parent_uid="0",
+        )
+        self.assertTrue(TakeoffPlanView.begin_paste_backout(view, [hole], {}, "7"))
+        self.assertTrue(view._paste_backout_active)
+        self.assertEqual(view.cursor_modes, ["paste_backout"])
+        self.assertEqual(view.cursor_mode_change_requested.emitted, ["paste_backout"])
+
+    def test_invalid_paste_backout_click_is_rejected_without_commit(self):
+        class FakeEvent:
+            def __init__(self):
+                self.accepted = False
+
+            def pos(self):
+                return QtCore.QPoint(0, 0)
+
+            def accept(self):
+                self.accepted = True
+
+        class FakeSignal:
+            def __init__(self):
+                self.emitted = []
+
+            def emit(self, placements, source_bid_uid):
+                self.emitted.append((placements, source_bid_uid))
+
+        class FakePasteBackoutView:
+            def __init__(self):
+                self._paste_backout_active = True
+                self.paste_backouts_placed = FakeSignal()
+                self.cancel_calls = 0
+
+            def mapToScene(self, _pos):
+                return QtCore.QPointF(0.0, 0.0)
+
+            def _paste_backout_compute_translations(self, _scene_pos):
+                return [[1.0, 1.0, 2.0, 1.0, 2.0, 2.0]]
+
+            def _paste_backout_validate_all(self, _translated_list):
+                return [("host", False)], False
+
+            def cancel_paste_backout(self):
+                self.cancel_calls += 1
+
+        view = FakePasteBackoutView()
+        event = FakeEvent()
+
+        self.assertTrue(PlacementModeMixin.handle_paste_backout_press(view, event))
+        self.assertTrue(event.accepted)
+        self.assertEqual(view.paste_backouts_placed.emitted, [])
+        self.assertEqual(view.cancel_calls, 0)
 
     def test_crosshair_repaints_on_vertical_and_horizontal_scroll(self):
         class FakeViewport:

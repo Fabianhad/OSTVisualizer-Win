@@ -1068,7 +1068,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [50.0, 75.0, 100.0, 50.0],
         )
 
-    def test_intelligent_paste_off_blocks_holes_only_backout_paste(self):
+    def test_intelligent_paste_off_starts_holes_only_backout_paste(self):
         hole = Takeoff(
             uid="old-hole",
             condition_uid="c1",
@@ -1091,7 +1091,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         handler._clipboard_svc = FakeClipboard([hole])
         handler.on_paste_requested()
-        self.assertEqual(plan_view.paste_backout_calls, [])
+        self.assertEqual(len(plan_view.paste_backout_calls), 1)
         self.assertEqual(write.calls, [])
 
     def test_intelligent_paste_on_uses_holes_only_backout_paste(self):
@@ -1117,6 +1117,32 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler._clipboard_svc = FakeClipboard([hole])
         handler.on_paste_requested()
         self.assertEqual(len(plan_view.paste_backout_calls), 1)
+        self.assertEqual(write.calls, [])
+
+    def test_holes_only_backout_paste_requires_place_takeoff_access(self):
+        hole = Takeoff(
+            uid="old-hole",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[0.5, 0.5, 1.0, 0.5, 1.0, 1.0],
+            parent_uid="old-parent",
+        )
+        plan_view = FakePlanView()
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.SELECT_TAKEOFFS}),
+        )
+        handler._clipboard_svc = FakeClipboard([hole])
+        handler.on_paste_requested()
+        self.assertEqual(plan_view.paste_backout_calls, [])
         self.assertEqual(write.calls, [])
 
     def test_paste_annotation_redo_uses_source_to_current_takeoff_remap(self):

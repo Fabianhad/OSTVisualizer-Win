@@ -60,3 +60,6 @@
 - Fixed named view renames so `BidNamedViews.Name` is written as plain text instead of text-annotation encoded bytes.
 - Refreshed detached annotation/view window named-view combo boxes immediately after named view renames.
 - Fixed placement live previews so disabling full-window crosshairs no longer disables mouse tracking needed for preview updates.
+- Fixed holes-only paste so copied backout holes enter paste-backout placement even when Intelligent Paste is disabled.
+- Kept project tree folders expanded after deleting a bid when the folder was opened by restored selection state.
+- Displayed bids without an assigned job status as `(unassigned)` in the project tree Status column.

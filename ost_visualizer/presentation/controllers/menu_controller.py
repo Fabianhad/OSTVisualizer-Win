@@ -467,11 +467,7 @@ class MenuController:
         backout_action = self._actions.get("backout_mode")
         if backout_action:
             self._tool_action_enabled_state.pop("backout_mode", None)
-            refresh_enabled = backout_action.property("refresh_enabled")
-            if callable(refresh_enabled):
-                refresh_enabled()
-            else:
-                backout_action.setEnabled(False)
+            self.handlers.ui_event.refresh_backout_action()
 
     def _set_variable_actions_enabled(self, variable: str, enabled: bool) -> None:
         for action in self._variable_actions.get(variable, ()):
