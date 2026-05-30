@@ -56,6 +56,7 @@ from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.utils.color_swatch import rounded_color_swatch
 from ost_visualizer.presentation.utils.mcp_setup_config import (
     build_claude_desktop_config,
+    build_codex_config_toml,
     build_codex_mcp_add_command,
 )
 from ost_visualizer.presentation.utils.zoom_debouncer import (
@@ -567,16 +568,23 @@ class OptionsPreferencesTests(unittest.TestCase):
         texts = _visible_texts(dialog)
         self.assertIn("Connect AI tools", texts)
         self.assertIn("Claude Desktop or Cursor", texts)
-        self.assertIn("Codex CLI", texts)
+        self.assertIn("Codex", texts)
+        self.assertIn("Codex config.toml", texts)
+        self.assertIn("Codex CLI command", texts)
         self.assertEqual(
             tab.claude_config_edit.toPlainText(),
             build_claude_desktop_config(helper_path),
+        )
+        self.assertEqual(
+            tab.codex_config_edit.toPlainText(),
+            build_codex_config_toml(helper_path),
         )
         self.assertEqual(
             tab.codex_command_edit.toPlainText(),
             build_codex_mcp_add_command(helper_path),
         )
         self.assertEqual(tab.copy_claude_button.text(), "Copy Setup JSON")
+        self.assertEqual(tab.copy_codex_config_button.text(), "Copy Codex TOML")
         self.assertEqual(tab.copy_codex_button.text(), "Copy Setup Command")
         dialog.close()
 
@@ -585,6 +593,11 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog = OptionsDialog(Config(), mcp_helper_path=helper_path)
         apply_button = _apply_button(dialog)
         dialog._tabs.setCurrentWidget(dialog._mcp_setup_tab)
+        dialog._mcp_setup_tab.copy_codex_config_button.click()
+        self.assertEqual(
+            QtWidgets.QApplication.clipboard().text(),
+            build_codex_config_toml(helper_path),
+        )
         dialog._mcp_setup_tab.copy_codex_button.click()
         self.assertEqual(
             QtWidgets.QApplication.clipboard().text(),

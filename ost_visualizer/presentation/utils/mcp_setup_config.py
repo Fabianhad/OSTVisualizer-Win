@@ -28,6 +28,25 @@ def build_claude_desktop_config(helper_path: Path) -> str:
     return json.dumps(config, indent=2)
 
 
+def _toml_basic_string(value: str) -> str:
+    replacements = {
+        "\\": "\\\\",
+        '"': '\\"',
+        "\b": "\\b",
+        "\t": "\\t",
+        "\n": "\\n",
+        "\f": "\\f",
+        "\r": "\\r",
+    }
+    escaped = "".join(replacements.get(char, char) for char in value)
+    return f'"{escaped}"'
+
+
+def build_codex_config_toml(helper_path: Path) -> str:
+    command = _toml_basic_string(str(Path(helper_path)))
+    return f'[mcp_servers."{MCP_SERVER_NAME}"]\n' f"command = {command}\n" "args = []"
+
+
 def quote_powershell_arg(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 

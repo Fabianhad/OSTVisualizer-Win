@@ -27,7 +27,7 @@ class McpServerRegistrationTests(unittest.TestCase):
             server = build_mcp_server(registry)
             tools = server.list_tools()
             tool_names = {tool["name"] for tool in tools}
-        self.assertEqual(len(tool_names), 33)
+        self.assertEqual(len(tool_names), 36)
         self.assertTrue(all(tool["description"] for tool in tools))
         self.assertIn("get_condition_summary", tool_names)
         self.assertIn("get_selected_pages_summary", tool_names)
@@ -35,6 +35,9 @@ class McpServerRegistrationTests(unittest.TestCase):
         self.assertIn("get_page_metadata", tool_names)
         self.assertIn("get_page_pdf_text_summary", tool_names)
         self.assertIn("get_page_pdf_vectors_summary", tool_names)
+        self.assertIn("get_page_markups_summary", tool_names)
+        self.assertIn("get_page_overlay_summary", tool_names)
+        self.assertIn("search_page_pdf_text", tool_names)
         self.assertIn("search_pages", tool_names)
         self.assertIn("list_layers", tool_names)
         self.assertIn("list_named_views", tool_names)

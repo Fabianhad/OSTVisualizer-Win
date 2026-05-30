@@ -4,6 +4,8 @@ from ..application.dtos.mcp_context_dtos import (
     McpAreaSummaryDto,
     McpBidQuantitySummaryDto,
     McpDuplicateConditionSummaryDto,
+    McpPageMarkupsSummaryDto,
+    McpPdfTextSearchSummaryDto,
     McpPdfTextSummaryDto,
     McpPdfVectorsSummaryDto,
     McpResultMetaDto,
@@ -196,6 +198,56 @@ def build_mcp_server(
             database_id,
             bid_uid,
             page_uid,
+            source,
+            limit,
+        )
+
+    @mcp.tool()
+    def get_page_markups_summary(
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+        limit: int = 50,
+    ) -> dict:
+        """Return bounded markup and annotation counts for one page."""
+        return run_read(
+            read_service.get_page_markups_summary,
+            database_id,
+            bid_uid,
+            page_uid,
+            limit,
+        )
+
+    @mcp.tool()
+    def get_page_overlay_summary(
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+    ) -> dict:
+        """Return redacted main/overlay page source and transform metadata."""
+        return run_read(
+            read_service.get_page_overlay_summary,
+            database_id,
+            bid_uid,
+            page_uid,
+        )
+
+    @mcp.tool()
+    def search_page_pdf_text(
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+        query: str,
+        source: str = "auto",
+        limit: int = 10,
+    ) -> dict:
+        """Search embedded PDF text on one page with bounded snippets."""
+        return run_read(
+            read_service.search_page_pdf_text,
+            database_id,
+            bid_uid,
+            page_uid,
+            query,
             source,
             limit,
         )
@@ -596,8 +648,9 @@ def build_mcp_server(
             "Review the OST takeoff scope for database_id="
             f"{database_id} and bid_uid={bid_uid}. Use list_pages, "
             "get_page_metadata, get_page_pdf_text_summary, "
-            "get_page_pdf_vectors_summary, list_conditions, "
-            "search_conditions, list_takeoffs, "
+            "get_page_pdf_vectors_summary, search_page_pdf_text, "
+            "get_page_markups_summary, get_page_overlay_summary, "
+            "list_conditions, search_conditions, list_takeoffs, "
             "get_condition_summary, get_bid_quantity_summary, review_scope_gaps, "
             "find_duplicate_conditions, find_zero_quantity_conditions, "
             "find_unplaced_takeoffs, and get_page_context. "
@@ -760,6 +813,8 @@ def _has_summary_meta(result) -> bool:
         (
             McpBidQuantitySummaryDto,
             McpAreaSummaryDto,
+            McpPageMarkupsSummaryDto,
+            McpPdfTextSearchSummaryDto,
             McpPdfTextSummaryDto,
             McpPdfVectorsSummaryDto,
             McpScopeGapSummaryDto,

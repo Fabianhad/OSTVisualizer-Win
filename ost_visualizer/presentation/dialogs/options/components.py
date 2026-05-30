@@ -53,6 +53,7 @@ from ...config import (
 from ...utils.color_swatch import rounded_color_swatch
 from ...utils.mcp_setup_config import (
     build_claude_desktop_config,
+    build_codex_config_toml,
     build_codex_mcp_add_command,
     default_file_state_path,
     default_mcp_helper_path,
@@ -377,13 +378,21 @@ class McpSetupTab(QtWidgets.QWidget):
         self.file_state_path = default_file_state_path()
         self.status_label = None
         self.claude_config_edit = None
+        self.codex_config_edit = None
         self.codex_command_edit = None
         self.copy_claude_button = None
+        self.copy_codex_config_button = None
         self.copy_codex_button = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
-        layout = QtWidgets.QVBoxLayout(self)
+        outer_layout = QtWidgets.QVBoxLayout(self)
+        outer_layout.setContentsMargins(*NO_MARGINS)
+        scroll_area = QtWidgets.QScrollArea(self)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        content = QtWidgets.QWidget(scroll_area)
+        layout = QtWidgets.QVBoxLayout(content)
         layout.setContentsMargins(*RELAXED_MARGINS)
         layout.setSpacing(RELAXED_SPACING)
         header = QtWidgets.QLabel("Connect AI tools", self)
@@ -398,31 +407,44 @@ class McpSetupTab(QtWidgets.QWidget):
         self.status_label = QtWidgets.QLabel(self._status_text(), self)
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
-        layout.addWidget(self._section_label("Claude Desktop or Cursor"))
-        self.claude_config_edit = self._read_only_text_edit(
+        self.claude_config_edit, self.copy_claude_button = self._add_copy_block(
+            layout,
+            "Claude Desktop or Cursor",
             build_claude_desktop_config(self.helper_path),
-            min_height=135,
+            135,
+            "Copy Setup JSON",
+            self._copy_claude_config,
         )
-        layout.addWidget(self.claude_config_edit)
-        self.copy_claude_button = QtWidgets.QPushButton("Copy Setup JSON", self)
-        self.copy_claude_button.clicked.connect(self._copy_claude_config)
-        layout.addWidget(
-            self.copy_claude_button,
-            alignment=QtCore.Qt.AlignmentFlag.AlignRight,
+        layout.addWidget(self._section_label("Codex"))
+        codex_summary = QtWidgets.QLabel(
+            "Codex connects to the local stdio helper and sees checked files "
+            "or live context from OST Visualizer.",
+            self,
         )
-        layout.addWidget(self._section_label("Codex CLI"))
-        self.codex_command_edit = self._read_only_text_edit(
+        codex_summary.setWordWrap(True)
+        layout.addWidget(codex_summary)
+        (
+            self.codex_config_edit,
+            self.copy_codex_config_button,
+        ) = self._add_copy_block(
+            layout,
+            "Codex config.toml",
+            build_codex_config_toml(self.helper_path),
+            80,
+            "Copy Codex TOML",
+            self._copy_codex_config,
+        )
+        self.codex_command_edit, self.copy_codex_button = self._add_copy_block(
+            layout,
+            "Codex CLI command",
             build_codex_mcp_add_command(self.helper_path),
-            min_height=55,
+            55,
+            "Copy Setup Command",
+            self._copy_codex_command,
         )
-        layout.addWidget(self.codex_command_edit)
-        button_row = QtWidgets.QHBoxLayout()
-        self.copy_codex_button = QtWidgets.QPushButton("Copy Setup Command", self)
-        self.copy_codex_button.clicked.connect(self._copy_codex_command)
-        button_row.addWidget(self.copy_codex_button)
-        button_row.addStretch(1)
-        layout.addLayout(button_row)
         layout.addStretch(1)
+        scroll_area.setWidget(content)
+        outer_layout.addWidget(scroll_area)
 
     def refresh_status(self) -> None:
         if self.status_label is not None:
@@ -458,8 +480,28 @@ class McpSetupTab(QtWidgets.QWidget):
         edit.setLineWrapMode(QtWidgets.QPlainTextEdit.LineWrapMode.NoWrap)
         return edit
 
+    def _add_copy_block(
+        self,
+        layout: QtWidgets.QVBoxLayout,
+        label: str,
+        text: str,
+        min_height: int,
+        button_text: str,
+        copy_slot,
+    ) -> tuple[QtWidgets.QPlainTextEdit, QtWidgets.QPushButton]:
+        layout.addWidget(self._section_label(label))
+        edit = self._read_only_text_edit(text, min_height=min_height)
+        layout.addWidget(edit)
+        button = QtWidgets.QPushButton(button_text, self)
+        button.clicked.connect(copy_slot)
+        layout.addWidget(button, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
+        return edit, button
+
     def _copy_claude_config(self) -> None:
         self._copy_to_clipboard(self.claude_config_edit.toPlainText())
+
+    def _copy_codex_config(self) -> None:
+        self._copy_to_clipboard(self.codex_config_edit.toPlainText())
 
     def _copy_codex_command(self) -> None:
         self._copy_to_clipboard(self.codex_command_edit.toPlainText())
@@ -471,6 +513,7 @@ class McpSetupTab(QtWidgets.QWidget):
     def cleanup(self) -> None:
         for button in (
             self.copy_claude_button,
+            self.copy_codex_config_button,
             self.copy_codex_button,
         ):
             if button:
@@ -480,8 +523,10 @@ class McpSetupTab(QtWidgets.QWidget):
                     pass
         self.status_label = None
         self.claude_config_edit = None
+        self.codex_config_edit = None
         self.codex_command_edit = None
         self.copy_claude_button = None
+        self.copy_codex_config_button = None
         self.copy_codex_button = None
         self.helper_path = None
         self.file_state_path = None

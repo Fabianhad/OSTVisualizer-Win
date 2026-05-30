@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 MCP_BRIDGE_SERVER_NAME = "OSTVisualizerMcpBridge.v1"
 
@@ -325,6 +325,95 @@ class McpPdfVectorsSummaryDto:
     snap_line_count: int = 0
     snap_point_count: int = 0
     segments: List[McpPdfVectorSegmentDto] = field(default_factory=list)
+
+
+@dataclass
+class McpMarkupSampleDto:
+    uid: str
+    annotation_type: str
+    layer_uid: Optional[str] = None
+    visible: bool = True
+    color: str = ""
+    width: float = 0.0
+    point_count: int = 0
+    bbox_left: Optional[float] = None
+    bbox_top: Optional[float] = None
+    bbox_right: Optional[float] = None
+    bbox_bottom: Optional[float] = None
+    length: Optional[float] = None
+    text_snippet: str = ""
+    text_character_count: int = 0
+    linked_takeoff_count: int = 0
+
+
+@dataclass
+class McpPageMarkupsSummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    page_uid: str
+    page_name: str
+    sheet_no: str
+    meta: McpResultMetaDto
+    total_markup_count: int = 0
+    visible_markup_count: int = 0
+    dimension_count: int = 0
+    text_annotation_count: int = 0
+    callout_count: int = 0
+    hotlink_count: int = 0
+    named_view_count: int = 0
+    counts_by_type: Dict[str, int] = field(default_factory=dict)
+    samples: List[McpMarkupSampleDto] = field(default_factory=list)
+
+
+@dataclass
+class McpPageOverlaySummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    page_uid: str
+    page_name: str
+    sheet_no: str
+    source_kind: str = "blank"
+    image_basename: Optional[str] = None
+    image_path_status: str = "not_configured"
+    is_pdf: bool = False
+    has_overlay: bool = False
+    overlay_basename: Optional[str] = None
+    overlay_path_status: str = "not_configured"
+    overlay_kind: str = "not_configured"
+    show_mode: int = 0
+    show_original: bool = True
+    show_overlay: bool = False
+    overlay_transform_summary: Optional[McpPdfOverlayTransformDto] = None
+
+
+@dataclass
+class McpPdfTextSearchMatchDto:
+    page_uid: str
+    page_name: str
+    sheet_no: str
+    source: str
+    snippet: str
+    left: float = 0.0
+    top: float = 0.0
+    right: float = 0.0
+    bottom: float = 0.0
+    character_count: int = 0
+
+
+@dataclass
+class McpPdfTextSearchSummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    page_uid: str
+    query: str
+    source: str
+    source_status: str
+    meta: McpResultMetaDto
+    match_count: int = 0
+    matches: List[McpPdfTextSearchMatchDto] = field(default_factory=list)
 
 
 @dataclass

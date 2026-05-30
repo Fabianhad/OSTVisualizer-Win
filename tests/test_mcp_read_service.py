@@ -87,6 +87,7 @@ class FakeProjectRepository:
             overlay_rotation=0.25,
             deskew_rotation_overlay=0.5,
             overlay_rect=(0.0, 0.0, 306.0, 396.0),
+            image_show_mode=2,
             page_index=0,
         )
         page2 = Page(
@@ -167,6 +168,27 @@ class FakeProjectRepository:
                 ),
             ],
             bid_annotations=[
+                BidAnnotation(
+                    uid="text-1",
+                    annotation_type="text",
+                    page_uid="page-1",
+                    layer_uid="layer-1",
+                    position=[15.0, 25.0, 40.0, 10.0, 0.0],
+                    properties={
+                        "Text": (
+                            "Private owner note with a deliberately long markup text "
+                            "body that should be summarized without returning the full "
+                            "annotation contents"
+                        )
+                    },
+                ),
+                BidAnnotation(
+                    uid="dimension-1",
+                    annotation_type="dimension",
+                    page_uid="page-1",
+                    position=[0.0, 0.0, 3.0, 4.0],
+                    properties={"BidTakeoffFromUID": "takeoff-1"},
+                ),
                 BidAnnotation(
                     uid="view-1",
                     annotation_type="namedview",
@@ -379,6 +401,73 @@ class McpReadServiceTests(unittest.TestCase):
                 "db-1", "bid-1", "page-1", source=r"C:\plans\A101.pdf"
             )
 
+    def test_page_markups_summary_is_bounded_and_redacts_text(self):
+        summary = self.service.get_page_markups_summary(
+            "db-1", "bid-1", "page-1", limit=2
+        )
+        self.assertEqual(summary.status, "truncated")
+        self.assertEqual(summary.total_markup_count, 3)
+        self.assertEqual(summary.visible_markup_count, 3)
+        self.assertEqual(summary.text_annotation_count, 1)
+        self.assertEqual(summary.dimension_count, 1)
+        self.assertEqual(summary.named_view_count, 1)
+        self.assertEqual(summary.counts_by_type["text"], 1)
+        self.assertEqual(summary.meta.limit, 2)
+        self.assertEqual(summary.meta.returned_count, 2)
+        self.assertEqual(summary.meta.total_count, 3)
+        self.assertTrue(summary.meta.truncated)
+        self.assertTrue(summary.meta.has_more)
+        by_type = {sample.annotation_type: sample for sample in summary.samples}
+        self.assertIn("text", by_type)
+        self.assertIn("dimension", by_type)
+        self.assertTrue(by_type["text"].text_snippet.startswith("Private owner note"))
+        self.assertLess(
+            len(by_type["text"].text_snippet),
+            by_type["text"].text_character_count,
+        )
+        self.assertFalse("text" in by_type["text"].__dict__)
+        self.assertFalse("position" in by_type["text"].__dict__)
+        self.assertFalse("properties" in by_type["text"].__dict__)
+        self.assertEqual(by_type["dimension"].length, 5.0)
+        self.assertEqual(by_type["dimension"].linked_takeoff_count, 1)
+        self.assertFalse("image_path" in summary.__dict__)
+        self.assertFalse("overlay_image_path" in summary.__dict__)
+
+    def test_page_overlay_summary_redacts_paths_and_reports_show_mode(self):
+        summary = self.service.get_page_overlay_summary("db-1", "bid-1", "page-1")
+        self.assertEqual(summary.status, "ok")
+        self.assertEqual(summary.source_kind, "composite")
+        self.assertEqual(summary.image_basename, "A101.pdf")
+        self.assertEqual(summary.overlay_basename, "A101-overlay.pdf")
+        self.assertEqual(summary.overlay_kind, "pdf")
+        self.assertTrue(summary.show_original)
+        self.assertTrue(summary.show_overlay)
+        self.assertEqual(summary.overlay_transform_summary.rotation, 0.75)
+        self.assertFalse("image_path" in summary.__dict__)
+        self.assertFalse("overlay_image_path" in summary.__dict__)
+
+    def test_search_page_pdf_text_is_bounded_and_snippet_only(self):
+        summary = self.service.search_page_pdf_text(
+            "db-1", "bid-1", "page-1", query="schedule", limit=1
+        )
+        self.assertEqual(summary.status, "ok")
+        self.assertEqual(summary.source, "main")
+        self.assertEqual(summary.match_count, 1)
+        self.assertEqual(summary.meta.limit, 1)
+        self.assertEqual(summary.meta.returned_count, 1)
+        self.assertEqual(summary.meta.total_count, 1)
+        self.assertFalse(summary.meta.truncated)
+        self.assertFalse(summary.meta.has_more)
+        self.assertEqual(summary.matches[0].snippet, "Door schedule")
+        self.assertEqual(summary.matches[0].page_name, "A101")
+        self.assertFalse("text" in summary.matches[0].__dict__)
+
+    def test_search_page_pdf_text_rejects_unknown_source(self):
+        with self.assertRaises(McpReadError):
+            self.service.search_page_pdf_text(
+                "db-1", "bid-1", "page-1", "schedule", source=r"C:\plans\A101.pdf"
+            )
+
     def test_page_lists_include_sheet_sequence_and_limit_metadata(self):
         pages = self.service.list_pages("db-1", "bid-1", limit=2)
         self.assertEqual([page.uid for page in pages], ["page-1", "page-2"])
@@ -466,7 +555,7 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual([layer.name for layer in layers], ["Takeoff", "Hidden"])
         self.assertEqual(layers[0].condition_count, 2)
         self.assertEqual(layers[0].takeoff_count, 2)
-        self.assertEqual(layers[0].annotation_count, 1)
+        self.assertEqual(layers[0].annotation_count, 2)
         self.assertFalse(layers[1].visible)
         self.assertTrue(layers[1].is_locked)
         named_views = self.service.list_named_views("db-1", "bid-1")

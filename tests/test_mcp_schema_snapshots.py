@@ -5,8 +5,13 @@ from ost_visualizer.application.dtos.mcp_context_dtos import (
     McpConditionDto,
     McpConditionQuantitySummaryDto,
     McpConditionSummaryDto,
+    McpMarkupSampleDto,
     McpPageDto,
+    McpPageMarkupsSummaryDto,
+    McpPageOverlaySummaryDto,
     McpPageTakeoffSummaryDto,
+    McpPdfTextSearchMatchDto,
+    McpPdfTextSearchSummaryDto,
     McpPdfTextRunDto,
     McpPdfTextSummaryDto,
     McpPdfVectorSegmentDto,
@@ -152,6 +157,121 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "segments",
             },
         )
+
+    def test_page_markups_summary_shape_is_stable(self):
+        payload = ok(
+            McpPageMarkupsSummaryDto(
+                status="ok",
+                database_id="db",
+                bid_uid="bid",
+                page_uid="page",
+                page_name="A101",
+                sheet_no="S-101",
+                meta=McpResultMetaDto(limit=1),
+                samples=[McpMarkupSampleDto(uid="m1", annotation_type="text")],
+            )
+        )
+        self.assertEqual(
+            set(payload["data"].keys()),
+            {
+                "status",
+                "database_id",
+                "bid_uid",
+                "page_uid",
+                "page_name",
+                "sheet_no",
+                "meta",
+                "total_markup_count",
+                "visible_markup_count",
+                "dimension_count",
+                "text_annotation_count",
+                "callout_count",
+                "hotlink_count",
+                "named_view_count",
+                "counts_by_type",
+                "samples",
+            },
+        )
+        self.assertNotIn("image_path", payload["data"])
+        self.assertNotIn("text", payload["data"]["samples"][0])
+        self.assertNotIn("position", payload["data"]["samples"][0])
+        self.assertNotIn("properties", payload["data"]["samples"][0])
+
+    def test_page_overlay_summary_shape_is_stable(self):
+        payload = ok(
+            McpPageOverlaySummaryDto(
+                status="ok",
+                database_id="db",
+                bid_uid="bid",
+                page_uid="page",
+                page_name="A101",
+                sheet_no="S-101",
+            )
+        )
+        self.assertEqual(
+            set(payload["data"].keys()),
+            {
+                "status",
+                "database_id",
+                "bid_uid",
+                "page_uid",
+                "page_name",
+                "sheet_no",
+                "source_kind",
+                "image_basename",
+                "image_path_status",
+                "is_pdf",
+                "has_overlay",
+                "overlay_basename",
+                "overlay_path_status",
+                "overlay_kind",
+                "show_mode",
+                "show_original",
+                "show_overlay",
+                "overlay_transform_summary",
+            },
+        )
+        self.assertNotIn("overlay_image_path", payload["data"])
+        self.assertNotIn("image_path", payload["data"])
+
+    def test_pdf_text_search_summary_shape_is_stable(self):
+        payload = ok(
+            McpPdfTextSearchSummaryDto(
+                status="ok",
+                database_id="db",
+                bid_uid="bid",
+                page_uid="page",
+                query="door",
+                source="main",
+                source_status="configured",
+                meta=McpResultMetaDto(limit=1),
+                matches=[
+                    McpPdfTextSearchMatchDto(
+                        page_uid="page",
+                        page_name="A101",
+                        sheet_no="S-101",
+                        source="main",
+                        snippet="Door schedule",
+                    )
+                ],
+            )
+        )
+        self.assertEqual(
+            set(payload["data"].keys()),
+            {
+                "status",
+                "database_id",
+                "bid_uid",
+                "page_uid",
+                "query",
+                "source",
+                "source_status",
+                "meta",
+                "match_count",
+                "matches",
+            },
+        )
+        self.assertNotIn("text", payload["data"]["matches"][0])
 
     def test_area_summary_shape_is_stable(self):
         payload = ok(

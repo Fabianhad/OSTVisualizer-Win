@@ -9,7 +9,7 @@
 - Added a local read-only MCP bridge for live desktop context such as active view, selected pages, highlighted conditions, and selected takeoffs.
 - Added MCP setup controls to the Options dialog for copying Claude Desktop/Cursor config and Codex setup commands.
 - Added read-only MCP area context with area names on takeoffs/current context plus `list_areas` and `get_area_summary`.
-- Added safe read-only MCP page search, layer summaries, named views, hotlinks, redacted page sheet metadata, and bounded PDF text/vector summaries.
+- Added safe read-only MCP page search, layer summaries, named views, hotlinks, redacted page sheet metadata, bounded PDF text/vector summaries, page markup summaries, overlay summaries, and page-scoped PDF text search.
 - Added separate Options controls for grid, PDF-line, takeoff, and right-angle snap thresholds.
 - Added a Reset All Settings button to the Options dialog that restores app preferences and workspace layout state to defaults.
 - Added embedded PDF text selection in the plan view with I-beam hover, drag-range highlighting, and copy support.

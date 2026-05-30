@@ -84,6 +84,9 @@ Current production path:
 - Internal stdlib stdio server in `ost_visualizer/mcp_server/internal_server.py`.
 - Source command: `.\venv\Scripts\python.exe -m ost_visualizer.mcp_server.main`.
 - Packaged command: MCP clients launch `ostv-mcp.exe`.
+- Codex setup should use `~/.codex/config.toml` (or a trusted project
+  `.codex/config.toml`) with `[mcp_servers."ost-visualizer"]`, or
+  `codex mcp add ost-visualizer -- <path-to-ostv-mcp.exe>`.
 - Production helper route: `McpServer.py` -> `ost_visualizer.mcp_server.main`.
 - GUI app owns only the live-context bridge in `presentation/services/mcp_context_bridge.py`; it does not start the stdio MCP server.
 - MCP helper path must not import PySide6, presentation startup, or `config/di_config.py`.
@@ -120,7 +123,7 @@ Important MCP files:
 - `ost_visualizer/presentation/dialogs/options/dialog.py`
 - `tests/test_mcp*.py`
 
-Expected public MCP counts should remain 33 tools, 1 resource, 4 resource templates, and 2 prompts unless a change intentionally updates the public surface.
+Expected public MCP counts should remain 36 tools, 1 resource, 4 resource templates, and 2 prompts unless a change intentionally updates the public surface.
 
 ## Permission Model
 

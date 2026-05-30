@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 from ...domain.entities.area import BidArea
+from ...domain.entities.annotation import BidAnnotation
 from ...domain.entities.condition import Condition
 from ...domain.entities.file_results import BidLoadResult, FileLoadResult
 from ...domain.entities.hierarchy_data import (
@@ -34,11 +35,16 @@ from ..dtos.mcp_context_dtos import (
     McpHierarchyDto,
     McpHotlinkDto,
     McpLayerDto,
+    McpMarkupSampleDto,
     McpNamedViewDto,
     McpPageContextDto,
     McpPageDto,
+    McpPageMarkupsSummaryDto,
+    McpPageOverlaySummaryDto,
     McpPageTakeoffSummaryDto,
     McpPdfOverlayTransformDto,
+    McpPdfTextSearchMatchDto,
+    McpPdfTextSearchSummaryDto,
     McpPdfTextRunDto,
     McpPdfTextSummaryDto,
     McpPdfVectorSegmentDto,
@@ -88,6 +94,8 @@ class McpReadService:
     PDF_TEXT_MAX_LIMIT = 50
     PDF_VECTOR_DEFAULT_LIMIT = 20
     PDF_VECTOR_MAX_LIMIT = 100
+    MARKUP_DEFAULT_LIMIT = 50
+    MARKUP_MAX_LIMIT = 250
 
     def __init__(
         self,
@@ -320,6 +328,155 @@ class McpReadService:
             snap_line_count=len(segments),
             snap_point_count=point_count,
             segments=[self._pdf_vector_segment_dto(segment) for segment in limited],
+        )
+
+    def get_page_markups_summary(
+        self,
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+        limit: int = 50,
+    ) -> McpPageMarkupsSummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        page = bid_data.pages.get(page_uid)
+        if page is None:
+            raise McpReadError(f"Unknown page_uid: {page_uid}")
+        markups = [
+            annotation
+            for annotation in bid_data.bid_annotations
+            if annotation.page_uid == page_uid
+        ]
+        limited, meta = self._limited(
+            markups,
+            limit,
+            default=self.MARKUP_DEFAULT_LIMIT,
+            max_limit=self.MARKUP_MAX_LIMIT,
+        )
+        counts_by_type: Dict[str, int] = defaultdict(int)
+        for annotation in markups:
+            counts_by_type[annotation.annotation_type] += 1
+        return McpPageMarkupsSummaryDto(
+            status=_summary_status_for_meta(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            page_uid=page_uid,
+            page_name=page.name,
+            sheet_no=page.sheet_no,
+            meta=meta,
+            total_markup_count=len(markups),
+            visible_markup_count=sum(1 for annotation in markups if annotation.visible),
+            dimension_count=counts_by_type.get("dimension", 0),
+            text_annotation_count=counts_by_type.get("text", 0),
+            callout_count=counts_by_type.get("callout", 0),
+            hotlink_count=counts_by_type.get("hotlink", 0),
+            named_view_count=counts_by_type.get("namedview", 0),
+            counts_by_type=dict(sorted(counts_by_type.items())),
+            samples=[self._markup_sample_dto(annotation) for annotation in limited],
+        )
+
+    def get_page_overlay_summary(
+        self,
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+    ) -> McpPageOverlaySummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        page = bid_data.pages.get(page_uid)
+        if page is None:
+            raise McpReadError(f"Unknown page_uid: {page_uid}")
+        image_path = page.image_path or ""
+        overlay_path = page.overlay_image_path or ""
+        show_original, show_overlay = self._image_show_flags(page.image_show_mode)
+        return McpPageOverlaySummaryDto(
+            status="ok" if overlay_path else "not_configured",
+            database_id=database_id,
+            bid_uid=bid_uid,
+            page_uid=page_uid,
+            page_name=page.name,
+            sheet_no=page.sheet_no,
+            source_kind=self._page_source_kind(page),
+            image_basename=self._safe_basename(image_path) if image_path else None,
+            image_path_status="configured" if image_path else "not_configured",
+            is_pdf=bool(image_path and image_path.lower().endswith(".pdf")),
+            has_overlay=bool(overlay_path),
+            overlay_basename=(
+                self._safe_basename(overlay_path) if overlay_path else None
+            ),
+            overlay_path_status="configured" if overlay_path else "not_configured",
+            overlay_kind=self._overlay_kind(page),
+            show_mode=page.image_show_mode,
+            show_original=show_original,
+            show_overlay=show_overlay and bool(overlay_path),
+            overlay_transform_summary=self._overlay_transform_summary(page),
+        )
+
+    def search_page_pdf_text(
+        self,
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+        query: str,
+        source: str = "auto",
+        limit: int = 10,
+    ) -> McpPdfTextSearchSummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        page = bid_data.pages.get(page_uid)
+        if page is None:
+            raise McpReadError(f"Unknown page_uid: {page_uid}")
+        source_ref = self._resolve_pdf_source(page, source)
+        clean_query = " ".join(str(query or "").split())
+        clean_limit = self._clean_limit(
+            limit,
+            default=self.PDF_TEXT_DEFAULT_LIMIT,
+            max_limit=self.PDF_TEXT_MAX_LIMIT,
+        )
+        if source_ref[2] != "configured":
+            meta = McpResultMetaDto(limit=clean_limit)
+            return McpPdfTextSearchSummaryDto(
+                status=source_ref[2],
+                database_id=database_id,
+                bid_uid=bid_uid,
+                page_uid=page_uid,
+                query=clean_query,
+                source=source_ref[0],
+                source_status=source_ref[2],
+                meta=meta,
+            )
+        if not clean_query:
+            meta = McpResultMetaDto(limit=clean_limit)
+            return McpPdfTextSearchSummaryDto(
+                status="empty",
+                database_id=database_id,
+                bid_uid=bid_uid,
+                page_uid=page_uid,
+                query=clean_query,
+                source=source_ref[0],
+                source_status=source_ref[2],
+                meta=meta,
+            )
+        query_text = clean_query.lower()
+        matches = [
+            self._pdf_text_search_match_dto(page, source_ref[0], run, clean_query)
+            for run in self._read_pdf_text_runs(source_ref[1], source_ref[3])
+            if query_text in (run.text or "").lower()
+        ]
+        limited, meta = self._limited(
+            matches,
+            clean_limit,
+            default=self.PDF_TEXT_DEFAULT_LIMIT,
+            max_limit=self.PDF_TEXT_MAX_LIMIT,
+        )
+        return McpPdfTextSearchSummaryDto(
+            status=_summary_status_for_meta(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            page_uid=page_uid,
+            query=clean_query,
+            source=source_ref[0],
+            source_status=source_ref[2],
+            meta=meta,
+            match_count=len(matches),
+            matches=limited,
         )
 
     def list_conditions(
@@ -1148,6 +1305,12 @@ class McpReadService:
             resized=page.overlay_resized,
         )
 
+    @staticmethod
+    def _image_show_flags(mode: int) -> Tuple[bool, bool]:
+        show_original = mode in (0, 2)
+        show_overlay = mode in (1, 2)
+        return show_original, show_overlay
+
     def _enrich_page_pdf_metadata(self, dto: McpPageDto, page: Page) -> None:
         source_ref = self._resolve_pdf_source(page, "auto")
         if source_ref[2] != "configured":
@@ -1242,6 +1405,46 @@ class McpReadService:
         return clean[: max_chars - 3].rstrip() + "..."
 
     @staticmethod
+    def _snippet_around_query(text: str, query: str, max_chars: int = 120) -> str:
+        clean_text = " ".join(str(text or "").split())
+        clean_query = " ".join(str(query or "").split())
+        if not clean_text or not clean_query:
+            return McpReadService._snippet(clean_text, max_chars=max_chars)
+        match_index = clean_text.lower().find(clean_query.lower())
+        if match_index < 0 or len(clean_text) <= max_chars:
+            return McpReadService._snippet(clean_text, max_chars=max_chars)
+        start = max(0, match_index - max_chars // 3)
+        end = min(len(clean_text), start + max_chars)
+        start = max(0, end - max_chars)
+        snippet = clean_text[start:end].strip()
+        if start > 0:
+            snippet = "..." + snippet.lstrip()
+        if end < len(clean_text):
+            snippet = snippet.rstrip() + "..."
+        return snippet
+
+    @staticmethod
+    def _pdf_text_search_match_dto(
+        page: Page,
+        source: str,
+        run: PdfTextRunDto,
+        query: str,
+    ) -> McpPdfTextSearchMatchDto:
+        text = run.text or ""
+        return McpPdfTextSearchMatchDto(
+            page_uid=page.uid,
+            page_name=page.name,
+            sheet_no=page.sheet_no,
+            source=source,
+            snippet=McpReadService._snippet_around_query(text, query),
+            left=run.left,
+            top=run.top,
+            right=run.right,
+            bottom=run.bottom,
+            character_count=len(text),
+        )
+
+    @staticmethod
     def _pdf_vector_segment_dto(
         segment: PdfVectorSegmentDto,
     ) -> McpPdfVectorSegmentDto:
@@ -1279,6 +1482,52 @@ class McpReadService:
             points.add((round(segment.x1, 3), round(segment.y1, 3)))
             points.add((round(segment.x2, 3), round(segment.y2, 3)))
         return len(points)
+
+    @staticmethod
+    def _markup_sample_dto(annotation: BidAnnotation) -> McpMarkupSampleDto:
+        bbox = annotation.get_bbox_ost()
+        bbox_left = bbox_top = bbox_right = bbox_bottom = None
+        if bbox is not None:
+            bbox_left, bbox_top, bbox_right, bbox_bottom = bbox
+        length = None
+        line = annotation.get_line_coords()
+        if line is not None:
+            x1, y1, x2, y2 = line
+            length = math.hypot(x2 - x1, y2 - y1)
+        text = ""
+        if annotation.annotation_type in {"text", "callout", "namedview"}:
+            text = str(annotation.get_text_content() or "")
+        linked_takeoff_count = 0
+        if annotation.properties.get("BidTakeoffFromUID"):
+            linked_takeoff_count += 1
+        if annotation.properties.get("BidTakeoffToUID"):
+            linked_takeoff_count += 1
+        return McpMarkupSampleDto(
+            uid=annotation.uid,
+            annotation_type=annotation.annotation_type,
+            layer_uid=annotation.layer_uid or None,
+            visible=annotation.visible,
+            color=annotation.color,
+            width=annotation.width,
+            point_count=McpReadService._annotation_point_count(annotation),
+            bbox_left=bbox_left,
+            bbox_top=bbox_top,
+            bbox_right=bbox_right,
+            bbox_bottom=bbox_bottom,
+            length=length,
+            text_snippet=McpReadService._snippet(text) if text else "",
+            text_character_count=len(text),
+            linked_takeoff_count=linked_takeoff_count,
+        )
+
+    @staticmethod
+    def _annotation_point_count(annotation: BidAnnotation) -> int:
+        if not annotation.position:
+            return 0
+        coordinate_count = len(annotation.position)
+        if coordinate_count % 2 == 1:
+            coordinate_count -= 1
+        return max(0, coordinate_count // 2)
 
     @staticmethod
     def _condition_type_name(condition: Condition) -> str:

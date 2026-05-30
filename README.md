@@ -95,6 +95,7 @@ process and exposes only checked `.mdb` databases from
 server; it only provides a live-context bridge when the app is running.
 
 The MCP server exposes project, bid, page metadata, bounded PDF text/vector
+summaries, page-scoped PDF text search, page markup summaries, overlay
 summaries, page search, layer, area, named-view, hotlink, condition, takeoff,
 condition summary, selected-page summary, selected-takeoff summary, search,
 quantity-summary, page-context, duplicate-condition, zero-quantity, unplaced
@@ -150,7 +151,16 @@ reload your MCP client so it launches the helper:
 }
 ```
 
-Codex production setup uses the helper directly:
+Codex production setup uses the helper directly. Add this TOML to
+`~/.codex/config.toml` or to a trusted project `.codex/config.toml`:
+
+```toml
+[mcp_servers."ost-visualizer"]
+command = "C:\\Program Files\\OST Visualizer\\ostv-mcp.exe"
+args = []
+```
+
+You can also register the same stdio helper with the Codex CLI:
 
 ```powershell
 codex mcp add ost-visualizer -- 'C:\Program Files\OST Visualizer\ostv-mcp.exe'
