@@ -337,11 +337,8 @@ class ProjectWriteHandler:
                 return
 
     def _get_bid_orig_project_uid(self, bid_ref: BidRef) -> Optional[str]:
-        try:
-            bid_info = self.project_data.get_hierarchy().find_bid_info(bid_ref)
-            return bid_info.orig_bid_project_uid if bid_info else None
-        except Exception:
-            return None
+        bid_info = self.project_data.get_hierarchy().find_bid_info(bid_ref)
+        return bid_info.orig_bid_project_uid if bid_info else None
 
     def delete_bids(self, bid_refs: List[BidRef]) -> None:
         self._delete_bids(bid_refs)

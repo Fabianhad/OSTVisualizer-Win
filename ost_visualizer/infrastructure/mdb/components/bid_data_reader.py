@@ -107,7 +107,7 @@ class BidDataReaderMixin:
                 row = cursor.fetchone()
                 if row and row[0]:
                     return str(row[0])
-        except Exception:
+        except pyodbc.Error:
             pass
         return None
 
@@ -358,7 +358,7 @@ class BidDataReaderMixin:
                     for row in cursor.fetchall():
                         if row[0] is not None:
                             result.add(str(row[0]))
-        except Exception:
+        except pyodbc.Error:
             pass
         return result
 
@@ -815,7 +815,7 @@ class BidDataReaderMixin:
                         bid_uid=bid_uid,
                         parent_uid=parent_uid,
                     )
-        except Exception:
+        except pyodbc.Error:
             pass
         return folders
 
@@ -955,8 +955,6 @@ class BidDataReaderMixin:
                     )
                     takeoff_extras[uid] = {c: row_data[c] for c in extra_cols}
         except pyodbc.Error as exc:
-            if "HY109" in str(exc) or "Record is deleted" in str(exc):
-                pass
-            else:
+            if "HY109" not in str(exc) and "Record is deleted" not in str(exc):
                 raise
         return bid_takeoffs, takeoff_extras

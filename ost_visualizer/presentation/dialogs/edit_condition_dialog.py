@@ -300,10 +300,9 @@ class EditConditionDialog(QtWidgets.QDialog):
         self.set_interactive(not self._read_only and self._has_license)
 
     def _get_current_index(self) -> int:
-        try:
-            return self._condition_uids.index(self._current_uid)
-        except ValueError:
+        if self._current_uid not in self._condition_uids:
             return 0
+        return self._condition_uids.index(self._current_uid)
 
     def _current_condition(self) -> Optional[Condition]:
         return self._conditions_map.get(self._current_uid)

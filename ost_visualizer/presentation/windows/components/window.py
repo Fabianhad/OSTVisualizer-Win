@@ -455,10 +455,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if not self.view or not self._on_page_selected:
             return
         order = self._page_combo.get_page_order()
-        try:
-            idx = order.index(self.view.target_page_uid)
-        except ValueError:
+        if self.view.target_page_uid not in order:
             return
+        idx = order.index(self.view.target_page_uid)
         if idx > 0:
             self._on_page_selected(order[idx - 1])
 
@@ -466,10 +465,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if not self.view or not self._on_page_selected:
             return
         order = self._page_combo.get_page_order()
-        try:
-            idx = order.index(self.view.target_page_uid)
-        except ValueError:
+        if self.view.target_page_uid not in order:
             return
+        idx = order.index(self.view.target_page_uid)
         if idx < len(order) - 1:
             self._on_page_selected(order[idx + 1])
 
@@ -483,12 +481,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._btn_prev.setEnabled(False)
             self._btn_next.setEnabled(False)
             return
-        try:
-            idx = order.index(page_uid)
-        except ValueError:
+        if page_uid not in order:
             self._btn_prev.setEnabled(False)
             self._btn_next.setEnabled(False)
             return
+        idx = order.index(page_uid)
         self._btn_prev.setEnabled(idx > 0)
         self._btn_next.setEnabled(idx < len(order) - 1)
 

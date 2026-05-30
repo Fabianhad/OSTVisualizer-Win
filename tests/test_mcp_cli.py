@@ -9,6 +9,10 @@ class McpCliTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             _parse_args(["--database", "demo.mdb"])
 
+    def test_app_data_dir_argument_is_not_supported(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            _parse_args(["--app-data-dir", "alternate"])
+
 
 if __name__ == "__main__":
     unittest.main()

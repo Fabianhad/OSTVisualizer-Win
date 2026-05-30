@@ -49,14 +49,14 @@ class PageCache:
         self._in_flight_condition = threading.Condition(self._lock)
 
     def _get_renderer(self) -> PageRenderer:
-        try:
-            return self._local.renderer
-        except AttributeError:
-            renderer = PageRenderer()
-            self._local.renderer = renderer
-            with self._renderers_lock:
-                self._renderers.append(renderer)
+        renderer = self._local.__dict__.get("renderer")
+        if renderer is not None:
             return renderer
+        renderer = PageRenderer()
+        self._local.renderer = renderer
+        with self._renderers_lock:
+            self._renderers.append(renderer)
+        return renderer
 
     def _quantize_scale(self, scale: float) -> float:
         return max(0.1, round(scale, 3))

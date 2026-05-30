@@ -262,13 +262,12 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
     def prepare_title(self, bid_name: str, page_names: List[str]) -> str:
         if len(page_names) == 1:
             return f"{bid_name} - {page_names[0]}"
-        elif len(page_names) == 2:
+        if len(page_names) == 2:
             return f"{bid_name} - {page_names[0]} + {page_names[1]}"
-        else:
-            first_page = page_names[0]
-            second_page = page_names[1]
-            remaining = len(page_names) - 2
-            return f"{bid_name} - {first_page} + {second_page} + {remaining} more"
+        first_page = page_names[0]
+        second_page = page_names[1]
+        remaining = len(page_names) - 2
+        return f"{bid_name} - {first_page} + {second_page} + {remaining} more"
 
     def execute_export(
         self, bid_conditions: Dict, takeoffs: List, output_path: str, **kwargs

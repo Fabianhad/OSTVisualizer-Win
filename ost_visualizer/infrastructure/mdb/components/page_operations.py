@@ -1,3 +1,6 @@
+import pyodbc
+
+
 class PageOperationsMixin:
     _POSITION_TABLES = (
         "BidTakeoffs",
@@ -124,7 +127,7 @@ class PageOperationsMixin:
                         new_bytes,
                         int(r.UID),
                     )
-            except Exception:
+            except (pyodbc.Error, TypeError, ValueError):
                 pass
 
     def save_page_view_state(

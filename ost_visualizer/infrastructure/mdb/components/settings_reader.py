@@ -71,7 +71,7 @@ class SettingsReaderMixin:
                         val = str(row[0]).strip() if row[0] is not None else ""
                         if val and val != "NULL":
                             used_job_status_uids.add(val)
-            except Exception:
+            except pyodbc.Error:
                 pass
             folders, pages_without_folder = self._query_cover_sheet_pages(
                 connection, bid_uid
@@ -250,7 +250,7 @@ class SettingsReaderMixin:
                         defaults["next_bid_no"] = (
                             int(row.NextBidNo) if row.NextBidNo else 1
                         )
-        except Exception:
+        except (pyodbc.Error, TypeError, ValueError):
             pass
         return defaults
 

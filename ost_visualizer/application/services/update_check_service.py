@@ -56,7 +56,7 @@ class UpdateCheckService:
             for server_part, current_part in zip(server_parts, current_parts):
                 if server_part > current_part:
                     return True
-                elif server_part < current_part:
+                if server_part < current_part:
                     return False
             return False
         except (ValueError, AttributeError) as exc:

@@ -133,5 +133,7 @@ class ImportHandler:
             if hierarchy.loaded_files:
                 return hierarchy.loaded_files[0].file_path
         except Exception:
-            pass
+            logger.warning(
+                "Failed to inspect hierarchy for import target", exc_info=True
+            )
         return None

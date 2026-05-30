@@ -36,14 +36,11 @@ class LicenseAggregate:
         except OSError as exc:
             self.logger.error("Error reading license cache: %s", exc)
             self._license = License()
-        except Exception as exc:
-            self.logger.exception("Unexpected error loading license: %s", exc)
-            self._license = License()
 
     def save(self) -> None:
         try:
             self.repository.save(self._license)
-        except Exception as exc:
+        except OSError as exc:
             self.logger.exception("Error saving license: %s", exc)
             raise
 
@@ -199,8 +196,6 @@ class LicenseAggregate:
             pass
         except OSError as exc:
             self.logger.warning("Unable to clear license cache: %s", exc)
-        except Exception as exc:
-            self.logger.exception("Unexpected error clearing license cache: %s", exc)
 
     def _restore_previous_cache(self, previous_license: License) -> None:
         try:
@@ -208,7 +203,7 @@ class LicenseAggregate:
                 self.repository.save(previous_license)
             else:
                 self.repository.clear()
-        except Exception as exc:
+        except OSError as exc:
             self.logger.warning(
                 "Unable to restore previous license cache after failed update: %s",
                 exc,

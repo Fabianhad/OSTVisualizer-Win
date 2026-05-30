@@ -5,12 +5,14 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from ...domain.entities.area import BidArea
 from ...domain.entities.condition import Condition
 from ...domain.entities.file_results import BidLoadResult, FileLoadResult
+from ...domain.entities.hotlink import build_hotlink_from_annotation
 from ...domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyData,
     HierarchyFileEntry,
     HierarchyProjectInfo,
 )
+from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.page import Page
 from ...domain.entities.takeoff import Takeoff
 from ...domain.repositories.i_project_repository import IProjectRepository
@@ -28,7 +30,10 @@ from ..dtos.mcp_context_dtos import (
     McpDatabaseDto,
     McpDuplicateConditionGroupDto,
     McpDuplicateConditionSummaryDto,
+    McpHotlinkDto,
     McpHierarchyDto,
+    McpLayerDto,
+    McpNamedViewDto,
     McpPageContextDto,
     McpPageDto,
     McpPageTakeoffSummaryDto,
@@ -55,6 +60,21 @@ class McpDatabaseRef:
     display_name: str
 
 
+def _summary_status_for_meta(meta: McpResultMetaDto) -> str:
+    if meta.truncated:
+        return "truncated"
+    if meta.total_count == 0:
+        return "empty"
+    return "ok"
+
+
+class McpLimitedList(list):
+    def __init__(self, items: List, meta: McpResultMetaDto):
+        super().__init__(items)
+        self.meta = meta
+        self.status = _summary_status_for_meta(meta)
+
+
 class McpReadService:
     def __init__(
         self,
@@ -71,7 +91,8 @@ class McpReadService:
             McpDatabaseDto(
                 database_id=db.database_id,
                 display_name=db.display_name,
-                file_path=db.file_path,
+                basename=self._safe_basename(db.file_path),
+                path_status="checked",
                 exists=True,
             )
             for db in sorted(
@@ -99,7 +120,8 @@ class McpReadService:
             database=McpDatabaseDto(
                 database_id=db.database_id,
                 display_name=db.display_name,
-                file_path=db.file_path,
+                basename=self._safe_basename(db.file_path),
+                path_status="checked",
             ),
             projects=[
                 self._project_dto(uid, project)
@@ -136,9 +158,12 @@ class McpReadService:
         dto.selected_page_uid = bid_data.selected_page_uid
         return dto
 
-    def list_pages(self, database_id: str, bid_uid: str) -> List[McpPageDto]:
+    def list_pages(
+        self, database_id: str, bid_uid: str, limit: int = 500
+    ) -> List[McpPageDto]:
         bid_data = self._load_bid(database_id, bid_uid)
-        return [self._page_dto(page) for page in self._ordered_pages(bid_data)]
+        pages = [self._page_dto(page) for page in self._ordered_pages(bid_data)]
+        return self._limited_list(pages, limit)
 
     def get_current_page(self, database_id: str, bid_uid: str) -> Optional[McpPageDto]:
         bid_data = self._load_bid(database_id, bid_uid)
@@ -148,7 +173,27 @@ class McpReadService:
         pages = self._ordered_pages(bid_data)
         return self._page_dto(pages[0]) if pages else None
 
-    def get_page_pdf_info(
+    def search_pages(
+        self,
+        database_id: str,
+        bid_uid: str,
+        query: str,
+        limit: int = 50,
+    ) -> List[McpPageDto]:
+        query_text = str(query or "").strip().lower()
+        if not query_text:
+            return self._limited_list([], limit, default=50)
+        bid_data = self._load_bid(database_id, bid_uid)
+        matches = []
+        for page in self._ordered_pages(bid_data):
+            haystack = " ".join(
+                [page.uid, page.name, page.sheet_no, str(page.sequence)]
+            ).lower()
+            if query_text in haystack:
+                matches.append(self._page_dto(page))
+        return self._limited_list(matches, limit, default=50)
+
+    def get_page_metadata(
         self, database_id: str, bid_uid: str, page_uid: str
     ) -> McpPageDto:
         bid_data = self._load_bid(database_id, bid_uid)
@@ -157,12 +202,15 @@ class McpReadService:
             raise McpReadError(f"Unknown page_uid: {page_uid}")
         return self._page_dto(page)
 
-    def list_conditions(self, database_id: str, bid_uid: str) -> List[McpConditionDto]:
+    def list_conditions(
+        self, database_id: str, bid_uid: str, limit: int = 500
+    ) -> List[McpConditionDto]:
         bid_data = self._load_bid(database_id, bid_uid)
-        return [
+        conditions = [
             self._condition_dto(condition)
             for condition in self._ordered_conditions(bid_data)
         ]
+        return self._limited_list(conditions, limit)
 
     def list_areas(
         self, database_id: str, bid_uid: str, limit: int = 500
@@ -170,10 +218,11 @@ class McpReadService:
         bid_data = self._load_bid(database_id, bid_uid)
         counts, visible_counts, page_uids = self._area_usage_maps(bid_data)
         children = self._area_child_uid_map(bid_data)
-        return [
+        areas = [
             self._area_dto(area, counts, visible_counts, page_uids, children)
-            for area in self._ordered_areas(bid_data)[: self._clean_limit(limit)]
+            for area in self._ordered_areas(bid_data)
         ]
+        return self._limited_list(areas, limit)
 
     def get_area_summary(
         self,
@@ -214,7 +263,7 @@ class McpReadService:
         pages = self._page_takeoff_summaries(area_takeoffs, bid_data)
         limited_pages, meta = self._limited(pages, limit, default=250)
         return McpAreaSummaryDto(
-            status=self._summary_status(meta),
+            status=_summary_status_for_meta(meta),
             database_id=database_id,
             bid_uid=bid_uid,
             area=area_dto,
@@ -256,7 +305,7 @@ class McpReadService:
             ).lower()
             if query_text in haystack:
                 matches.append(self._condition_dto(condition))
-        return matches[: self._clean_limit(limit, default=50)]
+        return self._limited_list(matches, limit, default=50)
 
     def get_condition_summary(
         self,
@@ -306,11 +355,15 @@ class McpReadService:
             condition_uid=condition_uid,
             visible_only=visible_only,
         )
-        clean_limit = self._clean_limit(limit)
-        return [
-            self._takeoff_dto(t, bid_data, include_geometry=include_geometry)
-            for t in takeoffs[:clean_limit]
-        ]
+        max_limit = 250 if include_geometry else 5000
+        limited, meta = self._limited(takeoffs, limit, max_limit=max_limit)
+        return McpLimitedList(
+            [
+                self._takeoff_dto(t, bid_data, include_geometry=include_geometry)
+                for t in limited
+            ],
+            meta,
+        )
 
     def get_selected_takeoffs_summary(
         self,
@@ -405,6 +458,7 @@ class McpReadService:
         bid_uid: str,
         page_uid: Optional[str] = None,
         condition_uid: Optional[str] = None,
+        limit: int = 500,
     ) -> List[McpQuantityDto]:
         bid_data = self._load_bid(database_id, bid_uid)
         takeoffs = self._filter_takeoffs(
@@ -418,7 +472,8 @@ class McpReadService:
             takeoffs,
             only_condition_uids={condition_uid} if condition_uid else None,
         )
-        return self._quantity_dtos(quantities, bid_data.bid_conditions, takeoffs)
+        dtos = self._quantity_dtos(quantities, bid_data.bid_conditions, takeoffs)
+        return self._limited_list(dtos, limit)
 
     def get_page_quantity_summary(
         self, database_id: str, bid_uid: str, page_uid: str
@@ -438,7 +493,7 @@ class McpReadService:
         ]
         limited, meta = self._limited(summaries, limit, default=250)
         return McpBidQuantitySummaryDto(
-            status=self._summary_status(meta),
+            status=_summary_status_for_meta(meta),
             database_id=database_id,
             bid_uid=bid_uid,
             meta=meta,
@@ -490,7 +545,7 @@ class McpReadService:
             truncated=returned_count < total_count,
         )
         return McpScopeGapSummaryDto(
-            status=self._summary_status(meta),
+            status=_summary_status_for_meta(meta),
             database_id=database_id,
             bid_uid=bid_uid,
             meta=meta,
@@ -529,7 +584,7 @@ class McpReadService:
         groups.sort(key=lambda group: group.name.lower())
         limited, meta = self._limited(groups, limit, default=100)
         return McpDuplicateConditionSummaryDto(
-            status=self._summary_status(meta),
+            status=_summary_status_for_meta(meta),
             database_id=database_id,
             bid_uid=bid_uid,
             meta=meta,
@@ -554,7 +609,7 @@ class McpReadService:
         ]
         limited, meta = self._limited(zero_summaries, limit, default=100)
         return McpZeroQuantitySummaryDto(
-            status=self._summary_status(meta),
+            status=_summary_status_for_meta(meta),
             database_id=database_id,
             bid_uid=bid_uid,
             meta=meta,
@@ -577,7 +632,7 @@ class McpReadService:
         ]
         limited, meta = self._limited(takeoffs, limit, default=100)
         return McpUnplacedTakeoffSummaryDto(
-            status=self._summary_status(meta),
+            status=_summary_status_for_meta(meta),
             database_id=database_id,
             bid_uid=bid_uid,
             meta=meta,
@@ -606,11 +661,108 @@ class McpReadService:
             page=page_dto,
             page_label=page.name,
             sheet_name=page.name,
-            source_file_name=Path(image_path).name if image_path else "",
+            source_file_name=self._safe_basename(image_path) if image_path else "",
             has_pdf_source=page_dto.is_pdf,
             has_overlay=bool(page.overlay_image_path),
             page_text_status="deferred",
         )
+
+    def list_layers(
+        self,
+        database_id: str,
+        bid_uid: str,
+        limit: int = 500,
+    ) -> List[McpLayerDto]:
+        bid_data = self._load_bid(database_id, bid_uid)
+        condition_counts: Dict[str, int] = defaultdict(int)
+        takeoff_counts: Dict[str, int] = defaultdict(int)
+        annotation_counts: Dict[str, int] = defaultdict(int)
+        for condition in bid_data.bid_conditions.values():
+            if condition.layer_uid:
+                condition_counts[condition.layer_uid] += 1
+        for takeoff in bid_data.bid_takeoffs:
+            condition = bid_data.bid_conditions.get(takeoff.condition_uid)
+            if condition and condition.layer_uid:
+                takeoff_counts[condition.layer_uid] += 1
+        for annotation in bid_data.bid_annotations:
+            if annotation.layer_uid:
+                annotation_counts[annotation.layer_uid] += 1
+        layers = [
+            McpLayerDto(
+                uid=layer.uid,
+                name=layer.name,
+                visible=layer.show,
+                sequence=layer.sequence,
+                is_template=layer.is_template,
+                is_locked=layer.is_locked,
+                condition_count=condition_counts.get(layer.uid, 0),
+                takeoff_count=takeoff_counts.get(layer.uid, 0),
+                annotation_count=annotation_counts.get(layer.uid, 0),
+            )
+            for layer in sorted(
+                bid_data.bid_layers,
+                key=lambda item: (item.sequence, item.name.lower(), item.uid),
+            )
+        ]
+        return self._limited_list(layers, limit)
+
+    def list_named_views(
+        self,
+        database_id: str,
+        bid_uid: str,
+        page_uid: Optional[str] = None,
+        limit: int = 250,
+    ) -> List[McpNamedViewDto]:
+        bid_data = self._load_bid(database_id, bid_uid)
+        self._validate_optional_page_uid(bid_data, page_uid)
+        views = []
+        for named_view in self._named_views(bid_data):
+            if page_uid and named_view.bid_page_uid != page_uid:
+                continue
+            page = bid_data.pages.get(named_view.bid_page_uid)
+            views.append(self._named_view_dto(named_view, page))
+        return self._limited_list(views, limit, default=250)
+
+    def list_hotlinks(
+        self,
+        database_id: str,
+        bid_uid: str,
+        page_uid: Optional[str] = None,
+        limit: int = 250,
+    ) -> List[McpHotlinkDto]:
+        bid_data = self._load_bid(database_id, bid_uid)
+        self._validate_optional_page_uid(bid_data, page_uid)
+        named_views = {view.uid: view for view in self._named_views(bid_data)}
+        hotlinks = []
+        for annotation in bid_data.bid_annotations:
+            hotlink = build_hotlink_from_annotation(annotation)
+            if hotlink is None:
+                continue
+            if page_uid and hotlink.bid_page_uid != page_uid:
+                continue
+            source_page = bid_data.pages.get(hotlink.bid_page_uid)
+            target = (
+                named_views.get(str(hotlink.target_view_uid))
+                if hotlink.target_view_uid
+                else None
+            )
+            target_page = (
+                bid_data.pages.get(target.bid_page_uid) if target is not None else None
+            )
+            hotlinks.append(
+                McpHotlinkDto(
+                    uid=hotlink.uid,
+                    page_uid=hotlink.bid_page_uid,
+                    page_name=source_page.name if source_page else "",
+                    layer_uid=hotlink.bid_layer_uid,
+                    visible=annotation.visible,
+                    target_named_view_uid=target.uid if target is not None else None,
+                    target_named_view_name=target.name if target is not None else "",
+                    target_page_uid=target.bid_page_uid if target is not None else None,
+                    target_page_name=target_page.name if target_page else "",
+                )
+            )
+        return self._limited_list(hotlinks, limit, default=250)
 
     def search_takeoffs(
         self,
@@ -650,7 +802,7 @@ class McpReadService:
                 matches.append(
                     self._takeoff_dto(takeoff, bid_data, include_geometry=False)
                 )
-        return matches[: self._clean_limit(limit, default=50)]
+        return self._limited_list(matches, limit, default=50)
 
     def find_pages_without_takeoffs(
         self,
@@ -659,7 +811,7 @@ class McpReadService:
         limit: int = 500,
     ) -> List[McpPageDto]:
         bid_data = self._load_bid(database_id, bid_uid)
-        return self._pages_without_takeoffs(bid_data)[: self._clean_limit(limit)]
+        return self._limited_list(self._pages_without_takeoffs(bid_data), limit)
 
     def find_conditions_without_takeoffs(
         self,
@@ -668,7 +820,7 @@ class McpReadService:
         limit: int = 500,
     ) -> List[McpConditionDto]:
         bid_data = self._load_bid(database_id, bid_uid)
-        return self._conditions_without_takeoffs(bid_data)[: self._clean_limit(limit)]
+        return self._limited_list(self._conditions_without_takeoffs(bid_data), limit)
 
     def _pages_without_takeoffs(self, bid_data: BidLoadResult) -> List[McpPageDto]:
         pages_with_takeoffs = {t.page_uid for t in bid_data.bid_takeoffs}
@@ -800,12 +952,16 @@ class McpReadService:
         )
 
     def _page_dto(self, page: Page) -> McpPageDto:
-        image_path = page.image_path or None
+        image_path = page.image_path or ""
+        overlay_path = page.overlay_image_path or ""
         return McpPageDto(
             uid=page.uid,
             name=page.name,
+            sheet_no=page.sheet_no,
+            sequence=page.sequence,
             folder_uid=page.folder_uid,
-            image_path=image_path,
+            image_basename=self._safe_basename(image_path) if image_path else None,
+            image_path_status="configured" if image_path else "not_configured",
             is_pdf=bool(image_path and image_path.lower().endswith(".pdf")),
             page_index=page.page_index,
             width_pts=page.width_pts,
@@ -814,7 +970,11 @@ class McpReadService:
             scale_factor2=page.scale_factor2,
             rotation=page.rotation,
             layer_visible=page.layer_visible,
-            overlay_image_path=page.overlay_image_path,
+            overlay_basename=(
+                self._safe_basename(overlay_path) if overlay_path else None
+            ),
+            overlay_path_status="configured" if overlay_path else "not_configured",
+            has_overlay=bool(overlay_path),
             takeoff_count=len(page.takeoffs),
         )
 
@@ -938,6 +1098,53 @@ class McpReadService:
             if area.parent_uid and area.parent_uid != "0":
                 children.setdefault(area.parent_uid, []).append(area.uid)
         return children
+
+    @staticmethod
+    def _safe_basename(path: str) -> str:
+        return str(path or "").replace("\\", "/").rstrip("/").split("/")[-1]
+
+    @staticmethod
+    def _validate_optional_page_uid(
+        bid_data: BidLoadResult, page_uid: Optional[str]
+    ) -> None:
+        if page_uid and page_uid not in bid_data.pages:
+            raise McpReadError(f"Unknown page_uid: {page_uid}")
+
+    def _named_views(self, bid_data: BidLoadResult) -> List[NamedView]:
+        views = []
+        for annotation in bid_data.bid_annotations:
+            view = build_named_view_from_annotation(annotation)
+            if view is not None:
+                views.append(view)
+        return sorted(
+            views,
+            key=lambda item: (
+                (
+                    bid_data.pages.get(item.bid_page_uid).page_index
+                    if item.bid_page_uid in bid_data.pages
+                    else 0
+                ),
+                item.name.lower(),
+                item.uid,
+            ),
+        )
+
+    @staticmethod
+    def _named_view_dto(named_view: NamedView, page: Optional[Page]) -> McpNamedViewDto:
+        return McpNamedViewDto(
+            uid=named_view.uid,
+            page_uid=named_view.bid_page_uid,
+            page_name=page.name if page else "",
+            name=named_view.name,
+            min_x=named_view.min_x,
+            min_y=named_view.min_y,
+            max_x=named_view.max_x,
+            max_y=named_view.max_y,
+            center_x=named_view.center_x,
+            center_y=named_view.center_y,
+            width=named_view.width,
+            height=named_view.height,
+        )
 
     def _condition_quantity_summary(
         self,
@@ -1080,32 +1287,52 @@ class McpReadService:
         )
 
     @staticmethod
-    def _clean_limit(limit: int, default: int = 500) -> int:
+    def _clean_limit(limit: int, default: int = 500, max_limit: int = 5000) -> int:
+        return McpReadService._clean_limit_with_max(
+            limit, default=default, max_limit=max_limit
+        )
+
+    @staticmethod
+    def _clean_limit_with_max(
+        limit: int, default: int = 500, max_limit: int = 5000
+    ) -> int:
         try:
             value = int(limit)
         except (TypeError, ValueError):
             value = default
-        return max(1, min(value, 5000))
+        return max(1, min(value, max_limit))
 
     def _limited(
         self,
         items: List,
         limit: int,
         default: int = 500,
+        max_limit: int = 5000,
     ) -> Tuple[List, McpResultMetaDto]:
-        clean_limit = self._clean_limit(limit, default=default)
+        clean_limit = self._clean_limit_with_max(
+            limit, default=default, max_limit=max_limit
+        )
         limited = items[:clean_limit]
+        truncated = len(limited) < len(items)
         return limited, McpResultMetaDto(
             limit=clean_limit,
             returned_count=len(limited),
             total_count=len(items),
-            truncated=len(limited) < len(items),
+            truncated=truncated,
+            has_more=truncated,
         )
 
-    @staticmethod
-    def _summary_status(meta: McpResultMetaDto) -> str:
-        if meta.truncated:
-            return "truncated"
-        if meta.total_count == 0:
-            return "empty"
-        return "ok"
+    def _limited_list(
+        self,
+        items: List,
+        limit: int,
+        default: int = 500,
+        max_limit: int = 5000,
+    ) -> McpLimitedList:
+        limited, meta = self._limited(
+            items,
+            limit,
+            default=default,
+            max_limit=max_limit,
+        )
+        return McpLimitedList(limited, meta)

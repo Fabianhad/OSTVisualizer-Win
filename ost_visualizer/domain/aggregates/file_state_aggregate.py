@@ -26,18 +26,12 @@ class FileStateAggregate:
         except OSError as exc:
             self.logger.error("Error reading file state: %s", exc)
             self._state = FileState()
-        except Exception as exc:
-            self.logger.exception("Unexpected error loading file state: %s", exc)
-            self._state = FileState()
 
     def _save_state(self) -> None:
         try:
             self.repository.save(self._state)
         except OSError as exc:
             self.logger.error("Error saving file state: %s", exc)
-            raise
-        except Exception as exc:
-            self.logger.exception("Unexpected error saving file state: %s", exc)
             raise
 
     @property

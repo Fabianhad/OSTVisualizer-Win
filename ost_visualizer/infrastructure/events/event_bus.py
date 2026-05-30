@@ -18,10 +18,9 @@ class EventBus(IEventBus):
         callbacks = self._subscribers.get(event_type)
         if not callbacks:
             return
-        try:
-            callbacks.remove(callback)
-        except ValueError:
+        if callback not in callbacks:
             return
+        callbacks.remove(callback)
         if not callbacks:
             del self._subscribers[event_type]
 

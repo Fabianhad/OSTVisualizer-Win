@@ -870,7 +870,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
                         dpm_y * 0.0254
                     )
                 return size.width() / 96.0, size.height() / 96.0
-        except Exception:
+        except (OSError, RuntimeError):
             pass
         return None
 

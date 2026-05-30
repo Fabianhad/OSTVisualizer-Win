@@ -9,6 +9,7 @@
 - Added a local read-only MCP bridge for live desktop context such as active view, selected pages, highlighted conditions, and selected takeoffs.
 - Added MCP setup controls to the Options dialog for copying Claude Desktop/Cursor config and Codex setup commands.
 - Added read-only MCP area context with area names on takeoffs/current context plus `list_areas` and `get_area_summary`.
+- Added safe read-only MCP page search, layer summaries, named views, hotlinks, and redacted page sheet metadata.
 - Added separate Options controls for grid, PDF-line, takeoff, and right-angle snap thresholds.
 - Added a Reset All Settings button to the Options dialog that restores app preferences and workspace layout state to defaults.
 - Added embedded PDF text selection in the plan view with I-beam hover, drag-range highlighting, and copy support.
@@ -17,7 +18,7 @@
 ### Changed
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.
 - Replaced the external MCP runtime dependency with an internal stdlib stdio adapter, and removed obsolete MCP dependency/setup files.
-- Limited MCP database access to checked OST Visualizer database settings, with bounded responses and status/result-limit metadata.
+- Limited MCP database access to checked OST Visualizer database settings, with redacted local paths plus bounded responses and status/result-limit metadata.
 - Build scripts now produce a separate lightweight Nuitka standalone MCP helper directory instead of combining MCP hosting with the desktop executable.
 - Kept MCP read-only: no database path overrides, exports, CSV, writes, shell execution, arbitrary SQL, PDF text extraction, OCR, or page text tools are exposed.
 - Split placement snapping so takeoff, PDF-line, and grid snapping use independent app-config toggles and thresholds.

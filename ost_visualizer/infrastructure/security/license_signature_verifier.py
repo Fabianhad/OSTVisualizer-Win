@@ -54,7 +54,7 @@ class LicenseSignatureVerifier:
                 return True
             self.logger.warning("License signature verification failed")
             return False
-        except Exception as exc:
+        except (ArithmeticError, TypeError, ValueError) as exc:
             self.logger.warning("License signature verification failed: %s", exc)
             return False
 

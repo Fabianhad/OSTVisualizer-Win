@@ -16,7 +16,7 @@ class HotlinkEventAdapter(IShutdownAware):
         if self._plan_view:
             try:
                 self._plan_view.hotlink_clicked.disconnect(self._on_hotlink_clicked)
-            except Exception:
+            except (TypeError, RuntimeError):
                 pass
             self._plan_view = None
 

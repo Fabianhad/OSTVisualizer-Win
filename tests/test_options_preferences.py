@@ -1107,9 +1107,7 @@ class OptionsPreferencesTests(unittest.TestCase):
 
         class BackoutPlanView:
             _valid_backout_parent_uid = TakeoffPlanView._valid_backout_parent_uid
-            backout_parent_candidate_uid = (
-                TakeoffPlanView.backout_parent_candidate_uid
-            )
+            backout_parent_candidate_uid = TakeoffPlanView.backout_parent_candidate_uid
 
             def __init__(self, selected, takeoffs, conditions):
                 self._selected_uids = set(selected)
@@ -1250,9 +1248,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 refresh_backout_action=lambda: explicit_refresh_calls.append(1)
             )
         )
-
         MenuController._sync_tool_action_states(controller, True)
-
         self.assertEqual(explicit_refresh_calls, [1])
 
     def test_begin_paste_backout_requires_host_area(self):
@@ -1294,11 +1290,9 @@ class OptionsPreferencesTests(unittest.TestCase):
             position=[1.0, 1.0, 2.0, 1.0, 2.0, 2.0],
             parent_uid="source-parent",
         )
-
         self.assertFalse(TakeoffPlanView.begin_paste_backout(view, [hole], {}, "7"))
         self.assertFalse(view._paste_backout_active)
         self.assertEqual(view.cursor_modes, [])
-
         view._current_takeoffs["host"] = Takeoff(
             uid="host",
             condition_uid="area-condition",
@@ -1348,7 +1342,6 @@ class OptionsPreferencesTests(unittest.TestCase):
 
         view = FakePasteBackoutView()
         event = FakeEvent()
-
         self.assertTrue(PlacementModeMixin.handle_paste_backout_press(view, event))
         self.assertTrue(event.accepted)
         self.assertEqual(view.paste_backouts_placed.emitted, [])

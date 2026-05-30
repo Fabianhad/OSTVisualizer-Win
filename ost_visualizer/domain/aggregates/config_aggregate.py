@@ -136,14 +136,11 @@ class ConfigAggregate:
             self._apply_config(config)
         except FileNotFoundError:
             self._reset_to_defaults(save=True)
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             self.logger.error("%s; resetting to defaults", exc)
             self._reset_to_defaults(save=True)
         except OSError as exc:
             self.logger.error("Error reading configuration: %s", exc)
-            self._reset_to_defaults(save=False)
-        except Exception as exc:
-            self.logger.exception("Unexpected error loading configuration: %s", exc)
             self._reset_to_defaults(save=False)
 
     def _apply_config(self, config: Config) -> None:
@@ -251,7 +248,7 @@ class ConfigAggregate:
         if config_changed:
             try:
                 self._save_config()
-            except Exception:
+            except OSError:
                 self.logger.warning("Failed to save corrected config", exc_info=True)
 
     def _save_config(self) -> None:
@@ -260,16 +257,13 @@ class ConfigAggregate:
         except OSError as exc:
             self.logger.error("Error saving configuration: %s", exc)
             raise
-        except Exception as exc:
-            self.logger.exception("Unexpected error saving configuration: %s", exc)
-            raise
 
     def _reset_to_defaults(self, save: bool) -> None:
         self._config = Config()
         if save:
             try:
                 self.repository.save(self._config)
-            except Exception as exc:
+            except OSError as exc:
                 self.logger.exception(
                     "Failed to save default configuration to %s: %s",
                     self.repository.config_path,

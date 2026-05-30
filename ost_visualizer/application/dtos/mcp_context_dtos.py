@@ -8,7 +8,8 @@ MCP_BRIDGE_SERVER_NAME = "OSTVisualizerMcpBridge.v1"
 class McpDatabaseDto:
     database_id: str
     display_name: str
-    file_path: str
+    basename: str = ""
+    path_status: str = "checked"
     exists: bool = True
 
 
@@ -39,8 +40,11 @@ class McpBidDto:
 class McpPageDto:
     uid: str
     name: str
+    sheet_no: str = ""
+    sequence: int = 0
     folder_uid: Optional[str] = None
-    image_path: Optional[str] = None
+    image_basename: Optional[str] = None
+    image_path_status: str = "not_configured"
     is_pdf: bool = False
     page_index: int = 0
     width_pts: float = 0.0
@@ -49,7 +53,9 @@ class McpPageDto:
     scale_factor2: float = 1.0
     rotation: int = 0
     layer_visible: bool = True
-    overlay_image_path: Optional[str] = None
+    overlay_basename: Optional[str] = None
+    overlay_path_status: str = "not_configured"
+    has_overlay: bool = False
     takeoff_count: int = 0
 
 
@@ -116,6 +122,7 @@ class McpResultMetaDto:
     returned_count: int = 0
     total_count: int = 0
     truncated: bool = False
+    has_more: bool = False
 
 
 @dataclass
@@ -237,6 +244,48 @@ class McpPageContextDto:
     has_pdf_source: bool = False
     has_overlay: bool = False
     page_text_status: str = "deferred"
+
+
+@dataclass
+class McpLayerDto:
+    uid: str
+    name: str
+    visible: bool = True
+    sequence: int = 0
+    is_template: bool = False
+    is_locked: bool = False
+    condition_count: int = 0
+    takeoff_count: int = 0
+    annotation_count: int = 0
+
+
+@dataclass
+class McpNamedViewDto:
+    uid: str
+    page_uid: str
+    page_name: str = ""
+    name: str = ""
+    min_x: float = 0.0
+    min_y: float = 0.0
+    max_x: float = 0.0
+    max_y: float = 0.0
+    center_x: float = 0.0
+    center_y: float = 0.0
+    width: float = 0.0
+    height: float = 0.0
+
+
+@dataclass
+class McpHotlinkDto:
+    uid: str
+    page_uid: str
+    page_name: str = ""
+    layer_uid: Optional[str] = None
+    visible: bool = True
+    target_named_view_uid: Optional[str] = None
+    target_named_view_name: str = ""
+    target_page_uid: Optional[str] = None
+    target_page_name: str = ""
 
 
 @dataclass

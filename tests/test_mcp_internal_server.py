@@ -16,7 +16,7 @@ EXPECTED_TOOLS = {
     "get_bid_summary",
     "list_pages",
     "get_current_page",
-    "get_page_pdf_info",
+    "get_page_metadata",
     "list_conditions",
     "list_areas",
     "get_area_summary",
@@ -26,6 +26,10 @@ EXPECTED_TOOLS = {
     "get_selected_takeoffs_summary",
     "get_selected_pages_summary",
     "summarize_quantities",
+    "search_pages",
+    "list_layers",
+    "list_named_views",
+    "list_hotlinks",
     "get_page_quantity_summary",
     "search_takeoffs",
     "get_bid_quantity_summary",
@@ -85,6 +89,7 @@ class McpInternalServerProtocolTests(unittest.TestCase):
         self.assertFalse(response["isError"])
         self.assertTrue(response["structuredContent"]["success"])
         self.assertEqual(response["structuredContent"]["status"], "no_checked_database")
+        self.assertIn("has_more", response["structuredContent"]["meta"])
 
     def test_resources_and_templates(self):
         resources = self.request("resources/list")["result"]["resources"]
@@ -111,6 +116,40 @@ class McpInternalServerProtocolTests(unittest.TestCase):
                 "ost://database/{database_id}/bid/{bid_uid}/quantities",
             },
         )
+
+    def test_saved_context_redacts_file_paths(self):
+        root = Path(self.tmp.name)
+        db_path = root / "private" / "demo.mdb"
+        db_path.parent.mkdir()
+        db_path.write_text("", encoding="utf-8")
+        (root / "file_state.json").write_text(
+            json.dumps(
+                {"file_entries": [{"file_path": str(db_path), "is_checked": True}]}
+            ),
+            encoding="utf-8",
+        )
+        (root / "workspace_state.json").write_text(
+            json.dumps(
+                {
+                    "project_workspace": {
+                        "selected_node": {
+                            "kind": "database",
+                            "file_path": str(db_path),
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.server = build_mcp_server(DatabaseRegistry(app_data_dir=root))
+        response = self.request(
+            "tools/call",
+            {"name": "get_current_context", "arguments": {}},
+        )["result"]["structuredContent"]
+        encoded = json.dumps(response)
+        self.assertNotIn(str(db_path), encoded)
+        self.assertNotIn("file_path", encoded)
+        self.assertEqual(response["data"]["file_basename"], "demo.mdb")
 
     def test_prompts_list_and_get(self):
         prompts = self.request("prompts/list")["result"]["prompts"]

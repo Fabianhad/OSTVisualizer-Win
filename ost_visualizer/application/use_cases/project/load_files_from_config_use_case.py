@@ -19,7 +19,10 @@ class LoadFilesFromConfigUseCase:
     def execute(self) -> List[str]:
         try:
             file_state = self.file_state_repository.load()
-        except Exception:
+        except FileNotFoundError:
+            return []
+        except (OSError, ValueError) as exc:
+            self.logger.warning("Could not load file state from config: %s", exc)
             return []
         if not file_state.file_entries:
             return []

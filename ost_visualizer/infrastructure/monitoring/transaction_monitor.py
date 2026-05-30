@@ -59,7 +59,7 @@ class TransactionMonitor:
             if evt.open(self.STATUS_EVENT_NAME):
                 return evt
         except Exception:
-            pass
+            logger.debug("Unable to open OST realtime status event", exc_info=True)
         return None
 
     def _sync_status_state(self) -> None:
@@ -89,8 +89,6 @@ class TransactionMonitor:
                 self._show_dll_not_loaded_message()
             else:
                 self._state = MonitorState.WAITING_FOR_OST
-        elif self._state == MonitorState.CONNECTED:
-            pass
 
     def set_update_dialog_active(self, active: bool) -> None:
         if self._notifier is None:

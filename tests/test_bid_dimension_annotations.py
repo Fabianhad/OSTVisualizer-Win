@@ -330,7 +330,8 @@ class BidDimensionAnnotationTests(unittest.TestCase):
 
     def test_dimension_label_style_persists_to_bid_dimensions_font_columns(self):
         conn = sqlite3.connect(":memory:")
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE BidDimensions (
                 UID INTEGER PRIMARY KEY,
                 FontName TEXT,
@@ -340,12 +341,15 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 FontItalic INTEGER,
                 FontUnderline INTEGER
             )
-            """)
-        conn.execute("""
+            """
+        )
+        conn.execute(
+            """
             INSERT INTO BidDimensions
                 (UID, FontName, FontColor, FontSize, FontBold, FontItalic, FontUnderline)
             VALUES (7, 'Arial', 0, 10, 0, 0, 0)
-            """)
+            """
+        )
         ops = _DimensionWriteOps(conn)
         self.assertTrue(
             ops.save_annotation_text_properties(
@@ -366,11 +370,13 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 ],
             )
         )
-        row = conn.execute("""
+        row = conn.execute(
+            """
             SELECT FontName, FontColor, FontSize, FontBold, FontItalic, FontUnderline
               FROM BidDimensions
              WHERE UID=7
-            """).fetchone()
+            """
+        ).fetchone()
         self.assertEqual(row, ("Calibri", 0x332211, 18, 1, 1, 1))
 
     def test_native_pdf_export_writes_horizontal_line_dimension_annotation(self):

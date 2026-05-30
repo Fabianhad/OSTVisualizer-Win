@@ -12,11 +12,6 @@ def _parse_args(argv=None):
         description="Run the OST Visualizer read-only MCP stdio server."
     )
     parser.add_argument(
-        "--app-data-dir",
-        default=None,
-        help="Override the OST Visualizer app data directory for testing.",
-    )
-    parser.add_argument(
         "--log-level",
         default="WARNING",
         choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
@@ -27,7 +22,14 @@ def _parse_args(argv=None):
 
 def _configure_logging(app_data_dir: Path, level_name: str) -> logging.Logger:
     app_data_dir.mkdir(parents=True, exist_ok=True)
-    level = getattr(logging, level_name.upper(), logging.WARNING)
+    levels = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+    level = levels.get(level_name.upper(), logging.WARNING)
     logger = LOGGER
     logger.setLevel(level)
     logger.handlers.clear()
@@ -48,7 +50,7 @@ def _configure_logging(app_data_dir: Path, level_name: str) -> logging.Logger:
 
 def main(argv=None) -> int:
     args = _parse_args(argv)
-    app_data_dir = Path(args.app_data_dir) if args.app_data_dir else get_app_data_dir()
+    app_data_dir = get_app_data_dir()
     logger = _configure_logging(app_data_dir, args.log_level)
     try:
         from .server import run_stdio_server

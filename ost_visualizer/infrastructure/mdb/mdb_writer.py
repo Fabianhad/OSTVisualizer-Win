@@ -47,7 +47,7 @@ class MdbWriter(
             except Exception:
                 try:
                     conn.rollback()
-                except Exception:
+                except pyodbc.Error:
                     pass
                 raise
             finally:

@@ -52,7 +52,5 @@ class LicenseThreadManager:
         self._active_threads.clear()
 
     def _remove_thread(self, thread: threading.Thread) -> None:
-        try:
+        if thread in self._active_threads:
             self._active_threads.remove(thread)
-        except ValueError:
-            pass

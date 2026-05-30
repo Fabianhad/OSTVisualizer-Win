@@ -6,6 +6,7 @@ from .cdn_type import CdnType
 from .condition import Condition
 from .condition_folder import BidConditionFolder
 from .hierarchy_data import HierarchyData, HierarchyFileEntry
+from .layer import BidLayer
 from .page import Page
 from .page_info import BidPageInfo
 from .takeoff import Takeoff
@@ -30,6 +31,7 @@ class BidLoadResult:
     pages: Dict[str, Page] = field(default_factory=dict)
     page_area_selections: Dict[str, Optional[str]] = field(default_factory=dict)
     bid_annotations: List[BidAnnotation] = field(default_factory=list)
+    bid_layers: List[BidLayer] = field(default_factory=list)
     bid_condition_folders: Dict[str, BidConditionFolder] = field(default_factory=dict)
     selected_page_uid: Optional[str] = None
     takeoff_extras: Dict[str, Dict[str, Any]] = field(default_factory=dict)

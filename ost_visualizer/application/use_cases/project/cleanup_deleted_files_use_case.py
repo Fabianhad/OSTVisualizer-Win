@@ -25,7 +25,7 @@ class CleanupDeletedFilesUseCase:
     def execute_and_save(self) -> int:
         try:
             file_state = self.file_state_repository.load()
-        except Exception as exc:
+        except (FileNotFoundError, OSError, ValueError) as exc:
             self.logger.warning("Could not load file state for cleanup: %s", exc)
             return 0
         if not file_state.file_entries:
@@ -40,7 +40,7 @@ class CleanupDeletedFilesUseCase:
         if removed_count > 0:
             try:
                 self.file_state_repository.save(file_state)
-            except Exception as exc:
+            except OSError as exc:
                 self.logger.error("Failed to save file state after cleanup: %s", exc)
                 return 0
         return removed_count

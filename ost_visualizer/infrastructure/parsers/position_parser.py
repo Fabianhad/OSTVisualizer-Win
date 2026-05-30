@@ -213,14 +213,11 @@ def parse_position(position_str: str) -> List[float]:
 def parse_position_bytes(pos_bytes) -> List[float]:
     if not pos_bytes:
         return []
-    try:
-        if isinstance(pos_bytes, bytes):
-            pos_str = pos_bytes.decode("utf-8", errors="ignore")
-        else:
-            pos_str = str(pos_bytes)
-        return parse_position(pos_str)
-    except Exception:
-        return []
+    if isinstance(pos_bytes, bytes):
+        pos_str = pos_bytes.decode("utf-8", errors="ignore")
+    else:
+        pos_str = str(pos_bytes)
+    return parse_position(pos_str)
 
 
 def clear_caches() -> None:

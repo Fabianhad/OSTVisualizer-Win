@@ -5,6 +5,7 @@ from ost_visualizer.application.services.mcp_read_service import (
     McpReadService,
 )
 from ost_visualizer.domain.entities.area import BidArea
+from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.file_results import BidLoadResult, FileLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import (
@@ -13,6 +14,7 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyFileEntry,
     HierarchyProjectInfo,
 )
+from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.uom_service import CALC_COUNT, UOM_EACH
@@ -20,7 +22,7 @@ from ost_visualizer.domain.services.uom_service import CALC_COUNT, UOM_EACH
 
 class FakeProjectRepository:
     def __init__(self):
-        self.file_path = "demo.mdb"
+        self.file_path = r"C:\jobs\private\demo.mdb"
         self.hierarchy = HierarchyData(
             loaded_files=[
                 HierarchyFileEntry(
@@ -49,6 +51,7 @@ class FakeProjectRepository:
             calc_type1=CALC_COUNT,
             uom1=UOM_EACH,
             ref_no=1,
+            layer_uid="layer-1",
         )
         hidden = Condition(
             uid="cond-2",
@@ -58,16 +61,40 @@ class FakeProjectRepository:
             uom1=UOM_EACH,
             ref_no=2,
             layer_visible=False,
+            layer_uid="layer-2",
         )
         unused = Condition(
             uid="cond-3",
             name="Unused Linear",
             condition_type=Condition.TYPE_LINEAR,
             ref_no=3,
+            layer_uid="layer-1",
         )
-        page1 = Page(uid="page-1", name="A101", image_path="A101.pdf", page_index=0)
-        page2 = Page(uid="page-2", name="A102", image_path="A102.pdf", page_index=1)
-        page3 = Page(uid="page-3", name="A103", image_path="A103.pdf", page_index=2)
+        page1 = Page(
+            uid="page-1",
+            name="A101",
+            sheet_no="S-101",
+            sequence=10,
+            image_path=r"C:\plans\A101.pdf",
+            overlay_image_path=r"C:\plans\A101-overlay.pdf",
+            page_index=0,
+        )
+        page2 = Page(
+            uid="page-2",
+            name="A102",
+            sheet_no="S-102",
+            sequence=20,
+            image_path=r"C:\plans\A102.pdf",
+            page_index=1,
+        )
+        page3 = Page(
+            uid="page-3",
+            name="A103",
+            sheet_no="S-103",
+            sequence=30,
+            image_path=r"C:\plans\A103.pdf",
+            page_index=2,
+        )
         t1 = Takeoff(
             uid="takeoff-1",
             condition_uid="cond-1",
@@ -112,6 +139,39 @@ class FakeProjectRepository:
                     guid="{AREA-2}",
                 ),
             },
+            bid_layers=[
+                BidLayer(
+                    uid="layer-1",
+                    bid_uid="bid-1",
+                    name="Takeoff",
+                    show=True,
+                    sequence=1,
+                ),
+                BidLayer(
+                    uid="layer-2",
+                    bid_uid="bid-1",
+                    name="Hidden",
+                    show=False,
+                    sequence=2,
+                    is_locked=True,
+                ),
+            ],
+            bid_annotations=[
+                BidAnnotation(
+                    uid="view-1",
+                    annotation_type="namedview",
+                    page_uid="page-1",
+                    position=[0.0, 0.0, 10.0, 0.0, 10.0, 5.0, 0.0, 5.0],
+                    properties={"Text": "Lobby Detail"},
+                ),
+                BidAnnotation(
+                    uid="hotlink-1",
+                    annotation_type="hotlink",
+                    page_uid="page-2",
+                    layer_uid="layer-1",
+                    properties={"BidPageViewUID": "view-1"},
+                ),
+            ],
             pages={"page-1": page1, "page-2": page2, "page-3": page3},
             selected_page_uid="page-2",
         )
@@ -145,6 +205,28 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual(len(bids), 1)
         self.assertEqual(bids[0].uid, "bid-1")
 
+    def test_database_and_page_outputs_redact_local_paths(self):
+        databases = self.service.list_databases()
+        self.assertEqual(databases[0].basename, "demo.mdb")
+        self.assertFalse("file_path" in databases[0].__dict__)
+        pages = self.service.list_pages("db-1", "bid-1")
+        self.assertEqual(pages[0].image_basename, "A101.pdf")
+        self.assertEqual(pages[0].overlay_basename, "A101-overlay.pdf")
+        self.assertEqual(pages[0].image_path_status, "configured")
+        self.assertEqual(pages[0].overlay_path_status, "configured")
+        self.assertFalse("image_path" in pages[0].__dict__)
+        self.assertFalse("overlay_image_path" in pages[0].__dict__)
+
+    def test_page_lists_include_sheet_sequence_and_limit_metadata(self):
+        pages = self.service.list_pages("db-1", "bid-1", limit=2)
+        self.assertEqual([page.uid for page in pages], ["page-1", "page-2"])
+        self.assertEqual(pages[0].sheet_no, "S-101")
+        self.assertEqual(pages[0].sequence, 10)
+        self.assertEqual(pages.meta.limit, 2)
+        self.assertEqual(pages.meta.returned_count, 2)
+        self.assertEqual(pages.meta.total_count, 3)
+        self.assertTrue(pages.meta.has_more)
+
     def test_hierarchy_lookup_does_not_fall_back_to_unmatched_file(self):
         self.repo.hierarchy.loaded_files[0].file_path = "other.mdb"
         with self.assertRaises(McpReadError):
@@ -159,10 +241,17 @@ class McpReadServiceTests(unittest.TestCase):
     def test_list_takeoffs_filters_visible_and_limit(self):
         takeoffs = self.service.list_takeoffs("db-1", "bid-1", limit=1)
         self.assertEqual([t.uid for t in takeoffs], ["takeoff-1"])
+        self.assertEqual(takeoffs.meta.total_count, 2)
+        self.assertTrue(takeoffs.meta.has_more)
         self.assertEqual(takeoffs[0].area_name, "Level One Deck")
         all_takeoffs = self.service.list_takeoffs("db-1", "bid-1", visible_only=False)
         self.assertEqual(len(all_takeoffs), 3)
         self.assertIsNone(all_takeoffs[2].area_name)
+        geometry_takeoffs = self.service.list_takeoffs(
+            "db-1", "bid-1", include_geometry=True, limit=99999
+        )
+        self.assertEqual(geometry_takeoffs.meta.limit, 250)
+        self.assertIsNotNone(geometry_takeoffs[0].position)
 
     def test_area_tools_report_metadata_and_usage(self):
         areas = self.service.list_areas("db-1", "bid-1")
@@ -207,6 +296,25 @@ class McpReadServiceTests(unittest.TestCase):
         matches = self.service.search_conditions("db-1", "bid-1", "count", limit=1)
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].uid, "cond-1")
+
+    def test_search_pages_layers_named_views_and_hotlinks(self):
+        pages = self.service.search_pages("db-1", "bid-1", "S-102")
+        self.assertEqual([page.uid for page in pages], ["page-2"])
+        layers = self.service.list_layers("db-1", "bid-1")
+        self.assertEqual([layer.name for layer in layers], ["Takeoff", "Hidden"])
+        self.assertEqual(layers[0].condition_count, 2)
+        self.assertEqual(layers[0].takeoff_count, 2)
+        self.assertEqual(layers[0].annotation_count, 1)
+        self.assertFalse(layers[1].visible)
+        self.assertTrue(layers[1].is_locked)
+        named_views = self.service.list_named_views("db-1", "bid-1")
+        self.assertEqual(named_views[0].name, "Lobby Detail")
+        self.assertEqual(named_views[0].page_name, "A101")
+        self.assertEqual(named_views[0].width, 10.0)
+        hotlinks = self.service.list_hotlinks("db-1", "bid-1", page_uid="page-2")
+        self.assertEqual(hotlinks[0].target_named_view_uid, "view-1")
+        self.assertEqual(hotlinks[0].target_page_uid, "page-1")
+        self.assertEqual(hotlinks[0].target_page_name, "A101")
 
     def test_condition_summary_includes_pages_and_quantities(self):
         summary = self.service.get_condition_summary("db-1", "bid-1", "cond-1")

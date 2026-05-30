@@ -59,7 +59,7 @@ def visualize_with_threejs(
             if page_width_inches > 0 and page_height_inches > 0:
                 scene_data["page_width"] = page_width_inches
                 scene_data["page_height"] = page_height_inches
-        except Exception:
+        except OSError:
             pass
     html_content = _generate_html(scene_data, title)
     if output_path is None:

@@ -235,12 +235,11 @@ def _check_single_import(layer: str, filepath: Path, lineno: int, target: str):
     #     may import application/interfaces, application/dtos, application/events only
     elif layer == "infrastructure":
         if target_layer == "presentation":
-            if (
+            is_allowed_viz_exception = (
                 stem in INFRA_PRESENTATION_VIZ_EXCEPTIONS
                 and "presentation.visualization" in target
-            ):
-                pass  # DI factory importing presentation/visualization/
-            else:
+            )
+            if not is_allowed_viz_exception:
                 add(
                     "layer",
                     filepath,
@@ -256,9 +255,7 @@ def _check_single_import(layer: str, filepath: Path, lineno: int, target: str):
             if target_sublayer not in allowed_app:
                 # Check documented exception
                 exception_module = INFRA_APP_SERVICE_EXCEPTIONS.get(stem)
-                if exception_module and exception_module in target:
-                    pass  # documented exception
-                else:
+                if not (exception_module and exception_module in target):
                     add(
                         "layer",
                         filepath,
@@ -572,9 +569,8 @@ def main():
             print()
         print(f"Total: {len(violations)} violation(s)")
         return 1
-    else:
-        print("No violations found.")
-        return 0
+    print("No violations found.")
+    return 0
 
 
 if __name__ == "__main__":

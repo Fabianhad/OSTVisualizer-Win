@@ -63,7 +63,7 @@ class MdbConnectionManager:
             for conn in self._write_conns.values():
                 try:
                     conn.close()
-                except Exception:
+                except pyodbc.Error:
                     pass
             self._write_conns.clear()
 
@@ -78,7 +78,7 @@ class MdbConnectionManager:
                 for conn in pool.values():
                     try:
                         conn.close()
-                    except Exception:
+                    except pyodbc.Error:
                         pass
                 pool.clear()
 
@@ -88,5 +88,5 @@ class MdbConnectionManager:
         if conn is not None:
             try:
                 conn.close()
-            except Exception:
+            except pyodbc.Error:
                 pass

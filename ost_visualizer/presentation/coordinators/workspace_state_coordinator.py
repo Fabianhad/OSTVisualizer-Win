@@ -813,7 +813,6 @@ class WorkspaceStateCoordinator(QtCore.QObject):
     def _decode_byte_array(value: Optional[str]) -> QtCore.QByteArray:
         if not value:
             return QtCore.QByteArray()
-        try:
-            return QtCore.QByteArray.fromBase64(value.encode("ascii"))
-        except Exception:
+        if not value.isascii():
             return QtCore.QByteArray()
+        return QtCore.QByteArray.fromBase64(value.encode("ascii"))

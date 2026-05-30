@@ -29,6 +29,7 @@ class ProjectReadService:
         try:
             all_layers = self._reader.get_bid_layers_for_sidebar(file_path, bid_uid)
         except Exception:
+            self.logger.warning("Failed to load bid layers", exc_info=True)
             return []
         return merge_layers_for_bid(all_layers)
 

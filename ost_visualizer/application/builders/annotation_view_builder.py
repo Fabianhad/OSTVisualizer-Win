@@ -82,7 +82,7 @@ class AnnotationViewBuilder:
         icon_provider = self.container.get("icon_provider")
         try:
             parent_window = self.container.get("main_window")
-        except Exception:
+        except KeyError:
             parent_window = None
         return self.view_manager_factory(
             event_bus=self.event_bus,

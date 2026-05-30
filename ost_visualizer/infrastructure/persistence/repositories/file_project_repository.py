@@ -60,6 +60,7 @@ class MdbFileParser(IFileParser):
             takeoff_extras,
         ) = self.parser.get_bid_data(file_path, bid_uid)
         pages = build_pages_from_bid_data(bid_pages, bid_takeoffs)
+        bid_layers = self.parser.get_bid_layers_for_sidebar(file_path, bid_uid)
         return BidLoadResult(
             bid_conditions=bid_conditions,
             bid_takeoffs=bid_takeoffs,
@@ -68,10 +69,14 @@ class MdbFileParser(IFileParser):
             pages=pages,
             page_area_selections=page_area_selections,
             bid_annotations=bid_annotations,
+            bid_layers=bid_layers,
             bid_condition_folders=bid_condition_folders,
             selected_page_uid=selected_page_uid,
             takeoff_extras=takeoff_extras,
         )
+
+    def get_bid_layers_for_sidebar(self, file_path: str, bid_uid: str):
+        return self.parser.get_bid_layers_for_sidebar(file_path, bid_uid)
 
     def get_database_statistics(self, file_path: str) -> Dict[str, int]:
         return self.parser.get_database_statistics(file_path)

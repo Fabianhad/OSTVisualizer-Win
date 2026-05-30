@@ -610,7 +610,7 @@ class PlacementModeMixin:
         for item in self._place_preview_items:
             try:
                 self._scene.removeItem(item)
-            except Exception:
+            except (TypeError, RuntimeError):
                 pass
         self._place_preview_items.clear()
 
@@ -1444,7 +1444,7 @@ class PlacementModeMixin:
         for item in self._paste_backout_preview_items:
             try:
                 self._scene.removeItem(item)
-            except Exception:
+            except (TypeError, RuntimeError):
                 pass
         self._paste_backout_preview_items.clear()
 

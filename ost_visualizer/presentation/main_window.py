@@ -547,7 +547,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _resolve_update_service(self):
         try:
             return self.app_controller.get_service("update_check_service")
-        except Exception:
+        except KeyError:
             return None
 
     def _check_for_updates(self) -> None:
@@ -1351,10 +1351,9 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> QtCore.QByteArray | None:
         if geometry_b64 is None:
             return None
-        try:
-            return QtCore.QByteArray.fromBase64(geometry_b64.encode("ascii"))
-        except Exception:
+        if not geometry_b64.isascii():
             return QtCore.QByteArray()
+        return QtCore.QByteArray.fromBase64(geometry_b64.encode("ascii"))
 
     def _resolve_detached_initial_state(
         self,

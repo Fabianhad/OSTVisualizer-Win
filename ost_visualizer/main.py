@@ -41,7 +41,7 @@ def _enable_faulthandler(log_dir: Path, logger: logging.Logger) -> None:
             buffering=1,
         )
         faulthandler.enable(file=_crash_log_stream, all_threads=True)
-    except Exception:
+    except (OSError, RuntimeError):
         logger.exception("Failed to enable faulthandler")
 
 

@@ -122,13 +122,12 @@ class ExportService:
                     page_count=result.page_count,
                     format_name=strategy.name,
                 )
-            else:
-                return ExportResultDto(
-                    success=False,
-                    format_name=strategy.name,
-                    error_message="Export function returned False",
-                    error_code=ExportErrorCode.WORKER_FAILED,
-                )
+            return ExportResultDto(
+                success=False,
+                format_name=strategy.name,
+                error_message="Export function returned False",
+                error_code=ExportErrorCode.WORKER_FAILED,
+            )
         except Exception as e:
             return ExportResultDto(
                 success=False,

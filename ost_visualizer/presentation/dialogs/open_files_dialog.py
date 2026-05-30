@@ -229,11 +229,13 @@ class OpenFilesDialog(QtWidgets.QDialog):
         return [FileEntry(e.file_path, e.is_checked) for e in self.file_entries]
 
     def _is_in_working_dir(self, file_path: str) -> bool:
+        if self._working_directory_service is None:
+            return False
         try:
             resolved = Path(file_path).resolve()
             wd_resolved = self._working_directory_service.working_dir.resolve()
             return resolved.parent == wd_resolved
-        except Exception:
+        except OSError:
             return False
 
     def _update_remove_button_state(self) -> None:

@@ -9,6 +9,7 @@ from ost_visualizer.application.dtos.mcp_context_dtos import (
     McpResultMetaDto,
     McpSelectedTakeoffsSummaryDto,
     McpTakeoffDto,
+    McpPageDto,
 )
 from ost_visualizer.mcp_server.serializers import error, ok
 
@@ -24,6 +25,7 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "returned_count",
                 "total_count",
                 "truncated",
+                "has_more",
             },
         )
         failure = error("missing", code="not_found")
@@ -77,6 +79,13 @@ class McpSchemaSnapshotTests(unittest.TestCase):
         payload = ok(McpTakeoffDto(uid="t1", condition_uid="c1"))
         self.assertIn("area_uid", payload["data"])
         self.assertIn("area_name", payload["data"])
+
+    def test_page_shape_redacts_source_paths(self):
+        payload = ok(McpPageDto(uid="p1", name="A101", image_basename="A101.pdf"))
+        self.assertIn("image_basename", payload["data"])
+        self.assertIn("image_path_status", payload["data"])
+        self.assertNotIn("image_path", payload["data"])
+        self.assertNotIn("overlay_image_path", payload["data"])
 
     def test_area_summary_shape_is_stable(self):
         payload = ok(

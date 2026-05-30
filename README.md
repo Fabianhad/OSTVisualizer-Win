@@ -94,14 +94,17 @@ process and exposes only checked `.mdb` databases from
 `~/.ost_visualizer/file_state.json`. The desktop GUI does not start the stdio
 server; it only provides a live-context bridge when the app is running.
 
-The MCP server exposes project, bid, page, area, PDF metadata, condition,
-takeoff, condition summary, selected-page summary, selected-takeoff summary,
-search, quantity-summary, page-context, duplicate-condition, zero-quantity,
-unplaced takeoff, and lightweight scope-gap review tools. Broad result sets use explicit
-limits and include status/metadata such as returned count and truncation state.
-It does not support `--database`, arbitrary database paths, shell execution,
-arbitrary SQL, arbitrary file reads, PDF rendering/text extraction, OCR, page
-text, exports, CSV, or database mutation.
+The MCP server exposes project, bid, page metadata, page search, layer, area,
+named-view, hotlink, condition, takeoff, condition summary, selected-page
+summary, selected-takeoff summary, search, quantity-summary, page-context,
+duplicate-condition, zero-quantity, unplaced takeoff, and lightweight scope-gap
+review tools. Broad result sets use explicit limits and include status/metadata
+such as returned count, total count, truncation state, and `has_more`. Local
+database and page source paths are redacted to safe IDs, basenames, and path
+status fields.
+It does not support `--database`, `--app-data-dir`, arbitrary database paths,
+shell execution, arbitrary SQL, arbitrary file reads, PDF rendering/text
+extraction, OCR, page text, exports, CSV, or database mutation.
 When the desktop app is running, `get_current_context` also includes a live
 read-only UI snapshot through a local app bridge, including active tab/view,
 selected bid/page/conditions, and selected takeoff UIDs.

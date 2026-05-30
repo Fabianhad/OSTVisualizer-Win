@@ -40,18 +40,18 @@ class QtMessageNotifier(QtCore.QObject):
     def cleanup(self) -> None:
         try:
             self._show_message.disconnect()
-        except Exception:
+        except (TypeError, RuntimeError):
             pass
         try:
             self._set_update_active.disconnect()
-        except Exception:
+        except (TypeError, RuntimeError):
             pass
         if self._queue:
             self._queue.clear()
         if self._current_dialog is not None:
             try:
                 self._current_dialog.finished.disconnect()
-            except Exception:
+            except (TypeError, RuntimeError):
                 pass
             self._current_dialog.deleteLater()
             self._current_dialog = None
@@ -90,7 +90,7 @@ class QtMessageNotifier(QtCore.QObject):
         if self._current_dialog is not None:
             try:
                 self._current_dialog.finished.disconnect()
-            except Exception:
+            except (TypeError, RuntimeError):
                 pass
             self._current_dialog.deleteLater()
             self._current_dialog = None

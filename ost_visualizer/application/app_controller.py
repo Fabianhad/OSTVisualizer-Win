@@ -98,7 +98,7 @@ class AppController:
                 entry.is_checked and Path(entry.file_path).exists()
                 for entry in self._file_state_model.file_entries
             )
-        except Exception:
+        except OSError:
             return False
 
     def create_new_database(
