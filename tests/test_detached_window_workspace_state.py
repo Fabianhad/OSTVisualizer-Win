@@ -26,6 +26,12 @@ def _encoded_geometry(value: bytes = b"geometry") -> str:
     return bytes(QtCore.QByteArray(value).toBase64()).decode("ascii")
 
 
+class WorkspaceStateDecodeTests(unittest.TestCase):
+    def test_decode_byte_array_rejects_corrupted_non_string_state(self):
+        decoded = WorkspaceStateCoordinator._decode_byte_array(123)
+        self.assertTrue(decoded.isEmpty())
+
+
 class FakeHotlinkPlanView:
     def __init__(self, *, visible: bool = True, stable: bool = True):
         self.current_page_uid = None

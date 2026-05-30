@@ -5,11 +5,15 @@ from ost_visualizer.application.dtos.mcp_context_dtos import (
     McpConditionDto,
     McpConditionQuantitySummaryDto,
     McpConditionSummaryDto,
+    McpPageDto,
     McpPageTakeoffSummaryDto,
+    McpPdfTextRunDto,
+    McpPdfTextSummaryDto,
+    McpPdfVectorSegmentDto,
+    McpPdfVectorsSummaryDto,
     McpResultMetaDto,
     McpSelectedTakeoffsSummaryDto,
     McpTakeoffDto,
-    McpPageDto,
 )
 from ost_visualizer.mcp_server.serializers import error, ok
 
@@ -84,8 +88,70 @@ class McpSchemaSnapshotTests(unittest.TestCase):
         payload = ok(McpPageDto(uid="p1", name="A101", image_basename="A101.pdf"))
         self.assertIn("image_basename", payload["data"])
         self.assertIn("image_path_status", payload["data"])
+        self.assertIn("source_kind", payload["data"])
+        self.assertIn("text_run_count", payload["data"])
+        self.assertIn("snap_line_count", payload["data"])
         self.assertNotIn("image_path", payload["data"])
         self.assertNotIn("overlay_image_path", payload["data"])
+
+    def test_pdf_text_summary_shape_is_stable(self):
+        payload = ok(
+            McpPdfTextSummaryDto(
+                status="ok",
+                database_id="db",
+                bid_uid="bid",
+                page_uid="page",
+                source="main",
+                source_status="configured",
+                meta=McpResultMetaDto(limit=1),
+                runs=[McpPdfTextRunDto(snippet="Door schedule")],
+            )
+        )
+        self.assertEqual(
+            set(payload["data"].keys()),
+            {
+                "status",
+                "database_id",
+                "bid_uid",
+                "page_uid",
+                "source",
+                "source_status",
+                "meta",
+                "text_run_count",
+                "character_count",
+                "returned_character_count",
+                "runs",
+            },
+        )
+
+    def test_pdf_vectors_summary_shape_is_stable(self):
+        payload = ok(
+            McpPdfVectorsSummaryDto(
+                status="ok",
+                database_id="db",
+                bid_uid="bid",
+                page_uid="page",
+                source="main",
+                source_status="configured",
+                meta=McpResultMetaDto(limit=1),
+                segments=[McpPdfVectorSegmentDto(0.0, 0.0, 1.0, 0.0)],
+            )
+        )
+        self.assertEqual(
+            set(payload["data"].keys()),
+            {
+                "status",
+                "database_id",
+                "bid_uid",
+                "page_uid",
+                "source",
+                "source_status",
+                "meta",
+                "snap_line_count",
+                "snap_point_count",
+                "segments",
+            },
+        )
 
     def test_area_summary_shape_is_stable(self):
         payload = ok(

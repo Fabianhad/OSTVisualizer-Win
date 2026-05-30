@@ -7,8 +7,8 @@ from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.loaded_file import LoadedFile
 from ost_visualizer.domain.entities.project import Project
 from ost_visualizer.presentation.components.project_tree_view import (
-    ProjectView,
     _DELETED_PROJECT_UID,
+    ProjectView,
 )
 
 

@@ -78,7 +78,7 @@ $mcpNuitkaArgs = @(
     "--output-dir=$McpOutDir"
     '--output-filename=ostv-mcp.exe'
     '--include-windows-runtime-dlls=no'
-    "--nofollow-import-to=PySide6,ost_visualizer.presentation,ost_visualizer.config.di_config"
+    "--nofollow-import-to=PySide6,ost_visualizer.config.di_config"
 ) + $CommonNofollowArgs + @(
     '--assume-yes-for-downloads'
     '--lto=yes'

@@ -17,9 +17,6 @@ from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
 from ost_visualizer.domain.entities.page_info import BidPageInfo
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
-    PlacementModeMixin,
-)
 from ost_visualizer.presentation.components.menu_builder import MenuBuilder
 from ost_visualizer.presentation.components.page_combo import (
     PageComboBox,
@@ -29,6 +26,9 @@ from ost_visualizer.presentation.components.plan_view.components.graphics_items 
     ImageBackgroundItem,
     TileGraphicsItem,
     TileKey,
+)
+from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
+    PlacementModeMixin,
 )
 from ost_visualizer.presentation.components.plan_view.components.zoom_handler import (
     ZoomHandlerMixin,
@@ -231,6 +231,10 @@ class OptionsPreferencesTests(unittest.TestCase):
 
     def tearDown(self):
         self.app.processEvents()
+
+    def test_decode_workspace_geometry_rejects_corrupted_non_string_state(self):
+        decoded = MainWindow._decode_workspace_geometry(123)
+        self.assertTrue(decoded.isEmpty())
 
     def test_options_dialog_loads_persisted_preferences(self):
         dialog = OptionsDialog(

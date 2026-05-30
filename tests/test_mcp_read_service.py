@@ -1,11 +1,16 @@
 import unittest
+from ost_visualizer.application.dtos.pdf_metadata_dtos import (
+    PdfPageInfoDto,
+    PdfTextRunDto,
+    PdfVectorSegmentDto,
+)
 from ost_visualizer.application.services.mcp_read_service import (
     McpDatabaseRef,
     McpReadError,
     McpReadService,
 )
-from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.file_results import BidLoadResult, FileLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import (
@@ -77,6 +82,11 @@ class FakeProjectRepository:
             sequence=10,
             image_path=r"C:\plans\A101.pdf",
             overlay_image_path=r"C:\plans\A101-overlay.pdf",
+            overlay_offset_x=1.5,
+            overlay_offset_y=2.5,
+            overlay_rotation=0.25,
+            deskew_rotation_overlay=0.5,
+            overlay_rect=(0.0, 0.0, 306.0, 396.0),
             page_index=0,
         )
         page2 = Page(
@@ -183,6 +193,76 @@ class FakeProjectRepository:
         return self.bid_data if bid_uid == "bid-1" else BidLoadResult()
 
 
+class FakePdfMetadataProvider:
+    def get_page_info(self, file_path, page_index):
+        if file_path.endswith("A101-overlay.pdf"):
+            return PdfPageInfoDto(
+                status="ok",
+                page_count=1,
+                effective_width_pts=300.0,
+                effective_height_pts=200.0,
+                media_width_pts=300.0,
+                media_height_pts=200.0,
+                crop_width_pts=300.0,
+                crop_height_pts=200.0,
+                intrinsic_rotation=90,
+            )
+        if file_path.endswith(".pdf"):
+            return PdfPageInfoDto(
+                status="ok",
+                page_count=3,
+                effective_width_pts=612.0,
+                effective_height_pts=792.0,
+                media_width_pts=612.0,
+                media_height_pts=792.0,
+                crop_width_pts=612.0,
+                crop_height_pts=792.0,
+                intrinsic_rotation=0,
+            )
+        return PdfPageInfoDto(status="not_pdf")
+
+    def get_text_runs(self, file_path, page_index):
+        if file_path.endswith("A103.pdf"):
+            return []
+        if file_path.endswith("A101-overlay.pdf"):
+            return [
+                PdfTextRunDto(
+                    text="Overlay note",
+                    left=1.0,
+                    top=2.0,
+                    right=20.0,
+                    bottom=8.0,
+                )
+            ]
+        return [
+            PdfTextRunDto(
+                text="Private title block with a deliberately long embedded PDF text run",
+                left=10.0,
+                top=20.0,
+                right=100.0,
+                bottom=30.0,
+            ),
+            PdfTextRunDto(
+                text="Door schedule",
+                left=12.0,
+                top=40.0,
+                right=80.0,
+                bottom=50.0,
+            ),
+        ]
+
+    def get_vector_segments(self, file_path, page_index):
+        if file_path.endswith("A103.pdf"):
+            return []
+        if file_path.endswith("A101-overlay.pdf"):
+            return [PdfVectorSegmentDto(0.0, 0.0, 0.0, 20.0)]
+        return [
+            PdfVectorSegmentDto(0.0, 0.0, 10.0, 0.0),
+            PdfVectorSegmentDto(10.0, 0.0, 10.0, 10.0),
+            PdfVectorSegmentDto(0.0, 0.0, 10.0, 10.0),
+        ]
+
+
 class McpReadServiceTests(unittest.TestCase):
     def setUp(self):
         self.repo = FakeProjectRepository()
@@ -195,6 +275,7 @@ class McpReadServiceTests(unittest.TestCase):
                     display_name="Demo",
                 )
             ],
+            pdf_metadata_provider=FakePdfMetadataProvider(),
         )
 
     def test_lists_projects_and_bids(self):
@@ -216,6 +297,87 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual(pages[0].overlay_path_status, "configured")
         self.assertFalse("image_path" in pages[0].__dict__)
         self.assertFalse("overlay_image_path" in pages[0].__dict__)
+
+    def test_page_metadata_includes_safe_pdf_summary_without_paths(self):
+        page = self.service.get_page_metadata("db-1", "bid-1", "page-1")
+        self.assertEqual(page.source_kind, "composite")
+        self.assertEqual(page.pdf_metadata_status, "ok")
+        self.assertEqual(page.page_width, 612.0)
+        self.assertEqual(page.page_height, 792.0)
+        self.assertEqual(page.pdf_page_count, 3)
+        self.assertTrue(page.has_embedded_text)
+        self.assertEqual(page.text_run_count, 2)
+        self.assertEqual(page.snap_line_count, 3)
+        self.assertEqual(page.snap_point_count, 3)
+        self.assertEqual(page.overlay_kind, "pdf")
+        self.assertEqual(page.overlay_transform_summary.offset_x, 1.5)
+        self.assertEqual(page.overlay_transform_summary.offset_y, 2.5)
+        self.assertEqual(page.overlay_transform_summary.rotation, 0.75)
+        self.assertFalse("image_path" in page.__dict__)
+        self.assertFalse("overlay_image_path" in page.__dict__)
+
+    def test_pdf_text_summary_is_bounded_and_redacted_by_default(self):
+        summary = self.service.get_page_pdf_text_summary(
+            "db-1", "bid-1", "page-1", limit=1
+        )
+        self.assertEqual(summary.status, "truncated")
+        self.assertEqual(summary.source, "main")
+        self.assertEqual(summary.meta.returned_count, 1)
+        self.assertEqual(summary.meta.total_count, 2)
+        self.assertTrue(summary.meta.has_more)
+        self.assertEqual(summary.text_run_count, 2)
+        self.assertGreater(summary.character_count, summary.returned_character_count)
+        self.assertIsNone(summary.runs[0].text)
+        self.assertTrue(summary.runs[0].snippet.startswith("Private title block"))
+
+    def test_pdf_text_summary_can_include_strictly_limited_text_and_overlay_source(
+        self,
+    ):
+        summary = self.service.get_page_pdf_text_summary(
+            "db-1",
+            "bid-1",
+            "page-1",
+            source="overlay",
+            include_text=True,
+            limit=5,
+        )
+        self.assertEqual(summary.status, "ok")
+        self.assertEqual(summary.source, "overlay")
+        self.assertEqual(summary.meta.returned_count, 1)
+        self.assertEqual(summary.runs[0].text, "Overlay note")
+        self.assertEqual(summary.runs[0].left, 1.0)
+        self.assertEqual(summary.runs[0].character_count, 12)
+
+    def test_pdf_vectors_summary_is_bounded_and_reports_snap_counts(self):
+        summary = self.service.get_page_pdf_vectors_summary(
+            "db-1", "bid-1", "page-1", limit=2
+        )
+        self.assertEqual(summary.status, "truncated")
+        self.assertEqual(summary.source, "main")
+        self.assertEqual(summary.snap_line_count, 3)
+        self.assertEqual(summary.snap_point_count, 3)
+        self.assertEqual(summary.meta.returned_count, 2)
+        self.assertTrue(summary.meta.has_more)
+        self.assertEqual(summary.segments[0].orientation, "horizontal")
+        self.assertEqual(summary.segments[1].orientation, "vertical")
+
+    def test_pdf_summaries_handle_no_text_and_overlay_vectors(self):
+        empty_text = self.service.get_page_pdf_text_summary("db-1", "bid-1", "page-3")
+        self.assertEqual(empty_text.status, "empty")
+        self.assertEqual(empty_text.meta.returned_count, 0)
+        overlay_vectors = self.service.get_page_pdf_vectors_summary(
+            "db-1", "bid-1", "page-1", source="overlay"
+        )
+        self.assertEqual(overlay_vectors.status, "ok")
+        self.assertEqual(overlay_vectors.source, "overlay")
+        self.assertEqual(overlay_vectors.snap_line_count, 1)
+        self.assertEqual(overlay_vectors.segments[0].orientation, "vertical")
+
+    def test_pdf_summary_rejects_unknown_source_without_path_inputs(self):
+        with self.assertRaises(McpReadError):
+            self.service.get_page_pdf_text_summary(
+                "db-1", "bid-1", "page-1", source=r"C:\plans\A101.pdf"
+            )
 
     def test_page_lists_include_sheet_sequence_and_limit_metadata(self):
         pages = self.service.list_pages("db-1", "bid-1", limit=2)

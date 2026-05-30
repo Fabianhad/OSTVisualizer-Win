@@ -17,6 +17,8 @@ EXPECTED_TOOLS = {
     "list_pages",
     "get_current_page",
     "get_page_metadata",
+    "get_page_pdf_text_summary",
+    "get_page_pdf_vectors_summary",
     "list_conditions",
     "list_areas",
     "get_area_summary",

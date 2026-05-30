@@ -811,7 +811,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
 
     @staticmethod
     def _decode_byte_array(value: Optional[str]) -> QtCore.QByteArray:
-        if not value:
+        if not value or not isinstance(value, str):
             return QtCore.QByteArray()
         if not value.isascii():
             return QtCore.QByteArray()

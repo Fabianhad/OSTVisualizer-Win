@@ -93,7 +93,7 @@ Do not add:
 - FastMCP or MCP SDK runtime dependencies.
 - Separate MCP dependency files, setup scripts, or CLI-extra install flows.
 - `--database`, `--app-data-dir`, arbitrary database path overrides, arbitrary file reads, generic DB access, or arbitrary SQL.
-- CSV/export, write/mutation, shell execution, PDF rendering/text extraction, OCR, or page text tools.
+- CSV/export, write/mutation, shell execution, PDF rendering, OCR, arbitrary page text dumps, or unbounded PDF text/vector extraction.
 
 Database scope:
 
@@ -112,13 +112,15 @@ Important MCP files:
 - `ost_visualizer/mcp_server/bridge_client.py`
 - `ost_visualizer/application/services/mcp_read_service.py`
 - `ost_visualizer/application/dtos/mcp_context_dtos.py`
+- `ost_visualizer/application/interfaces/i_pdf_metadata_provider.py`
+- `ost_visualizer/infrastructure/pdf_metadata_provider.py`
 - `ost_visualizer/presentation/services/mcp_context_bridge.py`
 - `ost_visualizer/presentation/utils/mcp_setup_config.py`
 - `ost_visualizer/presentation/dialogs/options/components.py`
 - `ost_visualizer/presentation/dialogs/options/dialog.py`
 - `tests/test_mcp*.py`
 
-Expected public MCP counts should remain 31 tools, 1 resource, 4 resource templates, and 2 prompts unless a change intentionally updates the public surface.
+Expected public MCP counts should remain 33 tools, 1 resource, 4 resource templates, and 2 prompts unless a change intentionally updates the public surface.
 
 ## Permission Model
 

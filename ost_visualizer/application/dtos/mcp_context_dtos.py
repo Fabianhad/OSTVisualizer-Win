@@ -56,6 +56,23 @@ class McpPageDto:
     overlay_basename: Optional[str] = None
     overlay_path_status: str = "not_configured"
     has_overlay: bool = False
+    source_kind: str = "blank"
+    page_width: float = 0.0
+    page_height: float = 0.0
+    pdf_metadata_status: str = "not_requested"
+    pdf_page_count: int = 0
+    media_width_pts: float = 0.0
+    media_height_pts: float = 0.0
+    crop_width_pts: float = 0.0
+    crop_height_pts: float = 0.0
+    intrinsic_rotation: int = 0
+    has_embedded_text: bool = False
+    text_run_count: int = 0
+    character_count: int = 0
+    snap_line_count: int = 0
+    snap_point_count: int = 0
+    overlay_kind: str = "not_configured"
+    overlay_transform_summary: Optional["McpPdfOverlayTransformDto"] = None
     takeoff_count: int = 0
 
 
@@ -123,6 +140,20 @@ class McpResultMetaDto:
     total_count: int = 0
     truncated: bool = False
     has_more: bool = False
+
+
+@dataclass
+class McpPdfOverlayTransformDto:
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+    rotation: float = 0.0
+    deskew_rotation: float = 0.0
+    scale: float = 0.0
+    rect_x: float = 0.0
+    rect_y: float = 0.0
+    rect_width: float = 0.0
+    rect_height: float = 0.0
+    resized: bool = False
 
 
 @dataclass
@@ -244,6 +275,56 @@ class McpPageContextDto:
     has_pdf_source: bool = False
     has_overlay: bool = False
     page_text_status: str = "deferred"
+
+
+@dataclass
+class McpPdfTextRunDto:
+    snippet: str
+    left: float = 0.0
+    top: float = 0.0
+    right: float = 0.0
+    bottom: float = 0.0
+    character_count: int = 0
+    text: Optional[str] = None
+
+
+@dataclass
+class McpPdfTextSummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    page_uid: str
+    source: str
+    source_status: str
+    meta: McpResultMetaDto
+    text_run_count: int = 0
+    character_count: int = 0
+    returned_character_count: int = 0
+    runs: List[McpPdfTextRunDto] = field(default_factory=list)
+
+
+@dataclass
+class McpPdfVectorSegmentDto:
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    length: float = 0.0
+    orientation: str = "other"
+
+
+@dataclass
+class McpPdfVectorsSummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    page_uid: str
+    source: str
+    source_status: str
+    meta: McpResultMetaDto
+    snap_line_count: int = 0
+    snap_point_count: int = 0
+    segments: List[McpPdfVectorSegmentDto] = field(default_factory=list)
 
 
 @dataclass

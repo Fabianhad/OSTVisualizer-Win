@@ -4,10 +4,12 @@ from ..application.dtos.mcp_context_dtos import (
     McpAreaSummaryDto,
     McpBidQuantitySummaryDto,
     McpDuplicateConditionSummaryDto,
+    McpPdfTextSummaryDto,
+    McpPdfVectorsSummaryDto,
     McpResultMetaDto,
+    McpScopeGapSummaryDto,
     McpSelectedPagesSummaryDto,
     McpSelectedTakeoffsSummaryDto,
-    McpScopeGapSummaryDto,
     McpUnplacedTakeoffSummaryDto,
     McpZeroQuantitySummaryDto,
 )
@@ -17,6 +19,7 @@ from ..application.services.mcp_read_service import (
     McpReadService,
 )
 from ..infrastructure.mdb.mdb_reader import MdbReader
+from ..infrastructure.pdf_metadata_provider import NativePdfMetadataProvider
 from ..infrastructure.persistence.repositories.file_project_repository import (
     FileProjectRepository,
     MdbFileParser,
@@ -43,6 +46,9 @@ def create_read_service(
     return McpReadService(
         project_repository=repository,
         databases=registry.databases,
+        pdf_metadata_provider=NativePdfMetadataProvider(
+            logger=base_logger.getChild("PdfMetadataProvider")
+        ),
     )
 
 
@@ -155,6 +161,44 @@ def build_mcp_server(
     def get_page_metadata(database_id: str, bid_uid: str, page_uid: str) -> dict:
         """Return general redacted metadata for one page."""
         return run_read(read_service.get_page_metadata, database_id, bid_uid, page_uid)
+
+    @mcp.tool()
+    def get_page_pdf_text_summary(
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+        source: str = "auto",
+        include_text: bool = False,
+        limit: int = 10,
+    ) -> dict:
+        """Return bounded embedded PDF text metadata and snippets for one page."""
+        return run_read(
+            read_service.get_page_pdf_text_summary,
+            database_id,
+            bid_uid,
+            page_uid,
+            source,
+            include_text,
+            limit,
+        )
+
+    @mcp.tool()
+    def get_page_pdf_vectors_summary(
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+        source: str = "auto",
+        limit: int = 20,
+    ) -> dict:
+        """Return bounded PDF vector line metadata used for snapping."""
+        return run_read(
+            read_service.get_page_pdf_vectors_summary,
+            database_id,
+            bid_uid,
+            page_uid,
+            source,
+            limit,
+        )
 
     @mcp.tool()
     def list_conditions(database_id: str, bid_uid: str, limit: int = 500) -> dict:
@@ -551,7 +595,9 @@ def build_mcp_server(
         return (
             "Review the OST takeoff scope for database_id="
             f"{database_id} and bid_uid={bid_uid}. Use list_pages, "
-            "list_conditions, search_conditions, list_takeoffs, "
+            "get_page_metadata, get_page_pdf_text_summary, "
+            "get_page_pdf_vectors_summary, list_conditions, "
+            "search_conditions, list_takeoffs, "
             "get_condition_summary, get_bid_quantity_summary, review_scope_gaps, "
             "find_duplicate_conditions, find_zero_quantity_conditions, "
             "find_unplaced_takeoffs, and get_page_context. "
@@ -714,6 +760,8 @@ def _has_summary_meta(result) -> bool:
         (
             McpBidQuantitySummaryDto,
             McpAreaSummaryDto,
+            McpPdfTextSummaryDto,
+            McpPdfVectorsSummaryDto,
             McpScopeGapSummaryDto,
             McpDuplicateConditionSummaryDto,
             McpZeroQuantitySummaryDto,

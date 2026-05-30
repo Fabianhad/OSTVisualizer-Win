@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
+import pyodbc
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.cdn_type import CdnType
 from ....domain.entities.file_results import BidLoadResult, FileLoadResult
@@ -60,7 +61,7 @@ class MdbFileParser(IFileParser):
             takeoff_extras,
         ) = self.parser.get_bid_data(file_path, bid_uid)
         pages = build_pages_from_bid_data(bid_pages, bid_takeoffs)
-        bid_layers = self.parser.get_bid_layers_for_sidebar(file_path, bid_uid)
+        bid_layers = self._load_bid_layers(file_path, bid_uid)
         return BidLoadResult(
             bid_conditions=bid_conditions,
             bid_takeoffs=bid_takeoffs,
@@ -77,6 +78,18 @@ class MdbFileParser(IFileParser):
 
     def get_bid_layers_for_sidebar(self, file_path: str, bid_uid: str):
         return self.parser.get_bid_layers_for_sidebar(file_path, bid_uid)
+
+    def _load_bid_layers(self, file_path: str, bid_uid: str):
+        try:
+            return self.parser.get_bid_layers_for_sidebar(file_path, bid_uid)
+        except (pyodbc.Error, TypeError, ValueError) as exc:
+            self.logger.warning(
+                "Failed to load bid layers for %s in %s: %s",
+                bid_uid,
+                file_path,
+                exc,
+            )
+            return []
 
     def get_database_statistics(self, file_path: str) -> Dict[str, int]:
         return self.parser.get_database_statistics(file_path)

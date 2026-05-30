@@ -25,11 +25,16 @@ class McpServerRegistrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             registry = DatabaseRegistry(app_data_dir=Path(tmp))
             server = build_mcp_server(registry)
-            tool_names = {tool["name"] for tool in server.list_tools()}
+            tools = server.list_tools()
+            tool_names = {tool["name"] for tool in tools}
+        self.assertEqual(len(tool_names), 33)
+        self.assertTrue(all(tool["description"] for tool in tools))
         self.assertIn("get_condition_summary", tool_names)
         self.assertIn("get_selected_pages_summary", tool_names)
         self.assertIn("get_selected_takeoffs_summary", tool_names)
         self.assertIn("get_page_metadata", tool_names)
+        self.assertIn("get_page_pdf_text_summary", tool_names)
+        self.assertIn("get_page_pdf_vectors_summary", tool_names)
         self.assertIn("search_pages", tool_names)
         self.assertIn("list_layers", tool_names)
         self.assertIn("list_named_views", tool_names)

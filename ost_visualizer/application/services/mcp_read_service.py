@@ -1,3 +1,4 @@
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -5,13 +6,13 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from ...domain.entities.area import BidArea
 from ...domain.entities.condition import Condition
 from ...domain.entities.file_results import BidLoadResult, FileLoadResult
-from ...domain.entities.hotlink import build_hotlink_from_annotation
 from ...domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyData,
     HierarchyFileEntry,
     HierarchyProjectInfo,
 )
+from ...domain.entities.hotlink import build_hotlink_from_annotation
 from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.page import Page
 from ...domain.entities.takeoff import Takeoff
@@ -30,13 +31,18 @@ from ..dtos.mcp_context_dtos import (
     McpDatabaseDto,
     McpDuplicateConditionGroupDto,
     McpDuplicateConditionSummaryDto,
-    McpHotlinkDto,
     McpHierarchyDto,
+    McpHotlinkDto,
     McpLayerDto,
     McpNamedViewDto,
     McpPageContextDto,
     McpPageDto,
     McpPageTakeoffSummaryDto,
+    McpPdfOverlayTransformDto,
+    McpPdfTextRunDto,
+    McpPdfTextSummaryDto,
+    McpPdfVectorSegmentDto,
+    McpPdfVectorsSummaryDto,
     McpProjectDto,
     McpQuantityDto,
     McpResultMetaDto,
@@ -47,6 +53,8 @@ from ..dtos.mcp_context_dtos import (
     McpUnplacedTakeoffSummaryDto,
     McpZeroQuantitySummaryDto,
 )
+from ..dtos.pdf_metadata_dtos import PdfPageInfoDto, PdfTextRunDto, PdfVectorSegmentDto
+from ..interfaces.i_pdf_metadata_provider import IPdfMetadataProvider
 
 
 class McpReadError(ValueError):
@@ -76,12 +84,19 @@ class McpLimitedList(list):
 
 
 class McpReadService:
+    PDF_TEXT_DEFAULT_LIMIT = 10
+    PDF_TEXT_MAX_LIMIT = 50
+    PDF_VECTOR_DEFAULT_LIMIT = 20
+    PDF_VECTOR_MAX_LIMIT = 100
+
     def __init__(
         self,
         project_repository: IProjectRepository,
         databases: Iterable[McpDatabaseRef],
+        pdf_metadata_provider: Optional[IPdfMetadataProvider] = None,
     ):
         self._repository = project_repository
+        self._pdf_metadata_provider = pdf_metadata_provider
         self._databases: Dict[str, McpDatabaseRef] = {
             db.database_id: db for db in databases
         }
@@ -200,7 +215,112 @@ class McpReadService:
         page = bid_data.pages.get(page_uid)
         if page is None:
             raise McpReadError(f"Unknown page_uid: {page_uid}")
-        return self._page_dto(page)
+        return self._page_dto(page, include_pdf_metadata=True)
+
+    def get_page_pdf_text_summary(
+        self,
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+        source: str = "auto",
+        include_text: bool = False,
+        limit: int = 10,
+    ) -> McpPdfTextSummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        page = bid_data.pages.get(page_uid)
+        if page is None:
+            raise McpReadError(f"Unknown page_uid: {page_uid}")
+        source_ref = self._resolve_pdf_source(page, source)
+        clean_limit = self._clean_limit(
+            limit,
+            default=self.PDF_TEXT_DEFAULT_LIMIT,
+            max_limit=self.PDF_TEXT_MAX_LIMIT,
+        )
+        if source_ref[2] != "configured":
+            meta = McpResultMetaDto(limit=clean_limit)
+            return McpPdfTextSummaryDto(
+                status=source_ref[2],
+                database_id=database_id,
+                bid_uid=bid_uid,
+                page_uid=page_uid,
+                source=source_ref[0],
+                source_status=source_ref[2],
+                meta=meta,
+            )
+        runs = self._read_pdf_text_runs(source_ref[1], source_ref[3])
+        limited, meta = self._limited(
+            runs,
+            clean_limit,
+            default=self.PDF_TEXT_DEFAULT_LIMIT,
+            max_limit=self.PDF_TEXT_MAX_LIMIT,
+        )
+        total_character_count = sum(len(run.text or "") for run in runs)
+        returned_runs = [
+            self._pdf_text_run_dto(run, include_text=include_text) for run in limited
+        ]
+        return McpPdfTextSummaryDto(
+            status=_summary_status_for_meta(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            page_uid=page_uid,
+            source=source_ref[0],
+            source_status=source_ref[2],
+            meta=meta,
+            text_run_count=len(runs),
+            character_count=total_character_count,
+            returned_character_count=sum(len(run.text or "") for run in limited),
+            runs=returned_runs,
+        )
+
+    def get_page_pdf_vectors_summary(
+        self,
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+        source: str = "auto",
+        limit: int = 20,
+    ) -> McpPdfVectorsSummaryDto:
+        bid_data = self._load_bid(database_id, bid_uid)
+        page = bid_data.pages.get(page_uid)
+        if page is None:
+            raise McpReadError(f"Unknown page_uid: {page_uid}")
+        source_ref = self._resolve_pdf_source(page, source)
+        clean_limit = self._clean_limit(
+            limit,
+            default=self.PDF_VECTOR_DEFAULT_LIMIT,
+            max_limit=self.PDF_VECTOR_MAX_LIMIT,
+        )
+        if source_ref[2] != "configured":
+            meta = McpResultMetaDto(limit=clean_limit)
+            return McpPdfVectorsSummaryDto(
+                status=source_ref[2],
+                database_id=database_id,
+                bid_uid=bid_uid,
+                page_uid=page_uid,
+                source=source_ref[0],
+                source_status=source_ref[2],
+                meta=meta,
+            )
+        segments = self._read_pdf_vector_segments(source_ref[1], source_ref[3])
+        limited, meta = self._limited(
+            segments,
+            clean_limit,
+            default=self.PDF_VECTOR_DEFAULT_LIMIT,
+            max_limit=self.PDF_VECTOR_MAX_LIMIT,
+        )
+        point_count = self._pdf_snap_point_count(segments)
+        return McpPdfVectorsSummaryDto(
+            status=_summary_status_for_meta(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            page_uid=page_uid,
+            source=source_ref[0],
+            source_status=source_ref[2],
+            meta=meta,
+            snap_line_count=len(segments),
+            snap_point_count=point_count,
+            segments=[self._pdf_vector_segment_dto(segment) for segment in limited],
+        )
 
     def list_conditions(
         self, database_id: str, bid_uid: str, limit: int = 500
@@ -538,11 +658,13 @@ class McpReadService:
             + len(limited_missing_pages)
             + len(limited_missing_conditions)
         )
+        truncated = returned_count < total_count
         meta = McpResultMetaDto(
             limit=clean_limit,
             returned_count=returned_count,
             total_count=total_count,
-            truncated=returned_count < total_count,
+            truncated=truncated,
+            has_more=truncated,
         )
         return McpScopeGapSummaryDto(
             status=_summary_status_for_meta(meta),
@@ -951,10 +1073,10 @@ class McpReadService:
             ),
         )
 
-    def _page_dto(self, page: Page) -> McpPageDto:
+    def _page_dto(self, page: Page, include_pdf_metadata: bool = False) -> McpPageDto:
         image_path = page.image_path or ""
         overlay_path = page.overlay_image_path or ""
-        return McpPageDto(
+        dto = McpPageDto(
             uid=page.uid,
             name=page.name,
             sheet_no=page.sheet_no,
@@ -975,8 +1097,188 @@ class McpReadService:
             ),
             overlay_path_status="configured" if overlay_path else "not_configured",
             has_overlay=bool(overlay_path),
+            source_kind=self._page_source_kind(page),
+            page_width=page.width_pts,
+            page_height=page.height_pts,
+            overlay_kind=self._overlay_kind(page),
+            overlay_transform_summary=self._overlay_transform_summary(page),
             takeoff_count=len(page.takeoffs),
         )
+        if include_pdf_metadata:
+            self._enrich_page_pdf_metadata(dto, page)
+        return dto
+
+    @staticmethod
+    def _page_source_kind(page: Page) -> str:
+        has_main = bool(page.image_path)
+        has_overlay = bool(page.overlay_image_path)
+        if has_main and has_overlay:
+            return "composite"
+        if has_main:
+            return "main"
+        if has_overlay:
+            return "overlay"
+        return "blank"
+
+    @staticmethod
+    def _overlay_kind(page: Page) -> str:
+        overlay_path = page.overlay_image_path or ""
+        if not overlay_path:
+            return "not_configured"
+        return "pdf" if overlay_path.lower().endswith(".pdf") else "raster"
+
+    @staticmethod
+    def _overlay_transform_summary(page: Page) -> Optional[McpPdfOverlayTransformDto]:
+        if not page.overlay_image_path:
+            return None
+        rect_x, rect_y, rect_w, rect_h = page.overlay_rect
+        scale = 0.0
+        if rect_w > 0 and page.width_pts > 0:
+            scale = rect_w / page.width_pts
+        return McpPdfOverlayTransformDto(
+            offset_x=page.overlay_offset_x,
+            offset_y=page.overlay_offset_y,
+            rotation=page.overlay_rotation + page.deskew_rotation_overlay,
+            deskew_rotation=page.deskew_rotation_overlay,
+            scale=scale,
+            rect_x=rect_x,
+            rect_y=rect_y,
+            rect_width=rect_w,
+            rect_height=rect_h,
+            resized=page.overlay_resized,
+        )
+
+    def _enrich_page_pdf_metadata(self, dto: McpPageDto, page: Page) -> None:
+        source_ref = self._resolve_pdf_source(page, "auto")
+        if source_ref[2] != "configured":
+            dto.pdf_metadata_status = source_ref[2]
+            return
+        page_info = self._read_pdf_page_info(source_ref[1], source_ref[3])
+        dto.pdf_metadata_status = page_info.status
+        dto.pdf_page_count = page_info.page_count
+        if page_info.status == "ok":
+            dto.page_width = page_info.effective_width_pts
+            dto.page_height = page_info.effective_height_pts
+            dto.media_width_pts = page_info.media_width_pts
+            dto.media_height_pts = page_info.media_height_pts
+            dto.crop_width_pts = page_info.crop_width_pts
+            dto.crop_height_pts = page_info.crop_height_pts
+            dto.intrinsic_rotation = page_info.intrinsic_rotation
+        text_runs = self._read_pdf_text_runs(source_ref[1], source_ref[3])
+        vector_segments = self._read_pdf_vector_segments(source_ref[1], source_ref[3])
+        dto.has_embedded_text = bool(text_runs)
+        dto.text_run_count = len(text_runs)
+        dto.character_count = sum(len(run.text or "") for run in text_runs)
+        dto.snap_line_count = len(vector_segments)
+        dto.snap_point_count = self._pdf_snap_point_count(vector_segments)
+
+    def _resolve_pdf_source(self, page: Page, source: str) -> Tuple[str, str, str, int]:
+        clean_source = str(source or "auto").strip().lower()
+        if clean_source not in {"auto", "main", "overlay"}:
+            raise McpReadError(f"Unknown PDF source: {source}")
+        if clean_source == "main":
+            return self._pdf_source_tuple(
+                "main", page.image_path or "", page.page_index
+            )
+        if clean_source == "overlay":
+            return self._pdf_source_tuple("overlay", page.overlay_image_path or "", 0)
+        main = self._pdf_source_tuple("main", page.image_path or "", page.page_index)
+        if main[2] == "configured":
+            return main
+        overlay = self._pdf_source_tuple("overlay", page.overlay_image_path or "", 0)
+        if overlay[2] == "configured":
+            return overlay
+        return main if main[2] != "not_configured" else overlay
+
+    @staticmethod
+    def _pdf_source_tuple(
+        source: str, file_path: str, page_index: int
+    ) -> Tuple[str, str, str, int]:
+        if not file_path:
+            return (source, "", "not_configured", int(page_index or 0))
+        if not file_path.lower().endswith(".pdf"):
+            return (source, file_path, "not_pdf", int(page_index or 0))
+        return (source, file_path, "configured", int(page_index or 0))
+
+    def _read_pdf_page_info(self, file_path: str, page_index: int):
+        if self._pdf_metadata_provider is None:
+            return PdfPageInfoDto(status="unavailable")
+        return self._pdf_metadata_provider.get_page_info(file_path, page_index)
+
+    def _read_pdf_text_runs(
+        self, file_path: str, page_index: int
+    ) -> List[PdfTextRunDto]:
+        if self._pdf_metadata_provider is None:
+            return []
+        return self._pdf_metadata_provider.get_text_runs(file_path, page_index)
+
+    def _read_pdf_vector_segments(
+        self, file_path: str, page_index: int
+    ) -> List[PdfVectorSegmentDto]:
+        if self._pdf_metadata_provider is None:
+            return []
+        return self._pdf_metadata_provider.get_vector_segments(file_path, page_index)
+
+    @staticmethod
+    def _pdf_text_run_dto(
+        run: PdfTextRunDto, include_text: bool = False
+    ) -> McpPdfTextRunDto:
+        text = run.text or ""
+        return McpPdfTextRunDto(
+            snippet=McpReadService._snippet(text),
+            text=text[:500] if include_text else None,
+            left=run.left,
+            top=run.top,
+            right=run.right,
+            bottom=run.bottom,
+            character_count=len(text),
+        )
+
+    @staticmethod
+    def _snippet(text: str, max_chars: int = 80) -> str:
+        clean = " ".join(str(text or "").split())
+        if len(clean) <= max_chars:
+            return clean
+        return clean[: max_chars - 3].rstrip() + "..."
+
+    @staticmethod
+    def _pdf_vector_segment_dto(
+        segment: PdfVectorSegmentDto,
+    ) -> McpPdfVectorSegmentDto:
+        length = math.hypot(segment.x2 - segment.x1, segment.y2 - segment.y1)
+        return McpPdfVectorSegmentDto(
+            x1=segment.x1,
+            y1=segment.y1,
+            x2=segment.x2,
+            y2=segment.y2,
+            length=length,
+            orientation=McpReadService._orientation_bucket(
+                segment.x1, segment.y1, segment.x2, segment.y2
+            ),
+        )
+
+    @staticmethod
+    def _orientation_bucket(x1: float, y1: float, x2: float, y2: float) -> str:
+        dx = x2 - x1
+        dy = y2 - y1
+        if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+            return "point"
+        angle = abs(math.degrees(math.atan2(dy, dx))) % 180
+        if angle <= 10 or angle >= 170:
+            return "horizontal"
+        if 80 <= angle <= 100:
+            return "vertical"
+        if 35 <= angle <= 55 or 125 <= angle <= 145:
+            return "diagonal"
+        return "other"
+
+    @staticmethod
+    def _pdf_snap_point_count(segments: List[PdfVectorSegmentDto]) -> int:
+        points = set()
+        for segment in segments:
+            points.add((round(segment.x1, 3), round(segment.y1, 3)))
+            points.add((round(segment.x2, 3), round(segment.y2, 3)))
+        return len(points)
 
     @staticmethod
     def _condition_type_name(condition: Condition) -> str:

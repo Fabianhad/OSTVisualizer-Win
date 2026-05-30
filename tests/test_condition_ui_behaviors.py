@@ -9,8 +9,8 @@ from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
-from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities import pattern as pattern_values
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,

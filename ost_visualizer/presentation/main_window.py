@@ -1351,6 +1351,8 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> QtCore.QByteArray | None:
         if geometry_b64 is None:
             return None
+        if not isinstance(geometry_b64, str):
+            return QtCore.QByteArray()
         if not geometry_b64.isascii():
             return QtCore.QByteArray()
         return QtCore.QByteArray.fromBase64(geometry_b64.encode("ascii"))
