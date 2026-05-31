@@ -123,7 +123,7 @@ Important MCP files:
 - `ost_visualizer/presentation/dialogs/options/dialog.py`
 - `tests/test_mcp*.py`
 
-Expected public MCP counts should remain 36 tools, 1 resource, 4 resource templates, and 2 prompts unless a change intentionally updates the public surface.
+Expected public MCP counts should remain 36 tools, 1 resource, 4 resource templates, and 7 prompts unless a change intentionally updates the public surface.
 
 ## Permission Model
 

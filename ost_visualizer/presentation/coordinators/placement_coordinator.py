@@ -55,7 +55,7 @@ class PlacementCoordinator:
     def enter(self, condition_uid: str, condition_uids: list) -> bool:
         if not self._plan_view:
             return False
-        if not self._access.is_allowed(Feature.PLACE_TAKEOFF):
+        if not self._access.is_allowed(Feature.PLACE_PLAN_ITEMS):
             return False
         if not self._is_condition_placeable(condition_uid):
             self.force_exit()

@@ -13,7 +13,7 @@ Built for estimators and construction teams who work with OST project files dail
 
 ## Features
 
-- **2D Plan View** -- Interactive view with annotations overlaid on project pages, including detached Annotation and View windows
+- **2D Plan View** -- Interactive view with annotations overlaid on project pages, including BidDimension placement and detached Annotation/View windows
 - **PDF Plan Sheets** -- View PDF drawings at any scale
 - **Multi-database** -- Open and browse multiple project files at the same time
 - **Bid Organization** -- Full project hierarchy for navigating bids and conditions
@@ -103,6 +103,11 @@ takeoff, and lightweight scope-gap review tools. Broad result sets use explicit
 limits and include status/metadata such as returned count, total count,
 truncation state, and `has_more`. Local database and page source paths are
 redacted to safe IDs, basenames, and path status fields.
+
+Read-only prompts guide common workflows such as bid scope review, page QA,
+markup and hotlink review, overlay/PDF context review, and quantity variance
+review using the existing bounded tools.
+
 It does not support `--database`, `--app-data-dir`, arbitrary database paths,
 shell execution, arbitrary SQL, arbitrary file reads, PDF rendering, OCR,
 unbounded page text dumps, exports, CSV, or database mutation.

@@ -55,7 +55,7 @@ class McpServerRegistrationTests(unittest.TestCase):
         self.assertIn("find_conditions_without_takeoffs", tool_names)
         self.assertFalse(any("csv" in name.lower() for name in tool_names))
 
-    def test_current_estimator_prompt_is_registered(self):
+    def test_expected_prompts_are_registered(self):
         from ost_visualizer.mcp_server.registry import DatabaseRegistry
         from ost_visualizer.mcp_server.server import build_mcp_server
 
@@ -63,7 +63,19 @@ class McpServerRegistrationTests(unittest.TestCase):
             registry = DatabaseRegistry(app_data_dir=Path(tmp))
             server = build_mcp_server(registry)
             prompt_names = {prompt["name"] for prompt in server.list_prompts()}
-        self.assertIn("review_current_estimator_context", prompt_names)
+        self.assertEqual(len(prompt_names), 7)
+        self.assertEqual(
+            prompt_names,
+            {
+                "review_current_estimator_context",
+                "review_takeoff_scope",
+                "review_bid_scope",
+                "review_page_qa",
+                "review_markup_and_links",
+                "review_overlay_and_pdf_context",
+                "review_quantity_variance",
+            },
+        )
 
 
 if __name__ == "__main__":

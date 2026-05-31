@@ -26,6 +26,9 @@ from ost_visualizer.presentation.components.plan_view.components.graphics_items 
 from ost_visualizer.presentation.components.plan_view.components.input_handler import (
     InputHandlerMixin,
 )
+from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
+    PlacementModeMixin,
+)
 from ost_visualizer.presentation.components.plan_view.components.selection_manager import (
     SelectionManagerMixin,
 )
@@ -50,6 +53,67 @@ class BaseKeyHandler:
 
     def mouseMoveEvent(self, _event):
         pass
+
+
+class _FakeSignal:
+    def __init__(self):
+        self.emitted = []
+
+    def emit(self, *args):
+        self.emitted.append(args)
+
+
+class _IdentityCoordinateSystem:
+    def transform_vertices_to_2d(self, position):
+        return list(position)
+
+    def pdf_points_to_screen_pixels(self, value):
+        return float(value)
+
+
+class _PlacementSceneBuilder:
+    def __init__(self):
+        self._cs = _IdentityCoordinateSystem()
+
+    def get_coordinate_system(self):
+        return self._cs
+
+
+class AnnotationPlacementHarness(PlacementModeMixin):
+    def __init__(self):
+        self._scene = QGraphicsScene()
+        self._scene_builder = _PlacementSceneBuilder()
+        self._place_preview_items = []
+        self._backout_orig_parent_path = None
+        self._backout_parent_uid = None
+        self._uid_to_items = {}
+        self._place_flashing = False
+        self._annotation_place_type = None
+        self._annotation_place_points = []
+        self._annotation_place_dragging = False
+        self._current_bid_page_uid = "page-1"
+        self._snap_increments = 1.0
+        self.annotation_created = _FakeSignal()
+        self.preview_repaints = 0
+        self.selection_updates = 0
+        self._selected_uids = {"old"}
+
+    def _current_page_transform(self):
+        return None
+
+    def _request_place_preview_repaint(self):
+        self.preview_repaints += 1
+
+    def _placement_snap_from_scene(self, cursor_scene):
+        x = float(cursor_scene.x())
+        y = float(cursor_scene.y())
+        return x, y, x, y, 0
+
+    def _snap_angle_for_placement(self, _x1, _y1, x2, y2, _snap_kind):
+        return x2, y2
+
+    def update_selection_visuals(self):
+        self.selection_updates += 1
 
 
 class InputHandlerHarness(
@@ -299,7 +363,7 @@ class CtrlDragTests(unittest.TestCase):
         view._panning = False
         view._right_pan_active = False
         view._last_pan_point = None
-        view._drag_takeoff_uid = None
+        view._drag_plan_item_uid = None
         view._drag_handle_index = -2
         view._drag_orig_position = []
         view._drag_handle_corner_count = 0
@@ -418,7 +482,7 @@ class CtrlDragTests(unittest.TestCase):
         view.mousePressEvent(event)
         self.assertTrue(event.accepted)
         self.assertTrue(view._zoom_press_ctrl)
-        self.assertIsNone(view._drag_takeoff_uid)
+        self.assertIsNone(view._drag_plan_item_uid)
         self.assertEqual(view._drag_handle_index, -2)
         self.assertEqual(view._drag_item_orig_positions, {})
 
@@ -429,14 +493,14 @@ class CtrlDragTests(unittest.TestCase):
         view.mousePressEvent(event)
         self.assertTrue(event.accepted)
         self.assertEqual(view._selected_uids, set())
-        self.assertIsNone(view._drag_takeoff_uid)
+        self.assertIsNone(view._drag_plan_item_uid)
 
     def test_selected_hotlink_center_press_starts_drag(self):
         view = self._make_hotlink_view(selected=True)
         event = FakeMouseEvent()
         view.mousePressEvent(event)
         self.assertTrue(event.accepted)
-        self.assertEqual(view._drag_takeoff_uid, "h1")
+        self.assertEqual(view._drag_plan_item_uid, "h1")
         self.assertEqual(view._drag_orig_position, [10.0, 10.0])
         self.assertEqual(view._drag_handle_index, -1)
 
@@ -453,7 +517,7 @@ class CtrlDragTests(unittest.TestCase):
         move = FakeMouseEvent(x=18, y=18)
         view.mouseMoveEvent(move)
         self.assertTrue(move.accepted)
-        self.assertEqual(view._drag_takeoff_uid, "h1")
+        self.assertEqual(view._drag_plan_item_uid, "h1")
         self.assertFalse(view._select_band_active)
         self.assertIsNone(view._rubber_band_origin)
         self.assertEqual(view._uid_to_items["h1"][0].pos(), QtCore.QPointF(8.0, 8.0))
@@ -509,7 +573,7 @@ class CtrlDragTests(unittest.TestCase):
         view.mousePressEvent(event)
         self.assertTrue(event.accepted)
         self.assertFalse(view._zoom_press_ctrl)
-        self.assertEqual(view._drag_takeoff_uid, "t1")
+        self.assertEqual(view._drag_plan_item_uid, "t1")
         item = view._uid_to_items["t1"][0]
         self.assertEqual(view._drag_item_orig_positions[id(item)], item.pos())
 
@@ -529,12 +593,12 @@ class CtrlDragTests(unittest.TestCase):
         outside_press = FakeMouseEvent(x=200, y=200)
         view.mousePressEvent(outside_press)
         self.assertTrue(outside_press.accepted)
-        self.assertIsNone(view._drag_takeoff_uid)
+        self.assertIsNone(view._drag_plan_item_uid)
         self.assertEqual(view._drag_orig_position, [])
         inside_press = FakeMouseEvent(x=20, y=20)
         view.mousePressEvent(inside_press)
         self.assertTrue(inside_press.accepted)
-        self.assertEqual(view._drag_takeoff_uid, "a1")
+        self.assertEqual(view._drag_plan_item_uid, "a1")
         self.assertEqual(
             view._drag_orig_position,
             view._current_annotations["a1"].position,
@@ -546,14 +610,14 @@ class CtrlDragTests(unittest.TestCase):
         overlay = view._uid_to_items["t1"][0]
         overlay_orig = overlay.pos()
         overlay.setPos(25.0, 30.0)
-        view._drag_takeoff_uid = "t1"
+        view._drag_plan_item_uid = "t1"
         view._drag_handle_index = -1
         view._drag_orig_position = [0.0, 0.0, 10.0, 0.0]
         view._drag_item_orig_positions = {id(overlay): overlay_orig}
         view._select_band_origin = QtCore.QPointF(10.0, 10.0)
         move = FakeMouseEvent(x=200, y=200, buttons=Qt.MouseButton.NoButton)
         view.mouseMoveEvent(move)
-        self.assertIsNone(view._drag_takeoff_uid)
+        self.assertIsNone(view._drag_plan_item_uid)
         self.assertEqual(view._drag_handle_index, -2)
         self.assertIsNone(view._select_band_origin)
         self.assertEqual(overlay.pos(), overlay_orig)
@@ -573,7 +637,7 @@ class CtrlDragTests(unittest.TestCase):
         self.assertTrue(press.accepted)
         self.assertEqual(view.selected_text_annotation_uids, ["a1"])
         self.assertEqual(view.editing_text_annotation_uids, ["a1"])
-        self.assertIsNone(view._drag_takeoff_uid)
+        self.assertIsNone(view._drag_plan_item_uid)
 
     def test_double_click_named_view_label_enters_rename_without_text_toolbar(self):
         view = self._make_view({"nv1"})
@@ -590,7 +654,7 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(view.editing_named_view_uids, ["nv1"])
         self.assertEqual(view.editing_text_annotation_uids, [])
         self.assertEqual(view.selected_text_annotation_uids, [])
-        self.assertIsNone(view._drag_takeoff_uid)
+        self.assertIsNone(view._drag_plan_item_uid)
 
     def test_ctrl_zoom_release_restores_temporary_overlay_and_handle_positions(self):
         view = self._make_view()
@@ -601,7 +665,7 @@ class CtrlDragTests(unittest.TestCase):
         handle_orig = handle.pos()
         overlay.setPos(21.0, 22.0)
         handle.setPos(25.0, 26.0)
-        view._drag_takeoff_uid = "t1"
+        view._drag_plan_item_uid = "t1"
         view._drag_item_orig_positions = {
             id(overlay): overlay_orig,
             id(handle): handle_orig,
@@ -611,7 +675,7 @@ class CtrlDragTests(unittest.TestCase):
         InputHandlerMixin.keyReleaseEvent(view, FakeKeyEvent())
         self.assertEqual(overlay.pos(), overlay_orig)
         self.assertEqual(handle.pos(), handle_orig)
-        self.assertIsNone(view._drag_takeoff_uid)
+        self.assertIsNone(view._drag_plan_item_uid)
         self.assertEqual(view._drag_item_orig_positions, {})
 
     def test_multi_takeoff_drag_preview_uses_snapped_item_deltas(self):
@@ -756,7 +820,7 @@ class CtrlDragTests(unittest.TestCase):
         view._current_annotations = {"d1": ann}
         view._uid_to_items = {"d1": items}
         view._handle_infos = [SimpleNamespace(item=FakeItem()) for _ in range(2)]
-        view._drag_takeoff_uid = "d1"
+        view._drag_plan_item_uid = "d1"
         view._drag_handle_index = 1
         view._drag_handle_corner_count = 0
         view._drag_orig_position = list(ann.position)
@@ -956,7 +1020,7 @@ class CtrlDragTests(unittest.TestCase):
             Condition.TYPE_AREA
         )
         original_bounds = main_item.path().boundingRect()
-        view._drag_takeoff_uid = "t1"
+        view._drag_plan_item_uid = "t1"
         view._drag_item_orig_paths = {
             id(item): QPainterPath(item.path()) for item in view._uid_to_items["t1"]
         }
@@ -970,6 +1034,59 @@ class CtrlDragTests(unittest.TestCase):
         self.assertIs(old_pattern.scene(), view._scene)
         self.assertEqual(view._uid_to_items["t1"], [main_item, old_pattern])
         self.assertEqual(main_item.path().boundingRect(), original_bounds)
+
+
+class AnnotationPlacementTests(unittest.TestCase):
+    def setUp(self):
+        _app()
+
+    def test_dimension_annotation_preview_uses_live_dimension_label(self):
+        view = AnnotationPlacementHarness()
+        self.assertTrue(view._enter_annotation_place_mode("dimension"))
+        view._annotation_place_points = [(0.0, 0.0)]
+        view.update_annotation_place_preview(QtCore.QPointF(255.0, 0.0))
+        labels = [
+            item
+            for item in view._place_preview_items
+            if isinstance(item, QGraphicsTextItem)
+        ]
+        paths = [
+            item
+            for item in view._place_preview_items
+            if isinstance(item, QGraphicsPathItem)
+        ]
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(paths[0].path().elementCount(), 6)
+        self.assertEqual(len(labels), 1)
+        self.assertEqual(labels[0].toPlainText(), "21' - 3\"")
+        view.update_annotation_place_preview(QtCore.QPointF(18.0, 0.0))
+        labels = [
+            item
+            for item in view._place_preview_items
+            if isinstance(item, QGraphicsTextItem)
+        ]
+        self.assertEqual(labels[0].toPlainText(), "1' - 6\"")
+
+    def test_dimension_annotation_commit_and_cancel_clear_preview(self):
+        view = AnnotationPlacementHarness()
+        view._enter_annotation_place_mode("dimension")
+        view._annotation_place_points = [(0.0, 0.0)]
+        view.update_annotation_place_preview(QtCore.QPointF(12.0, 0.0))
+        self.assertTrue(view._place_preview_items)
+        self.assertTrue(
+            view._commit_dimension_annotation_placement([0.0, 0.0, 12.0, 0.0])
+        )
+        self.assertEqual(
+            view.annotation_created.emitted,
+            [("dimension", [0.0, 0.0, 12.0, 0.0], "page-1")],
+        )
+        self.assertEqual(view._place_preview_items, [])
+        view._enter_annotation_place_mode("dimension")
+        view._annotation_place_points = [(0.0, 0.0)]
+        view.update_annotation_place_preview(QtCore.QPointF(12.0, 0.0))
+        view._exit_annotation_place_mode()
+        self.assertEqual(view._annotation_place_type, None)
+        self.assertEqual(view._place_preview_items, [])
 
 
 if __name__ == "__main__":

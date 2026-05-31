@@ -13,7 +13,11 @@ class ZoomHandlerMixin:
             self._request_crosshair_repaint()
         if (dx or dy) and self._selected_uids:
             self.viewport().update()
-        if (dx or dy) and self._cursor_mode == "place" and self._place_preview_items:
+        if (
+            (dx or dy)
+            and self._cursor_mode in ("place", "annotation_place")
+            and self._place_preview_items
+        ):
             self.refresh_place_preview_after_view_change()
         if self._paste_backout_active:
             self.refresh_paste_backout_preview_after_view_change()

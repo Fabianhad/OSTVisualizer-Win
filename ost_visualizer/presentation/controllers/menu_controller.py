@@ -110,7 +110,7 @@ class MenuController:
             "toggle_takeoff_grayscale": self._toggle_takeoff_grayscale,
             "toggle_main_toolbar": self._set_main_toolbar_visible,
             "toggle_view_toolbar": self._set_view_toolbar_visible,
-            "toggle_takeoff_tools_toolbar": self._set_takeoff_tools_toolbar_visible,
+            "toggle_plan_tools_toolbar": self._set_plan_tools_toolbar_visible,
             "toggle_2d_tab": self._set_2d_tab_visible,
             "toggle_3d_tab": self._set_3d_tab_visible,
             "toggle_page_invert": self.handlers.ui_event.toggle_page_invert,
@@ -166,8 +166,8 @@ class MenuController:
             "view_toolbar_visible": lambda: self._workspace_toolbar_visible(
                 self.window.VIEW_TOOLBAR_KEY
             ),
-            "takeoff_tools_toolbar_visible": lambda: self._workspace_toolbar_visible(
-                self.window.TAKEOFF_TOOLS_TOOLBAR_KEY
+            "plan_tools_toolbar_visible": lambda: self._workspace_toolbar_visible(
+                self.window.PLAN_TOOLS_TOOLBAR_KEY
             ),
             "page_invert": lambda: self._active_page_invert(),
             "page_bitonal": lambda: self._active_page_bitonal(),
@@ -200,9 +200,9 @@ class MenuController:
             self.window.VIEW_TOOLBAR_KEY, visible
         )
 
-    def _set_takeoff_tools_toolbar_visible(self, visible: bool) -> None:
+    def _set_plan_tools_toolbar_visible(self, visible: bool) -> None:
         self.window.set_workspace_toolbar_preference(
-            self.window.TAKEOFF_TOOLS_TOOLBAR_KEY, visible
+            self.window.PLAN_TOOLS_TOOLBAR_KEY, visible
         )
 
     def _set_2d_tab_visible(self, visible: bool) -> None:
@@ -267,7 +267,7 @@ class MenuController:
             takeoff_menu.setEnabled(True)
         for action_key in (
             "toggle_view_toolbar",
-            "toggle_takeoff_tools_toolbar",
+            "toggle_plan_tools_toolbar",
             "toggle_2d_tab",
             "toggle_3d_tab",
             "zoom_in",
@@ -325,7 +325,7 @@ class MenuController:
         can_transform_takeoffs = (
             takeoff_active
             and has_selected_takeoffs
-            and self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS)
+            and self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS)
         )
         for action_key in (
             "rotate_takeoff_left",
@@ -445,9 +445,10 @@ class MenuController:
     def _sync_tool_action_states(self, takeoff_active: bool) -> None:
         for action_key in (
             "select_tool",
-            "takeoff_tool",
+            "place_tool",
             "zoom_tool",
             "pan_tool",
+            "dimension_tool",
         ):
             action = self._actions.get(action_key)
             if not action:
@@ -515,7 +516,7 @@ class MenuController:
         if key in (
             "main_toolbar_visible",
             "view_toolbar_visible",
-            "takeoff_tools_toolbar_visible",
+            "plan_tools_toolbar_visible",
             "page_invert",
             "page_bitonal",
             "show_overlay_image",

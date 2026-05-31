@@ -9,6 +9,7 @@
 #include <iostream>
 #include <iomanip>
 #include <chrono>
+#include <algorithm>
 namespace ost_pdf_writer
 {
     static std::string get_pdf_date()
@@ -663,6 +664,56 @@ namespace ost_pdf_writer
             annots.appendItem(annot);
         }
     }
+    static void add_highlights_to_page(QPDF &output,
+                                       QPDFPageObjectHelper &page,
+                                       const std::vector<PDFWriter::HighlightAnnotationData> &highlights)
+    {
+        if (highlights.empty())
+        {
+            return;
+        }
+        QPDFObjectHandle page_dict = page.getObjectHandle();
+        QPDFObjectHandle annots = get_or_create_annots(page_dict);
+        for (const auto &highlight_data : highlights)
+        {
+            std::vector<std::vector<std::array<double, 2>>> strokes;
+            for (const auto &stroke : highlight_data.strokes)
+            {
+                if (stroke.size() >= 2)
+                {
+                    strokes.push_back(stroke);
+                }
+            }
+            if (strokes.empty())
+            {
+                continue;
+            }
+            BluebeamHighlight highlight;
+            highlight.strokes = strokes;
+            highlight.color = highlight_data.color;
+            highlight.width = std::max(1.0, highlight_data.width);
+            highlight.opacity = highlight_data.opacity;
+            highlight.content = highlight_data.content;
+            std::string annot_dict_str = generate_bluebeam_highlight_dict(highlight);
+            QPDFObjectHandle annot_obj = QPDFObjectHandle::parse(&output, annot_dict_str);
+            annot_obj.replaceKey("/P", page_dict);
+            QPDFObjectHandle gs = QPDFObjectHandle::newDictionary();
+            gs.replaceKey("/Type", QPDFObjectHandle::newName("/ExtGState"));
+            gs.replaceKey("/BM", QPDFObjectHandle::newName("/Multiply"));
+            gs.replaceKey("/CA", QPDFObjectHandle::newReal(highlight.opacity));
+            gs.replaceKey("/ca", QPDFObjectHandle::newReal(highlight.opacity));
+            QPDFObjectHandle ext_gstate = QPDFObjectHandle::newDictionary();
+            ext_gstate.replaceKey("/R0", gs);
+            QPDFObjectHandle extra_res = QPDFObjectHandle::newDictionary();
+            extra_res.replaceKey("/ExtGState", ext_gstate);
+            std::string ap_content = generate_highlight_appearance_stream(highlight);
+            auto rect = compute_highlight_rect(highlight);
+            attach_appearance_stream(output, annot_obj, ap_content,
+                                     rect[0], rect[1], rect[2], rect[3], extra_res);
+            QPDFObjectHandle annot = output.makeIndirectObject(annot_obj);
+            annots.appendItem(annot);
+        }
+    }
     bool PDFWriter::export_page_with_annotations(const std::string &source_pdf,
                                                  int page_index,
                                                  const std::string &output_pdf,
@@ -764,6 +815,7 @@ namespace ost_pdf_writer
                 add_polygons_annot_to_page(output, last_page, page_data.polygons);
                 add_inks_to_page(output, last_page, page_data.inks);
                 add_texts_to_page(output, last_page, page_data.texts);
+                add_highlights_to_page(output, last_page, page_data.highlights);
             }
             QPDFWriter writer(output, output_pdf.c_str());
             writer.setStaticID(true);

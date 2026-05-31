@@ -13,12 +13,26 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
 )
 from .....domain.entities import shape as shapes
+from .....domain.entities.annotation import BidAnnotation
 from .....domain.entities.condition import Condition
 from ....visualization.core.geometry.takeoff_geometry import (
     compute_count_vertices,
     compute_line_angle,
 )
 from ....visualization.pdf import ost_pdf
+from ....visualization.pdf.renderers.annotation_item_renderer import (
+    DIMENSION_FONT_SIZE_ADJUSTMENT,
+    build_dimension_path,
+    create_dimension_text_item,
+)
+from ....visualization.pdf.renderers.annotation_renderer import (
+    calculate_dimension_geometry,
+)
+from ....utils.annotation_defaults import (
+    DIMENSION_ANNOTATION_COLOR,
+    DIMENSION_ANNOTATION_WIDTH,
+    dimension_annotation_properties,
+)
 from .geometry_utils import polygon_is_valid, polyline_self_intersects
 from .handle_style import apply_takeoff_handle_style
 from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
@@ -476,7 +490,12 @@ class PlacementModeMixin:
 
     def refresh_place_preview_after_view_change(self) -> None:
         if self._last_mouse_vp_pos is not None and self._place_preview_items:
-            self.update_place_preview(self.mapToScene(self._last_mouse_vp_pos))
+            if self._cursor_mode == "annotation_place":
+                self.update_annotation_place_preview(
+                    self.mapToScene(self._last_mouse_vp_pos)
+                )
+            else:
+                self.update_place_preview(self.mapToScene(self._last_mouse_vp_pos))
         self._request_place_preview_repaint()
 
     def _should_update_place_preview(self, cond_type: int) -> bool:
@@ -613,6 +632,142 @@ class PlacementModeMixin:
             except (TypeError, RuntimeError):
                 pass
         self._place_preview_items.clear()
+
+    def _enter_annotation_place_mode(self, annotation_type: str) -> bool:
+        if annotation_type != "dimension":
+            return False
+        self.clear_place_preview()
+        self._annotation_place_type = annotation_type
+        self._annotation_place_points = []
+        self._annotation_place_dragging = False
+        return True
+
+    def _exit_annotation_place_mode(self) -> None:
+        self.clear_place_preview()
+        self._annotation_place_type = None
+        self._annotation_place_points = []
+        self._annotation_place_dragging = False
+
+    def _dimension_placement_position(
+        self, cursor_scene: QtCore.QPointF
+    ) -> tuple[list, int]:
+        ost_x, ost_y, _cx, _cy, snap_kind = self._placement_snap_from_scene(
+            cursor_scene
+        )
+        x1, y1 = self._annotation_place_points[0]
+        x2, y2 = self._snap_angle_for_placement(x1, y1, ost_x, ost_y, snap_kind)
+        return [x1, y1, x2, y2], snap_kind
+
+    def update_annotation_place_preview(self, cursor_scene: QtCore.QPointF) -> None:
+        self.clear_place_preview()
+        if self._annotation_place_type != "dimension":
+            return
+        if not self._annotation_place_points:
+            _ost_x, _ost_y, cx, cy, snap_kind = self._placement_snap_from_scene(
+                cursor_scene
+            )
+            self._add_snap_cursor_marker(cx, cy, snap_kind)
+            self._request_place_preview_repaint()
+            return
+        position, _snap_kind = self._dimension_placement_position(cursor_scene)
+        if math.hypot(position[2] - position[0], position[3] - position[1]) <= 1e-9:
+            return
+        annotation = BidAnnotation(
+            uid="__dimension_preview__",
+            annotation_type="dimension",
+            page_uid=self._current_bid_page_uid or "",
+            position=position,
+            color=DIMENSION_ANNOTATION_COLOR,
+            width=DIMENSION_ANNOTATION_WIDTH,
+            properties=dimension_annotation_properties(),
+        )
+        cs = self._scene_builder.get_coordinate_system()
+        dimension = calculate_dimension_geometry(
+            annotation, position, cs.transform_vertices_to_2d
+        )
+        if not dimension:
+            return
+        path = build_dimension_path(dimension, cs)
+        if path.isEmpty():
+            return
+        path_item = QGraphicsPathItem()
+        path_item.setPath(path)
+        pen = QPen(QColor(annotation.color))
+        pen.setWidthF(annotation.width)
+        pen.setCosmetic(True)
+        path_item.setPen(pen)
+        path_item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        path_item.setZValue(15)
+        page_transform = self._current_page_transform()
+        if page_transform is not None:
+            path_item.setTransform(page_transform)
+        self._scene.addItem(path_item)
+        self._place_preview_items.append(path_item)
+        text_item = create_dimension_text_item(
+            dimension,
+            annotation.color,
+            cs,
+            DIMENSION_FONT_SIZE_ADJUSTMENT,
+        )
+        if text_item is not None:
+            text_item.setZValue(16)
+            if page_transform is not None:
+                text_item.setTransform(page_transform)
+            self._scene.addItem(text_item)
+            self._place_preview_items.append(text_item)
+        self._request_place_preview_repaint()
+
+    def handle_annotation_place_press(self, event) -> bool:
+        if self._annotation_place_type != "dimension":
+            return False
+        scene_pos = self.mapToScene(event.pos())
+        if self._annotation_place_points and not self._annotation_place_dragging:
+            position, _snap_kind = self._dimension_placement_position(scene_pos)
+            if self._commit_dimension_annotation_placement(position):
+                event.accept()
+                return True
+            self.update_annotation_place_preview(scene_pos)
+            event.accept()
+            return True
+        ost_x, ost_y, _cx, _cy, _snap_kind = self._placement_snap_from_scene(scene_pos)
+        self._selected_uids.clear()
+        self.update_selection_visuals()
+        self._annotation_place_points = [(ost_x, ost_y)]
+        self._annotation_place_dragging = True
+        self.update_annotation_place_preview(scene_pos)
+        event.accept()
+        return True
+
+    def handle_annotation_place_release(self, event) -> bool:
+        if (
+            self._annotation_place_type != "dimension"
+            or not self._annotation_place_points
+            or not self._annotation_place_dragging
+        ):
+            return False
+        scene_pos = self.mapToScene(event.pos())
+        position, _snap_kind = self._dimension_placement_position(scene_pos)
+        if self._commit_dimension_annotation_placement(position):
+            event.accept()
+            return True
+        self._annotation_place_dragging = False
+        self.update_annotation_place_preview(scene_pos)
+        event.accept()
+        return True
+
+    def _commit_dimension_annotation_placement(self, position: list) -> bool:
+        min_len = self._snap_increments if self._snap_increments > 0 else 1e-6
+        distance = math.hypot(position[2] - position[0], position[3] - position[1])
+        if distance < min_len:
+            return False
+        page_uid = self._current_bid_page_uid or ""
+        if not page_uid:
+            return False
+        self.clear_place_preview()
+        self._annotation_place_points = []
+        self._annotation_place_dragging = False
+        self.annotation_created.emit("dimension", position, page_uid)
+        return True
 
     def _flash_invalid_preview(self, condition_color: QColor) -> None:
         if self._place_flashing:

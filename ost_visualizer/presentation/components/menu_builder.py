@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 from PySide6 import QtGui, QtWidgets
-from ..config import MAIN_TOOLBAR_LABEL, TAKEOFF_TOOLS_TOOLBAR_LABEL, VIEW_TOOLBAR_LABEL
+from ..config import MAIN_TOOLBAR_LABEL, PLAN_TOOLS_TOOLBAR_LABEL, VIEW_TOOLBAR_LABEL
 from ..managers.icon_manager import IconManager
 from ..managers.shortcut_manager import ShortcutManager
 
@@ -130,9 +130,9 @@ class MenuBuilder:
                         ),
                         (
                             "check",
-                            TAKEOFF_TOOLS_TOOLBAR_LABEL,
-                            "takeoff_tools_toolbar_visible",
-                            "toggle_takeoff_tools_toolbar",
+                            PLAN_TOOLS_TOOLBAR_LABEL,
+                            "plan_tools_toolbar_visible",
+                            "toggle_plan_tools_toolbar",
                         ),
                     ],
                 ),
@@ -188,9 +188,10 @@ class MenuBuilder:
             ],
             "Tools": [
                 ("shared", "select_tool"),
-                ("shared", "takeoff_tool"),
+                ("shared", "place_tool"),
                 ("shared", "zoom_tool"),
                 ("shared", "pan_tool"),
+                ("shared", "dimension_tool"),
                 ("sep",),
                 ("shared", "backout_mode"),
                 ("sep",),

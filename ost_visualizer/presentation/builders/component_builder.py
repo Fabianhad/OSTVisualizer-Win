@@ -14,6 +14,8 @@ from ..components.viewer_cursors import make_rotate_cursor, make_zoom_cursor
 from ..config import (
     ACTION_NEXT_PAGE_LABEL,
     ACTION_NEXT_PAGE_TOOLTIP,
+    ACTION_DIMENSION_LABEL,
+    ACTION_DIMENSION_TOOLTIP,
     ACTION_PAN_LABEL,
     ACTION_PAN_TOOLTIP,
     ACTION_PREVIOUS_PAGE_LABEL,
@@ -22,8 +24,8 @@ from ..config import (
     ACTION_RESET_VIEW_TOOLTIP,
     ACTION_SELECT_LABEL,
     ACTION_SELECT_TOOLTIP,
-    ACTION_TAKEOFF_LABEL,
-    ACTION_TAKEOFF_TOOLTIP,
+    ACTION_PLACE_LABEL,
+    ACTION_PLACE_TOOLTIP,
     ACTION_ZOOM_IN_LABEL,
     ACTION_ZOOM_IN_TOOLTIP,
     ACTION_ZOOM_LABEL,
@@ -41,7 +43,7 @@ from ..config import (
     NO_SPACING,
     SIDEBAR_MIN_WIDTH,
     TAB_INDEX_TAKEOFF,
-    TAKEOFF_TOOLS_TOOLBAR_LABEL,
+    PLAN_TOOLS_TOOLBAR_LABEL,
     VIEW_LABEL,
     VIEW_TOOLBAR_LABEL,
     VIEW_WINDOW_TITLE,
@@ -62,7 +64,7 @@ from ..managers.ui_access_manager import Feature
 from ..services.undo_redo_service import UndoRedoService
 
 
-class _TakeoffRibbonToolBar(QtWidgets.QToolBar):
+class _PlanRibbonToolBar(QtWidgets.QToolBar):
     def __init__(self, parent: QtWidgets.QWidget | None = None):
         super().__init__(parent)
         self._preferred_docked_height = 0
@@ -95,7 +97,7 @@ class _TakeoffRibbonToolBar(QtWidgets.QToolBar):
         return hint
 
 
-class _TakeoffToolbarLayoutSyncFilter(QtCore.QObject):
+class _PlanToolbarLayoutSyncFilter(QtCore.QObject):
     def __init__(self, callback, parent: QtCore.QObject | None = None):
         super().__init__(parent)
         self._callback = callback
@@ -122,7 +124,7 @@ class ComponentBundle:
     plan_view: TakeoffPlanView
     view_stack: QtWidgets.QStackedWidget
     status_panel: StatusPanel
-    takeoff_tools_toolbar: QtWidgets.QToolBar
+    plan_tools_toolbar: QtWidgets.QToolBar
     view_toolbar: QtWidgets.QToolBar
     main_toolbar: QtWidgets.QToolBar
     view_2d_action: QtGui.QAction
@@ -145,6 +147,7 @@ class ComponentBundle:
     previous_page_action: QtGui.QAction
     select_action: QtGui.QAction
     pan_action: QtGui.QAction
+    dimension_action: QtGui.QAction
     zoom_mode_action: QtGui.QAction
     backout_action: QtGui.QAction
     cover_sheet_button: QtWidgets.QToolButton
@@ -330,10 +333,10 @@ class ComponentBuilder:
         select_action.setToolTip(ACTION_SELECT_TOOLTIP)
         cursor_group.addAction(select_action)
         main_toolbar.addAction(select_action)
-        place_action = QtGui.QAction(ACTION_TAKEOFF_LABEL, viewer_container)
-        IconManager.apply(place_action, IconId.TAKEOFF_TOOL)
+        place_action = QtGui.QAction(ACTION_PLACE_LABEL, viewer_container)
+        IconManager.apply(place_action, IconId.PLACE_TOOL)
         place_action.setCheckable(True)
-        place_action.setToolTip(ACTION_TAKEOFF_TOOLTIP)
+        place_action.setToolTip(ACTION_PLACE_TOOLTIP)
         cursor_group.addAction(place_action)
         main_toolbar.addAction(place_action)
         pan_action = QtGui.QAction(ACTION_PAN_LABEL, viewer_container)
@@ -342,6 +345,12 @@ class ComponentBuilder:
         pan_action.setToolTip(ACTION_PAN_TOOLTIP)
         cursor_group.addAction(pan_action)
         main_toolbar.addAction(pan_action)
+        dimension_action = QtGui.QAction(ACTION_DIMENSION_LABEL, viewer_container)
+        IconManager.apply(dimension_action, IconId.DIMENSION_TOOL)
+        dimension_action.setCheckable(True)
+        dimension_action.setToolTip(ACTION_DIMENSION_TOOLTIP)
+        cursor_group.addAction(dimension_action)
+        main_toolbar.addAction(dimension_action)
         zoom_mode_action = QtGui.QAction(ACTION_ZOOM_LABEL, viewer_container)
         IconManager.apply(zoom_mode_action, IconId.ZOOM_TOOL)
         zoom_mode_action.setCheckable(True)
@@ -388,7 +397,7 @@ class ComponentBuilder:
         _undo_svc = UndoRedoService()
         if ui_access_manager:
             _undo_svc.set_write_guard(
-                lambda: ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS)
+                lambda: ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS)
             )
         _plan_view_handler = PlanViewActionHandler(
             plan_view=plan_view,
@@ -521,6 +530,15 @@ class ComponentBuilder:
                 canvas.set_cursor_mode("pan" if checked else "default"),
             )
         )
+
+        def _on_dimension_toggled(checked: bool) -> None:
+            if not checked:
+                return
+            if plan_view.activate_dimension_annotation_placement():
+                return
+            select_action.setChecked(True)
+
+        dimension_action.toggled.connect(_on_dimension_toggled)
         zoom_mode_action.toggled.connect(
             lambda checked: (
                 plan_view.set_cursor_mode("zoom") if checked else None,
@@ -533,6 +551,7 @@ class ComponentBuilder:
                 "select": select_action,
                 "place": place_action,
                 "pan": pan_action,
+                "annotation_place": dimension_action,
                 "zoom": zoom_mode_action,
             }
             action = action_map.get(mode)
@@ -551,21 +570,21 @@ class ComponentBuilder:
         fit_action.triggered.connect(_on_fit)
         zoom_in_action.triggered.connect(_on_zoom_in)
         zoom_out_action.triggered.connect(_on_zoom_out)
-        takeoff_tools_toolbar = _TakeoffRibbonToolBar(self.window)
-        takeoff_tools_toolbar.setObjectName("takeoffToolsToolbar")
-        takeoff_tools_toolbar.setWindowTitle(TAKEOFF_TOOLS_TOOLBAR_LABEL)
-        takeoff_tools_toolbar.setMovable(True)
-        takeoff_tools_toolbar.setFloatable(True)
-        takeoff_tools_toolbar.setOrientation(QtCore.Qt.Orientation.Vertical)
-        takeoff_tools_toolbar.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
-        takeoff_tools_toolbar.setToolButtonStyle(
+        plan_tools_toolbar = _PlanRibbonToolBar(self.window)
+        plan_tools_toolbar.setObjectName("planToolsToolbar")
+        plan_tools_toolbar.setWindowTitle(PLAN_TOOLS_TOOLBAR_LABEL)
+        plan_tools_toolbar.setMovable(True)
+        plan_tools_toolbar.setFloatable(True)
+        plan_tools_toolbar.setOrientation(QtCore.Qt.Orientation.Vertical)
+        plan_tools_toolbar.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
+        plan_tools_toolbar.setToolButtonStyle(
             QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
         )
-        takeoff_tools_toolbar.setSizePolicy(
+        plan_tools_toolbar.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Fixed,
             QtWidgets.QSizePolicy.Policy.MinimumExpanding,
         )
-        workspace_view_toolbar = _TakeoffRibbonToolBar(self.window)
+        workspace_view_toolbar = _PlanRibbonToolBar(self.window)
         workspace_view_toolbar.setObjectName("viewToolbar")
         workspace_view_toolbar.setWindowTitle(VIEW_TOOLBAR_LABEL)
         workspace_view_toolbar.setMovable(True)
@@ -605,7 +624,7 @@ class ComponentBuilder:
         backout_action.setToolTip(_BACKOUT_DISABLED_TOOLTIP)
         backout_action.setCheckable(True)
         backout_action.setEnabled(False)
-        takeoff_tools_toolbar.addAction(backout_action)
+        plan_tools_toolbar.addAction(backout_action)
         workspace_main_toolbar = QtWidgets.QToolBar(self.window)
         workspace_main_toolbar.setWindowTitle(MAIN_TOOLBAR_LABEL)
         workspace_main_toolbar.setMovable(True)
@@ -717,12 +736,12 @@ class ComponentBuilder:
         viewer_container_layout.addWidget(main_toolbar)
         viewer_container_layout.addWidget(view_stack, 1)
         self.window.addToolBar(
-            QtCore.Qt.ToolBarArea.RightToolBarArea, takeoff_tools_toolbar
+            QtCore.Qt.ToolBarArea.RightToolBarArea, plan_tools_toolbar
         )
         self.window.addToolBar(
             QtCore.Qt.ToolBarArea.RightToolBarArea, workspace_view_toolbar
         )
-        takeoff_tools_toolbar.setVisible(False)
+        plan_tools_toolbar.setVisible(False)
         workspace_view_toolbar.setVisible(False)
         conditions_sidebar = ConditionsSidebar(
             takeoff_tab, uom_label_fn=project_read_service.get_uom_label
@@ -781,16 +800,16 @@ class ComponentBuilder:
         central_layout.addWidget(tab_widget)
         status_panel = StatusPanel(central_widget)
 
-        def _sync_takeoff_toolbar_heights() -> None:
+        def _sync_plan_toolbar_heights() -> None:
             if (
-                takeoff_tools_toolbar.isFloating()
+                plan_tools_toolbar.isFloating()
                 or workspace_view_toolbar.isFloating()
-                or self.window.toolBarArea(takeoff_tools_toolbar)
+                or self.window.toolBarArea(plan_tools_toolbar)
                 != QtCore.Qt.ToolBarArea.RightToolBarArea
                 or self.window.toolBarArea(workspace_view_toolbar)
                 != QtCore.Qt.ToolBarArea.RightToolBarArea
             ):
-                takeoff_tools_toolbar.set_preferred_docked_height(0)
+                plan_tools_toolbar.set_preferred_docked_height(0)
                 workspace_view_toolbar.set_preferred_docked_height(0)
                 return
             host = self.window.centralWidget() or self.window
@@ -800,27 +819,23 @@ class ComponentBuilder:
             if available_height <= 0:
                 return
             target_height = max(1, available_height // 2)
-            takeoff_tools_toolbar.set_preferred_docked_height(target_height)
+            plan_tools_toolbar.set_preferred_docked_height(target_height)
             workspace_view_toolbar.set_preferred_docked_height(target_height)
 
-        def _schedule_takeoff_toolbar_height_sync(*_args) -> None:
-            QtCore.QTimer.singleShot(0, _sync_takeoff_toolbar_heights)
+        def _schedule_plan_toolbar_height_sync(*_args) -> None:
+            QtCore.QTimer.singleShot(0, _sync_plan_toolbar_heights)
 
-        toolbar_layout_sync_filter = _TakeoffToolbarLayoutSyncFilter(
-            _sync_takeoff_toolbar_heights, self.window
+        toolbar_layout_sync_filter = _PlanToolbarLayoutSyncFilter(
+            _sync_plan_toolbar_heights, self.window
         )
         self.window.installEventFilter(toolbar_layout_sync_filter)
-        takeoff_tools_toolbar.topLevelChanged.connect(
-            _schedule_takeoff_toolbar_height_sync
-        )
+        plan_tools_toolbar.topLevelChanged.connect(_schedule_plan_toolbar_height_sync)
         workspace_view_toolbar.topLevelChanged.connect(
-            _schedule_takeoff_toolbar_height_sync
+            _schedule_plan_toolbar_height_sync
         )
-        takeoff_tools_toolbar.visibilityChanged.connect(
-            _schedule_takeoff_toolbar_height_sync
-        )
+        plan_tools_toolbar.visibilityChanged.connect(_schedule_plan_toolbar_height_sync)
         workspace_view_toolbar.visibilityChanged.connect(
-            _schedule_takeoff_toolbar_height_sync
+            _schedule_plan_toolbar_height_sync
         )
 
         def _on_area_placement_in_progress(in_progress: bool) -> None:
@@ -829,7 +844,7 @@ class ComponentBuilder:
             view_toolbar.setEnabled(not in_progress)
             tab_widget.tabBar().setEnabled(not in_progress)
             workspace_main_toolbar.setEnabled(not in_progress)
-            takeoff_tools_toolbar.setEnabled(not in_progress)
+            plan_tools_toolbar.setEnabled(not in_progress)
             workspace_view_toolbar.setEnabled(not in_progress)
             self.window.menuBar().setEnabled(not in_progress)
             if in_progress:
@@ -839,7 +854,7 @@ class ComponentBuilder:
 
         plan_view.area_placement_in_progress.connect(_on_area_placement_in_progress)
         workspace_main_toolbar.setObjectName("mainToolbar")
-        _sync_takeoff_toolbar_heights()
+        _sync_plan_toolbar_heights()
         return ComponentBundle(
             central_widget=central_widget,
             tab_widget=tab_widget,
@@ -851,7 +866,7 @@ class ComponentBuilder:
             plan_view=plan_view,
             view_stack=view_stack,
             status_panel=status_panel,
-            takeoff_tools_toolbar=takeoff_tools_toolbar,
+            plan_tools_toolbar=plan_tools_toolbar,
             view_toolbar=workspace_view_toolbar,
             main_toolbar=workspace_main_toolbar,
             view_2d_action=btn_2d_action,
@@ -874,6 +889,7 @@ class ComponentBuilder:
             previous_page_action=previous_page_action,
             select_action=select_action,
             pan_action=pan_action,
+            dimension_action=dimension_action,
             zoom_mode_action=zoom_mode_action,
             backout_action=backout_action,
             cover_sheet_button=cover_sheet_button,

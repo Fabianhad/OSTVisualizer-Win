@@ -206,6 +206,10 @@ class UIEventCoordinator:
         action.toggled.connect(self._on_backout_toggled)
         self._toolbar.refresh_backout_action()
 
+    def set_dimension_action(self, action: QtGui.QAction) -> None:
+        self._toolbar.set_dimension_action(action)
+        self._toolbar.refresh()
+
     def refresh_backout_action(self) -> None:
         self._toolbar.refresh_backout_action()
 
@@ -418,7 +422,7 @@ class UIEventCoordinator:
             self._mesh_window.clear_scene()
 
     def _on_mesh_window_clicked(self, takeoff_uids: list) -> None:
-        if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         self._sync_selection(self._SOURCE_3D_WINDOW, takeoff_uids)
 
@@ -743,7 +747,7 @@ class UIEventCoordinator:
             self._toolbar.refresh()
 
     def _on_3d_mesh_clicked(self, takeoff_uids: list) -> None:
-        if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         self._sync_selection(self._SOURCE_3D, takeoff_uids)
 
@@ -1700,7 +1704,7 @@ class UIEventCoordinator:
             self.plan_view.flip_selected_takeoffs(horizontal=False)
 
     def _can_transform_selected_takeoffs(self) -> bool:
-        if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
             return False
         return bool(self.plan_view and self.plan_view.has_selected_takeoffs)
 

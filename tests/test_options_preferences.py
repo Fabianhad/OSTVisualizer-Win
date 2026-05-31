@@ -52,6 +52,7 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 from ost_visualizer.presentation.dialogs.options import components as options_components
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.presentation.managers.icon_manager import ICON_SPECS, IconId
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.utils.color_swatch import rounded_color_swatch
 from ost_visualizer.presentation.utils.mcp_setup_config import (
@@ -615,6 +616,28 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertIn(("cmd", "Options...", "options"), tools_items)
         self.assertNotIn(("cmd", old_label, old_key), tools_items)
 
+    def test_dimension_tool_is_registered_after_pan_with_square_foot_icon(self):
+        root = Path(__file__).resolve().parents[1]
+        builder_source = (
+            root
+            / "ost_visualizer"
+            / "presentation"
+            / "builders"
+            / "component_builder.py"
+        ).read_text(encoding="utf-8")
+        self.assertLess(
+            builder_source.index("main_toolbar.addAction(pan_action)"),
+            builder_source.index("main_toolbar.addAction(dimension_action)"),
+        )
+        self.assertLess(
+            builder_source.index("main_toolbar.addAction(dimension_action)"),
+            builder_source.index("main_toolbar.addAction(zoom_mode_action)"),
+        )
+        self.assertEqual(
+            ICON_SPECS[IconId.DIMENSION_TOOL].svg_name,
+            "square_foot_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
+        )
+
     def test_update_app_options_updates_color_mode_and_publishes_changed_payload(self):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)
@@ -1094,7 +1117,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 self.allowed = allowed
 
             def is_allowed(self, feature):
-                return self.allowed and feature == Feature.PLACE_TAKEOFF
+                return self.allowed and feature == Feature.PLACE_PLAN_ITEMS
 
         class FakeUiState:
             def get_selected_bid_refs(self):
@@ -1267,6 +1290,53 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         MenuController._sync_tool_action_states(controller, True)
         self.assertEqual(explicit_refresh_calls, [1])
+
+    def test_dimension_action_does_not_use_backout_toggle_handler(self):
+        _app()
+
+        class FakeToolbar:
+            def __init__(self):
+                self.backout_action = None
+                self.dimension_action = None
+                self.refresh_calls = 0
+                self.backout_refresh_calls = 0
+
+            def set_backout_action(self, action):
+                self.backout_action = action
+
+            def set_dimension_action(self, action):
+                self.dimension_action = action
+
+            def refresh(self):
+                self.refresh_calls += 1
+
+            def refresh_backout_action(self):
+                self.backout_refresh_calls += 1
+
+        toolbar = FakeToolbar()
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._toolbar = toolbar
+        coordinator._on_backout_toggled = lambda checked: calls.append(checked)
+
+        dimension_action = QtGui.QAction()
+        dimension_action.setCheckable(True)
+        UIEventCoordinator.set_dimension_action(coordinator, dimension_action)
+        dimension_action.setChecked(True)
+
+        self.assertEqual(calls, [])
+        self.assertIs(toolbar.dimension_action, dimension_action)
+        self.assertEqual(toolbar.refresh_calls, 1)
+        self.assertEqual(toolbar.backout_refresh_calls, 0)
+
+        backout_action = QtGui.QAction()
+        backout_action.setCheckable(True)
+        UIEventCoordinator.set_backout_action(coordinator, backout_action)
+        backout_action.setChecked(True)
+
+        self.assertEqual(calls, [True])
+        self.assertIs(toolbar.backout_action, backout_action)
+        self.assertEqual(toolbar.backout_refresh_calls, 1)
 
     def test_begin_paste_backout_requires_host_area(self):
         class FakeSignal:

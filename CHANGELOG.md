@@ -10,10 +10,11 @@
 - Added MCP setup controls to the Options dialog for copying Claude Desktop/Cursor config and Codex setup commands.
 - Added read-only MCP area context with area names on takeoffs/current context plus `list_areas` and `get_area_summary`.
 - Added safe read-only MCP page search, layer summaries, named views, hotlinks, redacted page sheet metadata, bounded PDF text/vector summaries, page markup summaries, overlay summaries, and page-scoped PDF text search.
+- Added read-only MCP prompt workflows for bid scope review, page QA, markup/link review, overlay/PDF context, and quantity variance review.
 - Added separate Options controls for grid, PDF-line, takeoff, and right-angle snap thresholds.
 - Added a Reset All Settings button to the Options dialog that restores app preferences and workspace layout state to defaults.
 - Added embedded PDF text selection in the plan view with I-beam hover, drag-range highlighting, and copy support.
-- Added 2D rendering and Bluebeam-style PDF LineDimension export for imported BidDimensions annotations, including end ticks, feet/inches labels, text-label formatting, measurement metadata, and corrected PDF appearance bounds.
+- Added 2D rendering, toolbar placement, and Bluebeam-style PDF LineDimension export for BidDimensions annotations, including end ticks, feet/inches labels, text-label formatting, measurement metadata, and corrected PDF appearance bounds.
 
 ### Changed
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.

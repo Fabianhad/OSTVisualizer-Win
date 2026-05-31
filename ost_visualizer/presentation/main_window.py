@@ -16,7 +16,7 @@ from .config import (
     SHOW_TOOLBARS_MENU_TITLE,
     SIDEBAR_MIN_WIDTH,
     TAB_INDEX_TAKEOFF,
-    TAKEOFF_TOOLS_TOOLBAR_LABEL,
+    PLAN_TOOLS_TOOLBAR_LABEL,
     VIEW_TOOLBAR_LABEL,
 )
 from .configurators.window_configurator import WindowConfigurator
@@ -48,10 +48,10 @@ class MainWindow(QtWidgets.QMainWindow):
     update_dialog_requested = Signal(object)
     MAIN_TOOLBAR_KEY = "main_toolbar"
     VIEW_TOOLBAR_KEY = "view_toolbar"
-    TAKEOFF_TOOLS_TOOLBAR_KEY = "takeoff_tools_toolbar"
+    PLAN_TOOLS_TOOLBAR_KEY = "plan_tools_toolbar"
     _MAIN_TOOLBAR_KEY = MAIN_TOOLBAR_KEY
     _VIEW_TOOLBAR_KEY = VIEW_TOOLBAR_KEY
-    _TAKEOFF_TOOLS_TOOLBAR_KEY = TAKEOFF_TOOLS_TOOLBAR_KEY
+    _PLAN_TOOLS_TOOLBAR_KEY = PLAN_TOOLS_TOOLBAR_KEY
 
     def __init__(self, app_controller, splash_screen=None):
         super().__init__()
@@ -144,7 +144,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.opengl_viewer = components.opengl_viewer
         self.plan_view = components.plan_view
         self._view_stack = components.view_stack
-        self._takeoff_tools_toolbar = components.takeoff_tools_toolbar
+        self._plan_tools_toolbar = components.plan_tools_toolbar
         self._view_toolbar = components.view_toolbar
         self._main_toolbar = components.main_toolbar
         self._cover_sheet_button = components.cover_sheet_button
@@ -171,7 +171,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._workspace_toolbar_visibility = {
             self._MAIN_TOOLBAR_KEY: True,
             self._VIEW_TOOLBAR_KEY: True,
-            self._TAKEOFF_TOOLS_TOOLBAR_KEY: True,
+            self._PLAN_TOOLS_TOOLBAR_KEY: True,
         }
         self._syncing_toolbar_visibility = False
         self._main_toolbar.visibilityChanged.connect(
@@ -179,9 +179,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._MAIN_TOOLBAR_KEY, visible
             )
         )
-        self._takeoff_tools_toolbar.visibilityChanged.connect(
+        self._plan_tools_toolbar.visibilityChanged.connect(
             lambda visible: self._on_workspace_toolbar_visibility_changed(
-                self._TAKEOFF_TOOLS_TOOLBAR_KEY, visible
+                self._PLAN_TOOLS_TOOLBAR_KEY, visible
             )
         )
         self._view_toolbar.visibilityChanged.connect(
@@ -251,6 +251,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handlers.ui_event.set_page_settings_bar(components.page_settings_bar)
         self.handlers.ui_event.set_select_action(components.select_action)
         self.handlers.ui_event.set_place_action(components.place_action)
+        self.handlers.ui_event.set_dimension_action(components.dimension_action)
         self.handlers.ui_event.set_backout_action(components.backout_action)
         self.handlers.ui_event.set_conditions_sidebar(components.conditions_sidebar)
         self.handlers.ui_event.set_bid_layers_sidebar(components.bid_layers_sidebar)
@@ -330,9 +331,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 "next_page": components.next_page_action,
                 "previous_page": components.previous_page_action,
                 "select_tool": components.select_action,
-                "takeoff_tool": components.place_action,
+                "place_tool": components.place_action,
                 "zoom_tool": components.zoom_mode_action,
                 "pan_tool": components.pan_action,
+                "dimension_tool": components.dimension_action,
                 "backout_mode": components.backout_action,
                 "layers_sidebar": components.layers_toggle_action,
                 "conditions_sidebar": components.conditions_toggle_action,
@@ -582,7 +584,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._handle_inline_text_shortcut("delete"):
             return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
-            if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+            if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
                 return
             self.plan_view.delete_selected()
         else:
@@ -592,7 +594,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _duplicate_selected(self) -> None:
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
-            if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+            if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
                 return
             self.plan_view.duplicate_selected()
         else:
@@ -604,7 +606,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._handle_inline_text_shortcut("copy"):
             return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
-            if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+            if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
                 return
             self.plan_view.copy_selected()
             return
@@ -633,7 +635,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._handle_inline_text_shortcut("paste"):
             return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
-            if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+            if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
                 return
             if not self._plan_view_handler.can_paste_to_current_bid():
                 return
@@ -683,7 +685,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if self._handle_inline_text_shortcut("select_all"):
             return
-        if not self.ui_access_manager.is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         self.plan_view.select_all()
         self.handlers.ui_event.refresh_toolbar()
@@ -801,8 +803,8 @@ class MainWindow(QtWidgets.QMainWindow):
             takeoff_active = self.is_takeoff_tab_active()
             self._set_toolbar_visible(self._main_toolbar, self._MAIN_TOOLBAR_KEY, True)
             self._set_toolbar_visible(
-                self._takeoff_tools_toolbar,
-                self._TAKEOFF_TOOLS_TOOLBAR_KEY,
+                self._plan_tools_toolbar,
+                self._PLAN_TOOLS_TOOLBAR_KEY,
                 takeoff_active,
             )
             self._set_toolbar_visible(
@@ -837,8 +839,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 VIEW_TOOLBAR_LABEL,
             ),
             (
-                self._TAKEOFF_TOOLS_TOOLBAR_KEY,
-                TAKEOFF_TOOLS_TOOLBAR_LABEL,
+                self._PLAN_TOOLS_TOOLBAR_KEY,
+                PLAN_TOOLS_TOOLBAR_LABEL,
             ),
         )
         for key, label in toolbar_entries:
@@ -858,7 +860,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def get_workspace_toolbars(self) -> list[QtWidgets.QToolBar]:
         return [
             self._main_toolbar,
-            self._takeoff_tools_toolbar,
+            self._plan_tools_toolbar,
             self._view_toolbar,
         ]
 

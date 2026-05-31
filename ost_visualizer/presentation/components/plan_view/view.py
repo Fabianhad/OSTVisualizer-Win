@@ -151,7 +151,9 @@ def _rects_nearly_equal(
 
 
 _SCENE_RECT_MARGIN = 50.0
-_PASSIVE_MOUSE_TRACKING_CURSOR_MODES = frozenset({"place", "paste_backout"})
+_PASSIVE_MOUSE_TRACKING_CURSOR_MODES = frozenset(
+    {"place", "annotation_place", "paste_backout"}
+)
 
 
 class TakeoffPlanView(
@@ -180,6 +182,7 @@ class TakeoffPlanView(
     rotations_flushed = Signal(list)
     group_rotation_flushed = Signal(list, list, list)
     takeoff_created = Signal(str, list, str)
+    annotation_created = Signal(str, list, str)
     hole_created = Signal(str, list, str, str)
     elements_deleted = Signal(list)
     takeoff_selection_changed = Signal(list)
@@ -344,7 +347,7 @@ class TakeoffPlanView(
         self._dirty_ann_positions: Dict[str, Tuple[str, List[float]]] = {}
         self._position_before_edit: Dict[str, List[float]] = {}
         self._ann_db_uid_map: Dict[str, str] = {}
-        self._drag_takeoff_uid: Optional[str] = None
+        self._drag_plan_item_uid: Optional[str] = None
         self._drag_handle_index: int = -2
         self._drag_handle_corner_count: int = 0
         self._drag_orig_position: List[float] = []
@@ -358,6 +361,9 @@ class TakeoffPlanView(
         self._place_session_uid: Optional[str] = None
         self._place_all_condition_uids: List[str] = []
         self._place_points: List[Tuple[float, float]] = []
+        self._annotation_place_type: Optional[str] = None
+        self._annotation_place_points: List[Tuple[float, float]] = []
+        self._annotation_place_dragging: bool = False
         self._place_preview_items: List[QGraphicsItem] = []
         self._takeoff_snap_index = None
         self._pdf_snap_index = None
@@ -3322,7 +3328,7 @@ class TakeoffPlanView(
         self.clear_selection_items()
         saved_selection = set(self._selected_uids)
         self._selected_uids.clear()
-        self._drag_takeoff_uid = None
+        self._drag_plan_item_uid = None
         self._drag_handle_index = -2
         self._drag_orig_position = []
         self._drag_item_orig_positions = {}
@@ -3454,6 +3460,7 @@ class TakeoffPlanView(
             self._reset_place_session_state()
         if not preserve_place_session:
             self._clear_backout_state()
+            self._exit_annotation_place_mode()
         self._flush_dirty_rotations()
         self._flush_dirty_positions()
         self._cancel_tile_requests()
@@ -3488,7 +3495,7 @@ class TakeoffPlanView(
         self._press_changed_selection = False
         self._zoom_press_ctrl = False
         self._rubber_band_origin = None
-        self._drag_takeoff_uid = None
+        self._drag_plan_item_uid = None
         self._drag_handle_index = -2
         self._drag_orig_position = []
         self._drag_handle_corner_count = 0
@@ -3557,10 +3564,13 @@ class TakeoffPlanView(
         if mode != "select":
             self.finish_intelligent_paste_placement()
         if mode == "place":
+            self._exit_annotation_place_mode()
             if not self.enter_place_mode():
                 return
         else:
             self._exit_place_mode()
+            if mode != "annotation_place":
+                self._exit_annotation_place_mode()
             self._clear_backout_state()
         self._apply_cursor_mode(mode)
 
@@ -3578,6 +3588,22 @@ class TakeoffPlanView(
         )
         self._apply_cursor_mode("place")
         self.cursor_mode_change_requested.emit("place")
+        return True
+
+    def activate_dimension_annotation_placement(self) -> bool:
+        return self.activate_annotation_placement("dimension")
+
+    def activate_annotation_placement(self, annotation_type: str) -> bool:
+        self.finish_intelligent_paste_placement()
+        if not self._current_bid_page_uid:
+            return False
+        self._exit_place_mode()
+        self._clear_backout_state()
+        activated = self._enter_annotation_place_mode(annotation_type)
+        if not activated:
+            return False
+        self._apply_cursor_mode("annotation_place")
+        self.cursor_mode_change_requested.emit("annotation_place")
         return True
 
     def _filter_place_conditions(self, active_uid: str, uids: list) -> list:
@@ -3627,6 +3653,7 @@ class TakeoffPlanView(
 
     def cancel_place_mode(self) -> None:
         self._exit_place_mode()
+        self._exit_annotation_place_mode()
         self._clear_backout_state()
         self.cursor_mode_change_requested.emit("select")
 

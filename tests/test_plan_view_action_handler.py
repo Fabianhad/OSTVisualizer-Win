@@ -32,6 +32,7 @@ class FakePlanView:
         self.mouse_ost_position = (100.0, 200.0)
         self.intelligent_paste_calls = []
         self.annotation_key_map = {}
+        self.annotations = {}
 
     def set_selected_uids(self, uids):
         self.selected = set(uids)
@@ -45,8 +46,8 @@ class FakePlanView:
             return None
         return self.data.get_takeoff(uid)
 
-    def get_annotation(self, _uid):
-        return None
+    def get_annotation(self, uid):
+        return self.annotations.get(uid)
 
     def find_annotation_keys_by_uid_type(self, uid_type_set):
         return {
@@ -368,7 +369,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             width=1.0,
         )
 
-    def test_denied_takeoff_selection_access_blocks_plan_view_write_signals(self):
+    def test_denied_plan_item_selection_access_blocks_plan_view_write_signals(self):
         data = FakeProjectData()
         takeoff = Takeoff(
             uid="t1",
@@ -397,6 +398,48 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.position_calls, [])
         self.assertEqual(write.calls, [])
 
+    def test_dimension_annotation_created_uses_annotation_write_path(self):
+        plan_view = FakePlanView()
+        plan_view.annotation_key_map = {("ann-1", "dimension"): "ann-1"}
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+        )
+        handler.on_annotation_created("dimension", [1.0, 2.0, 13.0, 2.0], "p1")
+        self.assertEqual(len(ann_write.insert_calls), 1)
+        _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+        self.assertEqual(specs[0].annotation_type, "dimension")
+        self.assertEqual(specs[0].position, [1.0, 2.0, 13.0, 2.0])
+        self.assertEqual(specs[0].properties["FontName"], "Arial")
+        self.assertEqual(specs[0].properties["FontColor"], "#ff0000")
+        self.assertEqual(plan_view.selected, {"ann-1"})
+        self.assertEqual(undo.count, 1)
+
+    def test_denied_place_plan_items_access_blocks_dimension_placement_write(self):
+        ann_write = FakeAnnotationWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess(set()),
+        )
+        handler.on_annotation_created("dimension", [1.0, 2.0, 13.0, 2.0], "p1")
+        self.assertEqual(ann_write.insert_calls, [])
+
     def test_denied_annotation_text_access_blocks_text_property_write(self):
         annotation_write = FakeAnnotationWriteService()
         handler = PlanViewActionHandler(
@@ -408,7 +451,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
-            ui_access_manager=FakeAccess({Feature.SELECT_TAKEOFFS}),
+            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
         handler.on_annotation_text_properties_flushed(
             [("a1", "text", {"Text": "Old"}, {"Text": "New"})]
@@ -939,7 +982,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.calls[0][2][0].position, [50.0, 75.0, 54.0, 75.0])
         self.assertEqual(plan_view.intelligent_paste_calls, [(["100"], (10.0, 20.0))])
 
-    def test_intelligent_paste_disabled_uses_existing_offset_paste(self):
+    def test_intelligent_paste_disabled_uses_standard_offset_paste(self):
         source = Takeoff(
             uid="source",
             condition_uid="c1",
@@ -984,7 +1027,36 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [(["ann-1"], (10.0, 20.0))],
         )
 
-    def test_intelligent_paste_disabled_pastes_annotation_with_legacy_offset(self):
+    def test_paste_bid_dimension_preserves_style_properties(self):
+        source = self._copied_annotation(
+            annotation_type="dimension",
+            position=[10.0, 20.0, 22.0, 20.0],
+        )
+        source.properties = {
+            "BidTakeoffFromUID": "",
+            "BidTakeoffToUID": "",
+            "FontName": "Segoe UI",
+            "FontColor": "#112233",
+            "FontSize": 14,
+            "FontBold": True,
+            "FontItalic": True,
+            "FontUnderline": False,
+        }
+        plan_view = FakePlanView()
+        plan_view.mouse_ost_position = (50.0, 75.0)
+        plan_view.annotation_key_map = {("ann-1", "dimension"): "ann-1"}
+        ann_write = FakeAnnotationWriteService()
+        handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
+        handler._clipboard_svc = FakeClipboard([], annotations=[source])
+        handler.on_paste_requested()
+        self.assertEqual(len(ann_write.insert_calls), 1)
+        spec = ann_write.insert_calls[0][2][0]
+        self.assertEqual(spec.annotation_type, "dimension")
+        self.assertEqual(spec.position, [50.0, 75.0, 62.0, 75.0])
+        self.assertEqual(spec.properties, source.properties)
+        self.assertEqual(plan_view.selected, {"ann-1"})
+
+    def test_intelligent_paste_disabled_pastes_annotation_with_standard_offset(self):
         source = self._copied_annotation()
         plan_view = FakePlanView()
         plan_view.intelligent_paste_enabled = False
@@ -1025,7 +1097,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [(["100", "ann-1"], (10.0, 20.0))],
         )
 
-    def test_intelligent_paste_disabled_pastes_mixed_clipboard_with_legacy_offset(self):
+    def test_intelligent_paste_disabled_pastes_mixed_clipboard_with_standard_offset(self):
         takeoff = self._copied_takeoff()
         annotation = self._copied_annotation(position=[20.0, 30.0, 24.0, 30.0])
         plan_view = FakePlanView()
@@ -1119,7 +1191,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(len(plan_view.paste_backout_calls), 1)
         self.assertEqual(write.calls, [])
 
-    def test_holes_only_backout_paste_requires_place_takeoff_access(self):
+    def test_holes_only_backout_paste_requires_place_plan_items_access(self):
         hole = Takeoff(
             uid="old-hole",
             condition_uid="c1",
@@ -1138,7 +1210,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
-            ui_access_manager=FakeAccess({Feature.SELECT_TAKEOFFS}),
+            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
         handler._clipboard_svc = FakeClipboard([hole])
         handler.on_paste_requested()

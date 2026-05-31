@@ -19,6 +19,8 @@ def invert_image(image: QImage) -> QImage:
 
 def bitonal_image(image: QImage) -> QImage:
     result = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    if result.isNull():
+        return result
     painter = QPainter(result)
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Darken)
     painter.fillRect(result.rect(), QColor(220, 220, 220))

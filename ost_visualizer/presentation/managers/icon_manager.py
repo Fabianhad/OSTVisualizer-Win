@@ -23,8 +23,9 @@ class IconId(Enum):
     PREVIOUS_PAGE = "previous_page"
     NEXT_PAGE = "next_page"
     SELECT_TOOL = "select_tool"
-    TAKEOFF_TOOL = "takeoff_tool"
+    PLACE_TOOL = "place_tool"
     PAN_TOOL = "pan_tool"
+    DIMENSION_TOOL = "dimension_tool"
     ZOOM_TOOL = "zoom_tool"
     RESET_VIEW = "reset_view"
     ZOOM_IN = "zoom_in"
@@ -81,8 +82,11 @@ ICON_SPECS: Dict[IconId, IconSpec] = {
     IconId.SELECT_TOOL: IconSpec(
         "arrow_selector_tool_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
     ),
-    IconId.TAKEOFF_TOOL: IconSpec("crosshatch.svg"),
+    IconId.PLACE_TOOL: IconSpec("crosshatch.svg"),
     IconId.PAN_TOOL: IconSpec("pan_tool_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
+    IconId.DIMENSION_TOOL: IconSpec(
+        "square_foot_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
     IconId.ZOOM_TOOL: IconSpec("search_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
     IconId.RESET_VIEW: IconSpec(
         "find_in_page_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
@@ -129,8 +133,9 @@ ACTION_ICONS: Dict[str, IconId] = {
     "previous_page": IconId.PREVIOUS_PAGE,
     "next_page": IconId.NEXT_PAGE,
     "select_tool": IconId.SELECT_TOOL,
-    "takeoff_tool": IconId.TAKEOFF_TOOL,
+    "place_tool": IconId.PLACE_TOOL,
     "pan_tool": IconId.PAN_TOOL,
+    "dimension_tool": IconId.DIMENSION_TOOL,
     "zoom_tool": IconId.ZOOM_TOOL,
     "reset_view": IconId.RESET_VIEW,
     "zoom_in": IconId.ZOOM_IN,

@@ -122,7 +122,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             {
                 "main_toolbar": self._state.toolbar_visibility.main_toolbar_visible,
                 "view_toolbar": self._state.toolbar_visibility.view_toolbar_visible,
-                "takeoff_tools_toolbar": self._state.toolbar_visibility.takeoff_tools_toolbar_visible,
+                "plan_tools_toolbar": self._state.toolbar_visibility.plan_tools_toolbar_visible,
             }
         )
         if self._pending_splitter_sizes:
@@ -670,8 +670,8 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         state.toolbar_visibility.view_toolbar_visible = toolbar_visibility.get(
             "view_toolbar", True
         )
-        state.toolbar_visibility.takeoff_tools_toolbar_visible = toolbar_visibility.get(
-            "takeoff_tools_toolbar", True
+        state.toolbar_visibility.plan_tools_toolbar_visible = toolbar_visibility.get(
+            "plan_tools_toolbar", True
         )
         state.takeoff_workspace.left_splitter_sizes = splitter_sizes
         state.takeoff_workspace.takeoff_splitter_sizes = takeoff_splitter_sizes

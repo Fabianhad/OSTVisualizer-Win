@@ -328,6 +328,46 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         ]
         self.assertEqual(actual_coords, expected_coords)
 
+    def test_pdf_export_collects_highlights_as_native_highlight_data(self):
+        exporter = PDFExporter.__new__(PDFExporter)
+        exporter._coord_system = OSTCoordinateSystem()
+        exporter._color_service = _ColorService()
+        annotation = BidAnnotation(
+            uid="h1",
+            annotation_type="highlight",
+            page_uid="p1",
+            position=[10.0, 20.0, 110.0, 60.0],
+            color="#ffff00",
+        )
+        highlights = exporter._collect_highlights("p1", [annotation], _page_info())
+        self.assertEqual(len(highlights), 1)
+        self.assertEqual(
+            highlights[0].strokes,
+            [[[10.0, 752.0], [110.0, 752.0]]],
+        )
+        self.assertAlmostEqual(highlights[0].width, 40.0)
+        self.assertEqual(highlights[0].color, [255, 255, 0])
+        self.assertAlmostEqual(highlights[0].opacity, 1.0)
+
+    def test_pdf_export_collects_rotated_highlight_corners_in_pdf_quad_order(self):
+        exporter = PDFExporter.__new__(PDFExporter)
+        exporter._coord_system = OSTCoordinateSystem()
+        exporter._color_service = _ColorService()
+        annotation = BidAnnotation(
+            uid="h2",
+            annotation_type="highlight",
+            page_uid="p1",
+            position=[110.0, 60.0, 10.0, 20.0, 110.0, 20.0, 10.0, 60.0],
+            color="#00ff00",
+        )
+        highlights = exporter._collect_highlights("p1", [annotation], _page_info())
+        self.assertEqual(len(highlights), 1)
+        self.assertEqual(
+            highlights[0].strokes,
+            [[[10.0, 752.0], [110.0, 752.0]]],
+        )
+        self.assertAlmostEqual(highlights[0].width, 40.0)
+
     def test_dimension_label_style_persists_to_bid_dimensions_font_columns(self):
         conn = sqlite3.connect(":memory:")
         conn.execute(
@@ -440,6 +480,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         first.rects = [self._native_rect()]
         first.lines = [self._native_line()]
         first.texts = [self._native_text("First page", "center")]
+        first.highlights = [self._native_highlight()]
         second = self._blank_page(500.0, 350.0)
         second.ovals = [self._native_oval()]
         second.polygons = [self._native_polygon()]
@@ -491,6 +532,45 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertIn("/Q 1", text_block)
         self.assertIn("text-align:center", text_block)
         self.assertGreaterEqual(pdf_text.count("/AP <<"), 7)
+
+    def test_native_pdf_export_writes_highlight_annotation_fields(self):
+        pdf_text = self._write_native_pdf(highlights=[self._native_highlight()])
+        highlight_block = self._annot_block_by_subject(pdf_text, "Highlight")
+        self.assertIn("/Subtype /Ink", highlight_block)
+        self.assertIn("/BM /Multiply", highlight_block)
+        self.assertIn("/InkList [ [ 10 65 120 65 ] ]", highlight_block)
+        self.assertIn("/Rect [ -17 38 147 92 ]", highlight_block)
+        self.assertIn("/C [ 1 1 0 ]", highlight_block)
+        self.assertIn("/BS << /S /S /Type /Border /W 50 >>", highlight_block)
+        self.assertIn("/NM (", highlight_block)
+        self.assertIn("/AP <<", highlight_block)
+        self.assertNotIn("/QuadPoints", highlight_block)
+        ap_block = self._ap_block_for_annotation(pdf_text, highlight_block)
+        self.assertIn("/BM /Multiply", ap_block)
+        self.assertIn("/CA 1", ap_block)
+        stream_text = self._stream_text(ap_block)
+        self.assertIn("/R0 gs", stream_text)
+        self.assertIn("1 1 0 RG", stream_text)
+        self.assertIn("50 w 1 j 1 J", stream_text)
+        self.assertIn("10 65 m 120 65 l S", stream_text)
+
+    def test_native_pdf_export_highlights_on_multiple_pages_reference_their_pages(self):
+        first = self._blank_page(400.0, 300.0)
+        first.highlights = [self._native_highlight()]
+        second = self._blank_page(500.0, 350.0)
+        second_highlight = self._native_highlight()
+        second_highlight.strokes = [[[20.0, 100.0], [140.0, 100.0]]]
+        second_highlight.width = 40.0
+        second.highlights = [second_highlight]
+        pdf_text = self._write_native_pdf_pages([first, second])
+        page_to_annots = self._page_annotation_refs(pdf_text)
+        self.assertEqual(len(page_to_annots), 2)
+        for page_object, annot_objects in page_to_annots.items():
+            self.assertEqual(len(annot_objects), 1)
+            annot_block = self._object_block(pdf_text, annot_objects[0])
+            self.assertIn("/Subtype /Ink", annot_block)
+            self.assertIn("/BM /Multiply", annot_block)
+            self.assertRegex(annot_block, rf"/P\s+{page_object}\s+0\s+R")
 
     def test_native_pdf_export_arrow_ap_bounds_include_drawn_arrowhead(self):
         arrow = self._native_arrow()
@@ -701,6 +781,15 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         text.text_align = align
         return text
 
+    def _native_highlight(self):
+        highlight = ost_pdf_writer.HighlightAnnotationData()
+        highlight.strokes = [[[10.0, 65.0], [120.0, 65.0]]]
+        highlight.color = [255, 255, 0]
+        highlight.width = 50.0
+        highlight.opacity = 1.0
+        highlight.content = ""
+        return highlight
+
     def _write_native_pdf_with_dimension(self, dimension):
         return self._write_native_pdf(dimensions=[dimension])
 
@@ -714,6 +803,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         polygons=None,
         inks=None,
         texts=None,
+        highlights=None,
     ):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "dimension_export.pdf"
@@ -726,6 +816,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             page.polygons = polygons or []
             page.inks = inks or []
             page.texts = texts or []
+            page.highlights = highlights or []
             writer = ost_pdf_writer.PDFWriter()
             self.assertTrue(
                 writer.merge_pages_with_annotations([page], str(output_path)),

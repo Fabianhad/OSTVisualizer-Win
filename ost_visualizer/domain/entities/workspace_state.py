@@ -266,13 +266,13 @@ class DetachedWindowsState:
 class ToolbarVisibilityState:
     main_toolbar_visible: bool = True
     view_toolbar_visible: bool = True
-    takeoff_tools_toolbar_visible: bool = True
+    plan_tools_toolbar_visible: bool = True
 
     def to_dict(self) -> dict:
         return {
             "main_toolbar_visible": self.main_toolbar_visible,
             "view_toolbar_visible": self.view_toolbar_visible,
-            "takeoff_tools_toolbar_visible": self.takeoff_tools_toolbar_visible,
+            "plan_tools_toolbar_visible": self.plan_tools_toolbar_visible,
         }
 
     @classmethod
@@ -288,8 +288,8 @@ class ToolbarVisibilityState:
                 data.get("view_toolbar_visible"),
                 True,
             ),
-            takeoff_tools_toolbar_visible=_coerce_bool(
-                data.get("takeoff_tools_toolbar_visible"),
+            plan_tools_toolbar_visible=_coerce_bool(
+                data.get("plan_tools_toolbar_visible"),
                 True,
             ),
         )

@@ -598,7 +598,7 @@ class ProjectView(QtWidgets.QWidget):
         uid: str,
         file_path: Optional[str],
     ) -> None:
-        if not self._project_tree_write_allowed(Feature.CREATE_FOLDER):
+        if not self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE):
             return
         original_name = item.text(0)
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
@@ -640,7 +640,7 @@ class ProjectView(QtWidgets.QWidget):
             return
         if new_name == original_name:
             return
-        if not self._project_tree_write_allowed(Feature.CREATE_FOLDER):
+        if not self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE):
             item.setText(0, original_name)
             return
         if self.on_rename_project:
@@ -1198,7 +1198,7 @@ class ProjectView(QtWidgets.QWidget):
             context.kind == "project"
             and bool(context.project_uid)
             and context.project_uid != _DELETED_PROJECT_UID
-            and self._project_tree_write_allowed(Feature.CREATE_FOLDER)
+            and self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
         )
 
     def _rename_context(self, context: ProjectTreeContext) -> None:

@@ -17,6 +17,9 @@ from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
+from ost_visualizer.presentation.handlers.condition_action_handler import (
+    ConditionActionHandler,
+)
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.ui_access_manager import (
     Feature,
@@ -91,9 +94,13 @@ class _ToolbarUiState(_UiState):
 class _FakeAction:
     def __init__(self):
         self.enabled = None
+        self.checked = False
 
     def setEnabled(self, enabled):
         self.enabled = bool(enabled)
+
+    def isChecked(self):
+        return self.checked
 
 
 class _FakeLayersSidebar:
@@ -102,6 +109,32 @@ class _FakeLayersSidebar:
 
     def set_interactive(self, interactive):
         self.interactive = bool(interactive)
+
+
+class _FakeConditionsSidebar:
+    def __init__(self):
+        self.create_folder_enabled = None
+
+    def get_selected_condition_uids(self):
+        return []
+
+    def is_condition_placeable(self, _uid):
+        return False
+
+    def set_create_enabled(self, _enabled):
+        pass
+
+    def set_duplicate_enabled(self, _enabled):
+        pass
+
+    def set_delete_enabled(self, _enabled):
+        pass
+
+    def set_edit_enabled(self, _enabled, read_only_enabled=False):
+        pass
+
+    def set_create_folder_enabled(self, enabled):
+        self.create_folder_enabled = bool(enabled)
 
 
 class _FakeTabWidget:
@@ -115,6 +148,7 @@ class _FakeTabWidget:
 class _FakePlanView:
     has_selection = True
     place_condition_uid = None
+    current_page_uid = "page-1"
 
     def __init__(self):
         self.deleted = 0
@@ -149,6 +183,30 @@ class _UseCase:
 class _ForbiddenUseCase:
     def execute(self, *args, **kwargs):
         raise AssertionError("locked bid guard did not block the write")
+
+
+class _FakeAccess:
+    def __init__(self, allowed):
+        self.allowed = set(allowed)
+        self.checked = []
+
+    def is_allowed(self, feature):
+        self.checked.append(feature)
+        return feature in self.allowed
+
+
+class _ConditionStructureWriteService:
+    def __init__(self):
+        self.deleted_folders = []
+        self.condition_updates = []
+
+    def delete_condition_folders(self, file_path, folder_uids):
+        self.deleted_folders.append((file_path, list(folder_uids)))
+        return True
+
+    def update_condition(self, file_path, bid_uid, condition_uid, dto):
+        self.condition_updates.append((file_path, bid_uid, condition_uid, dto))
+        return SimpleNamespace(success=True)
 
 
 def _write_service(project_data):
@@ -230,31 +288,129 @@ class BidLockPermissionTests(unittest.TestCase):
     def test_bid_lock_applies_and_unlocks_immediately_in_access_manager(self):
         project_data = _ProjectData()
         manager = self._access_manager(project_data)
+        self.assertTrue(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
         self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION))
-        self.assertTrue(manager.is_allowed(Feature.SELECT_TAKEOFFS))
+        self.assertTrue(manager.is_allowed(Feature.SELECT_PLAN_ITEMS))
+        self.assertTrue(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
         self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
         project_data.locked = True
+        self.assertTrue(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
         self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION))
-        self.assertFalse(manager.is_allowed(Feature.SELECT_TAKEOFFS))
+        self.assertFalse(manager.is_allowed(Feature.SELECT_PLAN_ITEMS))
+        self.assertFalse(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
         self.assertFalse(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
         self.assertTrue(manager.is_allowed(Feature.DELETE_BID))
         self.assertTrue(manager.is_allowed(Feature.DUPLICATE_BID))
         self.assertTrue(manager.is_allowed(Feature.EDIT_BID_JOB_STATUS))
         project_data.locked = False
+        self.assertTrue(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
         self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION))
-        self.assertTrue(manager.is_allowed(Feature.SELECT_TAKEOFFS))
+        self.assertTrue(manager.is_allowed(Feature.SELECT_PLAN_ITEMS))
+        self.assertTrue(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
         self.assertTrue(manager.is_allowed(Feature.DELETE_BID))
         self.assertTrue(manager.is_allowed(Feature.DUPLICATE_BID))
+
+    def test_split_structure_permissions_keep_existing_blockers(self):
+        project_data = _ProjectData()
+        manager = self._access_manager(project_data)
+        self.assertTrue(manager.can_create_project_tree_items(True))
+        self.assertFalse(manager.can_create_project_tree_items(False))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
+        manager.set_area_placement_active(True)
+        self.assertFalse(manager.can_create_project_tree_items(True))
+        self.assertFalse(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
+        self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
+        manager.set_area_placement_active(False)
+        manager.set_text_annotation_edit_active(True)
+        self.assertFalse(manager.can_create_project_tree_items(True))
+        self.assertFalse(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
+        self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
+
+    def test_condition_folder_toolbar_uses_condition_structure_permission(self):
+        project_data = _ProjectData()
+        ui_state = _ToolbarUiState(project_data.bid_ref)
+        manager = self._access_manager(project_data, ui_state)
+        coordinator = ToolbarStateCoordinator(ui_state, manager, project_data)
+        conditions_sidebar = _FakeConditionsSidebar()
+        coordinator.set_conditions_sidebar(conditions_sidebar)
+        coordinator.set_plan_view(_FakePlanView())
+        coordinator.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
+        coordinator.refresh()
+        self.assertTrue(conditions_sidebar.create_folder_enabled)
+        manager.set_text_annotation_edit_active(True)
+        coordinator.refresh()
+        self.assertFalse(conditions_sidebar.create_folder_enabled)
+
+    def _condition_structure_handler(self, allowed):
+        access = _FakeAccess(allowed)
+        write_service = _ConditionStructureWriteService()
+        coordinator = SimpleNamespace(
+            ui_access_manager=access,
+            conditions_sidebar=None,
+        )
+        ui_state = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=write_service,
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=ui_state,
+        )
+        return handler, access, write_service
+
+    def test_condition_folder_delete_and_move_use_structure_permission(self):
+        handler, access, write_service = self._condition_structure_handler(
+            {Feature.DELETE_CONDITION, Feature.EDIT_CONDITION}
+        )
+        handler.on_folder_delete_requested(["folder-1"])
+        handler.on_move_condition_to_folder("cond-1", "folder-2")
+        self.assertEqual(write_service.deleted_folders, [])
+        self.assertEqual(write_service.condition_updates, [])
+        self.assertEqual(
+            access.checked,
+            [
+                Feature.EDIT_CONDITION_STRUCTURE,
+                Feature.EDIT_CONDITION_STRUCTURE,
+            ],
+        )
+
+        handler, access, write_service = self._condition_structure_handler(
+            {Feature.EDIT_CONDITION_STRUCTURE}
+        )
+        handler.on_folder_delete_requested(["folder-1"])
+        handler.on_move_condition_to_folder("cond-1", "folder-2")
+        self.assertEqual(write_service.deleted_folders, [("db.mdb", ["folder-1"])])
+        self.assertEqual(len(write_service.condition_updates), 1)
+        _file_path, _bid_uid, condition_uid, dto = write_service.condition_updates[0]
+        self.assertEqual(condition_uid, "cond-1")
+        self.assertEqual(dto.get_changes()["folder_uid"], "folder-2")
+        self.assertEqual(
+            access.checked,
+            [
+                Feature.EDIT_CONDITION_STRUCTURE,
+                Feature.EDIT_CONDITION_STRUCTURE,
+            ],
+        )
 
     def test_text_annotation_edit_mode_blocks_conflicting_actions(self):
         project_data = _ProjectData()
         manager = self._access_manager(project_data)
-        self.assertTrue(manager.is_allowed(Feature.SELECT_TAKEOFFS))
-        self.assertTrue(manager.is_allowed(Feature.PLACE_TAKEOFF))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
+        self.assertTrue(manager.is_allowed(Feature.SELECT_PLAN_ITEMS))
+        self.assertTrue(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
         self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
         manager.set_text_annotation_edit_active(True)
-        self.assertFalse(manager.is_allowed(Feature.SELECT_TAKEOFFS))
-        self.assertFalse(manager.is_allowed(Feature.PLACE_TAKEOFF))
+        self.assertFalse(manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE))
+        self.assertFalse(manager.is_allowed(Feature.EDIT_CONDITION_STRUCTURE))
+        self.assertFalse(manager.is_allowed(Feature.SELECT_PLAN_ITEMS))
+        self.assertFalse(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
         self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
 
     def test_exiting_text_edit_reenables_shell_controls_without_page_switch(self):
@@ -280,7 +436,7 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(cover_sheet_button.enabled)
         self.assertTrue(layers_sidebar.interactive)
 
-    def test_takeoff_tab_delete_toolbar_uses_takeoff_selection_permission(self):
+    def test_takeoff_tab_delete_toolbar_uses_plan_item_selection_permission(self):
         project_data = _ProjectData()
         project_data.locked = True
         ui_state = _ToolbarUiState(project_data.bid_ref)
@@ -292,6 +448,34 @@ class BidLockPermissionTests(unittest.TestCase):
         coordinator.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
         coordinator.refresh()
         self.assertFalse(delete_action.enabled)
+
+    def test_dimension_toolbar_uses_place_plan_items_permission(self):
+        project_data = _ProjectData()
+        ui_state = _ToolbarUiState(project_data.bid_ref)
+        manager = self._access_manager(project_data, ui_state)
+        coordinator = ToolbarStateCoordinator(ui_state, manager, project_data)
+        dimension_action = _FakeAction()
+        plan_view = _FakePlanView()
+        coordinator.set_dimension_action(dimension_action)
+        coordinator.set_plan_view(plan_view)
+        coordinator.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_FakeTabWidget(1))
+        coordinator.refresh()
+        self.assertTrue(dimension_action.enabled)
+        project_data.locked = True
+        coordinator.refresh()
+        self.assertFalse(dimension_action.enabled)
+        project_data.locked = False
+        manager.set_text_annotation_edit_active(True)
+        coordinator.refresh()
+        self.assertFalse(dimension_action.enabled)
+        manager.set_text_annotation_edit_active(False)
+        plan_view.current_page_uid = None
+        coordinator.refresh()
+        self.assertFalse(dimension_action.enabled)
+        plan_view.current_page_uid = "page-1"
+        coordinator.refresh()
+        self.assertTrue(dimension_action.enabled)
 
     def test_takeoff_shortcuts_do_not_run_when_selection_access_denied(self):
         project_data = _ProjectData()

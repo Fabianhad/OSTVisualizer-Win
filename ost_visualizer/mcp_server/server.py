@@ -636,9 +636,11 @@ def build_mcp_server(
             "Review the current OST Visualizer estimator context using only "
             "read-only MCP tools. Start with get_current_context and "
             "get_selected_takeoffs_summary. If a live bid is available, inspect "
-            "pages, conditions, takeoffs, condition summaries, and quantity "
-            "summaries before drawing conclusions. Do not assume quantities that "
-            "were not returned by tools, and do not suggest database edits."
+            "get_selected_pages_summary, list_pages, list_conditions, "
+            "list_takeoffs, get_condition_summary, and summarize_quantities before "
+            "drawing conclusions. Treat status=truncated or meta.has_more=true as "
+            "partial evidence and narrow the request with page, condition, or search "
+            "filters. Stay read-only and base conclusions only on returned data."
         )
 
     @mcp.prompt()
@@ -656,8 +658,106 @@ def build_mcp_server(
             "find_unplaced_takeoffs, and get_page_context. "
             "Call out pages with unusually low or high takeoff counts, "
             "conditions without takeoffs, hidden-layer conditions, and major "
-            "quantity drivers. Do not suggest edits unless the user explicitly "
-            "asks for a separate write-capable workflow."
+            "quantity drivers. Treat truncated or has_more results as partial and "
+            "refine with page_uid, condition_uid, query, or lower limits. Stay "
+            "read-only and do not infer data that was not returned."
+        )
+
+    @mcp.prompt()
+    def review_bid_scope(database_id: str, bid_uid: str) -> str:
+        """Guide a full read-only bid scope review."""
+        return (
+            "Review bid scope for database_id="
+            f"{database_id} and bid_uid={bid_uid}. Start with get_bid_summary, "
+            "list_pages, list_conditions, list_areas, and get_bid_quantity_summary. "
+            "Then run review_scope_gaps, find_duplicate_conditions, "
+            "find_zero_quantity_conditions, and find_unplaced_takeoffs. For pages "
+            "or conditions that look unusual, follow up with get_page_quantity_summary, "
+            "get_condition_summary, list_takeoffs, and get_page_context. Treat "
+            "status=truncated or meta.has_more=true as partial evidence; refine "
+            "with page_uid, condition_uid, search_pages, search_conditions, or "
+            "search_takeoffs. Stay read-only and summarize confidence limits."
+        )
+
+    @mcp.prompt()
+    def review_page_qa(database_id: str, bid_uid: str, page_uid: str) -> str:
+        """Guide a read-only page quality review."""
+        return (
+            "Review one page for QA using database_id="
+            f"{database_id}, bid_uid={bid_uid}, and page_uid={page_uid}. Start with "
+            "get_page_metadata, get_page_context, get_page_quantity_summary, "
+            "get_page_markups_summary, get_page_overlay_summary, "
+            "get_page_pdf_text_summary, and get_page_pdf_vectors_summary. Check "
+            "takeoff counts with list_takeoffs, condition context with "
+            "list_conditions and list_layers, and missing-scope signals with "
+            "review_scope_gaps. Note missing or sparse takeoffs, hidden-layer "
+            "context, dense or unusual markups, overlay/source mode, and whether PDF "
+            "text or vectors are available. Treat truncated or has_more results as "
+            "partial and refine with page_uid, condition_uid, source, query, or "
+            "lower limits. Stay read-only."
+        )
+
+    @mcp.prompt()
+    def review_markup_and_links(
+        database_id: str,
+        bid_uid: str,
+        page_uid: Optional[str] = None,
+    ) -> str:
+        """Guide a read-only markup, named-view, and hotlink review."""
+        scope = (
+            f"page_uid={page_uid}"
+            if page_uid
+            else "all pages in the bid, using page filters for follow-up"
+        )
+        return (
+            "Review markups, named views, and hotlinks for database_id="
+            f"{database_id}, bid_uid={bid_uid}, scope={scope}. Start with "
+            "list_pages, list_layers, list_named_views, and list_hotlinks. For each "
+            "page of interest, use get_page_metadata and get_page_markups_summary; "
+            "pass page_uid to list_named_views and list_hotlinks when narrowing. "
+            "Look for orphan-looking links, target pages that need context, hidden "
+            "layer involvement, high markup density, and sparse named-view coverage. "
+            "Treat truncated or has_more results as partial and refine by page_uid "
+            "or smaller limits. Stay read-only and cite the tool results used."
+        )
+
+    @mcp.prompt()
+    def review_overlay_and_pdf_context(
+        database_id: str,
+        bid_uid: str,
+        page_uid: str,
+    ) -> str:
+        """Guide a read-only overlay and PDF-context review."""
+        return (
+            "Review overlay and PDF context for database_id="
+            f"{database_id}, bid_uid={bid_uid}, and page_uid={page_uid}. Start with "
+            "get_page_overlay_summary and get_page_metadata. Then call "
+            "get_page_pdf_text_summary and get_page_pdf_vectors_summary with "
+            "source=auto first; use source=main or source=overlay only when the "
+            "overlay summary shows both sources and you need to compare them. Use "
+            "search_page_pdf_text for specific labels or sheet notes. Report source "
+            "kind, show mode, overlay transform, embedded text availability, vector "
+            "availability, and any mismatch between visible source context and PDF "
+            "source choice. Treat truncated or has_more results as partial and "
+            "refine with source, query, or lower limits. Stay read-only."
+        )
+
+    @mcp.prompt()
+    def review_quantity_variance(database_id: str, bid_uid: str) -> str:
+        """Guide a read-only quantity variance review."""
+        return (
+            "Review quantity variance for database_id="
+            f"{database_id} and bid_uid={bid_uid}. Start with "
+            "get_bid_quantity_summary, summarize_quantities, "
+            "find_zero_quantity_conditions, find_duplicate_conditions, and "
+            "review_scope_gaps. For outliers, call get_condition_summary, "
+            "get_page_quantity_summary, list_takeoffs, list_pages, and "
+            "list_conditions. Remember that quantity summaries use visible "
+            "takeoffs and visible conditions; check hidden-layer context with "
+            "list_layers and condition layer fields. Treat truncated or has_more "
+            "results as partial and refine with condition_uid, page_uid, query, "
+            "or lower limits. Stay read-only and separate confirmed findings from "
+            "questions for estimator review."
         )
 
     @mcp.resource("ost://databases")

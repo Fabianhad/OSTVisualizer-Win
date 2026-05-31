@@ -3,9 +3,9 @@ from PySide6 import QtGui, QtWidgets
 from ...domain.entities.condition import Condition
 from ..config import (
     ACTION_PAN_LABEL,
+    ACTION_PLACE_LABEL,
     ACTION_RESET_VIEW_LABEL,
     ACTION_SELECT_LABEL,
-    ACTION_TAKEOFF_LABEL,
     ACTION_ZOOM_IN_LABEL,
     ACTION_ZOOM_LABEL,
     ACTION_ZOOM_OUT_LABEL,
@@ -16,7 +16,7 @@ from .overlay_context_menu import add_overlay_submenu_with_select
 
 CONTEXT_TOOLS_ACTIONS = (
     (ACTION_SELECT_LABEL, "select_tool"),
-    (ACTION_TAKEOFF_LABEL, "takeoff_tool"),
+    (ACTION_PLACE_LABEL, "place_tool"),
     (ACTION_ZOOM_LABEL, "zoom_tool"),
     (ACTION_PAN_LABEL, "pan_tool"),
     None,

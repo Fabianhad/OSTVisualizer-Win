@@ -152,6 +152,19 @@ NB_MODULE(ost_pdf_writer, m)
                     "RGB font color as [r, g, b] (0-255)")
             .def_rw("text_align", &PDFWriter::TextAnnotationData::text_align,
                     "Text alignment: 'left', 'center', or 'right'");
+        nb::class_<PDFWriter::HighlightAnnotationData>(m, "HighlightAnnotationData",
+                                                       "Data for a Bluebeam-style ink highlighter annotation")
+            .def(nb::init<>())
+            .def_rw("strokes", &PDFWriter::HighlightAnnotationData::strokes,
+                    "List of highlighter stroke paths, each a list of (x, y) coordinates in PDF points")
+            .def_rw("color", &PDFWriter::HighlightAnnotationData::color,
+                    "RGB highlight color as [r, g, b] (0-255)")
+            .def_rw("width", &PDFWriter::HighlightAnnotationData::width,
+                    "Highlighter stroke width in PDF points")
+            .def_rw("opacity", &PDFWriter::HighlightAnnotationData::opacity,
+                    "Highlight opacity from 0.0 to 1.0")
+            .def_rw("content", &PDFWriter::HighlightAnnotationData::content,
+                    "Optional highlight contents text");
         nb::class_<PDFWriter::PageExportData>(m, "PageExportData",
                                               "Data for exporting a single page with takeoffs")
             .def(nb::init<>())
@@ -177,6 +190,8 @@ NB_MODULE(ost_pdf_writer, m)
                     "List of ink/pen annotations (InkAnnotationData) for this page")
             .def_rw("texts", &PDFWriter::PageExportData::texts,
                     "List of text box annotations (TextAnnotationData) for this page")
+            .def_rw("highlights", &PDFWriter::PageExportData::highlights,
+                    "List of highlight annotations (HighlightAnnotationData) for this page")
             .def_rw("page_width", &PDFWriter::PageExportData::page_width,
                     "Page width in points (for blank pages, default 612)")
             .def_rw("page_height", &PDFWriter::PageExportData::page_height,

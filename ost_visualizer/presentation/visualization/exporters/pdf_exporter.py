@@ -41,6 +41,7 @@ _LINEAR_CONDITION_TYPE = 0
 _COUNT_CONDITION_TYPE = 2
 _ATTACHMENT_CONDITION_TYPE = 3
 _DEFAULT_FILL_OPACITY = 0.5
+_DEFAULT_HIGHLIGHT_OPACITY = 1.0
 _GRAY_COLOR_HEX = "#808080"
 _INCHES_TO_FEET = 1.0 / 12.0
 _PDF_POINTS_PER_INCH = 72
@@ -117,6 +118,9 @@ class PDFExporter:
                     text_data = self._collect_texts(
                         page.uid, bid_annotations or [], page_info
                     )
+                    highlight_data = self._collect_highlights(
+                        page.uid, bid_annotations or [], page_info
+                    )
                     export_data = ost_pdf_writer.PageExportData()
                     self._configure_page_background(
                         export_data, page, page_info, temp_dir
@@ -130,6 +134,7 @@ class PDFExporter:
                     export_data.polygons = polygon_data
                     export_data.inks = ink_data
                     export_data.texts = text_data
+                    export_data.highlights = highlight_data
                     page_exports.append(export_data)
                 if not page_exports:
                     logger.error("No valid pages to export")
@@ -831,6 +836,98 @@ class PDFExporter:
             ink_data.width = annotation.width
             inks.append(ink_data)
         return inks
+
+    def _collect_highlights(
+        self,
+        page_uid: str,
+        bid_annotations: List[BidAnnotation],
+        page_info: PageRenderInfo,
+    ) -> List[Any]:
+        highlights = []
+        for annotation in bid_annotations:
+            if not annotation.is_highlight or annotation.page_uid != page_uid:
+                continue
+            position = annotation.position
+            n_coords = len(position) - 1 if len(position) % 2 == 1 else len(position)
+            if n_coords < 4:
+                continue
+            pdf_points = self._coord_system.ost_to_pdf_coordinates(
+                position[:n_coords], page_info
+            )
+            if len(pdf_points) < 2:
+                continue
+            strokes, width = self._highlight_ink_strokes(pdf_points)
+            if not strokes:
+                continue
+            highlight_data = ost_pdf_writer.HighlightAnnotationData()
+            highlight_data.strokes = strokes
+            highlight_data.color = self._color_service.hex_to_rgb_int(annotation.color)
+            highlight_data.width = width
+            highlight_data.opacity = _DEFAULT_HIGHLIGHT_OPACITY
+            highlight_data.content = annotation.get_text_content()
+            highlights.append(highlight_data)
+        return highlights
+
+    @staticmethod
+    def _highlight_ink_strokes(pdf_points):
+        strokes = []
+        widths = []
+        if len(pdf_points) >= 4 and len(pdf_points) % 4 == 0:
+            for idx in range(0, len(pdf_points), 4):
+                quad = PDFExporter._order_highlight_quad(pdf_points[idx : idx + 4])
+                stroke, width = PDFExporter._highlight_stroke_from_quad(quad)
+                strokes.append(stroke)
+                widths.append(width)
+        else:
+            quad = PDFExporter._highlight_rect_quad(pdf_points)
+            stroke, width = PDFExporter._highlight_stroke_from_quad(quad)
+            strokes.append(stroke)
+            widths.append(width)
+        if not strokes:
+            return [], 0.0
+        return strokes, max(widths)
+
+    @staticmethod
+    def _highlight_rect_quad(pdf_points):
+        min_x = min(point[0] for point in pdf_points)
+        max_x = max(point[0] for point in pdf_points)
+        min_y = min(point[1] for point in pdf_points)
+        max_y = max(point[1] for point in pdf_points)
+        return [
+            [min_x, max_y],
+            [max_x, max_y],
+            [min_x, min_y],
+            [max_x, min_y],
+        ]
+
+    @staticmethod
+    def _highlight_stroke_from_quad(quad_points):
+        left_x = (quad_points[0][0] + quad_points[2][0]) / 2.0
+        left_y = (quad_points[0][1] + quad_points[2][1]) / 2.0
+        right_x = (quad_points[1][0] + quad_points[3][0]) / 2.0
+        right_y = (quad_points[1][1] + quad_points[3][1]) / 2.0
+        left_height = math.hypot(
+            quad_points[0][0] - quad_points[2][0],
+            quad_points[0][1] - quad_points[2][1],
+        )
+        right_height = math.hypot(
+            quad_points[1][0] - quad_points[3][0],
+            quad_points[1][1] - quad_points[3][1],
+        )
+        width = max(1.0, (left_height + right_height) / 2.0)
+        return [[left_x, left_y], [right_x, right_y]], width
+
+    @staticmethod
+    def _order_highlight_quad(pdf_points):
+        by_y = sorted(pdf_points, key=lambda point: point[1], reverse=True)
+        top = sorted(by_y[:2], key=lambda point: point[0])
+        bottom = sorted(by_y[2:4], key=lambda point: point[0])
+        return [
+            [top[0][0], top[0][1]],
+            [top[1][0], top[1][1]],
+            [bottom[0][0], bottom[0][1]],
+            [bottom[1][0], bottom[1][1]],
+        ]
 
     def _collect_texts(
         self,

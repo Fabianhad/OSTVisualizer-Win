@@ -6,16 +6,17 @@ from ...application.events.app_events import AppEvents
 class Feature(Enum):
     DELETE_BID = auto()
     DUPLICATE_BID = auto()
-    CREATE_FOLDER = auto()
+    EDIT_PROJECT_TREE_STRUCTURE = auto()
+    EDIT_CONDITION_STRUCTURE = auto()
     IMPORT = auto()
     COVER_SHEET = auto()
     EDIT_PAGE_SETTINGS = auto()
-    SELECT_TAKEOFFS = auto()
+    SELECT_PLAN_ITEMS = auto()
     EXPORT = auto()
     VIEW_3D = auto()
     VIEW_2D = auto()
     EXPORT_BID_FILE = auto()
-    PLACE_TAKEOFF = auto()
+    PLACE_PLAN_ITEMS = auto()
     DUPLICATE_CONDITION = auto()
     DELETE_CONDITION = auto()
     EDIT_CONDITION = auto()
@@ -30,12 +31,13 @@ _OST_BLOCKED: FrozenSet[Feature] = frozenset(
     {
         Feature.DELETE_BID,
         Feature.DUPLICATE_BID,
-        Feature.CREATE_FOLDER,
+        Feature.EDIT_PROJECT_TREE_STRUCTURE,
+        Feature.EDIT_CONDITION_STRUCTURE,
         Feature.IMPORT,
         Feature.COVER_SHEET,
         Feature.EDIT_PAGE_SETTINGS,
-        Feature.SELECT_TAKEOFFS,
-        Feature.PLACE_TAKEOFF,
+        Feature.SELECT_PLAN_ITEMS,
+        Feature.PLACE_PLAN_ITEMS,
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
@@ -47,8 +49,8 @@ _OST_BLOCKED: FrozenSet[Feature] = frozenset(
 _LOCK_BLOCKED: FrozenSet[Feature] = frozenset(
     {
         Feature.EDIT_PAGE_SETTINGS,
-        Feature.SELECT_TAKEOFFS,
-        Feature.PLACE_TAKEOFF,
+        Feature.SELECT_PLAN_ITEMS,
+        Feature.PLACE_PLAN_ITEMS,
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
@@ -58,14 +60,15 @@ _LOCK_BLOCKED: FrozenSet[Feature] = frozenset(
 _LICENSE_REQUIRED: FrozenSet[Feature] = frozenset(
     {
         Feature.VIEW_3D,
-        Feature.SELECT_TAKEOFFS,
+        Feature.SELECT_PLAN_ITEMS,
         Feature.EXPORT,
         Feature.EXPORT_BID_FILE,
         Feature.IMPORT,
         Feature.DELETE_BID,
         Feature.DUPLICATE_BID,
-        Feature.CREATE_FOLDER,
-        Feature.PLACE_TAKEOFF,
+        Feature.EDIT_PROJECT_TREE_STRUCTURE,
+        Feature.EDIT_CONDITION_STRUCTURE,
+        Feature.PLACE_PLAN_ITEMS,
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
@@ -82,8 +85,8 @@ _REQUIRES_BID: FrozenSet[Feature] = frozenset(
         Feature.COVER_SHEET,
         Feature.DUPLICATE_BID,
         Feature.EDIT_PAGE_SETTINGS,
-        Feature.SELECT_TAKEOFFS,
-        Feature.PLACE_TAKEOFF,
+        Feature.SELECT_PLAN_ITEMS,
+        Feature.PLACE_PLAN_ITEMS,
         Feature.EXPORT_BID_FILE,
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
@@ -94,7 +97,8 @@ _REQUIRES_BID: FrozenSet[Feature] = frozenset(
 )
 _REQUIRES_ANY_SELECTION: FrozenSet[Feature] = frozenset(
     {
-        Feature.CREATE_FOLDER,
+        Feature.EDIT_PROJECT_TREE_STRUCTURE,
+        Feature.EDIT_CONDITION_STRUCTURE,
         Feature.IMPORT,
     }
 )
@@ -107,11 +111,12 @@ _PLACEMENT_BLOCKED: FrozenSet[Feature] = frozenset(
     {
         Feature.DELETE_BID,
         Feature.DUPLICATE_BID,
-        Feature.CREATE_FOLDER,
+        Feature.EDIT_PROJECT_TREE_STRUCTURE,
+        Feature.EDIT_CONDITION_STRUCTURE,
         Feature.IMPORT,
         Feature.COVER_SHEET,
         Feature.EDIT_PAGE_SETTINGS,
-        Feature.SELECT_TAKEOFFS,
+        Feature.SELECT_PLAN_ITEMS,
         Feature.EXPORT,
         Feature.EXPORT_BID_FILE,
         Feature.DUPLICATE_CONDITION,
@@ -128,14 +133,15 @@ _TEXT_EDIT_BLOCKED: FrozenSet[Feature] = frozenset(
     {
         Feature.DELETE_BID,
         Feature.DUPLICATE_BID,
-        Feature.CREATE_FOLDER,
+        Feature.EDIT_PROJECT_TREE_STRUCTURE,
+        Feature.EDIT_CONDITION_STRUCTURE,
         Feature.IMPORT,
         Feature.COVER_SHEET,
         Feature.EDIT_PAGE_SETTINGS,
-        Feature.SELECT_TAKEOFFS,
+        Feature.SELECT_PLAN_ITEMS,
         Feature.EXPORT,
         Feature.EXPORT_BID_FILE,
-        Feature.PLACE_TAKEOFF,
+        Feature.PLACE_PLAN_ITEMS,
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
@@ -214,11 +220,7 @@ class UIAccessManager:
     def can_create_project_tree_items(self, has_file_context: bool) -> bool:
         if not has_file_context:
             return False
-        if self._area_placement_active:
-            return False
-        if self._ost_active:
-            return False
-        return self.has_license()
+        return self.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
 
     def set_area_placement_active(self, active: bool) -> None:
         self._area_placement_active = active
@@ -256,7 +258,7 @@ class UIAccessManager:
         if not self._ui_state_manager:
             return
         if self._ui_state_manager.place_condition_uid and not self.is_allowed(
-            Feature.PLACE_TAKEOFF
+            Feature.PLACE_PLAN_ITEMS
         ):
             if self._placement_coordinator:
                 self._placement_coordinator.force_exit()

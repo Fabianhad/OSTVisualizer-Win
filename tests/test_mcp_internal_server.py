@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -47,6 +48,60 @@ EXPECTED_TOOLS = {
     "find_conditions_without_takeoffs",
 }
 
+EXPECTED_PROMPTS = {
+    "review_current_estimator_context",
+    "review_takeoff_scope",
+    "review_bid_scope",
+    "review_page_qa",
+    "review_markup_and_links",
+    "review_overlay_and_pdf_context",
+    "review_quantity_variance",
+}
+
+PROMPT_ARGUMENTS = {
+    "review_current_estimator_context": {},
+    "review_takeoff_scope": {"database_id": "db", "bid_uid": "bid"},
+    "review_bid_scope": {"database_id": "db", "bid_uid": "bid"},
+    "review_page_qa": {
+        "database_id": "db",
+        "bid_uid": "bid",
+        "page_uid": "page",
+    },
+    "review_markup_and_links": {"database_id": "db", "bid_uid": "bid"},
+    "review_overlay_and_pdf_context": {
+        "database_id": "db",
+        "bid_uid": "bid",
+        "page_uid": "page",
+    },
+    "review_quantity_variance": {"database_id": "db", "bid_uid": "bid"},
+}
+
+FORBIDDEN_PROMPT_TERMS = (
+    "write",
+    "writes",
+    "database mutation",
+    "exports",
+    "arbitrary sql",
+    "ocr",
+    "arbitrary path",
+    "arbitrary paths",
+    "file path",
+    "full text",
+    "full raw text",
+    "raw table",
+    "raw tables",
+    "unbounded",
+    "ui control",
+)
+
+ALLOWED_PROMPT_IDENTIFIERS = EXPECTED_TOOLS | EXPECTED_PROMPTS | {
+    "database_id",
+    "bid_uid",
+    "page_uid",
+    "condition_uid",
+    "has_more",
+}
+
 
 class McpInternalServerProtocolTests(unittest.TestCase):
     def setUp(self):
@@ -84,6 +139,7 @@ class McpInternalServerProtocolTests(unittest.TestCase):
         tools = self.request("tools/list")["result"]["tools"]
         tool_names = {tool["name"] for tool in tools}
         self.assertEqual(tool_names, EXPECTED_TOOLS)
+        self.assertEqual(len(tool_names), 36)
         self.assertFalse(any("csv" in name.lower() for name in tool_names))
         self.assertTrue(all(tool["description"] for tool in tools))
         response = self.request(
@@ -159,20 +215,40 @@ class McpInternalServerProtocolTests(unittest.TestCase):
     def test_prompts_list_and_get(self):
         prompts = self.request("prompts/list")["result"]["prompts"]
         prompt_names = {prompt["name"] for prompt in prompts}
-        self.assertEqual(
-            prompt_names,
-            {"review_current_estimator_context", "review_takeoff_scope"},
-        )
+        self.assertEqual(prompt_names, EXPECTED_PROMPTS)
         self.assertTrue(all(prompt["description"] for prompt in prompts))
-        response = self.request(
-            "prompts/get",
-            {
-                "name": "review_takeoff_scope",
-                "arguments": {"database_id": "db", "bid_uid": "bid"},
-            },
-        )["result"]
-        self.assertEqual(response["messages"][0]["role"], "user")
-        self.assertIn("database_id=db", response["messages"][0]["content"]["text"])
+        for name, arguments in PROMPT_ARGUMENTS.items():
+            response = self.request(
+                "prompts/get",
+                {"name": name, "arguments": arguments},
+            )["result"]
+            self.assertEqual(response["messages"][0]["role"], "user")
+            text = response["messages"][0]["content"]["text"]
+            self.assertIn("read-only", text.lower())
+            self.assertIn("truncated", text.lower())
+            self.assertIn("has_more", text.lower())
+
+    def test_prompt_text_references_existing_tools_only(self):
+        identifier_pattern = r"\b[a-z]+(?:_[a-z]+)+\b"
+        for name, arguments in PROMPT_ARGUMENTS.items():
+            response = self.request(
+                "prompts/get",
+                {"name": name, "arguments": arguments},
+            )["result"]
+            text = response["messages"][0]["content"]["text"]
+            identifiers = set(re.findall(identifier_pattern, text))
+            unknown = identifiers - ALLOWED_PROMPT_IDENTIFIERS
+            self.assertEqual(unknown, set(), f"{name} references unknown identifiers")
+
+    def test_prompt_text_stays_within_read_only_safety_limits(self):
+        for name, arguments in PROMPT_ARGUMENTS.items():
+            response = self.request(
+                "prompts/get",
+                {"name": name, "arguments": arguments},
+            )["result"]
+            lower_text = response["messages"][0]["content"]["text"].lower()
+            for term in FORBIDDEN_PROMPT_TERMS:
+                self.assertNotIn(term, lower_text, name)
 
     def test_json_rpc_errors_and_notifications(self):
         self.assertEqual(

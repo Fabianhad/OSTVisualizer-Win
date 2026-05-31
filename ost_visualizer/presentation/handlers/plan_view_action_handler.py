@@ -11,9 +11,15 @@ from ..services.selection_clipboard_service import SelectionClipboardService
 from ..services.selection_commands import (
     DeleteAnnotationsCommand,
     DeleteTakeoffsCommand,
+    InsertAnnotationsCommand,
     InsertTakeoffsCommand,
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
+)
+from ..utils.annotation_defaults import (
+    DIMENSION_ANNOTATION_COLOR,
+    DIMENSION_ANNOTATION_WIDTH,
+    dimension_annotation_properties,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,6 +75,7 @@ class PlanViewActionHandler:
         pv.rotations_flushed.connect(self.on_rotations_flushed)
         pv.group_rotation_flushed.connect(self.on_group_rotation_flushed)
         pv.takeoff_created.connect(self.on_takeoff_created)
+        pv.annotation_created.connect(self.on_annotation_created)
         pv.hole_created.connect(self.on_hole_created)
         pv.elements_deleted.connect(self.on_elements_deleted)
         pv.undo_requested.connect(self._undo_svc.undo)
@@ -78,7 +85,7 @@ class PlanViewActionHandler:
         pv.paste_backouts_placed.connect(self.on_paste_backouts_placed)
 
     def can_paste_to_current_bid(self) -> bool:
-        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return False
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not self._clipboard_svc.has_content():
@@ -210,7 +217,7 @@ class PlanViewActionHandler:
         return new_uids
 
     def on_assign_to_area(self, uids: list) -> None:
-        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
@@ -220,7 +227,7 @@ class PlanViewActionHandler:
         self._write_svc.save_takeoffs_area(db_path, takeoff_uids, area_uid)
 
     def on_reassign_condition(self, uids: list, condition_uid: str) -> None:
-        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
@@ -235,7 +242,7 @@ class PlanViewActionHandler:
         )
 
     def on_set_negative(self, uids: list, is_negative: bool) -> None:
-        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
@@ -244,7 +251,7 @@ class PlanViewActionHandler:
         self._write_svc.set_takeoffs_negative(db_path, takeoff_uids, is_negative)
 
     def on_set_curved(self, uids: list, make_curved: bool) -> None:
-        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
@@ -274,7 +281,7 @@ class PlanViewActionHandler:
 
     def on_positions_flushed(self, takeoff_changes: list, ann_changes: list) -> None:
         if (takeoff_changes or ann_changes) and not self._is_allowed(
-            Feature.SELECT_TAKEOFFS
+            Feature.SELECT_PLAN_ITEMS
         ):
             return
         db_path = self._data_svc.get_current_bid_file_path()
@@ -426,7 +433,7 @@ class PlanViewActionHandler:
         self._undo_svc.push(_undo_text_and_position, _redo_text_and_position)
 
     def on_rotations_flushed(self, rotation_changes: list) -> None:
-        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path or not rotation_changes:
@@ -452,7 +459,7 @@ class PlanViewActionHandler:
     ) -> None:
         if (
             takeoff_changes or ann_changes or rotation_changes
-        ) and not self._is_allowed(Feature.SELECT_TAKEOFFS):
+        ) and not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path:
@@ -508,7 +515,7 @@ class PlanViewActionHandler:
     def on_takeoff_created(
         self, condition_uid: str, position: list, page_uid: str
     ) -> None:
-        if not self._is_allowed(Feature.PLACE_TAKEOFF):
+        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not condition_uid or not page_uid:
@@ -543,10 +550,30 @@ class PlanViewActionHandler:
             ]
         self._insert_takeoffs_with_undo(bid_ref, specs, fast_refresh=True)
 
+    def on_annotation_created(
+        self, annotation_type: str, position: list, page_uid: str
+    ) -> None:
+        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
+            return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if not bid_ref or not annotation_type or not page_uid:
+            return
+        if annotation_type != "dimension":
+            return
+        spec = InsertAnnotationSpec(
+            page_uid=page_uid,
+            annotation_type="dimension",
+            position=list(position),
+            color=DIMENSION_ANNOTATION_COLOR,
+            width=DIMENSION_ANNOTATION_WIDTH,
+            properties=dimension_annotation_properties(),
+        )
+        self._insert_annotations_with_undo(bid_ref, [spec])
+
     def on_hole_created(
         self, condition_uid: str, position: list, page_uid: str, parent_uid: str
     ) -> None:
-        if not self._is_allowed(Feature.PLACE_TAKEOFF):
+        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not condition_uid or not page_uid or not parent_uid:
@@ -563,8 +590,34 @@ class PlanViewActionHandler:
         )
         self._insert_takeoffs_with_undo(bid_ref, [spec], fast_refresh=True)
 
+    def _insert_annotations_with_undo(
+        self, bid_ref, specs: List[InsertAnnotationSpec]
+    ) -> bool:
+        new_uids = self._ann_write_svc.insert_annotations(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            specs,
+        )
+        if not new_uids:
+            return False
+        uid_type_set = {
+            (uid, specs[i].annotation_type) for i, uid in enumerate(new_uids)
+        }
+        keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+        if keys:
+            self._plan_view.set_selected_uids(keys)
+        cmd = InsertAnnotationsCommand(
+            uids=new_uids,
+            bid_ref=bid_ref,
+            specs=specs[: len(new_uids)],
+            write_svc=self._ann_write_svc,
+            plan_view=self._plan_view,
+        )
+        self._undo_svc.push(cmd.undo, cmd.redo)
+        return True
+
     def on_paste_backouts_placed(self, placements: list, source_bid_uid) -> None:
-        if not self._is_allowed(Feature.PLACE_TAKEOFF):
+        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not placements:
@@ -661,7 +714,7 @@ class PlanViewActionHandler:
         self._data_svc.add_takeoffs(takeoffs)
 
     def on_elements_deleted(self, uids: list) -> None:
-        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not uids:
@@ -783,7 +836,7 @@ class PlanViewActionHandler:
         self._undo_svc.push(_undo, _redo)
 
     def on_copy_requested(self, uids: list) -> None:
-        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         takeoffs = []
         annotations = []
@@ -847,7 +900,7 @@ class PlanViewActionHandler:
         return uid_map
 
     def on_paste_requested(self) -> None:
-        if not self._is_allowed(Feature.SELECT_TAKEOFFS):
+        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         if not self._clipboard_svc.has_content():
             return
@@ -869,7 +922,7 @@ class PlanViewActionHandler:
         regulars = [t for t in all_items if not t.is_hole]
         holes = [t for t in all_items if t.is_hole]
         if holes and not regulars:
-            if not self._is_allowed(Feature.PLACE_TAKEOFF):
+            if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
                 return
             extras_by_uid = {
                 h.uid: dict(self._clipboard_svc.get_extras(h.uid)) for h in holes

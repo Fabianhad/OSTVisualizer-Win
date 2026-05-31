@@ -1135,4 +1135,76 @@ namespace ost_pdf_writer
         oss << "ET Q";
         return oss.str();
     }
+    std::array<double, 4> compute_highlight_rect(const BluebeamHighlight &highlight)
+    {
+        auto bb = compute_bbox_strokes(highlight.strokes);
+        double padding = highlight.width / 2.0 + 2.0;
+        return {bb[0] - padding, bb[1] - padding, bb[2] + padding, bb[3] + padding};
+    }
+    std::string generate_bluebeam_highlight_dict(const BluebeamHighlight &highlight)
+    {
+        std::ostringstream oss;
+        auto rect = compute_highlight_rect(highlight);
+        auto [r, g, b] = color_to_rgb(highlight.color);
+        std::string pdf_date = highlight.created_date.empty() ? generate_pdf_date() : highlight.created_date;
+        std::string nm = generate_nm();
+        oss << "<<\n";
+        oss << "/BM /Multiply\n";
+        oss << "/BS << /S /S /Type /Border /W " << highlight.width << " >>\n";
+        oss << "/C [ " << r << " " << g << " " << b << " ]\n";
+        if (!highlight.content.empty())
+        {
+            oss << "/Contents (" << escape_pdf_string(highlight.content) << ")\n";
+        }
+        oss << "/CreationDate (" << pdf_date << ")\n";
+        oss << "/F 4\n";
+        oss << "/InkList [ ";
+        for (const auto &stroke : highlight.strokes)
+        {
+            oss << "[ ";
+            for (const auto &point : stroke)
+            {
+                oss << point[0] << " " << point[1] << " ";
+            }
+            oss << "] ";
+        }
+        oss << "]\n";
+        oss << "/M (" << pdf_date << ")\n";
+        oss << "/NM (" << nm << ")\n";
+        oss << "/Rect [ " << rect[0] << " " << rect[1] << " " << rect[2] << " " << rect[3] << " ]\n";
+        oss << "/Subj (Highlight)\n";
+        oss << "/Subtype /Ink\n";
+        oss << "/T (" << escape_pdf_string(highlight.author) << ")\n";
+        oss << "/Type /Annot\n";
+        oss << ">>";
+        return oss.str();
+    }
+    std::string generate_highlight_appearance_stream(const BluebeamHighlight &highlight)
+    {
+        auto [r, g, b] = color_to_rgb(highlight.color);
+        std::ostringstream oss;
+        oss << "/R0 gs ";
+        oss << r << " " << g << " " << b << " RG ";
+        oss << highlight.width << " w 1 j 1 J ";
+        for (const auto &stroke : highlight.strokes)
+        {
+            if (stroke.empty())
+                continue;
+            bool first = true;
+            for (const auto &point : stroke)
+            {
+                if (first)
+                {
+                    oss << point[0] << " " << point[1] << " m ";
+                    first = false;
+                }
+                else
+                {
+                    oss << point[0] << " " << point[1] << " l ";
+                }
+            }
+            oss << "S ";
+        }
+        return oss.str();
+    }
 }

@@ -390,7 +390,9 @@ class ConditionActionHandler:
             )
 
     def on_create_folder_requested(self, parent_uid: str) -> None:
-        if not self._coordinator.ui_access_manager.is_allowed(Feature.CREATE_FOLDER):
+        if not self._coordinator.ui_access_manager.is_allowed(
+            Feature.EDIT_CONDITION_STRUCTURE
+        ):
             return
         bid_ref, write_service = self._get_bid_ref_and_write_service()
         if not bid_ref or not write_service:
@@ -408,7 +410,9 @@ class ConditionActionHandler:
         sidebar.set_pending_folder_edit(new_uid)
 
     def on_folder_renamed(self, folder_uid: str, new_name: str) -> None:
-        if not self._coordinator.ui_access_manager.is_allowed(Feature.CREATE_FOLDER):
+        if not self._coordinator.ui_access_manager.is_allowed(
+            Feature.EDIT_CONDITION_STRUCTURE
+        ):
             return
         bid_ref, write_service = self._get_bid_ref_and_write_service()
         if not bid_ref or not write_service:
@@ -448,7 +452,9 @@ class ConditionActionHandler:
     def on_folder_delete_requested(self, folder_uids: list) -> None:
         if not folder_uids:
             return
-        if not self._coordinator.ui_access_manager.is_allowed(Feature.DELETE_CONDITION):
+        if not self._coordinator.ui_access_manager.is_allowed(
+            Feature.EDIT_CONDITION_STRUCTURE
+        ):
             return
         bid_ref, write_service = self._get_bid_ref_and_write_service()
         if not bid_ref or not write_service:
@@ -458,7 +464,9 @@ class ConditionActionHandler:
             logger.warning("Failed to delete condition folders %s", folder_uids)
 
     def on_move_condition_to_folder(self, condition_uid: str, folder_uid: str) -> None:
-        if not self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION):
+        if not self._coordinator.ui_access_manager.is_allowed(
+            Feature.EDIT_CONDITION_STRUCTURE
+        ):
             return
         bid_ref, write_service = self._get_bid_ref_and_write_service()
         if not bid_ref or not write_service:

@@ -22,6 +22,7 @@ class ToolbarStateCoordinator:
         self._select_action: Optional[QtGui.QAction] = None
         self._select_all_action: Optional[QtGui.QAction] = None
         self._backout_action: Optional[QtGui.QAction] = None
+        self._dimension_action: Optional[QtGui.QAction] = None
         self._cover_sheet_button: Optional[QtWidgets.QToolButton] = None
         self._page_settings_bar = None
         self._bid_layers_sidebar = None
@@ -64,6 +65,9 @@ class ToolbarStateCoordinator:
 
     def set_backout_action(self, action: QtGui.QAction) -> None:
         self._backout_action = action
+
+    def set_dimension_action(self, action: QtGui.QAction) -> None:
+        self._dimension_action = action
 
     def set_cover_sheet_button(self, btn: QtWidgets.QToolButton) -> None:
         self._cover_sheet_button = btn
@@ -118,7 +122,7 @@ class ToolbarStateCoordinator:
             return False
         if not self._view_stack or self._view_stack.currentIndex() != 1:
             return False
-        if not self._access.is_allowed(Feature.PLACE_TAKEOFF):
+        if not self._access.is_allowed(Feature.PLACE_PLAN_ITEMS):
             return False
         return True
 
@@ -160,7 +164,7 @@ class ToolbarStateCoordinator:
         if self._copy_action:
             if on_takeoff_tab:
                 self._copy_action.setEnabled(
-                    self._access.is_allowed(Feature.SELECT_TAKEOFFS)
+                    self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
                     and has_takeoff_selection
                 )
             else:
@@ -181,7 +185,7 @@ class ToolbarStateCoordinator:
         if self._paste_action:
             if on_takeoff_tab:
                 self._paste_action.setEnabled(
-                    self._access.is_allowed(Feature.SELECT_TAKEOFFS)
+                    self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
                     and bool(
                         self.plan_view_handler
                         and self.plan_view_handler.can_paste_to_current_bid()
@@ -192,7 +196,7 @@ class ToolbarStateCoordinator:
         if self._delete_action:
             if on_takeoff_tab:
                 self._delete_action.setEnabled(
-                    self._access.is_allowed(Feature.SELECT_TAKEOFFS)
+                    self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
                     and bool(self.plan_view and self.plan_view.has_selection)
                 )
             elif not self._access.is_allowed(Feature.DELETE_BID):
@@ -208,7 +212,7 @@ class ToolbarStateCoordinator:
                 self._delete_action.setEnabled(False)
         undo_redo_allowed = (
             on_takeoff_tab
-            and self._access.is_allowed(Feature.SELECT_TAKEOFFS)
+            and self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
             and bool(self.undo_service)
         )
         if self._undo_action:
@@ -222,7 +226,7 @@ class ToolbarStateCoordinator:
         if self._duplicate_action:
             if on_takeoff_tab:
                 self._duplicate_action.setEnabled(
-                    self._access.is_allowed(Feature.SELECT_TAKEOFFS)
+                    self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
                     and bool(self.plan_view and self.plan_view.has_selection)
                 )
             else:
@@ -232,7 +236,7 @@ class ToolbarStateCoordinator:
         if self._select_all_action:
             if on_takeoff_tab:
                 self._select_all_action.setEnabled(
-                    self._access.is_allowed(Feature.SELECT_TAKEOFFS)
+                    self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
                     and bool(self.plan_view)
                 )
             else:
@@ -267,9 +271,9 @@ class ToolbarStateCoordinator:
         active_place_condition_placeable = bool(
             active_place_condition_uid
         ) and self._is_condition_placeable(active_place_condition_uid)
-        can_place_takeoff = (
+        can_place_plan_items = (
             on_takeoff_tab
-            and self._access.is_allowed(Feature.PLACE_TAKEOFF)
+            and self._access.is_allowed(Feature.PLACE_PLAN_ITEMS)
             and bool(self.plan_view)
             and (
                 bool(selected_placeable_condition_uids)
@@ -278,14 +282,29 @@ class ToolbarStateCoordinator:
             )
         )
         if self._place_action:
-            self._place_action.setEnabled(can_place_takeoff)
+            self._place_action.setEnabled(can_place_plan_items)
             if (
-                not can_place_takeoff
+                not can_place_plan_items
                 and self._place_action.isChecked()
                 and self._select_action
             ):
                 self._select_action.setChecked(True)
-        select_allowed = self._access.is_allowed(Feature.SELECT_TAKEOFFS)
+        can_place_dimension = (
+            on_takeoff_tab
+            and self._access.is_allowed(Feature.PLACE_PLAN_ITEMS)
+            and bool(self.plan_view)
+            and bool(self.plan_view.current_page_uid)
+            and bool(self._view_stack and self._view_stack.currentIndex() == 1)
+        )
+        if self._dimension_action:
+            self._dimension_action.setEnabled(can_place_dimension)
+            if (
+                not can_place_dimension
+                and self._dimension_action.isChecked()
+                and self._select_action
+            ):
+                self._select_action.setChecked(True)
+        select_allowed = self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
         if self.plan_view:
             self.plan_view.set_selection_enabled(select_allowed)
         if self.opengl_viewer:
@@ -311,7 +330,7 @@ class ToolbarStateCoordinator:
                 ),
             )
             self.conditions_sidebar.set_create_folder_enabled(
-                self._access.is_allowed(Feature.CREATE_FOLDER)
+                self._access.is_allowed(Feature.EDIT_CONDITION_STRUCTURE)
             )
         self.refresh_backout_action()
 
@@ -326,6 +345,7 @@ class ToolbarStateCoordinator:
         self._select_action = None
         self._select_all_action = None
         self._backout_action = None
+        self._dimension_action = None
         self._cover_sheet_button = None
         self._page_settings_bar = None
         self._bid_layers_sidebar = None

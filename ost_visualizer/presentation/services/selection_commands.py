@@ -36,6 +36,46 @@ class InsertTakeoffsCommand:
             self._plan_view.set_selected_uids(set(new_uids))
 
 
+class InsertAnnotationsCommand:
+    def __init__(
+        self,
+        uids: List[str],
+        bid_ref: BidRef,
+        specs: list,
+        write_svc,
+        plan_view,
+    ) -> None:
+        self._current_uids = list(uids)
+        self._bid_ref = bid_ref
+        self._specs = list(specs)
+        self._write_svc = write_svc
+        self._plan_view = plan_view
+
+    def undo(self) -> None:
+        self._write_svc.delete_annotations(
+            self._bid_ref.file_path,
+            [
+                (uid, spec.annotation_type)
+                for uid, spec in zip(self._current_uids, self._specs)
+            ],
+        )
+        self._plan_view.clear_selection()
+
+    def redo(self) -> None:
+        new_uids = self._write_svc.insert_annotations(
+            self._bid_ref.file_path, self._bid_ref.bid_uid, self._specs
+        )
+        self._specs = self._specs[: len(new_uids)]
+        self._current_uids = list(new_uids)
+        if self._current_uids:
+            uid_type_set = {
+                (uid, self._specs[i].annotation_type)
+                for i, uid in enumerate(self._current_uids)
+            }
+            keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+            self._plan_view.set_selected_uids(keys)
+
+
 def _takeoff_to_spec(
     t,
     source_bid_uid: Optional[str] = None,

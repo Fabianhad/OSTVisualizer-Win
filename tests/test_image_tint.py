@@ -1,5 +1,7 @@
 import unittest
+from PySide6 import QtCore, QtGui
 from ost_visualizer.presentation.visualization.utils import ost_image
+from ost_visualizer.presentation.visualization.utils.image_effects import bitonal_image
 
 
 def _bgra_pixels(image):
@@ -8,6 +10,24 @@ def _bgra_pixels(image):
 
 
 class ImageTintTests(unittest.TestCase):
+    def test_bitonal_image_ignores_null_image_without_qpainter_warning(self):
+        messages = []
+
+        def capture_qt_message(_mode, _context, message):
+            messages.append(message)
+
+        previous_handler = QtCore.qInstallMessageHandler(capture_qt_message)
+        try:
+            result = bitonal_image(QtGui.QImage())
+        finally:
+            QtCore.qInstallMessageHandler(previous_handler)
+
+        self.assertTrue(result.isNull())
+        self.assertEqual(
+            [message for message in messages if message.startswith("QPainter::")],
+            [],
+        )
+
     def test_tint_grayscale_preserves_antialias_alpha(self):
         tinted = ost_image.tint_grayscale(
             bytes([0, 128, 234, 235, 255]),

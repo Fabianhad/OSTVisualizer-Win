@@ -109,6 +109,14 @@ namespace ost_pdf_writer
             std::array<uint8_t, 3> color;
             std::string text_align;
         };
+        struct HighlightAnnotationData
+        {
+            std::vector<std::vector<std::array<double, 2>>> strokes;
+            std::array<uint8_t, 3> color;
+            double width;
+            double opacity;
+            std::string content;
+        };
         struct PageExportData
         {
             std::string source_pdf;
@@ -122,6 +130,7 @@ namespace ost_pdf_writer
             std::vector<PolygonAnnotationAnnotData> polygons;
             std::vector<InkAnnotationData> inks;
             std::vector<TextAnnotationData> texts;
+            std::vector<HighlightAnnotationData> highlights;
             double page_width;
             double page_height;
             int rotation;
