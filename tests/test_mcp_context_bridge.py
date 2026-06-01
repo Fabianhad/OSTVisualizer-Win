@@ -1,4 +1,5 @@
 import unittest
+from PySide6 import QtCore
 from ost_visualizer.presentation.services.mcp_context_bridge import McpContextBridge
 
 
@@ -28,6 +29,10 @@ class _FakeWindow:
 
 
 class McpContextBridgeSelectionTests(unittest.TestCase):
+    @staticmethod
+    def _app():
+        return QtCore.QCoreApplication.instance() or QtCore.QCoreApplication([])
+
     def _bridge(self, plan_uids, viewer_uids, mesh_uids=None):
         bridge = McpContextBridge.__new__(McpContextBridge)
         bridge._plan_view = _FakePlanView(plan_uids)
@@ -46,6 +51,21 @@ class McpContextBridgeSelectionTests(unittest.TestCase):
     def test_selection_falls_back_to_detached_mesh_window(self):
         bridge = self._bridge(plan_uids=[], viewer_uids=[], mesh_uids=["mesh-1"])
         self.assertEqual(bridge._selected_takeoff_uids("3d"), ["mesh-1"])
+
+    def test_cleanup_releases_server_and_ui_references(self):
+        self._app()
+        bridge = McpContextBridge(
+            main_window=object(),
+            ui_state_manager=object(),
+            project_data_service=object(),
+            plan_view=object(),
+        )
+        bridge.cleanup()
+        self.assertIsNone(bridge._server)
+        self.assertIsNone(bridge._main_window)
+        self.assertIsNone(bridge._ui_state)
+        self.assertIsNone(bridge._project_data)
+        self.assertIsNone(bridge._plan_view)
 
 
 if __name__ == "__main__":

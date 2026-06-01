@@ -35,8 +35,29 @@ class McpContextBridge(QtCore.QObject):
             )
 
     def cleanup(self) -> None:
-        self._server.close()
-        self._server.removeServer(MCP_BRIDGE_SERVER_NAME)
+        if self._server is not None:
+            try:
+                self._server.newConnection.disconnect(self._on_new_connection)
+            except (TypeError, RuntimeError):
+                pass
+            self._server.close()
+            self._server.removeServer(MCP_BRIDGE_SERVER_NAME)
+        for socket in self.findChildren(QLocalSocket):
+            try:
+                socket.readyRead.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                socket.disconnected.disconnect()
+            except (TypeError, RuntimeError):
+                pass
+            socket.abort()
+            socket.deleteLater()
+        self._main_window = None
+        self._ui_state = None
+        self._project_data = None
+        self._plan_view = None
+        self._server = None
 
     def _on_new_connection(self) -> None:
         while self._server.hasPendingConnections():
@@ -121,7 +142,7 @@ class McpContextBridge(QtCore.QObject):
         return self._clean_uid_list(self._plan_view.get_selected_takeoff_uids())
 
     def _embedded_3d_selected_takeoff_uids(self) -> list:
-        viewer = getattr(self._main_window, "opengl_viewer", None)
+        viewer = self._main_window.opengl_viewer
         if viewer is None:
             return []
         return self._clean_uid_list(viewer.get_selected_takeoff_uids())

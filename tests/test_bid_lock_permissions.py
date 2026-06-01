@@ -230,6 +230,17 @@ class _ConditionStructureWriteService:
         return True
 
 
+class _ConditionDuplicateRefreshFailedWriteService:
+    def __init__(self):
+        self.calls = []
+
+    def duplicate_conditions_result(self, file_path, bid_uid, condition_uids):
+        self.calls.append((file_path, bid_uid, list(condition_uids)))
+        return WriteReloadResult(
+            ["condition-copy"], write_success=True, reload_success=False
+        )
+
+
 def _write_service(project_data, reload_success=True):
     logger = logging.getLogger(__name__ + ".write_service")
     logger.propagate = False
@@ -448,6 +459,43 @@ class BidLockPermissionTests(unittest.TestCase):
             [False, False],
         )
         self.assertEqual(write_service.reloads, ["db.mdb"])
+
+    def test_condition_duplicate_refresh_failure_warns_without_placement(self):
+        warnings = []
+        access = _FakeAccess({Feature.DUPLICATE_CONDITION})
+        write_service = _ConditionDuplicateRefreshFailedWriteService()
+        placement = SimpleNamespace(entered=[])
+        placement.enter = lambda *args: placement.entered.append(args)
+        coordinator = SimpleNamespace(
+            ui_access_manager=access,
+            conditions_sidebar=None,
+            placement=placement,
+            _is_takeoff_2d_view_active=lambda: True,
+            refresh_conditions_ui=lambda: None,
+            highlight_sidebar=lambda _uids: None,
+        )
+        ui_state = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=write_service,
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=ui_state,
+        )
+        from ost_visualizer.presentation.handlers import condition_action_handler
+
+        old_warning = condition_action_handler.show_warning
+        condition_action_handler.show_warning = lambda *args: warnings.append(args)
+        try:
+            handler.on_duplicate_requested(["condition-1"])
+        finally:
+            condition_action_handler.show_warning = old_warning
+        self.assertEqual(write_service.calls, [("db.mdb", "bid-1", ["condition-1"])])
+        self.assertEqual(placement.entered, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("could not be refreshed", warnings[0][2])
 
     def test_text_annotation_edit_mode_blocks_conflicting_actions(self):
         project_data = _ProjectData()
@@ -672,6 +720,80 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(result.write_success)
         self.assertTrue(result.refresh_failed)
         self.assertEqual(result.value, "new-bid")
+
+    def test_condition_create_result_keeps_uid_when_refresh_fails(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data, reload_success=False)
+        service._insert_condition = _UseCase("condition-new")
+        result = service.create_condition_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            SimpleNamespace(),
+        )
+        self.assertFalse(result)
+        self.assertTrue(result.write_success)
+        self.assertTrue(result.refresh_failed)
+        self.assertEqual(result.value, "condition-new")
+
+    def test_condition_duplicate_result_keeps_uids_when_refresh_fails(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data, reload_success=False)
+        service._duplicate_conditions = _UseCase(["condition-copy"])
+        result = service.duplicate_conditions_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            ["condition-1"],
+        )
+        self.assertFalse(result)
+        self.assertTrue(result.write_success)
+        self.assertTrue(result.refresh_failed)
+        self.assertEqual(result.value, ["condition-copy"])
+
+    def test_layer_insert_result_keeps_uid_when_refresh_fails(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data, reload_success=False)
+        service._insert_layer = _UseCase("layer-new")
+        result = service.insert_layer_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            "Layer",
+            1,
+        )
+        self.assertFalse(result)
+        self.assertTrue(result.write_success)
+        self.assertTrue(result.refresh_failed)
+        self.assertEqual(result.value, "layer-new")
+
+    def test_condition_dialog_layer_insert_warns_when_refresh_fails(self):
+        warnings = []
+        bid_ref = BidRef("db.mdb", "bid-1")
+        coordinator = SimpleNamespace(conditions_sidebar=None)
+        write_service = SimpleNamespace(
+            insert_layer_result=lambda _file_path, _bid_uid, _name, _sequence: (
+                WriteReloadResult("layer-new", write_success=True, reload_success=False)
+            )
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=write_service,
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(),
+        )
+        from ost_visualizer.presentation.handlers import condition_action_handler
+
+        old_warning = condition_action_handler.show_warning
+        condition_action_handler.show_warning = lambda *args: warnings.append(args)
+        try:
+            callbacks = handler._layer_dialog_callbacks(bid_ref, write_service)
+            uid = callbacks["layer_insert_fn"]("Layer", 3)
+        finally:
+            condition_action_handler.show_warning = old_warning
+        self.assertEqual(uid, "layer-new")
+        self.assertEqual(len(warnings), 1)
+        self.assertIn(
+            "created, but the layer list could not be refreshed", warnings[0][2]
+        )
 
     def test_new_folder_warns_when_create_succeeds_but_refresh_fails(self):
         warnings = []

@@ -2,6 +2,7 @@ import math
 import os
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
@@ -22,6 +23,9 @@ from ost_visualizer.presentation.components.plan_view.components.drag_handler im
 )
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
     NAMED_VIEW_LABEL_ITEM_KIND,
+)
+from ost_visualizer.presentation.components.plan_view.components import (
+    input_handler as input_handler_module,
 )
 from ost_visualizer.presentation.components.plan_view.components.input_handler import (
     InputHandlerMixin,
@@ -246,6 +250,20 @@ class FakeMouseEvent:
         self.accepted = True
 
 
+class FakeCursorViewport:
+    def __init__(self):
+        self.cursor = None
+
+    def rect(self):
+        return QtCore.QRect(0, 0, 200, 200)
+
+    def mapFromGlobal(self, point):
+        return QtCore.QPoint(point)
+
+    def setCursor(self, cursor):
+        self.cursor = cursor
+
+
 class FakeKeyEvent:
     def __init__(self, key=Qt.Key.Key_Control):
         self._key = key
@@ -360,6 +378,8 @@ class CtrlDragTests(unittest.TestCase):
         view._select_band_dragged = False
         view._press_changed_selection = False
         view._rotation_drag_active = False
+        view._rotate_cursor = Qt.CursorShape.CrossCursor
+        view._rotate_handle_item = None
         view._panning = False
         view._right_pan_active = False
         view._last_pan_point = None
@@ -546,6 +566,40 @@ class CtrlDragTests(unittest.TestCase):
         view = self._make_selected_path_takeoff_view()
         cursor = view._resolve_select_cursor(QtCore.QPoint(5, 5))
         self.assertEqual(cursor, Qt.CursorShape.SizeAllCursor)
+
+    def test_rotate_mode_uses_normal_hover_cursors_except_rotate_handle(self):
+        view = self._make_selected_path_takeoff_view()
+        view._cursor_mode = "rotate"
+        view._rotate_handle_item = FakeItem(0.0, 0.0)
+        self.assertEqual(
+            view._resolve_cursor(QtCore.QPoint(100, 100)),
+            Qt.CursorShape.ArrowCursor,
+        )
+        view._rotate_handle_item = FakeItem(100.0, 100.0)
+        self.assertEqual(
+            view._resolve_cursor(QtCore.QPoint(5, 5)),
+            Qt.CursorShape.SizeAllCursor,
+        )
+        view._rotate_handle_item = FakeItem(5.0, 5.0)
+        self.assertEqual(
+            view._resolve_cursor(QtCore.QPoint(5, 5)),
+            Qt.CursorShape.CrossCursor,
+        )
+
+    def test_rotate_mode_update_cursor_uses_live_viewport_pos_not_stale_hover(self):
+        view = self._make_selected_path_takeoff_view()
+        view._cursor_mode = "rotate"
+        view._last_mouse_vp_pos = QtCore.QPoint(5, 5)
+        view._rotate_handle_item = FakeItem(0.0, 0.0)
+        viewport = FakeCursorViewport()
+        view.viewport = lambda: viewport
+        with patch.object(
+            input_handler_module,
+            "QCursor",
+            SimpleNamespace(pos=lambda: QtCore.QPoint(100, 100)),
+        ):
+            InputHandlerMixin._update_cursor(view)
+        self.assertEqual(viewport.cursor, Qt.CursorShape.ArrowCursor)
 
     def test_stale_move_drag_index_does_not_force_move_cursor_without_active_press(
         self,

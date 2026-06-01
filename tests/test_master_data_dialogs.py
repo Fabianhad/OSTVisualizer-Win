@@ -557,6 +557,25 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_layers_dialog_stale_selected_item_does_not_crash_button_update(self):
+        dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=[self._layer("layer-1", "Layer 1", 1)],
+        )
+        try:
+            item = dialog.tree.topLevelItem(0)
+            dialog.tree.setCurrentItem(item)
+            dialog._layers = []
+            dialog._update_button_states()
+            self.assertFalse(dialog.btn_select.isEnabled())
+            self.assertFalse(dialog.btn_delete.isEnabled())
+            self.assertFalse(dialog.btn_move_up.isEnabled())
+            self.assertFalse(dialog.btn_move_down.isEnabled())
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()

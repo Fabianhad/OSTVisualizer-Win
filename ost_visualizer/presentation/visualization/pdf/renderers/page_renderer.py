@@ -25,6 +25,7 @@ class PageRenderer:
         if self._current_pdf_path == file_path:
             return renderer
         renderer.close()
+        self._current_pdf_path = None
         if not renderer.open(file_path):
             path_obj = Path(file_path)
             pdfium_error = renderer.get_last_error()

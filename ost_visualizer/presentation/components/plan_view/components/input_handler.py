@@ -2,7 +2,7 @@ import math
 from typing import List, Optional
 from PySide6 import QtCore
 from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QMouseEvent, QPainterPath, QTransform, QWheelEvent
+from PySide6.QtGui import QCursor, QMouseEvent, QPainterPath, QTransform, QWheelEvent
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsPathItem,
@@ -412,14 +412,7 @@ class InputHandlerMixin:
             self._cursor_mode in ("rotate", "slope_rotate")
             and event.button() == Qt.MouseButton.LeftButton
         ):
-            near_handle = False
-            if self._rotate_handle_item is not None:
-                handle_vp = self.mapFromScene(self._rotate_handle_item.pos())
-                dist = math.hypot(
-                    vp_pos.x() - handle_vp.x(), vp_pos.y() - handle_vp.y()
-                )
-                near_handle = dist <= 16
-            if near_handle:
+            if self._is_over_rotate_handle(vp_pos):
                 scene_pos = self.mapToScene(vp_pos)
                 dx = scene_pos.x() - self._rotate_center_scene.x()
                 dy = scene_pos.y() - self._rotate_center_scene.y()
@@ -1992,6 +1985,27 @@ class InputHandlerMixin:
             self._update_cursor()
         super().keyReleaseEvent(event)
 
+    def _is_over_rotate_handle(self, vp_pos) -> bool:
+        if self._rotate_handle_item is None or vp_pos is None:
+            return False
+        handle_vp = self.mapFromScene(self._rotate_handle_item.pos())
+        return math.hypot(vp_pos.x() - handle_vp.x(), vp_pos.y() - handle_vp.y()) <= 16
+
+    def _has_active_cursor_press(self) -> bool:
+        return bool(
+            self._select_band_origin is not None
+            and QApplication.mouseButtons() & Qt.MouseButton.LeftButton
+        )
+
+    def _current_viewport_cursor_pos(self):
+        viewport = self.viewport()
+        if viewport is None:
+            return None
+        vp_pos = viewport.mapFromGlobal(QCursor.pos())
+        if not viewport.rect().contains(vp_pos):
+            return None
+        return vp_pos
+
     def _resolve_cursor(self, vp_pos) -> Qt.CursorShape:
         if self._panning and not (self._right_pan_active and self._ctrl_held):
             return Qt.CursorShape.ClosedHandCursor
@@ -2001,9 +2015,7 @@ class InputHandlerMixin:
             return Qt.CursorShape.CrossCursor
         if self._zoom_press_ctrl:
             return self._zoom_cursor
-        active_press = (
-            self._select_band_origin is not None or self._rotation_drag_active
-        )
+        active_press = self._has_active_cursor_press()
         if active_press:
             if self._drag_handle_index == -1:
                 return Qt.CursorShape.SizeAllCursor
@@ -2029,13 +2041,8 @@ class InputHandlerMixin:
         ):
             return Qt.CursorShape.IBeamCursor
         if self._cursor_mode in ("rotate", "slope_rotate"):
-            if self._rotate_handle_item is not None and vp_pos is not None:
-                handle_vp = self.mapFromScene(self._rotate_handle_item.pos())
-                dist = math.hypot(
-                    vp_pos.x() - handle_vp.x(), vp_pos.y() - handle_vp.y()
-                )
-                if dist <= 16:
-                    return self._rotate_cursor
+            if self._is_over_rotate_handle(vp_pos):
+                return self._rotate_cursor
             if vp_pos is not None:
                 return self._resolve_select_cursor(vp_pos)
             return Qt.CursorShape.ArrowCursor
@@ -2044,6 +2051,8 @@ class InputHandlerMixin:
         return Qt.CursorShape.ArrowCursor
 
     def _update_cursor(self, vp_pos=None) -> None:
+        if vp_pos is None:
+            vp_pos = self._current_viewport_cursor_pos()
         if vp_pos is None:
             vp_pos = self._last_mouse_vp_pos
         self.viewport().setCursor(self._resolve_cursor(vp_pos))

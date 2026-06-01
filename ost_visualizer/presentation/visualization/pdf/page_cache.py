@@ -33,14 +33,15 @@ class TintedCacheKey:
 
 class PageCache:
     MAX_ENTRIES = 20
+    MAX_METADATA_ENTRIES = 512
 
     def __init__(self):
         self._cache: OrderedDict[CacheKey, QImage] = OrderedDict()
         self._tinted_cache: OrderedDict[TintedCacheKey, QImage] = OrderedDict()
-        self._page_info_cache: Dict[str, Dict] = {}
-        self._page_count_cache: Dict[str, int] = {}
-        self._page_size_cache: Dict[str, tuple] = {}
-        self._text_runs_cache: Dict[str, list] = {}
+        self._page_info_cache: OrderedDict[str, Dict] = OrderedDict()
+        self._page_count_cache: OrderedDict[str, int] = OrderedDict()
+        self._page_size_cache: OrderedDict[str, tuple] = OrderedDict()
+        self._text_runs_cache: OrderedDict[str, list] = OrderedDict()
         self._lock = threading.Lock()
         self._local = threading.local()
         self._renderers: List[PageRenderer] = []
@@ -174,11 +175,12 @@ class PageCache:
         cache_key = f"{file_path}:{page_index}"
         with self._lock:
             if cache_key in self._page_info_cache:
+                self._page_info_cache.move_to_end(cache_key)
                 return self._page_info_cache[cache_key]
         renderer = self._get_renderer()
         info = renderer.get_page_info(file_path, page_index)
         with self._lock:
-            self._page_info_cache[cache_key] = info
+            self._store_lru(self._page_info_cache, cache_key, info)
         return info
 
     def _store_cache_image(
@@ -211,36 +213,45 @@ class PageCache:
             return 0
         return int(image.sizeInBytes())
 
+    def _store_lru(self, cache: OrderedDict, key, value) -> None:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > self.MAX_METADATA_ENTRIES:
+            cache.popitem(last=False)
+
     def get_page_count(self, file_path: str) -> int:
         with self._lock:
             if file_path in self._page_count_cache:
+                self._page_count_cache.move_to_end(file_path)
                 return self._page_count_cache[file_path]
         renderer = self._get_renderer()
         count = renderer.get_page_count(file_path)
         with self._lock:
-            self._page_count_cache[file_path] = count
+            self._store_lru(self._page_count_cache, file_path, count)
         return count
 
     def get_page_size(self, file_path: str, page_index: int = 0) -> tuple:
         cache_key = f"{file_path}:{page_index}"
         with self._lock:
             if cache_key in self._page_size_cache:
+                self._page_size_cache.move_to_end(cache_key)
                 return self._page_size_cache[cache_key]
         renderer = self._get_renderer()
         size = renderer.get_page_size(file_path, page_index)
         with self._lock:
-            self._page_size_cache[cache_key] = size
+            self._store_lru(self._page_size_cache, cache_key, size)
         return size
 
     def get_text_runs(self, file_path: str, page_index: int = 0) -> list:
         cache_key = f"{file_path}:{page_index}"
         with self._lock:
             if cache_key in self._text_runs_cache:
+                self._text_runs_cache.move_to_end(cache_key)
                 return list(self._text_runs_cache[cache_key])
         renderer = self._get_renderer()
         text_runs = renderer.extract_text_runs(file_path, page_index)
         with self._lock:
-            self._text_runs_cache[cache_key] = list(text_runs)
+            self._store_lru(self._text_runs_cache, cache_key, list(text_runs))
         return list(text_runs)
 
     def clear(self):

@@ -17,6 +17,7 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 from ost_visualizer.presentation.coordinators.workspace_state_coordinator import (
     WorkspaceStateCoordinator,
 )
+from ost_visualizer.presentation.windows.components.window import DetachedPageViewWindow
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
 )
@@ -210,6 +211,47 @@ class TrackableSignal:
 
     def disconnect(self, callback):
         self.disconnected.append(callback)
+
+
+class CleanupSignal:
+    def __init__(self):
+        self.disconnected = []
+
+    def disconnect(self, callback):
+        self.disconnected.append(callback)
+
+
+class CleanupPlanView:
+    def __init__(self):
+        self.page_geometry_ready = CleanupSignal()
+        self.page_fully_loaded = CleanupSignal()
+        self.positions_flushed = CleanupSignal()
+        self.annotation_text_properties_flushed = CleanupSignal()
+        self.annotation_text_and_positions_flushed = CleanupSignal()
+        self.elements_deleted = CleanupSignal()
+        self.undo_requested = CleanupSignal()
+        self.redo_requested = CleanupSignal()
+        self.blocked = None
+        self.cleaned = False
+
+    def blockSignals(self, blocked):
+        self.blocked = bool(blocked)
+
+    def cleanup(self):
+        self.cleaned = True
+
+
+class CleanupCombo:
+    def __init__(self):
+        self.page_activated = CleanupSignal()
+        self.currentIndexChanged = CleanupSignal()
+        self.cleaned = False
+
+    def cleanup(self):
+        self.cleaned = True
+
+    def cleanup_popup(self):
+        self.cleaned = True
 
 
 class TrackableDetachedWindow:
@@ -444,6 +486,48 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertEqual(coordinator._tracked_detached_windows, {})
         self.assertEqual(coordinator._tracked_detached_destroy_callbacks, {})
         self.assertEqual(coordinator._detached_restore_applied, {})
+
+    def test_detached_page_window_cleanup_releases_renderer_references(self):
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        retained = object()
+        plan_view = CleanupPlanView()
+        window._is_closing = False
+        window._show_timer = None
+        window._named_view_resize_focus_timer = None
+        window._pending_named_view_resize_focus = False
+        window._reveal_named_view_blank_canvas = lambda: None
+        window._hotlink_adapter = None
+        window.plan_view = plan_view
+        window._undo_svc = None
+        window._ann_write_svc = retained
+        window._file_path = "file.mdb"
+        window._renderers = retained
+        window._color_service = retained
+        window._config = retained
+        window._pages_with_takeoffs = {"page-1"}
+        window._on_page_selected = lambda _uid: None
+        window._on_named_view_selected = lambda _page, _view: None
+        window._on_scale_changed = lambda _page, _sf1, _sf2: None
+        window._page_combo = CleanupCombo()
+        window._named_view_combo = CleanupCombo()
+        window._scale_combo = retained
+        window._btn_select = retained
+        window._named_views = [retained]
+        window.event_bus = retained
+        window.view = retained
+        window.page_data = retained
+        window.icon_provider = retained
+        DetachedPageViewWindow.cleanup(window)
+        self.assertTrue(plan_view.cleaned)
+        self.assertIsNone(window.plan_view)
+        self.assertIsNone(window._renderers)
+        self.assertIsNone(window._color_service)
+        self.assertIsNone(window._config)
+        self.assertEqual(window._pages_with_takeoffs, set())
+        self.assertIsNone(window._page_combo)
+        self.assertIsNone(window._named_view_combo)
+        self.assertIsNone(window._scale_combo)
+        self.assertIsNone(window._btn_select)
 
 
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):

@@ -467,14 +467,12 @@ class ComponentBuilder:
             canvas.setEnabled(index == 0)
             plan_view.setEnabled(index == 1)
             if index == 0:
-                placement = getattr(ui_event_handler, "placement", None)
-                if placement is not None:
-                    placement.force_exit()
+                ui_event_handler.placement.force_exit()
                 select_action.setChecked(True)
                 _update_combo(canvas.get_zoom_percent() / 100.0)
             else:
                 _update_combo(_last_2d_zoom[0])
-            if not getattr(ui_event_handler, "_is_cleaning_up", False):
+            if not ui_event_handler._is_cleaning_up:
                 ui_event_handler.refresh_toolbar()
 
         def _on_zoom_in() -> None:
@@ -519,10 +517,7 @@ class ComponentBuilder:
                 if conditions_sidebar
                 else []
             )
-            placement = getattr(ui_event_handler, "placement", None)
-            if placement is None:
-                select_action.setChecked(True)
-                return
+            placement = ui_event_handler.placement
             if selected:
                 uid = selected[-1]
                 if placement.enter(uid, selected):

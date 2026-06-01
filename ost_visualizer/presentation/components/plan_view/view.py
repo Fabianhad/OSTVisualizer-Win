@@ -153,7 +153,7 @@ def _rects_nearly_equal(
 
 _SCENE_RECT_MARGIN = 50.0
 _PASSIVE_MOUSE_TRACKING_CURSOR_MODES = frozenset(
-    {"place", "annotation_place", "paste_backout"}
+    {"place", "annotation_place", "paste_backout", "rotate", "slope_rotate"}
 )
 
 
@@ -1008,7 +1008,7 @@ class TakeoffPlanView(
         item.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsFocusable, True)
         item.setFocus(Qt.FocusReason.MouseFocusReason)
-        self._update_cursor()
+        self._update_cursor(self._last_mouse_vp_pos)
         if was_inactive:
             self.text_annotation_edit_mode_changed.emit(True)
         return True

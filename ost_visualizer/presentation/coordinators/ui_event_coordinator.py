@@ -177,7 +177,7 @@ class UIEventCoordinator:
         self._toolbar.refresh()
 
     def refresh_toolbar(self) -> None:
-        if getattr(self, "_is_cleaning_up", False) or self._toolbar is None:
+        if self._is_cleaning_up or self._toolbar is None:
             return
         self._toolbar.refresh()
 
@@ -305,7 +305,7 @@ class UIEventCoordinator:
 
     def _on_view_stack_changed(self, index: int) -> None:
         if (
-            getattr(self, "_is_cleaning_up", False)
+            self._is_cleaning_up
             or self._toolbar is None
             or self._sidebar is None
             or self.ui_state_manager is None
@@ -1471,11 +1471,7 @@ class UIEventCoordinator:
             self._set_takeoff_tab_visible(False)
             self._update_export_menu_state()
             return
-        prev_current_file_path = (
-            self.project_data.get_current_file_path()
-            if hasattr(self.project_data, "get_current_file_path")
-            else None
-        )
+        prev_current_file_path = self.project_data.get_current_file_path()
         self.project_data.set_current_file(bid_ref.file_path)
         load_success = self.project_operations.load_bid(bid_ref)
         if not load_success:
@@ -2245,13 +2241,24 @@ class UIEventCoordinator:
         if not sidebar:
             return
         try:
-            new_uid = self._project_write_service.insert_layer(
+            result = self._project_write_service.insert_layer_result(
                 bid_ref.file_path, bid_ref.bid_uid, name, after_sequence
             )
-            if new_uid:
-                sidebar.set_pending_selection(new_uid)
+            if not result.write_success or not result.value:
+                self._sidebar.load_bid_layers_sidebar()
+                return
+            if result.refresh_failed:
+                show_warning(
+                    self.main_window,
+                    "Refresh Error",
+                    "The layer was created, but the layer list could not be "
+                    "refreshed. Reopen the database to see the new layer.",
+                )
+                return
+            sidebar.set_pending_selection(str(result.value))
         except Exception:
             logger.warning("Failed to insert layer", exc_info=True)
+            self._sidebar.load_bid_layers_sidebar()
 
     def _on_layer_deleted(self, layer_uid: str) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()

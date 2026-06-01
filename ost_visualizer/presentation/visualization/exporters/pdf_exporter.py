@@ -168,6 +168,12 @@ class PDFExporter:
                 error_message=str(e),
                 error_code=ExportErrorCode.UNEXPECTED,
             )
+        finally:
+            self._clear_export_render_resources()
+
+    def _clear_export_render_resources(self) -> None:
+        self._export_composite_renderer.clear_cache()
+        self._export_page_cache.clear()
 
     def _configure_page_background(
         self,

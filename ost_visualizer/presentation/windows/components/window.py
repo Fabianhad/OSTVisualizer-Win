@@ -1059,15 +1059,23 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._undo_svc = None
         self._ann_write_svc = None
         self._file_path = None
+        self._renderers = None
+        self._color_service = None
+        self._config = None
+        self._pages_with_takeoffs.clear()
         self._on_page_selected = None
         self._on_named_view_selected = None
         self._on_scale_changed = None
         self._page_combo.page_activated.disconnect(self._on_page_activated)
         self._page_combo.cleanup()
+        self._page_combo = None
         self._named_view_combo.currentIndexChanged.disconnect(
             self._on_named_view_combo_changed
         )
         self._named_view_combo.cleanup_popup()
+        self._named_view_combo = None
+        self._scale_combo = None
+        self._btn_select = None
         self._named_views = []
         self.event_bus = None
         self.view = None

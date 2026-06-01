@@ -271,6 +271,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._dirty = False
         self._building = False
         self._interactive_enabled = True
+        self._allow_apply = True
         self._saved_form_state = ()
         self._active_sub_dialog: Optional[QtWidgets.QDialog] = None
         self._general_tab_built = False
@@ -1279,11 +1280,17 @@ class EditConditionDialog(QtWidgets.QDialog):
 
     def _update_apply_button(self) -> None:
         self._apply_btn.setEnabled(
-            self._interactive_enabled
+            self._allow_apply
+            and self._interactive_enabled
             and self._has_license
             and not self._read_only
             and self._dirty
         )
+
+    def set_apply_allowed(self, allowed: bool) -> None:
+        self._allow_apply = bool(allowed)
+        self._apply_btn.setVisible(self._allow_apply)
+        self._update_apply_button()
 
     def _update_style_combo_state(self) -> None:
         has_takeoffs = self._has_takeoffs_fn(self._current_uid)

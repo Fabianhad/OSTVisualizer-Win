@@ -48,6 +48,7 @@
 - Fixed Intelligent Paste so copied takeoffs and annotations paste at the cursor, support temporary original-axis snap guides only during the first drag, and stop using that snap state after release or cancel.
 - Fixed Cover Sheet page image paths so saved `BidPages.ImagePath` values use Windows backslashes for OST compatibility.
 - Fixed PDF export default filenames so page names that already end in `.pdf` do not produce `.pdf.pdf`.
+- Cleared stale detached page-window, PDF renderer, export background, and MCP bridge references during cleanup, and bounded PDF metadata caches across page/file switches.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.
 - Fixed text annotation selected/edit outlines to use the real textbox resize bounds and clipped overflowing text to the textbox.
 - Centered area Display Dimension labels inside the takeoff while keeping Display Name labels below the takeoff.

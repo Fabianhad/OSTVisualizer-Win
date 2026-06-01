@@ -1107,9 +1107,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         view, viewport = _plan_view_with_tracking_viewport()
         TakeoffPlanView._apply_cursor_mode(view, "place")
         TakeoffPlanView._apply_cursor_mode(view, "paste_backout")
+        TakeoffPlanView._apply_cursor_mode(view, "rotate")
         TakeoffPlanView._apply_cursor_mode(view, "select")
-        self.assertEqual(viewport.tracking, [True, True, False])
-        self.assertEqual(viewport.updates, 3)
+        self.assertEqual(viewport.tracking, [True, True, True, False])
+        self.assertEqual(viewport.updates, 4)
 
     def test_backout_action_state_matches_context_rules(self):
         class FakeAccess:

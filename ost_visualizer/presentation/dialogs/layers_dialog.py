@@ -184,7 +184,7 @@ class LayersDialog(QtWidgets.QDialog):
         if raw_uid is None:
             return None
         uid = str(raw_uid)
-        return next(layer for layer in self._layers if layer.uid == uid)
+        return self._find_layer_by_uid(uid)
 
     def _selected_row(self) -> int:
         selected = self._selected_items()
@@ -201,6 +201,9 @@ class LayersDialog(QtWidgets.QDialog):
             (layer for layer in self._layers if layer.name.strip().lower() == target),
             None,
         )
+
+    def _find_layer_by_uid(self, uid: str) -> Optional[BidLayer]:
+        return next((layer for layer in self._layers if layer.uid == uid), None)
 
     def _max_sequence(self) -> int:
         if not self._layers:
@@ -392,7 +395,7 @@ class LayersDialog(QtWidgets.QDialog):
         if raw_uid is None:
             return None
         uid = str(raw_uid)
-        return next(layer for layer in self._layers if layer.uid == uid)
+        return self._find_layer_by_uid(uid)
 
     def _on_show_changed(self, layer_uid: str, checked: bool) -> None:
         if self._building or not self._is_interactive:
@@ -451,7 +454,7 @@ class LayersDialog(QtWidgets.QDialog):
         selected_layer = self._selected_layer()
         selected_row = self._selected_row()
         can_modify_selected = self._can_modify(selected_layer)
-        self.btn_select.setEnabled(len(selected) == 1)
+        self.btn_select.setEnabled(selected_layer is not None)
         self.btn_check_all.setEnabled(bool(self._layers))
         self.btn_uncheck_all.setEnabled(bool(self._layers))
         self.btn_new.setEnabled(True)

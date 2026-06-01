@@ -429,6 +429,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 self.place_condition_uid = None
 
         coordinator.ui_state_manager = UiState()
+        coordinator._is_cleaning_up = False
         coordinator.plan_view = None
         coordinator._placement = FakePlacement()
         coordinator._placement.is_active = True

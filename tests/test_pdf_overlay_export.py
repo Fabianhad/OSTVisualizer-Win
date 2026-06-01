@@ -57,6 +57,17 @@ class _TakeoffService:
         return [], {}
 
 
+class _Clearable:
+    def __init__(self):
+        self.clear_calls = 0
+
+    def clear(self):
+        self.clear_calls += 1
+
+    def clear_cache(self):
+        self.clear_calls += 1
+
+
 class _CoordinateSystem:
     def parse_position(self, _position):
         return []
@@ -72,8 +83,8 @@ def _make_exporter(writer):
     exporter._takeoff_service = _TakeoffService()
     exporter._coord_system = _CoordinateSystem()
     exporter._uom_service = SimpleNamespace()
-    exporter._export_page_cache = SimpleNamespace()
-    exporter._export_composite_renderer = SimpleNamespace()
+    exporter._export_page_cache = _Clearable()
+    exporter._export_composite_renderer = _Clearable()
     return exporter
 
 
@@ -348,6 +359,18 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(writer.merge_calls, 1)
         self.assertEqual(progress_calls, [(1, 1, "Page 1")])
+
+    def test_export_clears_background_render_resources_after_run(self):
+        writer = _FakeWriter()
+        exporter = _make_exporter(writer)
+        page_cache = _Clearable()
+        composite_renderer = _Clearable()
+        exporter._export_page_cache = page_cache
+        exporter._export_composite_renderer = composite_renderer
+        result = _export_single_page(exporter, _page())
+        self.assertTrue(result.success)
+        self.assertEqual(page_cache.clear_calls, 1)
+        self.assertEqual(composite_renderer.clear_calls, 1)
 
 
 if __name__ == "__main__":

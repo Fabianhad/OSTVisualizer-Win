@@ -1,6 +1,7 @@
 import logging
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
+from typing import Optional
 from PySide6.QtCore import QSignalBlocker
 from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
 from ...application.dtos.update_condition_dto import (
@@ -56,8 +57,10 @@ class ConditionActionHandler:
             "layer_used_uids_fn": lambda: self._read_service.get_layer_uids_in_use(
                 bid_ref.file_path, bid_ref.bid_uid
             ),
-            "layer_insert_fn": lambda name, after_sequence: write_service.insert_layer(
-                bid_ref.file_path, bid_ref.bid_uid, name, after_sequence
+            "layer_insert_fn": lambda name, after_sequence: (
+                self._insert_layer_from_dialog(
+                    bid_ref, write_service, name, after_sequence
+                )
             ),
             "layer_delete_many_fn": lambda layer_uids: write_service.delete_layers(
                 bid_ref.file_path, layer_uids
@@ -79,6 +82,31 @@ class ConditionActionHandler:
                 )
             ),
         }
+
+    def _insert_layer_from_dialog(
+        self, bid_ref, write_service, name: str, after_sequence: int
+    ) -> Optional[str]:
+        result = write_service.insert_layer_result(
+            bid_ref.file_path, bid_ref.bid_uid, name, after_sequence
+        )
+        if not result.write_success or not result.value:
+            return None
+        if result.refresh_failed:
+            self._warn_layer_refresh_failed()
+        return str(result.value)
+
+    def _warn_layer_refresh_failed(self) -> None:
+        parent = (
+            self._coordinator.conditions_sidebar.window()
+            if self._coordinator.conditions_sidebar
+            else None
+        )
+        show_warning(
+            parent,
+            "Refresh Error",
+            "The layer was created, but the layer list could not be refreshed. "
+            "Reopen the database to see the new layer.",
+        )
 
     def on_create_requested(self, folder_uid: str = "") -> None:
         if not self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION):
@@ -148,6 +176,7 @@ class ConditionActionHandler:
             display_grid_while_drawing=False,
         )
         created_uid = [None]
+        created_refresh_failed = [False]
 
         def save_new_condition(_cond_uid, dto):
             changes = dto.get_changes()
@@ -176,11 +205,12 @@ class ConditionActionHandler:
                 spec = replace(spec, **spec_updates)
             spec.folder_uid = folder_uid or None
             with QSignalBlocker(sidebar):
-                new_uid = write_service.create_condition(
+                result = write_service.create_condition_result(
                     bid_ref.file_path, bid_ref.bid_uid, spec
                 )
-            if new_uid:
-                created_uid[0] = new_uid
+            if result.write_success and result.value:
+                created_uid[0] = str(result.value)
+                created_refresh_failed[0] = result.refresh_failed
                 return UpdateConditionResultDto(success=True)
             return UpdateConditionResultDto(
                 success=False, error="Failed to create condition."
@@ -205,11 +235,20 @@ class ConditionActionHandler:
             metric=self._is_metric(),
         )
         dialog._dirty = True
+        dialog.set_apply_allowed(False)
         try:
             exec_with_ost_blocking(dialog, self._coordinator.event_bus)
         finally:
             dialog.deleteLater()
         self._coordinator.refresh_conditions_ui()
+        if created_refresh_failed[0]:
+            show_warning(
+                sidebar.window(),
+                "Refresh Error",
+                "The condition was created, but the conditions list could not be "
+                "refreshed. Reopen the database to see the new condition.",
+            )
+            return
         if created_uid[0]:
             self._coordinator.highlight_sidebar({created_uid[0]})
 
@@ -224,11 +263,15 @@ class ConditionActionHandler:
         if not bid_ref or not write_service:
             return
         sidebar = self._coordinator.conditions_sidebar
-        new_uids = self._duplicate_conditions(
+        result = self._duplicate_conditions_result(
             bid_ref, write_service, condition_uids, sidebar
         )
+        new_uids = list(result.value or [])
         if not new_uids:
             logger.warning("Failed to duplicate conditions %s", condition_uids)
+            return
+        if result.refresh_failed:
+            self._warn_condition_refresh_failed("duplicated")
             return
         self._finish_condition_duplicate(new_uids, sidebar)
 
@@ -253,11 +296,15 @@ class ConditionActionHandler:
                 bid_ref, write_service, condition_uids, target, sidebar
             )
             return
-        new_uids = self._duplicate_conditions(
+        result = self._duplicate_conditions_result(
             bid_ref, write_service, condition_uids, sidebar
         )
+        new_uids = list(result.value or [])
         if not new_uids:
             logger.warning("Failed to paste duplicate conditions %s", condition_uids)
+            return
+        if result.refresh_failed:
+            self._warn_condition_refresh_failed("duplicated")
             return
         target_applied = False
         for condition_uid in new_uids:
@@ -312,21 +359,36 @@ class ConditionActionHandler:
             )
         if not moved_uids:
             return
-        write_service.reload_and_notify(bid_ref.file_path)
+        if not write_service.reload_and_notify(bid_ref.file_path):
+            self._warn_condition_refresh_failed("moved")
+            return
         self._coordinator.refresh_conditions_ui()
         if sidebar:
             self._coordinator.highlight_sidebar(set(moved_uids))
 
-    def _duplicate_conditions(
+    def _duplicate_conditions_result(
         self, bid_ref, write_service, condition_uids: list, sidebar
-    ) -> list:
+    ):
         if sidebar:
             with QSignalBlocker(sidebar):
-                return write_service.duplicate_conditions(
+                return write_service.duplicate_conditions_result(
                     bid_ref.file_path, bid_ref.bid_uid, condition_uids
                 )
-        return write_service.duplicate_conditions(
+        return write_service.duplicate_conditions_result(
             bid_ref.file_path, bid_ref.bid_uid, condition_uids
+        )
+
+    def _warn_condition_refresh_failed(self, action: str) -> None:
+        parent = (
+            self._coordinator.conditions_sidebar.window()
+            if self._coordinator.conditions_sidebar
+            else None
+        )
+        show_warning(
+            parent,
+            "Refresh Error",
+            f"The condition was {action}, but the conditions list could not be "
+            "refreshed. Reopen the database to see the latest conditions.",
         )
 
     def _finish_condition_duplicate(self, new_uids: list, sidebar) -> None:
@@ -410,13 +472,16 @@ class ConditionActionHandler:
         if not sidebar:
             return
         parent = parent_uid or None
-        new_uid = write_service.create_condition_folder(
+        result = write_service.create_condition_folder_result(
             bid_ref.file_path, bid_ref.bid_uid, "New Folder", parent
         )
-        if not new_uid:
+        if not result.write_success or not result.value:
             logger.warning("Failed to create condition folder under parent %s", parent)
             return
-        sidebar.set_pending_folder_edit(new_uid)
+        if result.refresh_failed:
+            self._warn_condition_refresh_failed("created")
+            return
+        sidebar.set_pending_folder_edit(str(result.value))
 
     def on_folder_renamed(self, folder_uid: str, new_name: str) -> None:
         if not self._coordinator.ui_access_manager.is_allowed(
@@ -537,7 +602,9 @@ class ConditionActionHandler:
             )
         if not changed_uids:
             return
-        write_service.reload_and_notify(bid_ref.file_path)
+        if not write_service.reload_and_notify(bid_ref.file_path):
+            self._warn_condition_refresh_failed("updated")
+            return
         self._coordinator.refresh_conditions_ui()
         if sidebar:
             self._coordinator.highlight_sidebar(set(changed_uids))

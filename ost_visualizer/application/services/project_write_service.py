@@ -356,14 +356,24 @@ class ProjectWriteService(BaseWriteService):
     def create_condition(
         self, db_path: str, bid_uid: str, spec: CreateConditionSpec
     ) -> Optional[str]:
+        result = self.create_condition_result(db_path, bid_uid, spec)
+        return str(result.value) if result.success and result.value else None
+
+    def create_condition_result(
+        self, db_path: str, bid_uid: str, spec: CreateConditionSpec
+    ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "create_condition", db_path, bid_uid
         ):
-            return None
+            return WriteReloadResult(None, write_success=False, reload_success=False)
         new_uid = self._insert_condition.execute(db_path, bid_uid, spec)
-        if new_uid is not None and not self.reload_and_notify(db_path):
-            return None
-        return new_uid
+        if new_uid is None:
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        return WriteReloadResult(
+            new_uid,
+            write_success=True,
+            reload_success=self.reload_and_notify(db_path),
+        )
 
     def create_condition_folder(
         self,
@@ -372,16 +382,30 @@ class ProjectWriteService(BaseWriteService):
         name: str,
         parent_uid: Optional[str] = None,
     ) -> Optional[str]:
+        result = self.create_condition_folder_result(db_path, bid_uid, name, parent_uid)
+        return str(result.value) if result.success and result.value else None
+
+    def create_condition_folder_result(
+        self,
+        db_path: str,
+        bid_uid: str,
+        name: str,
+        parent_uid: Optional[str] = None,
+    ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "create_condition_folder", db_path, bid_uid
         ):
-            return None
+            return WriteReloadResult(None, write_success=False, reload_success=False)
         new_uid = self._insert_condition_folder.execute(
             db_path, bid_uid, name, parent_uid
         )
-        if new_uid is not None and not self.reload_and_notify(db_path):
-            return None
-        return new_uid
+        if new_uid is None:
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        return WriteReloadResult(
+            new_uid,
+            write_success=True,
+            reload_success=self.reload_and_notify(db_path),
+        )
 
     def rename_condition_folder(self, db_path: str, folder_uid: str, name: str) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
@@ -404,14 +428,24 @@ class ProjectWriteService(BaseWriteService):
     def duplicate_conditions(
         self, db_path: str, bid_uid: str, condition_uids: list
     ) -> list:
+        result = self.duplicate_conditions_result(db_path, bid_uid, condition_uids)
+        return list(result.value or []) if result.success else []
+
+    def duplicate_conditions_result(
+        self, db_path: str, bid_uid: str, condition_uids: list
+    ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "duplicate_conditions", db_path, bid_uid
         ):
-            return []
+            return WriteReloadResult([], write_success=False, reload_success=False)
         new_uids = self._duplicate_conditions.execute(db_path, bid_uid, condition_uids)
-        if new_uids and not self.reload_and_notify(db_path):
-            return []
-        return new_uids
+        if not new_uids:
+            return WriteReloadResult([], write_success=False, reload_success=False)
+        return WriteReloadResult(
+            list(new_uids),
+            write_success=True,
+            reload_success=self.reload_and_notify(db_path),
+        )
 
     def duplicate_conditions_to_bid(
         self,
@@ -719,14 +753,24 @@ class ProjectWriteService(BaseWriteService):
     def insert_layer(
         self, db_path: str, bid_uid: str, name: str, after_sequence: int
     ) -> Optional[str]:
+        result = self.insert_layer_result(db_path, bid_uid, name, after_sequence)
+        return str(result.value) if result.success and result.value else None
+
+    def insert_layer_result(
+        self, db_path: str, bid_uid: str, name: str, after_sequence: int
+    ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "insert_layer", db_path, bid_uid
         ):
-            return None
+            return WriteReloadResult(None, write_success=False, reload_success=False)
         new_uid = self._insert_layer.execute(db_path, bid_uid, name, after_sequence)
-        if new_uid is not None and not self.reload_and_notify(db_path):
-            return None
-        return new_uid
+        if new_uid is None:
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        return WriteReloadResult(
+            new_uid,
+            write_success=True,
+            reload_success=self.reload_and_notify(db_path),
+        )
 
     def delete_layer(
         self, db_path: str, layer_uid: str, reload_database: bool = True
