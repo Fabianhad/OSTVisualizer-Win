@@ -10,12 +10,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
 from ost_visualizer.domain.entities import pattern as pattern_values
+from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
 )
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
+from ost_visualizer.presentation.components.area_combo import AreaComboBox
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
 )
@@ -134,6 +137,59 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             }
             & condition_fields
         )
+
+    def test_condition_sidebar_rebuild_clears_stale_selection_cache(self):
+        sidebar = ConditionsSidebar(None)
+        sidebar.load_conditions(
+            {"c1": Condition(uid="c1", name="Condition 1", ref_no=1)},
+            {},
+            "Project",
+        )
+        sidebar.highlight_conditions({"c1"})
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        sidebar.load_conditions(
+            {"c2": Condition(uid="c2", name="Condition 2", ref_no=2)},
+            {},
+            "Project",
+        )
+        self.assertEqual(sidebar.get_selected_condition_uids(), [])
+
+    def test_condition_cut_paste_to_root_and_folder_uses_edit_permission(self):
+        sidebar = ConditionsSidebar(None)
+        pasted = []
+        sidebar.paste_requested.connect(
+            lambda uids, target: pasted.append((list(uids), dict(target)))
+        )
+        sidebar.load_conditions(
+            {"c1": Condition(uid="c1", name="Condition 1", ref_no=1)},
+            {"f1": BidConditionFolder(uid="f1", name="Folder")},
+            "Project",
+        )
+        sidebar.set_duplicate_enabled(False)
+        sidebar.set_edit_enabled(True)
+        sidebar.highlight_conditions({"c1"})
+        sidebar._cut_selected_conditions()
+        root = sidebar.tree.topLevelItem(0)
+        folder = sidebar._folder_items["f1"]
+        self.assertTrue(sidebar._can_paste_to_item(root))
+        self.assertTrue(sidebar._can_paste_context_target("root", root))
+        sidebar._paste_copied_conditions(folder)
+        self.assertEqual(pasted[0][0], ["c1"])
+        self.assertEqual(pasted[0][1]["kind"], "folder")
+        self.assertEqual(pasted[0][1]["folder_uid"], "f1")
+        self.assertTrue(pasted[0][1]["cut"])
+
+    def test_area_combo_clears_deleted_selected_area_uid_on_reload(self):
+        combo = AreaComboBox(None)
+        combo.load_areas(
+            [BidArea(uid="a1", bid_uid="b1", parent_uid="", name="Area 1", sequence=1)],
+            selected_uid="a1",
+        )
+        self.assertEqual(combo.get_current_area_uid(), "a1")
+        combo.load_areas([], selected_uid=None)
+        self.assertEqual(combo.get_current_area_uid(), "")
+        combo.set_current_area_uid("deleted")
+        self.assertEqual(combo.get_current_area_uid(), "")
 
     @classmethod
     def setUpClass(cls):

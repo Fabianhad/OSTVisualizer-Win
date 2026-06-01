@@ -109,6 +109,7 @@ class PlanViewActionHandler:
         if not self._write_svc.save_takeoff_text_properties(
             bid_ref.file_path, new_updates, reload_database=False
         ):
+            self._plan_view.restore_condition_text_properties(changes)
             return
         page_uids = self._data_svc.update_takeoff_text_properties(new_updates)
         self._publish_takeoffs_changed_for_pages(
@@ -162,6 +163,18 @@ class PlanViewActionHandler:
         )
         return True
 
+    def _publish_saved_takeoff_position_rotation_changes(
+        self, positions: List[tuple], rotations: List[tuple]
+    ) -> None:
+        page_uids = []
+        if positions:
+            page_uids.extend(self._data_svc.update_takeoff_positions(positions))
+        if rotations:
+            page_uids.extend(self._data_svc.update_takeoff_rotations(rotations))
+        changed_uids = [uid for uid, _position in positions]
+        changed_uids.extend(uid for uid, _rotation in rotations)
+        self._publish_takeoffs_changed_for_pages(page_uids, changed_uids)
+
     def _save_takeoff_position_rotation_fast(
         self,
         db_path: str,
@@ -176,14 +189,7 @@ class PlanViewActionHandler:
             db_path, rotations, reload_database=False
         ):
             return False
-        page_uids = []
-        if positions:
-            page_uids.extend(self._data_svc.update_takeoff_positions(positions))
-        if rotations:
-            page_uids.extend(self._data_svc.update_takeoff_rotations(rotations))
-        changed_uids = [uid for uid, _position in positions]
-        changed_uids.extend(uid for uid, _rotation in rotations)
-        self._publish_takeoffs_changed_for_pages(page_uids, changed_uids)
+        self._publish_saved_takeoff_position_rotation_changes(positions, rotations)
         return True
 
     def _delete_takeoffs_fast(self, db_path: str, takeoff_uids: List[str]) -> bool:
@@ -258,6 +264,7 @@ class PlanViewActionHandler:
         if not db_path or not takeoff_uids:
             return
         cs = self._plan_view.get_coordinate_system()
+        changed = False
         for uid in takeoff_uids:
             takeoff = self._resolver.resolve_takeoff(uid)
             if not takeoff:
@@ -270,14 +277,30 @@ class PlanViewActionHandler:
                 cx = (x1 + x2) / 2.0
                 cy = (y1 + y2) / 2.0
                 pos = [x1, y1, x2, y2, cx, cy, 0.0]
-                self._write_svc.set_takeoff_curve(
-                    db_path, uid, pos, Takeoff.CURVE_ENABLED
+                changed = (
+                    self._write_svc.set_takeoff_curve(
+                        db_path,
+                        uid,
+                        pos,
+                        Takeoff.CURVE_ENABLED,
+                        reload_database=False,
+                    )
+                    or changed
                 )
             else:
                 pos = list(pos[:4])
-                self._write_svc.set_takeoff_curve(
-                    db_path, uid, pos, Takeoff.CURVE_DISABLED
+                changed = (
+                    self._write_svc.set_takeoff_curve(
+                        db_path,
+                        uid,
+                        pos,
+                        Takeoff.CURVE_DISABLED,
+                        reload_database=False,
+                    )
+                    or changed
                 )
+        if changed:
+            self._write_svc.reload_and_notify(db_path)
 
     def on_positions_flushed(self, takeoff_changes: list, ann_changes: list) -> None:
         if (takeoff_changes or ann_changes) and not self._is_allowed(
@@ -296,6 +319,9 @@ class PlanViewActionHandler:
                 ok_t = self._write_svc.save_takeoff_positions(db_path, new_positions)
             else:
                 ok_t = self._save_takeoff_positions_fast(db_path, new_positions)
+            if not ok_t:
+                self._plan_view.restore_flushed_positions(takeoff_changes, ann_changes)
+                return
         ok_a = True
         if ann_changes:
             ok_a = self._ann_write_svc.save_annotation_positions(
@@ -305,7 +331,8 @@ class PlanViewActionHandler:
                     for uid, ann_type, _old, new_pos in ann_changes
                 ],
             )
-        if not ok_t or not ok_a:
+        if not ok_a:
+            self._plan_view.restore_flushed_positions([], ann_changes)
             return
         t_old = [(uid, list(old)) for uid, old, _ in takeoff_changes if old]
         t_new = [(uid, list(new)) for uid, _, new in takeoff_changes]
@@ -348,6 +375,7 @@ class PlanViewActionHandler:
             db_path, new_updates
         )
         if not success:
+            self._plan_view.restore_annotation_text_properties(changes)
             return
         self._publish_named_view_renames(new_updates)
         old_updates = [
@@ -405,6 +433,9 @@ class PlanViewActionHandler:
             db_path, new_updates, new_positions
         )
         if not success:
+            self._plan_view.restore_annotation_text_and_positions(
+                text_changes, ann_position_changes
+            )
             return
         old_updates = [
             (uid, ann_type, dict(old_props))
@@ -440,6 +471,7 @@ class PlanViewActionHandler:
             return
         new_rotations = [(uid, new_rot) for uid, _old, new_rot in rotation_changes]
         if not self._save_takeoff_rotations_fast(db_path, new_rotations):
+            self._plan_view.restore_flushed_rotations(rotation_changes)
             return
         r_old = [(uid, old) for uid, old, _ in rotation_changes if old is not None]
         r_new = [(uid, new) for uid, _, new in rotation_changes]
@@ -481,9 +513,36 @@ class PlanViewActionHandler:
             if r_new:
                 ok_r = self._write_svc.save_takeoff_rotations(db_path, r_new)
             if not (ok_t and ok_a and ok_r):
+                if not ok_t:
+                    self._plan_view.restore_flushed_positions(
+                        takeoff_changes, ann_changes
+                    )
+                    self._plan_view.restore_flushed_rotations(rotation_changes)
+                elif not ok_a:
+                    self._plan_view.restore_flushed_positions([], ann_changes)
+                    if not ok_r:
+                        self._plan_view.restore_flushed_rotations(rotation_changes)
+                elif not ok_r:
+                    self._plan_view.restore_flushed_rotations(rotation_changes)
                 return
-        elif not self._save_takeoff_position_rotation_fast(db_path, t_new, r_new):
-            return
+        else:
+            positions_saved = False
+            if t_new:
+                if not self._write_svc.save_takeoff_positions(
+                    db_path, t_new, reload_database=False
+                ):
+                    self._plan_view.restore_flushed_positions(takeoff_changes, [])
+                    self._plan_view.restore_flushed_rotations(rotation_changes)
+                    return
+                positions_saved = True
+            if r_new and not self._write_svc.save_takeoff_rotations(
+                db_path, r_new, reload_database=False
+            ):
+                if positions_saved:
+                    self._publish_saved_takeoff_position_rotation_changes(t_new, [])
+                self._plan_view.restore_flushed_rotations(rotation_changes)
+                return
+            self._publish_saved_takeoff_position_rotation_changes(t_new, r_new)
         t_old = [(uid, list(old)) for uid, old, _ in takeoff_changes if old]
         a_old = [(uid, t, list(old)) for uid, t, old, _ in ann_changes if old]
         a_new = [(uid, t, list(new)) for uid, t, _, new in ann_changes]
@@ -775,6 +834,7 @@ class PlanViewActionHandler:
                 for t in saved_takeoffs
             ]
             if not self._delete_takeoffs_fast(db_path, takeoff_uids):
+                self._plan_view.set_selected_uids(set(uids))
                 return
             current_uids = list(takeoff_uids)
 
@@ -823,6 +883,7 @@ class PlanViewActionHandler:
                 )
             )
         if not delete_cmds:
+            self._plan_view.set_selected_uids(set(uids))
             return
 
         def _undo():

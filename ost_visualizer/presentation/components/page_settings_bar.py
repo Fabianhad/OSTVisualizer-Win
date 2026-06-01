@@ -195,12 +195,9 @@ class PageSettingsBar(QtWidgets.QWidget):
             return
         prev_area_uid = self.area_combo.get_current_area_uid()
 
-        def _save_fn(changes: dict) -> dict:
-            return (
-                self._save_areas_fn(
-                    self._bid_ref.file_path, self._bid_ref.bid_uid, changes
-                )
-                or {}
+        def _save_fn(changes: dict) -> Optional[dict]:
+            return self._save_areas_fn(
+                self._bid_ref.file_path, self._bid_ref.bid_uid, changes
             )
 
         def _on_saved() -> None:

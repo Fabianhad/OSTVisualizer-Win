@@ -409,6 +409,25 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._named_view_combo.setCurrentIndex(-1)
         self._named_view_combo.blockSignals(False)
 
+    def update_navigation(
+        self,
+        bid: Optional[Bid],
+        named_views: Optional[List[NamedViewEntry]] = None,
+        pages_with_takeoffs: Optional[set[str]] = None,
+    ) -> None:
+        if self._is_closing:
+            return
+        self._pages_with_takeoffs = set(pages_with_takeoffs or ())
+        self._named_views = list(named_views or [])
+        if bid is None:
+            self._page_combo.clear()
+        else:
+            self._populate_page_combo(bid)
+        self._populate_named_view_combo()
+        page_uid = self.view.target_page_uid if self.view else ""
+        self._update_combo_to_page(page_uid)
+        self._page_combo.set_pages_with_takeoffs(self._pages_with_takeoffs)
+
     def update_named_view_name(self, named_view_uid: str, name: str) -> None:
         if self._is_closing:
             return
@@ -503,7 +522,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._start_named_view_blank_canvas()
         else:
             self._reveal_named_view_blank_canvas()
-        self._load_page_content()
+        if not self._load_page_content():
+            return
         self._update_combo_to_page(view.target_page_uid)
         self._sync_current_page_takeoff_indicator()
         self._page_combo.set_pages_with_takeoffs(self._pages_with_takeoffs)
@@ -547,10 +567,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             sf1, sf2 = data
             self._on_scale_changed(self.page_data.page.uid, sf1, sf2)
 
-    def _load_page_content(self) -> None:
+    def _load_page_content(self) -> bool:
         page = self.page_data.page if self.page_data else None
         if not page:
-            return
+            self.plan_view.clear()
+            return False
         self._update_scale_combo(page.scale_factor1, page.scale_factor2)
         try:
             self.plan_view.load_page(
@@ -563,8 +584,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 page_area_selections=self.page_data.page_area_selections,
             )
             self._apply_named_view_focus_if_possible(require_stable_view=False)
+            return True
         except Exception:
             self.logger.exception("Error loading page into plan_view")
+            self.plan_view.clear()
+            return False
 
     def _focus_on_named_view(self) -> None:
         if self._is_closing:
@@ -828,6 +852,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             for uid, ann_type, _old, new_pos in ann_changes
         ]
         if not self._ann_write_svc.save_annotation_positions(db_path, new_changes):
+            self.plan_view.restore_flushed_positions([], ann_changes)
             return
         if self._undo_svc is None:
             return
@@ -864,6 +889,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             db_path, new_updates
         )
         if not success:
+            self.plan_view.restore_annotation_text_properties(changes)
             return
         self._publish_named_view_renames(new_updates)
         if self._undo_svc is None:
@@ -924,6 +950,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             db_path, new_updates, new_positions
         )
         if not success:
+            self.plan_view.restore_annotation_text_and_positions(
+                text_changes, ann_position_changes
+            )
             return
         if self._undo_svc is None:
             return
@@ -979,6 +1008,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             db_path,
             [(a.uid, a.annotation_type) for a in saved_annotations],
         ):
+            self.plan_view.set_selected_uids(set(uids))
             return
         if self._undo_svc is None:
             return

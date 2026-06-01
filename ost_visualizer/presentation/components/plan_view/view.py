@@ -1,6 +1,7 @@
 import math
 import os
 import uuid
+from dataclasses import replace
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 from PySide6 import QtCore, QtSvg
@@ -310,6 +311,7 @@ class TakeoffPlanView(
         self._current_takeoffs: Dict[str, Takeoff] = {}
         self._current_conditions: Dict[str, Condition] = {}
         self._current_color_map: Dict[str, str] = {}
+        self._current_page_area_selections: Optional[Dict[str, Optional[str]]] = None
         self._current_annotations: Dict[str, BidAnnotation] = {}
         self._uid_to_items: Dict[str, List] = {}
         self._select_band_origin: Optional[QtCore.QPointF] = None
@@ -345,6 +347,7 @@ class TakeoffPlanView(
         self._snap_increments: float = 0.0
         self._dirty_positions: Dict[str, List[float]] = {}
         self._dirty_ann_positions: Dict[str, Tuple[str, List[float]]] = {}
+        self._refreshing_overlays: bool = False
         self._position_before_edit: Dict[str, List[float]] = {}
         self._ann_db_uid_map: Dict[str, str] = {}
         self._drag_plan_item_uid: Optional[str] = None
@@ -2358,6 +2361,108 @@ class TakeoffPlanView(
     def get_annotation(self, uid: str):
         return self._current_annotations.get(uid)
 
+    def restore_flushed_positions(
+        self, takeoff_changes: list, ann_changes: list
+    ) -> None:
+        changed = False
+        for uid, old_pos, _new_pos in takeoff_changes:
+            takeoff = self._current_takeoffs.get(uid)
+            if takeoff is None or not old_pos:
+                continue
+            takeoff.position = list(old_pos)
+            changed = True
+        for db_uid, ann_type, old_pos, _new_pos in ann_changes:
+            if not old_pos:
+                continue
+            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
+                ann = self._current_annotations.get(key)
+                if ann is None:
+                    continue
+                ann.position = list(old_pos)
+                changed = True
+        if changed:
+            self._rebuild_current_overlays_from_model()
+
+    def restore_flushed_rotations(self, rotation_changes: list) -> None:
+        changed = False
+        for uid, old_rotation, _new_rotation in rotation_changes:
+            takeoff = self._current_takeoffs.get(uid)
+            if takeoff is None or old_rotation is None:
+                continue
+            takeoff.rotation = old_rotation
+            changed = True
+        if changed:
+            self._rebuild_current_overlays_from_model()
+
+    def restore_condition_text_properties(self, changes: list) -> None:
+        changed = False
+        for takeoff_uid, _label_kind, old_props, _new_props in changes:
+            takeoff = self._current_takeoffs.get(takeoff_uid)
+            if takeoff is None or not old_props:
+                continue
+            self._apply_takeoff_text_style_values(takeoff, dict(old_props))
+            changed = True
+        if changed:
+            self._rebuild_current_overlays_from_model()
+
+    def restore_annotation_text_properties(self, changes: list) -> None:
+        changed = False
+        for db_uid, ann_type, old_props, _new_props in changes:
+            if not old_props:
+                continue
+            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
+                ann = self._current_annotations.get(key)
+                if ann is None:
+                    continue
+                ann.properties.update(dict(old_props))
+                if "FontColor" in old_props:
+                    ann.color = int_color_to_hex(int(old_props["FontColor"] or 0))
+                changed = True
+        if changed:
+            self._rebuild_current_overlays_from_model()
+
+    def restore_annotation_text_and_positions(
+        self, text_changes: list, ann_position_changes: list
+    ) -> None:
+        changed = False
+        for db_uid, ann_type, old_props, _new_props in text_changes:
+            if not old_props:
+                continue
+            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
+                ann = self._current_annotations.get(key)
+                if ann is None:
+                    continue
+                ann.properties.update(dict(old_props))
+                if "FontColor" in old_props:
+                    ann.color = int_color_to_hex(int(old_props["FontColor"] or 0))
+                changed = True
+        for db_uid, ann_type, old_pos, _new_pos in ann_position_changes:
+            if not old_pos:
+                continue
+            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
+                ann = self._current_annotations.get(key)
+                if ann is None:
+                    continue
+                ann.position = list(old_pos)
+                changed = True
+        if changed:
+            self._rebuild_current_overlays_from_model()
+
+    def _rebuild_current_overlays_from_model(self) -> None:
+        if self._current_page is None:
+            return
+        self._refresh_overlays(
+            self._current_page,
+            list(self._current_takeoffs.values()),
+            self._current_conditions,
+            self._current_color_map,
+            list(self._current_annotations.values()),
+            self._current_page_area_selections,
+            self._current_bid_ref,
+        )
+        self._update_scene_rect()
+        self.viewport().update()
+
     def find_annotation_keys_by_uid_type(self, uid_type_set: set) -> set:
         return {
             key
@@ -2811,6 +2916,8 @@ class TakeoffPlanView(
             self._snap_increments = takeoff_increments
 
     def _flush_dirty_positions(self) -> None:
+        if self._refreshing_overlays:
+            return
         if not self._dirty_positions and not self._dirty_ann_positions:
             return
         if self._dirty_positions:
@@ -3154,6 +3261,7 @@ class TakeoffPlanView(
         self._current_conditions = conditions
         self._cancel_backout_if_invalid()
         self._current_color_map = color_map
+        self._current_page_area_selections = page_area_selections
         self._current_page = page
         self._current_bid_page_uid = page.uid
         self._current_render_identity = next_render_identity
@@ -3320,7 +3428,60 @@ class TakeoffPlanView(
         page_area_selections: Optional[Dict[str, Optional[str]]],
         bid_ref: Optional[BidRef],
     ) -> None:
-        self._flush_dirty_positions()
+        self._refreshing_overlays = True
+        try:
+            self._refresh_overlays_impl_unflushed(
+                page,
+                self._takeoffs_with_dirty_positions(takeoffs),
+                conditions,
+                color_map,
+                self._annotations_with_dirty_positions(annotations),
+                page_area_selections,
+                bid_ref,
+            )
+        finally:
+            self._refreshing_overlays = False
+
+    def _takeoffs_with_dirty_positions(self, takeoffs: List[Takeoff]) -> List[Takeoff]:
+        if not self._dirty_positions:
+            return takeoffs
+        result: List[Takeoff] = []
+        for takeoff in takeoffs:
+            dirty = self._dirty_positions.get(takeoff.uid)
+            if dirty is None:
+                result.append(takeoff)
+                continue
+            result.append(replace(takeoff, position=list(dirty)))
+        return result
+
+    def _annotations_with_dirty_positions(
+        self, annotations: Optional[List[BidAnnotation]]
+    ) -> Optional[List[BidAnnotation]]:
+        if not annotations or not self._dirty_ann_positions:
+            return annotations
+        dirty_by_db_uid = {
+            self._ann_db_uid_map.get(key, key): (ann_type, list(position))
+            for key, (ann_type, position) in self._dirty_ann_positions.items()
+        }
+        result: List[BidAnnotation] = []
+        for annotation in annotations:
+            dirty = dirty_by_db_uid.get(annotation.uid)
+            if dirty is None or dirty[0] != annotation.annotation_type:
+                result.append(annotation)
+                continue
+            result.append(replace(annotation, position=list(dirty[1])))
+        return result
+
+    def _refresh_overlays_impl_unflushed(
+        self,
+        page: Page,
+        takeoffs: List[Takeoff],
+        conditions: Dict[str, Condition],
+        color_map: Dict[str, str],
+        annotations: Optional[List[BidAnnotation]],
+        page_area_selections: Optional[Dict[str, Optional[str]]],
+        bid_ref: Optional[BidRef],
+    ) -> None:
         saved_text_annotation_uid = self._selected_text_annotation_uid
         saved_dimension_label_uid = self._selected_dimension_text_label_target()
         saved_condition_label_target = self._selected_condition_text_label_target()
@@ -3360,6 +3521,7 @@ class TakeoffPlanView(
         self._current_conditions = conditions
         self._cancel_backout_if_invalid()
         self._current_color_map = color_map
+        self._current_page_area_selections = page_area_selections
         rotation = page.rotation
         page_info = self._scene_builder.build_page_info(
             page,
@@ -3486,6 +3648,7 @@ class TakeoffPlanView(
         self._invalidate_snap_index()
         self._current_conditions = {}
         self._current_color_map = {}
+        self._current_page_area_selections = None
         self._current_annotations = {}
         self._ann_db_uid_map = {}
         self.takeoff_selection_changed.emit([])

@@ -7,7 +7,9 @@ from ost_visualizer.application.services.active_bid_write_guard import (
 )
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
+    WriteReloadResult,
 )
+from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
@@ -180,6 +182,18 @@ class _UseCase:
         return self.result
 
 
+class _SequenceUseCase:
+    def __init__(self, results):
+        self.results = list(results)
+        self.calls = []
+
+    def execute(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        if self.results:
+            return self.results.pop(0)
+        return False
+
+
 class _ForbiddenUseCase:
     def execute(self, *args, **kwargs):
         raise AssertionError("locked bid guard did not block the write")
@@ -199,17 +213,24 @@ class _ConditionStructureWriteService:
     def __init__(self):
         self.deleted_folders = []
         self.condition_updates = []
+        self.condition_update_kwargs = []
+        self.reloads = []
 
     def delete_condition_folders(self, file_path, folder_uids):
         self.deleted_folders.append((file_path, list(folder_uids)))
         return True
 
-    def update_condition(self, file_path, bid_uid, condition_uid, dto):
+    def update_condition(self, file_path, bid_uid, condition_uid, dto, **kwargs):
         self.condition_updates.append((file_path, bid_uid, condition_uid, dto))
+        self.condition_update_kwargs.append(dict(kwargs))
         return SimpleNamespace(success=True)
 
+    def reload_and_notify(self, file_path):
+        self.reloads.append(file_path)
+        return True
 
-def _write_service(project_data):
+
+def _write_service(project_data, reload_success=True):
     logger = logging.getLogger(__name__ + ".write_service")
     logger.propagate = False
     if not logger.handlers:
@@ -267,7 +288,7 @@ def _write_service(project_data):
         swap_layer_sequence=forbidden,
         save_bid_selected_page=forbidden,
         save_page_view_state=forbidden,
-        reload_database=lambda _file_path: True,
+        reload_database=lambda _file_path: reload_success,
         event_bus=_EventBus(),
         logger=logger,
         bid_write_guard=ActiveBidWriteGuard(project_data, logger),
@@ -379,7 +400,6 @@ class BidLockPermissionTests(unittest.TestCase):
                 Feature.EDIT_CONDITION_STRUCTURE,
             ],
         )
-
         handler, access, write_service = self._condition_structure_handler(
             {Feature.EDIT_CONDITION_STRUCTURE}
         )
@@ -397,6 +417,37 @@ class BidLockPermissionTests(unittest.TestCase):
                 Feature.EDIT_CONDITION_STRUCTURE,
             ],
         )
+
+    def test_batch_condition_field_update_reloads_once_after_loop(self):
+        access = _FakeAccess({Feature.EDIT_CONDITION})
+        write_service = _ConditionStructureWriteService()
+        coordinator = SimpleNamespace(
+            ui_access_manager=access,
+            conditions_sidebar=None,
+            refresh_conditions_ui=lambda: None,
+            highlight_sidebar=lambda _uids: None,
+        )
+        ui_state = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
+        )
+        project_data = SimpleNamespace(get_bid_conditions=lambda: {})
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=write_service,
+            project_read_service=None,
+            project_data=project_data,
+            ui_state_manager=ui_state,
+        )
+        handler.on_condition_layer_change_requested(["cond-1", "cond-2"], "layer-1")
+        self.assertEqual(len(write_service.condition_updates), 2)
+        self.assertEqual(
+            [
+                call.get("reload_database")
+                for call in write_service.condition_update_kwargs
+            ],
+            [False, False],
+        )
+        self.assertEqual(write_service.reloads, ["db.mdb"])
 
     def test_text_annotation_edit_mode_blocks_conflicting_actions(self):
         project_data = _ProjectData()
@@ -567,6 +618,171 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         self.assertEqual(1, len(delete_bids.calls))
         self.assertEqual(1, len(duplicate_bid.calls))
+
+    def test_write_service_reports_failure_when_required_reload_fails(self):
+        project_data = _ProjectData()
+        service, update_bid_job_status, delete_bids, duplicate_bid = _write_service(
+            project_data, reload_success=False
+        )
+        self.assertFalse(
+            service.delete_bids(
+                project_data.bid_ref.file_path, [project_data.bid_ref.bid_uid]
+            )
+        )
+        self.assertIsNone(
+            service.duplicate_bid(
+                project_data.bid_ref.file_path, project_data.bid_ref.bid_uid
+            )
+        )
+        self.assertFalse(
+            service.update_bid_job_status(
+                project_data.bid_ref.file_path,
+                project_data.bid_ref.bid_uid,
+                "2",
+            )
+        )
+        self.assertEqual(1, len(delete_bids.calls))
+        self.assertEqual(1, len(duplicate_bid.calls))
+        self.assertEqual(1, len(update_bid_job_status.calls))
+
+    def test_create_project_result_distinguishes_refresh_failure_from_write_failure(
+        self,
+    ):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        create_project = _SequenceUseCase(["project-new", "project-legacy"])
+        service._create_project = create_project
+        service._reload_database = lambda _file_path: False
+        result = service.create_project_result(project_data.bid_ref.file_path, "New")
+        self.assertFalse(result)
+        self.assertTrue(result.write_success)
+        self.assertTrue(result.refresh_failed)
+        self.assertEqual(result.value, "project-new")
+        self.assertIsNone(
+            service.create_project(project_data.bid_ref.file_path, "Legacy")
+        )
+
+    def test_duplicate_bid_result_keeps_created_uid_when_refresh_fails(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data, reload_success=False)
+        result = service.duplicate_bid_result(
+            project_data.bid_ref.file_path, project_data.bid_ref.bid_uid
+        )
+        self.assertFalse(result)
+        self.assertTrue(result.write_success)
+        self.assertTrue(result.refresh_failed)
+        self.assertEqual(result.value, "new-bid")
+
+    def test_new_folder_warns_when_create_succeeds_but_refresh_fails(self):
+        warnings = []
+        criticals = []
+        renames = []
+        controller = MenuController.__new__(MenuController)
+        controller.window = SimpleNamespace(
+            project_view=SimpleNamespace(
+                schedule_rename=lambda uid: renames.append(uid)
+            )
+        )
+        controller.ui_access_manager = SimpleNamespace(
+            can_create_project_tree_items=lambda has_file: has_file
+        )
+        controller.ui_state_manager = SimpleNamespace(
+            selected_file_path="db.mdb",
+            selected_project_uid=None,
+        )
+        controller.project_data = SimpleNamespace()
+        controller._project_write_service = SimpleNamespace(
+            create_project_result=lambda _path, _name: WriteReloadResult(
+                "project-new", write_success=True, reload_success=False
+            )
+        )
+        from ost_visualizer.presentation.controllers import menu_controller
+
+        old_warning = menu_controller.show_warning
+        old_critical = menu_controller.show_critical
+        menu_controller.show_warning = lambda *_args: warnings.append(_args)
+        menu_controller.show_critical = lambda *_args: criticals.append(_args)
+        try:
+            MenuController._new_folder(controller)
+        finally:
+            menu_controller.show_warning = old_warning
+            menu_controller.show_critical = old_critical
+        self.assertEqual(len(warnings), 1)
+        self.assertIn(
+            "created, but the project tree could not be refreshed", warnings[0][2]
+        )
+        self.assertEqual(criticals, [])
+        self.assertEqual(renames, [])
+
+    def test_batch_layer_delete_reports_partial_success_and_reloads_once(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        delete_layer = _SequenceUseCase([True, False])
+        reload_calls = []
+        service._delete_layer = delete_layer
+        service._reload_database = (
+            lambda file_path: reload_calls.append(file_path) or True
+        )
+        result = service.delete_layers(
+            project_data.bid_ref.file_path, ["layer-1", "layer-2"]
+        )
+        self.assertFalse(result)
+        self.assertTrue(result.any_success)
+        self.assertTrue(result.partial_success)
+        self.assertEqual(result.succeeded_uids, ["layer-1"])
+        self.assertEqual(result.failed_uids, ["layer-2"])
+        self.assertEqual(len(delete_layer.calls), 2)
+        self.assertEqual(reload_calls, [project_data.bid_ref.file_path])
+
+    def test_save_bid_areas_requires_uid_map_for_new_area(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        service._save_bid_areas = _UseCase({})
+        changes = BidAreaChangeset(
+            new=[
+                BidArea(
+                    uid="new_0",
+                    bid_uid=project_data.bid_ref.bid_uid,
+                    parent_uid="",
+                    name="Area 2",
+                    sequence=0,
+                )
+            ],
+            updated=[],
+            deleted_uids=[],
+        )
+        self.assertIsNone(
+            service.save_bid_areas(
+                project_data.bid_ref.file_path,
+                project_data.bid_ref.bid_uid,
+                changes,
+            )
+        )
+
+    def test_save_bid_areas_reports_reload_failure_for_existing_changes(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data, reload_success=False)
+        service._save_bid_areas = _UseCase({})
+        changes = BidAreaChangeset(
+            new=[],
+            updated=[
+                BidArea(
+                    uid="area-1",
+                    bid_uid=project_data.bid_ref.bid_uid,
+                    parent_uid="",
+                    name="Area 1",
+                    sequence=0,
+                )
+            ],
+            deleted_uids=[],
+        )
+        self.assertIsNone(
+            service.save_bid_areas(
+                project_data.bid_ref.file_path,
+                project_data.bid_ref.bid_uid,
+                changes,
+            )
+        )
 
 
 if __name__ == "__main__":

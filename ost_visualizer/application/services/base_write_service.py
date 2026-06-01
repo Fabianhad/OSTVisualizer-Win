@@ -14,9 +14,11 @@ class BaseWriteService:
         self._event_bus = event_bus
         self.logger = logger or logging.getLogger(__name__)
 
-    def reload_and_notify(self, file_path: str) -> None:
-        if self.reload_database(file_path):
-            self.notify_database_refreshed(file_path)
+    def reload_and_notify(self, file_path: str) -> bool:
+        if not self.reload_database(file_path):
+            return False
+        self.notify_database_refreshed(file_path)
+        return True
 
     def reload_database(self, file_path: str) -> bool:
         try:

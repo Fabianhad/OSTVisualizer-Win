@@ -174,6 +174,32 @@ class FakeDetachedWindow:
             self.installed_filters.remove(event_filter)
 
 
+class FakeDetachedPlanView:
+    def __init__(self, annotations=None):
+        self.annotations = {ann.uid: ann for ann in annotations or []}
+        self.restored_positions = []
+        self.restored_text_properties = []
+        self.restored_text_and_positions = []
+        self.selected_uids = set()
+
+    def restore_flushed_positions(self, takeoff_changes, ann_changes):
+        self.restored_positions.append((list(takeoff_changes), list(ann_changes)))
+
+    def restore_annotation_text_properties(self, changes):
+        self.restored_text_properties.append(list(changes))
+
+    def restore_annotation_text_and_positions(self, text_changes, ann_position_changes):
+        self.restored_text_and_positions.append(
+            (list(text_changes), list(ann_position_changes))
+        )
+
+    def get_annotation(self, uid):
+        return self.annotations.get(uid)
+
+    def set_selected_uids(self, uids):
+        self.selected_uids = set(uids)
+
+
 class TrackableSignal:
     def __init__(self):
         self.connected = []
@@ -237,6 +263,47 @@ class FakeCombo:
 
     def setCurrentIndex(self, index):
         self.current_index = index
+
+
+class FakeButton:
+    def __init__(self):
+        self.enabled = None
+
+    def setEnabled(self, enabled):
+        self.enabled = bool(enabled)
+
+
+class FakePageCombo:
+    def __init__(self):
+        self.loaded_bid = None
+        self.cleared = False
+        self.selected_uid = None
+        self.pages_with_takeoffs = None
+        self.label_options = None
+        self.order = []
+
+    def set_label_options(self, show_page_index, show_sheet_number):
+        self.label_options = (bool(show_page_index), bool(show_sheet_number))
+
+    def load_bid(self, bid, pages_with_takeoffs=None):
+        self.loaded_bid = bid
+        self.cleared = False
+        self.pages_with_takeoffs = set(pages_with_takeoffs or ())
+        self.order = [page.uid for page in bid.pages_without_folder]
+
+    def clear(self):
+        self.cleared = True
+        self.loaded_bid = None
+        self.order = []
+
+    def get_page_order(self):
+        return list(self.order)
+
+    def set_current_page_uid(self, uid):
+        self.selected_uid = uid
+
+    def set_pages_with_takeoffs(self, page_uids):
+        self.pages_with_takeoffs = set(page_uids or ())
 
 
 class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
@@ -463,6 +530,91 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._on_named_view_renamed("nv1", "Updated View")
         self.assertEqual(calls, [(("nv1", "Updated View"),)])
 
+    def test_refresh_window_updates_navigation_before_page_content(self):
+        calls = []
+        view = SimpleNamespace(uid="view-1", bid_ref=BidRef("file.mdb", "bid-1"))
+        page_data = SimpleNamespace(page=Page(uid="p1", name="Page 1"))
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            set_read_only=lambda read_only: calls.append(("read_only", read_only)),
+            update_page=lambda data: calls.append(("page", data.page.uid)),
+        )
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._get_page_data = lambda active_view: page_data
+        manager._update_window_navigation = lambda active_view: calls.append(
+            ("navigation", active_view.uid)
+        )
+        manager._is_read_only = lambda: False
+        manager._refresh_window()
+        self.assertEqual(
+            calls,
+            [("navigation", "view-1"), ("read_only", False), ("page", "p1")],
+        )
+
+    def test_failed_detached_scale_save_refreshes_window_state(self):
+        calls = []
+        view = SimpleNamespace(file_path="file.mdb")
+        write_service = SimpleNamespace(
+            save_page_scale=lambda db_path, page_uid, sf1, sf2: calls.append(
+                ("save", db_path, page_uid, sf1, sf2)
+            )
+            or False
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._write_service = write_service
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager.project_data = SimpleNamespace(get_current_bid_file_path=lambda: None)
+        manager._refresh_window = lambda: calls.append("refresh")
+        manager.logger = SimpleNamespace(exception=lambda *args, **kwargs: None)
+        manager._on_window_scale_changed("page-1", 0.25, 12.0)
+        self.assertEqual(calls, [("save", "file.mdb", "page-1", 0.25, 12.0), "refresh"])
+
+    def test_open_existing_detached_view_rebuilds_navigation_before_load(self):
+        calls = []
+        existing_view = SimpleNamespace(
+            uid="view-1",
+            bid_uid="old-bid",
+            file_path="old.mdb",
+            bid_ref=BidRef("old.mdb", "old-bid"),
+            target_page_uid="old-page",
+            update_view_target=lambda page_uid, named_view_uid=None: calls.append(
+                ("target", page_uid, named_view_uid)
+            ),
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            load_view=lambda view, data, navigation_source="unknown": calls.append(
+                ("load", view.bid_uid, view.file_path, data, navigation_source)
+            )
+        )
+        manager.repository = SimpleNamespace(
+            get_active_view=lambda: existing_view,
+            update_view=lambda view: calls.append(
+                ("repo", view.bid_uid, view.file_path)
+            ),
+        )
+        manager._update_window_navigation = lambda view: calls.append(
+            ("navigation", view.bid_uid, view.file_path)
+        )
+        manager._get_page_data = lambda view: "page-data"
+        manager.bring_to_front = lambda: calls.append("front")
+        manager._notify_visibility_changed = lambda: calls.append("notify")
+        result = manager.open_view(
+            BidRef("new.mdb", "new-bid"), "new-page", "named-view"
+        )
+        self.assertEqual(result, "view-1")
+        self.assertEqual(
+            calls,
+            [
+                ("target", "new-page", "named-view"),
+                ("repo", "new-bid", "new.mdb"),
+                ("navigation", "new-bid", "new.mdb"),
+                ("load", "new-bid", "new.mdb", "page-data", "hotlink"),
+                "front",
+                "notify",
+            ],
+        )
+
     def test_detached_window_named_view_combo_uses_renamed_text(self):
         from ost_visualizer.presentation.windows.components.window import (
             DetachedPageViewWindow,
@@ -493,6 +645,128 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(annotation.properties["Text"], "Updated View")
         self.assertEqual(plan_view_calls, [("nv1", "Updated View")])
+
+    def test_detached_annotation_position_save_failure_restores_plan_view(self):
+        from ost_visualizer.presentation.windows.components.window import (
+            DetachedPageViewWindow,
+        )
+
+        plan_view = FakeDetachedPlanView()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = SimpleNamespace(
+            save_annotation_positions=lambda *_args: False
+        )
+        window._file_path = "bid.mdb"
+        window.plan_view = plan_view
+        changes = [("a1", "text", [1.0, 1.0], [2.0, 2.0])]
+        window._on_positions_flushed([], changes)
+        self.assertEqual(plan_view.restored_positions, [([], changes)])
+
+    def test_detached_annotation_text_save_failure_restores_plan_view(self):
+        from ost_visualizer.presentation.windows.components.window import (
+            DetachedPageViewWindow,
+        )
+
+        plan_view = FakeDetachedPlanView()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = SimpleNamespace(
+            save_annotation_text_properties=lambda *_args: False
+        )
+        window._file_path = "bid.mdb"
+        window.plan_view = plan_view
+        changes = [("a1", "text", {"Text": "Old"}, {"Text": "New"})]
+        window._on_annotation_text_properties_flushed(changes)
+        self.assertEqual(plan_view.restored_text_properties, [changes])
+
+    def test_detached_annotation_text_and_position_save_failure_restores_plan_view(
+        self,
+    ):
+        from ost_visualizer.presentation.windows.components.window import (
+            DetachedPageViewWindow,
+        )
+
+        plan_view = FakeDetachedPlanView()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = SimpleNamespace(
+            save_annotation_text_properties_and_positions=lambda *_args: False
+        )
+        window._file_path = "bid.mdb"
+        window.plan_view = plan_view
+        text_changes = [("a1", "text", {"Text": "Old"}, {"Text": "New"})]
+        position_changes = [("a1", "text", [1.0, 1.0], [2.0, 2.0])]
+        window._on_annotation_text_and_positions_flushed(text_changes, position_changes)
+        self.assertEqual(
+            plan_view.restored_text_and_positions,
+            [(text_changes, position_changes)],
+        )
+
+    def test_detached_annotation_delete_failure_restores_selection(self):
+        from ost_visualizer.presentation.windows.components.window import (
+            DetachedPageViewWindow,
+        )
+
+        annotation = BidAnnotation(uid="a1", annotation_type="text", page_uid="p1")
+        plan_view = FakeDetachedPlanView([annotation])
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = SimpleNamespace(delete_annotations=lambda *_args: False)
+        window._file_path = "bid.mdb"
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._on_elements_deleted(["a1"])
+        self.assertEqual(plan_view.selected_uids, {"a1"})
+
+    def test_detached_window_navigation_refresh_rebuilds_page_and_view_models(self):
+        from ost_visualizer.presentation.windows.components.window import (
+            DetachedPageViewWindow,
+        )
+
+        bid = SimpleNamespace(
+            pages_without_folder=[
+                Page(uid="p1", name="Page 1"),
+                Page(uid="p2", name="Page 2"),
+            ]
+        )
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._is_closing = False
+        window._pages_with_takeoffs = set()
+        window._named_views = [("stale", "old", "Old Page", "Old View")]
+        window._show_page_index = True
+        window._show_sheet_number = False
+        window._page_combo = FakePageCombo()
+        window._named_view_combo = FakeCombo()
+        window._btn_prev = FakeButton()
+        window._btn_next = FakeButton()
+        window.view = SimpleNamespace(target_page_uid="p2")
+        window.update_navigation(
+            bid,
+            named_views=[
+                ("nv1", "p1", "Page 1", "View 1"),
+                ("nv2", "p2", "Page 2", "View 2"),
+                ("orphan", "missing", "Missing", "Missing View"),
+            ],
+            pages_with_takeoffs={"p1"},
+        )
+        self.assertIs(window._page_combo.loaded_bid, bid)
+        self.assertEqual(window._page_combo.selected_uid, "p2")
+        self.assertEqual(window._page_combo.pages_with_takeoffs, {"p1"})
+        self.assertEqual(
+            window._named_view_combo.items,
+            [("View 1", ("p1", "nv1")), ("View 2", ("p2", "nv2"))],
+        )
+        self.assertTrue(window._btn_prev.enabled)
+        self.assertFalse(window._btn_next.enabled)
 
 
 class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):

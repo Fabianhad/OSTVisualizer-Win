@@ -11,7 +11,7 @@ from ..dialogs.cover_sheet.dialog import CoverSheetDialog
 from ..dialogs.options.dialog import OptionsDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.image_show_mode import mode_to_flags
-from ..utils.messagebox import DB_LOCKED_HINT, show_critical
+from ..utils.messagebox import DB_LOCKED_HINT, show_critical, show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.windows import remove_minimize_maximize
 
@@ -709,10 +709,18 @@ class MenuController:
             if result != QtWidgets.QDialog.DialogCode.Accepted:
                 return
             updates = dialog.get_updates()
-            bid_uid = self._project_write_service.create_bid(
+            create_result = self._project_write_service.create_bid_result(
                 file_path, target_project_uid, updates
             )
-            if not bid_uid:
+            if create_result.refresh_failed:
+                show_warning(
+                    self.window,
+                    "Refresh Error",
+                    "The bid was created, but the project tree could not be refreshed. "
+                    "Reopen the database to see the created bid.",
+                )
+                return
+            if not create_result:
                 show_critical(
                     self.window,
                     "New Project",
@@ -744,14 +752,25 @@ class MenuController:
             file_path is not None
         ):
             return
-        new_uid = self._project_write_service.create_project(file_path, "New Project")
-        if not new_uid:
+        create_result = self._project_write_service.create_project_result(
+            file_path, "New Project"
+        )
+        if create_result.refresh_failed:
+            show_warning(
+                self.window,
+                "Refresh Error",
+                "The project was created, but the project tree could not be refreshed. "
+                "Reopen the database to see the created project.",
+            )
+            return
+        if not create_result:
             show_critical(
                 self.window,
                 "New Project",
                 f"Failed to create project. {DB_LOCKED_HINT}",
             )
             return
+        new_uid = str(create_result.value)
         self.window.project_view.schedule_rename(new_uid)
 
     def _new_database(self) -> None:

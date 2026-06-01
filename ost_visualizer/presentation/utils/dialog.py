@@ -11,6 +11,14 @@ class ItemRecord(TypedDict):
     is_new: bool
 
 
+def save_result_succeeded(result) -> bool:
+    return result is not None and result is not False
+
+
+def save_result_mapping(result) -> Dict[str, Any]:
+    return result if isinstance(result, dict) else {}
+
+
 class BaseListDialog(QtWidgets.QDialog):
     _UID_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
@@ -32,18 +40,18 @@ class BaseListDialog(QtWidgets.QDialog):
         set_initial_window_size(self, width, height)
         self.icon_provider.set_window_icon(self)
 
-    def _save_pending(self) -> None:
-        pass
+    def _save_pending(self) -> bool:
+        return True
 
     def done(self, result: int) -> None:
         if result == QtWidgets.QDialog.DialogCode.Accepted:
-            self._save_pending()
+            if self._save_pending() is False:
+                return
         super().done(result)
 
     def closeEvent(self, event) -> None:
         self.setFocus()
-        self._save_pending()
-        event.accept()
+        super().closeEvent(event)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -232,17 +240,24 @@ class BasePickerDialog(BaseListDialog):
         if to_delete is None:
             return
         to_delete_uids = {uid for _, uid in to_delete}
-        real_deleted = []
+        real_deleted = [
+            uid
+            for item in selected
+            if (uid := item.data(self._uid_col, self._UID_ROLE)) in to_delete_uids
+            and not str(uid).startswith("new_")
+        ]
+        if real_deleted and self._save_fn:
+            result = self._save_fn(
+                {"new": [], "updated": [], "deleted_uids": real_deleted}
+            )
+            if not save_result_succeeded(result):
+                return
         for item in selected:
             uid = item.data(self._uid_col, self._UID_ROLE)
             if uid not in to_delete_uids:
                 continue
-            if not str(uid).startswith("new_"):
-                real_deleted.append(uid)
             self._items = [r for r in self._items if r["uid"] != uid]
             self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(item))
-        if real_deleted and self._save_fn:
-            self._save_fn({"new": [], "updated": [], "deleted_uids": real_deleted})
         self._update_button_states()
 
     def _on_item_double_clicked(
@@ -282,22 +297,22 @@ class BasePickerDialog(BaseListDialog):
     def _set_extra_interactive(self, enabled: bool) -> None:
         pass
 
-    def _save_pending(self) -> None:
+    def _save_pending(self) -> bool:
         if not self._save_fn or self._save_done:
-            return
+            return True
         self._pre_save()
         self._items = [r for r in self._items if not r["is_new"] or r["name"].strip()]
         new_items = [r for r in self._items if r["is_new"]]
         updated = [r for r in self._items if not r["is_new"]]
         if new_items or updated:
-            result = (
-                self._save_fn(
-                    {"new": new_items, "updated": updated, "deleted_uids": []}
-                )
-                or {}
+            result = self._save_fn(
+                {"new": new_items, "updated": updated, "deleted_uids": []}
             )
-            self._post_save(result)
+            if not save_result_succeeded(result):
+                return False
+            self._post_save(save_result_mapping(result))
         self._save_done = True
+        return True
 
     def _pre_save(self) -> None:
         pass
@@ -313,5 +328,4 @@ class BasePickerDialog(BaseListDialog):
 
     def closeEvent(self, event) -> None:
         self.setFocus()
-        self._save_pending()
-        event.accept()
+        super().closeEvent(event)

@@ -58,6 +58,7 @@ class FileOperationHandler:
                 if entry.is_checked
             }
             files_to_unload = old_checked_files - new_checked_entries.keys()
+            final_entries = list(file_entries)
             for norm_path in files_to_unload:
                 raw = next(
                     (
@@ -67,20 +68,36 @@ class FileOperationHandler:
                     ),
                     norm_path,
                 )
-                self._unload_file_fn(raw)
-            self._file_state_model.update_entries(file_entries)
+                if not self._unload_file_fn(raw):
+                    for entry in final_entries:
+                        if entry.normalized_path == norm_path:
+                            entry.is_checked = True
+                            break
+                    show_warning(
+                        self.window,
+                        "Unload File",
+                        f"Failed to unload {raw}.",
+                    )
             norms_to_load = new_checked_entries.keys() - old_checked_files
             if norms_to_load:
-                self._load_specific_files(
+                loaded_norms = self._load_specific_files(
                     [new_checked_entries[n] for n in norms_to_load]
                 )
+                for norm_path in norms_to_load - loaded_norms:
+                    for entry in final_entries:
+                        if entry.normalized_path == norm_path:
+                            entry.is_checked = False
+                            break
+            self._file_state_model.update_entries(final_entries)
 
-    def _load_specific_files(self, file_paths) -> None:
+    def _load_specific_files(self, file_paths) -> set:
+        loaded_norms = set()
         if not file_paths:
-            return
+            return loaded_norms
         for file_path in file_paths:
             result = self._file_loading_service.load_file(file_path)
             if result.success:
+                loaded_norms.add(normalize_path(result.file_path or file_path))
                 self.event_bus.publish(
                     AppEvents.FILE_OPENED,
                     file_path=result.file_path,
@@ -91,6 +108,7 @@ class FileOperationHandler:
                     "Error Loading File",
                     f"Failed to load {file_path}:\n{result.error_message}",
                 )
+        return loaded_norms
 
     def unload_file(self) -> None:
         file_path = None

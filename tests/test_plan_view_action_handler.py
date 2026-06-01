@@ -33,6 +33,11 @@ class FakePlanView:
         self.intelligent_paste_calls = []
         self.annotation_key_map = {}
         self.annotations = {}
+        self.restored_positions = []
+        self.restored_rotations = []
+        self.restored_condition_text_properties = []
+        self.restored_text_properties = []
+        self.restored_text_and_positions = []
 
     def set_selected_uids(self, uids):
         self.selected = set(uids)
@@ -56,6 +61,23 @@ class FakePlanView:
             if (uid, ann_type) in self.annotation_key_map
         }
 
+    def restore_flushed_positions(self, takeoff_changes, ann_changes):
+        self.restored_positions.append((list(takeoff_changes), list(ann_changes)))
+
+    def restore_flushed_rotations(self, rotation_changes):
+        self.restored_rotations.append(list(rotation_changes))
+
+    def restore_condition_text_properties(self, changes):
+        self.restored_condition_text_properties.append(list(changes))
+
+    def restore_annotation_text_properties(self, changes):
+        self.restored_text_properties.append(list(changes))
+
+    def restore_annotation_text_and_positions(self, text_changes, ann_position_changes):
+        self.restored_text_and_positions.append(
+            (list(text_changes), list(ann_position_changes))
+        )
+
     def cancel_place_mode(self):
         self.cancel_place_mode_calls += 1
 
@@ -68,6 +90,9 @@ class FakePlanView:
     def mark_intelligent_paste_drag_pending(self, pasted_uids, source_anchor_ost):
         self.intelligent_paste_calls.append((list(pasted_uids), source_anchor_ost))
         return True
+
+    def get_coordinate_system(self):
+        return SimpleNamespace(parse_position=lambda position: list(position))
 
 
 class FakeUiState:
@@ -184,6 +209,8 @@ class FakeWriteService:
         self.rotation_calls = []
         self.text_property_calls = []
         self.delete_calls = []
+        self.curve_calls = []
+        self.reloads = []
         self.next_uids = ["100"]
         self.uid_batches = []
         self._next_uid_index = 0
@@ -220,8 +247,26 @@ class FakeWriteService:
         self.delete_calls.append((db_path, list(uids), reload_database))
         return True
 
+    def set_takeoff_curve(
+        self, db_path, takeoff_uid, position, curve, reload_database=True
+    ):
+        self.curve_calls.append(
+            (db_path, takeoff_uid, list(position), curve, reload_database)
+        )
+        return True
+
+    def reload_and_notify(self, db_path):
+        self.reloads.append(db_path)
+        return True
+
     def update_condition(
-        self, db_path, bid_uid, condition_uid, updates, all_conditions=None
+        self,
+        db_path,
+        bid_uid,
+        condition_uid,
+        updates,
+        all_conditions=None,
+        reload_database=True,
     ):
         self.update_condition_calls.append(
             (
@@ -230,6 +275,7 @@ class FakeWriteService:
                 condition_uid,
                 updates.get_changes(),
                 all_conditions,
+                reload_database,
             )
         )
         return SimpleNamespace(success=True)
@@ -368,6 +414,38 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             color=color,
             width=1.0,
         )
+
+    def test_set_curved_batches_reload_until_after_all_curve_updates(self):
+        data = FakeProjectData()
+        data.takeoffs = {
+            "t1": Takeoff(
+                uid="t1",
+                condition_uid="42",
+                page_uid="p1",
+                position=[0.0, 0.0, 10.0, 0.0],
+            ),
+            "t2": Takeoff(
+                uid="t2",
+                condition_uid="42",
+                page_uid="p1",
+                position=[0.0, 10.0, 10.0, 10.0],
+            ),
+        }
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+        )
+        handler.on_set_curved(["t1", "t2"], True)
+        self.assertEqual(len(write.curve_calls), 2)
+        self.assertEqual([call[4] for call in write.curve_calls], [False, False])
+        self.assertEqual(write.reloads, ["bid.mdb"])
 
     def test_denied_plan_item_selection_access_blocks_plan_view_write_signals(self):
         data = FakeProjectData()
@@ -516,6 +594,32 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.takeoffs["t1"].name_font_size, 24)
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
 
+    def test_failed_condition_label_text_property_save_restores_plan_view(self):
+        plan_view = FakePlanView()
+        write = FakeWriteService()
+        write.save_takeoff_text_properties = lambda *args, **kwargs: False
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.EDIT_CONDITION}),
+        )
+        changes = [
+            (
+                "t1",
+                "display_name",
+                {"name_font_size": 9},
+                {"name_font_size": 24},
+            )
+        ]
+        handler.on_condition_text_properties_flushed(changes)
+        self.assertEqual(plan_view.restored_condition_text_properties, [changes])
+
     def test_new_takeoff_uses_fast_refresh_and_updates_model(self):
         plan_view = FakePlanView()
         data = FakeProjectData()
@@ -593,6 +697,32 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_reassign_condition(["t1"], "missing-condition")
         self.assertEqual(write.condition_calls, [("bid.mdb", ["t1"], "42")])
 
+    def test_set_curved_batches_reload_after_all_curve_writes(self):
+        data = FakeProjectData()
+        for index in range(3):
+            uid = f"t{index + 1}"
+            data.takeoffs[uid] = Takeoff(
+                uid=uid,
+                condition_uid="42",
+                page_uid="p1",
+                position=[0.0, 0.0, 10.0, 0.0],
+            )
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+        )
+        handler.on_set_curved(["t1", "t2", "t3"], True)
+        self.assertEqual(len(write.curve_calls), 3)
+        self.assertTrue(all(call[4] is False for call in write.curve_calls))
+        self.assertEqual(write.reloads, ["bid.mdb"])
+
     def test_pure_takeoff_position_edit_uses_takeoffs_changed(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -649,6 +779,15 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
+    def test_failed_takeoff_position_save_restores_plan_view(self):
+        plan_view = FakePlanView()
+        write = FakeWriteService()
+        write.save_takeoff_positions = lambda *args, **kwargs: False
+        handler = self._paste_handler(plan_view=plan_view, write=write)
+        changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
+        handler.on_positions_flushed(changes, [])
+        self.assertEqual(plan_view.restored_positions, [(changes, [])])
+
     def test_mixed_takeoff_annotation_position_keeps_reload_path(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -674,6 +813,19 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.position_calls[0][2], True)
         self.assertEqual(ann_write.position_calls[0][0], "bid.mdb")
         self.assertEqual(event_bus.events, [])
+
+    def test_failed_annotation_position_save_restores_only_annotations(self):
+        plan_view = FakePlanView()
+        write = FakeWriteService()
+        ann_write = FakeAnnotationWriteService()
+        ann_write.save_annotation_positions = lambda *args, **kwargs: False
+        handler = self._paste_handler(
+            plan_view=plan_view, write=write, ann_write=ann_write
+        )
+        takeoff_changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
+        ann_changes = [("a1", "annotation", [1.0, 1.0], [2.0, 2.0])]
+        handler.on_positions_flushed(takeoff_changes, ann_changes)
+        self.assertEqual(plan_view.restored_positions, [([], ann_changes)])
 
     def test_annotation_text_property_changes_use_annotation_write_service(self):
         data = FakeProjectData()
@@ -712,6 +864,22 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 ("bid.mdb", [("a1", "text", {"Text": "New", "FontBold": True})]),
             ],
         )
+
+    def test_failed_annotation_text_property_save_restores_plan_view(self):
+        plan_view = FakePlanView()
+        ann_write = FakeAnnotationWriteService()
+        ann_write.save_annotation_text_properties = lambda *args, **kwargs: False
+        handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
+        changes = [
+            (
+                "a1",
+                "text",
+                {"Text": "Old", "FontBold": False},
+                {"Text": "New", "FontBold": True},
+            )
+        ]
+        handler.on_annotation_text_properties_flushed(changes)
+        self.assertEqual(plan_view.restored_text_properties, [changes])
 
     def test_named_view_rename_publishes_combo_refresh_event(self):
         data = FakeProjectData()
@@ -792,6 +960,30 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ],
         )
 
+    def test_failed_annotation_text_and_box_save_restores_plan_view(self):
+        plan_view = FakePlanView()
+        ann_write = FakeAnnotationWriteService()
+        ann_write.save_annotation_text_properties_and_positions = (
+            lambda *args, **kwargs: False
+        )
+        handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
+        text_changes = [
+            (
+                "a1",
+                "text",
+                {"FontSize": 12, "FontColor": 0},
+                {"FontSize": 24, "FontColor": 0x332211},
+            )
+        ]
+        position_changes = [
+            ("a1", "text", [100.0, 100.0, 40.0, 15.0], [100.0, 100.0, 80.0, 30.0])
+        ]
+        handler.on_annotation_text_and_positions_flushed(text_changes, position_changes)
+        self.assertEqual(
+            plan_view.restored_text_and_positions,
+            [(text_changes, position_changes)],
+        )
+
     def test_pure_takeoff_rotation_uses_takeoffs_changed(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -814,6 +1006,15 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.takeoffs["t1"].rotation, 90.0)
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
         self.assertEqual(event_bus.events[0][1]["page_uid"], "p1")
+
+    def test_failed_takeoff_rotation_save_restores_plan_view(self):
+        plan_view = FakePlanView()
+        write = FakeWriteService()
+        write.save_takeoff_rotations = lambda *args, **kwargs: False
+        handler = self._paste_handler(plan_view=plan_view, write=write)
+        changes = [("t1", 0.0, 90.0)]
+        handler.on_rotations_flushed(changes)
+        self.assertEqual(plan_view.restored_rotations, [changes])
 
     def test_group_rotation_updates_positions_and_rotations_targeted(self):
         data = FakeProjectData()
@@ -848,6 +1049,38 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(len(event_bus.events), 1)
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
 
+    def test_group_rotation_failure_keeps_persisted_position_change(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+            rotation=0.0,
+        )
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.save_takeoff_rotations = lambda *args, **kwargs: False
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+        )
+        position_changes = [("t1", [0.0, 0.0], [3.0, 4.0])]
+        rotation_changes = [("t1", 0.0, 45.0)]
+        handler.on_group_rotation_flushed(position_changes, [], rotation_changes)
+        self.assertEqual(plan_view.restored_positions, [])
+        self.assertEqual(plan_view.restored_rotations, [rotation_changes])
+        self.assertEqual(data.takeoffs["t1"].position, [3.0, 4.0])
+        self.assertEqual(data.takeoffs["t1"].rotation, 0.0)
+        self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
+
     def test_simple_takeoff_delete_uses_targeted_path(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -869,6 +1102,32 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.delete_calls[0][2], False)
         self.assertNotIn("t1", data.takeoffs)
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
+
+    def test_failed_simple_takeoff_delete_reselects_original_uids(self):
+        class FailingDeleteWriteService(FakeWriteService):
+            def delete_takeoffs(self, db_path, uids, reload_database=True):
+                super().delete_takeoffs(db_path, uids, reload_database)
+                return False
+
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        write = FailingDeleteWriteService()
+        plan_view = FakePlanView(data)
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+        )
+        handler.on_elements_deleted(["t1"])
+        self.assertEqual(plan_view.selected, {"t1"})
+        self.assertEqual(write.delete_calls, [("bid.mdb", ["t1"], False)])
 
     def test_takeoff_delete_undo_redo_uses_targeted_path(self):
         data = FakeProjectData()
@@ -1097,7 +1356,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [(["100", "ann-1"], (10.0, 20.0))],
         )
 
-    def test_intelligent_paste_disabled_pastes_mixed_clipboard_with_standard_offset(self):
+    def test_intelligent_paste_disabled_pastes_mixed_clipboard_with_standard_offset(
+        self,
+    ):
         takeoff = self._copied_takeoff()
         annotation = self._copied_annotation(position=[20.0, 30.0, 24.0, 30.0])
         plan_view = FakePlanView()

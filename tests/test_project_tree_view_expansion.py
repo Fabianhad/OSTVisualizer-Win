@@ -98,6 +98,26 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         source_project = self._find_item("project-1")
         self.assertTrue(source_project.isExpanded())
 
+    def test_multi_select_bids_does_not_switch_active_bid(self):
+        bid_selections = []
+        multi_selections = []
+        self.view.on_bid_selection = lambda bid_ref: bid_selections.append(bid_ref)
+        self.view.on_multi_selection = lambda bids, projects: multi_selections.append(
+            (list(bids), list(projects))
+        )
+        self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
+        bid_1 = self._find_item("bid-1")
+        bid_2 = self._find_item("bid-2")
+        self.view.top_tree.setCurrentItem(bid_1)
+        bid_1.setSelected(True)
+        self.assertEqual([ref.bid_uid for ref in bid_selections], ["bid-1"])
+        bid_2.setSelected(True)
+        self.assertEqual([ref.bid_uid for ref in bid_selections], ["bid-1"])
+        self.assertEqual(
+            sorted(ref.bid_uid for ref in multi_selections[-1][0]),
+            ["bid-1", "bid-2"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

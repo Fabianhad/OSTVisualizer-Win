@@ -116,7 +116,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
     condition_layer_change_requested = Signal(list, str)
     condition_type_change_requested = Signal(list, str)
     group_by_type_changed = Signal(bool)
-    _deferred_highlight = Signal(object)
 
     def __init__(self, parent: QtWidgets.QWidget, uom_label_fn=None):
         super().__init__(parent)
@@ -151,10 +150,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._folder_editor_connected: bool = False
         self._build_ui()
         self._connect_signals()
-        self._deferred_highlight.connect(
-            self.highlight_conditions,
-            QtCore.Qt.ConnectionType.QueuedConnection,
-        )
 
     def _build_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
@@ -350,6 +345,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self.tree.clear()
         self._condition_items.clear()
         self._folder_items.clear()
+        self._selected_condition_uids = []
+        self._selected_folder_uids = []
         root = _SortableItem([f"Conditions - {self._project_name}"])
         root.setData(_COL_NO, _ITEM_ROLE, (_TYPE_ROOT, ""))
         root.setFlags(
@@ -398,6 +395,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._pending_folder_edit_uid = None
         if pending and pending in self._folder_items:
             self.start_folder_edit(pending)
+        self._sync_button_states()
 
     def set_available_layers(self, layers: List[BidLayer]) -> None:
         self._available_layers = list(layers or [])
@@ -611,9 +609,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self.tree.setUpdatesEnabled(True)
             self._block_item_changed = False
             self._restore_scroll(saved)
-
-    def request_highlight(self, condition_uids: Set[str]) -> None:
-        self._deferred_highlight.emit(condition_uids)
 
     def highlight_conditions(self, condition_uids: Set[str]) -> None:
         self._block_selection_signal = True
@@ -916,9 +911,12 @@ class ConditionsSidebar(QtWidgets.QWidget):
     def _can_paste_context_target(
         self, kind: Optional[str], item: Optional[QtWidgets.QTreeWidgetItem]
     ) -> bool:
-        return kind in (_TYPE_CONDITION, _TYPE_CDN_TYPE) and self._can_paste_to_item(
-            item
-        )
+        return kind in (
+            _TYPE_ROOT,
+            _TYPE_FOLDER,
+            _TYPE_CONDITION,
+            _TYPE_CDN_TYPE,
+        ) and self._can_paste_to_item(item)
 
     def _rename_context_target(self, item: QtWidgets.QTreeWidgetItem) -> None:
         kind, uid = self._item_kind_uid(item)
@@ -1278,7 +1276,12 @@ class ConditionsSidebar(QtWidgets.QWidget):
     ) -> None:
         if self._text_editor_has_focus():
             return
-        if not self._copied_condition_uids or not self._duplicate_allowed:
+        can_write = (
+            self._edit_allowed
+            if self._condition_clipboard_cut
+            else self._duplicate_allowed
+        )
+        if not self._copied_condition_uids or not can_write:
             return
         if item is None:
             item = self.tree.currentItem()

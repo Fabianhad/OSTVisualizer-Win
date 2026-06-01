@@ -146,6 +146,23 @@ class DetachedPageViewManager(IShutdownAware):
         if self._window is not None:
             self._window.update_named_view_name(named_view_uid, name)
 
+    def _get_bid_for_view(self, view: AnnotationView):
+        bid_ref = view.bid_ref if view else None
+        if not bid_ref:
+            return None
+        return self.project_data.get_bid(bid_ref)
+
+    def _update_window_navigation(self, view: AnnotationView) -> None:
+        if self._window is None:
+            return
+        bid = self._get_bid_for_view(view)
+        named_views = self._collect_named_views(bid) if bid else []
+        self._window.update_navigation(
+            bid,
+            named_views=named_views,
+            pages_with_takeoffs=self._collect_pages_with_takeoffs(view.bid_ref),
+        )
+
     def set_ui_access_manager(self, manager) -> None:
         self._ui_access_manager = manager
 
@@ -168,8 +185,7 @@ class DetachedPageViewManager(IShutdownAware):
         if not view:
             return
         page_data = self._get_page_data(view)
-        if not page_data.page:
-            return
+        self._update_window_navigation(view)
         self._window.set_read_only(self._is_read_only())
         self._window.update_page(page_data)
 
@@ -194,6 +210,7 @@ class DetachedPageViewManager(IShutdownAware):
                     page_uid=target_page_uid, named_view_uid=target_named_view_uid
                 )
                 self.repository.update_view(existing_view)
+                self._update_window_navigation(existing_view)
                 self._window.load_view(
                     existing_view,
                     self._get_page_data(existing_view),
@@ -272,9 +289,12 @@ class DetachedPageViewManager(IShutdownAware):
         if not db_path:
             return
         try:
-            self._write_service.save_page_scale(db_path, page_uid, sf1, sf2)
+            saved = self._write_service.save_page_scale(db_path, page_uid, sf1, sf2)
+            if saved is False:
+                self._refresh_window()
         except Exception:
             self.logger.exception("Failed to save page scale from detached view")
+            self._refresh_window()
 
     def _on_window_named_view_selected(
         self, page_uid: str, named_view_uid: str
@@ -318,7 +338,7 @@ class DetachedPageViewManager(IShutdownAware):
         coord_system = self._coord_factory.create()
         color_service = self._color_service
         bid_ref = view.bid_ref
-        bid = self.project_data.get_bid(bid_ref) if bid_ref else None
+        bid = self._get_bid_for_view(view)
         file_path = (
             bid_ref.file_path
             if bid_ref

@@ -100,11 +100,12 @@ class ImportRefreshFlowTests(unittest.TestCase):
 
     def test_loaded_databases_have_path_tiebreaker_when_file_times_match(self):
         repository = FileProjectRepository.__new__(FileProjectRepository)
-        repository._current_hierarchy = type(
-            "FakeHierarchy",
-            (),
-            {"set": lambda self, data: setattr(self, "data", data)},
-        )()
+
+        class FakeHierarchy:
+            def set(self, data):
+                self.data = data
+
+        repository._current_hierarchy = FakeHierarchy()
         repository._loaded_files = {
             "z.mdb": _LoadedFileCache(
                 file_path="z.mdb",

@@ -1318,22 +1318,18 @@ class OptionsPreferencesTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._toolbar = toolbar
         coordinator._on_backout_toggled = lambda checked: calls.append(checked)
-
         dimension_action = QtGui.QAction()
         dimension_action.setCheckable(True)
         UIEventCoordinator.set_dimension_action(coordinator, dimension_action)
         dimension_action.setChecked(True)
-
         self.assertEqual(calls, [])
         self.assertIs(toolbar.dimension_action, dimension_action)
         self.assertEqual(toolbar.refresh_calls, 1)
         self.assertEqual(toolbar.backout_refresh_calls, 0)
-
         backout_action = QtGui.QAction()
         backout_action.setCheckable(True)
         UIEventCoordinator.set_backout_action(coordinator, backout_action)
         backout_action.setChecked(True)
-
         self.assertEqual(calls, [True])
         self.assertIs(toolbar.backout_action, backout_action)
         self.assertEqual(toolbar.backout_refresh_calls, 1)
@@ -1583,6 +1579,44 @@ class OptionsPreferencesTests(unittest.TestCase):
             get_active_page_uid=lambda: "p1",
         )
         self.assertFalse(MainWindow.can_go_next_takeoff_page(window))
+
+    def test_takeoff_next_page_adds_and_navigates_to_new_last_page(self):
+        class FakePageCombo:
+            def __init__(self):
+                self.order = ["p1", "p2"]
+
+            def get_page_order(self):
+                return list(self.order)
+
+            def get_active_page_uid(self):
+                return "p2"
+
+            def go_next(self):
+                raise AssertionError("Last-page add path should not call go_next")
+
+        navigations = []
+        window = MainWindow.__new__(MainWindow)
+        window._config_model = SimpleNamespace(allow_add_page_from_takeoff_tab=True)
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: 1)
+        window.ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: True)
+        window._project_data_service = SimpleNamespace(
+            is_current_bid_locked=lambda: False
+        )
+        window.ui_state_manager = SimpleNamespace(get_selected_bid_ref=lambda: object())
+        window.takeoff_sidebar = FakePageCombo()
+
+        def add_page():
+            window.takeoff_sidebar.order.append("p3")
+            return True
+
+        window.handlers = SimpleNamespace(
+            cover_sheet=SimpleNamespace(add_blank_page_from_takeoff_tab=add_page),
+            ui_event=SimpleNamespace(
+                navigate_to_takeoff_page=lambda page_uid: navigations.append(page_uid)
+            ),
+        )
+        MainWindow.go_next_takeoff_page(window)
+        self.assertEqual(navigations, ["p3"])
 
     def test_high_resolution_preference_caps_pdf_rerendering(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)

@@ -10,7 +10,7 @@ from ..config import (
     RELAXED_MARGINS,
     RELAXED_SPACING,
 )
-from ..utils.dialog import BaseListDialog
+from ..utils.dialog import BaseListDialog, save_result_mapping, save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete
 
 
@@ -20,7 +20,7 @@ class BidAreasDialog(BaseListDialog):
         icon_provider,
         parent: Optional[QtWidgets.QWidget] = None,
         bid_areas: Optional[List[BidArea]] = None,
-        save_fn: Optional[Callable[[dict], dict]] = None,
+        save_fn: Optional[Callable[[dict], Optional[dict]]] = None,
         used_uids: Optional[Set[str]] = None,
         on_saved_fn: Optional[Callable] = None,
         has_license: bool = True,
@@ -319,9 +319,9 @@ class BidAreasDialog(BaseListDialog):
     def _on_move_down(self) -> None:
         self._move(1)
 
-    def _live_save(self) -> None:
+    def _live_save(self) -> bool:
         if not self._save_fn:
-            return
+            return True
         new_areas: List[BidArea] = []
         updated_areas: List[BidArea] = []
 
@@ -355,7 +355,15 @@ class BidAreasDialog(BaseListDialog):
                 updated=updated_areas,
                 deleted_uids=list(self._deleted_uids),
             )
-            uid_map = self._save_fn(changeset) or {}
+            result = self._save_fn(changeset)
+            if not save_result_succeeded(result):
+                return False
+            uid_map = save_result_mapping(result)
+            missing_new_uids = [
+                area.uid for area in new_areas if area.uid not in uid_map
+            ]
+            if missing_new_uids:
+                return False
             self._deleted_uids.clear()
             if uid_map:
                 self.tree.blockSignals(True)
@@ -365,6 +373,7 @@ class BidAreasDialog(BaseListDialog):
                     self.tree.blockSignals(False)
             if self._on_saved_fn:
                 self._on_saved_fn()
+        return True
 
     def _apply_uid_map(
         self, parent_item: QtWidgets.QTreeWidgetItem, uid_map: Dict[str, str]
@@ -388,7 +397,7 @@ class BidAreaPickerDialog(BidAreasDialog):
         icon_provider,
         parent: Optional[QtWidgets.QWidget] = None,
         bid_areas: Optional[List[BidArea]] = None,
-        save_fn: Optional[Callable[[dict], dict]] = None,
+        save_fn: Optional[Callable[[dict], Optional[dict]]] = None,
         used_uids: Optional[Set[str]] = None,
         on_saved_fn: Optional[Callable] = None,
         bid_ref: Optional[BidRef] = None,

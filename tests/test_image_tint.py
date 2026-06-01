@@ -21,7 +21,6 @@ class ImageTintTests(unittest.TestCase):
             result = bitonal_image(QtGui.QImage())
         finally:
             QtCore.qInstallMessageHandler(previous_handler)
-
         self.assertTrue(result.isNull())
         self.assertEqual(
             [message for message in messages if message.startswith("QPainter::")],

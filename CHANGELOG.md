@@ -40,6 +40,8 @@
 - Linear takeoff line patterns now rotate with the takeoff direction so horizontal, vertical, and diagonal hatches follow the line instead of the page axes.
 
 ### Fixed
+- Fixed several stale UI state and failed-write rollback paths, including 2D placement staying active in 3D, failed bid switches clearing the current workspace/undo owner, stale condition and area selections after rebuilds, detached page windows showing deleted or failed-load content, page/layer/overlay controls drifting after save failures, and batched condition/curve updates refreshing once instead of reentering mid-command.
+- Preserved unsaved takeoff moves during same-page overlay refreshes, rolled back failed plan-view and detached annotation edits, made master-data window close/cancel paths discard pending edits instead of saving them, tightened Bid Area save/refresh failure handling, and distinguished saved-but-refresh-failed project creation from plain save failure.
 - Included the standalone `ostv-mcp.exe` helper and its runtime files in the desktop distribution so production MCP client config points to an installed executable.
 - Kept the UI responsive while creating new databases by running database creation through the existing progress dialog workflow.
 - Tightened MCP JSON-RPC request validation and removed an arbitrary hierarchy fallback for unmatched database files.

@@ -9,6 +9,7 @@ from ..config import (
     RELAXED_MARGINS,
     RELAXED_SPACING,
 )
+from ..utils.dialog import save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.windows import remove_minimize, set_initial_window_size
 
@@ -23,7 +24,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         condition_types: Optional[List[CdnType]] = None,
         current_name: str = "",
         used_uids: Optional[Set[str]] = None,
-        save_fn: Optional[Callable[[dict], Dict[str, str]]] = None,
+        save_fn: Optional[Callable[[dict], Optional[Dict[str, str]]]] = None,
         reload_fn: Optional[Callable[[], List[CdnType]]] = None,
         has_license: bool = True,
         menu_mode: bool = False,
@@ -243,9 +244,22 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             )
             self._set_item_text(item, original)
             return
-        self._save_fn(
-            {"new": [], "updated": [{"uid": uid, "name": new_name}], "deleted_uids": []}
-        )
+        try:
+            result = self._save_fn(
+                {
+                    "new": [],
+                    "updated": [{"uid": uid, "name": new_name}],
+                    "deleted_uids": [],
+                }
+            )
+        except Exception:
+            self._set_item_text(item, original)
+            show_warning(self, "Condition Types", "Failed to rename condition type.")
+            return
+        if not save_result_succeeded(result):
+            self._set_item_text(item, original)
+            show_warning(self, "Condition Types", "Failed to rename condition type.")
+            return
         self._reload_items(select_uid=uid)
 
     def _commit_new_item(self, item: QtWidgets.QTreeWidgetItem) -> None:
@@ -267,13 +281,17 @@ class ConditionTypesDialog(QtWidgets.QDialog):
 
     def create_condition_type(self, name: str) -> bool:
         temp_uid = "new_condition_type"
-        result = self._save_fn(
-            {
-                "new": [{"uid": temp_uid, "name": name}],
-                "updated": [],
-                "deleted_uids": [],
-            }
-        )
+        try:
+            result = self._save_fn(
+                {
+                    "new": [{"uid": temp_uid, "name": name}],
+                    "updated": [],
+                    "deleted_uids": [],
+                }
+            )
+        except Exception:
+            show_warning(self, "Condition Types", "Failed to create condition type.")
+            return False
         new_uid = (result or {}).get(temp_uid)
         if not new_uid:
             show_warning(self, "Condition Types", "Failed to create condition type.")
@@ -317,7 +335,16 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         if to_delete is None:
             return
         deleted_uids = [uid for _, uid in to_delete]
-        self._save_fn({"new": [], "updated": [], "deleted_uids": deleted_uids})
+        try:
+            result = self._save_fn(
+                {"new": [], "updated": [], "deleted_uids": deleted_uids}
+            )
+        except Exception:
+            show_warning(self, "Condition Types", "Failed to delete condition type.")
+            return
+        if not save_result_succeeded(result):
+            show_warning(self, "Condition Types", "Failed to delete condition type.")
+            return
         self._reload_items()
         if self.tree.topLevelItemCount():
             self.tree.setCurrentItem(self.tree.topLevelItem(next_row))

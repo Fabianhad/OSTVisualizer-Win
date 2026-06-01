@@ -26,7 +26,7 @@ class LayersDialog(QtWidgets.QDialog):
         used_uids: Optional[Set[str]] = None,
         reload_fn: Optional[Callable[[], List[BidLayer]]] = None,
         insert_fn: Optional[Callable[[str, int], Optional[str]]] = None,
-        delete_fn: Optional[Callable[[str], bool]] = None,
+        delete_many_fn: Optional[Callable[[List[str]], object]] = None,
         update_show_fn: Optional[Callable[[str, bool], bool]] = None,
         update_all_show_fn: Optional[Callable[[bool], bool]] = None,
         update_name_fn: Optional[Callable[[str, str], bool]] = None,
@@ -39,7 +39,7 @@ class LayersDialog(QtWidgets.QDialog):
         self._used_uids = {str(uid) for uid in (used_uids or set())}
         self._reload_fn = reload_fn
         self._insert_fn = insert_fn
-        self._delete_fn = delete_fn
+        self._delete_many_fn = delete_many_fn
         self._update_show_fn = update_show_fn
         self._update_all_show_fn = update_all_show_fn
         self._update_name_fn = update_name_fn
@@ -360,14 +360,29 @@ class LayersDialog(QtWidgets.QDialog):
         to_delete = confirm_multi_delete(self, "Delete Layer", pairs, self._used_uids)
         if to_delete is None:
             return
-        for _, uid in to_delete:
-            try:
-                if not self._delete_fn(uid):
-                    show_warning(self, "Delete Layer", "Failed to delete layer.")
-                    break
-            except Exception as exc:
-                show_warning(self, "Delete Layer", str(exc))
-                break
+        uids = [uid for _, uid in to_delete]
+        try:
+            result = self._delete_many_fn(uids)
+            success = bool(result)
+            any_success = bool(result.any_success)
+            partial_success = bool(result.partial_success)
+        except Exception as exc:
+            show_warning(self, "Delete Layer", str(exc))
+            return
+        if not success:
+            if any_success:
+                self._reload_items()
+                if self.tree.topLevelItemCount():
+                    self.tree.setCurrentItem(self.tree.topLevelItem(next_row))
+                message = (
+                    "Some layers were deleted, but one or more deletes failed."
+                    if partial_success
+                    else "Layers were deleted, but the refresh failed."
+                )
+                show_warning(self, "Delete Layer", message)
+                return
+            show_warning(self, "Delete Layer", "Failed to delete layer.")
+            return
         self._reload_items()
         if self.tree.topLevelItemCount():
             self.tree.setCurrentItem(self.tree.topLevelItem(next_row))
@@ -470,7 +485,7 @@ class LayersDialog(QtWidgets.QDialog):
         self.icon_provider = None
         self._reload_fn = None
         self._insert_fn = None
-        self._delete_fn = None
+        self._delete_many_fn = None
         self._update_show_fn = None
         self._update_all_show_fn = None
         self._update_name_fn = None

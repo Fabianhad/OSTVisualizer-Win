@@ -143,11 +143,13 @@ class UIEventCoordinator:
         self._last_mesh_kwargs: Optional[dict] = None
         self._plan_view_handler = None
         self._takeoff_workspace_bid_ref: Optional[BidRef] = None
+        self._is_cleaning_up: bool = False
         self._pending_takeoff_page_uids: Optional[List[str]] = None
         self._pending_takeoff_active_page_uid: Optional[str] = None
         self._pending_takeoff_selected_area_uid: str = ""
         self._pending_takeoff_place_condition_uid: Optional[str] = None
         self._pending_takeoff_place_condition_uids: List[str] = []
+        self._takeoff_highlight_condition_uids: set = set()
         self._pending_hotlink_page_uid: Optional[str] = None
         self._pending_hotlink_named_view: Optional[NamedView] = None
         self._plan_view_signaler = _MainThreadSignaler(main_window)
@@ -175,6 +177,8 @@ class UIEventCoordinator:
         self._toolbar.refresh()
 
     def refresh_toolbar(self) -> None:
+        if getattr(self, "_is_cleaning_up", False) or self._toolbar is None:
+            return
         self._toolbar.refresh()
 
     def set_delete_action(self, action: QtGui.QAction) -> None:
@@ -300,6 +304,19 @@ class UIEventCoordinator:
         self._toolbar.refresh_backout_action()
 
     def _on_view_stack_changed(self, index: int) -> None:
+        if (
+            getattr(self, "_is_cleaning_up", False)
+            or self._toolbar is None
+            or self._sidebar is None
+            or self.ui_state_manager is None
+        ):
+            return
+        if index != 1:
+            if self._placement is None:
+                return
+            self._placement.force_exit()
+            self.ui_state_manager.clear_place_condition()
+            self._toolbar.set_select_checked()
         self._sidebar.update_conditions_quantities()
         if index == 1 and self.plan_view:
             self.plan_view.reset_ctrl_held()
@@ -597,10 +614,13 @@ class UIEventCoordinator:
             in self.project_data.get_bid_conditions()
         ):
             if self._is_condition_placeable(self._pending_takeoff_place_condition_uid):
-                self._placement.enter(
-                    self._pending_takeoff_place_condition_uid,
-                    self._pending_takeoff_place_condition_uids,
-                )
+                if self._is_takeoff_2d_view_active():
+                    self._placement.enter(
+                        self._pending_takeoff_place_condition_uid,
+                        self._pending_takeoff_place_condition_uids,
+                    )
+                else:
+                    self._reset_to_select_mode()
             else:
                 self._reset_to_select_mode()
         self._clear_staged_takeoff_restore()
@@ -701,6 +721,15 @@ class UIEventCoordinator:
         if self.conditions_sidebar:
             self.conditions_sidebar.highlight_conditions(uids)
 
+    def _is_takeoff_2d_view_active(self) -> bool:
+        return self._toolbar.is_takeoff_2d_view_active()
+
+    def _set_plan_select_mode(self) -> None:
+        if self.plan_view:
+            self.plan_view.reset_ctrl_held()
+            self.plan_view.set_cursor_mode("select")
+        self._toolbar.set_select_checked()
+
     def _takeoff_uids_to_condition_uids(self, uids: list) -> set:
         if not uids:
             return set()
@@ -716,8 +745,11 @@ class UIEventCoordinator:
     _SOURCE_3D_WINDOW = "3d_window"
 
     def _sync_selection(self, source: str, takeoff_uids: list) -> None:
+        if self._placement is None or self._nav is None:
+            return
         if takeoff_uids:
             cond_uids = self._takeoff_uids_to_condition_uids(takeoff_uids)
+            self._takeoff_highlight_condition_uids = set(cond_uids)
             self.highlight_sidebar(cond_uids)
             if source != self._SOURCE_2D and self.plan_view:
                 self.plan_view.set_selected_uids(set(takeoff_uids), emit=False)
@@ -737,6 +769,20 @@ class UIEventCoordinator:
                 ):
                     self._placement.enter(new_uid, list(cond_uids))
         else:
+            takeoff_highlight = set(self._takeoff_highlight_condition_uids)
+            placement_owns_highlight = bool(
+                self._placement.is_active
+                and self._placement.condition_uid
+                and self._placement.condition_uid in takeoff_highlight
+            )
+            if (
+                takeoff_highlight
+                and not placement_owns_highlight
+                and self.ui_state_manager.highlighted_condition_uids
+                == takeoff_highlight
+            ):
+                self.highlight_sidebar(set())
+            self._takeoff_highlight_condition_uids = set()
             if source != self._SOURCE_2D and self.plan_view:
                 self.plan_view.clear_selection(emit=False)
             if source != self._SOURCE_3D and self.opengl_viewer:
@@ -752,6 +798,8 @@ class UIEventCoordinator:
         self._sync_selection(self._SOURCE_3D, takeoff_uids)
 
     def _on_takeoff_selection_changed(self, uids: list) -> None:
+        if self._placement is None or self._nav is None:
+            return
         self._sync_selection(self._SOURCE_2D, uids)
         self._restore_project_tree_bid_selection_if_needed()
 
@@ -828,14 +876,11 @@ class UIEventCoordinator:
         )
         used_uids = self.project_data.get_area_uids_with_takeoff()
 
-        def save_fn(changes) -> dict:
+        def save_fn(changes) -> Optional[dict]:
             if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
-                return {}
-            return (
-                self._project_write_service.save_bid_areas(
-                    bid_ref.file_path, bid_ref.bid_uid, changes
-                )
-                or {}
+                return None
+            return self._project_write_service.save_bid_areas(
+                bid_ref.file_path, bid_ref.bid_uid, changes
             )
 
         def on_saved() -> None:
@@ -985,17 +1030,15 @@ class UIEventCoordinator:
             return False
         return self._project_write_service.save_job_statuses(file_path, changes)
 
-    def _save_master_pay_classes(self, file_path: str, changes) -> dict:
+    def _save_master_pay_classes(self, file_path: str, changes) -> bool:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
-            return {}
-        return self._project_write_service.save_pay_classes(file_path, changes) or {}
+            return False
+        return self._project_write_service.save_pay_classes(file_path, changes)
 
-    def _save_master_condition_types(self, file_path: str, changes) -> dict:
+    def _save_master_condition_types(self, file_path: str, changes) -> Optional[dict]:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
-            return {}
-        return (
-            self._project_write_service.save_condition_types(file_path, changes) or {}
-        )
+            return None
+        return self._project_write_service.save_condition_types(file_path, changes)
 
     def _resolve_master_data_file_path(self) -> Optional[str]:
         return self.main_window.get_selected_database_context_file_path()
@@ -1019,9 +1062,7 @@ class UIEventCoordinator:
 
     def _reset_to_select_mode(self) -> None:
         self._placement.force_exit()
-        if self.plan_view:
-            self.plan_view.reset_ctrl_held()
-            self.plan_view.set_cursor_mode("select")
+        self._set_plan_select_mode()
         self._toolbar.refresh()
 
     def ensure_select_mode(self) -> None:
@@ -1035,14 +1076,24 @@ class UIEventCoordinator:
             and not self.ui_state_manager.highlighted_condition_uids
             and not selected_takeoff_condition_uid
         ):
-            self.plan_view.reset_ctrl_held()
-            self.plan_view.set_cursor_mode("select")
+            self._set_plan_select_mode()
 
     def _on_ost_status_changed(self, **_) -> None:
         self.ensure_select_mode()
         self._menu_state_signaler.request_update()
 
     def cleanup(self) -> None:
+        self._is_cleaning_up = True
+        if self._view_stack:
+            try:
+                self._view_stack.currentChanged.disconnect(self._on_view_stack_changed)
+            except (TypeError, RuntimeError):
+                pass
+        if self._tab_widget:
+            try:
+                self._tab_widget.currentChanged.disconnect(self._on_tab_changed)
+            except (TypeError, RuntimeError):
+                pass
         if self._undo_service:
             self._undo_service.set_change_callback(None)
         for event_name, callback in self._subscriptions:
@@ -1184,6 +1235,20 @@ class UIEventCoordinator:
             return
         has_file = bool(self.project_data.get_current_file_path())
         if snap.bid_ref:
+            if not self.project_data.get_bid(snap.bid_ref):
+                self._reset_takeoff_workspace_state()
+                self.ui_state_manager.set_bid_selection(None)
+                self.project_data.deselect_pages()
+                self.main_window.project_view.restore_file_selection(
+                    snap.selected_file_path or snap.bid_ref.file_path
+                )
+                self._nav.finish_refresh(
+                    NavState.FILE_LOADED_NO_BID if has_file else NavState.NO_FILE
+                )
+                self.ui_access_manager.refresh()
+                self._toolbar.refresh()
+                self._update_export_menu_state()
+                return
             self.main_window.project_view.restore_bid_selection(snap.bid_ref)
             self._resolve_bid_lock_state(snap.bid_ref)
             self._reset_takeoff_workspace_state()
@@ -1406,7 +1471,21 @@ class UIEventCoordinator:
             self._set_takeoff_tab_visible(False)
             self._update_export_menu_state()
             return
+        prev_current_file_path = (
+            self.project_data.get_current_file_path()
+            if hasattr(self.project_data, "get_current_file_path")
+            else None
+        )
         self.project_data.set_current_file(bid_ref.file_path)
+        load_success = self.project_operations.load_bid(bid_ref)
+        if not load_success:
+            if prev_current_file_path:
+                self.project_data.set_current_file(prev_current_file_path)
+            elif prev_bid_ref:
+                self.project_data.set_current_file(prev_bid_ref.file_path)
+            self.ui_access_manager.refresh()
+            self._update_export_menu_state()
+            return
         self._placement.force_exit()
         self.ensure_select_mode()
         self.ui_state_manager.set_bid_selection(bid_ref)
@@ -1416,12 +1495,6 @@ class UIEventCoordinator:
         self._viewer.clear_viewer()
         self._clear_mesh_views_for_scene_update(clear_embedded=False)
         self.visualization_service.refresh_mesh_view([])
-        load_success = self.project_operations.load_bid(bid_ref)
-        if not load_success:
-            self.ui_state_manager.set_bid_selection(prev_bid_ref)
-            self.ui_access_manager.refresh()
-            self._update_export_menu_state()
-            return
         self._resolve_bid_lock_state(bid_ref)
         self._reset_takeoff_workspace_state()
         self._nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
@@ -1528,6 +1601,7 @@ class UIEventCoordinator:
             elif selected != previous:
                 self._clear_mesh_replay_buffer()
             self.visualization_service.refresh_mesh_view(selected)
+        self._sidebar.update_conditions_quantities()
         self._update_export_menu_state()
         self._update_page_info_status()
 
@@ -1614,6 +1688,7 @@ class UIEventCoordinator:
 
     def _on_condition_selected(self, condition_uid: str) -> None:
         if not condition_uid:
+            self._takeoff_highlight_condition_uids = set()
             self.ui_state_manager.set_highlighted_conditions(set())
             selected_takeoff_condition_uid = (
                 self.plan_view.selected_takeoff_condition_uid()
@@ -1629,8 +1704,11 @@ class UIEventCoordinator:
             selected = self.conditions_sidebar.get_selected_condition_uids()
         else:
             selected = [condition_uid]
+        self._takeoff_highlight_condition_uids = set()
         self.ui_state_manager.set_highlighted_conditions(set(selected))
-        if not self._is_condition_placeable(condition_uid):
+        if not self._is_takeoff_2d_view_active() or not self._is_condition_placeable(
+            condition_uid
+        ):
             self._reset_to_select_mode()
             return
         self._placement.enter(condition_uid, selected)
@@ -1682,10 +1760,13 @@ class UIEventCoordinator:
         self, file_path: str, page_uid: str, sf1: float, sf2: float
     ) -> None:
         write_svc = self._project_write_service
+        success = False
         try:
-            write_svc.save_page_scale(file_path, page_uid, sf1, sf2)
+            success = bool(write_svc.save_page_scale(file_path, page_uid, sf1, sf2))
         except Exception:
             logger.warning("Failed to save page scale", exc_info=True)
+        if not success:
+            self._update_page_settings_bar(page_uid)
 
     def rotate_selected_takeoffs_left(self) -> None:
         if self._can_transform_selected_takeoffs():
@@ -1939,6 +2020,7 @@ class UIEventCoordinator:
         if not self._stage_selection_after_page_delete(page_uid):
             return
         if not self._project_write_service.delete_pages(bid_ref.file_path, [page_uid]):
+            self._clear_staged_takeoff_restore()
             show_critical(
                 self.main_window,
                 "Delete Page",
@@ -2011,13 +2093,16 @@ class UIEventCoordinator:
     def _set_overlay_visibility(self, target: str, checked: bool) -> None:
         page_uid = self.ui_state_manager.active_page_uid
         if not page_uid:
+            self._update_export_menu_state()
             return
         page = self.project_data.get_page(page_uid)
         if not page:
+            self._update_export_menu_state()
             return
         if not page.overlay_image_path and (
             target == "overlay" or (target == "original" and not checked)
         ):
+            self._update_export_menu_state()
             return
         show_mode = resolve_overlay_visibility_mode(
             page.image_show_mode, target, checked
@@ -2037,12 +2122,20 @@ class UIEventCoordinator:
     def _on_page_area_changed(
         self, file_path: str, page_uid: str, area_uid: str
     ) -> None:
-        self.ui_state_manager.selected_area_uid = area_uid
+        previous_area_uid = (
+            self.project_data.get_page_area_selections().get(page_uid) or ""
+        )
         write_svc = self._project_write_service
+        success = False
         try:
-            write_svc.save_page_area(file_path, page_uid, area_uid)
+            success = bool(write_svc.save_page_area(file_path, page_uid, area_uid))
         except Exception:
             logger.warning("Failed to save page area", exc_info=True)
+        if success:
+            self.ui_state_manager.selected_area_uid = area_uid
+            return
+        self.ui_state_manager.selected_area_uid = previous_area_uid
+        self._update_page_settings_bar(page_uid)
 
     def _on_overlay_display_mode_requested(self, show_mode: int) -> None:
         if show_mode not in (SHOW_ORIGINAL, SHOW_OVERLAY, SHOW_BOTH):
@@ -2059,8 +2152,10 @@ class UIEventCoordinator:
             )
         except Exception:
             logger.warning("Failed to save page show mode", exc_info=True)
+            self._update_export_menu_state()
             return
         if not success:
+            self._update_export_menu_state()
             return
         page = self.project_data.get_page(page_uid)
         if page:
@@ -2068,6 +2163,7 @@ class UIEventCoordinator:
         self._sync_overlay_display_mode(page_uid)
         if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
             self._update_plan_view(page_uid)
+        self._update_export_menu_state()
 
     def toggle_page_invert(self, invert: bool) -> None:
         self._toggle_page_image_flag(
@@ -2131,10 +2227,15 @@ class UIEventCoordinator:
         if not bid_ref:
             return
         write_svc = self._project_write_service
+        success = False
         try:
-            write_svc.update_layer_show(bid_ref.file_path, layer_uid, show)
+            success = bool(
+                write_svc.update_layer_show(bid_ref.file_path, layer_uid, show)
+            )
         except Exception:
             logger.warning("Failed to update layer visibility", exc_info=True)
+        if not success:
+            self._sidebar.load_bid_layers_sidebar()
 
     def _on_layer_added(self, name: str, after_sequence: int) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -2167,10 +2268,17 @@ class UIEventCoordinator:
         if not bid_ref:
             return
         write_svc = self._project_write_service
+        success = False
         try:
-            write_svc.update_all_layers_show(bid_ref.file_path, bid_ref.bid_uid, show)
+            success = bool(
+                write_svc.update_all_layers_show(
+                    bid_ref.file_path, bid_ref.bid_uid, show
+                )
+            )
         except Exception:
             logger.warning("Failed to update all layers visibility", exc_info=True)
+        if not success:
+            self._sidebar.load_bid_layers_sidebar()
 
     def _on_layer_moved(self, layer_uid: str, direction: int) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -2194,7 +2302,12 @@ class UIEventCoordinator:
         if not bid_ref:
             return
         write_svc = self._project_write_service
+        success = False
         try:
-            write_svc.update_layer_name(bid_ref.file_path, layer_uid, new_name)
+            success = bool(
+                write_svc.update_layer_name(bid_ref.file_path, layer_uid, new_name)
+            )
         except Exception:
             logger.warning("Failed to rename layer", exc_info=True)
+        if not success:
+            self._sidebar.load_bid_layers_sidebar()

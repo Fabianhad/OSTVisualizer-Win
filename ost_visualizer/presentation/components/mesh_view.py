@@ -318,6 +318,27 @@ class OpenGLViewer(QtWidgets.QWidget):
     def get_selected_takeoff_uids(self) -> list:
         return list(self._selected_takeoff_uids)
 
+    def _reconcile_selected_takeoffs_with_scene(self) -> None:
+        if not self._renderer:
+            return
+        scene = self._renderer.scene
+        available_uids = {
+            uid for i in range(scene.mesh_count()) if (uid := scene.get_takeoff_uid(i))
+        }
+        reconciled = [
+            uid for uid in self._selected_takeoff_uids if uid in available_uids
+        ]
+        selection_changed = reconciled != self._selected_takeoff_uids
+        self._selected_takeoff_uids = reconciled
+        scene.clear_selection()
+        if reconciled:
+            uid_set = set(reconciled)
+            for i in range(scene.mesh_count()):
+                if scene.get_takeoff_uid(i) in uid_set:
+                    scene.set_selected(i, True)
+        if selection_changed:
+            self.mesh_clicked.emit(list(self._selected_takeoff_uids))
+
     def set_negative_check_fn(self, fn) -> None:
         self._negative_check_fn = fn
 
@@ -700,6 +721,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._renderer.scene.clear()
         for mesh in meshes:
             self._renderer.scene.add_mesh(mesh)
+        self._reconcile_selected_takeoffs_with_scene()
         if self._renderer.scene.empty():
             self._renderer.camera.reset()
             self._renderer.suspend()

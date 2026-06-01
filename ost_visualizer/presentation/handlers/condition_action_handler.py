@@ -59,8 +59,8 @@ class ConditionActionHandler:
             "layer_insert_fn": lambda name, after_sequence: write_service.insert_layer(
                 bid_ref.file_path, bid_ref.bid_uid, name, after_sequence
             ),
-            "layer_delete_fn": lambda layer_uid: write_service.delete_layer(
-                bid_ref.file_path, layer_uid
+            "layer_delete_many_fn": lambda layer_uids: write_service.delete_layers(
+                bid_ref.file_path, layer_uids
             ),
             "layer_update_show_fn": lambda layer_uid, show: (
                 write_service.update_layer_show(bid_ref.file_path, layer_uid, show)
@@ -211,7 +211,7 @@ class ConditionActionHandler:
             dialog.deleteLater()
         self._coordinator.refresh_conditions_ui()
         if created_uid[0]:
-            sidebar.request_highlight({created_uid[0]})
+            self._coordinator.highlight_sidebar({created_uid[0]})
 
     def on_duplicate_requested(self, condition_uids: list) -> None:
         if not condition_uids:
@@ -259,6 +259,7 @@ class ConditionActionHandler:
         if not new_uids:
             logger.warning("Failed to paste duplicate conditions %s", condition_uids)
             return
+        target_applied = False
         for condition_uid in new_uids:
             dto = UpdateConditionDto()
             dto.set("folder_uid", target.get("folder_uid") or None)
@@ -269,6 +270,7 @@ class ConditionActionHandler:
                 bid_ref.bid_uid,
                 condition_uid,
                 dto,
+                reload_database=False,
             )
             if not result.success:
                 logger.warning(
@@ -276,6 +278,10 @@ class ConditionActionHandler:
                     condition_uid,
                     result.error,
                 )
+            else:
+                target_applied = True
+        if target_applied:
+            write_service.reload_and_notify(bid_ref.file_path)
         self._finish_condition_duplicate(new_uids, sidebar)
 
     def _move_conditions_to_target(
@@ -294,6 +300,7 @@ class ConditionActionHandler:
                 condition_uid,
                 dto,
                 all_conditions=self._project_data.get_bid_conditions(),
+                reload_database=False,
             )
             if result.success:
                 moved_uids.append(condition_uid)
@@ -305,9 +312,10 @@ class ConditionActionHandler:
             )
         if not moved_uids:
             return
+        write_service.reload_and_notify(bid_ref.file_path)
         self._coordinator.refresh_conditions_ui()
         if sidebar:
-            sidebar.request_highlight(set(moved_uids))
+            self._coordinator.highlight_sidebar(set(moved_uids))
 
     def _duplicate_conditions(
         self, bid_ref, write_service, condition_uids: list, sidebar
@@ -322,10 +330,11 @@ class ConditionActionHandler:
         )
 
     def _finish_condition_duplicate(self, new_uids: list, sidebar) -> None:
-        self._coordinator.placement.enter(new_uids[-1], new_uids)
+        if self._coordinator._is_takeoff_2d_view_active():
+            self._coordinator.placement.enter(new_uids[-1], new_uids)
         self._coordinator.refresh_conditions_ui()
         if sidebar:
-            sidebar.request_highlight(set(new_uids))
+            self._coordinator.highlight_sidebar(set(new_uids))
 
     def on_delete_requested(self, condition_uids: list) -> None:
         if not condition_uids:
@@ -422,6 +431,7 @@ class ConditionActionHandler:
         )
         if not success:
             logger.warning("Failed to rename condition folder %s", folder_uid)
+            self._coordinator.refresh_conditions_ui()
 
     def on_condition_renamed(self, condition_uid: str, new_name: str) -> None:
         if not self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION):
@@ -447,7 +457,7 @@ class ConditionActionHandler:
             )
             self._coordinator.refresh_conditions_ui()
             if sidebar:
-                sidebar.request_highlight({condition_uid})
+                self._coordinator.highlight_sidebar({condition_uid})
 
     def on_folder_delete_requested(self, folder_uids: list) -> None:
         if not folder_uids:
@@ -514,6 +524,7 @@ class ConditionActionHandler:
                 condition_uid,
                 dto,
                 all_conditions=self._project_data.get_bid_conditions(),
+                reload_database=False,
             )
             if result.success:
                 changed_uids.append(condition_uid)
@@ -526,9 +537,10 @@ class ConditionActionHandler:
             )
         if not changed_uids:
             return
+        write_service.reload_and_notify(bid_ref.file_path)
         self._coordinator.refresh_conditions_ui()
         if sidebar:
-            sidebar.request_highlight(set(changed_uids))
+            self._coordinator.highlight_sidebar(set(changed_uids))
 
     def on_edit_requested(self, condition_uids: list) -> None:
         if not condition_uids:
@@ -592,7 +604,7 @@ class ConditionActionHandler:
                         self._project_data.get_bid_conditions()
                     )
             if result.success:
-                sidebar.request_highlight({cond_uid})
+                self._coordinator.highlight_sidebar({cond_uid})
             return result
 
         dialog = EditConditionDialog(
@@ -618,8 +630,10 @@ class ConditionActionHandler:
         def _on_navigated(uid):
             _current_uid[0] = uid
             self._coordinator.highlight_sidebar({uid})
-            sidebar.request_highlight({uid})
-            if self._coordinator.placement.is_active:
+            if (
+                self._coordinator.placement.is_active
+                and self._coordinator._is_takeoff_2d_view_active()
+            ):
                 self._coordinator.placement.enter(uid, [uid])
 
         dialog.condition_navigated.connect(_on_navigated)
@@ -628,4 +642,4 @@ class ConditionActionHandler:
         finally:
             dialog.deleteLater()
         self._coordinator.refresh_conditions_ui()
-        sidebar.request_highlight({_current_uid[0]})
+        self._coordinator.highlight_sidebar({_current_uid[0]})

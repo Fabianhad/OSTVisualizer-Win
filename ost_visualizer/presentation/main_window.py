@@ -961,7 +961,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not self.can_go_next_takeoff_page():
             return
-        self.handlers.cover_sheet.add_blank_page_from_takeoff_tab()
+        if self.handlers.cover_sheet.add_blank_page_from_takeoff_tab():
+            order = self.takeoff_sidebar.get_page_order()
+            if order:
+                self.handlers.ui_event.navigate_to_takeoff_page(order[-1])
 
     def set_active_takeoff_view(self, active_view: str) -> None:
         index = 1 if str(active_view).lower() == "2d" else 0

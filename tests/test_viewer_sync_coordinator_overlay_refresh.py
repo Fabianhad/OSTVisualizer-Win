@@ -2110,6 +2110,43 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             )
         )
 
+    def test_overlay_refresh_preserves_dirty_takeoff_position_without_flushing(self):
+        view = self._make_plan_view()
+        page = Page(uid="page-1", name="Page 1")
+        bid_ref = BidRef(file_path="bid.mdb", bid_uid="bid-1")
+        condition = Condition(uid="c1", name="Condition", layer_visible=True)
+        stale_takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="page-1",
+            position=[0.0, 0.0, 10.0, 10.0],
+        )
+        dirty_position = [50.0, 60.0, 70.0, 80.0]
+        view._current_bid_page_uid = page.uid
+        view._current_render_identity = view._build_render_identity(page, bid_ref)
+        view._dirty_positions = {"t1": list(dirty_position)}
+        view._position_before_edit = {"t1": list(stale_takeoff.position)}
+        emitted = []
+        view.positions_flushed.connect(
+            lambda takeoffs, annotations: emitted.append((takeoffs, annotations))
+        )
+        try:
+            refreshed = view.refresh_current_page_overlays(
+                page=page,
+                takeoffs=[stale_takeoff],
+                conditions={"c1": condition},
+                color_map={},
+                bid_ref=bid_ref,
+                annotations=[],
+                page_area_selections={},
+            )
+            self.assertTrue(refreshed)
+            self.assertEqual(view.get_takeoff("t1").position, dirty_position)
+            self.assertEqual(view._dirty_positions, {"t1": dirty_position})
+            self.assertEqual(emitted, [])
+        finally:
+            view.cleanup()
+
     def test_fit_to_page_uses_page_canvas_not_far_off_scene_extent(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         scene = FakeScene()

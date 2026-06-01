@@ -115,12 +115,27 @@ class ToolbarStateCoordinator:
         self._backout_action.setChecked(checked)
         self._backout_action.blockSignals(False)
 
+    def set_select_checked(self) -> None:
+        if not self._select_action:
+            return
+        if self._select_action.isChecked():
+            return
+        self._select_action.blockSignals(True)
+        self._select_action.setChecked(True)
+        self._select_action.blockSignals(False)
+
+    def is_takeoff_2d_view_active(self) -> bool:
+        return bool(
+            self._tab_widget
+            and self._tab_widget.currentIndex() == TAB_INDEX_TAKEOFF
+            and self._view_stack
+            and self._view_stack.currentIndex() == 1
+        )
+
     def is_backout_context_available(self) -> bool:
         if not self.plan_view:
             return False
-        if not self._tab_widget or self._tab_widget.currentIndex() != TAB_INDEX_TAKEOFF:
-            return False
-        if not self._view_stack or self._view_stack.currentIndex() != 1:
+        if not self.is_takeoff_2d_view_active():
             return False
         if not self._access.is_allowed(Feature.PLACE_PLAN_ITEMS):
             return False
@@ -272,7 +287,7 @@ class ToolbarStateCoordinator:
             active_place_condition_uid
         ) and self._is_condition_placeable(active_place_condition_uid)
         can_place_plan_items = (
-            on_takeoff_tab
+            self.is_takeoff_2d_view_active()
             and self._access.is_allowed(Feature.PLACE_PLAN_ITEMS)
             and bool(self.plan_view)
             and (
@@ -288,7 +303,10 @@ class ToolbarStateCoordinator:
                 and self._place_action.isChecked()
                 and self._select_action
             ):
-                self._select_action.setChecked(True)
+                if self.plan_view:
+                    self.plan_view.reset_ctrl_held()
+                    self.plan_view.set_cursor_mode("select")
+                self.set_select_checked()
         can_place_dimension = (
             on_takeoff_tab
             and self._access.is_allowed(Feature.PLACE_PLAN_ITEMS)

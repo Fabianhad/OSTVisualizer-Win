@@ -217,7 +217,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         layer_reload_fn=None,
         layer_used_uids_fn=None,
         layer_insert_fn=None,
-        layer_delete_fn=None,
+        layer_delete_many_fn=None,
         layer_update_show_fn=None,
         layer_update_all_show_fn=None,
         layer_update_name_fn=None,
@@ -262,7 +262,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._layer_reload_fn = layer_reload_fn
         self._layer_used_uids_fn = layer_used_uids_fn
         self._layer_insert_fn = layer_insert_fn
-        self._layer_delete_fn = layer_delete_fn
+        self._layer_delete_many_fn = layer_delete_many_fn
         self._layer_update_show_fn = layer_update_show_fn
         self._layer_update_all_show_fn = layer_update_all_show_fn
         self._layer_update_name_fn = layer_update_name_fn
@@ -1018,7 +1018,7 @@ class EditConditionDialog(QtWidgets.QDialog):
                 "deleted_uids": [],
             }
         )
-        created_uid = (result or {}).get(temp_uid)
+        created_uid = result.get(temp_uid) if result else None
         self._reload_condition_types()
         if created_uid:
             self._type_edit.setText(name)
@@ -1079,7 +1079,7 @@ class EditConditionDialog(QtWidgets.QDialog):
             used_uids=self._used_layer_uids(),
             reload_fn=self._reload_layers,
             insert_fn=self._layer_insert_fn,
-            delete_fn=self._layer_delete_fn,
+            delete_many_fn=self._layer_delete_many_fn,
             update_show_fn=self._layer_update_show_fn,
             update_all_show_fn=self._layer_update_all_show_fn,
             update_name_fn=self._layer_update_name_fn,

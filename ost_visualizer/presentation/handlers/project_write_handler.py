@@ -136,10 +136,10 @@ class ProjectWriteHandler:
 
     def rename_project(
         self, project_uid: str, new_name: str, file_path: Optional[str]
-    ) -> None:
+    ) -> bool:
         resolved_path = file_path or self.project_data.get_current_file_path()
         if not resolved_path or not new_name.strip():
-            return
+            return False
         if not self._write_service.rename_project(
             resolved_path, project_uid, new_name.strip()
         ):
@@ -148,6 +148,8 @@ class ProjectWriteHandler:
                 "Rename Error",
                 f"Failed to rename project. {DB_LOCKED_HINT}",
             )
+            return False
+        return True
 
     def update_bid_job_status(self, bid_ref: BidRef, job_status_uid: str) -> None:
         if not bid_ref or not bid_ref.file_path or not bid_ref.bid_uid:

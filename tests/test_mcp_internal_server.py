@@ -47,7 +47,6 @@ EXPECTED_TOOLS = {
     "find_pages_without_takeoffs",
     "find_conditions_without_takeoffs",
 }
-
 EXPECTED_PROMPTS = {
     "review_current_estimator_context",
     "review_takeoff_scope",
@@ -57,7 +56,6 @@ EXPECTED_PROMPTS = {
     "review_overlay_and_pdf_context",
     "review_quantity_variance",
 }
-
 PROMPT_ARGUMENTS = {
     "review_current_estimator_context": {},
     "review_takeoff_scope": {"database_id": "db", "bid_uid": "bid"},
@@ -75,7 +73,6 @@ PROMPT_ARGUMENTS = {
     },
     "review_quantity_variance": {"database_id": "db", "bid_uid": "bid"},
 }
-
 FORBIDDEN_PROMPT_TERMS = (
     "write",
     "writes",
@@ -93,14 +90,17 @@ FORBIDDEN_PROMPT_TERMS = (
     "unbounded",
     "ui control",
 )
-
-ALLOWED_PROMPT_IDENTIFIERS = EXPECTED_TOOLS | EXPECTED_PROMPTS | {
-    "database_id",
-    "bid_uid",
-    "page_uid",
-    "condition_uid",
-    "has_more",
-}
+ALLOWED_PROMPT_IDENTIFIERS = (
+    EXPECTED_TOOLS
+    | EXPECTED_PROMPTS
+    | {
+        "database_id",
+        "bid_uid",
+        "page_uid",
+        "condition_uid",
+        "has_more",
+    }
+)
 
 
 class McpInternalServerProtocolTests(unittest.TestCase):

@@ -11,6 +11,7 @@ from ..config import (
 )
 from ..dtos.employee_edit_dtos import EmployeeRecord, PayClassRecord
 from ..dtos.picker_dialog_result_dto import PickerDialogResult
+from ..utils.dialog import save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete
 from ..utils.windows import remove_minimize, set_initial_window_size
 from .employee_detail_dialog import EmployeeDetailDialog
@@ -268,40 +269,51 @@ class EmployeesDialog(QtWidgets.QDialog):
         if to_delete is None:
             return
         to_delete_uids = {uid for _, uid in to_delete}
-        real_deleted = []
+        real_deleted = [
+            uid
+            for item in selected_items
+            if (uid := item.data(0, self._UID_ROLE)) in to_delete_uids
+            and not str(uid).startswith("new_")
+        ]
+        if real_deleted and self._save_fn:
+            result = self._save_fn(
+                {"new": [], "updated": [], "deleted_uids": real_deleted}
+            )
+            if not save_result_succeeded(result):
+                return
         for item in selected_items:
             uid = item.data(0, self._UID_ROLE)
             if uid not in to_delete_uids:
                 continue
-            if not str(uid).startswith("new_"):
-                real_deleted.append(uid)
             self._employees = [e for e in self._employees if e.uid != uid]
             if self._selected_uid == uid:
                 self._selected_uid = None
             idx = self.tree.indexOfTopLevelItem(item)
             self.tree.takeTopLevelItem(idx)
-        if real_deleted and self._save_fn:
-            self._save_fn({"new": [], "updated": [], "deleted_uids": real_deleted})
         self._update_button_states()
 
-    def _save_pending(self) -> None:
+    def _save_pending(self) -> bool:
         if not self._save_fn or self._save_done:
-            return
+            return True
         new_employees = [e for e in self._employees if e.is_new]
         updated_employees = [e for e in self._employees if not e.is_new]
         if new_employees or updated_employees:
-            self._save_fn(
+            result = self._save_fn(
                 {
                     "new": new_employees,
                     "updated": updated_employees,
                     "deleted_uids": [],
                 }
             )
+            if not save_result_succeeded(result):
+                return False
         self._save_done = True
+        return True
 
     def done(self, result: int) -> None:
         if result == QtWidgets.QDialog.DialogCode.Accepted:
-            self._save_pending()
+            if self._save_pending() is False:
+                return
         super().done(result)
 
     def get_result(self) -> PickerDialogResult[Employee]:
@@ -331,5 +343,4 @@ class EmployeesDialog(QtWidgets.QDialog):
         self._used_uids.clear()
 
     def closeEvent(self, event) -> None:
-        self._save_pending()
-        event.accept()
+        super().closeEvent(event)

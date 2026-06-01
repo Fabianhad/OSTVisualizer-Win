@@ -49,6 +49,8 @@ class AreaComboBox(TreePopupComboBoxBase):
         _add_children(root, "")
         self._block_signals = False
         target = selected_uid if selected_uid is not None else self._selected_uid
+        if (target or "") not in self._area_items:
+            target = ""
         self.set_current_area_uid(target or "")
 
     def _add_item(
@@ -97,7 +99,10 @@ class AreaComboBox(TreePopupComboBoxBase):
             self.setEditText("")
 
     def set_current_area_uid(self, uid: Optional[str]) -> None:
-        self._select_uid(uid or "", emit=False)
+        target = uid or ""
+        if target not in self._area_items:
+            target = ""
+        self._select_uid(target, emit=False)
 
     def get_current_area_uid(self) -> str:
         return self._selected_uid or ""

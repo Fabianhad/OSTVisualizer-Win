@@ -644,7 +644,9 @@ class ProjectView(QtWidgets.QWidget):
             item.setText(0, original_name)
             return
         if self.on_rename_project:
-            self.on_rename_project(uid, new_name, file_path)
+            result = self.on_rename_project(uid, new_name, file_path)
+            if result is False:
+                item.setText(0, original_name)
 
     def _set_item_info(
         self,
@@ -784,6 +786,10 @@ class ProjectView(QtWidgets.QWidget):
 
     def _on_top_selection_change(self):
         bid_refs, project_uids = self._collect_multi_selection()
+        if len(self.top_tree.selectedItems()) > 1:
+            if self.on_multi_selection:
+                self.on_multi_selection(bid_refs, project_uids)
+            return
         item = self._current_selected_item()
         if item is None:
             self.current_bid_ref = None
