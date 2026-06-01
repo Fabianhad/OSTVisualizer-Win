@@ -18,7 +18,6 @@ class SplashScreen(QtWidgets.QSplashScreen):
         pixmap = QtGui.QPixmap(SPLASH_SCREEN_WIDTH, SPLASH_SCREEN_HEIGHT)
         pixmap.fill(get_app_window_color())
         super().__init__(pixmap, QtCore.Qt.WindowType.WindowStaysOnTopHint)
-        self.setParent(parent)
         self._title = "OST Visualizer"
         self._message = ""
 
@@ -56,4 +55,3 @@ class SplashScreen(QtWidgets.QSplashScreen):
             logger.exception("Error closing SplashScreen")
         self._title = None
         self._message = None
-        self.setParent(None)

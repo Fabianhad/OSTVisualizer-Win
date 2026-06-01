@@ -1,4 +1,5 @@
 from typing import List
+from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 
 
@@ -31,6 +32,23 @@ class BidClipboardService:
     @property
     def source_file_path(self) -> str:
         return self._bid_refs[0].file_path
+
+    def source_matches_file(self, file_path: str) -> bool:
+        return bool(
+            self.has_content()
+            and file_path
+            and normalize_path(self.source_file_path) == normalize_path(file_path)
+        )
+
+    @staticmethod
+    def refs_share_database(bid_refs: List[BidRef]) -> bool:
+        if not bid_refs:
+            return False
+        file_path = bid_refs[0].file_path
+        return all(
+            normalize_path(ref.file_path) == normalize_path(file_path)
+            for ref in bid_refs
+        )
 
     def _set_refs(self, bid_refs: List[BidRef], cut: bool) -> None:
         self._bid_refs = list(bid_refs)

@@ -789,6 +789,36 @@ class CtrlDragTests(unittest.TestCase):
         self.assertIn(path, view._rotation_drag_preview_items)
         self.assertNotIn(label, view._rotation_drag_preview_items)
 
+    def test_rotate_handle_press_takes_priority_over_condition_label(self):
+        view = self._make_view({"t1"})
+        view._cursor_mode = "rotate"
+        view._rotate_handle_item = QGraphicsPathItem()
+        view._rotate_handle_item.setPos(10.0, 0.0)
+        view._rotate_center_scene = QtCore.QPointF(0.0, 0.0)
+        view._rotate_handle_uid = "t1"
+        view._rotate_handle_radius = 10.0
+        view._rotate_handle_start_angle_deg = 0.0
+        view._is_rotatable_uid = lambda uid: uid == "t1"
+        view._current_takeoffs["t1"].rotation = 0.0
+        view._current_takeoffs["t1"].is_hole = False
+        path = QGraphicsPathItem()
+        path.setData(0, "t1")
+        label = QGraphicsTextItem("Display Dimension")
+        label.setData(0, "t1")
+        label.setData(2, "condition_label")
+        label.setData(3, "display_dimension")
+        view._uid_to_items = {"t1": [path, label]}
+        view._dimension_text_label_at = lambda _pos: label
+        view._select_dimension_text_label = lambda _item: self.fail(
+            "rotation handle press should not select display text labels"
+        )
+        press = FakeMouseEvent(x=10, y=0)
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        self.assertTrue(view._rotation_drag_active)
+        self.assertIn(path, view._rotation_drag_preview_items)
+        self.assertNotIn(label, view._rotation_drag_preview_items)
+
     def _make_pattern_resize_view(self, condition_type):
         view = InputHandlerHarness()
         view._scene = QGraphicsScene()

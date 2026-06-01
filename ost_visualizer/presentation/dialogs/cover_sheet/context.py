@@ -40,7 +40,7 @@ class CoverSheetContext:
         return self._read.get_employees_and_pay_classes(self._bid_ref.file_path)
 
     def save_bid_areas(self, changes):
-        return self._write.save_bid_areas(
+        return self._write.save_bid_areas_result(
             self._bid_ref.file_path, self._bid_ref.bid_uid, changes
         )
 

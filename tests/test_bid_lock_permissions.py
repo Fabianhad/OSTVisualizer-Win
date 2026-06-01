@@ -1,6 +1,7 @@
 import logging
 import unittest
 from types import SimpleNamespace
+from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
 from ost_visualizer.application.services.active_bid_write_guard import (
     ActiveBidWriteGuard,
@@ -22,10 +23,16 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 from ost_visualizer.presentation.handlers.condition_action_handler import (
     ConditionActionHandler,
 )
+from ost_visualizer.presentation.handlers.project_write_handler import (
+    ProjectWriteHandler,
+)
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.ui_access_manager import (
     Feature,
     UIAccessManager,
+)
+from ost_visualizer.presentation.services.bid_clipboard_service import (
+    BidClipboardService,
 )
 
 
@@ -208,6 +215,10 @@ class _FakeAccess:
         self.checked.append(feature)
         return feature in self.allowed
 
+    def is_project_bid_clipboard_allowed(self, feature):
+        self.checked.append(feature)
+        return feature in self.allowed
+
 
 class _ConditionStructureWriteService:
     def __init__(self):
@@ -239,6 +250,30 @@ class _ConditionDuplicateRefreshFailedWriteService:
         return WriteReloadResult(
             ["condition-copy"], write_success=True, reload_success=False
         )
+
+
+class _PartialPasteWriteService:
+    def __init__(self):
+        self.duplicate_results = ["copy-1", None]
+        self.duplicate_calls = []
+        self.reloads = []
+        self.notifications = []
+
+    def duplicate_bid(self, file_path, bid_uid, reload=False):
+        self.duplicate_calls.append((file_path, bid_uid, reload))
+        if self.duplicate_results:
+            return self.duplicate_results.pop(0)
+        return None
+
+    def move_bids(self, *args, **kwargs):
+        raise AssertionError("same-project paste should not move copied bids")
+
+    def reload_database(self, file_path):
+        self.reloads.append(file_path)
+        return True
+
+    def notify_database_refreshed(self, file_path):
+        self.notifications.append(file_path)
 
 
 def _write_service(project_data, reload_success=True):
@@ -601,6 +636,165 @@ class BidLockPermissionTests(unittest.TestCase):
         MenuController.trigger_menu_callback(controller, "blocked")
         self.assertEqual(calls, [])
 
+    def test_project_paste_allows_same_database_with_normalized_paths(self):
+        window = MainWindow.__new__(MainWindow)
+        window._bid_clipboard = BidClipboardService()
+        window._bid_clipboard.copy([BidRef("C:/jobs/test.mdb", "bid-1")])
+        window.ui_access_manager = _FakeAccess({Feature.DUPLICATE_BID})
+        self.assertTrue(
+            MainWindow._can_paste_project_bids(
+                window, "C:\\jobs\\test.mdb", "project-2"
+            )
+        )
+
+    def test_context_copy_stores_bid_clipboard_with_normalized_same_database_refs(self):
+        window = MainWindow.__new__(MainWindow)
+        window._bid_clipboard = BidClipboardService()
+        refresh_calls = []
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(refresh_toolbar=lambda: refresh_calls.append(True))
+        )
+        MainWindow._copy_project_bids(
+            window,
+            [
+                BidRef("C:/jobs/test.mdb", "bid-1"),
+                BidRef("C:\\jobs\\test.mdb", "bid-2"),
+            ],
+        )
+        self.assertEqual(
+            [ref.bid_uid for ref in window._bid_clipboard.bid_refs],
+            ["bid-1", "bid-2"],
+        )
+        self.assertEqual(refresh_calls, [True])
+
+    def test_project_paste_invokes_bid_paste_handler_for_same_database_target(self):
+        window = MainWindow.__new__(MainWindow)
+        window._bid_clipboard = BidClipboardService()
+        window._bid_clipboard.copy([BidRef("C:/jobs/test.mdb", "bid-1")])
+        window.ui_access_manager = _FakeAccess({Feature.DUPLICATE_BID})
+        paste_calls = []
+        refresh_calls = []
+        window.handlers = SimpleNamespace(
+            delete=SimpleNamespace(
+                paste_bids=lambda refs, project_uid, is_cut=False: paste_calls.append(
+                    ([ref.bid_uid for ref in refs], project_uid, is_cut)
+                )
+                or True
+            ),
+            ui_event=SimpleNamespace(
+                refresh_toolbar=lambda: refresh_calls.append(True)
+            ),
+        )
+        MainWindow._paste_project_bids(window, "C:\\jobs\\test.mdb", "project-2")
+        self.assertEqual(paste_calls, [(["bid-1"], "project-2", False)])
+        self.assertEqual(refresh_calls, [True])
+
+    def test_project_paste_allowed_when_project_target_replaces_bid_selection(self):
+        project_data = _ProjectData()
+        ui_state = SimpleNamespace(
+            selected_file_path="C:/jobs/test.mdb",
+            selected_project_uid="project-2",
+            place_condition_uid=None,
+            get_selected_bid_ref=lambda: None,
+            is_database_selected=lambda: False,
+        )
+        manager = self._access_manager(project_data, ui_state)
+        self.assertFalse(manager.is_allowed(Feature.DUPLICATE_BID))
+        window = MainWindow.__new__(MainWindow)
+        window._bid_clipboard = BidClipboardService()
+        window._bid_clipboard.copy([BidRef("C:/jobs/test.mdb", "bid-1")])
+        window.ui_access_manager = manager
+        self.assertTrue(
+            MainWindow._can_paste_project_bids(window, "C:/jobs/test.mdb", "project-2")
+        )
+
+    def test_toolbar_paste_allows_same_database_with_normalized_paths(self):
+        clipboard = BidClipboardService()
+        clipboard.copy([BidRef("C:/jobs/test.mdb", "bid-1")])
+        ui_state = SimpleNamespace(
+            selected_file_path="C:\\jobs\\test.mdb",
+            selected_project_uid="project-2",
+            get_selected_bid_ref=lambda: None,
+        )
+        toolbar = ToolbarStateCoordinator(
+            ui_state,
+            _FakeAccess({Feature.DUPLICATE_BID}),
+            SimpleNamespace(find_project_uid_for_bid=lambda _ref: None),
+        )
+        toolbar.set_bid_clipboard(clipboard)
+        self.assertTrue(toolbar._can_paste_bid_clipboard())
+
+    def test_toolbar_paste_allowed_when_project_target_replaces_bid_selection(self):
+        clipboard = BidClipboardService()
+        clipboard.copy([BidRef("C:/jobs/test.mdb", "bid-1")])
+        project_data = _ProjectData()
+        ui_state = SimpleNamespace(
+            selected_file_path="C:/jobs/test.mdb",
+            selected_project_uid="project-2",
+            place_condition_uid=None,
+            get_selected_bid_ref=lambda: None,
+            get_selected_bid_refs=lambda: [],
+            is_database_selected=lambda: False,
+        )
+        manager = self._access_manager(project_data, ui_state)
+        self.assertFalse(manager.is_allowed(Feature.DUPLICATE_BID))
+        toolbar = ToolbarStateCoordinator(ui_state, manager, project_data)
+        toolbar.set_bid_clipboard(clipboard)
+        self.assertTrue(toolbar._can_paste_bid_clipboard())
+
+    def test_multi_bid_paste_partial_success_warns_without_plain_failure(self):
+        write_service = _PartialPasteWriteService()
+        project_data = SimpleNamespace(
+            find_project_uid_for_bid=lambda _ref: "project-1",
+            get_hierarchy=lambda: SimpleNamespace(find_bid_info=lambda _ref: None),
+        )
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=SimpleNamespace(),
+        )
+
+        def run_progress(_label, task_fn, **_kwargs):
+            return QtWidgets.QDialog.DialogCode.Accepted, task_fn(), None
+
+        handler._run_progress_dialog = run_progress
+        warnings = []
+        criticals = []
+        from ost_visualizer.presentation.handlers import project_write_handler
+
+        old_warning = project_write_handler.show_warning
+        old_critical = project_write_handler.show_critical
+        old_logger_error = project_write_handler.logger.error
+        project_write_handler.show_warning = lambda *args: warnings.append(args)
+        project_write_handler.show_critical = lambda *args: criticals.append(args)
+        project_write_handler.logger.error = lambda *args, **kwargs: None
+        try:
+            result = handler.paste_bids(
+                [
+                    BidRef("db.mdb", "bid-1"),
+                    BidRef("db.mdb", "bid-2"),
+                ],
+                "project-1",
+            )
+        finally:
+            project_write_handler.show_warning = old_warning
+            project_write_handler.show_critical = old_critical
+            project_write_handler.logger.error = old_logger_error
+        self.assertTrue(result)
+        self.assertEqual(
+            write_service.duplicate_calls,
+            [
+                ("db.mdb", "bid-1", False),
+                ("db.mdb", "bid-2", False),
+            ],
+        )
+        self.assertEqual(write_service.reloads, ["db.mdb"])
+        self.assertEqual(write_service.notifications, ["db.mdb"])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("Some bids were pasted", warnings[0][2])
+        self.assertEqual(criticals, [])
+
     def test_locked_bid_blocks_condition_edits_at_write_service(self):
         project_data = _ProjectData()
         project_data.locked = True
@@ -764,6 +958,28 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(result.refresh_failed)
         self.assertEqual(result.value, "layer-new")
 
+    def test_condition_type_save_result_keeps_mapping_when_refresh_fails(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data, reload_success=False)
+        service._save_condition_types = _SequenceUseCase(
+            [{"new_condition_type": "type-new"}, {"new_condition_type": "type-legacy"}]
+        )
+        changes = {
+            "new": [{"uid": "new_condition_type", "name": "Concrete"}],
+            "updated": [],
+            "deleted_uids": [],
+        }
+        result = service.save_condition_types_result(
+            project_data.bid_ref.file_path, changes
+        )
+        self.assertFalse(result)
+        self.assertTrue(result.write_success)
+        self.assertTrue(result.refresh_failed)
+        self.assertEqual(result.value, {"new_condition_type": "type-new"})
+        self.assertIsNone(
+            service.save_condition_types(project_data.bid_ref.file_path, changes)
+        )
+
     def test_condition_dialog_layer_insert_warns_when_refresh_fails(self):
         warnings = []
         bid_ref = BidRef("db.mdb", "bid-1")
@@ -794,6 +1010,42 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertIn(
             "created, but the layer list could not be refreshed", warnings[0][2]
         )
+
+    def test_condition_dialog_condition_type_save_warns_when_refresh_fails(self):
+        warnings = []
+        bid_ref = BidRef("db.mdb", "bid-1")
+        coordinator = SimpleNamespace(conditions_sidebar=None)
+        write_service = SimpleNamespace(
+            save_condition_types_result=lambda _file_path, _changes: (
+                WriteReloadResult(
+                    {"new_condition_type": "type-new"},
+                    write_success=True,
+                    reload_success=False,
+                )
+            )
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=write_service,
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(),
+        )
+        from ost_visualizer.presentation.handlers import condition_action_handler
+
+        old_warning = condition_action_handler.show_warning
+        condition_action_handler.show_warning = lambda *args: warnings.append(args)
+        try:
+            result = handler._save_condition_types_from_dialog(
+                bid_ref,
+                write_service,
+                {"new": [{"uid": "new_condition_type", "name": "Concrete"}]},
+            )
+        finally:
+            condition_action_handler.show_warning = old_warning
+        self.assertEqual(result, {"new_condition_type": "type-new"})
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("could not be refreshed", warnings[0][2])
 
     def test_new_folder_warns_when_create_succeeds_but_refresh_fails(self):
         warnings = []
@@ -898,6 +1150,39 @@ class BidLockPermissionTests(unittest.TestCase):
             ],
             deleted_uids=[],
         )
+        self.assertIsNone(
+            service.save_bid_areas(
+                project_data.bid_ref.file_path,
+                project_data.bid_ref.bid_uid,
+                changes,
+            )
+        )
+
+    def test_save_bid_areas_result_preserves_uid_map_when_refresh_fails(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data, reload_success=False)
+        service._save_bid_areas = _UseCase({"new_0": "area-2"})
+        changes = BidAreaChangeset(
+            new=[
+                BidArea(
+                    uid="new_0",
+                    bid_uid=project_data.bid_ref.bid_uid,
+                    parent_uid="",
+                    name="Area 2",
+                    sequence=0,
+                )
+            ],
+            updated=[],
+            deleted_uids=[],
+        )
+        result = service.save_bid_areas_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            changes,
+        )
+        self.assertTrue(result.write_success)
+        self.assertTrue(result.refresh_failed)
+        self.assertEqual(result.value, {"new_0": "area-2"})
         self.assertIsNone(
             service.save_bid_areas(
                 project_data.bid_ref.file_path,

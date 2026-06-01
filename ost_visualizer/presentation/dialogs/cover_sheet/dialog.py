@@ -22,6 +22,7 @@ from ...config import (
 )
 from ...managers.icon_manager import IconId, IconManager
 from ...utils.button_policy import apply_no_highlight_button_policy
+from ...utils.dialog import save_result_refresh_failed
 from ...utils.image_show_mode import SHOW_LABELS
 from ...utils.messagebox import (
     confirm_delete_page_with_contents,
@@ -745,6 +746,11 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 if selected_name and self.combo_estimator.itemText(i) == selected_name:
                     matched = i
                     break
+                if not selected_name and str(self.combo_estimator.itemData(i)) == str(
+                    current_uid
+                ):
+                    matched = i
+                    break
             self.combo_estimator.setCurrentIndex(matched)
             if matched == -1:
                 self.combo_estimator.lineEdit().clear()
@@ -763,11 +769,25 @@ class CoverSheetDialog(QtWidgets.QDialog):
         used_uids = (
             self._get_used_area_uids_fn() if self._get_used_area_uids_fn else None
         )
+
+        def save_bid_areas(changes):
+            if not self._save_bid_areas_fn:
+                return None
+            result = self._save_bid_areas_fn(changes)
+            if save_result_refresh_failed(result):
+                show_warning(
+                    self,
+                    "Refresh Error",
+                    "The bid area changes were saved, but the area list could not be "
+                    "refreshed. Reopen the database to see the latest bid areas.",
+                )
+            return result
+
         dialog = BidAreasDialog(
             self.icon_provider,
             parent=self,
             bid_areas=bid_areas,
-            save_fn=self._save_bid_areas_fn,
+            save_fn=save_bid_areas if self._save_bid_areas_fn else None,
             used_uids=used_uids,
             on_saved_fn=self._refresh_fn,
             has_license=self._has_license,

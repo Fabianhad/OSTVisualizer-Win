@@ -876,12 +876,8 @@ class UIEventCoordinator:
         )
         used_uids = self.project_data.get_area_uids_with_takeoff()
 
-        def save_fn(changes) -> Optional[dict]:
-            if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
-                return None
-            return self._project_write_service.save_bid_areas(
-                bid_ref.file_path, bid_ref.bid_uid, changes
-            )
+        def save_fn(changes):
+            return self._save_bid_areas_from_dialog(bid_ref, changes)
 
         def on_saved() -> None:
             if self._page_settings_bar:
@@ -906,6 +902,23 @@ class UIEventCoordinator:
         finally:
             dialog.cleanup()
             dialog.deleteLater()
+
+    def _save_bid_areas_from_dialog(self, bid_ref, changes):
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            return None
+        result = self._project_write_service.save_bid_areas_result(
+            bid_ref.file_path, bid_ref.bid_uid, changes
+        )
+        if not result.write_success:
+            return None
+        if result.refresh_failed:
+            show_warning(
+                self.main_window,
+                "Refresh Error",
+                "The bid area changes were saved, but the area list could not be "
+                "refreshed. Reopen the database to see the latest bid areas.",
+            )
+        return result
 
     def open_employees_dialog(self) -> None:
         file_path = self._editable_master_data_file_path()
@@ -1038,7 +1051,20 @@ class UIEventCoordinator:
     def _save_master_condition_types(self, file_path: str, changes) -> Optional[dict]:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
             return None
-        return self._project_write_service.save_condition_types(file_path, changes)
+        result = self._project_write_service.save_condition_types_result(
+            file_path, changes
+        )
+        if not result.write_success:
+            return None
+        if result.refresh_failed:
+            show_warning(
+                self.main_window,
+                "Refresh Error",
+                "The condition type changes were saved, but the condition type list "
+                "could not be refreshed. Reopen the database to see the latest "
+                "condition types.",
+            )
+        return result.value
 
     def _resolve_master_data_file_path(self) -> Optional[str]:
         return self.main_window.get_selected_database_context_file_path()
@@ -1160,8 +1186,8 @@ class UIEventCoordinator:
     def _on_file_opened(self, **kwargs) -> None:
         self._save_current_page_view_state()
         self._placement.force_exit()
-        self._sync_undo_bid()
         self.ui_state_manager.reset_selections()
+        self._sync_undo_bid()
         self.main_window.project_view.set_selected_node_state(None)
         self._nav.transition_to(NavState.FILE_LOADED_NO_BID)
         self.ui_access_manager.refresh()
@@ -1238,6 +1264,7 @@ class UIEventCoordinator:
             if not self.project_data.get_bid(snap.bid_ref):
                 self._reset_takeoff_workspace_state()
                 self.ui_state_manager.set_bid_selection(None)
+                self._sync_undo_bid()
                 self.project_data.deselect_pages()
                 self.main_window.project_view.restore_file_selection(
                     snap.selected_file_path or snap.bid_ref.file_path
@@ -1332,9 +1359,9 @@ class UIEventCoordinator:
             return
         self._save_current_page_view_state()
         self._placement.force_exit()
-        self._sync_undo_bid()
         self.ui_state_manager.reset_selections()
         self.ui_state_manager.set_database_selected(False)
+        self._sync_undo_bid()
         self.ui_access_manager.refresh()
         self.project_data.clear_page_selection()
         self._reset_takeoff_workspace_state()
@@ -1364,10 +1391,10 @@ class UIEventCoordinator:
         project_uid = kwargs.get("project_uid")
         self._save_current_page_view_state()
         self._placement.force_exit()
-        self._sync_undo_bid()
         self.ui_state_manager.reset_selections()
         self.ui_state_manager.set_database_selected(is_database_root, file_path)
         self.ui_state_manager.set_project_uid(project_uid)
+        self._sync_undo_bid()
         self._nav.transition_to(NavState.FILE_LOADED_NO_BID)
         self.ui_access_manager.refresh()
         self.project_data.deselect_pages()
@@ -1457,10 +1484,10 @@ class UIEventCoordinator:
         self._save_current_page_view_state()
         if not bid_ref:
             self._placement.force_exit()
-            self._sync_undo_bid()
             self.ui_state_manager.set_bid_selection(None)
             self.ui_state_manager.set_database_selected(False)
             self.ui_state_manager.set_file_path(None)
+            self._sync_undo_bid()
             self._nav.transition_to(NavState.FILE_LOADED_NO_BID)
             self.ui_access_manager.refresh()
             self.project_data.deselect_pages()
@@ -1577,7 +1604,6 @@ class UIEventCoordinator:
         if not page:
             return
         selected_area = self.project_data.get_page_area_selections().get(page_uid)
-        self.ui_state_manager.selected_area_uid = selected_area or ""
         areas_for_page = self.project_data.get_area_uids_with_takeoff_for_page(page_uid)
         self._page_settings_bar.load_page(
             page_uid,
@@ -1585,6 +1611,9 @@ class UIEventCoordinator:
             page.scale_factor2,
             selected_area,
             areas_with_takeoff=areas_for_page,
+        )
+        self.ui_state_manager.selected_area_uid = (
+            self._page_settings_bar.get_selected_area_uid() or ""
         )
 
     def _update_page_selection(self, page_uids: List[str]) -> None:

@@ -10,7 +10,12 @@ from ..config import (
     RELAXED_MARGINS,
     RELAXED_SPACING,
 )
-from ..utils.dialog import BaseListDialog, save_result_mapping, save_result_succeeded
+from ..utils.dialog import (
+    BaseListDialog,
+    save_result_mapping,
+    save_result_refresh_failed,
+    save_result_succeeded,
+)
 from ..utils.messagebox import confirm_multi_delete
 
 
@@ -371,7 +376,7 @@ class BidAreasDialog(BaseListDialog):
                     self._apply_uid_map(self.tree.invisibleRootItem(), uid_map)
                 finally:
                     self.tree.blockSignals(False)
-            if self._on_saved_fn:
+            if self._on_saved_fn and not save_result_refresh_failed(result):
                 self._on_saved_fn()
         return True
 

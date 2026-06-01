@@ -21,6 +21,7 @@ class _DuplicateBidResult:
 class _PasteBidsResult:
     success: bool
     reload_success: bool
+    partial_success: bool = False
 
 
 class ProjectWriteHandler:
@@ -227,6 +228,27 @@ class ProjectWriteHandler:
         if (
             rc == QtWidgets.QDialog.DialogCode.Accepted
             and paste_result is not None
+            and paste_result.partial_success
+        ):
+            logger.error("Bid paste partially completed before failing")
+            message = (
+                "Some bids were pasted, but the paste did not finish. "
+                "Review the refreshed project tree before retrying."
+            )
+            if not paste_result.reload_success:
+                message = (
+                    "Some bids were pasted, but the paste did not finish and the "
+                    "project tree could not be refreshed. Reopen the database before retrying."
+                )
+            show_warning(
+                self.window,
+                "Paste Partially Completed",
+                message,
+            )
+            return True
+        if (
+            rc == QtWidgets.QDialog.DialogCode.Accepted
+            and paste_result is not None
             and paste_result.success
         ):
             if not paste_result.reload_success:
@@ -296,7 +318,7 @@ class ProjectWriteHandler:
             return _PasteBidsResult(False, False)
         reporter.report("project data")
         reload_success = self._write_service.reload_database(file_path)
-        return _PasteBidsResult(False, reload_success)
+        return _PasteBidsResult(False, reload_success, partial_success=True)
 
     def _paste_bid_label(self, bid_refs: List[BidRef]) -> str:
         if len(bid_refs) != 1:

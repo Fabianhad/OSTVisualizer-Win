@@ -1,4 +1,5 @@
 import unittest
+from ost_visualizer.application.services.project_write_service import WriteReloadResult
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyData
 from ost_visualizer.domain.entities.page import Page
@@ -6,6 +7,7 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
     _MainThreadSignaler,
 )
+from ost_visualizer.presentation.managers.ui_access_manager import Feature
 
 
 class FakeUiState:
@@ -229,12 +231,24 @@ class FakeVisualization:
         self.monitoring_started += 1
 
 
+class FakeUndo:
+    def __init__(self):
+        self.active = []
+
+    def set_active_bid(self, bid_ref):
+        self.active.append(bid_ref)
+
+
 class FakeNav:
     def __init__(self):
         self.state = None
 
     def transition_to(self, state):
         self.state = state
+
+    @property
+    def is_refreshing(self):
+        return False
 
 
 class FakeRefreshSnapshot:
@@ -262,6 +276,43 @@ class FakeRefreshNav:
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_master_condition_type_save_warns_when_refresh_fails(self):
+        warnings = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = object()
+        coordinator.ui_access_manager = type(
+            "Access",
+            (),
+            {"is_allowed": lambda _self, feature: feature == Feature.EDIT_MASTER_DATA},
+        )()
+        coordinator._project_write_service = type(
+            "WriteService",
+            (),
+            {
+                "save_condition_types_result": lambda _self, _path, _changes: (
+                    WriteReloadResult(
+                        {"new_condition_type": "type-new"},
+                        write_success=True,
+                        reload_success=False,
+                    )
+                )
+            },
+        )()
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        old_warning = ui_event_coordinator.show_warning
+        ui_event_coordinator.show_warning = lambda *args: warnings.append(args)
+        try:
+            result = coordinator._save_master_condition_types(
+                "db.mdb",
+                {"new": [{"uid": "new_condition_type", "name": "Concrete"}]},
+            )
+        finally:
+            ui_event_coordinator.show_warning = old_warning
+        self.assertEqual(result, {"new_condition_type": "type-new"})
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("could not be refreshed", warnings[0][2])
+
     def test_main_thread_signaler_cleanup_releases_callback(self):
         calls = []
         signaler = _MainThreadSignaler()
@@ -526,6 +577,132 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.project_data.deselects, 0)
         self.assertEqual(coordinator._viewer.clears, 0)
         self.assertEqual(coordinator._undo_service.active, [])
+
+    def test_clearing_bid_selection_clears_undo_owner(self):
+        old_ref = BidRef("old.mdb", "old-bid")
+
+        class UiState:
+            def __init__(self):
+                self.bid_ref = old_ref
+
+            def get_selected_bid_ref(self):
+                return self.bid_ref
+
+            def set_bid_selection(self, bid_ref):
+                self.bid_ref = bid_ref
+
+            def set_database_selected(self, *_args):
+                pass
+
+            def set_file_path(self, *_args):
+                pass
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = type(
+            "ProjectData",
+            (),
+            {"deselect_pages": lambda _self: None},
+        )()
+        coordinator._undo_service = FakeUndo()
+        coordinator._placement = FakePlacement()
+        coordinator._toolbar = FakeToolbar()
+        coordinator._viewer = FakeUnloadViewer()
+        coordinator.visualization_service = FakeVisualization()
+        coordinator.ui_access_manager = FakeAccess()
+        coordinator._nav = FakeNav()
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._save_current_page_view_state = lambda: None
+        coordinator._clear_mesh_views_for_scene_update = lambda **_kwargs: None
+        coordinator._reset_takeoff_workspace_state = lambda: None
+        coordinator._set_takeoff_tab_visible = lambda _visible: None
+        coordinator.handle_bid_selection(None)
+        self.assertIsNone(coordinator.ui_state_manager.get_selected_bid_ref())
+        self.assertEqual(coordinator._undo_service.active, [None])
+
+    def test_file_selection_clears_undo_owner_after_resetting_selection(self):
+        old_ref = BidRef("old.mdb", "old-bid")
+
+        class UiState:
+            def __init__(self):
+                self.bid_ref = old_ref
+                self.database_selected = None
+                self.project_uid = None
+
+            def get_selected_bid_ref(self):
+                return self.bid_ref
+
+            def reset_selections(self):
+                self.bid_ref = None
+
+            def set_database_selected(self, selected, file_path=None):
+                self.database_selected = (selected, file_path)
+
+            def set_project_uid(self, project_uid):
+                self.project_uid = project_uid
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = type(
+            "ProjectData",
+            (),
+            {"deselect_pages": lambda _self: None},
+        )()
+        coordinator._undo_service = FakeUndo()
+        coordinator._placement = FakePlacement()
+        coordinator._viewer = FakeUnloadViewer()
+        coordinator.visualization_service = FakeVisualization()
+        coordinator.ui_access_manager = FakeAccess()
+        coordinator._nav = FakeNav()
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._save_current_page_view_state = lambda: None
+        coordinator._clear_mesh_views_for_scene_update = lambda **_kwargs: None
+        coordinator._reset_takeoff_workspace_state = lambda: None
+        coordinator._set_takeoff_tab_visible = lambda _visible: None
+        coordinator._on_file_selected(file_path="new.mdb", is_database_root=True)
+        self.assertIsNone(coordinator.ui_state_manager.get_selected_bid_ref())
+        self.assertEqual(coordinator._undo_service.active, [None])
+
+    def test_page_settings_bar_sync_stores_validated_area_uid(self):
+        class UiState:
+            selected_area_uid = ""
+
+        class ProjectData:
+            def get_page(self, page_uid):
+                return Page(uid=page_uid, name="Page 1")
+
+            def get_page_area_selections(self):
+                return {"page-1": "deleted-area"}
+
+            def get_area_uids_with_takeoff_for_page(self, _page_uid):
+                return set()
+
+        class PageSettingsBar:
+            def __init__(self):
+                self.loaded = []
+
+            def load_page(
+                self,
+                page_uid,
+                sf1,
+                sf2,
+                selected_area_uid,
+                areas_with_takeoff=None,
+            ):
+                self.loaded.append(
+                    (page_uid, sf1, sf2, selected_area_uid, areas_with_takeoff)
+                )
+
+            def get_selected_area_uid(self):
+                return ""
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator._page_settings_bar = PageSettingsBar()
+        coordinator._update_page_settings_bar("page-1")
+        self.assertEqual(coordinator._page_settings_bar.loaded[0][3], "deleted-area")
+        self.assertEqual(coordinator.ui_state_manager.selected_area_uid, "")
 
     def test_failed_page_delete_clears_pending_page_restore(self):
         from ost_visualizer.presentation.coordinators import ui_event_coordinator

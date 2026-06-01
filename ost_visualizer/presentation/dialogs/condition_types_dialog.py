@@ -160,11 +160,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         if self._pending_new_item is not None:
             self._start_edit_item(self._pending_new_item)
             return
-        selected = [
-            item
-            for item in self.tree.selectedItems()
-            if not item.isHidden() and item.data(0, self._UID_ROLE) is not None
-        ]
+        selected = self._valid_selected_items()
         self._pending_new_prev_uid = (
             str(selected[0].data(0, self._UID_ROLE)) if len(selected) == 1 else None
         )
@@ -227,8 +223,13 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         if item is self._pending_new_item:
             self._commit_new_item(item)
             return
-        uid = str(item.data(0, self._UID_ROLE))
+        raw_uid = item.data(0, self._UID_ROLE)
+        if raw_uid is None:
+            return
+        uid = str(raw_uid)
         original = self._name_by_uid(uid)
+        if original is None:
+            return
         new_name = item.text(0).strip()
         if not new_name:
             self._set_item_text(item, original)
@@ -306,8 +307,17 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             None,
         )
 
-    def _name_by_uid(self, uid: str) -> str:
-        return next(item.name for item in self._items if item.uid == uid)
+    def _name_by_uid(self, uid: str) -> Optional[str]:
+        return next((item.name for item in self._items if item.uid == uid), None)
+
+    def _valid_selected_items(self) -> List[QtWidgets.QTreeWidgetItem]:
+        return [
+            item
+            for item in self.tree.selectedItems()
+            if not item.isHidden()
+            and item.data(0, self._UID_ROLE) is not None
+            and self._name_by_uid(str(item.data(0, self._UID_ROLE))) is not None
+        ]
 
     def _set_item_text(self, item: QtWidgets.QTreeWidgetItem, text: str) -> None:
         self._building = True
@@ -317,11 +327,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
     def _on_delete(self) -> None:
         if not self._is_interactive:
             return
-        selected = [
-            item
-            for item in self.tree.selectedItems()
-            if not item.isHidden() and item.data(0, self._UID_ROLE) is not None
-        ]
+        selected = self._valid_selected_items()
         if not selected:
             return
         next_row = min(
@@ -352,11 +358,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
     def _on_select(self) -> None:
         if not self._is_interactive:
             return
-        selected = [
-            item
-            for item in self.tree.selectedItems()
-            if not item.isHidden() and item.data(0, self._UID_ROLE) is not None
-        ]
+        selected = self._valid_selected_items()
         if len(selected) != 1:
             return
         item = selected[0]
@@ -375,11 +377,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             self.btn_new.setEnabled(False)
             self.btn_delete.setEnabled(False)
             return
-        selected = [
-            item
-            for item in self.tree.selectedItems()
-            if not item.isHidden() and item.data(0, self._UID_ROLE) is not None
-        ]
+        selected = self._valid_selected_items()
         self.btn_select.setEnabled(self._menu_mode or len(selected) == 1)
         self.btn_new.setEnabled(True)
         self.btn_delete.setEnabled(bool(selected))

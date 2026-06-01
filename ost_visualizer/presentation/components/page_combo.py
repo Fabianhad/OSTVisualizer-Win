@@ -422,6 +422,7 @@ class SinglePageComboBox(TreePopupComboBoxBase):
     def load_bid(
         self, bid: Bid, pages_with_takeoffs: Optional[Set[str]] = None
     ) -> None:
+        previous_uid = self._selected_uid
         self._block_signals = True
         self._model.clear()
         self._page_items.clear()
@@ -431,6 +432,7 @@ class SinglePageComboBox(TreePopupComboBoxBase):
             self._add_folder_item(root, folder)
         for page in bid.pages_without_folder:
             self._add_page_item(root, page)
+        self._selected_uid = previous_uid if previous_uid in self._page_items else ""
         self._block_signals = False
         self._update_display_text()
 
@@ -543,7 +545,10 @@ class SinglePageComboBox(TreePopupComboBoxBase):
         self.setEditText(item.text() if item else "")
 
     def set_current_page_uid(self, uid: Optional[str]) -> None:
-        self._select_uid(uid or "", emit=False)
+        target = uid or ""
+        if target not in self._page_items:
+            target = ""
+        self._select_uid(target, emit=False)
 
     def get_page_order(self) -> List[str]:
         return _walk_page_uids(self._model.invisibleRootItem())

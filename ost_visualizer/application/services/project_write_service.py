@@ -900,29 +900,47 @@ class ProjectWriteService(BaseWriteService):
         return self._reload_after_success(db_path, success)
 
     def save_condition_types(self, db_path: str, changes: dict) -> Optional[dict]:
+        result = self.save_condition_types_result(db_path, changes)
+        return result.value if result.success else None
+
+    def save_condition_types_result(
+        self, db_path: str, changes: dict
+    ) -> WriteReloadResult:
         result = self._save_condition_types.execute(db_path, changes)
         if result is None or result is False:
-            return None
+            return WriteReloadResult(None, write_success=False, reload_success=False)
         has_changes = any(
             changes.get(key) for key in ("new", "updated", "deleted_uids")
         )
-        if has_changes and not self.reload_and_notify(db_path):
-            return None
-        return result
+        reload_success = self.reload_and_notify(db_path) if has_changes else True
+        return WriteReloadResult(
+            result,
+            write_success=True,
+            reload_success=reload_success,
+        )
 
     def save_bid_areas(self, db_path: str, bid_uid: str, changes) -> Optional[dict]:
+        result = self.save_bid_areas_result(db_path, bid_uid, changes)
+        return result.value if result.success else None
+
+    def save_bid_areas_result(
+        self, db_path: str, bid_uid: str, changes
+    ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "save_bid_areas", db_path, bid_uid
         ):
-            return None
+            return WriteReloadResult(None, write_success=False, reload_success=False)
         result = self._save_bid_areas.execute(db_path, bid_uid, changes)
         if result is None or result is False:
-            return None
+            return WriteReloadResult(None, write_success=False, reload_success=False)
         uid_map = result
         missing_new_uids = [area.uid for area in changes.new if area.uid not in uid_map]
         if missing_new_uids:
-            return None
+            return WriteReloadResult(None, write_success=False, reload_success=False)
         has_changes = bool(changes.new or changes.updated or changes.deleted_uids)
-        if has_changes and not self.reload_and_notify(db_path):
-            return None
-        return uid_map
+        reload_success = self.reload_and_notify(db_path) if has_changes else True
+        return WriteReloadResult(
+            uid_map,
+            write_success=True,
+            reload_success=reload_success,
+        )

@@ -49,6 +49,7 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
         self._drag_file_path: Optional[str] = None
         self.on_move_bids: Optional[Callable] = None
         self._ui_access_manager = None
+        self._context_menu_press_pos: Optional[QtCore.QPoint] = None
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
@@ -59,6 +60,16 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         item = self.itemAt(event.position().toPoint())
+        if event.button() == QtCore.Qt.MouseButton.RightButton:
+            self._context_menu_press_pos = event.position().toPoint()
+            self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+            if item is None or item.isSelected():
+                if item is not None:
+                    self._set_current_item_preserving_selection(item)
+                event.accept()
+                return
+            super().mousePressEvent(event)
+            return
         if (
             event.button() == QtCore.Qt.MouseButton.LeftButton
             and item is None
@@ -79,6 +90,26 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
             event.accept()
             return
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.MouseButton.RightButton:
+            pos = self._context_menu_press_pos or event.position().toPoint()
+            self._context_menu_press_pos = None
+            self.customContextMenuRequested.emit(pos)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _set_current_item_preserving_selection(
+        self, item: QtWidgets.QTreeWidgetItem
+    ) -> None:
+        index = self.indexFromItem(item, 0)
+        selection_model = self.selectionModel()
+        if selection_model and index.isValid():
+            selection_model.setCurrentIndex(
+                index,
+                QtCore.QItemSelectionModel.SelectionFlag.NoUpdate,
+            )
 
     def _eligible_drag_items(self) -> List[QtWidgets.QTreeWidgetItem]:
         out: List[QtWidgets.QTreeWidgetItem] = []
@@ -953,18 +984,28 @@ class ProjectView(QtWidgets.QWidget):
     def _on_context_menu(self, pos: QtCore.QPoint) -> None:
         item = self.top_tree.itemAt(pos)
         if not item:
-            return
-        if not item.isSelected():
-            self.top_tree.clearSelection()
-            item.setSelected(True)
-        self.top_tree.setCurrentItem(item)
-        self._on_top_selection_change()
+            item = self._current_selected_item()
+            if item is None:
+                return
+        self._prepare_context_menu_selection(item)
         context = self._context_for_item(item)
         if context is None:
             return
         menu = QtWidgets.QMenu(self)
         self._build_project_context_menu(menu, context)
         menu.exec(self.top_tree.viewport().mapToGlobal(pos))
+
+    def _prepare_context_menu_selection(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        selection_changed = False
+        if not item.isSelected():
+            self.top_tree.clearSelection()
+            item.setSelected(True)
+            self.top_tree.setCurrentItem(item)
+            selection_changed = True
+        elif item.isSelected():
+            self.top_tree._set_current_item_preserving_selection(item)
+        if selection_changed:
+            self._on_top_selection_change()
 
     def _context_for_item(
         self, item: QtWidgets.QTreeWidgetItem
@@ -987,7 +1028,7 @@ class ProjectView(QtWidgets.QWidget):
             bid_ref=bid_ref,
             bid_status=item.text(2) if kind == "bid" else "",
             paste_target=self._paste_target_for_item(item),
-            copy_refs=self._selected_copy_bid_refs(),
+            copy_refs=self._copy_bid_refs_for_context(item),
             selected_deleted_refs=self._selected_deleted_bid_refs(),
             empty_deleted_refs=self._deleted_bid_refs_for_context(item),
         )
@@ -1079,7 +1120,7 @@ class ProjectView(QtWidgets.QWidget):
             ContextMenuManager.action_spec(
                 ContextActionId.COPY,
                 "Copy",
-                callback=self._copy_selected_bids,
+                callback=lambda refs=context.copy_refs: self._copy_bid_refs(refs),
                 enabled=bool(context.copy_refs),
             ),
         )
@@ -1304,10 +1345,38 @@ class ProjectView(QtWidgets.QWidget):
             return []
         return refs
 
+    def _copy_bid_refs_for_context(
+        self, item: QtWidgets.QTreeWidgetItem
+    ) -> List[BidRef]:
+        if item.isSelected():
+            return self._selected_copy_bid_refs()
+        refs = self._single_copy_bid_ref_for_item(item)
+        if not refs:
+            return []
+        access_manager = self.top_tree._ui_access_manager
+        if access_manager and not access_manager.is_allowed(Feature.DUPLICATE_BID):
+            return []
+        return refs
+
+    def _single_copy_bid_ref_for_item(
+        self, item: QtWidgets.QTreeWidgetItem
+    ) -> List[BidRef]:
+        kind, uid, file_path = self._get_item_info(item)
+        if kind != "bid" or not uid or not file_path:
+            return []
+        parent = item.parent()
+        if parent:
+            parent_kind, parent_uid, _ = self._get_item_info(parent)
+            if parent_kind == "project" and parent_uid == _DELETED_PROJECT_UID:
+                return []
+        return [BidRef(file_path=file_path, bid_uid=uid)]
+
     def _copy_selected_bids(self) -> None:
         if self._text_editor_has_focus():
             return
-        refs = self._selected_copy_bid_refs()
+        self._copy_bid_refs(self._selected_copy_bid_refs())
+
+    def _copy_bid_refs(self, refs: List[BidRef]) -> None:
         if refs and self.on_copy_bids:
             self.on_copy_bids(refs)
 

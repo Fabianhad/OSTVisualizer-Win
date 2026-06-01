@@ -2373,6 +2373,28 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(combo.lineEdit().text(), "3 - S1 - A101")
         combo.close()
 
+    def test_single_page_combo_clears_deleted_selected_page_on_reload(self):
+        combo = SinglePageComboBox()
+        first_bid = Bid(
+            uid="bid-1",
+            name="Bid",
+            pages_without_folder=[Page(uid="p1", name="A101")],
+        )
+        refreshed_bid = Bid(
+            uid="bid-1",
+            name="Bid",
+            pages_without_folder=[Page(uid="p2", name="A102")],
+        )
+        combo.load_bid(first_bid)
+        combo.set_current_page_uid("p1")
+        self.assertEqual(combo._selected_uid, "p1")
+        combo.load_bid(refreshed_bid)
+        self.assertEqual(combo._selected_uid, "")
+        self.assertEqual(combo.lineEdit().text(), "")
+        combo.set_current_page_uid("missing")
+        self.assertEqual(combo._selected_uid, "")
+        combo.close()
+
     def test_bid_page_info_sequence_populates_page_label_source(self):
         pages = build_pages_from_bid_data(
             {

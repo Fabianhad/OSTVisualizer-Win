@@ -318,7 +318,16 @@ class InputHandlerMixin:
                 super().mousePressEvent(event)
                 return
             self._finish_active_inline_text_edit(commit=True)
-        if event.button() == Qt.MouseButton.LeftButton and self._cursor_mode != "place":
+        rotate_handle_press = (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._cursor_mode in ("rotate", "slope_rotate")
+            and self._is_over_rotate_handle(vp_pos)
+        )
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._cursor_mode != "place"
+            and not rotate_handle_press
+        ):
             dimension_label = self._dimension_text_label_at(vp_pos)
             if dimension_label is not None and self._select_dimension_text_label(
                 dimension_label

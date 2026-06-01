@@ -673,12 +673,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         if not self._bid_clipboard.has_content():
             return False
-        if file_path != self._bid_clipboard.source_file_path:
+        if not self._bid_clipboard.source_matches_file(file_path):
             return False
         feature = (
             Feature.DELETE_BID if self._bid_clipboard.is_cut else Feature.DUPLICATE_BID
         )
-        return self.ui_access_manager.is_allowed(feature)
+        return self.ui_access_manager.is_project_bid_clipboard_allowed(feature)
 
     def _select_all(self) -> None:
         if self.tab_widget.currentIndex() != TAB_INDEX_TAKEOFF:
@@ -700,10 +700,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _same_file_bid_refs(self, bid_refs) -> bool:
-        if not bid_refs:
-            return False
-        file_path = bid_refs[0].file_path
-        return all(ref.file_path == file_path for ref in bid_refs)
+        return BidClipboardService.refs_share_database(bid_refs)
 
     def _get_bid_paste_target(self):
         bid_ref = self.ui_state_manager.get_selected_bid_ref()

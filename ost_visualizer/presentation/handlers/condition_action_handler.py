@@ -108,6 +108,28 @@ class ConditionActionHandler:
             "Reopen the database to see the new layer.",
         )
 
+    def _save_condition_types_from_dialog(self, bid_ref, write_service, changes):
+        result = write_service.save_condition_types_result(bid_ref.file_path, changes)
+        if not result.write_success:
+            return None
+        if result.refresh_failed:
+            self._warn_condition_type_refresh_failed()
+        return result.value
+
+    def _warn_condition_type_refresh_failed(self) -> None:
+        parent = (
+            self._coordinator.conditions_sidebar.window()
+            if self._coordinator.conditions_sidebar
+            else None
+        )
+        show_warning(
+            parent,
+            "Refresh Error",
+            "The condition type changes were saved, but the condition type list "
+            "could not be refreshed. Reopen the database to see the latest "
+            "condition types.",
+        )
+
     def on_create_requested(self, folder_uid: str = "") -> None:
         if not self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION):
             return
@@ -118,8 +140,8 @@ class ConditionActionHandler:
         if not sidebar:
             return
         cdn_types = self._read_service.get_cdn_types(bid_ref.file_path)
-        save_condition_types = lambda changes: write_service.save_condition_types(
-            bid_ref.file_path, changes
+        save_condition_types = lambda changes: self._save_condition_types_from_dialog(
+            bid_ref, write_service, changes
         )
         reload_condition_types = lambda: list(
             self._read_service.get_cdn_types(bid_ref.file_path).values()
@@ -634,8 +656,8 @@ class ConditionActionHandler:
             return
         ordered_uids = sidebar.collect_ordered_condition_uids()
         cdn_types = self._read_service.get_cdn_types(bid_ref.file_path)
-        save_condition_types = lambda changes: write_service.save_condition_types(
-            bid_ref.file_path, changes
+        save_condition_types = lambda changes: self._save_condition_types_from_dialog(
+            bid_ref, write_service, changes
         )
         reload_condition_types = lambda: list(
             self._read_service.get_cdn_types(bid_ref.file_path).values()

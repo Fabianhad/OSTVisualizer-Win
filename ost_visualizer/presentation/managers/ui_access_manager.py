@@ -229,23 +229,34 @@ class UIAccessManager:
         self._text_annotation_edit_active = bool(active)
 
     def is_allowed(self, feature: Feature) -> bool:
+        return not self._feature_blocked(feature, require_current_selection=True)
+
+    def is_project_bid_clipboard_allowed(self, feature: Feature) -> bool:
+        if feature not in (Feature.DELETE_BID, Feature.DUPLICATE_BID):
+            return self.is_allowed(feature)
+        return not self._feature_blocked(feature, require_current_selection=False)
+
+    def _feature_blocked(
+        self, feature: Feature, *, require_current_selection: bool
+    ) -> bool:
         if self._text_annotation_edit_active and feature in _TEXT_EDIT_BLOCKED:
-            return False
+            return True
         if self._area_placement_active and feature in _PLACEMENT_BLOCKED:
-            return False
+            return True
         if self._ost_active and feature in _OST_BLOCKED:
-            return False
+            return True
         if self._bid_locked and feature in _LOCK_BLOCKED:
-            return False
+            return True
         if not self.has_license() and feature in _LICENSE_REQUIRED:
-            return False
-        if not self._bid_selected and feature in _REQUIRES_BID:
-            return False
-        if not self._any_selection and feature in _REQUIRES_ANY_SELECTION:
-            return False
-        if not self._database_selected and feature in _REQUIRES_DATABASE:
-            return False
-        return True
+            return True
+        if require_current_selection:
+            if not self._bid_selected and feature in _REQUIRES_BID:
+                return True
+            if not self._any_selection and feature in _REQUIRES_ANY_SELECTION:
+                return True
+            if not self._database_selected and feature in _REQUIRES_DATABASE:
+                return True
+        return False
 
     def _on_ost_status_changed(self, **kwargs) -> None:
         self._ost_active = kwargs.get("active", False)

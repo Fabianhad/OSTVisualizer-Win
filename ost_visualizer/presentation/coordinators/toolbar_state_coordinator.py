@@ -2,6 +2,7 @@ from typing import Optional
 from PySide6 import QtGui, QtWidgets
 from ..config import TAB_INDEX_TAKEOFF
 from ..managers.ui_access_manager import Feature
+from ..services.bid_clipboard_service import BidClipboardService
 
 _BACKOUT_ENABLED_TOOLTIP = "Create a backout in the selected area takeoff"
 _BACKOUT_DISABLED_TOOLTIP = "Select a visible area takeoff to create a backout."
@@ -381,10 +382,7 @@ class ToolbarStateCoordinator:
         self._project_data = None
 
     def _same_file_refs(self, refs: list) -> bool:
-        if not refs:
-            return False
-        file_path = refs[0].file_path
-        return all(ref.file_path == file_path for ref in refs)
+        return BidClipboardService.refs_share_database(refs)
 
     def _can_paste_bid_clipboard(self) -> bool:
         if not self.bid_clipboard or not self.bid_clipboard.has_content():
@@ -392,7 +390,7 @@ class ToolbarStateCoordinator:
         target_file_path = self._ui_state.selected_file_path
         if not target_file_path:
             return False
-        if self.bid_clipboard.source_file_path != target_file_path:
+        if not self.bid_clipboard.source_matches_file(target_file_path):
             return False
         bid_ref = self._ui_state.get_selected_bid_ref()
         target_project_uid = (
@@ -403,6 +401,6 @@ class ToolbarStateCoordinator:
         feature = (
             Feature.DELETE_BID if self.bid_clipboard.is_cut else Feature.DUPLICATE_BID
         )
-        if not self._access.is_allowed(feature):
+        if not self._access.is_project_bid_clipboard_allowed(feature):
             return False
         return self._ui_state.selected_project_uid != "1"

@@ -7,6 +7,7 @@ from unittest import mock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
 from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, CoverSheetPage
+from ost_visualizer.domain.entities.employee import Employee
 from ost_visualizer.infrastructure.mdb.components.settings_operations import (
     SettingsOperationsMixin,
 )
@@ -343,6 +344,48 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             finally:
                 dialog.close()
                 dialog.deleteLater()
+
+    def test_employee_picker_cancel_restores_existing_estimator_selection(self):
+        data = _cover_sheet_data()
+        data.estimator_uid = "emp-1"
+        data.employees = [
+            Employee(uid="emp-1", first_name="Alice", last_name="Estimator"),
+            Employee(uid="emp-2", first_name="Bob", last_name="Estimator"),
+        ]
+
+        class CancelEmployeesDialog:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            data,
+            reload_employees_fn=lambda: (list(data.employees), data.pay_classes),
+        )
+        try:
+            from ost_visualizer.presentation.dialogs.cover_sheet import dialog as module
+
+            old_dialog = module.EmployeesDialog
+            module.EmployeesDialog = CancelEmployeesDialog
+            try:
+                dialog._open_employees_dialog()
+            finally:
+                module.EmployeesDialog = old_dialog
+            self.assertEqual(dialog.combo_estimator.currentData(), "emp-1")
+            self.assertEqual(dialog.combo_estimator.currentText(), "Alice Estimator")
+        finally:
+            dialog.close()
+            dialog.deleteLater()
 
 
 if __name__ == "__main__":

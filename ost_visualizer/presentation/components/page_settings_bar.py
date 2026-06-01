@@ -9,6 +9,8 @@ from ..config import COMPACT_MARGINS, COMPACT_SPACING, NO_MARGINS, SCALE_TOOLTIP
 from ..dialogs.areas_dialog import BidAreaPickerDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.button_policy import apply_no_highlight_button_policy
+from ..utils.dialog import save_result_refresh_failed
+from ..utils.messagebox import show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.scales import ALL_SCALES
 
@@ -195,10 +197,18 @@ class PageSettingsBar(QtWidgets.QWidget):
             return
         prev_area_uid = self.area_combo.get_current_area_uid()
 
-        def _save_fn(changes: dict) -> Optional[dict]:
-            return self._save_areas_fn(
+        def _save_fn(changes: dict):
+            result = self._save_areas_fn(
                 self._bid_ref.file_path, self._bid_ref.bid_uid, changes
             )
+            if save_result_refresh_failed(result):
+                show_warning(
+                    self,
+                    "Refresh Error",
+                    "The bid area changes were saved, but the area list could not be "
+                    "refreshed. Reopen the database to see the latest bid areas.",
+                )
+            return result
 
         def _on_saved() -> None:
             self.load_bid_areas(

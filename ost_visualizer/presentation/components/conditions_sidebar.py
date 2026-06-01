@@ -170,7 +170,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
             )
         header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         header.resizeSection(_COL_NO, 90)
-        header.resizeSection(_COL_NAME, 120)
+        header.resizeSection(_COL_NAME, 100)
         header.resizeSection(_COL_QTY1, 50)
         header.resizeSection(_COL_QTY2, 50)
         header.resizeSection(_COL_QTY3, 50)

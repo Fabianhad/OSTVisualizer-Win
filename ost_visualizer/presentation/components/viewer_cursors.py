@@ -14,9 +14,13 @@ OUTLINE_OFFSETS = [
 
 
 def recolor_pixmap(src: QtGui.QPixmap, color: QtGui.QColor) -> QtGui.QPixmap:
+    if src.isNull() or src.size().isEmpty():
+        return QtGui.QPixmap()
     dst = QtGui.QPixmap(src.size())
     dst.fill(QtCore.Qt.GlobalColor.transparent)
     p = QtGui.QPainter(dst)
+    if not p.isActive():
+        return QtGui.QPixmap()
     p.drawPixmap(0, 0, src)
     p.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_SourceIn)
     p.fillRect(dst.rect(), color)
@@ -31,6 +35,8 @@ def _make_outlined_cursor(icon_name: str) -> QtGui.QCursor:
         QtCore.Qt.AspectRatioMode.KeepAspectRatio,
         QtCore.Qt.TransformationMode.SmoothTransformation,
     )
+    if base.isNull():
+        return QtGui.QCursor(QtCore.Qt.CursorShape.ArrowCursor)
     black = recolor_pixmap(base, QtGui.QColor(0, 0, 0))
     white = recolor_pixmap(base, QtGui.QColor(255, 255, 255))
     pm = QtGui.QPixmap(26, 26)

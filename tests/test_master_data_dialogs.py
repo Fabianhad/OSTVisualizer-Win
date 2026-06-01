@@ -23,7 +23,10 @@ from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesD
 from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
     PayrollClassListDialog,
 )
-from ost_visualizer.application.services.project_write_service import BatchWriteResult
+from ost_visualizer.application.services.project_write_service import (
+    BatchWriteResult,
+    WriteReloadResult,
+)
 
 
 def _app():
@@ -276,6 +279,33 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_bid_areas_dialog_applies_uid_map_when_refresh_fails(self):
+        saved = []
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[],
+            save_fn=lambda _changes: WriteReloadResult(
+                {"new_0": "area-2"},
+                write_success=True,
+                reload_success=False,
+            ),
+            on_saved_fn=lambda: saved.append("saved"),
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Area 2")
+            dialog.tree.blockSignals(False)
+            self.assertTrue(dialog._live_save())
+            self.assertEqual(item.data(0, dialog._UID_ROLE), "area-2")
+            self.assertNotIn("new_0", dialog._new_uids)
+            self.assertEqual(saved, [])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_base_picker_does_not_accept_when_save_returns_false(self):
         dialog = self._payroll_class_dialog_with_save(lambda _changes: False)
         try:
@@ -426,6 +456,29 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertEqual(dialog.tree.topLevelItemCount(), 1)
             self.assertEqual(dialog.tree.topLevelItem(0).text(0), "Concrete")
             self.assertEqual(reload_calls, [])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_condition_type_stale_selected_item_does_not_crash_button_update(self):
+        save_calls = []
+        dialog = ConditionTypesDialog(
+            FakeIconProvider(),
+            condition_types=[CdnType(uid="type-1", name="Concrete")],
+            save_fn=lambda changes: save_calls.append(changes) or {},
+            reload_fn=lambda: [],
+        )
+        try:
+            item = dialog.tree.topLevelItem(0)
+            dialog.tree.setCurrentItem(item)
+            dialog._items = []
+            dialog._update_button_states()
+            item.setText(0, "Asphalt")
+            dialog._on_item_changed(item, 0)
+            self.assertFalse(dialog.btn_select.isEnabled())
+            self.assertFalse(dialog.btn_delete.isEnabled())
+            self.assertEqual(save_calls, [])
         finally:
             dialog.close()
             dialog.cleanup()
