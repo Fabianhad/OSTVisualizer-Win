@@ -55,3 +55,7 @@ def make_zoom_cursor() -> QtGui.QCursor:
 
 def make_rotate_cursor() -> QtGui.QCursor:
     return _make_outlined_cursor("replay_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg")
+
+
+def make_move_overlay_cursor() -> QtGui.QCursor:
+    return _make_outlined_cursor("recenter_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg")

@@ -226,23 +226,36 @@ class CompositeRenderer:
             rect_w / source_w_px,
             rect_h / source_h_px,
         )
-        canvas_to_source, ok = source_to_canvas.inverted()
-        if not ok:
-            return red_tinted
-        source_rect = canvas_to_source.mapRect(QRectF(tile_x, tile_y, tile_w, tile_h))
-        ov_src_x = math.floor(source_rect.left())
-        ov_src_y = math.floor(source_rect.top())
-        ov_src_right = math.ceil(source_rect.right())
-        ov_src_bottom = math.ceil(source_rect.bottom())
-        source_w_px_int = int(math.ceil(source_w_px))
-        source_h_px_int = int(math.ceil(source_h_px))
-        source_x = max(0, min(source_w_px_int, ov_src_x))
-        source_y = max(0, min(source_h_px_int, ov_src_y))
-        source_right = max(0, min(source_w_px_int, ov_src_right))
-        source_bottom = max(0, min(source_h_px_int, ov_src_bottom))
-        ov_src_w = source_right - source_x
-        ov_src_h = source_bottom - source_y
-        if ov_src_w <= 0 or ov_src_h <= 0:
+        source_width_px = int(math.ceil(source_w_px))
+        source_height_px = int(math.ceil(source_h_px))
+        use_full_scale_integer_crop = self._is_unrotated_full_scale_overlay(
+            total_rotation,
+            source_to_canvas,
+        )
+        if use_full_scale_integer_crop:
+            source_crop_x = int(tile_x - rect_x)
+            source_crop_y = int(tile_y - rect_y)
+            source_x = max(0, min(source_width_px, source_crop_x))
+            source_y = max(0, min(source_height_px, source_crop_y))
+            source_w = min(tile_w, max(0, source_width_px - source_x))
+            source_h = min(tile_h, max(0, source_height_px - source_y))
+        else:
+            canvas_to_source, ok = source_to_canvas.inverted()
+            if not ok:
+                return red_tinted
+            canvas_tile_rect = QRectF(tile_x, tile_y, tile_w, tile_h)
+            source_crop_rect = canvas_to_source.mapRect(canvas_tile_rect)
+            source_crop_left = math.floor(source_crop_rect.left())
+            source_crop_top = math.floor(source_crop_rect.top())
+            source_crop_right = math.ceil(source_crop_rect.right())
+            source_crop_bottom = math.ceil(source_crop_rect.bottom())
+            source_x = max(0, min(source_width_px, source_crop_left))
+            source_y = max(0, min(source_height_px, source_crop_top))
+            source_right = max(0, min(source_width_px, source_crop_right))
+            source_bottom = max(0, min(source_height_px, source_crop_bottom))
+            source_w = source_right - source_x
+            source_h = source_bottom - source_y
+        if source_w <= 0 or source_h <= 0:
             return red_tinted
         blue_tile = self._page_cache.render_region_uncached(
             page.overlay_image_path,
@@ -250,8 +263,8 @@ class CompositeRenderer:
             overlay_scale,
             source_x,
             source_y,
-            ov_src_w,
-            ov_src_h,
+            source_w,
+            source_h,
             rotation,
         )
         if not blue_tile:
@@ -266,7 +279,45 @@ class CompositeRenderer:
         painter = QPainter(result)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         painter.drawImage(0, 0, red_tinted)
-        source_to_tile = QTransform(
+        if use_full_scale_integer_crop:
+            dx = int(max(0, -source_crop_x))
+            dy = int(max(0, -source_crop_y))
+            painter.drawImage(dx, dy, blue_tinted)
+        else:
+            source_to_tile = self._source_crop_to_tile_transform(
+                source_to_canvas,
+                tile_x,
+                tile_y,
+                source_x,
+                source_y,
+            )
+            painter.setTransform(source_to_tile)
+            painter.drawImage(0, 0, blue_tinted)
+        painter.end()
+        return result
+
+    def _is_unrotated_full_scale_overlay(
+        self,
+        total_rotation: float,
+        source_to_canvas: QTransform,
+    ) -> bool:
+        return (
+            abs(total_rotation) < 1e-12
+            and abs(source_to_canvas.m11() - 1.0) < 1e-9
+            and abs(source_to_canvas.m22() - 1.0) < 1e-9
+            and abs(source_to_canvas.m12()) < 1e-12
+            and abs(source_to_canvas.m21()) < 1e-12
+        )
+
+    def _source_crop_to_tile_transform(
+        self,
+        source_to_canvas: QTransform,
+        tile_x: int,
+        tile_y: int,
+        source_x: int,
+        source_y: int,
+    ) -> QTransform:
+        transform = QTransform(
             source_to_canvas.m11(),
             source_to_canvas.m12(),
             source_to_canvas.m13(),
@@ -277,10 +328,8 @@ class CompositeRenderer:
             source_to_canvas.m32() - tile_y,
             source_to_canvas.m33(),
         )
-        painter.setTransform(source_to_tile)
-        painter.drawImage(source_x, source_y, blue_tinted)
-        painter.end()
-        return result
+        transform.translate(source_x, source_y)
+        return transform
 
     def clear_cache(self):
         self._composite_cache.clear()

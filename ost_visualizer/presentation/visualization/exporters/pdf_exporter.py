@@ -4,7 +4,14 @@ import os
 import tempfile
 from typing import Any, Dict, List, Optional
 from PySide6.QtCore import QMarginsF, QRectF, QSizeF
-from PySide6.QtGui import QImage, QPageLayout, QPageSize, QPainter, QPdfWriter
+from PySide6.QtGui import (
+    QImage,
+    QPageLayout,
+    QPageSize,
+    QPainter,
+    QPdfWriter,
+    QTransform,
+)
 from ....application.dtos.export_dto import ExportErrorCode, ExportResultDto
 from ....application.dtos.page_export_data_dto import PageExportData
 from ....application.interfaces.i_color_service import IColorService
@@ -229,6 +236,14 @@ class PDFExporter:
         page_info: PageRenderInfo,
         temp_dir: str,
     ) -> bool:
+        if not self._overlay_rect_matches_page(page):
+            source_pdf = self._create_overlay_rect_background_pdf(
+                page, page_info, temp_dir
+            )
+            if source_pdf:
+                self._use_source_pdf(export_data, source_pdf, 0)
+                return True
+            return False
         return self._try_single_source_background(
             export_data,
             page.overlay_image_path or "",
@@ -237,6 +252,59 @@ class PDFExporter:
             temp_dir,
             "overlay",
         )
+
+    @staticmethod
+    def _overlay_rect_matches_page(page: Page) -> bool:
+        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_page_points()
+        if rect_w <= 0.0 or rect_h <= 0.0:
+            return True
+        return (
+            abs(rect_x) <= 0.001
+            and abs(rect_y) <= 0.001
+            and abs(rect_w - page.effective_width_pts) <= 0.001
+            and abs(rect_h - page.effective_height_pts) <= 0.001
+        )
+
+    def _create_overlay_rect_background_pdf(
+        self, page: Page, page_info: PageRenderInfo, temp_dir: str
+    ) -> Optional[str]:
+        image = self._render_positioned_overlay_background(page)
+        return self._write_raster_background_pdf(image, page_info, temp_dir, "overlay")
+
+    def _render_positioned_overlay_background(self, page: Page) -> Optional[QImage]:
+        if not page.overlay_image_path:
+            return None
+        overlay = self._export_page_cache.get_page(
+            page.overlay_image_path,
+            0,
+            _PDF_RENDER_SCALE,
+            0,
+        )
+        if overlay is None or overlay.isNull():
+            return None
+        if overlay.width() <= 0 or overlay.height() <= 0:
+            return None
+        canvas_w = max(1, int(round(page.effective_width_pts * _PDF_RENDER_SCALE)))
+        canvas_h = max(1, int(round(page.effective_height_pts * _PDF_RENDER_SCALE)))
+        result = QImage(canvas_w, canvas_h, QImage.Format.Format_ARGB32)
+        result.fill(0xFFFFFFFF)
+        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_canvas(canvas_w, canvas_h)
+        if rect_w <= 0.0 or rect_h <= 0.0:
+            return result
+        transform = QTransform()
+        transform.translate(rect_x, rect_y)
+        total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
+        if total_rotation != 0:
+            transform.rotate(math.degrees(total_rotation))
+        transform.scale(rect_w / overlay.width(), rect_h / overlay.height())
+        painter = QPainter(result)
+        if not painter.isActive():
+            return None
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.setTransform(transform)
+        painter.drawImage(0, 0, overlay)
+        painter.end()
+        return result
 
     def _try_single_source_background(
         self,
@@ -338,6 +406,33 @@ class PDFExporter:
         export_data.page_height = page_info.get("height", 792.0)
         export_data.rotation = page_info.get("rotation", 0)
 
+    @staticmethod
+    def _is_annotation_exportable(
+        annotation: BidAnnotation,
+        page_uid: str,
+        annotation_types: str | tuple[str, ...],
+    ) -> bool:
+        if isinstance(annotation_types, str):
+            type_matches = annotation.annotation_type == annotation_types
+        else:
+            type_matches = annotation.annotation_type in annotation_types
+        return type_matches and annotation.page_uid == page_uid and annotation.visible
+
+    @staticmethod
+    def _text_align_to_pdf_value(raw_align: Any) -> str:
+        if isinstance(raw_align, str):
+            normalized = raw_align.strip().lower()
+            return {
+                "center": "center",
+                "right": "right",
+                "1": "center",
+                "2": "right",
+            }.get(normalized, "left")
+        try:
+            return {1: "center", 2: "right"}.get(int(raw_align), "left")
+        except (TypeError, ValueError):
+            return "left"
+
     def _build_page_info(self, page: Page) -> PageRenderInfo:
         stored_width_pts = page.width_pts
         stored_height_pts = page.height_pts
@@ -431,6 +526,8 @@ class PDFExporter:
             if condition_uid not in bid_conditions:
                 continue
             condition = bid_conditions[condition_uid]
+            if not condition.layer_visible:
+                continue
             condition_type = condition.condition_type if condition.condition_type else 0
             if condition_type != _AREA_CONDITION_TYPE:
                 continue
@@ -491,6 +588,8 @@ class PDFExporter:
             if condition_uid not in bid_conditions:
                 continue
             condition = bid_conditions[condition_uid]
+            if not condition.layer_visible:
+                continue
             cond_type = condition.condition_type if condition.condition_type else 0
             if cond_type == _AREA_CONDITION_TYPE:
                 continue
@@ -603,7 +702,7 @@ class PDFExporter:
     ) -> List[Any]:
         arrows = []
         for annotation in bid_annotations:
-            if not annotation.is_arrow or annotation.page_uid != page_uid:
+            if not self._is_annotation_exportable(annotation, page_uid, "arrow"):
                 continue
             line_coords = annotation.get_line_coords()
             if not line_coords:
@@ -634,7 +733,7 @@ class PDFExporter:
     ) -> List[Any]:
         rects = []
         for annotation in bid_annotations:
-            if not annotation.is_rect or annotation.page_uid != page_uid:
+            if not self._is_annotation_exportable(annotation, page_uid, "rect"):
                 continue
             position = annotation.position
             if len(position) < 4:
@@ -676,9 +775,7 @@ class PDFExporter:
     ) -> List[Any]:
         lines = []
         for annotation in bid_annotations:
-            if not annotation.is_line:
-                continue
-            if annotation.page_uid != page_uid:
+            if not self._is_annotation_exportable(annotation, page_uid, "line"):
                 continue
             line_coords = annotation.get_line_coords()
             if not line_coords:
@@ -711,7 +808,7 @@ class PDFExporter:
         scale_factor1 = float(page_info.get("scale_factor1", 0.0) or 0.0)
         scale_factor2 = float(page_info.get("scale_factor2", 0.0) or 0.0)
         for annotation in bid_annotations:
-            if not annotation.is_dimension or annotation.page_uid != page_uid:
+            if not self._is_annotation_exportable(annotation, page_uid, "dimension"):
                 continue
             line_coords = annotation.get_line_coords()
             if not line_coords:
@@ -753,7 +850,7 @@ class PDFExporter:
     ) -> List[Any]:
         ovals = []
         for annotation in bid_annotations:
-            if not annotation.is_oval or annotation.page_uid != page_uid:
+            if not self._is_annotation_exportable(annotation, page_uid, "oval"):
                 continue
             position = annotation.position
             if len(position) < 4:
@@ -795,9 +892,9 @@ class PDFExporter:
     ) -> List[Any]:
         polygons = []
         for annotation in bid_annotations:
-            if not annotation.is_polygon and not annotation.is_cloud:
-                continue
-            if annotation.page_uid != page_uid:
+            if not self._is_annotation_exportable(
+                annotation, page_uid, ("polygon", "cloud")
+            ):
                 continue
             position = annotation.position
             if len(position) < 6:
@@ -821,7 +918,7 @@ class PDFExporter:
     ) -> List[Any]:
         inks = []
         for annotation in bid_annotations:
-            if not annotation.is_ink or annotation.page_uid != page_uid:
+            if not self._is_annotation_exportable(annotation, page_uid, "ink"):
                 continue
             position = annotation.position
             if len(position) < 4:
@@ -851,7 +948,7 @@ class PDFExporter:
     ) -> List[Any]:
         highlights = []
         for annotation in bid_annotations:
-            if not annotation.is_highlight or annotation.page_uid != page_uid:
+            if not self._is_annotation_exportable(annotation, page_uid, "highlight"):
                 continue
             position = annotation.position
             n_coords = len(position) - 1 if len(position) % 2 == 1 else len(position)
@@ -943,7 +1040,7 @@ class PDFExporter:
     ) -> List[Any]:
         texts = []
         for annotation in bid_annotations:
-            if not annotation.is_text or annotation.page_uid != page_uid:
+            if not self._is_annotation_exportable(annotation, page_uid, "text"):
                 continue
             position = annotation.position
             if len(position) < 4:
@@ -965,8 +1062,9 @@ class PDFExporter:
             pdf_x2, pdf_y2 = pdf_coords[1]
             content = annotation.get_text_content()
             font_size = float(annotation.properties.get("FontSize") or 12.0)
-            raw_align = annotation.properties.get("TextAlign") or "left"
-            text_align = raw_align.lower() if isinstance(raw_align, str) else "left"
+            text_align = self._text_align_to_pdf_value(
+                annotation.properties.get("TextAlign", 0)
+            )
             text_data = ost_pdf_writer.TextAnnotationData()
             text_data.min_x = min(pdf_x1, pdf_x2)
             text_data.min_y = min(pdf_y1, pdf_y2)

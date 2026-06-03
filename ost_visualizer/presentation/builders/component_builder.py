@@ -10,7 +10,11 @@ from ..components.plan_view.view import TakeoffPlanView
 from ..components.popup_tracking_combo import PopupTrackingComboBox
 from ..components.project_tree_view import ProjectView
 from ..components.status_panel import StatusPanel
-from ..components.viewer_cursors import make_rotate_cursor, make_zoom_cursor
+from ..components.viewer_cursors import (
+    make_move_overlay_cursor,
+    make_rotate_cursor,
+    make_zoom_cursor,
+)
 from ..config import (
     ACTION_NEXT_PAGE_LABEL,
     ACTION_NEXT_PAGE_TOOLTIP,
@@ -29,6 +33,8 @@ from ..config import (
     ACTION_ZOOM_IN_LABEL,
     ACTION_ZOOM_IN_TOOLTIP,
     ACTION_ZOOM_LABEL,
+    ACTION_MOVE_OVERLAY_IMAGE_LABEL,
+    ACTION_MOVE_OVERLAY_IMAGE_TOOLTIP,
     ACTION_ZOOM_OUT_LABEL,
     ACTION_ZOOM_OUT_TOOLTIP,
     ACTION_ZOOM_TOOLTIP,
@@ -44,6 +50,7 @@ from ..config import (
     SIDEBAR_MIN_WIDTH,
     TAB_INDEX_TAKEOFF,
     PLAN_TOOLS_TOOLBAR_LABEL,
+    OVERLAY_TOOLS_TOOLBAR_LABEL,
     VIEW_LABEL,
     VIEW_TOOLBAR_LABEL,
     VIEW_WINDOW_TITLE,
@@ -125,6 +132,7 @@ class ComponentBundle:
     view_stack: QtWidgets.QStackedWidget
     status_panel: StatusPanel
     plan_tools_toolbar: QtWidgets.QToolBar
+    overlay_tools_toolbar: QtWidgets.QToolBar
     view_toolbar: QtWidgets.QToolBar
     main_toolbar: QtWidgets.QToolBar
     view_2d_action: QtGui.QAction
@@ -150,6 +158,7 @@ class ComponentBundle:
     dimension_action: QtGui.QAction
     zoom_mode_action: QtGui.QAction
     backout_action: QtGui.QAction
+    move_overlay_action: QtGui.QAction
     cover_sheet_button: QtWidgets.QToolButton
     page_settings_bar: PageSettingsBar
     bid_layers_sidebar: BidLayersSidebar
@@ -361,6 +370,7 @@ class ComponentBuilder:
         plan_view.set_zoom_cursor(_zoom_cursor)
         canvas.set_zoom_cursor(_zoom_cursor)
         plan_view.set_rotate_cursor(make_rotate_cursor())
+        plan_view.set_move_overlay_cursor(make_move_overlay_cursor())
         fit_action = QtGui.QAction(ACTION_RESET_VIEW_LABEL, viewer_container)
         IconManager.apply(fit_action, IconId.RESET_VIEW)
         fit_action.setToolTip(ACTION_RESET_VIEW_TOOLTIP)
@@ -606,6 +616,20 @@ class ComponentBuilder:
             QtWidgets.QSizePolicy.Policy.Fixed,
             QtWidgets.QSizePolicy.Policy.MinimumExpanding,
         )
+        overlay_tools_toolbar = _PlanRibbonToolBar(self.window)
+        overlay_tools_toolbar.setObjectName("overlayToolsToolbar")
+        overlay_tools_toolbar.setWindowTitle(OVERLAY_TOOLS_TOOLBAR_LABEL)
+        overlay_tools_toolbar.setMovable(True)
+        overlay_tools_toolbar.setFloatable(True)
+        overlay_tools_toolbar.setOrientation(QtCore.Qt.Orientation.Vertical)
+        overlay_tools_toolbar.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
+        overlay_tools_toolbar.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
+        )
+        overlay_tools_toolbar.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed,
+            QtWidgets.QSizePolicy.Policy.MinimumExpanding,
+        )
         ann_action = QtGui.QAction(
             ANNOTATION_VIEW_WINDOW_ACTION_LABEL, viewer_container
         )
@@ -633,6 +657,16 @@ class ComponentBuilder:
         backout_action.setCheckable(True)
         backout_action.setEnabled(False)
         plan_tools_toolbar.addAction(backout_action)
+        move_overlay_action = QtGui.QAction(
+            ACTION_MOVE_OVERLAY_IMAGE_LABEL, viewer_container
+        )
+        IconManager.apply(move_overlay_action, IconId.MOVE_OVERLAY_IMAGE)
+        move_overlay_action.setToolTip(ACTION_MOVE_OVERLAY_IMAGE_TOOLTIP)
+        move_overlay_action.setEnabled(False)
+        move_overlay_action.triggered.connect(
+            lambda _checked=False: plan_view.show_overlay_move_handle()
+        )
+        overlay_tools_toolbar.addAction(move_overlay_action)
         workspace_main_toolbar = QtWidgets.QToolBar(self.window)
         workspace_main_toolbar.setWindowTitle(MAIN_TOOLBAR_LABEL)
         workspace_main_toolbar.setMovable(True)
@@ -747,9 +781,13 @@ class ComponentBuilder:
             QtCore.Qt.ToolBarArea.RightToolBarArea, plan_tools_toolbar
         )
         self.window.addToolBar(
+            QtCore.Qt.ToolBarArea.RightToolBarArea, overlay_tools_toolbar
+        )
+        self.window.addToolBar(
             QtCore.Qt.ToolBarArea.RightToolBarArea, workspace_view_toolbar
         )
         plan_tools_toolbar.setVisible(False)
+        overlay_tools_toolbar.setVisible(False)
         workspace_view_toolbar.setVisible(False)
         conditions_sidebar = ConditionsSidebar(
             takeoff_tab, uom_label_fn=project_read_service.get_uom_label
@@ -809,16 +847,19 @@ class ComponentBuilder:
         status_panel = StatusPanel(central_widget)
 
         def _sync_plan_toolbar_heights() -> None:
-            if (
-                plan_tools_toolbar.isFloating()
-                or workspace_view_toolbar.isFloating()
-                or self.window.toolBarArea(plan_tools_toolbar)
+            docked_toolbars = (
+                plan_tools_toolbar,
+                overlay_tools_toolbar,
+                workspace_view_toolbar,
+            )
+            if any(
+                toolbar.isFloating()
+                or self.window.toolBarArea(toolbar)
                 != QtCore.Qt.ToolBarArea.RightToolBarArea
-                or self.window.toolBarArea(workspace_view_toolbar)
-                != QtCore.Qt.ToolBarArea.RightToolBarArea
+                for toolbar in docked_toolbars
             ):
-                plan_tools_toolbar.set_preferred_docked_height(0)
-                workspace_view_toolbar.set_preferred_docked_height(0)
+                for toolbar in docked_toolbars:
+                    toolbar.set_preferred_docked_height(0)
                 return
             host = self.window.centralWidget() or self.window
             available_height = host.height()
@@ -826,9 +867,9 @@ class ComponentBuilder:
                 available_height = self.window.contentsRect().height()
             if available_height <= 0:
                 return
-            target_height = max(1, available_height // 2)
-            plan_tools_toolbar.set_preferred_docked_height(target_height)
-            workspace_view_toolbar.set_preferred_docked_height(target_height)
+            target_height = max(1, available_height // len(docked_toolbars))
+            for toolbar in docked_toolbars:
+                toolbar.set_preferred_docked_height(target_height)
 
         def _schedule_plan_toolbar_height_sync(*_args) -> None:
             QtCore.QTimer.singleShot(0, _sync_plan_toolbar_heights)
@@ -838,10 +879,16 @@ class ComponentBuilder:
         )
         self.window.installEventFilter(toolbar_layout_sync_filter)
         plan_tools_toolbar.topLevelChanged.connect(_schedule_plan_toolbar_height_sync)
+        overlay_tools_toolbar.topLevelChanged.connect(
+            _schedule_plan_toolbar_height_sync
+        )
         workspace_view_toolbar.topLevelChanged.connect(
             _schedule_plan_toolbar_height_sync
         )
         plan_tools_toolbar.visibilityChanged.connect(_schedule_plan_toolbar_height_sync)
+        overlay_tools_toolbar.visibilityChanged.connect(
+            _schedule_plan_toolbar_height_sync
+        )
         workspace_view_toolbar.visibilityChanged.connect(
             _schedule_plan_toolbar_height_sync
         )
@@ -853,6 +900,7 @@ class ComponentBuilder:
             tab_widget.tabBar().setEnabled(not in_progress)
             workspace_main_toolbar.setEnabled(not in_progress)
             plan_tools_toolbar.setEnabled(not in_progress)
+            overlay_tools_toolbar.setEnabled(not in_progress)
             workspace_view_toolbar.setEnabled(not in_progress)
             self.window.menuBar().setEnabled(not in_progress)
             if in_progress:
@@ -875,6 +923,7 @@ class ComponentBuilder:
             view_stack=view_stack,
             status_panel=status_panel,
             plan_tools_toolbar=plan_tools_toolbar,
+            overlay_tools_toolbar=overlay_tools_toolbar,
             view_toolbar=workspace_view_toolbar,
             main_toolbar=workspace_main_toolbar,
             view_2d_action=btn_2d_action,
@@ -900,6 +949,7 @@ class ComponentBuilder:
             dimension_action=dimension_action,
             zoom_mode_action=zoom_mode_action,
             backout_action=backout_action,
+            move_overlay_action=move_overlay_action,
             cover_sheet_button=cover_sheet_button,
             page_settings_bar=page_settings_bar,
             bid_layers_sidebar=bid_layers_sidebar,

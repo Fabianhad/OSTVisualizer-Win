@@ -224,6 +224,39 @@ class PageOperationsMixin:
             )
             return False
 
+    def save_page_overlay_rect(
+        self,
+        db_path: str,
+        page_uid: str,
+        overlay_rect: tuple[float, float, float, float],
+    ) -> bool:
+        try:
+            rect_x, rect_y, rect_w, rect_h = overlay_rect
+            rect_text = (
+                f"{float(rect_x):.6f},{float(rect_y):.6f},"
+                f"{float(rect_w):.6f},{float(rect_h):.6f}"
+            )
+            with self._connection(db_path) as conn:
+                schema = self._schema(conn)
+                cursor = conn.cursor()
+                return self._execute_update_values(
+                    cursor,
+                    schema,
+                    "BidPages",
+                    {"OverlayRect": rect_text},
+                    ("UID",),
+                    "[UID]=?",
+                    [int(page_uid)],
+                    "save_page_overlay_rect",
+                )
+        except Exception:
+            self.logger.exception(
+                "Failed to save page overlay rect for page %s in %s",
+                page_uid,
+                db_path,
+            )
+            return False
+
     def save_page_invert(self, db_path: str, page_uid: str, invert: bool) -> bool:
         try:
             with self._connection(db_path) as conn:

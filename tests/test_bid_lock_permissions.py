@@ -169,6 +169,9 @@ class _FakePlanView:
     def set_selection_enabled(self, _enabled):
         pass
 
+    def can_move_overlay_image(self):
+        return False
+
     def delete_selected(self):
         self.deleted += 1
 
@@ -319,6 +322,7 @@ def _write_service(project_data, reload_success=True):
         save_page_scale=forbidden,
         save_page_show_mode=forbidden,
         save_page_overlay_image=forbidden,
+        save_page_overlay_rect=forbidden,
         save_page_invert=forbidden,
         save_page_bitonal=forbidden,
         save_page_image_adjustments=forbidden,

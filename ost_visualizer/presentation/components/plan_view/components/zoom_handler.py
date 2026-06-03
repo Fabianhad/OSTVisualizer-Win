@@ -1,3 +1,4 @@
+import math
 from typing import Optional, Tuple
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QTransform
@@ -117,7 +118,7 @@ class ZoomHandlerMixin:
 
     def _persisted_coords_to_scene_center(
         self, center_x: float, center_y: float
-    ) -> QPointF:
+    ) -> Optional[QPointF]:
         context = self._current_page_scene_context()
         if context is not None:
             page, scene_width, scene_height = context
@@ -129,7 +130,24 @@ class ZoomHandlerMixin:
             )
             if converted is not None:
                 return QPointF(converted[0], converted[1])
-        return QPointF(center_x, center_y)
+        return None
+
+    def _restored_view_state_is_page_bounded(self, center: QPointF) -> bool:
+        page_rect = self._page_scene_rect()
+        if page_rect.isNull() or not page_rect.isValid():
+            return False
+        if not page_rect.contains(center):
+            return False
+        viewport = self.viewport()
+        if viewport is None or not viewport.size().isValid():
+            return False
+        visible_rect = self.mapToScene(viewport.rect()).boundingRect()
+        if visible_rect.isNull() or not visible_rect.isValid():
+            return False
+        return (
+            visible_rect.width() <= page_rect.width() + 0.001
+            and visible_rect.height() <= page_rect.height() + 0.001
+        )
 
     def get_view_state(self) -> Tuple[float, float, float]:
         m11 = self.transform().m11()
@@ -143,13 +161,28 @@ class ZoomHandlerMixin:
     ) -> bool:
         if zoom_fac <= 0 or self._scene_scale <= 0:
             return False
+        center = self._persisted_coords_to_scene_center(center_x, center_y)
+        if center is None or not (
+            math.isfinite(center.x()) and math.isfinite(center.y())
+        ):
+            return False
         target_m11 = zoom_fac / (self._scene_scale * _DISPLAY_ZOOM_RATIO)
+        if target_m11 <= 0 or not math.isfinite(target_m11):
+            return False
         current = self.transform().m11()
         if current <= 0:
             return False
+        original_transform = self.transform()
+        original_h_scroll = self.horizontalScrollBar().value()
+        original_v_scroll = self.verticalScrollBar().value()
         factor = target_m11 / current
         self.scale(factor, factor)
-        self.centerOn(self._persisted_coords_to_scene_center(center_x, center_y))
+        self.centerOn(center)
+        if not self._restored_view_state_is_page_bounded(center):
+            self.setTransform(original_transform)
+            self.horizontalScrollBar().setValue(original_h_scroll)
+            self.verticalScrollBar().setValue(original_v_scroll)
+            return False
         new_scale = self.transform().m11()
         self._zoom_debouncer.handle_scale_changed(new_scale)
         self.zoom_changed.emit(zoom_fac)

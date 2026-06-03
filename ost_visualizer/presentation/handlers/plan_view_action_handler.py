@@ -58,6 +58,7 @@ class PlanViewActionHandler:
 
     def connect_signals(self) -> None:
         pv = self._plan_view
+        pv.set_overlay_rect_save_handler(self.save_current_page_overlay_rect)
         pv.assign_to_area_requested.connect(self.on_assign_to_area)
         pv.reassign_condition_requested.connect(self.on_reassign_condition)
         pv.set_negative_requested.connect(self.on_set_negative)
@@ -83,6 +84,22 @@ class PlanViewActionHandler:
         pv.copy_requested.connect(self.on_copy_requested)
         pv.paste_requested.connect(self.on_paste_requested)
         pv.paste_backouts_placed.connect(self.on_paste_backouts_placed)
+
+    def save_current_page_overlay_rect(self, overlay_rect: tuple):
+        if not self._is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            return None
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        page_uid = self._ui_state.active_page_uid
+        if not bid_ref or not page_uid:
+            return None
+        result = self._write_svc.save_page_overlay_rect_result(
+            bid_ref.file_path, page_uid, overlay_rect
+        )
+        if result.write_success:
+            page = self._data_svc.get_page(page_uid)
+            if page is not None:
+                page.overlay_rect = tuple(float(value) for value in overlay_rect)
+        return result
 
     def can_paste_to_current_bid(self) -> bool:
         if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):

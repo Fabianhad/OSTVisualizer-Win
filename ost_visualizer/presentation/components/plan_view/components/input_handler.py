@@ -271,7 +271,7 @@ class InputHandlerMixin:
             self._update_cursor()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
-        if self._cursor_mode == "place":
+        if self._cursor_mode in ("place", "move_overlay", "move_overlay_handle"):
             event.accept()
             return
         vp_pos = event.position().toPoint()
@@ -309,6 +309,23 @@ class InputHandlerMixin:
         advanced_mouse_controls = self._advanced_mouse_controls_active()
         vp_pos = event.position().toPoint()
         self._last_mouse_vp_pos = vp_pos
+        if self._cursor_mode == "move_overlay":
+            event.accept()
+            return
+        if self._cursor_mode == "move_overlay_handle":
+            if (
+                event.button() == Qt.MouseButton.LeftButton
+                and self._is_over_overlay_move_handle(vp_pos)
+            ):
+                if self._begin_overlay_move(vp_pos):
+                    event.accept()
+                    return
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._commit_overlay_move()
+                event.accept()
+                return
+            event.accept()
+            return
         if (
             event.button() == Qt.MouseButton.LeftButton
             and self.is_text_annotation_inline_edit_active()
@@ -791,6 +808,10 @@ class InputHandlerMixin:
             self.update_paste_backout_preview(self.mapToScene(cur_vp))
             event.accept()
             return
+        if self._cursor_mode == "move_overlay":
+            self._preview_overlay_move(self.mapToScene(cur_vp))
+            event.accept()
+            return
         if self._rotation_drag_active:
             scene_pos = self.mapToScene(cur_vp)
             dx = scene_pos.x() - self._rotate_center_scene.x()
@@ -1018,6 +1039,16 @@ class InputHandlerMixin:
         ):
             if self.handle_annotation_place_release(event):
                 return
+        if (
+            self._cursor_mode == "move_overlay"
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            self._finish_overlay_move_drag(self.mapToScene(vp_pos))
+            event.accept()
+            return
+        if self._cursor_mode == "move_overlay_handle":
+            event.accept()
+            return
         if self._rotation_drag_active and event.button() == Qt.MouseButton.LeftButton:
             snapped_deg = self._rotation_drag_snapped_deg
             single = len(self._selected_uids) == 1
@@ -1884,6 +1915,13 @@ class InputHandlerMixin:
             self.cancel_paste_backout()
             event.accept()
             return
+        if (
+            self._cursor_mode in ("move_overlay", "move_overlay_handle")
+            and event.key() == Qt.Key.Key_Escape
+        ):
+            self.cancel_overlay_move_mode(restore_preview=True)
+            event.accept()
+            return
         if self._cursor_mode == "place" and event.key() == Qt.Key.Key_Escape:
             self.finish_intelligent_paste_placement()
             if self._place_points:
@@ -2020,6 +2058,12 @@ class InputHandlerMixin:
             return Qt.CursorShape.ClosedHandCursor
         if self._rotation_drag_active:
             return self._rotate_cursor
+        if self._cursor_mode == "move_overlay":
+            return self._move_overlay_cursor
+        if self._cursor_mode == "move_overlay_handle":
+            if self._is_over_overlay_move_handle(vp_pos):
+                return self._move_overlay_cursor
+            return Qt.CursorShape.ArrowCursor
         if self._cursor_mode in ("place", "annotation_place", "paste_backout"):
             return Qt.CursorShape.CrossCursor
         if self._zoom_press_ctrl:

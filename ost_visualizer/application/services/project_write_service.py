@@ -47,6 +47,9 @@ from ..use_cases.project.save_page_name_use_case import SavePageNameUseCase
 from ..use_cases.project.save_page_overlay_image_use_case import (
     SavePageOverlayImageUseCase,
 )
+from ..use_cases.project.save_page_overlay_rect_use_case import (
+    SavePageOverlayRectUseCase,
+)
 from ..use_cases.project.save_page_scale_use_case import SavePageScaleUseCase
 from ..use_cases.project.save_page_show_mode_use_case import SavePageShowModeUseCase
 from ..use_cases.project.save_page_view_state_use_case import SavePageViewStateUseCase
@@ -159,6 +162,7 @@ class ProjectWriteService(BaseWriteService):
         save_page_scale: SavePageScaleUseCase,
         save_page_show_mode: SavePageShowModeUseCase,
         save_page_overlay_image: SavePageOverlayImageUseCase,
+        save_page_overlay_rect: SavePageOverlayRectUseCase,
         save_page_invert: SavePageInvertUseCase,
         save_page_bitonal: SavePageBitonalUseCase,
         save_page_image_adjustments: SavePageImageAdjustmentsUseCase,
@@ -218,6 +222,7 @@ class ProjectWriteService(BaseWriteService):
         self._save_page_scale = save_page_scale
         self._save_page_show_mode = save_page_show_mode
         self._save_page_overlay_image = save_page_overlay_image
+        self._save_page_overlay_rect = save_page_overlay_rect
         self._save_page_invert = save_page_invert
         self._save_page_bitonal = save_page_bitonal
         self._save_page_image_adjustments = save_page_image_adjustments
@@ -687,6 +692,25 @@ class ProjectWriteService(BaseWriteService):
             db_path, page_uid, overlay_image_path
         )
         return self._reload_after_success(db_path, success)
+
+    def save_page_overlay_rect_result(
+        self,
+        db_path: str,
+        page_uid: str,
+        overlay_rect: Tuple[float, float, float, float],
+    ) -> WriteReloadResult:
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            "save_page_overlay_rect", db_path
+        ):
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        success = self._save_page_overlay_rect.execute(db_path, page_uid, overlay_rect)
+        if not success:
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        return WriteReloadResult(
+            None,
+            write_success=True,
+            reload_success=self.reload_and_notify(db_path),
+        )
 
     def save_page_invert(self, db_path: str, page_uid: str, invert: bool) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(

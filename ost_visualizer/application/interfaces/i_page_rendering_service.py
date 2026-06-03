@@ -16,6 +16,7 @@ class IPageRenderingService(Protocol):
         use_cache: bool = True,
         invert: bool = False,
         bitonal: bool = False,
+        tint_rgb: tuple[int, int, int] | None = None,
     ) -> str: ...
     def render_composite_async(
         self,
@@ -51,6 +52,7 @@ class IPageRenderingService(Protocol):
         priority: int = 1,
         invert: bool = False,
         bitonal: bool = False,
+        tint_rgb: tuple[int, int, int] | None = None,
     ) -> str: ...
     def render_composite_region_async(
         self,

@@ -17,6 +17,7 @@ from .config import (
     SIDEBAR_MIN_WIDTH,
     TAB_INDEX_TAKEOFF,
     PLAN_TOOLS_TOOLBAR_LABEL,
+    OVERLAY_TOOLS_TOOLBAR_LABEL,
     VIEW_TOOLBAR_LABEL,
 )
 from .configurators.window_configurator import WindowConfigurator
@@ -49,9 +50,11 @@ class MainWindow(QtWidgets.QMainWindow):
     MAIN_TOOLBAR_KEY = "main_toolbar"
     VIEW_TOOLBAR_KEY = "view_toolbar"
     PLAN_TOOLS_TOOLBAR_KEY = "plan_tools_toolbar"
+    OVERLAY_TOOLS_TOOLBAR_KEY = "overlay_tools_toolbar"
     _MAIN_TOOLBAR_KEY = MAIN_TOOLBAR_KEY
     _VIEW_TOOLBAR_KEY = VIEW_TOOLBAR_KEY
     _PLAN_TOOLS_TOOLBAR_KEY = PLAN_TOOLS_TOOLBAR_KEY
+    _OVERLAY_TOOLS_TOOLBAR_KEY = OVERLAY_TOOLS_TOOLBAR_KEY
 
     def __init__(self, app_controller, splash_screen=None):
         super().__init__()
@@ -145,6 +148,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plan_view = components.plan_view
         self._view_stack = components.view_stack
         self._plan_tools_toolbar = components.plan_tools_toolbar
+        self._overlay_tools_toolbar = components.overlay_tools_toolbar
         self._view_toolbar = components.view_toolbar
         self._main_toolbar = components.main_toolbar
         self._cover_sheet_button = components.cover_sheet_button
@@ -172,6 +176,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._MAIN_TOOLBAR_KEY: True,
             self._VIEW_TOOLBAR_KEY: True,
             self._PLAN_TOOLS_TOOLBAR_KEY: True,
+            self._OVERLAY_TOOLS_TOOLBAR_KEY: True,
         }
         self._syncing_toolbar_visibility = False
         self._main_toolbar.visibilityChanged.connect(
@@ -182,6 +187,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._plan_tools_toolbar.visibilityChanged.connect(
             lambda visible: self._on_workspace_toolbar_visibility_changed(
                 self._PLAN_TOOLS_TOOLBAR_KEY, visible
+            )
+        )
+        self._overlay_tools_toolbar.visibilityChanged.connect(
+            lambda visible: self._on_workspace_toolbar_visibility_changed(
+                self._OVERLAY_TOOLS_TOOLBAR_KEY, visible
             )
         )
         self._view_toolbar.visibilityChanged.connect(
@@ -253,6 +263,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handlers.ui_event.set_place_action(components.place_action)
         self.handlers.ui_event.set_dimension_action(components.dimension_action)
         self.handlers.ui_event.set_backout_action(components.backout_action)
+        self.handlers.ui_event.set_move_overlay_action(components.move_overlay_action)
         self.handlers.ui_event.set_conditions_sidebar(components.conditions_sidebar)
         self.handlers.ui_event.set_bid_layers_sidebar(components.bid_layers_sidebar)
         self.handlers.ui_event.set_undo_service(components.undo_service)
@@ -805,6 +816,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 takeoff_active,
             )
             self._set_toolbar_visible(
+                self._overlay_tools_toolbar,
+                self._OVERLAY_TOOLS_TOOLBAR_KEY,
+                takeoff_active,
+            )
+            self._set_toolbar_visible(
                 self._view_toolbar,
                 self._VIEW_TOOLBAR_KEY,
                 takeoff_active,
@@ -839,6 +855,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._PLAN_TOOLS_TOOLBAR_KEY,
                 PLAN_TOOLS_TOOLBAR_LABEL,
             ),
+            (
+                self._OVERLAY_TOOLS_TOOLBAR_KEY,
+                OVERLAY_TOOLS_TOOLBAR_LABEL,
+            ),
         )
         for key, label in toolbar_entries:
             action = menu.addAction(label)
@@ -858,6 +878,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return [
             self._main_toolbar,
             self._plan_tools_toolbar,
+            self._overlay_tools_toolbar,
             self._view_toolbar,
         ]
 

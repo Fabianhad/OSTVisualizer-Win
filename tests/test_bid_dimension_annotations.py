@@ -15,7 +15,9 @@ from PySide6.QtWidgets import (
     QGraphicsTextItem,
 )
 from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.layer import Layer
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,
 )
@@ -327,6 +329,74 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             [dimensions[0].x2, dimensions[0].y2],
         ]
         self.assertEqual(actual_coords, expected_coords)
+
+    def test_pdf_export_collects_text_alignment_from_ost_numeric_values(self):
+        exporter = PDFExporter.__new__(PDFExporter)
+        exporter._coord_system = OSTCoordinateSystem()
+        exporter._color_service = _ColorService()
+
+        def annotation(uid, align):
+            return BidAnnotation(
+                uid=uid,
+                annotation_type="text",
+                page_uid="p1",
+                position=[60.0, 80.0, 40.0, 20.0],
+                color="#000000",
+                properties={"Text": uid, "TextAlign": align},
+            )
+
+        texts = exporter._collect_texts(
+            "p1",
+            [
+                annotation("left", 0),
+                annotation("center", 1),
+                annotation("right", 2),
+            ],
+            _page_info(),
+        )
+        self.assertEqual(
+            [text.text_align for text in texts], ["left", "center", "right"]
+        )
+
+    def test_pdf_export_skips_invisible_text_annotations(self):
+        exporter = PDFExporter.__new__(PDFExporter)
+        exporter._coord_system = OSTCoordinateSystem()
+        exporter._color_service = _ColorService()
+        hidden = BidAnnotation(
+            uid="hidden",
+            annotation_type="text",
+            page_uid="p1",
+            position=[60.0, 80.0, 40.0, 20.0],
+            color="#000000",
+            properties={"Text": "Hidden"},
+            visible=False,
+        )
+        self.assertEqual(exporter._collect_texts("p1", [hidden], _page_info()), [])
+
+    def test_pdf_export_skips_takeoffs_on_hidden_conditions(self):
+        exporter = PDFExporter.__new__(PDFExporter)
+        exporter._coord_system = OSTCoordinateSystem()
+        exporter._takeoff_service = SimpleNamespace(
+            group_area_takeoffs_with_holes=lambda takeoffs, _conditions: (takeoffs, {})
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[10.0, 20.0],
+        )
+        condition = Condition(
+            uid="c1",
+            condition_type=Condition.TYPE_COUNT,
+            width=12.0,
+            layer_visible=False,
+        )
+        takeoffs = exporter._collect_takeoffs(
+            [takeoff],
+            {"c1": condition},
+            _page_info(),
+        )
+        self.assertEqual(takeoffs, [])
 
     def test_pdf_export_collects_highlights_as_native_highlight_data(self):
         exporter = PDFExporter.__new__(PDFExporter)

@@ -214,6 +214,10 @@ class UIEventCoordinator:
         self._toolbar.set_dimension_action(action)
         self._toolbar.refresh()
 
+    def set_move_overlay_action(self, action: QtGui.QAction) -> None:
+        self._toolbar.set_move_overlay_action(action)
+        self._toolbar.refresh()
+
     def refresh_backout_action(self) -> None:
         self._toolbar.refresh_backout_action()
 

@@ -2,17 +2,25 @@ import logging
 import queue
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Dict, List, Optional, Tuple
 from PySide6.QtCore import QObject, Signal
 from .....application.dtos.render_result_dto import RenderResult
 from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
-from ...utils.image_effects import apply_page_image_effects
+from ...utils.image_effects import apply_page_image_effects, tint_image
 from ..page_cache import PageCache
 from .composite_renderer import CompositeRenderer
 
 logger = logging.getLogger(__name__)
+
+
+def _snapshot_page_for_render(page: Page) -> Page:
+    return replace(
+        page,
+        takeoffs=list(page.takeoffs),
+        overlay_rect=tuple(page.overlay_rect),
+    )
 
 
 @dataclass
@@ -95,15 +103,16 @@ class PDFRenderingService:
         use_cache: bool = True,
         invert: bool = False,
         bitonal: bool = False,
+        tint_rgb: Optional[tuple[int, int, int]] = None,
     ) -> str:
         request = RenderRequest(
             request_id=str(uuid.uuid4()),
-            request_type="page",
+            request_type="tinted_page" if tint_rgb else "page",
             file_path=file_path,
             page_index=page_index,
             scale=scale,
             rotation=rotation,
-            tint_rgb=None,
+            tint_rgb=tint_rgb,
             invert=invert,
             bitonal=bitonal,
             priority=priority,
@@ -131,6 +140,7 @@ class PDFRenderingService:
         priority: int = 1,
         invert: bool = False,
         bitonal: bool = False,
+        tint_rgb: Optional[tuple[int, int, int]] = None,
     ) -> str:
         request = RenderRequest(
             request_id=str(uuid.uuid4()),
@@ -139,7 +149,7 @@ class PDFRenderingService:
             page_index=page_index,
             scale=scale,
             rotation=rotation,
-            tint_rgb=None,
+            tint_rgb=tint_rgb,
             invert=invert,
             bitonal=bitonal,
             priority=priority,
@@ -165,18 +175,19 @@ class PDFRenderingService:
         callback: Callable[[RenderResult], None],
         priority: int = 0,
     ) -> str:
+        page_snapshot = _snapshot_page_for_render(page)
         request = RenderRequest(
             request_id=str(uuid.uuid4()),
             request_type="composite",
-            file_path=page.image_path,
-            page_index=page.page_index,
+            file_path=page_snapshot.image_path,
+            page_index=page_snapshot.page_index,
             scale=render_scale,
             rotation=rotation,
             tint_rgb=None,
-            invert=page.invert,
-            bitonal=page.bitonal,
+            invert=page_snapshot.invert,
+            bitonal=page_snapshot.bitonal,
             priority=priority,
-            page_entity=page,
+            page_entity=page_snapshot,
             bid_ref=bid_ref,
             view_scale=None,
             show_mode=None,
@@ -232,18 +243,19 @@ class PDFRenderingService:
         callback: Callable[[RenderResult], None],
         priority: int = 1,
     ) -> str:
+        page_snapshot = _snapshot_page_for_render(page)
         request = RenderRequest(
             request_id=str(uuid.uuid4()),
             request_type="composite_region",
-            file_path=page.image_path,
-            page_index=page.page_index,
+            file_path=page_snapshot.image_path,
+            page_index=page_snapshot.page_index,
             scale=scale,
             rotation=rotation,
             tint_rgb=None,
-            invert=page.invert,
-            bitonal=page.bitonal,
+            invert=page_snapshot.invert,
+            bitonal=page_snapshot.bitonal,
             priority=priority,
-            page_entity=page,
+            page_entity=page_snapshot,
             bid_ref=bid_ref,
             view_scale=None,
             show_mode=None,
@@ -424,6 +436,8 @@ class PDFRenderingService:
         )
         if request.cancelled.is_set() or not image:
             return RenderResult(request.request_id, False, None, "Cancelled or failed")
+        if request.tint_rgb:
+            image = tint_image(image, *request.tint_rgb)
         return RenderResult(
             request.request_id, True, self._apply_image_effects(request, image), None
         )

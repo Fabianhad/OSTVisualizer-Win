@@ -15,6 +15,7 @@
 - Added a Reset All Settings button to the Options dialog that restores app preferences and workspace layout state to defaults.
 - Added embedded PDF text selection in the plan view with I-beam hover, drag-range highlighting, and copy support.
 - Added 2D rendering, toolbar placement, and Bluebeam-style PDF LineDimension export for BidDimensions annotations, including end ticks, feet/inches labels, text-label formatting, measurement metadata, and corrected PDF appearance bounds.
+- Added a Move Overlay Image toolbar action for visually repositioning page overlays while preserving OST `OverlayRect` placement for PlanView and PDF export.
 
 ### Changed
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.
@@ -50,6 +51,7 @@
 - Fixed plan-view crashes when toggling original/overlay image visibility after image graphics items had already been cleared.
 - Fixed overlay image placement to honor OST `OverlayRect` alignment values when displaying and exporting red/blue overlays.
 - Fixed saved page view positions to round-trip OST `CurrentX`/`CurrentY` values as 96-DPI page pixels.
+- Fixed PDF export so hidden takeoff/annotation layers stay hidden and OST numeric text alignment exports as left, center, or right.
 - Fixed PDF export default filenames so page names that already end in `.pdf` do not produce `.pdf.pdf`.
 - Cleared stale detached page-window, PDF renderer, export background, and MCP bridge references during cleanup, and bounded PDF metadata caches across page/file switches.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.

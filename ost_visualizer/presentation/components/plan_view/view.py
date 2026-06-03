@@ -58,6 +58,7 @@ from ...interfaces.i_annotation_item_renderer import IAnnotationItemRenderer
 from ...interfaces.i_takeoff_renderer import ITakeoffRenderer
 from ...scene.scene_builder import SceneBuilder
 from ...utils.color_swatch import rounded_color_swatch
+from ...utils.messagebox import show_warning
 from ...utils.theme import set_palette_background
 from ...utils.themed_icon import apply_themed_icon, current_text_hex, recolor_svg
 from ...utils.zoom_debouncer import ZoomDebouncer
@@ -109,6 +110,7 @@ _TEXT_TOOL_ALIGN_CENTER_ICON = (
 _TEXT_TOOL_ALIGN_RIGHT_ICON = (
     "format_align_right_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
 )
+_MOVE_OVERLAY_ICON = "recenter_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
 
 
 class TextAnnotationGeometryPolicy(Enum):
@@ -153,7 +155,15 @@ def _rects_nearly_equal(
 
 _SCENE_RECT_MARGIN = 50.0
 _PASSIVE_MOUSE_TRACKING_CURSOR_MODES = frozenset(
-    {"place", "annotation_place", "paste_backout", "rotate", "slope_rotate"}
+    {
+        "place",
+        "annotation_place",
+        "paste_backout",
+        "rotate",
+        "slope_rotate",
+        "move_overlay_handle",
+        "move_overlay",
+    }
 )
 
 
@@ -244,6 +254,9 @@ class TakeoffPlanView(
         self._tile_items: Dict[TileKey, TileGraphicsItem] = {}
         self._tile_requests: Dict[TileKey, str] = {}
         self._tile_scale: float = 0.0
+        self._overlay_tile_items: Dict[TileKey, TileGraphicsItem] = {}
+        self._overlay_tile_requests: Dict[TileKey, str] = {}
+        self._overlay_tile_scale: float = 0.0
         self._base_raster_scale: float = 0.0
         self._base_raster_request_id: Optional[str] = None
         self._base_raster_request_scale: float = 0.0
@@ -274,6 +287,20 @@ class TakeoffPlanView(
         self._pre_pan_persistent_mode: Optional[str] = None
         self._zoom_cursor: QCursor = QCursor(Qt.CursorShape.CrossCursor)
         self._rotate_cursor: QCursor = QCursor(Qt.CursorShape.CrossCursor)
+        self._move_overlay_cursor: QCursor = QCursor(Qt.CursorShape.SizeAllCursor)
+        self._overlay_rect_save_handler = None
+        self._overlay_move_handle_item: Optional[QGraphicsPixmapItem] = None
+        self._overlay_move_original_rect: Optional[
+            Tuple[float, float, float, float]
+        ] = None
+        self._overlay_move_preview_rect: Optional[Tuple[float, float, float, float]] = (
+            None
+        )
+        self._overlay_move_anchor_scene: Optional[QtCore.QPointF] = None
+        self._overlay_move_drag_start_rect: Optional[
+            Tuple[float, float, float, float]
+        ] = None
+        self._overlay_move_dragging: bool = False
         self._rotate_handle_item: Optional[QGraphicsPixmapItem] = None
         self._rotate_line_item: Optional[QGraphicsLineItem] = None
         self._rotate_line_outline_item: Optional[QGraphicsLineItem] = None
@@ -2482,6 +2509,12 @@ class TakeoffPlanView(
     def set_rotate_cursor(self, cursor: QCursor) -> None:
         self._rotate_cursor = cursor
 
+    def set_move_overlay_cursor(self, cursor: QCursor) -> None:
+        self._move_overlay_cursor = cursor
+
+    def set_overlay_rect_save_handler(self, handler) -> None:
+        self._overlay_rect_save_handler = handler
+
     def set_selection_enabled(self, enabled: bool) -> None:
         self._selection_enabled = enabled
         if not enabled:
@@ -2511,10 +2544,7 @@ class TakeoffPlanView(
         if not self._uses_dynamic_tile_coverage():
             self.viewport().update()
             return
-        if (
-            self._disable_high_resolution_images
-            and not self._is_overlay_only_pdf_visual()
-        ):
+        if self._disable_high_resolution_images and not self._uses_overlay_pdf_tiles():
             if (
                 self._background_item is not None
                 and not self._is_composite_mode
@@ -3003,6 +3033,276 @@ class TakeoffPlanView(
             return ann.is_interactive and ann.can_rotate
         return uid in self._current_takeoffs
 
+    def can_move_overlay_image(self) -> bool:
+        page = self._current_page
+        if page is None or not page.overlay_image_path:
+            return False
+        rect = self._overlay_rect_tuple(page)
+        if rect is None:
+            return False
+        _x, _y, width, height = rect
+        return width > 0.0 and height > 0.0
+
+    def show_overlay_move_handle(self) -> bool:
+        if not self.can_move_overlay_image():
+            self.cancel_overlay_move_mode(restore_preview=True)
+            return False
+        page = self._current_page
+        rect = self._overlay_rect_tuple(page) if page is not None else None
+        if rect is None:
+            return False
+        self.finish_intelligent_paste_placement()
+        self._exit_place_mode()
+        self._exit_annotation_place_mode()
+        self._clear_backout_state()
+        self._clear_text_toolbar_target()
+        self._clear_pdf_text_selection()
+        self._selected_uids.clear()
+        self._on_selection_changed()
+        self.update_selection_visuals()
+        self._remove_rotate_handle()
+        self._remove_overlay_move_handle()
+        self._overlay_move_original_rect = rect
+        self._overlay_move_preview_rect = rect
+        self._overlay_move_anchor_scene = None
+        self._overlay_move_drag_start_rect = None
+        self._overlay_move_dragging = False
+        page_rect = self._page_scene_rect()
+        center = (
+            page_rect.center()
+            if page_rect.isValid()
+            else self._scene.sceneRect().center()
+        )
+        if not self._set_overlay_move_handle_pos(center):
+            return False
+        self._apply_cursor_mode("move_overlay_handle")
+        self.cursor_mode_change_requested.emit("move_overlay_handle")
+        self._update_cursor()
+        return True
+
+    def cancel_overlay_move_mode(self, restore_preview: bool = True) -> None:
+        if restore_preview and self._overlay_move_original_rect is not None:
+            self._set_current_overlay_rect(self._overlay_move_original_rect)
+        self._overlay_move_original_rect = None
+        self._overlay_move_preview_rect = None
+        self._overlay_move_anchor_scene = None
+        self._overlay_move_drag_start_rect = None
+        self._overlay_move_dragging = False
+        self._remove_overlay_move_handle()
+        if self._cursor_mode in ("move_overlay", "move_overlay_handle"):
+            self._apply_cursor_mode("select")
+            self.cursor_mode_change_requested.emit("select")
+        self._update_cursor()
+
+    def _overlay_rect_tuple(
+        self, page: Page
+    ) -> Optional[Tuple[float, float, float, float]]:
+        try:
+            rect_x, rect_y, rect_w, rect_h = page.overlay_rect
+            return (float(rect_x), float(rect_y), float(rect_w), float(rect_h))
+        except (TypeError, ValueError):
+            return None
+
+    def _outlined_icon_pixmap(self, icon_name: str, hex_color: str) -> QPixmap:
+        svg_path = resource_path("resources", "icons", icon_name)
+        svg_data = recolor_svg(svg_path, hex_color)
+        renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg_data))
+        icon_pm = QPixmap(24, 24)
+        icon_pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(icon_pm)
+        renderer.render(painter)
+        painter.end()
+        black_pm = recolor_pixmap(icon_pm, QColor(0, 0, 0))
+        outlined_pm = QPixmap(26, 26)
+        outlined_pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(outlined_pm)
+        for dx, dy in OUTLINE_OFFSETS:
+            painter.drawPixmap(1 + dx, 1 + dy, black_pm)
+        painter.drawPixmap(1, 1, icon_pm)
+        painter.end()
+        return outlined_pm
+
+    def _set_overlay_move_handle_pos(self, scene_pos: QtCore.QPointF) -> bool:
+        if self._overlay_move_handle_item is not None and not isValid(
+            self._overlay_move_handle_item
+        ):
+            self._overlay_move_handle_item = None
+        if self._overlay_move_handle_item is None:
+            pixmap = self._outlined_icon_pixmap(_MOVE_OVERLAY_ICON, current_text_hex())
+            if pixmap.isNull():
+                return False
+            handle = QGraphicsPixmapItem(pixmap)
+            handle.setOffset(-13, -13)
+            handle.setZValue(30)
+            handle.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            self._scene.addItem(handle)
+            self._overlay_move_handle_item = handle
+        elif self._overlay_move_handle_item.scene() is not self._scene:
+            self._scene.addItem(self._overlay_move_handle_item)
+        self._overlay_move_handle_item.setPos(scene_pos)
+        return True
+
+    def _remove_overlay_move_handle(self) -> None:
+        if self._overlay_move_handle_item is not None:
+            if (
+                isValid(self._overlay_move_handle_item)
+                and self._overlay_move_handle_item.scene() is self._scene
+            ):
+                self._scene.removeItem(self._overlay_move_handle_item)
+            self._overlay_move_handle_item = None
+
+    def _is_over_overlay_move_handle(self, vp_pos) -> bool:
+        if self._overlay_move_handle_item is None or vp_pos is None:
+            return False
+        if not isValid(self._overlay_move_handle_item):
+            self._overlay_move_handle_item = None
+            return False
+        handle_vp = self.mapFromScene(self._overlay_move_handle_item.pos())
+        return math.hypot(vp_pos.x() - handle_vp.x(), vp_pos.y() - handle_vp.y()) <= 16
+
+    def _begin_overlay_move(self, vp_pos) -> bool:
+        page = self._current_page
+        if page is None:
+            return False
+        rect = self._overlay_rect_tuple(page)
+        if rect is None:
+            return False
+        if self._overlay_move_original_rect is None:
+            self._overlay_move_original_rect = rect
+        self._overlay_move_preview_rect = rect
+        self._overlay_move_anchor_scene = self.mapToScene(vp_pos)
+        self._overlay_move_drag_start_rect = rect
+        self._overlay_move_dragging = True
+        self._apply_cursor_mode("move_overlay")
+        self.cursor_mode_change_requested.emit("move_overlay")
+        self._update_cursor(vp_pos)
+        return True
+
+    def _preview_overlay_move(self, scene_pos: QtCore.QPointF) -> None:
+        page = self._current_page
+        if (
+            page is None
+            or self._overlay_move_original_rect is None
+            or self._overlay_move_anchor_scene is None
+            or self._overlay_move_drag_start_rect is None
+        ):
+            return
+        scene_dx = scene_pos.x() - self._overlay_move_anchor_scene.x()
+        scene_dy = scene_pos.y() - self._overlay_move_anchor_scene.y()
+        delta = page.canvas_point_to_ost_page_pixels(
+            scene_dx,
+            scene_dy,
+            page.effective_width_pts * self._scene_scale,
+            page.effective_height_pts * self._scene_scale,
+        )
+        if delta is None:
+            return
+        dx, dy = delta
+        rect_x, rect_y, rect_w, rect_h = self._overlay_move_drag_start_rect
+        preview = (rect_x + dx, rect_y + dy, rect_w, rect_h)
+        self._set_overlay_move_handle_pos(scene_pos)
+        if self._overlay_move_preview_rect == preview:
+            return
+        self._overlay_move_preview_rect = preview
+        self._set_current_overlay_rect(preview)
+
+    def _finish_overlay_move_drag(self, scene_pos: QtCore.QPointF) -> None:
+        if not self._overlay_move_dragging:
+            return
+        self._preview_overlay_move(scene_pos)
+        self._overlay_move_anchor_scene = None
+        self._overlay_move_drag_start_rect = None
+        self._overlay_move_dragging = False
+        self._set_overlay_move_handle_pos(scene_pos)
+        self._apply_cursor_mode("move_overlay_handle")
+        self.cursor_mode_change_requested.emit("move_overlay_handle")
+        self._update_cursor(self.mapFromScene(scene_pos))
+
+    def _set_current_overlay_rect(
+        self, overlay_rect: Tuple[float, float, float, float]
+    ) -> None:
+        if self._current_page is None:
+            return
+        self._current_page.overlay_rect = tuple(float(value) for value in overlay_rect)
+        self._current_render_identity = self._build_render_identity(
+            self._current_page, self._current_bid_ref
+        )
+        self._apply_overlay_rect_to_visuals()
+
+    def _apply_overlay_rect_to_visuals(self) -> None:
+        page = self._current_page
+        if page is None:
+            return
+        if self._is_composite_mode:
+            self._clear_tiles()
+            if self._can_zoom_rerender and not self._disable_high_resolution_images:
+                self._update_tile_coverage(self.transform().m11())
+        for item in self._overlay_items:
+            if not self._is_live_graphics_item(item):
+                continue
+            pixmap = item.pixmap()
+            transform = self._overlay_graphics_transform(
+                page, pixmap.width(), pixmap.height(), self._scene_scale
+            )
+            if transform is not None:
+                item.setTransform(transform)
+                item.update()
+        if self._primary_tiles_use_overlay_pdf():
+            transform = self._overlay_pdf_tile_transform()
+            for item in self._tile_items.values():
+                if self._is_live_graphics_item(item):
+                    item.setTransform(transform)
+                    item.update()
+        if self._uses_both_overlay_pdf_tiles():
+            transform = self._overlay_pdf_tile_transform()
+            for item in self._overlay_tile_items.values():
+                if self._is_live_graphics_item(item):
+                    item.setTransform(transform)
+                    item.update()
+        self.viewport().update()
+
+    def _commit_overlay_move(self) -> None:
+        preview_rect = self._overlay_move_preview_rect
+        original_rect = self._overlay_move_original_rect
+        if preview_rect is None or original_rect is None:
+            self.cancel_overlay_move_mode(restore_preview=True)
+            return
+
+        def rollback_failed_save() -> None:
+            self._set_current_overlay_rect(original_rect)
+            self.cancel_overlay_move_mode(restore_preview=False)
+            show_warning(
+                self,
+                "Move Overlay Image",
+                "The overlay position could not be saved.",
+            )
+
+        self._overlay_move_anchor_scene = None
+        self._overlay_move_drag_start_rect = None
+        self._overlay_move_dragging = False
+        self._remove_overlay_move_handle()
+        if preview_rect == original_rect:
+            self.cancel_overlay_move_mode(restore_preview=False)
+            return
+        if self._overlay_rect_save_handler is None:
+            rollback_failed_save()
+            return
+        result = self._overlay_rect_save_handler(preview_rect)
+        if result is None or not result.write_success:
+            rollback_failed_save()
+            return
+        self._overlay_move_original_rect = None
+        self._overlay_move_preview_rect = None
+        self._apply_cursor_mode("select")
+        self.cursor_mode_change_requested.emit("select")
+        self._update_cursor()
+        if not result.reload_success:
+            show_warning(
+                self,
+                "Move Overlay Image",
+                "The overlay position was saved, but the page could not be refreshed.",
+            )
+
     def _create_rotate_handle(
         self,
         uids=None,
@@ -3044,27 +3344,11 @@ class TakeoffPlanView(
         start_angle_rad = math.radians(start_angle)
         handle_x = center_scene.x() + radius * math.cos(start_angle_rad)
         handle_y = center_scene.y() + radius * math.sin(start_angle_rad)
-        svg_path = resource_path(
-            "resources",
-            "icons",
-            "replay_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
-        )
         hex_color = SLOPE_ROTATE_HANDLE_HEX if slope_mode else current_text_hex()
-        svg_data = recolor_svg(svg_path, hex_color)
-        renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg_data))
-        icon_pm = QPixmap(24, 24)
-        icon_pm.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(icon_pm)
-        renderer.render(painter)
-        painter.end()
-        black_pm = recolor_pixmap(icon_pm, QColor(0, 0, 0))
-        outlined_pm = QPixmap(26, 26)
-        outlined_pm.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(outlined_pm)
-        for dx, dy in OUTLINE_OFFSETS:
-            painter.drawPixmap(1 + dx, 1 + dy, black_pm)
-        painter.drawPixmap(1, 1, icon_pm)
-        painter.end()
+        outlined_pm = self._outlined_icon_pixmap(
+            "replay_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
+            hex_color,
+        )
         handle = QGraphicsPixmapItem(outlined_pm)
         handle.setOffset(-13, -13)
         handle.setZValue(20)
@@ -3403,6 +3687,11 @@ class TakeoffPlanView(
                         rotation,
                         page.invert,
                         page.bitonal,
+                        tint_rgb=(
+                            (255, 80, 80)
+                            if page.image_show_mode == 2 and page.has_overlay
+                            else None
+                        ),
                     )
             elif strategy.load_overlay:
                 overlay_render_scale = strategy.view_scale
@@ -3643,6 +3932,7 @@ class TakeoffPlanView(
         return True
 
     def clear(self, preserve_place_session: bool = False):
+        self.cancel_overlay_move_mode(restore_preview=True)
         self.finish_intelligent_paste_placement()
         if self._place_session_uid is not None and not preserve_place_session:
             self._exit_place_mode()
@@ -3660,11 +3950,16 @@ class TakeoffPlanView(
         for item in self._tile_items.values():
             if self._is_live_graphics_item(item):
                 item.clear_image()
+        for item in self._overlay_tile_items.values():
+            if self._is_live_graphics_item(item):
+                item.clear_image()
         for item in self._overlay_items:
             if self._is_live_graphics_item(item):
                 item.setPixmap(QPixmap())
         self._tile_items.clear()
         self._tile_scale = 0.0
+        self._overlay_tile_items.clear()
+        self._overlay_tile_scale = 0.0
         self._cancel_optional_base_correction()
         self._base_raster_scale = 0.0
         self._selection_items.clear()
@@ -3755,6 +4050,8 @@ class TakeoffPlanView(
         self._deferred_page_visual_result = None
 
     def set_cursor_mode(self, mode: str) -> None:
+        if mode not in ("move_overlay", "move_overlay_handle"):
+            self.cancel_overlay_move_mode(restore_preview=True)
         if mode != "select":
             self.finish_intelligent_paste_placement()
         if mode == "place":

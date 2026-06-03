@@ -68,6 +68,9 @@ from ..use_cases.project.save_page_name_use_case import SavePageNameUseCase
 from ..use_cases.project.save_page_overlay_image_use_case import (
     SavePageOverlayImageUseCase,
 )
+from ..use_cases.project.save_page_overlay_rect_use_case import (
+    SavePageOverlayRectUseCase,
+)
 from ..use_cases.project.save_page_scale_use_case import SavePageScaleUseCase
 from ..use_cases.project.save_page_show_mode_use_case import SavePageShowModeUseCase
 from ..use_cases.project.save_page_view_state_use_case import SavePageViewStateUseCase
@@ -297,6 +300,9 @@ class UseCaseBuilder:
         save_page_overlay_image_uc = SavePageOverlayImageUseCase(
             mdb_writer, write_logger.getChild("SavePageOverlayImage")
         )
+        save_page_overlay_rect_uc = SavePageOverlayRectUseCase(
+            mdb_writer, write_logger.getChild("SavePageOverlayRect")
+        )
         save_page_invert_uc = SavePageInvertUseCase(
             mdb_writer, write_logger.getChild("SavePageInvert")
         )
@@ -428,6 +434,7 @@ class UseCaseBuilder:
                 save_page_scale=save_page_scale_uc,
                 save_page_show_mode=save_page_show_mode_uc,
                 save_page_overlay_image=save_page_overlay_image_uc,
+                save_page_overlay_rect=save_page_overlay_rect_uc,
                 save_page_invert=save_page_invert_uc,
                 save_page_bitonal=save_page_bitonal_uc,
                 save_page_image_adjustments=save_page_image_adjustments_uc,

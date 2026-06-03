@@ -71,6 +71,14 @@ class _PlanView:
     def backout_parent_candidate_uid(self):
         return None
 
+    def can_move_overlay_image(self):
+        return False
+
+
+class _OverlayPlanView(_PlanView):
+    def can_move_overlay_image(self):
+        return True
+
 
 class ToolbarStateCoordinatorTests(unittest.TestCase):
     def test_refresh_exits_place_when_3d_view_is_active(self):
@@ -96,6 +104,28 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         self.assertTrue(select_action.isChecked())
         self.assertTrue(plan_view.reset_ctrl_held_called)
         self.assertEqual(plan_view.cursor_modes, ["select"])
+
+    def test_move_overlay_action_enabled_for_editable_2d_overlay_page(self):
+        _app()
+        action = QtGui.QAction()
+        coordinator = ToolbarStateCoordinator(_UiState(), _Access(), _ProjectData())
+        coordinator.set_move_overlay_action(action)
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_IndexWidget(1))
+        coordinator.set_plan_view(_OverlayPlanView())
+        coordinator.refresh()
+        self.assertTrue(action.isEnabled())
+
+    def test_move_overlay_action_disabled_without_movable_overlay(self):
+        _app()
+        action = QtGui.QAction()
+        coordinator = ToolbarStateCoordinator(_UiState(), _Access(), _ProjectData())
+        coordinator.set_move_overlay_action(action)
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_IndexWidget(1))
+        coordinator.set_plan_view(_PlanView())
+        coordinator.refresh()
+        self.assertFalse(action.isEnabled())
 
 
 if __name__ == "__main__":

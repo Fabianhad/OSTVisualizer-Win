@@ -41,6 +41,7 @@ class IconId(Enum):
     UNSELECT_ALL = "unselect_all"
     MOVE_UP = "move_up"
     MOVE_DOWN = "move_down"
+    MOVE_OVERLAY_IMAGE = "move_overlay_image"
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,9 @@ ICON_SPECS: Dict[IconId, IconSpec] = {
     IconId.MOVE_DOWN: IconSpec(
         "keyboard_arrow_down_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
     ),
+    IconId.MOVE_OVERLAY_IMAGE: IconSpec(
+        "recenter_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
 }
 ACTION_ICONS: Dict[str, IconId] = {
     "open_files": IconId.OPEN_FILES,
@@ -148,6 +152,7 @@ ACTION_ICONS: Dict[str, IconId] = {
     "show_cover_sheet": IconId.COVER_SHEET,
     "layers_sidebar": IconId.LAYERS_SIDEBAR,
     "conditions_sidebar": IconId.CONDITIONS_SIDEBAR,
+    "move_overlay_image": IconId.MOVE_OVERLAY_IMAGE,
 }
 IconTarget = Union[QtGui.QAction, QtWidgets.QAbstractButton]
 

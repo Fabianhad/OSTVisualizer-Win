@@ -24,6 +24,7 @@ class ToolbarStateCoordinator:
         self._select_all_action: Optional[QtGui.QAction] = None
         self._backout_action: Optional[QtGui.QAction] = None
         self._dimension_action: Optional[QtGui.QAction] = None
+        self._move_overlay_action: Optional[QtGui.QAction] = None
         self._cover_sheet_button: Optional[QtWidgets.QToolButton] = None
         self._page_settings_bar = None
         self._bid_layers_sidebar = None
@@ -69,6 +70,9 @@ class ToolbarStateCoordinator:
 
     def set_dimension_action(self, action: QtGui.QAction) -> None:
         self._dimension_action = action
+
+    def set_move_overlay_action(self, action: QtGui.QAction) -> None:
+        self._move_overlay_action = action
 
     def set_cover_sheet_button(self, btn: QtWidgets.QToolButton) -> None:
         self._cover_sheet_button = btn
@@ -323,6 +327,14 @@ class ToolbarStateCoordinator:
                 and self._select_action
             ):
                 self._select_action.setChecked(True)
+        can_move_overlay = (
+            self.is_takeoff_2d_view_active()
+            and self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+            and bool(self.plan_view)
+            and self.plan_view.can_move_overlay_image()
+        )
+        if self._move_overlay_action:
+            self._move_overlay_action.setEnabled(can_move_overlay)
         select_allowed = self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
         if self.plan_view:
             self.plan_view.set_selection_enabled(select_allowed)
@@ -365,6 +377,7 @@ class ToolbarStateCoordinator:
         self._select_all_action = None
         self._backout_action = None
         self._dimension_action = None
+        self._move_overlay_action = None
         self._cover_sheet_button = None
         self._page_settings_bar = None
         self._bid_layers_sidebar = None

@@ -12,6 +12,7 @@ from PySide6.QtGui import (
     QMouseEvent,
     QPainter,
     QPainterPath,
+    QPixmap,
     QTextCursor,
     QTextOption,
 )
@@ -31,11 +32,18 @@ from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.application.dtos.render_result_dto import RenderResult
+from ost_visualizer.application.services.page_load_strategy_service import (
+    PageLoadStrategyService,
+)
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
     DIMENSION_LABEL_ITEM_KIND,
     NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
     NAMED_VIEW_LABEL_ITEM_KIND,
     ClippedTextGraphicsItem,
+    ImageBackgroundItem,
+    TileGraphicsItem,
+    TileKey,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
@@ -338,6 +346,11 @@ class FakeSizedViewport:
         return QtCore.QRect(0, 0, 100, 100)
 
 
+class FakePageSizeProvider:
+    def get_page_size(self, _file_path, _page_index):
+        return 612.0, 792.0
+
+
 class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -350,6 +363,761 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view = self._make_plan_view()
         self.assertIsNotNone(view._condition_text_toolbar)
         self.assertTrue(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
+    def test_show_both_strategy_uses_composite_layer(self):
+        strategy = PageLoadStrategyService(
+            FakePageSizeProvider()
+        ).determine_load_strategy(
+            Page(
+                uid="p1",
+                name="P1",
+                image_path="base.pdf",
+                overlay_image_path="overlay.pdf",
+                image_show_mode=2,
+                width_pts=612.0,
+                height_pts=792.0,
+            )
+        )
+        self.assertTrue(strategy.load_composite)
+        self.assertFalse(strategy.load_main)
+        self.assertFalse(strategy.load_overlay)
+
+    def test_show_both_overlay_item_stays_above_high_resolution_base_tiles(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+            image_show_mode=2,
+        )
+        pixmap = QPixmap(100, 100)
+        item = view._create_overlay_graphics_item(
+            pixmap,
+            page,
+            view_scale=2.0,
+            show_mode=2,
+        )
+        self.assertGreater(item.zValue(), 0.35)
+        view.cleanup()
+
+    def test_show_both_loads_composite_instead_of_separate_layers(self):
+        class RecordingRenderingService:
+            def __init__(self):
+                self.page_calls = []
+                self.composite_calls = []
+
+            def render_page_async(self, **kwargs):
+                self.page_calls.append(kwargs)
+                return "page-1"
+
+            def render_composite_async(self, **kwargs):
+                self.composite_calls.append(kwargs)
+                return "composite-1"
+
+            def extract_pdf_text_async(self, **_kwargs):
+                return "text-1"
+
+            def cancel_request(self, _request_id):
+                pass
+
+            def shutdown(self):
+                pass
+
+        view = self._make_plan_view()
+        rendering_service = RecordingRenderingService()
+        view._rendering_service = rendering_service
+        view._load_coordinator = PageLoadStrategyService(FakePageSizeProvider())
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(
+            view.load_page(
+                page=page,
+                takeoffs=[],
+                conditions={},
+                color_map={},
+            )
+        )
+        self.assertTrue(view._can_zoom_rerender)
+        self.assertEqual(rendering_service.page_calls, [])
+        self.assertEqual(len(rendering_service.composite_calls), 1)
+        self.assertEqual(rendering_service.composite_calls[0]["page"], page)
+        view.cleanup()
+
+    def test_show_both_high_resolution_tiles_request_red_base_and_blue_overlay(self):
+        class RecordingRenderingService:
+            def __init__(self):
+                self.calls = []
+
+            def render_region_async(self, **kwargs):
+                self.calls.append(kwargs)
+                return f"region-{len(self.calls)}"
+
+            def cancel_request(self, _request_id):
+                pass
+
+            def shutdown(self):
+                pass
+
+        view = self._make_plan_view()
+        rendering_service = RecordingRenderingService()
+        view._rendering_service = rendering_service
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+            rotation=90,
+        )
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._current_rotation = page.rotation
+        view._current_load_token = "load-1"
+        view._current_render_identity = view._build_render_identity(page, None)
+        view._scene_scale = 2.0
+        view._tile_items = {}
+        view._tile_requests = {}
+        view._overlay_tile_items = {}
+        view._overlay_tile_requests = {}
+        view._loaded_visual_kind = "overlay"
+        view._overlay_pdf_width_pts = 612.0
+        view._overlay_pdf_height_pts = 792.0
+        view._is_composite_mode = False
+        view._can_zoom_rerender = True
+        view._tile_scale = 4.0
+        view._overlay_tile_scale = 4.0
+        view._pdf_width_pts = 612.0
+        view._pdf_height_pts = 792.0
+        view._page_render_generation_id = 1
+        self.assertTrue(view._uses_dynamic_tile_coverage())
+        key = TileKey(0, 0, 4.0)
+        base_image = QImage(16, 16, QImage.Format.Format_ARGB32)
+        base_image.fill(0xFFFFFFFF)
+        background = ImageBackgroundItem(base_image, 6048.0, 4320.0)
+        view._background_item = background
+        view._scene.addItem(background)
+        self.assertTrue(background.isVisible())
+        view._request_tile(key, generation_id=1, priority=2)
+        self.assertEqual(rendering_service.calls[0]["file_path"], "base.pdf")
+        self.assertEqual(rendering_service.calls[0]["rotation"], 0)
+        self.assertEqual(rendering_service.calls[0]["tint_rgb"], (255, 80, 80))
+        view._on_tile_loaded(
+            RenderResult(
+                request_id="region-1", success=True, image=base_image, error=None
+            ),
+            key,
+            "load-1",
+            view._current_render_identity,
+            generation_id=1,
+        )
+        self.assertIn(key, view._tile_items)
+        self.assertFalse(background.isVisible())
+        overlay_key = TileKey(0, 0, 4.0)
+        view._request_overlay_tile(overlay_key, generation_id=1, priority=2)
+        self.assertEqual(rendering_service.calls[1]["file_path"], "overlay.pdf")
+        self.assertEqual(rendering_service.calls[1]["rotation"], 90)
+        self.assertEqual(rendering_service.calls[1]["tint_rgb"], (80, 80, 255))
+        low_res = view._create_overlay_graphics_item(
+            QPixmap(100, 100),
+            page,
+            view_scale=2.0,
+            show_mode=2,
+        )
+        view._scene.addItem(low_res)
+        view._overlay_items.append(low_res)
+        self.assertTrue(low_res.isVisible())
+        image = QImage(16, 16, QImage.Format.Format_ARGB32)
+        image.fill(0xFFFFFFFF)
+        pending_key = TileKey(1, 0, 4.0)
+        view._overlay_tile_requests[pending_key] = "region-3"
+        view._on_overlay_tile_loaded(
+            RenderResult(request_id="region-2", success=True, image=image, error=None),
+            overlay_key,
+            "load-1",
+            view._current_render_identity,
+            generation_id=1,
+        )
+        self.assertIn(overlay_key, view._overlay_tile_items)
+        self.assertGreater(view._overlay_tile_items[overlay_key].zValue(), 0.5)
+        self.assertTrue(low_res.isVisible())
+        self.assertIn(pending_key, view._overlay_tile_requests)
+        view._on_overlay_tile_loaded(
+            RenderResult(request_id="region-3", success=True, image=image, error=None),
+            pending_key,
+            "load-1",
+            view._current_render_identity,
+            generation_id=1,
+        )
+        self.assertFalse(low_res.isVisible())
+        view._clear_tiles()
+        self.assertEqual(view._overlay_tile_items, {})
+        self.assertEqual(view._overlay_tile_requests, {})
+        self.assertEqual(view._overlay_tile_scale, 0.0)
+        self.assertTrue(background.isVisible())
+        self.assertTrue(low_res.isVisible())
+        view.cleanup()
+
+    def test_show_both_optional_overlay_base_correction_uses_page_rotation(self):
+        class RecordingRenderingService:
+            def __init__(self):
+                self.calls = []
+
+            def render_overlay_async(self, **kwargs):
+                self.calls.append(kwargs)
+                return "overlay-base-1"
+
+            def cancel_request(self, _request_id):
+                pass
+
+            def shutdown(self):
+                pass
+
+        view = self._make_plan_view()
+        rendering_service = RecordingRenderingService()
+        view._rendering_service = rendering_service
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            rotation=90,
+        )
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._current_rotation = page.rotation
+        view._current_bid_ref = None
+        view._current_load_token = "load-1"
+        view._current_render_identity = view._build_render_identity(page, None)
+        view._scene_scale = 2.0
+        view._tile_items = {}
+        view._tile_requests = {}
+        view._base_raster_request_id = None
+        view._base_raster_request_scale = 0.0
+        view._base_correction_request_generation_id = 0
+        view._request_optional_overlay_base_correction(
+            base_raster_scale=3.0,
+            generation_id=7,
+        )
+        self.assertEqual(len(rendering_service.calls), 1)
+        call = rendering_service.calls[0]
+        self.assertIs(call["page"], page)
+        self.assertEqual(call["show_mode"], 2)
+        self.assertEqual(call["rotation"], 90)
+        self.assertEqual(call["render_scale"], 3.0)
+        view.cleanup()
+
+    def test_show_both_overlay_tile_transform_matches_low_res_overlay_item(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(96.0, 48.0, 816.0, 1056.0),
+            overlay_rotation=0.1,
+        )
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._scene_scale = 2.0
+        view._loaded_visual_kind = "overlay"
+        view._overlay_pdf_width_pts = 612.0
+        view._overlay_pdf_height_pts = 792.0
+        low_res = view._create_overlay_graphics_item(
+            QPixmap(1224, 1584),
+            page,
+            view_scale=2.0,
+            show_mode=2,
+        )
+        tile = TileGraphicsItem(
+            QImage(16, 16, QImage.Format.Format_ARGB32),
+            QtCore.QRectF(0.0, 0.0, 1224.0, 1584.0),
+            QtCore.QRectF(0.0, 0.0, 16.0, 16.0),
+        )
+        tile.setTransform(view._overlay_pdf_tile_transform())
+        view._scene.addItem(low_res)
+        view._scene.addItem(tile)
+        low_rect = low_res.sceneBoundingRect()
+        tile_rect = tile.sceneBoundingRect()
+        self.assertAlmostEqual(tile_rect.x(), low_rect.x(), places=5)
+        self.assertAlmostEqual(tile_rect.y(), low_rect.y(), places=5)
+        self.assertAlmostEqual(tile_rect.width(), low_rect.width(), places=5)
+        self.assertAlmostEqual(tile_rect.height(), low_rect.height(), places=5)
+        view.cleanup()
+
+    def test_show_both_cropped_overlay_tile_maps_to_overlay_rect_subregion(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(96.0, 48.0, 408.0, 528.0),
+        )
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._scene_scale = 2.0
+        view._loaded_visual_kind = "overlay"
+        view._overlay_pdf_width_pts = 612.0
+        view._overlay_pdf_height_pts = 792.0
+        view.TILE_SIZE_PX = 256
+        key = TileKey(1, 1, 4.0)
+        local_rect, source_rect = view._tile_item_rects(key, overlay=True)
+        tile = TileGraphicsItem(
+            QImage(256, 256, QImage.Format.Format_ARGB32),
+            local_rect,
+            source_rect,
+        )
+        tile.setTransform(view._overlay_pdf_tile_transform())
+        view._scene.addItem(tile)
+        scene_rect = tile.sceneBoundingRect()
+        self.assertAlmostEqual(scene_rect.x(), 208.0, places=5)
+        self.assertAlmostEqual(scene_rect.y(), 136.0, places=5)
+        self.assertAlmostEqual(scene_rect.width(), 64.0, places=5)
+        self.assertAlmostEqual(scene_rect.height(), 64.0, places=5)
+        self.assertEqual(source_rect, QtCore.QRectF(1.0, 1.0, 256.0, 256.0))
+        view.cleanup()
+
+    def test_move_overlay_preview_updates_show_both_overlay_tiles(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._scene_scale = 2.0
+        view._loaded_visual_kind = "overlay"
+        view._overlay_pdf_width_pts = 612.0
+        view._overlay_pdf_height_pts = 792.0
+        tile = TileGraphicsItem(
+            QImage(16, 16, QImage.Format.Format_ARGB32),
+            QtCore.QRectF(0.0, 0.0, 64.0, 64.0),
+            QtCore.QRectF(0.0, 0.0, 16.0, 16.0),
+        )
+        view._scene.addItem(tile)
+        view._tile_items = {}
+        view._overlay_tile_items = {TileKey(0, 0, 4.0): tile}
+        view._set_current_overlay_rect((96.0, 48.0, 816.0, 1056.0))
+        self.assertAlmostEqual(tile.transform().m31(), 144.0)
+        self.assertAlmostEqual(tile.transform().m32(), 72.0)
+        view.cleanup()
+
+    def test_page_result_keeps_white_canvas_behind_transparent_raster(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        canvas = view._white_canvas_item
+        image = QImage(20, 20, QImage.Format.Format_ARGB32)
+        image.fill(0x00000000)
+        view._apply_page_result(
+            {
+                "page": page,
+                "show_mode": 0,
+                "show_overlay": False,
+                "rotation": 0,
+                "view_scale": 2.0,
+                "base_raster_scale": 2.0,
+                "pdf_width_pts": 612.0,
+                "pdf_height_pts": 792.0,
+            },
+            RenderResult("r1", True, image, None),
+        )
+        self.assertIs(view._white_canvas_item, canvas)
+        self.assertIs(canvas.scene(), view._scene)
+        self.assertLess(canvas.zValue(), view._background_item.zValue())
+        view.cleanup()
+
+    def test_move_overlay_preview_translates_overlay_rect_in_page_pixels(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._scene_scale = 2.0
+        view._overlay_move_original_rect = page.overlay_rect
+        view._overlay_move_drag_start_rect = page.overlay_rect
+        view._overlay_move_anchor_scene = QtCore.QPointF(0.0, 0.0)
+        view._preview_overlay_move(QtCore.QPointF(144.0, 72.0))
+        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        view.cleanup()
+
+    def test_move_overlay_preview_updates_overlay_item_transform(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.png",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._scene_scale = 2.0
+        pixmap = QPixmap(100, 100)
+        item = view._create_overlay_graphics_item(
+            pixmap,
+            page,
+            view_scale=2.0,
+            show_mode=1,
+        )
+        view._scene.addItem(item)
+        view._overlay_items.append(item)
+        view._overlay_move_original_rect = page.overlay_rect
+        view._overlay_move_drag_start_rect = page.overlay_rect
+        view._overlay_move_anchor_scene = QtCore.QPointF(0.0, 0.0)
+        view._preview_overlay_move(QtCore.QPointF(144.0, 72.0))
+        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        self.assertAlmostEqual(item.transform().m31(), 144.0)
+        self.assertAlmostEqual(item.transform().m32(), 72.0)
+        view.cleanup()
+
+    def test_move_overlay_enters_mode_from_handle_click(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        handle_pos = view.mapFromScene(view._overlay_move_handle_item.pos())
+        view.mousePressEvent(self._left_press_event(handle_pos.x(), handle_pos.y()))
+        self.assertEqual(view._cursor_mode, "move_overlay")
+        self.assertIsNotNone(view._overlay_move_handle_item)
+        self.assertEqual(view._overlay_move_original_rect, (0.0, 0.0, 816.0, 1056.0))
+        view.cleanup()
+
+    def test_move_overlay_release_keeps_preview_handle_without_saving(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        calls = []
+        result = type(
+            "Result",
+            (),
+            {"write_success": True, "reload_success": True},
+        )()
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._scene_scale = 2.0
+        view.set_overlay_rect_save_handler(lambda rect: calls.append(rect) or result)
+        view._overlay_move_original_rect = page.overlay_rect
+        view._overlay_move_preview_rect = page.overlay_rect
+        anchor_scene = view.mapToScene(QtCore.QPoint(0, 0))
+        release_vp = view.mapFromScene(anchor_scene + QtCore.QPointF(144.0, 72.0))
+        view._overlay_move_anchor_scene = anchor_scene
+        view._overlay_move_drag_start_rect = page.overlay_rect
+        view._overlay_move_dragging = True
+        view._apply_cursor_mode("move_overlay")
+        view.mouseMoveEvent(self._left_move_event(release_vp.x(), release_vp.y()))
+        view.mouseReleaseEvent(self._left_release_event(release_vp.x(), release_vp.y()))
+        self.assertEqual(calls, [])
+        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        self.assertEqual(view._cursor_mode, "move_overlay_handle")
+        self.assertIsNotNone(view._overlay_move_handle_item)
+        self.assertEqual(view._overlay_move_preview_rect, (96.0, 48.0, 816.0, 1056.0))
+        self.assertEqual(view._overlay_move_original_rect, (0.0, 0.0, 816.0, 1056.0))
+        view.cleanup()
+
+    def test_move_overlay_outside_click_commits_preview_and_exits_mode(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(96.0, 48.0, 816.0, 1056.0),
+        )
+        calls = []
+        result = type(
+            "Result",
+            (),
+            {"write_success": True, "reload_success": True},
+        )()
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._scene_scale = 2.0
+        view.set_overlay_rect_save_handler(lambda rect: calls.append(rect) or result)
+        view._overlay_move_original_rect = (0.0, 0.0, 816.0, 1056.0)
+        view._overlay_move_preview_rect = page.overlay_rect
+        view._set_overlay_move_handle_pos(QtCore.QPointF(144.0, 72.0))
+        view._apply_cursor_mode("move_overlay_handle")
+        view.mousePressEvent(self._left_press_event(300.0, 250.0))
+        self.assertEqual(calls, [(96.0, 48.0, 816.0, 1056.0)])
+        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        self.assertEqual(view._cursor_mode, "select")
+        self.assertIsNone(view._overlay_move_handle_item)
+        self.assertIsNone(view._overlay_move_original_rect)
+        self.assertIsNone(view._overlay_move_preview_rect)
+        view.cleanup()
+
+    def test_move_overlay_can_drag_multiple_times_before_commit(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._scene_scale = 2.0
+        view._overlay_move_original_rect = page.overlay_rect
+        view._overlay_move_preview_rect = page.overlay_rect
+        view._set_overlay_move_handle_pos(QtCore.QPointF(0.0, 0.0))
+        view._apply_cursor_mode("move_overlay_handle")
+        first_press = view.mapFromScene(view._overlay_move_handle_item.pos())
+        view.mousePressEvent(self._left_press_event(first_press.x(), first_press.y()))
+        first_release = view.mapFromScene(QtCore.QPointF(144.0, 72.0))
+        view.mouseMoveEvent(self._left_move_event(first_release.x(), first_release.y()))
+        view.mouseReleaseEvent(
+            self._left_release_event(first_release.x(), first_release.y())
+        )
+        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        second_press = view.mapFromScene(view._overlay_move_handle_item.pos())
+        view.mousePressEvent(self._left_press_event(second_press.x(), second_press.y()))
+        second_release = view.mapFromScene(
+            view._overlay_move_anchor_scene + QtCore.QPointF(72.0, 36.0)
+        )
+        view.mouseMoveEvent(
+            self._left_move_event(second_release.x(), second_release.y())
+        )
+        view.mouseReleaseEvent(
+            self._left_release_event(second_release.x(), second_release.y())
+        )
+        self.assertEqual(page.overlay_rect, (144.0, 72.0, 816.0, 1056.0))
+        self.assertEqual(view._overlay_move_original_rect, (0.0, 0.0, 816.0, 1056.0))
+        view.cleanup()
+
+    def test_move_overlay_cancel_restores_original_overlay_rect(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(96.0, 48.0, 816.0, 1056.0),
+        )
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view._overlay_move_original_rect = (0.0, 0.0, 816.0, 1056.0)
+        view._overlay_move_preview_rect = page.overlay_rect
+        view.cancel_overlay_move_mode(restore_preview=True)
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        view.cleanup()
+
+    def test_move_overlay_escape_hides_handle_and_restores_original_overlay_rect(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(96.0, 48.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        view._overlay_move_original_rect = (0.0, 0.0, 816.0, 1056.0)
+        view._overlay_move_preview_rect = page.overlay_rect
+        view.keyPressEvent(
+            QKeyEvent(
+                QtCore.QEvent.Type.KeyPress,
+                QtCore.Qt.Key.Key_Escape,
+                QtCore.Qt.KeyboardModifier.NoModifier,
+            )
+        )
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertEqual(view._cursor_mode, "select")
+        self.assertIsNone(view._overlay_move_handle_item)
+        view.cleanup()
+
+    def test_move_overlay_commit_saves_preview_overlay_rect(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(96.0, 48.0, 816.0, 1056.0),
+        )
+        calls = []
+        result = type(
+            "Result",
+            (),
+            {"write_success": True, "reload_success": True},
+        )()
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view.set_overlay_rect_save_handler(lambda rect: calls.append(rect) or result)
+        view._overlay_move_original_rect = (0.0, 0.0, 816.0, 1056.0)
+        view._overlay_move_preview_rect = page.overlay_rect
+        view._commit_overlay_move()
+        self.assertEqual(calls, [(96.0, 48.0, 816.0, 1056.0)])
+        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        view.cleanup()
+
+    def test_move_overlay_save_failure_rolls_back_and_exits_mode(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(96.0, 48.0, 816.0, 1056.0),
+        )
+        result = type(
+            "Result",
+            (),
+            {"write_success": False, "reload_success": False},
+        )()
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view.set_overlay_rect_save_handler(lambda _rect: result)
+        view._overlay_move_original_rect = (0.0, 0.0, 816.0, 1056.0)
+        view._overlay_move_preview_rect = page.overlay_rect
+        view._apply_cursor_mode("move_overlay")
+        with patch(
+            "ost_visualizer.presentation.components.plan_view.view.show_warning"
+        ) as warning:
+            view._commit_overlay_move()
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertEqual(view._cursor_mode, "select")
+        self.assertIsNone(view._overlay_move_handle_item)
+        warning.assert_called_once()
+        view.cleanup()
+
+    def test_move_overlay_handle_is_removed_on_clear(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        handle = view._overlay_move_handle_item
+        view.clear()
+        self.assertIsNone(view._overlay_move_handle_item)
+        self.assertIsNone(handle.scene())
+        view.cleanup()
+
+    def test_valid_page_view_state_restores_converted_scene_center(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            zoom_fac=1.332,
+            current_x=408.0,
+            current_y=528.0,
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(
+            view.restore_view_state(page.zoom_fac, page.current_x, page.current_y)
+        )
+        center = view.mapToScene(view.viewport().rect().center())
+        self.assertAlmostEqual(center.x(), 612.0, delta=2.0)
+        self.assertAlmostEqual(center.y(), 792.0, delta=2.0)
+        view.cleanup()
+
+    def test_legacy_out_of_bounds_page_view_state_fits_to_page(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            zoom_fac=1.332,
+            current_x=99999.0,
+            current_y=99999.0,
+        )
+        self._install_page_canvas(view, page)
+        calls = []
+        view.fit_to_page = lambda: calls.append("fit")
+        view._load_initial_view_mode = "restore"
+        view._load_view_applied = False
+        view._apply_current_view_contract(consume_scroll_state=False)
+        self.assertEqual(calls, ["fit"])
+        view.cleanup()
+
+    def test_current_x_current_y_do_not_affect_overlay_placement(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.png",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+            current_x=99999.0,
+            current_y=99999.0,
+        )
+        view._scene_scale = 2.0
+        pixmap = QPixmap(100, 100)
+        item = view._create_overlay_graphics_item(
+            pixmap,
+            page,
+            view_scale=2.0,
+            show_mode=1,
+        )
+        self.assertAlmostEqual(item.transform().m31(), 0.0)
+        self.assertAlmostEqual(item.transform().m32(), 0.0)
         view.cleanup()
 
     def test_condition_text_toolbar_uses_format_icons_and_color_swatch(self):
@@ -1998,6 +2766,26 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             QtCore.Qt.KeyboardModifier.NoModifier,
         )
 
+    def _left_move_event(self, x, y):
+        return QMouseEvent(
+            QtCore.QEvent.Type.MouseMove,
+            QtCore.QPointF(x, y),
+            QtCore.QPointF(x, y),
+            QtCore.Qt.MouseButton.NoButton,
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+
+    def _left_release_event(self, x, y):
+        return QMouseEvent(
+            QtCore.QEvent.Type.MouseButtonRelease,
+            QtCore.QPointF(x, y),
+            QtCore.QPointF(x, y),
+            QtCore.Qt.MouseButton.LeftButton,
+            QtCore.Qt.MouseButton.NoButton,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+
     def _make_plan_view(self):
         view = TakeoffPlanView(
             color_service=FakeColorService(),
@@ -2008,6 +2796,24 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             linear_geometry=FakeLinearGeometry(),
         )
         return view
+
+    def _install_page_canvas(self, view, page, scene_scale=2.0):
+        view._current_page = page
+        view._current_bid_page_uid = page.uid
+        view._scene_scale = scene_scale
+        item = QGraphicsRectItem(
+            0.0,
+            0.0,
+            page.effective_width_pts * scene_scale,
+            page.effective_height_pts * scene_scale,
+        )
+        item.setZValue(-1.0)
+        view._white_canvas_item = item
+        view._scene.addItem(item)
+        view._scene.setSceneRect(item.rect())
+        view.resize(300, 300)
+        QApplication.processEvents()
+        return item
 
     def _add_dimension_label_annotation(self, view, properties=None):
         annotation = BidAnnotation(

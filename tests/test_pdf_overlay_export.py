@@ -163,6 +163,28 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual(exported_page.page_index, 0)
         self.assertFalse(exported_page.is_blank)
 
+    def test_overlay_only_pdf_export_rasterizes_moved_overlay_rect(self):
+        writer = _FakeWriter()
+        exporter = _make_exporter(writer)
+        calls = []
+        exporter._create_overlay_rect_background_pdf = (
+            lambda page, _page_info, temp_dir: calls.append(page.overlay_rect)
+            or os.path.join(temp_dir, "moved-overlay.pdf")
+        )
+        result = _export_single_page(
+            exporter,
+            _page(
+                overlay_image_path="overlay.pdf",
+                image_show_mode=SHOW_OVERLAY,
+                overlay_rect=(96.0, 0.0, 816.0, 1056.0),
+            ),
+        )
+        self.assertTrue(result.success)
+        exported_page = writer.pages[0]
+        self.assertEqual(calls, [(96.0, 0.0, 816.0, 1056.0)])
+        self.assertTrue(exported_page.source_pdf.endswith("moved-overlay.pdf"))
+        self.assertEqual(exported_page.page_index, 0)
+
     def test_overlay_only_raster_export_uses_single_image_source_path(self):
         writer = _FakeWriter()
         exporter = _make_exporter(writer)
