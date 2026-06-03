@@ -3,6 +3,7 @@ import pyodbc
 from ....domain.entities.area import BidAreaChangeset
 from ....domain.services.uom_service import normalize_uom_for_system
 from ...parsers.position_parser import convert_elevation_in_name
+from .overlay_rect import default_overlay_rect
 
 
 class SettingsOperationsMixin:
@@ -167,6 +168,11 @@ class SettingsOperationsMixin:
                                 "OverlayImagePath": self._windows_path_separators(
                                     page.get("overlay_path")
                                 ),
+                                "OverlayRect": (
+                                    default_overlay_rect(page["width"], page["height"])
+                                    if page.get("overlay_path")
+                                    else ""
+                                ),
                                 "BidPageFolderUID": folder_uid_val,
                             },
                             ("UID", "BidUID"),
@@ -194,6 +200,11 @@ class SettingsOperationsMixin:
                                 ),
                                 "OverlayImagePath": self._windows_path_separators(
                                     page.get("overlay_path")
+                                ),
+                                "OverlayRect": (
+                                    default_overlay_rect(page["width"], page["height"])
+                                    if page.get("overlay_path")
+                                    else ""
                                 ),
                                 "BidPageFolderUID": folder_uid_val,
                                 "Sequence": page.get("sequence") or 1,

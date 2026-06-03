@@ -4,6 +4,8 @@ from typing import Dict, Iterable, List, Optional
 from .page_info import BidPageInfo
 from .takeoff import Takeoff
 
+OST_OVERLAY_RECT_DPI = 96.0
+
 
 @dataclass
 class Page:
@@ -52,6 +54,91 @@ class Page:
     @property
     def effective_height_pts(self) -> float:
         return self.width_pts if self.rotation in (90, 270) else self.height_pts
+
+    def _ost_page_pixel_size(self) -> Optional[tuple[float, float]]:
+        try:
+            page_w = float(self.effective_width_pts) / 72.0 * OST_OVERLAY_RECT_DPI
+            page_h = float(self.effective_height_pts) / 72.0 * OST_OVERLAY_RECT_DPI
+        except (TypeError, ValueError):
+            return None
+        if page_w <= 0.0 or page_h <= 0.0:
+            return None
+        return page_w, page_h
+
+    def _conversion_dimensions(
+        self, canvas_width: float, canvas_height: float
+    ) -> Optional[tuple[float, float, float, float]]:
+        page_size = self._ost_page_pixel_size()
+        if page_size is None:
+            return None
+        try:
+            canvas_w = float(canvas_width)
+            canvas_h = float(canvas_height)
+        except (TypeError, ValueError):
+            return None
+        if canvas_w <= 0.0 or canvas_h <= 0.0:
+            return None
+        page_w, page_h = page_size
+        return page_w, page_h, canvas_w, canvas_h
+
+    def ost_page_pixels_to_canvas_point(
+        self,
+        x: float,
+        y: float,
+        canvas_width: float,
+        canvas_height: float,
+    ) -> Optional[tuple[float, float]]:
+        dimensions = self._conversion_dimensions(canvas_width, canvas_height)
+        if dimensions is None:
+            return None
+        try:
+            point_x = float(x)
+            point_y = float(y)
+        except (TypeError, ValueError):
+            return None
+        page_w, page_h, canvas_w, canvas_h = dimensions
+        return point_x * canvas_w / page_w, point_y * canvas_h / page_h
+
+    def canvas_point_to_ost_page_pixels(
+        self,
+        x: float,
+        y: float,
+        canvas_width: float,
+        canvas_height: float,
+    ) -> Optional[tuple[float, float]]:
+        dimensions = self._conversion_dimensions(canvas_width, canvas_height)
+        if dimensions is None:
+            return None
+        try:
+            point_x = float(x)
+            point_y = float(y)
+        except (TypeError, ValueError):
+            return None
+        page_w, page_h, canvas_w, canvas_h = dimensions
+        return point_x * page_w / canvas_w, point_y * page_h / canvas_h
+
+    def overlay_rect_canvas(
+        self, canvas_width: float, canvas_height: float
+    ) -> tuple[float, float, float, float]:
+        try:
+            rect_x, rect_y, rect_w, rect_h = self.overlay_rect
+            origin = self.ost_page_pixels_to_canvas_point(
+                rect_x, rect_y, canvas_width, canvas_height
+            )
+            size = self.ost_page_pixels_to_canvas_point(
+                rect_w, rect_h, canvas_width, canvas_height
+            )
+        except (TypeError, ValueError):
+            return (0.0, 0.0, 0.0, 0.0)
+        if origin is None or size is None:
+            return (0.0, 0.0, 0.0, 0.0)
+        return (*origin, *size)
+
+    def overlay_rect_page_points(self) -> tuple[float, float, float, float]:
+        return self.overlay_rect_canvas(
+            self.effective_width_pts,
+            self.effective_height_pts,
+        )
 
 
 def build_pages_from_bid_data(

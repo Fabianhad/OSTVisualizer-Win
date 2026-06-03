@@ -915,13 +915,20 @@ class SnapSegmentCacheTests(unittest.TestCase):
         second_key = harness._pdf_snap_cache_key()
         self.assertNotEqual(first_key, second_key)
 
-    def test_overlay_pdf_snap_points_map_through_overlay_scale_and_rotation(self):
+    def test_overlay_pdf_snap_points_map_through_overlay_rect_scale_and_rotation(self):
         harness = PlacementHarness()
         harness._current_page.overlay_image_path = "overlay.pdf"
         harness._current_page.image_show_mode = 2
-        harness._current_page.overlay_offset_x = 1.0
-        harness._current_page.overlay_offset_y = 0.5
+        harness._current_page.width_pts = 200.0
+        harness._current_page.overlay_offset_x = 999.0
+        harness._current_page.overlay_offset_y = -999.0
         harness._current_page.overlay_rotation = math.pi / 2.0
+        harness._current_page.overlay_rect = (
+            96.0,
+            48.0,
+            200.0 / 72.0 * 96.0,
+            100.0 / 72.0 * 96.0,
+        )
         mapped = harness._pdf_intelligence_point_to_page_point(
             "overlay",
             10.0,

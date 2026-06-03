@@ -1,4 +1,5 @@
 import pyodbc
+from .overlay_rect import default_overlay_rect
 
 
 class PageOperationsMixin:
@@ -190,11 +191,25 @@ class PageOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                values = {"OverlayImagePath": overlay_image_path or ""}
+                if schema.column_exists("BidPages", "OverlayRect"):
+                    if overlay_image_path:
+                        cursor.execute(
+                            "SELECT [Width], [Height] FROM [BidPages] WHERE [UID]=?",
+                            int(page_uid),
+                        )
+                        row = cursor.fetchone()
+                        if row is not None:
+                            values["OverlayRect"] = default_overlay_rect(
+                                row.Width, row.Height
+                            )
+                    else:
+                        values["OverlayRect"] = ""
                 return self._execute_update_values(
                     cursor,
                     schema,
                     "BidPages",
-                    {"OverlayImagePath": overlay_image_path or ""},
+                    values,
                     ("UID",),
                     "[UID]=?",
                     [int(page_uid)],

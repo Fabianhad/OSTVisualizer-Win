@@ -212,8 +212,7 @@ class PlacementModeMixin:
             page_index,
             float(self._pdf_width_pts or page.width_pts or 0.0),
             float(self._pdf_height_pts or page.height_pts or 0.0),
-            float(page.overlay_offset_x),
-            float(page.overlay_offset_y),
+            page.overlay_rect,
             float(page.overlay_rotation),
             float(page.deskew_rotation_overlay),
             float(ratio),
@@ -249,28 +248,23 @@ class PlacementModeMixin:
         page = self._current_page
         if page is None:
             return x, y
-        page_width = float(self._pdf_width_pts or page.width_pts or 0.0)
-        page_height = float(self._pdf_height_pts or page.height_pts or 0.0)
-        if (
-            page_width <= 0.0
-            or page_height <= 0.0
-            or source_width_pts <= 0.0
-            or source_height_pts <= 0.0
-        ):
+        if source_width_pts <= 0.0 or source_height_pts <= 0.0:
             return x, y
-        scale = min(page_width / source_width_pts, page_height / source_height_pts)
-        offset_x = float(page.overlay_offset_x) * 72.0
-        offset_y = float(page.overlay_offset_y) * 72.0
+        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_page_points()
+        if rect_w <= 0.0 or rect_h <= 0.0:
+            return x, y
+        scale_x = rect_w / source_width_pts
+        scale_y = rect_h / source_height_pts
         total_rotation = float(page.overlay_rotation + page.deskew_rotation_overlay)
-        scaled_x = x * scale
-        scaled_y = y * scale
+        scaled_x = x * scale_x
+        scaled_y = y * scale_y
         if abs(total_rotation) <= 1e-12:
-            return offset_x + scaled_x, offset_y + scaled_y
+            return rect_x + scaled_x, rect_y + scaled_y
         cos_a = math.cos(total_rotation)
         sin_a = math.sin(total_rotation)
         return (
-            offset_x + scaled_x * cos_a - scaled_y * sin_a,
-            offset_y + scaled_x * sin_a + scaled_y * cos_a,
+            rect_x + scaled_x * cos_a - scaled_y * sin_a,
+            rect_y + scaled_x * sin_a + scaled_y * cos_a,
         )
 
     def _build_takeoff_snap_segments(self) -> list:

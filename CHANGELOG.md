@@ -47,6 +47,9 @@
 - Tightened MCP JSON-RPC request validation and removed an arbitrary hierarchy fallback for unmatched database files.
 - Fixed Intelligent Paste so copied takeoffs and annotations paste at the cursor, support temporary original-axis snap guides only during the first drag, and stop using that snap state after release or cancel.
 - Fixed Cover Sheet page image paths so saved `BidPages.ImagePath` values use Windows backslashes for OST compatibility.
+- Fixed plan-view crashes when toggling original/overlay image visibility after image graphics items had already been cleared.
+- Fixed overlay image placement to honor OST `OverlayRect` alignment values when displaying and exporting red/blue overlays.
+- Fixed saved page view positions to round-trip OST `CurrentX`/`CurrentY` values as 96-DPI page pixels.
 - Fixed PDF export default filenames so page names that already end in `.pdf` do not produce `.pdf.pdf`.
 - Cleared stale detached page-window, PDF renderer, export background, and MCP bridge references during cleanup, and bounded PDF metadata caches across page/file switches.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.

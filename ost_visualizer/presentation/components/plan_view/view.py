@@ -1703,8 +1703,7 @@ class TakeoffPlanView(
             "layer_visible": page.layer_visible,
             "width_pts": page.width_pts,
             "height_pts": page.height_pts,
-            "overlay_offset_x": page.overlay_offset_x,
-            "overlay_offset_y": page.overlay_offset_y,
+            "overlay_rect": page.overlay_rect,
             "overlay_rotation": page.overlay_rotation,
             "overlay_deskew": page.deskew_rotation_overlay,
         }
@@ -1941,8 +1940,7 @@ class TakeoffPlanView(
             page_index,
             float(self._pdf_width_pts or page.width_pts or 0.0),
             float(self._pdf_height_pts or page.height_pts or 0.0),
-            float(page.overlay_offset_x),
-            float(page.overlay_offset_y),
+            page.overlay_rect,
             float(page.overlay_rotation),
             float(page.deskew_rotation_overlay),
             float(self._scene_scale),
@@ -3161,7 +3159,38 @@ class TakeoffPlanView(
         ]
         self.group_rotation_flushed.emit(takeoff_changes, ann_changes, rotation_changes)
 
+    def _is_live_graphics_item(self, item) -> bool:
+        return item is not None and isValid(item)
+
+    def _prune_deleted_page_overlay_items(self) -> None:
+        self._takeoff_items = [
+            item for item in self._takeoff_items if self._is_live_graphics_item(item)
+        ]
+        self._selection_items = [
+            item for item in self._selection_items if self._is_live_graphics_item(item)
+        ]
+        self._handle_infos = [
+            info
+            for info in self._handle_infos
+            if self._is_live_graphics_item(info.item)
+        ]
+        self._hotlink_items = [
+            (item, target)
+            for item, target in self._hotlink_items
+            if self._is_live_graphics_item(item)
+        ]
+        self._uid_to_items = {
+            uid: live_items
+            for uid, items in self._uid_to_items.items()
+            if (
+                live_items := [
+                    item for item in items if self._is_live_graphics_item(item)
+                ]
+            )
+        }
+
     def _set_page_overlay_items_visible(self, visible: bool) -> None:
+        self._prune_deleted_page_overlay_items()
         for item in self._takeoff_items:
             item.setVisible(visible)
         for item, _ in self._hotlink_items:
@@ -3626,12 +3655,14 @@ class TakeoffPlanView(
         self._flush_dirty_rotations()
         self._flush_dirty_positions()
         self._cancel_tile_requests()
-        if self._background_item is not None:
+        if self._is_live_graphics_item(self._background_item):
             self._background_item.clear_image()
         for item in self._tile_items.values():
-            item.clear_image()
+            if self._is_live_graphics_item(item):
+                item.clear_image()
         for item in self._overlay_items:
-            item.setPixmap(QPixmap())
+            if self._is_live_graphics_item(item):
+                item.setPixmap(QPixmap())
         self._tile_items.clear()
         self._tile_scale = 0.0
         self._cancel_optional_base_correction()

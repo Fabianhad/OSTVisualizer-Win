@@ -457,12 +457,18 @@ class PdfTextSelectionTests(unittest.TestCase):
         )
         self.assertEqual(view._pdf_text_cache_key[1], "main")
 
-    def test_overlay_pdf_text_boxes_map_through_overlay_offset(self):
+    def test_overlay_pdf_text_boxes_map_through_overlay_rect_position(self):
         view = self._make_view()
         view._current_page.overlay_image_path = "overlay.pdf"
         view._current_page.image_show_mode = 2
-        view._current_page.overlay_offset_x = 1.0
-        view._current_page.overlay_offset_y = 0.5
+        view._current_page.overlay_offset_x = 999.0
+        view._current_page.overlay_offset_y = -999.0
+        view._current_page.overlay_rect = (
+            96.0,
+            48.0,
+            200.0 / 72.0 * 96.0,
+            100.0 / 72.0 * 96.0,
+        )
         raw_runs = [
             _raw_run(
                 "B",
@@ -479,18 +485,23 @@ class PdfTextSelectionTests(unittest.TestCase):
             ("overlay", "overlay.pdf", 0),
         )
         self.assertEqual(len(mapped), 1)
-        self.assertEqual(
-            (mapped[0].left, mapped[0].top, mapped[0].right, mapped[0].bottom),
-            (164.0, 112.0, 184.0, 132.0),
-        )
+        bounds = (mapped[0].left, mapped[0].top, mapped[0].right, mapped[0].bottom)
+        for actual, expected in zip(bounds, (164.0, 112.0, 184.0, 132.0)):
+            self.assertAlmostEqual(actual, expected)
 
-    def test_overlay_pdf_text_boxes_map_through_overlay_scale_and_rotation(self):
+    def test_overlay_pdf_text_boxes_map_through_overlay_rect_scale_and_rotation(self):
         view = self._make_view()
         view._current_page.overlay_image_path = "overlay.pdf"
         view._current_page.image_show_mode = 2
-        view._current_page.overlay_offset_x = 1.0
-        view._current_page.overlay_offset_y = 0.5
+        view._current_page.overlay_offset_x = 999.0
+        view._current_page.overlay_offset_y = -999.0
         view._current_page.overlay_rotation = math.pi / 2.0
+        view._current_page.overlay_rect = (
+            96.0,
+            48.0,
+            200.0 / 72.0 * 96.0,
+            100.0 / 72.0 * 96.0,
+        )
         raw_runs = [
             _raw_run(
                 "R",
@@ -512,10 +523,9 @@ class PdfTextSelectionTests(unittest.TestCase):
             ("overlay", "overlay.pdf", 0),
         )
         self.assertEqual(len(mapped), 1)
-        self.assertEqual(
-            (mapped[0].left, mapped[0].top, mapped[0].right, mapped[0].bottom),
-            (64.0, 112.0, 104.0, 152.0),
-        )
+        bounds = (mapped[0].left, mapped[0].top, mapped[0].right, mapped[0].bottom)
+        for actual, expected in zip(bounds, (64.0, 112.0, 104.0, 152.0)):
+            self.assertAlmostEqual(actual, expected)
 
     def test_pdf_text_request_is_cancelled_when_page_clears(self):
         view = self._make_view()

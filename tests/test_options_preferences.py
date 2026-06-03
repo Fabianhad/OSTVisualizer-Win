@@ -1771,6 +1771,9 @@ class OptionsPreferencesTests(unittest.TestCase):
                 )
                 return QtGui.QImage(tile_w, tile_h, QtGui.QImage.Format.Format_ARGB32)
 
+            def get_page_size(self, _file_path, _page_index):
+                return (100.0, 100.0)
+
         page_cache = FakePageCache()
         renderer = CompositeRenderer(page_cache)
         page = Page(
@@ -1781,6 +1784,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             page_index=0,
             width_pts=100.0,
             height_pts=100.0,
+            overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 96.0, 100.0 / 72.0 * 96.0),
         )
         renderer.render_composite_region(
             page,
@@ -1802,6 +1806,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_image_path="overlay.pdf",
             width_pts=100.0,
             height_pts=100.0,
+            overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 96.0, 100.0 / 72.0 * 96.0),
             image_show_mode=1,
         )
         pixmap = QtGui.QPixmap(400, 200)
@@ -1810,12 +1815,87 @@ class OptionsPreferencesTests(unittest.TestCase):
             page,
             view_scale=2.0,
             show_mode=1,
-            render_scale=4.0,
         )
-        self.assertEqual(item.scale(), 0.5)
+        self.assertEqual(item.transform().m11(), 0.5)
+        self.assertEqual(item.transform().m22(), 1.0)
         self.assertEqual(
             item.transformationMode(),
             QtCore.Qt.TransformationMode.SmoothTransformation,
+        )
+
+    def test_overlay_item_uses_ost_overlay_rect_page_pixel_coordinates(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        page = Page(
+            uid="6420",
+            name="S3.0.pdf",
+            overlay_image_path="overlay.pdf",
+            width_pts=42.0 * 72.0,
+            height_pts=30.0 * 72.0,
+            overlay_rect=(-1.587912, 0.0, 4028.531767, 2877.295846),
+            image_show_mode=1,
+        )
+        pixmap = QtGui.QPixmap(6048, 4320)
+        item = view._create_overlay_graphics_item(
+            pixmap,
+            page,
+            view_scale=3.0,
+            show_mode=1,
+        )
+        transform = item.transform()
+        self.assertAlmostEqual(transform.m31(), -3.572802, places=5)
+        self.assertAlmostEqual(transform.m32(), 0.0, places=5)
+        self.assertAlmostEqual(transform.m11(), 1.498710, places=5)
+        self.assertAlmostEqual(transform.m22(), 1.498592, places=5)
+
+    def test_overlay_pdf_tiles_use_ost_overlay_rect_page_pixel_coordinates(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._scene_scale = 3.0
+        view._overlay_pdf_width_pts = 42.0 * 72.0
+        view._overlay_pdf_height_pts = 30.0 * 72.0
+        view._current_page = Page(
+            uid="6420",
+            name="S3.0.pdf",
+            overlay_image_path="overlay.pdf",
+            width_pts=42.0 * 72.0,
+            height_pts=30.0 * 72.0,
+            overlay_rect=(-1.587912, 0.0, 4028.531767, 2877.295846),
+            image_show_mode=2,
+        )
+        transform = view._overlay_pdf_tile_transform()
+        self.assertAlmostEqual(transform.m31(), -3.572802, places=5)
+        self.assertAlmostEqual(transform.m32(), 0.0, places=5)
+        self.assertAlmostEqual(transform.m11(), 0.999140, places=5)
+        self.assertAlmostEqual(transform.m22(), 0.999061, places=5)
+
+    def test_page_view_state_uses_ost_page_pixel_coordinates(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._scene_scale = 3.0
+        view._current_page = Page(
+            uid="6420",
+            name="S3.0.pdf",
+            width_pts=42.0 * 72.0,
+            height_pts=30.0 * 72.0,
+        )
+        current_x, current_y = view._scene_center_to_persisted_coords(
+            QtCore.QPointF(1512.0, 1080.0)
+        )
+        restored = view._persisted_coords_to_scene_center(current_x, current_y)
+        self.assertAlmostEqual(current_x, 672.0)
+        self.assertAlmostEqual(current_y, 480.0)
+        self.assertAlmostEqual(restored.x(), 1512.0)
+        self.assertAlmostEqual(restored.y(), 1080.0)
+
+    def test_page_view_state_conversion_handles_invalid_page_dimensions(self):
+        page = Page(uid="bad", name="Bad Page", width_pts=0.0, height_pts=100.0)
+        self.assertIsNone(
+            page.ost_page_pixels_to_canvas_point(10.0, 20.0, 100.0, 100.0)
+        )
+        self.assertIsNone(
+            page.canvas_point_to_ost_page_pixels(10.0, 20.0, 100.0, 100.0)
+        )
+        self.assertEqual(
+            page.overlay_rect_canvas(100.0, 100.0),
+            (0.0, 0.0, 0.0, 0.0),
         )
 
     def test_overlay_raster_item_keeps_default_transformation_mode(self):
@@ -1826,6 +1906,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_image_path="overlay.png",
             width_pts=100.0,
             height_pts=100.0,
+            overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 96.0, 100.0 / 72.0 * 96.0),
             image_show_mode=1,
         )
         pixmap = QtGui.QPixmap(200, 200)
@@ -1834,7 +1915,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             page,
             view_scale=2.0,
             show_mode=1,
-            render_scale=2.0,
         )
         self.assertEqual(
             item.transformationMode(),

@@ -1,6 +1,7 @@
 import math
 from collections import OrderedDict
 from typing import Optional
+from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QImage, QPainter, QTransform
 from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
@@ -81,10 +82,9 @@ class CompositeRenderer:
                 str(raster_rotation),
                 str(page.image_show_mode),
                 str(page.layer_visible),
-                str(page.overlay_offset_x),
-                str(page.overlay_offset_y),
                 str(page.overlay_rotation),
                 str(page.deskew_rotation_overlay),
+                str(page.overlay_rect),
             ]
         )
 
@@ -109,44 +109,38 @@ class CompositeRenderer:
         canvas_w: int,
         canvas_h: int,
     ) -> None:
-        pdf_width_pts = page.width_pts
-        pdf_height_pts = page.height_pts
-        view_scale = canvas_w / pdf_width_pts if pdf_width_pts > 0 else 1.0
-        expected_width = pdf_width_pts * view_scale
-        expected_height = pdf_height_pts * view_scale
-        overlay_scale = self._calculate_overlay_scale(
-            overlay.width(), overlay.height(), expected_width, expected_height
-        )
-        offset_x = page.overlay_offset_x * 72 * view_scale
-        offset_y = page.overlay_offset_y * 72 * view_scale
+        if overlay.width() <= 0 or overlay.height() <= 0:
+            return
+        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_canvas(canvas_w, canvas_h)
+        if rect_w <= 0.0 or rect_h <= 0.0:
+            return
         total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
         transform = self._build_transform(
-            offset_x, offset_y, total_rotation, overlay_scale
+            rect_x,
+            rect_y,
+            total_rotation,
+            rect_w / overlay.width(),
+            rect_h / overlay.height(),
         )
         painter.save()
         painter.setTransform(transform)
         painter.drawImage(0, 0, overlay)
         painter.restore()
 
-    def _calculate_overlay_scale(
-        self, overlay_w: float, overlay_h: float, expected_w: float, expected_h: float
-    ) -> float:
-        if overlay_w <= 0 or overlay_h <= 0:
-            return 1.0
-        scale_x = expected_w / overlay_w
-        scale_y = expected_h / overlay_h
-        return min(scale_x, scale_y)
-
     def _build_transform(
-        self, offset_x: float, offset_y: float, rotation_radians: float, scale: float
+        self,
+        translate_x: float,
+        translate_y: float,
+        rotation_radians: float,
+        scale_x: float,
+        scale_y: float,
     ) -> QTransform:
         transform = QTransform()
-        transform.translate(offset_x, offset_y)
+        transform.translate(translate_x, translate_y)
         if rotation_radians != 0:
             rotation_degrees = math.degrees(rotation_radians)
             transform.rotate(rotation_degrees)
-        if scale != 1.0:
-            transform.scale(scale, scale)
+        transform.scale(scale_x, scale_y)
         return transform
 
     def _evict_if_needed(self):
@@ -215,30 +209,47 @@ class CompositeRenderer:
                 if pdf_width_pts > 0 and native_w > 0
                 else scale
             )
-        overlay_offset_x = page.overlay_offset_x * 72 * scale
-        overlay_offset_y = page.overlay_offset_y * 72 * scale
+        source_w, source_h = self._page_cache.get_page_size(page.overlay_image_path, 0)
+        source_w_px = source_w * overlay_scale
+        source_h_px = source_h * overlay_scale
+        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_canvas(
+            page.effective_width_pts * scale,
+            page.effective_height_pts * scale,
+        )
+        if source_w_px <= 0.0 or source_h_px <= 0.0 or rect_w <= 0.0 or rect_h <= 0.0:
+            return red_tinted
         total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
-        ov_tile_x = tile_x - overlay_offset_x
-        ov_tile_y = tile_y - overlay_offset_y
-        if total_rotation != 0:
-            cx = ov_tile_x + tile_w / 2
-            cy = ov_tile_y + tile_h / 2
-            cos_a = math.cos(-total_rotation)
-            sin_a = math.sin(-total_rotation)
-            ov_tile_x = cx * cos_a - cy * sin_a - tile_w / 2
-            ov_tile_y = cx * sin_a + cy * cos_a - tile_h / 2
-        ov_src_x = int(ov_tile_x * overlay_scale / scale)
-        ov_src_y = int(ov_tile_y * overlay_scale / scale)
-        ov_src_w = int(tile_w * overlay_scale / scale)
-        ov_src_h = int(tile_h * overlay_scale / scale)
+        source_to_canvas = self._build_transform(
+            rect_x,
+            rect_y,
+            total_rotation,
+            rect_w / source_w_px,
+            rect_h / source_h_px,
+        )
+        canvas_to_source, ok = source_to_canvas.inverted()
+        if not ok:
+            return red_tinted
+        source_rect = canvas_to_source.mapRect(QRectF(tile_x, tile_y, tile_w, tile_h))
+        ov_src_x = math.floor(source_rect.left())
+        ov_src_y = math.floor(source_rect.top())
+        ov_src_right = math.ceil(source_rect.right())
+        ov_src_bottom = math.ceil(source_rect.bottom())
+        source_w_px_int = int(math.ceil(source_w_px))
+        source_h_px_int = int(math.ceil(source_h_px))
+        source_x = max(0, min(source_w_px_int, ov_src_x))
+        source_y = max(0, min(source_h_px_int, ov_src_y))
+        source_right = max(0, min(source_w_px_int, ov_src_right))
+        source_bottom = max(0, min(source_h_px_int, ov_src_bottom))
+        ov_src_w = source_right - source_x
+        ov_src_h = source_bottom - source_y
         if ov_src_w <= 0 or ov_src_h <= 0:
             return red_tinted
         blue_tile = self._page_cache.render_region_uncached(
             page.overlay_image_path,
             0,
             overlay_scale,
-            max(0, ov_src_x),
-            max(0, ov_src_y),
+            source_x,
+            source_y,
             ov_src_w,
             ov_src_h,
             rotation,
@@ -255,9 +266,19 @@ class CompositeRenderer:
         painter = QPainter(result)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         painter.drawImage(0, 0, red_tinted)
-        dx = max(0, -ov_src_x) * scale / overlay_scale if ov_src_x < 0 else 0
-        dy = max(0, -ov_src_y) * scale / overlay_scale if ov_src_y < 0 else 0
-        painter.drawImage(int(dx), int(dy), blue_tinted)
+        source_to_tile = QTransform(
+            source_to_canvas.m11(),
+            source_to_canvas.m12(),
+            source_to_canvas.m13(),
+            source_to_canvas.m21(),
+            source_to_canvas.m22(),
+            source_to_canvas.m23(),
+            source_to_canvas.m31() - tile_x,
+            source_to_canvas.m32() - tile_y,
+            source_to_canvas.m33(),
+        )
+        painter.setTransform(source_to_tile)
+        painter.drawImage(source_x, source_y, blue_tinted)
         painter.end()
         return result
 

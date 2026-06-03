@@ -11,6 +11,9 @@ from ost_visualizer.domain.entities.employee import Employee
 from ost_visualizer.infrastructure.mdb.components.settings_operations import (
     SettingsOperationsMixin,
 )
+from ost_visualizer.infrastructure.mdb.components.page_operations import (
+    PageOperationsMixin,
+)
 from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDialog
 
 
@@ -93,6 +96,77 @@ class _CoverSheetSettingsOps(SettingsOperationsMixin):
 class _FakeLogger:
     def exception(self, *_args):
         return None
+
+
+class _OverlayRectSchema:
+    def column_exists(self, table, column):
+        return table == "BidPages" and column in ("OverlayImagePath", "OverlayRect")
+
+    def require_table(self, _table):
+        return None
+
+    def require_column(self, _table, _column):
+        return None
+
+
+class _OverlayRectRow:
+    Width = 42.0
+    Height = 30.0
+
+
+class _OverlayRectCursor(_FakeCursor):
+    def __init__(self):
+        super().__init__()
+        self.last_query = None
+
+    def execute(self, query, *_args):
+        self.last_query = query
+        return None
+
+    def fetchone(self):
+        if self.last_query and "SELECT [Width], [Height]" in self.last_query:
+            return _OverlayRectRow()
+        return [0]
+
+
+class _OverlayRectConnection(_FakeConnection):
+    def __init__(self):
+        self.cursor_obj = _OverlayRectCursor()
+
+
+class _PageOverlayOps(PageOperationsMixin):
+    def __init__(self):
+        self.conn = _OverlayRectConnection()
+        self.schema = _OverlayRectSchema()
+        self.updates = []
+        self.logger = _FakeLogger()
+
+    def _connection(self, _db_path):
+        return self.conn
+
+    def _schema(self, _conn):
+        return self.schema
+
+    def _execute_update_values(
+        self,
+        _cursor,
+        _schema,
+        table,
+        values,
+        _required_columns,
+        _where_clause,
+        _where_values,
+        _operation,
+        allow_empty=False,
+    ):
+        self.updates.append(
+            {
+                "table": table,
+                "values": dict(values),
+                "allow_empty": allow_empty,
+            }
+        )
+        return True
 
 
 class _FakeIconProvider:
@@ -204,7 +278,29 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             page_update["values"]["OverlayImagePath"],
             r"C:\OCS Documents\OST\overlay.pdf",
         )
+        self.assertEqual(
+            page_update["values"]["OverlayRect"],
+            "0.000000,0.000000,4032.000000,2880.000000",
+        )
         self.assertEqual(page_update["values"]["SheetNo"], "S-100")
+
+    def test_saving_page_overlay_image_generates_full_page_overlay_rect(self):
+        ops = _PageOverlayOps()
+        success = ops.save_page_overlay_image(
+            "bid.mdb",
+            "11",
+            r"C:\OCS Documents\OST\overlay.pdf",
+        )
+        self.assertTrue(success)
+        self.assertEqual(len(ops.updates), 1)
+        self.assertEqual(ops.updates[0]["table"], "BidPages")
+        self.assertEqual(
+            ops.updates[0]["values"],
+            {
+                "OverlayImagePath": r"C:\OCS Documents\OST\overlay.pdf",
+                "OverlayRect": "0.000000,0.000000,4032.000000,2880.000000",
+            },
+        )
 
     def test_cover_sheet_image_path_cells_highlight_missing_files(self):
         missing_image = str(Path(tempfile.gettempdir()) / "missing-cover-page.pdf")

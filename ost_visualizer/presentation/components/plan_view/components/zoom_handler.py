@@ -2,6 +2,7 @@ from typing import Optional, Tuple
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QGraphicsView
+from shiboken6 import isValid
 
 _DISPLAY_ZOOM_RATIO = 0.333
 
@@ -87,14 +88,47 @@ class ZoomHandlerMixin:
     def zoom_out(self) -> None:
         self._apply_zoom_centered(1.0 / self.ZOOM_FACTOR)
 
+    def _current_page_scene_context(self):
+        page = getattr(self, "_current_page", None)
+        scene_scale = getattr(self, "_scene_scale", 0.0)
+        if page is None or scene_scale <= 0.0:
+            return None
+        width = page.effective_width_pts * scene_scale
+        height = page.effective_height_pts * scene_scale
+        if width <= 0.0 or height <= 0.0:
+            return None
+        return page, width, height
+
     def _scene_center_to_persisted_coords(
         self, center_scene: QPointF
     ) -> Tuple[float, float]:
+        context = self._current_page_scene_context()
+        if context is not None:
+            page, scene_width, scene_height = context
+            converted = page.canvas_point_to_ost_page_pixels(
+                center_scene.x(),
+                center_scene.y(),
+                scene_width,
+                scene_height,
+            )
+            if converted is not None:
+                return converted
         return center_scene.x(), center_scene.y()
 
     def _persisted_coords_to_scene_center(
         self, center_x: float, center_y: float
     ) -> QPointF:
+        context = self._current_page_scene_context()
+        if context is not None:
+            page, scene_width, scene_height = context
+            converted = page.ost_page_pixels_to_canvas_point(
+                center_x,
+                center_y,
+                scene_width,
+                scene_height,
+            )
+            if converted is not None:
+                return QPointF(converted[0], converted[1])
         return QPointF(center_x, center_y)
 
     def get_view_state(self) -> Tuple[float, float, float]:
@@ -164,9 +198,9 @@ class ZoomHandlerMixin:
         return transform
 
     def _get_page_rect_dimensions(self) -> Optional[Tuple[float, float]]:
-        if self._background_item:
+        if self._background_item is not None and isValid(self._background_item):
             rect = self._background_item.boundingRect()
-        elif self._white_canvas_item:
+        elif self._white_canvas_item is not None and isValid(self._white_canvas_item):
             rect = self._white_canvas_item.rect()
         else:
             return None
@@ -182,14 +216,17 @@ class ZoomHandlerMixin:
         width, height = dims
         transform = self._get_page_transform(width, height)
         for ref_item in (self._background_item, self._white_canvas_item):
-            if ref_item is not None:
+            if ref_item is not None and isValid(ref_item):
                 ref_item.setTransform(transform)
         for item in self._takeoff_items:
-            item.setTransform(transform)
+            if isValid(item):
+                item.setTransform(transform)
         for item in self._selection_items:
-            item.setTransform(transform)
+            if isValid(item):
+                item.setTransform(transform)
         for item in self._pdf_text_highlight_items:
-            item.setTransform(transform)
+            if isValid(item):
+                item.setTransform(transform)
 
     def _current_page_transform(self):
         dims = self._get_page_rect_dimensions()

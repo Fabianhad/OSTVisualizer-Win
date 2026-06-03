@@ -5,6 +5,7 @@ from typing import Any, Optional, Set
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QPixmap, QTransform
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem
+from shiboken6 import isValid
 from .....application.dtos.render_result_dto import RenderResult
 from .....domain.entities.page import Page
 from .graphics_items import ImageBackgroundItem, TileGraphicsItem, TileKey
@@ -157,7 +158,10 @@ class PageLoaderMixin:
         self._scene.addItem(self._background_item)
 
     def _remove_background_item(self) -> None:
-        if not self._background_item:
+        if self._background_item is None:
+            return
+        if not isValid(self._background_item):
+            self._background_item = None
             return
         self._background_item.clear_image()
         if self._background_item.scene() is self._scene:
@@ -165,11 +169,15 @@ class PageLoaderMixin:
         self._background_item = None
 
     def _remove_tile_item(self, item: TileGraphicsItem) -> None:
+        if not isValid(item):
+            return
         item.clear_image()
         if item.scene() is self._scene:
             self._scene.removeItem(item)
 
     def _remove_overlay_item(self, item: QGraphicsPixmapItem) -> None:
+        if not isValid(item):
+            return
         item.setPixmap(QPixmap())
         if item.scene() is self._scene:
             self._scene.removeItem(item)
@@ -258,13 +266,19 @@ class PageLoaderMixin:
         transform = QTransform()
         if page is None:
             return transform
+        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_page_points()
+        source_w = self._overlay_pdf_width_pts
+        source_h = self._overlay_pdf_height_pts
+        if rect_w <= 0.0 or rect_h <= 0.0 or source_w <= 0.0 or source_h <= 0.0:
+            return transform
         transform.translate(
-            page.overlay_offset_x * 72.0 * self._scene_scale,
-            page.overlay_offset_y * 72.0 * self._scene_scale,
+            rect_x * self._scene_scale,
+            rect_y * self._scene_scale,
         )
         total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
         if total_rotation != 0:
             transform.rotate(math.degrees(total_rotation))
+        transform.scale(rect_w / source_w, rect_h / source_h)
         return transform
 
     def _logical_page_scene_dimensions(
@@ -284,6 +298,12 @@ class PageLoaderMixin:
             self._remove_overlay_item(item)
         self._overlay_items.clear()
 
+    def _remove_white_canvas_item(self) -> None:
+        if self._white_canvas_item is not None and isValid(self._white_canvas_item):
+            if self._white_canvas_item.scene() is self._scene:
+                self._scene.removeItem(self._white_canvas_item)
+        self._white_canvas_item = None
+
     def _on_composite_loaded(self, result: RenderResult):
         data = self._resolve_pending_render(result, "Composite")
         if data is None:
@@ -293,9 +313,7 @@ class PageLoaderMixin:
         self._apply_composite_result(data, result)
 
     def _apply_composite_result(self, data: dict, result: RenderResult) -> None:
-        if self._white_canvas_item:
-            self._scene.removeItem(self._white_canvas_item)
-            self._white_canvas_item = None
+        self._remove_white_canvas_item()
         self._clear_overlay_items()
         scene_width, scene_height = self._logical_page_scene_dimensions(data, result)
         background_item = ImageBackgroundItem(
@@ -318,9 +336,7 @@ class PageLoaderMixin:
         self._apply_page_result(data, result)
 
     def _apply_page_result(self, data: dict, result: RenderResult) -> None:
-        if self._white_canvas_item:
-            self._scene.removeItem(self._white_canvas_item)
-            self._white_canvas_item = None
+        self._remove_white_canvas_item()
         view_scale = data.get("view_scale", 1.0)
         self._clear_overlay_items()
         scene_width, scene_height = self._logical_page_scene_dimensions(data, result)
@@ -369,7 +385,7 @@ class PageLoaderMixin:
             self._overlay_pdf_height_pts = float(result.image.height()) / render_scale
         overlay_pixmap = QPixmap.fromImage(result.image)
         item = self._create_overlay_graphics_item(
-            overlay_pixmap, page, view_scale, show_mode, render_scale
+            overlay_pixmap, page, view_scale, show_mode
         )
         if item:
             self._clear_overlay_items()
@@ -385,34 +401,29 @@ class PageLoaderMixin:
         page: Page,
         view_scale: float,
         show_mode: int,
-        render_scale: float,
     ):
         item = QGraphicsPixmapItem(overlay_pixmap)
         item.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
         z_value = 0.5 if show_mode == _SHOW_MODE_OVERLAY_ONLY else 0
         item.setZValue(z_value)
-        expected_width = page.effective_width_pts * view_scale
-        expected_height = page.effective_height_pts * view_scale
         overlay_width = overlay_pixmap.width()
         overlay_height = overlay_pixmap.height()
         is_pdf = page.overlay_image_path.lower().endswith(".pdf")
         if is_pdf:
             item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
-        if overlay_width > 0 and overlay_height > 0:
-            if is_pdf:
-                overlay_scale = view_scale / render_scale if render_scale > 0 else 1.0
-            else:
-                scale_x = expected_width / overlay_width
-                scale_y = expected_height / overlay_height
-                overlay_scale = min(scale_x, scale_y)
-            item.setScale(overlay_scale)
-        offset_x_screen = page.overlay_offset_x * 72 * view_scale
-        offset_y_screen = page.overlay_offset_y * 72 * view_scale
-        item.setPos(offset_x_screen, offset_y_screen)
+        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_canvas(
+            page.effective_width_pts * view_scale,
+            page.effective_height_pts * view_scale,
+        )
+        if overlay_width <= 0 or overlay_height <= 0 or rect_w <= 0.0 or rect_h <= 0.0:
+            return None
+        transform = QTransform()
+        transform.translate(rect_x, rect_y)
         total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
         if total_rotation != 0:
-            rotation_degrees = math.degrees(total_rotation)
-            item.setRotation(rotation_degrees)
+            transform.rotate(math.degrees(total_rotation))
+        transform.scale(rect_w / overlay_width, rect_h / overlay_height)
+        item.setTransform(transform)
         return item
 
     def _compute_tile_scale(self, view_m11: float) -> float:
