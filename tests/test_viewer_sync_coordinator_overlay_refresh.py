@@ -579,7 +579,9 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(call["render_scale"], 3.0)
         view.cleanup()
 
-    def test_show_both_overlay_visible_frame_transform_matches_low_res_overlay_item(self):
+    def test_show_both_overlay_visible_frame_transform_matches_low_res_overlay_item(
+        self,
+    ):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
@@ -620,7 +622,9 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertAlmostEqual(tile_rect.height(), low_rect.height(), places=5)
         view.cleanup()
 
-    def test_show_both_cropped_overlay_visible_frame_maps_to_overlay_rect_subregion(self):
+    def test_show_both_cropped_overlay_visible_frame_maps_to_overlay_rect_subregion(
+        self,
+    ):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
@@ -736,6 +740,95 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             view._white_canvas_item.zValue(),
             view._overlay_move_preview_base_item.zValue(),
         )
+        view.cleanup()
+
+    def test_move_overlay_hides_late_normal_overlay_result_during_preview(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        preview_base = ImageBackgroundItem(
+            QImage(20, 20, QImage.Format.Format_ARGB32),
+            1224.0,
+            1584.0,
+        )
+        preview_overlay = QGraphicsPixmapItem(QPixmap(20, 20))
+        view._scene.addItem(preview_base)
+        view._scene.addItem(preview_overlay)
+        view._overlay_move_preview_base_item = preview_base
+        view._overlay_move_preview_overlay_item = preview_overlay
+        view._overlay_move_original_rect = page.overlay_rect
+        view._overlay_move_preview_rect = page.overlay_rect
+        view._hide_overlay_move_normal_visuals()
+        view._set_overlay_move_preview_items_visible(True)
+        late_overlay = QImage(20, 20, QImage.Format.Format_ARGB32)
+        late_overlay.fill(QColor(80, 80, 255).rgba())
+        view._apply_overlay_result(
+            {
+                "page": page,
+                "view_scale": 2.0,
+                "show_mode": 2,
+                "overlay_render_scale": 2.0,
+            },
+            RenderResult("late-overlay", True, late_overlay, None),
+        )
+        self.assertEqual(len(view._overlay_items), 1)
+        self.assertFalse(view._overlay_items[0].isVisible())
+        self.assertTrue(preview_base.isVisible())
+        self.assertTrue(preview_overlay.isVisible())
+        view.cleanup()
+
+    def test_move_overlay_hides_late_composite_result_during_preview(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        preview_base = ImageBackgroundItem(
+            QImage(20, 20, QImage.Format.Format_ARGB32),
+            1224.0,
+            1584.0,
+        )
+        preview_overlay = QGraphicsPixmapItem(QPixmap(20, 20))
+        view._scene.addItem(preview_base)
+        view._scene.addItem(preview_overlay)
+        view._overlay_move_preview_base_item = preview_base
+        view._overlay_move_preview_overlay_item = preview_overlay
+        view._overlay_move_original_rect = page.overlay_rect
+        view._overlay_move_preview_rect = page.overlay_rect
+        view._hide_overlay_move_normal_visuals()
+        view._set_overlay_move_preview_items_visible(True)
+        late_composite = QImage(20, 20, QImage.Format.Format_ARGB32)
+        late_composite.fill(QColor(80, 80, 255).rgba())
+        view._apply_composite_result(
+            {
+                "page": page,
+                "pdf_width_pts": 612.0,
+                "pdf_height_pts": 792.0,
+                "base_raster_scale": 2.0,
+                "rotation": 0,
+            },
+            RenderResult("late-composite", True, late_composite, None),
+        )
+        self.assertIsNotNone(view._background_item)
+        self.assertFalse(view._background_item.isVisible())
+        self.assertTrue(preview_base.isVisible())
+        self.assertTrue(preview_overlay.isVisible())
         view.cleanup()
 
     def test_move_overlay_drag_before_base_ready_keeps_composite_visible(self):
@@ -1503,12 +1596,10 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._overlay_move_original_rect = page.overlay_rect
         view._overlay_move_preview_rect = (96.0, 48.0, 816.0, 1056.0)
         view.set_overlay_rect_save_handler(lambda _rect: result)
-
         with patch(
             "ost_visualizer.presentation.components.plan_view.view.show_warning"
         ):
             view._commit_overlay_move()
-
         self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
         self.assertIn("old-frame-request", view._rendering_service.cancelled_requests)
         self.assertIsNone(stale_frame.scene())
@@ -1548,9 +1639,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         composite_kwargs["callback"](
             RenderResult(composite_request_id, True, image, None)
         )
-
         view._update_tile_coverage(4.0)
-
         self.assertEqual(len(view._rendering_service.composite_frame_requests), 1)
         _request_id, frame_kwargs = view._rendering_service.composite_frame_requests[-1]
         self.assertEqual(

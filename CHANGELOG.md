@@ -50,7 +50,7 @@
 - Fixed Cover Sheet page image paths so saved `BidPages.ImagePath` values use Windows backslashes for OST compatibility.
 - Fixed plan-view crashes when toggling original/overlay image visibility after image graphics items had already been cleared.
 - Fixed overlay image placement to honor OST `OverlayRect` alignment values when displaying and exporting red/blue overlays.
-- Replaced high-resolution PDF tile refresh with visible-frame PDFium offset rendering to avoid blurry or distorted zoomed PDF overlay views.
+- Replaced high-resolution PDF tile refresh with visible-frame PDFium offset rendering and buffered cache replacement to avoid blurry, distorted, or blank zoomed PDF overlay views.
 - Fixed saved page view positions to round-trip OST `CurrentX`/`CurrentY` values as 96-DPI page pixels.
 - Fixed PDF export so hidden takeoff/annotation layers stay hidden and OST numeric text alignment exports as left, center, or right.
 - Fixed PDF export default filenames so page names that already end in `.pdf` do not produce `.pdf.pdf`.

@@ -298,6 +298,124 @@ class FakeOverlayMovementPageCache:
         return image
 
 
+class FakeVisibleFrameRenderingService:
+    def __init__(self):
+        self.frame_calls = []
+        self.composite_frame_calls = []
+        self.cancelled_requests = []
+        self._next_id = 1
+
+    def _request_id(self, prefix):
+        request_id = f"{prefix}-{self._next_id}"
+        self._next_id += 1
+        return request_id
+
+    def render_frame_async(self, **kwargs):
+        request_id = self._request_id("frame")
+        self.frame_calls.append((request_id, kwargs))
+        return request_id
+
+    def render_composite_frame_async(self, **kwargs):
+        request_id = self._request_id("composite-frame")
+        self.composite_frame_calls.append((request_id, kwargs))
+        return request_id
+
+    def cancel_request(self, request_id):
+        self.cancelled_requests.append(request_id)
+
+
+def _visible_frame_lifecycle_view(kind="base"):
+    view = TakeoffPlanView.__new__(TakeoffPlanView)
+    view._scene = QtWidgets.QGraphicsScene()
+    view._scene_scale = 2.0
+    view._current_page = Page(
+        uid="page-1",
+        name="Page 1",
+        image_path="base.pdf",
+        overlay_image_path="overlay.pdf",
+        image_show_mode=2 if kind == "composite" else 0,
+        width_pts=100.0,
+        height_pts=100.0,
+    )
+    view._loaded_visual_kind = "composite" if kind == "composite" else "page"
+    view._can_zoom_rerender = True
+    view._disable_high_resolution_images = False
+    view._pending_page_data = None
+    view._base_raster_scale = 2.0
+    view._base_raster_request_scale = 0.0
+    view._base_correction_request_generation_id = 0
+    view._page_render_generation_id = 0
+    view._pdf_width_pts = 100.0
+    view._pdf_height_pts = 100.0
+    view._overlay_pdf_width_pts = 100.0
+    view._overlay_pdf_height_pts = 100.0
+    view._overlay_items = []
+    view._visible_frame_item = None
+    view._visible_frame_request_id = None
+    view._visible_frame_key = None
+    view._visible_frame_metadata = None
+    view._pending_visible_frame_metadata = None
+    view._visible_frame_kind = None
+    view._visible_frame_scale = 0.0
+    view._is_composite_mode = kind == "composite"
+    view._current_rotation = 0
+    view._current_flip_x = False
+    view._current_flip_y = False
+    view._current_load_token = "load-1"
+    view._current_render_identity = {"page": "page-1", "kind": kind}
+    view._current_bid_ref = None
+    view._rendering_service = FakeVisibleFrameRenderingService()
+    view.transform = lambda: QtGui.QTransform().scale(4.0, 4.0)
+    view.viewportTransform = lambda: QtGui.QTransform(4.0, 0.0, 0.0, 4.0, 0.0, 0.0)
+    view._device_pixel_ratio = lambda: 1.0
+    view._overlay_move_suppresses_normal_tiles = lambda: False
+    view._cancel_optional_base_correction = lambda: None
+    view._viewport_scene_rect = QtCore.QRectF(0.0, 0.0, 50.0, 50.0)
+    view.mapToScene = lambda _rect: QtGui.QPolygonF(view._viewport_scene_rect)
+    view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
+    background = ImageBackgroundItem(
+        QtGui.QImage(20, 20, QtGui.QImage.Format.Format_ARGB32),
+        200.0,
+        200.0,
+    )
+    view._scene.addItem(background)
+    view._background_item = background
+    return view
+
+
+def _visible_frame_result_image(frame_kwargs):
+    return QtGui.QImage(
+        max(1, math.ceil(frame_kwargs["frame_w_pts"] * frame_kwargs["scale"])),
+        max(1, math.ceil(frame_kwargs["frame_h_pts"] * frame_kwargs["scale"])),
+        QtGui.QImage.Format.Format_ARGB32,
+    )
+
+
+def _visible_frame_context(kind="base"):
+    return {
+        "kind": kind,
+        "key": (kind,),
+        "page_uid": "page-1",
+        "file_path": f"{kind}.pdf",
+        "page_index": 0,
+        "identity": (kind,),
+        "scale": 3.25,
+        "rotation": 0,
+        "render_identity": (("page", "'page-1'"),),
+        "overlay_state_key": None,
+        "frame_x_pts": 10.4,
+        "frame_y_pts": 20.6,
+        "frame_w_pts": 50.5,
+        "frame_h_pts": 41.5,
+        "visible_x_pts": 10.4,
+        "visible_y_pts": 20.6,
+        "visible_w_pts": 50.5,
+        "visible_h_pts": 41.5,
+        "source_w_pts": 200.0,
+        "source_h_pts": 100.0,
+    }
+
+
 def _first_blue_column(image: QtGui.QImage) -> Optional[int]:
     for x in range(image.width()):
         blue_pixels = 0
@@ -315,14 +433,17 @@ def _write_colored_corner_pdf(path: Path) -> None:
         "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
         "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
     ]
-    stream = "\n".join(
-        [
-            "1 0 0 rg 0 80 20 20 re f",
-            "0 1 0 rg 180 80 20 20 re f",
-            "0 0 1 rg 0 0 20 20 re f",
-            "1 1 0 rg 180 0 20 20 re f",
-        ]
-    ) + "\n"
+    stream = (
+        "\n".join(
+            [
+                "1 0 0 rg 0 80 20 20 re f",
+                "0 1 0 rg 180 80 20 20 re f",
+                "0 0 1 rg 0 0 20 20 re f",
+                "1 1 0 rg 180 0 20 20 re f",
+            ]
+        )
+        + "\n"
+    )
     objects.append(
         "3 0 obj\n"
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] "
@@ -1791,12 +1912,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._uses_dynamic_tile_coverage = lambda: True
         view.transform = lambda: SimpleNamespace(m11=lambda: 3.5)
         view._update_tile_coverage = lambda scale: calls.append(("tiles", scale))
-        view.page_fully_loaded = SimpleNamespace(
-            emit=lambda: calls.append(("loaded",))
-        )
-
+        view.page_fully_loaded = SimpleNamespace(emit=lambda: calls.append(("loaded",)))
         self.assertTrue(view._finalize_page_load_if_ready())
-
         self.assertTrue(view._load_view_applied)
         self.assertIsNone(view._saved_scroll_state)
         self.assertEqual(
@@ -1921,7 +2038,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             ),
             image_show_mode=2,
         )
-
         image = renderer.render_composite_frame(
             page,
             scale=2.0,
@@ -1931,7 +2047,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             frame_h_pts=100.0,
             rotation=0,
         )
-
         self.assertIsNotNone(image)
         self.assertEqual(_first_blue_column(image), 20)
 
@@ -2185,7 +2300,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             (70.0, 30.0, 60.0, 40.0),
             (150.0, 60.0, 50.0, 40.0),
         ]
-
         for frame_x, frame_y, frame_w, frame_h in frames:
             with self.subTest(frame=(frame_x, frame_y, frame_w, frame_h)):
                 frame = renderer.render_frame(
@@ -2234,16 +2348,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._get_page_transform = lambda _w, _h: QtGui.QTransform()
         image = QtGui.QImage(101, 83, QtGui.QImage.Format.Format_ARGB32)
         image.fill(0xFFFFFFFF)
-        context = {
-            "kind": "base",
-            "key": ("base",),
-            "scale": 3.25,
-            "frame_x_pts": 10.4,
-            "frame_y_pts": 20.6,
-            "source_w_pts": 200.0,
-            "source_h_pts": 100.0,
-        }
-
+        context = _visible_frame_context("base")
         view._on_visible_frame_loaded(
             RenderResult("frame-1", True, image, None),
             context,
@@ -2251,13 +2356,143 @@ class OptionsPreferencesTests(unittest.TestCase):
             {"page": "page-1"},
             7,
         )
-
         self.assertIsNotNone(view._visible_frame_item)
         rect = view._visible_frame_item.boundingRect()
         self.assertEqual(rect.x(), round(10.4 * 2.0))
         self.assertEqual(rect.y(), round(20.6 * 2.0))
         self.assertEqual(rect.width(), round(101 * 2.0 / 3.25))
         self.assertEqual(rect.height(), round(83 * 2.0 / 3.25))
+
+    def test_visible_frame_keeps_low_res_background_visible_after_install(self):
+        view = _visible_frame_lifecycle_view()
+        view._update_tile_coverage(4.0)
+        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
+        frame_kwargs["callback"](
+            RenderResult(
+                request_id,
+                True,
+                _visible_frame_result_image(frame_kwargs),
+                None,
+            )
+        )
+        self.assertIsNotNone(view._visible_frame_item)
+        self.assertTrue(view._background_item.isVisible())
+        self.assertLess(
+            view._background_item.zValue(), view._visible_frame_item.zValue()
+        )
+
+    def test_both_mode_visible_frame_keeps_low_res_composite_background_visible(self):
+        view = _visible_frame_lifecycle_view(kind="composite")
+        view._update_tile_coverage(4.0)
+        request_id, frame_kwargs = view._rendering_service.composite_frame_calls[-1]
+        frame_kwargs["callback"](
+            RenderResult(
+                request_id,
+                True,
+                _visible_frame_result_image(frame_kwargs),
+                None,
+            )
+        )
+        self.assertIsNotNone(view._visible_frame_item)
+        self.assertTrue(view._background_item.isVisible())
+        self.assertLess(
+            view._background_item.zValue(), view._visible_frame_item.zValue()
+        )
+
+    def test_visible_frame_reuses_current_buffered_coverage_on_small_scroll(self):
+        view = _visible_frame_lifecycle_view()
+        view._update_tile_coverage(4.0)
+        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
+        frame_kwargs["callback"](
+            RenderResult(
+                request_id,
+                True,
+                _visible_frame_result_image(frame_kwargs),
+                None,
+            )
+        )
+        initial_item = view._visible_frame_item
+        initial_key = view._visible_frame_key
+        view._viewport_scene_rect = QtCore.QRectF(10.0, 0.0, 50.0, 50.0)
+        view._update_tile_coverage(4.0)
+        self.assertEqual(len(view._rendering_service.frame_calls), 1)
+        self.assertIs(view._visible_frame_item, initial_item)
+        self.assertEqual(view._visible_frame_key, initial_key)
+
+    def test_visible_frame_scroll_outside_coverage_replaces_only_after_success(self):
+        view = _visible_frame_lifecycle_view()
+        view._update_tile_coverage(4.0)
+        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
+        frame_kwargs["callback"](
+            RenderResult(
+                request_id,
+                True,
+                _visible_frame_result_image(frame_kwargs),
+                None,
+            )
+        )
+        old_item = view._visible_frame_item
+        view._viewport_scene_rect = QtCore.QRectF(80.0, 0.0, 50.0, 50.0)
+        view._update_tile_coverage(4.0)
+        self.assertEqual(len(view._rendering_service.frame_calls), 2)
+        self.assertIs(view._visible_frame_item, old_item)
+        self.assertIs(old_item.scene(), view._scene)
+        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
+        frame_kwargs["callback"](
+            RenderResult(
+                request_id,
+                True,
+                _visible_frame_result_image(frame_kwargs),
+                None,
+            )
+        )
+        self.assertIsNot(view._visible_frame_item, old_item)
+        self.assertIsNone(old_item.scene())
+        self.assertTrue(view._background_item.isVisible())
+
+    def test_visible_frame_pending_coverage_suppresses_duplicate_request(self):
+        view = _visible_frame_lifecycle_view()
+        view._update_tile_coverage(4.0)
+        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
+        frame_kwargs["callback"](
+            RenderResult(
+                request_id,
+                True,
+                _visible_frame_result_image(frame_kwargs),
+                None,
+            )
+        )
+        view._viewport_scene_rect = QtCore.QRectF(80.0, 0.0, 50.0, 50.0)
+        view._update_tile_coverage(4.0)
+        self.assertEqual(len(view._rendering_service.frame_calls), 2)
+        view._viewport_scene_rect = QtCore.QRectF(82.0, 0.0, 50.0, 50.0)
+        view._update_tile_coverage(4.0)
+        self.assertEqual(len(view._rendering_service.frame_calls), 2)
+        self.assertIsNotNone(view._visible_frame_request_id)
+
+    def test_visible_frame_render_failure_keeps_old_frame_and_low_res_visible(self):
+        view = _visible_frame_lifecycle_view()
+        view._update_tile_coverage(4.0)
+        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
+        frame_kwargs["callback"](
+            RenderResult(
+                request_id,
+                True,
+                _visible_frame_result_image(frame_kwargs),
+                None,
+            )
+        )
+        old_item = view._visible_frame_item
+        old_key = view._visible_frame_key
+        view._viewport_scene_rect = QtCore.QRectF(80.0, 0.0, 50.0, 50.0)
+        view._update_tile_coverage(4.0)
+        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
+        frame_kwargs["callback"](RenderResult(request_id, False, None, "render failed"))
+        self.assertIs(view._visible_frame_item, old_item)
+        self.assertEqual(view._visible_frame_key, old_key)
+        self.assertIsNone(view._visible_frame_request_id)
+        self.assertIsNone(view._pending_visible_frame_metadata)
+        self.assertTrue(view._background_item.isVisible())
 
     def test_background_images_smooth_but_high_resolution_tiles_stay_crisp_at_one_to_one(
         self,
@@ -2321,6 +2556,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._visible_frame_item = None
         view._visible_frame_request_id = None
         view._visible_frame_key = None
+        view._visible_frame_metadata = None
+        view._pending_visible_frame_metadata = None
         view._visible_frame_kind = None
         view._visible_frame_scale = 0.0
         view._background_item = None
@@ -2340,7 +2577,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view.mapToScene = lambda _rect: QtGui.QPolygonF(QtCore.QRectF(0, 0, 50, 50))
         view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
         view._update_tile_coverage(4.0)
-        self.assertEqual(calls, ["clear_grid", "cancel_base"])
+        self.assertEqual(calls, ["cancel_base"])
         self.assertEqual(len(rendering_service.frame_calls), 1)
         call = rendering_service.frame_calls[0]
         self.assertEqual(call["file_path"], "overlay.pdf")
@@ -2348,8 +2585,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(call["scale"], 8.0)
         self.assertEqual(call["frame_x_pts"], 0.0)
         self.assertEqual(call["frame_y_pts"], 0.0)
-        self.assertEqual(call["frame_w_pts"], 25.0)
-        self.assertEqual(call["frame_h_pts"], 25.0)
+        self.assertEqual(call["frame_w_pts"], 31.25)
+        self.assertEqual(call["frame_h_pts"], 31.25)
 
     def test_both_mode_zoom_requests_composite_visible_frame(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -2390,6 +2627,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._visible_frame_item = None
         view._visible_frame_request_id = None
         view._visible_frame_key = None
+        view._visible_frame_metadata = None
+        view._pending_visible_frame_metadata = None
         view._visible_frame_kind = None
         view._visible_frame_scale = 0.0
         view._background_item = None
@@ -2408,15 +2647,15 @@ class OptionsPreferencesTests(unittest.TestCase):
         view.mapToScene = lambda _rect: QtGui.QPolygonF(QtCore.QRectF(0, 0, 50, 50))
         view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
         view._update_tile_coverage(4.0)
-        self.assertEqual(calls, ["clear_grid", "cancel_base"])
+        self.assertEqual(calls, ["cancel_base"])
         self.assertEqual(len(rendering_service.composite_frame_calls), 1)
         call = rendering_service.composite_frame_calls[0]
         self.assertEqual(call["page"], view._current_page)
         self.assertEqual(call["scale"], 8.0)
         self.assertEqual(call["frame_x_pts"], 0.0)
         self.assertEqual(call["frame_y_pts"], 0.0)
-        self.assertEqual(call["frame_w_pts"], 25.0)
-        self.assertEqual(call["frame_h_pts"], 25.0)
+        self.assertEqual(call["frame_w_pts"], 31.25)
+        self.assertEqual(call["frame_h_pts"], 31.25)
 
     def test_composite_visible_frame_key_changes_with_overlay_rect(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -2439,6 +2678,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._current_rotation = 0
         view._current_flip_x = False
         view._current_flip_y = False
+        view._current_render_identity = {"page": "page-1"}
         view._overlay_rect_tuple = TakeoffPlanView._overlay_rect_tuple.__get__(
             view,
             TakeoffPlanView,
@@ -2446,11 +2686,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._device_pixel_ratio = lambda: 1.0
         view.mapToScene = lambda _rect: QtGui.QPolygonF(QtCore.QRectF(0, 0, 50, 50))
         view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
-
         first_context = view._build_visible_frame_context(8.0)
         view._current_page.overlay_rect = (96.0, 48.0, 133.333333, 133.333333)
         second_context = view._build_visible_frame_context(8.0)
-
         self.assertIsNotNone(first_context)
         self.assertIsNotNone(second_context)
         self.assertNotEqual(first_context["key"], second_context["key"])

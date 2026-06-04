@@ -143,9 +143,7 @@ class ImageTintTests(unittest.TestCase):
         image.fill(QtGui.QColor(255, 255, 255))
         image.setPixelColor(2, 0, QtGui.QColor(0, 0, 0))
         image.setPixelColor(2, 1, QtGui.QColor(0, 0, 0))
-
         tinted = tint_image(image, 80, 80, 255)
-
         for y in range(2):
             for x in range(5):
                 pixel = tinted.pixelColor(x, y)

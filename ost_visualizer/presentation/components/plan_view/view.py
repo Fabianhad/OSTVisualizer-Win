@@ -253,6 +253,8 @@ class TakeoffPlanView(
         self._visible_frame_item: Optional[TileGraphicsItem] = None
         self._visible_frame_request_id: Optional[str] = None
         self._visible_frame_key: Optional[tuple] = None
+        self._visible_frame_metadata: Optional[Dict] = None
+        self._pending_visible_frame_metadata: Optional[Dict] = None
         self._visible_frame_kind: Optional[str] = None
         self._visible_frame_scale: float = 0.0
         self._base_raster_scale: float = 0.0
@@ -3182,10 +3184,9 @@ class TakeoffPlanView(
         ]
 
     def _hide_overlay_move_normal_visuals(self) -> None:
-        if self._overlay_move_normal_visuals_hidden:
-            return
         for item in self._overlay_move_normal_visual_items():
-            self._overlay_move_hidden_visual_visibility[item] = item.isVisible()
+            if item not in self._overlay_move_hidden_visual_visibility:
+                self._overlay_move_hidden_visual_visibility[item] = item.isVisible()
             item.setVisible(False)
         self._overlay_move_normal_visuals_hidden = True
 
@@ -4304,6 +4305,8 @@ class TakeoffPlanView(
                 item.setPixmap(QPixmap())
         self._visible_frame_item = None
         self._visible_frame_key = None
+        self._visible_frame_metadata = None
+        self._pending_visible_frame_metadata = None
         self._visible_frame_kind = None
         self._visible_frame_scale = 0.0
         self._cancel_optional_base_correction()

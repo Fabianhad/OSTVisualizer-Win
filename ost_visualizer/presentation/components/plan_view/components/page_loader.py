@@ -18,6 +18,7 @@ _SHOW_MODE_OVERLAY_ONLY = 1
 _PDF_FRAME_CURRENT_Z = 0.35
 _OVERLAY_FRAME_CURRENT_Z = 0.65
 _FRAME_SCALE_LOG_STEP = 0.125
+_VISIBLE_FRAME_OVERSCAN_RATIO = 0.25
 _BASE_RASTER_SCALE_STEP = 0.25
 _BASE_RASTER_MIN_SCALE = 1.0
 _BASE_RASTER_MAX_SCALE = 3.0
@@ -349,6 +350,7 @@ class PageLoaderMixin:
         self._base_raster_scale = data["base_raster_scale"]
         self._apply_page_transform_to_items()
         self._mark_load_geometry_ready()
+        self._sync_overlay_move_hidden_normal_visuals()
 
     def _on_page_loaded(self, result: RenderResult):
         data = self._resolve_pending_render(result, "Page")
@@ -384,6 +386,7 @@ class PageLoaderMixin:
             )
         else:
             self._mark_load_geometry_ready()
+        self._sync_overlay_move_hidden_normal_visuals()
 
     def _on_overlay_loaded(self, result: RenderResult):
         data = self._resolve_pending_render(result, "Overlay")
@@ -416,6 +419,12 @@ class PageLoaderMixin:
             self._loaded_visual_kind = "overlay"
             self._base_raster_scale = render_scale
             self._mark_load_geometry_ready()
+            self._sync_overlay_move_hidden_normal_visuals()
+
+    def _sync_overlay_move_hidden_normal_visuals(self) -> None:
+        if self._overlay_move_normal_visuals_hidden:
+            self._hide_overlay_move_normal_visuals()
+            self._set_overlay_move_preview_items_visible(True)
 
     def _create_overlay_graphics_item(
         self,
@@ -490,12 +499,6 @@ class PageLoaderMixin:
             self._background_item.setVisible(visible)
 
     def _sync_low_res_base_visibility_for_tiles(self) -> None:
-        if self._visible_frame_kind in ("base", "composite"):
-            self._set_low_res_base_item_visible(
-                self._visible_frame_item is None
-                or self._visible_frame_request_id is not None
-            )
-            return
         self._set_low_res_base_item_visible(True)
 
     def _set_low_res_overlay_items_visible(self, visible: bool) -> None:
@@ -504,12 +507,6 @@ class PageLoaderMixin:
                 item.setVisible(visible)
 
     def _sync_low_res_overlay_visibility_for_tiles(self) -> None:
-        if self._visible_frame_kind == "overlay":
-            self._set_low_res_overlay_items_visible(
-                self._visible_frame_item is None
-                or self._visible_frame_request_id is not None
-            )
-            return
         if self._uses_overlay_pdf_tiles():
             self._set_low_res_overlay_items_visible(True)
 
@@ -527,6 +524,8 @@ class PageLoaderMixin:
         if self._visible_frame_request_id:
             self._rendering_service.cancel_request(self._visible_frame_request_id)
         self._visible_frame_request_id = None
+        self._pending_visible_frame_metadata = None
+        self._restore_visible_frame_state_from_current_metadata()
 
     def _clear_visible_frame(self) -> None:
         self._cancel_visible_frame_request()
@@ -534,6 +533,7 @@ class PageLoaderMixin:
             self._remove_tile_item(self._visible_frame_item)
         self._visible_frame_item = None
         self._visible_frame_key = None
+        self._visible_frame_metadata = None
         self._visible_frame_kind = None
         self._visible_frame_scale = 0.0
 
@@ -548,6 +548,97 @@ class PageLoaderMixin:
             tuple(round(value, 6) for value in overlay_rect),
             round(float(page.overlay_rotation or 0.0), 6),
             round(float(page.deskew_rotation_overlay or 0.0), 6),
+        )
+
+    def _visible_frame_render_identity_key(self):
+        return tuple(
+            sorted(
+                (str(key), repr(value))
+                for key, value in (self._current_render_identity or {}).items()
+            )
+        )
+
+    @staticmethod
+    def _visible_frame_rect_tuple(context: dict, prefix: str = "frame"):
+        return (
+            float(context[f"{prefix}_x_pts"]),
+            float(context[f"{prefix}_y_pts"]),
+            float(context[f"{prefix}_w_pts"]),
+            float(context[f"{prefix}_h_pts"]),
+        )
+
+    @staticmethod
+    def _visible_frame_rect_contains(outer, inner) -> bool:
+        epsilon = 1e-3
+        outer_x, outer_y, outer_w, outer_h = outer
+        inner_x, inner_y, inner_w, inner_h = inner
+        return (
+            outer_x <= inner_x + epsilon
+            and outer_y <= inner_y + epsilon
+            and outer_x + outer_w + epsilon >= inner_x + inner_w
+            and outer_y + outer_h + epsilon >= inner_y + inner_h
+        )
+
+    def _visible_frame_metadata_from_context(self, context: dict) -> dict:
+        return {
+            "identity": context["identity"],
+            "key": context["key"],
+            "kind": context["kind"],
+            "page_uid": context["page_uid"],
+            "file_path": context["file_path"],
+            "page_index": context["page_index"],
+            "scale": context["scale"],
+            "render_scale": context["scale"],
+            "rotation": context["rotation"],
+            "render_identity": context["render_identity"],
+            "overlay_state_key": context["overlay_state_key"],
+            "source_dimensions": (
+                context["source_w_pts"],
+                context["source_h_pts"],
+            ),
+            "frame_rect": self._visible_frame_rect_tuple(context, "frame"),
+            "visible_rect": self._visible_frame_rect_tuple(context, "visible"),
+        }
+
+    def _visible_frame_metadata_covers(self, metadata: Optional[dict], context: dict):
+        if not metadata:
+            return False
+        if metadata.get("identity") != context["identity"]:
+            return False
+        return self._visible_frame_rect_contains(
+            metadata.get("frame_rect", (0.0, 0.0, 0.0, 0.0)),
+            self._visible_frame_rect_tuple(context, "visible"),
+        )
+
+    def _restore_visible_frame_state_from_current_metadata(self) -> None:
+        if self._visible_frame_metadata is None:
+            self._visible_frame_key = None
+            self._visible_frame_kind = None
+            self._visible_frame_scale = 0.0
+            return
+        self._visible_frame_key = self._visible_frame_metadata.get("key")
+        self._visible_frame_kind = self._visible_frame_metadata.get("kind")
+        self._visible_frame_scale = self._visible_frame_metadata.get("scale", 0.0)
+
+    def _visible_frame_item_transform(self, context: dict) -> QTransform:
+        if context["kind"] == "overlay":
+            return self._overlay_pdf_tile_transform()
+        return self._get_page_transform(
+            context["source_w_pts"] * self._scene_scale,
+            context["source_h_pts"] * self._scene_scale,
+        )
+
+    def _visible_frame_local_rect(self, context: dict, image) -> QRectF:
+        scale = context["scale"]
+        frame_scene_x = round(context["frame_x_pts"] * self._scene_scale)
+        frame_scene_y = round(context["frame_y_pts"] * self._scene_scale)
+        frame_scene_w = round(float(image.width()) * self._scene_scale / scale)
+        frame_scene_h = round(float(image.height()) * self._scene_scale / scale)
+        return QRectF(
+            float(frame_scene_x),
+            float(frame_scene_y),
+            float(max(1, frame_scene_w)),
+            float(max(1, frame_scene_h)),
         )
 
     def _build_visible_frame_context(self, frame_scale: float) -> Optional[dict]:
@@ -613,44 +704,98 @@ class PageLoaderMixin:
         visible_local_rect = viewport_local_rect.intersected(source_local_rect)
         if visible_local_rect.isNull() or visible_local_rect.isEmpty():
             return None
-        frame_x_pts = visible_local_rect.left() / self._scene_scale
-        frame_y_pts = visible_local_rect.top() / self._scene_scale
-        frame_w_pts = visible_local_rect.width() / self._scene_scale
-        frame_h_pts = visible_local_rect.height() / self._scene_scale
+        visible_x_pts = visible_local_rect.left() / self._scene_scale
+        visible_y_pts = visible_local_rect.top() / self._scene_scale
+        visible_w_pts = visible_local_rect.width() / self._scene_scale
+        visible_h_pts = visible_local_rect.height() / self._scene_scale
+        if visible_w_pts <= 0.0 or visible_h_pts <= 0.0:
+            return None
+        buffer_w_pts = visible_w_pts * _VISIBLE_FRAME_OVERSCAN_RATIO
+        buffer_h_pts = visible_h_pts * _VISIBLE_FRAME_OVERSCAN_RATIO
+        frame_x_pts = max(0.0, visible_x_pts - buffer_w_pts)
+        frame_y_pts = max(0.0, visible_y_pts - buffer_h_pts)
+        frame_right_pts = min(
+            source_w_pts, visible_x_pts + visible_w_pts + buffer_w_pts
+        )
+        frame_bottom_pts = min(
+            source_h_pts, visible_y_pts + visible_h_pts + buffer_h_pts
+        )
+        frame_w_pts = frame_right_pts - frame_x_pts
+        frame_h_pts = frame_bottom_pts - frame_y_pts
         if frame_w_pts <= 0.0 or frame_h_pts <= 0.0:
             return None
+        overlay_state_key = self._visible_frame_overlay_state_key(page, kind)
+        render_identity = self._visible_frame_render_identity_key()
+        identity = (
+            kind,
+            page.uid,
+            file_path,
+            page_index,
+            round(frame_scale, 3),
+            rotation,
+            render_identity,
+            overlay_state_key,
+            round(source_w_pts, 3),
+            round(source_h_pts, 3),
+        )
         key = (
             kind,
             file_path,
             page_index,
             round(frame_scale, 3),
             rotation,
+            page.uid,
             round(frame_x_pts, 3),
             round(frame_y_pts, 3),
             round(frame_w_pts, 3),
             round(frame_h_pts, 3),
-            self._visible_frame_overlay_state_key(page, kind),
+            overlay_state_key,
         )
         return {
             "kind": kind,
+            "page_uid": page.uid,
             "file_path": file_path,
             "page_index": page_index,
             "scale": frame_scale,
             "rotation": rotation,
+            "render_identity": render_identity,
+            "overlay_state_key": overlay_state_key,
             "frame_x_pts": frame_x_pts,
             "frame_y_pts": frame_y_pts,
             "frame_w_pts": frame_w_pts,
             "frame_h_pts": frame_h_pts,
+            "visible_x_pts": visible_x_pts,
+            "visible_y_pts": visible_y_pts,
+            "visible_w_pts": visible_w_pts,
+            "visible_h_pts": visible_h_pts,
             "source_w_pts": source_w_pts,
             "source_h_pts": source_h_pts,
+            "identity": identity,
             "key": key,
         }
 
-    def _request_visible_frame(self, context: dict, generation_id: int) -> None:
-        key = context["key"]
-        if self._visible_frame_key == key and (
+    def _request_visible_frame(self, context: dict) -> None:
+        if (
             self._visible_frame_item is not None
-            or self._visible_frame_request_id is not None
+            and self._visible_frame_metadata_covers(
+                self._visible_frame_metadata, context
+            )
+        ):
+            if (
+                self._visible_frame_request_id is not None
+                and not self._visible_frame_metadata_covers(
+                    self._pending_visible_frame_metadata, context
+                )
+            ):
+                self._cancel_visible_frame_request()
+            self._sync_low_res_base_visibility_for_tiles()
+            self._sync_low_res_overlay_visibility_for_tiles()
+            return
+        if (
+            self._visible_frame_request_id is not None
+            and self._visible_frame_metadata_covers(
+                self._pending_visible_frame_metadata, context
+            )
         ):
             self._sync_low_res_base_visibility_for_tiles()
             self._sync_low_res_overlay_visibility_for_tiles()
@@ -659,12 +804,13 @@ class PageLoaderMixin:
         if page is None:
             return
         self._cancel_visible_frame_request()
-        if self._visible_frame_item is not None:
-            self._remove_tile_item(self._visible_frame_item)
-            self._visible_frame_item = None
+        generation_id = self._advance_render_generation()
+        metadata = self._visible_frame_metadata_from_context(context)
+        key = context["key"]
         self._visible_frame_key = key
         self._visible_frame_kind = context["kind"]
         self._visible_frame_scale = context["scale"]
+        self._pending_visible_frame_metadata = metadata
         self._sync_low_res_base_visibility_for_tiles()
         self._sync_low_res_overlay_visibility_for_tiles()
         load_token = self._current_load_token
@@ -742,23 +888,16 @@ class PageLoaderMixin:
             or not result.success
             or not result.image
         ):
+            self._pending_visible_frame_metadata = None
+            self._restore_visible_frame_state_from_current_metadata()
             self._sync_low_res_base_visibility_for_tiles()
             self._sync_low_res_overlay_visibility_for_tiles()
             return
-        if self._visible_frame_item is not None:
-            self._remove_tile_item(self._visible_frame_item)
+        old_item = self._visible_frame_item
         image = result.image
         scale = context["scale"]
-        frame_scene_x = round(context["frame_x_pts"] * self._scene_scale)
-        frame_scene_y = round(context["frame_y_pts"] * self._scene_scale)
-        frame_scene_w = round(float(image.width()) * self._scene_scale / scale)
-        frame_scene_h = round(float(image.height()) * self._scene_scale / scale)
-        local_rect = QRectF(
-            float(frame_scene_x),
-            float(frame_scene_y),
-            float(max(1, frame_scene_w)),
-            float(max(1, frame_scene_h)),
-        )
+        item_transform = self._visible_frame_item_transform(context)
+        local_rect = self._visible_frame_local_rect(context, image)
         item = TileGraphicsItem(
             image,
             local_rect,
@@ -766,19 +905,19 @@ class PageLoaderMixin:
         )
         if context["kind"] == "overlay":
             item.setZValue(_OVERLAY_FRAME_CURRENT_Z)
-            item.setTransform(self._overlay_pdf_tile_transform())
         else:
             item.setZValue(_PDF_FRAME_CURRENT_Z)
-            item.setTransform(
-                self._get_page_transform(
-                    context["source_w_pts"] * self._scene_scale,
-                    context["source_h_pts"] * self._scene_scale,
-                )
-            )
+        item.setTransform(item_transform)
         self._scene.addItem(item)
         self._visible_frame_item = item
+        self._visible_frame_metadata = self._visible_frame_metadata_from_context(
+            context
+        )
+        self._pending_visible_frame_metadata = None
         self._visible_frame_kind = context["kind"]
         self._visible_frame_scale = scale
+        if old_item is not None:
+            self._remove_tile_item(old_item)
         self._sync_low_res_base_visibility_for_tiles()
         self._sync_low_res_overlay_visibility_for_tiles()
 
@@ -1019,18 +1158,17 @@ class PageLoaderMixin:
                     self._advance_render_generation(),
                 )
             return
-        generation_id = self._advance_render_generation()
         raw_scale = self._compute_frame_scale(view_m11)
         frame_scale = self._quantize_frame_scale(raw_scale)
         base_scale = self._base_raster_scale or self._scene_scale
         if frame_scale <= base_scale * self._FRAME_ACTIVATE_RATIO:
             self._clear_tiles()
+            generation_id = self._advance_render_generation()
             if self._primary_tiles_use_overlay_pdf():
                 self._update_optional_overlay_base_coverage(view_m11, generation_id)
             else:
                 self._update_optional_base_coverage(view_m11, generation_id)
             return
-        self._clear_tile_grid()
         self._cancel_optional_base_correction()
         context = self._build_visible_frame_context(frame_scale)
         if context is None:
@@ -1038,7 +1176,7 @@ class PageLoaderMixin:
             self._sync_low_res_base_visibility_for_tiles()
             self._sync_low_res_overlay_visibility_for_tiles()
             return
-        self._request_visible_frame(context, generation_id)
+        self._request_visible_frame(context)
 
     def _cancel_pending_renders(self):
         for request_id in self._current_render_requests:
@@ -1053,6 +1191,8 @@ class PageLoaderMixin:
             self._remove_tile_item(self._visible_frame_item)
         self._visible_frame_item = None
         self._visible_frame_key = None
+        self._visible_frame_metadata = None
+        self._pending_visible_frame_metadata = None
         self._visible_frame_kind = None
         self._visible_frame_scale = 0.0
         self._set_low_res_base_item_visible(True)
