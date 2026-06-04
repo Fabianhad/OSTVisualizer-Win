@@ -258,6 +258,11 @@ class TakeoffPlanView(
         self._overlay_tile_items: Dict[TileKey, TileGraphicsItem] = {}
         self._overlay_tile_requests: Dict[TileKey, str] = {}
         self._overlay_tile_scale: float = 0.0
+        self._visible_frame_item: Optional[TileGraphicsItem] = None
+        self._visible_frame_request_id: Optional[str] = None
+        self._visible_frame_key: Optional[tuple] = None
+        self._visible_frame_kind: Optional[str] = None
+        self._visible_frame_scale: float = 0.0
         self._base_raster_scale: float = 0.0
         self._base_raster_request_id: Optional[str] = None
         self._base_raster_request_scale: float = 0.0
@@ -1930,6 +1935,8 @@ class TakeoffPlanView(
         self._apply_current_view_contract(consume_scroll_state=True)
         self._saved_scroll_state = None
         self._load_view_applied = True
+        if self._uses_dynamic_tile_coverage():
+            self._update_tile_coverage(self.transform().m11())
         self.page_fully_loaded.emit()
         return True
 
@@ -3169,6 +3176,8 @@ class TakeoffPlanView(
         for item in (self._background_item,):
             if item is not None:
                 items.append(item)
+        if self._visible_frame_item is not None:
+            items.append(self._visible_frame_item)
         items.extend(self._overlay_items)
         items.extend(self._tile_items.values())
         items.extend(self._overlay_tile_items.values())
@@ -4302,6 +4311,8 @@ class TakeoffPlanView(
         for item in self._overlay_tile_items.values():
             if self._is_live_graphics_item(item):
                 item.clear_image()
+        if self._is_live_graphics_item(self._visible_frame_item):
+            self._visible_frame_item.clear_image()
         for item in self._overlay_items:
             if self._is_live_graphics_item(item):
                 item.setPixmap(QPixmap())
@@ -4309,6 +4320,10 @@ class TakeoffPlanView(
         self._tile_scale = 0.0
         self._overlay_tile_items.clear()
         self._overlay_tile_scale = 0.0
+        self._visible_frame_item = None
+        self._visible_frame_key = None
+        self._visible_frame_kind = None
+        self._visible_frame_scale = 0.0
         self._cancel_optional_base_correction()
         self._base_raster_scale = 0.0
         self._selection_items.clear()

@@ -1003,7 +1003,7 @@ class InputHandlerMixin:
             self.verticalScrollBar().setValue(
                 self.verticalScrollBar().value() - delta.y()
             )
-            if self._can_zoom_rerender:
+            if self._uses_dynamic_tile_coverage():
                 self._zoom_debouncer.handle_scale_changed(self.transform().m11())
             event.accept()
         else:

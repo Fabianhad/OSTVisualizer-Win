@@ -171,6 +171,31 @@ class PageCache:
             rotation,
         )
 
+    def render_frame_uncached(
+        self,
+        file_path: str,
+        page_index: int,
+        scale: float,
+        frame_x_pts: float,
+        frame_y_pts: float,
+        frame_w_pts: float,
+        frame_h_pts: float,
+        rotation: int = 0,
+    ) -> Optional[QImage]:
+        if not file_path:
+            return None
+        quantized_scale = self._quantize_scale(scale)
+        return self._get_renderer().render_frame(
+            file_path,
+            page_index,
+            quantized_scale,
+            frame_x_pts,
+            frame_y_pts,
+            frame_w_pts,
+            frame_h_pts,
+            rotation,
+        )
+
     def get_page_info(self, file_path: str, page_index: int = 0) -> Dict:
         cache_key = f"{file_path}:{page_index}"
         with self._lock:

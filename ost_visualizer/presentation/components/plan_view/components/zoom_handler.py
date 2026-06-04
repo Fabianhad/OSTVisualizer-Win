@@ -251,6 +251,12 @@ class ZoomHandlerMixin:
         for ref_item in (self._background_item, self._white_canvas_item):
             if ref_item is not None and isValid(ref_item):
                 ref_item.setTransform(transform)
+        if (
+            self._visible_frame_item is not None
+            and self._visible_frame_kind in ("base", "composite")
+            and isValid(self._visible_frame_item)
+        ):
+            self._visible_frame_item.setTransform(transform)
         for item in self._takeoff_items:
             if isValid(item):
                 item.setTransform(transform)

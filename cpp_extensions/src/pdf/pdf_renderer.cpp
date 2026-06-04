@@ -4,6 +4,7 @@
 #include <fpdf_edit.h>
 #include <fpdf_text.h>
 #include <algorithm>
+#include <cmath>
 #include <mutex>
 #include <atomic>
 #include <cstring>
@@ -565,6 +566,131 @@ namespace ost_pdf
         result.pixels = std::move(pixels);
         result.width = tile_w;
         result.height = tile_h;
+        result.stride = stride;
+        return result;
+    }
+
+    std::optional<RenderedPage> PDFRenderer::render_page_frame(
+        int page_index,
+        float scale,
+        double frame_x_pts,
+        double frame_y_pts,
+        double frame_w_pts,
+        double frame_h_pts,
+        int rotation)
+    {
+        if (!doc_ || page_index < 0 || page_index >= page_count())
+        {
+            return std::nullopt;
+        }
+        if (scale <= 0.0f || frame_w_pts <= 0.0 || frame_h_pts <= 0.0)
+        {
+            return std::nullopt;
+        }
+        rotation = normalize_user_rotation_deg(rotation);
+        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
+        if (!page)
+        {
+            return std::nullopt;
+        }
+        double page_w = FPDF_GetPageWidth(page);
+        double page_h = FPDF_GetPageHeight(page);
+        if (page_w <= 0.0 || page_h <= 0.0)
+        {
+            FPDF_ClosePage(page);
+            return std::nullopt;
+        }
+
+        double canvas_w = (rotation == 1 || rotation == 3) ? page_h : page_w;
+        double canvas_h = (rotation == 1 || rotation == 3) ? page_w : page_h;
+        double left = std::max(0.0, frame_x_pts);
+        double top = std::max(0.0, frame_y_pts);
+        double right = std::min(canvas_w, frame_x_pts + frame_w_pts);
+        double bottom = std::min(canvas_h, frame_y_pts + frame_h_pts);
+        double clipped_w = right - left;
+        double clipped_h = bottom - top;
+        if (clipped_w <= 0.0 || clipped_h <= 0.0)
+        {
+            FPDF_ClosePage(page);
+            return std::nullopt;
+        }
+
+        int render_width = static_cast<int>(std::ceil(clipped_w * scale));
+        int render_height = static_cast<int>(std::ceil(clipped_h * scale));
+        if (render_width < 1)
+            render_width = 1;
+        if (render_height < 1)
+            render_height = 1;
+
+        int stride = render_width * 4;
+        std::vector<uint8_t> pixels(static_cast<size_t>(stride) * render_height);
+        FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(
+            render_width, render_height,
+            FPDFBitmap_BGRA,
+            pixels.data(),
+            stride);
+        if (!bitmap)
+        {
+            FPDF_ClosePage(page);
+            return std::nullopt;
+        }
+        FPDFBitmap_FillRect(bitmap, 0, 0, render_width, render_height, 0xFFFFFFFF);
+
+        FS_MATRIX matrix;
+        if (rotation == 0)
+        {
+            matrix.a = scale;
+            matrix.b = 0.0f;
+            matrix.c = 0.0f;
+            matrix.d = scale;
+            matrix.e = static_cast<float>(-left * scale);
+            matrix.f = static_cast<float>(-(page_h - bottom) * scale);
+        }
+        else if (rotation == 1)
+        {
+            matrix.a = 0.0f;
+            matrix.b = scale;
+            matrix.c = -scale;
+            matrix.d = 0.0f;
+            matrix.e = static_cast<float>((page_h - left) * scale);
+            matrix.f = static_cast<float>(-top * scale);
+        }
+        else if (rotation == 2)
+        {
+            matrix.a = -scale;
+            matrix.b = 0.0f;
+            matrix.c = 0.0f;
+            matrix.d = -scale;
+            matrix.e = static_cast<float>((page_w - left) * scale);
+            matrix.f = static_cast<float>(bottom * scale);
+        }
+        else
+        {
+            matrix.a = 0.0f;
+            matrix.b = -scale;
+            matrix.c = scale;
+            matrix.d = 0.0f;
+            matrix.e = static_cast<float>(-left * scale);
+            matrix.f = static_cast<float>((page_w - top) * scale);
+        }
+        FS_RECTF clip;
+        clip.left = 0.0f;
+        clip.top = 0.0f;
+        clip.right = static_cast<float>(render_width);
+        clip.bottom = static_cast<float>(render_height);
+        FPDF_RenderPageBitmapWithMatrix(
+            bitmap,
+            page,
+            &matrix,
+            &clip,
+            FPDF_ANNOT | FPDF_LCD_TEXT);
+
+        FPDFBitmap_Destroy(bitmap);
+        FPDF_ClosePage(page);
+        RenderedPage result;
+        result.pixels = std::move(pixels);
+        result.width = render_width;
+        result.height = render_height;
         result.stride = stride;
         return result;
     }

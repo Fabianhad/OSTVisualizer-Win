@@ -76,6 +76,14 @@ namespace ost_pdf
             int tile_w,
             int tile_h,
             int rotation = 0);
+        std::optional<RenderedPage> render_page_frame(
+            int page_index,
+            float scale,
+            double frame_x_pts,
+            double frame_y_pts,
+            double frame_w_pts,
+            double frame_h_pts,
+            int rotation = 0);
 
     private:
         void *doc_ = nullptr;

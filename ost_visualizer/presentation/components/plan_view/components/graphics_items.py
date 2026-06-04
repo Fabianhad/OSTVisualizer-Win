@@ -1,4 +1,5 @@
 import math
+import math
 from dataclasses import dataclass
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QPainter

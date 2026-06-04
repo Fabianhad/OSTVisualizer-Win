@@ -150,6 +150,47 @@ class PageRenderer:
         )
         return qimage.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
 
+    def render_frame(
+        self,
+        file_path: str,
+        page_index: int,
+        scale: float,
+        frame_x_pts: float,
+        frame_y_pts: float,
+        frame_w_pts: float,
+        frame_h_pts: float,
+        rotation: int = 0,
+    ) -> Optional[QImage]:
+        if not file_path:
+            return None
+        path = Path(file_path)
+        if not path.exists() or path.suffix.lower() != ".pdf":
+            return None
+        with self._pdfium_lock:
+            renderer = self._ensure_pdf_open_locked(file_path)
+            if not renderer:
+                return None
+            result = renderer.render_page_frame(
+                page_index,
+                scale,
+                frame_x_pts,
+                frame_y_pts,
+                frame_w_pts,
+                frame_h_pts,
+                rotation,
+            )
+        if not result:
+            return None
+        data = result.to_bytes()
+        qimage = QImage(
+            data,
+            result.width,
+            result.height,
+            result.stride,
+            QImage.Format.Format_ARGB32,
+        )
+        return qimage.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+
     def get_page_count(self, file_path: str) -> int:
         path = Path(file_path)
         if not path.exists() or path.suffix.lower() != ".pdf":

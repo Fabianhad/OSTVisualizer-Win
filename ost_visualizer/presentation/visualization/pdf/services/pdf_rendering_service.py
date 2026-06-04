@@ -48,6 +48,10 @@ class RenderRequest:
     tile_y: int = 0
     tile_w: int = 0
     tile_h: int = 0
+    frame_x_pts: float = 0.0
+    frame_y_pts: float = 0.0
+    frame_w_pts: float = 0.0
+    frame_h_pts: float = 0.0
 
 
 class RenderBridge(QObject):
@@ -172,6 +176,46 @@ class PDFRenderingService:
         )
         return self._enqueue_request(request)
 
+    def render_frame_async(
+        self,
+        file_path: str,
+        page_index: int,
+        scale: float,
+        rotation: int,
+        frame_x_pts: float,
+        frame_y_pts: float,
+        frame_w_pts: float,
+        frame_h_pts: float,
+        callback: Callable[[RenderResult], None],
+        priority: int = 1,
+        invert: bool = False,
+        bitonal: bool = False,
+        tint_rgb: Optional[tuple[int, int, int]] = None,
+    ) -> str:
+        request = RenderRequest(
+            request_id=str(uuid.uuid4()),
+            request_type="frame",
+            file_path=file_path,
+            page_index=page_index,
+            scale=scale,
+            rotation=rotation,
+            tint_rgb=tint_rgb,
+            invert=invert,
+            bitonal=bitonal,
+            priority=priority,
+            page_entity=None,
+            bid_ref=None,
+            view_scale=None,
+            show_mode=None,
+            cancelled=threading.Event(),
+            callback=callback,
+            frame_x_pts=frame_x_pts,
+            frame_y_pts=frame_y_pts,
+            frame_w_pts=frame_w_pts,
+            frame_h_pts=frame_h_pts,
+        )
+        return self._enqueue_request(request)
+
     def render_composite_async(
         self,
         page: Page,
@@ -278,6 +322,44 @@ class PDFRenderingService:
         )
         return self._enqueue_request(request)
 
+    def render_composite_frame_async(
+        self,
+        page: Page,
+        bid_ref: Optional[BidRef],
+        scale: float,
+        rotation: int,
+        frame_x_pts: float,
+        frame_y_pts: float,
+        frame_w_pts: float,
+        frame_h_pts: float,
+        callback: Callable[[RenderResult], None],
+        priority: int = 1,
+    ) -> str:
+        page_snapshot = _snapshot_page_for_render(page)
+        request = RenderRequest(
+            request_id=str(uuid.uuid4()),
+            request_type="composite_frame",
+            file_path=page_snapshot.image_path,
+            page_index=page_snapshot.page_index,
+            scale=scale,
+            rotation=rotation,
+            tint_rgb=None,
+            invert=page_snapshot.invert,
+            bitonal=page_snapshot.bitonal,
+            priority=priority,
+            page_entity=page_snapshot,
+            bid_ref=bid_ref,
+            view_scale=None,
+            show_mode=None,
+            cancelled=threading.Event(),
+            callback=callback,
+            frame_x_pts=frame_x_pts,
+            frame_y_pts=frame_y_pts,
+            frame_w_pts=frame_w_pts,
+            frame_h_pts=frame_h_pts,
+        )
+        return self._enqueue_request(request)
+
     def extract_pdf_text_async(
         self,
         file_path: str,
@@ -349,8 +431,12 @@ class PDFRenderingService:
                 return self._execute_overlay(request)
             elif request.request_type == "region":
                 return self._execute_region_render(request)
+            elif request.request_type == "frame":
+                return self._execute_frame_render(request)
             elif request.request_type == "composite_region":
                 return self._execute_composite_region(request)
+            elif request.request_type == "composite_frame":
+                return self._execute_composite_frame(request)
             elif request.request_type == "pdf_text":
                 return self._execute_pdf_text(request)
             else:
@@ -452,6 +538,25 @@ class PDFRenderingService:
             request.request_id, True, self._apply_image_effects(request, image), None
         )
 
+    def _execute_frame_render(self, request: RenderRequest) -> RenderResult:
+        image = self._page_cache.render_frame_uncached(
+            request.file_path,
+            request.page_index,
+            request.scale,
+            request.frame_x_pts,
+            request.frame_y_pts,
+            request.frame_w_pts,
+            request.frame_h_pts,
+            request.rotation,
+        )
+        if request.cancelled.is_set() or not image:
+            return RenderResult(request.request_id, False, None, "Cancelled or failed")
+        if request.tint_rgb:
+            image = tint_image(image, *request.tint_rgb)
+        return RenderResult(
+            request.request_id, True, self._apply_image_effects(request, image), None
+        )
+
     def _execute_composite_region(self, request: RenderRequest) -> RenderResult:
         page = request.page_entity
         if not page:
@@ -472,6 +577,34 @@ class PDFRenderingService:
                 False,
                 None,
                 "Failed to render composite region",
+            )
+        return RenderResult(
+            request.request_id,
+            True,
+            self._apply_image_effects(request, composited),
+            None,
+        )
+
+    def _execute_composite_frame(self, request: RenderRequest) -> RenderResult:
+        page = request.page_entity
+        if not page:
+            return RenderResult(request.request_id, False, None, "No page entity")
+        composited = self._composite_renderer.render_composite_frame(
+            page,
+            request.scale,
+            request.frame_x_pts,
+            request.frame_y_pts,
+            request.frame_w_pts,
+            request.frame_h_pts,
+            request.rotation,
+            cancelled_check=lambda: request.cancelled.is_set(),
+        )
+        if not composited:
+            return RenderResult(
+                request.request_id,
+                False,
+                None,
+                "Failed to render composite frame",
             )
         return RenderResult(
             request.request_id,

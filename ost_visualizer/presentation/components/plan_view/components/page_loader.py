@@ -20,13 +20,16 @@ _PDF_TILE_TRANSITION_Z = 0.3
 _PDF_TILE_CURRENT_Z = 0.35
 _OVERLAY_TILE_TRANSITION_Z = 0.6
 _OVERLAY_TILE_CURRENT_Z = 0.65
-_TILE_BLEED_PX = 1
 _TILE_SCALE_LOG_STEP = 0.125
 _BASE_RASTER_SCALE_STEP = 0.25
 _BASE_RASTER_MIN_SCALE = 1.0
 _BASE_RASTER_MAX_SCALE = 3.0
 _BASE_RASTER_MAX_PIXELS = 20_000_000
 _PLAN_VIEW_RASTER_ROTATION = 0
+
+
+def _native_pdf_pixel_extent(points: float, scale: float) -> int:
+    return int(points * scale + 0.5)
 
 
 class PageLoaderMixin:
@@ -486,7 +489,7 @@ class PageLoaderMixin:
         quantized_log = (
             math.ceil((log_scale - 1e-9) / _TILE_SCALE_LOG_STEP) * _TILE_SCALE_LOG_STEP
         )
-        return max(1.0, 2**quantized_log)
+        return round(max(1.0, 2**quantized_log), 3)
 
     def _compute_visible_tile_keys(
         self,
@@ -499,11 +502,12 @@ class PageLoaderMixin:
         raster_width_pts, raster_height_pts = self._tile_raster_dimensions(overlay)
         if raster_width_pts <= 0 or raster_height_pts <= 0:
             return set()
-        page_px_w = raster_width_pts * tile_scale
-        page_px_h = raster_height_pts * tile_scale
+        q_scale = self._quantize_tile_scale(tile_scale)
+        page_px_w = _native_pdf_pixel_extent(raster_width_pts, q_scale)
+        page_px_h = _native_pdf_pixel_extent(raster_height_pts, q_scale)
         num_cols = math.ceil(page_px_w / self.TILE_SIZE_PX)
         num_rows = math.ceil(page_px_h / self.TILE_SIZE_PX)
-        tile_scene_dim = self.TILE_SIZE_PX * view_scale / tile_scale
+        tile_scene_dim = self.TILE_SIZE_PX * view_scale / q_scale
         vp = viewport_scene_rect
         col_min = max(0, int((vp.left() - buffer * tile_scene_dim) / tile_scene_dim))
         row_min = max(0, int((vp.top() - buffer * tile_scene_dim) / tile_scene_dim))
@@ -514,7 +518,6 @@ class PageLoaderMixin:
             num_rows,
             int((vp.bottom() + buffer * tile_scene_dim) / tile_scene_dim) + 1,
         )
-        q_scale = self._quantize_tile_scale(tile_scale)
         return {
             TileKey(col, row, q_scale)
             for col in range(col_min, col_max)
@@ -524,27 +527,13 @@ class PageLoaderMixin:
     def _get_tile_render_local_rect(
         self, key: TileKey, overlay: bool = False
     ) -> QRectF:
-        view_scale = self._scene_scale
-        tile_x, tile_y, tile_w, tile_h = self._get_tile_px_rect(key, overlay)
-        bleed_left, bleed_top, bleed_right, bleed_bottom = self._get_tile_bleed_offsets(
-            tile_x, tile_y, tile_w, tile_h, key, overlay
-        )
-        render_x = tile_x - bleed_left
-        render_y = tile_y - bleed_top
-        render_w = tile_w + bleed_left + bleed_right
-        render_h = tile_h + bleed_top + bleed_bottom
-        return QRectF(
-            render_x * view_scale / key.scale,
-            render_y * view_scale / key.scale,
-            render_w * view_scale / key.scale,
-            render_h * view_scale / key.scale,
-        )
+        return self._get_tile_local_rect(key, overlay)
 
     def _get_tile_local_rect(self, key: TileKey, overlay: bool = False) -> QRectF:
         view_scale = self._scene_scale
         raster_width_pts, raster_height_pts = self._tile_raster_dimensions(overlay)
-        page_px_w = raster_width_pts * key.scale
-        page_px_h = raster_height_pts * key.scale
+        page_px_w = _native_pdf_pixel_extent(raster_width_pts, key.scale)
+        page_px_h = _native_pdf_pixel_extent(raster_height_pts, key.scale)
         tile_x_px = key.col * self.TILE_SIZE_PX
         tile_y_px = key.row * self.TILE_SIZE_PX
         tile_w_px = min(self.TILE_SIZE_PX, page_px_w - tile_x_px)
@@ -557,44 +546,16 @@ class PageLoaderMixin:
 
     def _get_tile_px_rect(self, key: TileKey, overlay: bool = False) -> tuple:
         raster_width_pts, raster_height_pts = self._tile_raster_dimensions(overlay)
-        page_px_w = int(raster_width_pts * key.scale)
-        page_px_h = int(raster_height_pts * key.scale)
+        page_px_w = _native_pdf_pixel_extent(raster_width_pts, key.scale)
+        page_px_h = _native_pdf_pixel_extent(raster_height_pts, key.scale)
         tile_x = key.col * self.TILE_SIZE_PX
         tile_y = key.row * self.TILE_SIZE_PX
         tile_w = min(self.TILE_SIZE_PX, page_px_w - tile_x)
         tile_h = min(self.TILE_SIZE_PX, page_px_h - tile_y)
         return (tile_x, tile_y, tile_w, tile_h)
 
-    def _get_tile_bleed_offsets(
-        self,
-        tile_x: int,
-        tile_y: int,
-        tile_w: int,
-        tile_h: int,
-        key: TileKey,
-        overlay: bool = False,
-    ) -> tuple:
-        raster_width_pts, raster_height_pts = self._tile_raster_dimensions(overlay)
-        page_px_w = int(raster_width_pts * key.scale)
-        page_px_h = int(raster_height_pts * key.scale)
-        return (
-            min(_TILE_BLEED_PX, tile_x),
-            min(_TILE_BLEED_PX, tile_y),
-            min(_TILE_BLEED_PX, max(0, page_px_w - (tile_x + tile_w))),
-            min(_TILE_BLEED_PX, max(0, page_px_h - (tile_y + tile_h))),
-        )
-
     def _get_tile_render_px_rect(self, key: TileKey, overlay: bool = False) -> tuple:
-        tile_x, tile_y, tile_w, tile_h = self._get_tile_px_rect(key, overlay)
-        bleed_left, bleed_top, bleed_right, bleed_bottom = self._get_tile_bleed_offsets(
-            tile_x, tile_y, tile_w, tile_h, key, overlay
-        )
-        return (
-            tile_x - bleed_left,
-            tile_y - bleed_top,
-            tile_w + bleed_left + bleed_right,
-            tile_h + bleed_top + bleed_bottom,
-        )
+        return self._get_tile_px_rect(key, overlay)
 
     def _evict_tiles(self, keep_keys: Set[TileKey]) -> None:
         evict_keys = (self._tile_items.keys() | self._tile_requests.keys()) - keep_keys
@@ -694,15 +655,12 @@ class PageLoaderMixin:
                     float(self._get_tile_px_rect(key, overlay)[3]),
                 ),
             )
-        tile_x, tile_y, tile_w, tile_h = self._get_tile_px_rect(key, overlay)
-        bleed_left, bleed_top, _bleed_right, _bleed_bottom = (
-            self._get_tile_bleed_offsets(tile_x, tile_y, tile_w, tile_h, key, overlay)
-        )
+        _tile_x, _tile_y, tile_w, tile_h = self._get_tile_px_rect(key, overlay)
         return (
             self._get_tile_local_rect(key, overlay),
             QRectF(
-                float(bleed_left),
-                float(bleed_top),
+                0.0,
+                0.0,
                 float(tile_w),
                 float(tile_h),
             ),
@@ -738,6 +696,12 @@ class PageLoaderMixin:
         self._evict_overlay_tile_keys(old_keys)
 
     def _clear_tiles(self) -> None:
+        self._clear_tile_grid()
+        self._clear_visible_frame()
+        self._set_low_res_base_item_visible(True)
+        self._set_low_res_overlay_items_visible(True)
+
+    def _clear_tile_grid(self) -> None:
         self._evict_tiles(set())
         self._evict_overlay_tile_keys(
             set(self._overlay_tile_items.keys())
@@ -745,14 +709,18 @@ class PageLoaderMixin:
         )
         self._tile_scale = 0.0
         self._overlay_tile_scale = 0.0
-        self._set_low_res_base_item_visible(True)
-        self._set_low_res_overlay_items_visible(True)
 
     def _set_low_res_base_item_visible(self, visible: bool) -> None:
         if self._background_item is not None and isValid(self._background_item):
             self._background_item.setVisible(visible)
 
     def _sync_low_res_base_visibility_for_tiles(self) -> None:
+        if self._visible_frame_kind in ("base", "composite"):
+            self._set_low_res_base_item_visible(
+                self._visible_frame_item is None
+                or self._visible_frame_request_id is not None
+            )
+            return
         page = self._current_page
         if not (
             page
@@ -773,6 +741,12 @@ class PageLoaderMixin:
                 item.setVisible(visible)
 
     def _sync_low_res_overlay_visibility_for_tiles(self) -> None:
+        if self._visible_frame_kind == "overlay":
+            self._set_low_res_overlay_items_visible(
+                self._visible_frame_item is None
+                or self._visible_frame_request_id is not None
+            )
+            return
         if self._uses_overlay_pdf_tiles():
             self._set_low_res_overlay_items_visible(
                 not bool(self._overlay_tile_items) or bool(self._overlay_tile_requests)
@@ -780,7 +754,10 @@ class PageLoaderMixin:
 
     def _tiles_active(self) -> bool:
         return bool(
-            self._tile_items
+            self._visible_frame_item
+            or self._visible_frame_request_id
+            or self._visible_frame_scale > 0
+            or self._tile_items
             or self._tile_requests
             or self._tile_scale > 0
             or self._overlay_tile_items
@@ -789,12 +766,248 @@ class PageLoaderMixin:
         )
 
     def _cancel_tile_requests(self) -> None:
+        self._cancel_visible_frame_request()
         for req_id in self._tile_requests.values():
             self._rendering_service.cancel_request(req_id)
         self._tile_requests.clear()
         for req_id in self._overlay_tile_requests.values():
             self._rendering_service.cancel_request(req_id)
         self._overlay_tile_requests.clear()
+
+    def _cancel_visible_frame_request(self) -> None:
+        if self._visible_frame_request_id:
+            self._rendering_service.cancel_request(self._visible_frame_request_id)
+        self._visible_frame_request_id = None
+
+    def _clear_visible_frame(self) -> None:
+        self._cancel_visible_frame_request()
+        if self._visible_frame_item is not None:
+            self._remove_tile_item(self._visible_frame_item)
+        self._visible_frame_item = None
+        self._visible_frame_key = None
+        self._visible_frame_kind = None
+        self._visible_frame_scale = 0.0
+
+    def _build_visible_frame_context(self, frame_scale: float) -> Optional[dict]:
+        page = self._current_page
+        viewport = self.viewport()
+        if (
+            page is None
+            or viewport is None
+            or not viewport.rect().isValid()
+            or frame_scale <= 0.0
+        ):
+            return None
+        if self._is_composite_mode:
+            kind = "composite"
+            file_path = page.image_path
+            page_index = page.page_index
+            rotation = _PLAN_VIEW_RASTER_ROTATION
+            source_w_pts, source_h_pts = self._rendered_pdf_page_dimensions()
+            transform = self._get_page_transform(
+                source_w_pts * self._scene_scale,
+                source_h_pts * self._scene_scale,
+            )
+        elif self._primary_tiles_use_overlay_pdf() or self._uses_both_overlay_pdf_tiles():
+            kind = "overlay"
+            file_path = page.overlay_image_path
+            page_index = 0
+            rotation = self._active_page_raster_rotation()
+            source_w_pts, source_h_pts = self._overlay_tile_raster_dimensions()
+            transform = self._overlay_pdf_tile_transform()
+        elif self._can_zoom_rerender:
+            kind = "base"
+            file_path = page.image_path
+            page_index = page.page_index
+            rotation = _PLAN_VIEW_RASTER_ROTATION
+            source_w_pts, source_h_pts = self._rendered_pdf_page_dimensions()
+            transform = self._get_page_transform(
+                source_w_pts * self._scene_scale,
+                source_h_pts * self._scene_scale,
+            )
+        else:
+            return None
+        if (
+            not file_path
+            or source_w_pts <= 0.0
+            or source_h_pts <= 0.0
+            or self._scene_scale <= 0.0
+        ):
+            return None
+        transform_inv, invertible = transform.inverted()
+        viewport_polygon = self.mapToScene(viewport.rect())
+        if invertible:
+            viewport_local_rect = transform_inv.map(viewport_polygon).boundingRect()
+        else:
+            viewport_local_rect = viewport_polygon.boundingRect()
+        source_local_rect = QRectF(
+            0.0,
+            0.0,
+            source_w_pts * self._scene_scale,
+            source_h_pts * self._scene_scale,
+        )
+        visible_local_rect = viewport_local_rect.intersected(source_local_rect)
+        if visible_local_rect.isNull() or visible_local_rect.isEmpty():
+            return None
+        frame_x_pts = visible_local_rect.left() / self._scene_scale
+        frame_y_pts = visible_local_rect.top() / self._scene_scale
+        frame_w_pts = visible_local_rect.width() / self._scene_scale
+        frame_h_pts = visible_local_rect.height() / self._scene_scale
+        if frame_w_pts <= 0.0 or frame_h_pts <= 0.0:
+            return None
+        key = (
+            kind,
+            file_path,
+            page_index,
+            round(frame_scale, 3),
+            rotation,
+            round(frame_x_pts, 3),
+            round(frame_y_pts, 3),
+            round(frame_w_pts, 3),
+            round(frame_h_pts, 3),
+        )
+        return {
+            "kind": kind,
+            "file_path": file_path,
+            "page_index": page_index,
+            "scale": frame_scale,
+            "rotation": rotation,
+            "frame_x_pts": frame_x_pts,
+            "frame_y_pts": frame_y_pts,
+            "frame_w_pts": frame_w_pts,
+            "frame_h_pts": frame_h_pts,
+            "source_w_pts": source_w_pts,
+            "source_h_pts": source_h_pts,
+            "key": key,
+        }
+
+    def _request_visible_frame(self, context: dict, generation_id: int) -> None:
+        key = context["key"]
+        if self._visible_frame_key == key and (
+            self._visible_frame_item is not None
+            or self._visible_frame_request_id is not None
+        ):
+            self._sync_low_res_base_visibility_for_tiles()
+            self._sync_low_res_overlay_visibility_for_tiles()
+            return
+        page = self._current_page
+        if page is None:
+            return
+        self._cancel_visible_frame_request()
+        if self._visible_frame_item is not None:
+            self._remove_tile_item(self._visible_frame_item)
+            self._visible_frame_item = None
+        self._visible_frame_key = key
+        self._visible_frame_kind = context["kind"]
+        self._visible_frame_scale = context["scale"]
+        self._sync_low_res_base_visibility_for_tiles()
+        self._sync_low_res_overlay_visibility_for_tiles()
+        load_token = self._current_load_token
+        render_identity = dict(self._current_render_identity or {})
+        weak_self = weakref.ref(self)
+
+        def on_frame_loaded(result: RenderResult) -> None:
+            view = weak_self()
+            if view is not None:
+                view._on_visible_frame_loaded(
+                    result,
+                    dict(context),
+                    load_token,
+                    render_identity,
+                    generation_id,
+                )
+
+        if context["kind"] == "composite":
+            request_id = self._rendering_service.render_composite_frame_async(
+                page=page,
+                bid_ref=self._current_bid_ref,
+                scale=context["scale"],
+                rotation=context["rotation"],
+                frame_x_pts=context["frame_x_pts"],
+                frame_y_pts=context["frame_y_pts"],
+                frame_w_pts=context["frame_w_pts"],
+                frame_h_pts=context["frame_h_pts"],
+                callback=on_frame_loaded,
+                priority=_RENDER_PRIORITY_VISIBLE_TILE,
+            )
+        else:
+            tint_rgb = None
+            if context["kind"] == "base" and page.image_show_mode == 2 and page.has_overlay:
+                tint_rgb = (255, 80, 80)
+            elif context["kind"] == "overlay" and page.image_show_mode == 2:
+                tint_rgb = (80, 80, 255)
+            request_id = self._rendering_service.render_frame_async(
+                file_path=context["file_path"],
+                page_index=context["page_index"],
+                scale=context["scale"],
+                rotation=context["rotation"],
+                frame_x_pts=context["frame_x_pts"],
+                frame_y_pts=context["frame_y_pts"],
+                frame_w_pts=context["frame_w_pts"],
+                frame_h_pts=context["frame_h_pts"],
+                callback=on_frame_loaded,
+                priority=_RENDER_PRIORITY_VISIBLE_TILE,
+                invert=page.invert,
+                bitonal=page.bitonal,
+                tint_rgb=tint_rgb,
+            )
+        self._visible_frame_request_id = request_id
+
+    def _on_visible_frame_loaded(
+        self,
+        result: RenderResult,
+        context: dict,
+        load_token: str,
+        render_identity,
+        generation_id: int,
+    ) -> None:
+        if self._visible_frame_request_id != result.request_id:
+            return
+        if not self._is_current_async_result(load_token, render_identity):
+            return
+        self._visible_frame_request_id = None
+        if (
+            self._is_stale_generation(generation_id)
+            or self._overlay_move_suppresses_normal_tiles()
+            or self._visible_frame_key != context["key"]
+            or not result.success
+            or not result.image
+        ):
+            self._sync_low_res_base_visibility_for_tiles()
+            self._sync_low_res_overlay_visibility_for_tiles()
+            return
+        if self._visible_frame_item is not None:
+            self._remove_tile_item(self._visible_frame_item)
+        image = result.image
+        scale = context["scale"]
+        local_rect = QRectF(
+            context["frame_x_pts"] * self._scene_scale,
+            context["frame_y_pts"] * self._scene_scale,
+            float(image.width()) * self._scene_scale / scale,
+            float(image.height()) * self._scene_scale / scale,
+        )
+        item = TileGraphicsItem(
+            image,
+            local_rect,
+            QRectF(0.0, 0.0, float(image.width()), float(image.height())),
+        )
+        if context["kind"] == "overlay":
+            item.setZValue(_OVERLAY_TILE_CURRENT_Z)
+            item.setTransform(self._overlay_pdf_tile_transform())
+        else:
+            item.setZValue(_PDF_TILE_CURRENT_Z)
+            item.setTransform(
+                self._get_page_transform(
+                    context["source_w_pts"] * self._scene_scale,
+                    context["source_h_pts"] * self._scene_scale,
+                )
+            )
+        self._scene.addItem(item)
+        self._visible_frame_item = item
+        self._visible_frame_kind = context["kind"]
+        self._visible_frame_scale = scale
+        self._sync_low_res_base_visibility_for_tiles()
+        self._sync_low_res_overlay_visibility_for_tiles()
 
     def _request_tile(self, key: TileKey, generation_id: int, priority: int) -> None:
         if key in self._tile_items or key in self._tile_requests:
@@ -1228,7 +1441,7 @@ class PageLoaderMixin:
         if not self._current_page:
             return
         if self._overlay_move_suppresses_normal_tiles():
-            self._cancel_tile_requests()
+            self._clear_tiles()
             return
         overlay_pdf_tiles = self._uses_overlay_pdf_tiles()
         if not (self._can_zoom_rerender or overlay_pdf_tiles):
@@ -1257,82 +1470,24 @@ class PageLoaderMixin:
             return
         generation_id = self._advance_render_generation()
         raw_scale = self._compute_tile_scale(view_m11)
-        tile_scale = self._quantize_tile_scale(raw_scale)
+        frame_scale = self._quantize_tile_scale(raw_scale)
         base_scale = self._base_raster_scale or self._scene_scale
-        if tile_scale <= base_scale * self._TILE_ACTIVATE_RATIO:
+        if frame_scale <= base_scale * self._TILE_ACTIVATE_RATIO:
             self._clear_tiles()
             if self._primary_tiles_use_overlay_pdf():
                 self._update_optional_overlay_base_coverage(view_m11, generation_id)
             else:
                 self._update_optional_base_coverage(view_m11, generation_id)
             return
-        if tile_scale != self._tile_scale:
-            self._tile_scale = tile_scale
-            self._demote_old_scale_tiles()
-        if (
-            self._uses_both_overlay_pdf_tiles()
-            and tile_scale != self._overlay_tile_scale
-        ):
-            self._overlay_tile_scale = tile_scale
-            self._demote_old_scale_tiles()
-        self._cancel_tile_requests()
+        self._clear_tile_grid()
         self._cancel_optional_base_correction()
-        if self._primary_tiles_use_overlay_pdf():
-            T = self._overlay_pdf_tile_transform()
-        else:
-            raster_width_pts, raster_height_pts = self._rendered_pdf_page_dimensions()
-            W = raster_width_pts * self._scene_scale
-            H = raster_height_pts * self._scene_scale
-            T = self._get_page_transform(W, H)
-        T_inv, invertible = T.inverted()
-        viewport_polygon = self.mapToScene(self.viewport().rect())
-        if invertible:
-            viewport_local_rect = T_inv.map(viewport_polygon).boundingRect()
-        else:
-            viewport_local_rect = viewport_polygon.boundingRect()
-        visible_keys, buffered_keys = self._partition_visible_and_buffered_tiles(
-            viewport_local_rect,
-            tile_scale,
-        )
-        needed_keys = visible_keys | buffered_keys
-        self._evict_old_scale_tiles_outside(self._tile_keys_local_rect(needed_keys))
-        self._evict_tiles_at_scale(tile_scale, needed_keys)
-        for key in sorted(visible_keys, key=lambda k: (k.row, k.col)):
-            self._request_tile(key, generation_id, _RENDER_PRIORITY_VISIBLE_TILE)
-        for key in sorted(buffered_keys, key=lambda k: (k.row, k.col)):
-            self._request_tile(key, generation_id, _RENDER_PRIORITY_BUFFERED_TILE)
-        self._sync_low_res_base_visibility_for_tiles()
-        if self._uses_both_overlay_pdf_tiles():
-            overlay_transform = self._overlay_pdf_tile_transform()
-            overlay_inv, overlay_invertible = overlay_transform.inverted()
-            if overlay_invertible:
-                overlay_viewport_local_rect = overlay_inv.map(
-                    viewport_polygon
-                ).boundingRect()
-            else:
-                overlay_viewport_local_rect = viewport_polygon.boundingRect()
-            overlay_visible, overlay_buffered = (
-                self._partition_visible_and_buffered_tiles(
-                    overlay_viewport_local_rect,
-                    tile_scale,
-                    overlay=True,
-                )
-            )
-            overlay_needed = overlay_visible | overlay_buffered
-            self._evict_old_overlay_scale_tiles_outside(
-                self._tile_keys_local_rect(overlay_needed, overlay=True)
-            )
-            self._evict_overlay_tiles_at_scale(tile_scale, overlay_needed)
-            for key in sorted(overlay_visible, key=lambda k: (k.row, k.col)):
-                self._request_overlay_tile(
-                    key, generation_id, _RENDER_PRIORITY_VISIBLE_TILE
-                )
-            for key in sorted(overlay_buffered, key=lambda k: (k.row, k.col)):
-                self._request_overlay_tile(
-                    key, generation_id, _RENDER_PRIORITY_BUFFERED_TILE
-                )
-        if not self._tile_requests:
-            self._evict_old_scale_tiles()
+        context = self._build_visible_frame_context(frame_scale)
+        if context is None:
+            self._clear_visible_frame()
+            self._sync_low_res_base_visibility_for_tiles()
+            self._sync_low_res_overlay_visibility_for_tiles()
+            return
+        self._request_visible_frame(context, generation_id)
 
     def _partition_visible_and_buffered_tiles(
         self, viewport_local_rect: QRectF, tile_scale: float, overlay: bool = False
@@ -1363,6 +1518,12 @@ class PageLoaderMixin:
         for item in self._overlay_tile_items.values():
             self._remove_tile_item(item)
         self._overlay_tile_items.clear()
+        if self._visible_frame_item is not None:
+            self._remove_tile_item(self._visible_frame_item)
+        self._visible_frame_item = None
+        self._visible_frame_key = None
+        self._visible_frame_kind = None
+        self._visible_frame_scale = 0.0
         self._tile_scale = 0.0
         self._overlay_tile_scale = 0.0
         self._set_low_res_base_item_visible(True)

@@ -761,7 +761,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertAlmostEqual(scene_rect.y(), 136.0, places=5)
         self.assertAlmostEqual(scene_rect.width(), 64.0, places=5)
         self.assertAlmostEqual(scene_rect.height(), 64.0, places=5)
-        self.assertEqual(source_rect, QtCore.QRectF(1.0, 1.0, 256.0, 256.0))
+        self.assertEqual(source_rect, QtCore.QRectF(0.0, 0.0, 256.0, 256.0))
         view.cleanup()
 
     def test_page_result_keeps_white_canvas_behind_transparent_raster(self):

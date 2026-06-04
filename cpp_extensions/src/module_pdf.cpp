@@ -166,6 +166,28 @@ Args:
 Returns:
     RenderedPage with dimensions (tile_w, tile_h), or None on failure
 )doc")
+            .def("render_page_frame", &PDFRenderer::render_page_frame,
+                 nb::arg("page_index"),
+                 nb::arg("scale"),
+                 nb::arg("frame_x_pts"),
+                 nb::arg("frame_y_pts"),
+                 nb::arg("frame_w_pts"),
+                 nb::arg("frame_h_pts"),
+                 nb::arg("rotation") = 0,
+                 nb::call_guard<nb::gil_scoped_release>(),
+                 R"doc(
+Render a PDF page frame to BGRA pixels.
+Args:
+    page_index: Zero-based page index
+    scale: Render scale (1.0 = 72 DPI)
+    frame_x_pts: Left of the frame in top-left page-canvas points
+    frame_y_pts: Top of the frame in top-left page-canvas points
+    frame_w_pts: Frame width in points
+    frame_h_pts: Frame height in points
+    rotation: user-applied rotation in degrees
+Returns:
+    RenderedPage clipped to the loaded page bounds, or None on failure
+)doc")
             .def("render_page", &PDFRenderer::render_page,
                  nb::arg("page_index"),
                  nb::arg("scale") = 1.0f,

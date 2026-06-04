@@ -58,6 +58,22 @@ class IPageRenderingService(Protocol):
         bitonal: bool = False,
         tint_rgb: tuple[int, int, int] | None = None,
     ) -> str: ...
+    def render_frame_async(
+        self,
+        file_path: str,
+        page_index: int,
+        scale: float,
+        rotation: int,
+        frame_x_pts: float,
+        frame_y_pts: float,
+        frame_w_pts: float,
+        frame_h_pts: float,
+        callback: Callable[[RenderResult], None],
+        priority: int = 1,
+        invert: bool = False,
+        bitonal: bool = False,
+        tint_rgb: tuple[int, int, int] | None = None,
+    ) -> str: ...
     def render_composite_region_async(
         self,
         page: Page,
@@ -68,6 +84,19 @@ class IPageRenderingService(Protocol):
         tile_y: int,
         tile_w: int,
         tile_h: int,
+        callback: Callable[[RenderResult], None],
+        priority: int = 1,
+    ) -> str: ...
+    def render_composite_frame_async(
+        self,
+        page: Page,
+        bid_ref: BidRef | None,
+        scale: float,
+        rotation: int,
+        frame_x_pts: float,
+        frame_y_pts: float,
+        frame_w_pts: float,
+        frame_h_pts: float,
         callback: Callable[[RenderResult], None],
         priority: int = 1,
     ) -> str: ...

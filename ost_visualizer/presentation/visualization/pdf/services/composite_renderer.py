@@ -10,6 +10,15 @@ from ..page_cache import PageCache
 
 _COMPOSITE_CACHE_MAX_BYTES = 96 * 1024 * 1024
 _COMPOSITE_CACHE_MAX_SINGLE_IMAGE_BYTES = 48 * 1024 * 1024
+_NEAR_NATIVE_OVERLAY_SCALE_TOLERANCE = 0.0015
+
+
+def _quantize_render_scale(scale: float) -> float:
+    return max(0.1, round(scale, 3))
+
+
+def _native_pdf_pixel_extent(points: float, scale: float) -> int:
+    return int(points * scale + 0.5)
 
 
 class CompositeRenderer:
@@ -181,10 +190,11 @@ class CompositeRenderer:
     ) -> Optional[QImage]:
         if tile_w <= 0 or tile_h <= 0:
             return None
+        render_scale = _quantize_render_scale(scale)
         red_tile = self._page_cache.render_region_uncached(
             page.image_path,
             page.page_index,
-            scale,
+            render_scale,
             tile_x,
             tile_y,
             tile_w,
@@ -198,37 +208,51 @@ class CompositeRenderer:
             return None
         if not page.overlay_image_path:
             return red_tinted
+        source_w, source_h = self._page_cache.get_page_size(page.overlay_image_path, 0)
+        canvas_w = _native_pdf_pixel_extent(page.effective_width_pts, render_scale)
+        canvas_h = _native_pdf_pixel_extent(page.effective_height_pts, render_scale)
+        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_canvas(
+            canvas_w,
+            canvas_h,
+        )
+        total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
         is_overlay_pdf = page.overlay_image_path.lower().endswith(".pdf")
-        pdf_width_pts = page.width_pts
         if is_overlay_pdf:
-            overlay_scale = scale
+            overlay_scale = self._overlay_pdf_region_scale(
+                source_w,
+                source_h,
+                rect_w,
+                rect_h,
+                total_rotation,
+                render_scale,
+            )
+            source_width_px = _native_pdf_pixel_extent(source_w, overlay_scale)
+            source_height_px = _native_pdf_pixel_extent(source_h, overlay_scale)
         else:
             native_w, _ = self._page_cache.get_page_size(page.overlay_image_path, 0)
+            pdf_width_pts = page.width_pts
             overlay_scale = (
                 native_w / pdf_width_pts
                 if pdf_width_pts > 0 and native_w > 0
-                else scale
+                else render_scale
             )
-        source_w, source_h = self._page_cache.get_page_size(page.overlay_image_path, 0)
-        source_w_px = source_w * overlay_scale
-        source_h_px = source_h * overlay_scale
-        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_canvas(
-            page.effective_width_pts * scale,
-            page.effective_height_pts * scale,
-        )
-        if source_w_px <= 0.0 or source_h_px <= 0.0 or rect_w <= 0.0 or rect_h <= 0.0:
+            source_width_px = int(source_w)
+            source_height_px = int(source_h)
+        if (
+            source_width_px <= 0
+            or source_height_px <= 0
+            or rect_w <= 0.0
+            or rect_h <= 0.0
+        ):
             return red_tinted
-        total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
         source_to_canvas = self._build_transform(
             rect_x,
             rect_y,
             total_rotation,
-            rect_w / source_w_px,
-            rect_h / source_h_px,
+            rect_w / source_width_px,
+            rect_h / source_height_px,
         )
-        source_width_px = int(math.ceil(source_w_px))
-        source_height_px = int(math.ceil(source_h_px))
-        use_full_scale_integer_crop = self._is_unrotated_full_scale_overlay(
+        use_full_scale_integer_crop = self._is_unrotated_near_native_overlay(
             total_rotation,
             source_to_canvas,
         )
@@ -296,18 +320,221 @@ class CompositeRenderer:
         painter.end()
         return result
 
-    def _is_unrotated_full_scale_overlay(
+    def render_composite_frame(
+        self,
+        page: Page,
+        scale: float,
+        frame_x_pts: float,
+        frame_y_pts: float,
+        frame_w_pts: float,
+        frame_h_pts: float,
+        rotation: int,
+        cancelled_check=None,
+    ) -> Optional[QImage]:
+        if frame_w_pts <= 0.0 or frame_h_pts <= 0.0:
+            return None
+        frame = self._clip_frame_to_page(
+            frame_x_pts,
+            frame_y_pts,
+            frame_w_pts,
+            frame_h_pts,
+            page.effective_width_pts,
+            page.effective_height_pts,
+        )
+        if frame is None:
+            return None
+        frame_x, frame_y, frame_w, frame_h = frame
+        render_scale = _quantize_render_scale(scale)
+        red_frame = self._page_cache.render_frame_uncached(
+            page.image_path,
+            page.page_index,
+            render_scale,
+            frame_x,
+            frame_y,
+            frame_w,
+            frame_h,
+            rotation,
+        )
+        if not red_frame:
+            return None
+        red_tinted = tint_image(red_frame, 255, 80, 80)
+        if cancelled_check and cancelled_check():
+            return None
+        result = QImage(
+            red_tinted.width(),
+            red_tinted.height(),
+            QImage.Format.Format_ARGB32,
+        )
+        result.fill(QColor(255, 255, 255))
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.drawImage(0, 0, red_tinted)
+        if page.overlay_image_path:
+            if page.overlay_image_path.lower().endswith(".pdf"):
+                self._draw_overlay_pdf_frame(
+                    painter,
+                    page,
+                    render_scale,
+                    frame_x,
+                    frame_y,
+                    frame_w,
+                    frame_h,
+                    rotation,
+                    cancelled_check,
+                )
+            else:
+                blue = self._page_cache.get_tinted_page(
+                    page.overlay_image_path,
+                    0,
+                    1.0,
+                    rotation,
+                    tint_rgb=(80, 80, 255),
+                )
+                if blue:
+                    painter.save()
+                    painter.scale(render_scale, render_scale)
+                    painter.translate(-frame_x, -frame_y)
+                    self._draw_overlay_image(
+                        painter,
+                        blue,
+                        page,
+                        page.effective_width_pts,
+                        page.effective_height_pts,
+                    )
+                    painter.restore()
+        painter.end()
+        return result
+
+    def _draw_overlay_pdf_frame(
+        self,
+        painter: QPainter,
+        page: Page,
+        render_scale: float,
+        frame_x: float,
+        frame_y: float,
+        frame_w: float,
+        frame_h: float,
+        rotation: int,
+        cancelled_check=None,
+    ) -> None:
+        source_w, source_h = self._page_cache.get_page_size(page.overlay_image_path, 0)
+        rect_x, rect_y, rect_w, rect_h = page.overlay_rect_page_points()
+        if source_w <= 0.0 or source_h <= 0.0 or rect_w <= 0.0 or rect_h <= 0.0:
+            return
+        total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
+        source_to_page = self._build_transform(
+            rect_x,
+            rect_y,
+            total_rotation,
+            rect_w / source_w,
+            rect_h / source_h,
+        )
+        page_to_source, ok = source_to_page.inverted()
+        if not ok:
+            return
+        frame_rect = QRectF(frame_x, frame_y, frame_w, frame_h)
+        source_rect = page_to_source.mapRect(frame_rect)
+        source_x = max(0.0, min(source_w, math.floor(source_rect.left())))
+        source_y = max(0.0, min(source_h, math.floor(source_rect.top())))
+        source_right = max(0.0, min(source_w, math.ceil(source_rect.right())))
+        source_bottom = max(0.0, min(source_h, math.ceil(source_rect.bottom())))
+        source_frame_w = source_right - source_x
+        source_frame_h = source_bottom - source_y
+        if source_frame_w <= 0.0 or source_frame_h <= 0.0:
+            return
+        overlay_scale = self._overlay_pdf_frame_scale(
+            render_scale,
+            rect_w / source_w,
+            rect_h / source_h,
+        )
+        blue_frame = self._page_cache.render_frame_uncached(
+            page.overlay_image_path,
+            0,
+            overlay_scale,
+            source_x,
+            source_y,
+            source_frame_w,
+            source_frame_h,
+            rotation,
+        )
+        if cancelled_check and cancelled_check():
+            return
+        if not blue_frame:
+            return
+        blue_tinted = tint_image(blue_frame, 80, 80, 255)
+        painter.save()
+        transform = QTransform()
+        transform.translate(-frame_x * render_scale, -frame_y * render_scale)
+        transform.scale(render_scale, render_scale)
+        transform *= source_to_page
+        transform.translate(source_x, source_y)
+        transform.scale(1.0 / overlay_scale, 1.0 / overlay_scale)
+        painter.setTransform(transform)
+        painter.drawImage(0, 0, blue_tinted)
+        painter.restore()
+
+    def _overlay_pdf_frame_scale(
+        self, render_scale: float, scale_x: float, scale_y: float
+    ) -> float:
+        overlay_scale = render_scale * max(abs(scale_x), abs(scale_y))
+        return _quantize_render_scale(max(0.1, overlay_scale))
+
+    def _clip_frame_to_page(
+        self,
+        frame_x: float,
+        frame_y: float,
+        frame_w: float,
+        frame_h: float,
+        page_w: float,
+        page_h: float,
+    ) -> Optional[tuple[float, float, float, float]]:
+        left = max(0.0, frame_x)
+        top = max(0.0, frame_y)
+        right = min(page_w, frame_x + frame_w)
+        bottom = min(page_h, frame_y + frame_h)
+        if right <= left or bottom <= top:
+            return None
+        return left, top, right - left, bottom - top
+
+    def _is_unrotated_near_native_overlay(
         self,
         total_rotation: float,
         source_to_canvas: QTransform,
     ) -> bool:
         return (
             abs(total_rotation) < 1e-12
-            and abs(source_to_canvas.m11() - 1.0) < 1e-9
-            and abs(source_to_canvas.m22() - 1.0) < 1e-9
+            and abs(source_to_canvas.m11() - 1.0)
+            <= _NEAR_NATIVE_OVERLAY_SCALE_TOLERANCE
+            and abs(source_to_canvas.m22() - 1.0)
+            <= _NEAR_NATIVE_OVERLAY_SCALE_TOLERANCE
             and abs(source_to_canvas.m12()) < 1e-12
             and abs(source_to_canvas.m21()) < 1e-12
         )
+
+    def _overlay_pdf_region_scale(
+        self,
+        source_w: float,
+        source_h: float,
+        rect_w: float,
+        rect_h: float,
+        total_rotation: float,
+        fallback_scale: float,
+    ) -> float:
+        if (
+            abs(total_rotation) >= 1e-12
+            or source_w <= 0.0
+            or source_h <= 0.0
+            or rect_w <= 0.0
+            or rect_h <= 0.0
+        ):
+            return fallback_scale
+        scale_x = rect_w / source_w
+        scale_y = rect_h / source_h
+        if scale_x <= 0.0 or scale_y <= 0.0:
+            return fallback_scale
+        if abs(scale_x - scale_y) / max(scale_x, scale_y) > 0.001:
+            return fallback_scale
+        return _quantize_render_scale((scale_x + scale_y) / 2.0)
 
     def _source_crop_to_tile_transform(
         self,
