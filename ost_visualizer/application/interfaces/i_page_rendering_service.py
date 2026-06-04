@@ -17,6 +17,8 @@ class IPageRenderingService(Protocol):
         invert: bool = False,
         bitonal: bool = False,
         tint_rgb: tuple[int, int, int] | None = None,
+        apply_invert_effect: bool = True,
+        apply_bitonal_effect: bool = True,
     ) -> str: ...
     def render_composite_async(
         self,
@@ -37,6 +39,8 @@ class IPageRenderingService(Protocol):
         callback: Callable[[RenderResult], None],
         priority: int = 0,
         render_scale: float | None = None,
+        apply_invert_effect: bool = True,
+        apply_bitonal_effect: bool = True,
     ) -> str: ...
     def render_region_async(
         self,

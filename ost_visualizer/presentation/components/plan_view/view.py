@@ -1,5 +1,6 @@
 import math
 import os
+import weakref
 import uuid
 from dataclasses import replace
 from enum import Enum
@@ -301,6 +302,14 @@ class TakeoffPlanView(
             Tuple[float, float, float, float]
         ] = None
         self._overlay_move_dragging: bool = False
+        self._overlay_move_preview_base_item: Optional[ImageBackgroundItem] = None
+        self._overlay_move_preview_overlay_item: Optional[QGraphicsPixmapItem] = None
+        self._overlay_move_preview_base_request_id: Optional[str] = None
+        self._overlay_move_preview_overlay_request_id: Optional[str] = None
+        self._overlay_move_preview_overlay_request_scale: float = 0.0
+        self._overlay_move_preview_generation_id: int = 0
+        self._overlay_move_hidden_visual_visibility: Dict[QGraphicsItem, bool] = {}
+        self._overlay_move_normal_visuals_hidden: bool = False
         self._rotate_handle_item: Optional[QGraphicsPixmapItem] = None
         self._rotate_line_item: Optional[QGraphicsLineItem] = None
         self._rotate_line_outline_item: Optional[QGraphicsLineItem] = None
@@ -2488,6 +2497,21 @@ class TakeoffPlanView(
         self._update_scene_rect()
         self.viewport().update()
 
+    def _force_reload_current_page_visuals(self) -> bool:
+        page = self._current_page
+        if page is None:
+            return False
+        return self._load_page_impl(
+            page,
+            list(self._current_takeoffs.values()),
+            self._current_conditions,
+            self._current_color_map,
+            self._current_bid_ref,
+            list(self._current_annotations.values()),
+            self._current_page_area_selections,
+            force_visual_reload=True,
+        )
+
     def find_annotation_keys_by_uid_type(self, uid_type_set: set) -> set:
         return {
             key
@@ -3067,6 +3091,7 @@ class TakeoffPlanView(
         self._overlay_move_anchor_scene = None
         self._overlay_move_drag_start_rect = None
         self._overlay_move_dragging = False
+        self._start_overlay_move_preview_setup(rect)
         page_rect = self._page_scene_rect()
         center = (
             page_rect.center()
@@ -3081,14 +3106,22 @@ class TakeoffPlanView(
         return True
 
     def cancel_overlay_move_mode(self, restore_preview: bool = True) -> None:
-        if restore_preview and self._overlay_move_original_rect is not None:
-            self._set_current_overlay_rect(self._overlay_move_original_rect)
+        if (
+            restore_preview
+            and self._overlay_move_original_rect is not None
+            and self._current_page is not None
+        ):
+            self._current_page.overlay_rect = tuple(self._overlay_move_original_rect)
+            self._current_render_identity = self._build_render_identity(
+                self._current_page, self._current_bid_ref
+            )
         self._overlay_move_original_rect = None
         self._overlay_move_preview_rect = None
         self._overlay_move_anchor_scene = None
         self._overlay_move_drag_start_rect = None
         self._overlay_move_dragging = False
         self._remove_overlay_move_handle()
+        self._clear_overlay_move_preview_visuals(restore_normal=True)
         if self._cursor_mode in ("move_overlay", "move_overlay_handle"):
             self._apply_cursor_mode("select")
             self.cursor_mode_change_requested.emit("select")
@@ -3102,6 +3135,352 @@ class TakeoffPlanView(
             return (float(rect_x), float(rect_y), float(rect_w), float(rect_h))
         except (TypeError, ValueError):
             return None
+
+    def _overlay_move_suppresses_normal_tiles(self) -> bool:
+        return getattr(self, "_overlay_move_original_rect", None) is not None
+
+    def _overlay_move_page_for_rect(
+        self, overlay_rect: Tuple[float, float, float, float]
+    ) -> Optional[Page]:
+        page = self._current_page
+        if page is None:
+            return None
+        return replace(page, overlay_rect=tuple(float(value) for value in overlay_rect))
+
+    def _ensure_overlay_move_white_canvas(self) -> None:
+        page = self._current_page
+        if page is None or self._white_canvas_item is not None:
+            return
+        width = page.effective_width_pts * self._scene_scale
+        height = page.effective_height_pts * self._scene_scale
+        if width <= 0.0 or height <= 0.0:
+            return
+        self._white_canvas_item = self._scene_builder.create_white_canvas(
+            self._scene,
+            width,
+            height,
+            color=self._page_canvas_color(),
+        )
+        self._apply_page_transform_to_items()
+        self._update_scene_rect()
+
+    def _overlay_move_normal_visual_items(self) -> List[QGraphicsItem]:
+        items: List[QGraphicsItem] = []
+        for item in (self._background_item,):
+            if item is not None:
+                items.append(item)
+        items.extend(self._overlay_items)
+        items.extend(self._tile_items.values())
+        items.extend(self._overlay_tile_items.values())
+        preview_items = {
+            id(self._overlay_move_preview_base_item),
+            id(self._overlay_move_preview_overlay_item),
+        }
+        return [
+            item
+            for item in items
+            if item is not None and id(item) not in preview_items and isValid(item)
+        ]
+
+    def _hide_overlay_move_normal_visuals(self) -> None:
+        if self._overlay_move_normal_visuals_hidden:
+            return
+        for item in self._overlay_move_normal_visual_items():
+            self._overlay_move_hidden_visual_visibility[item] = item.isVisible()
+            item.setVisible(False)
+        self._overlay_move_normal_visuals_hidden = True
+
+    def _restore_overlay_move_normal_visuals(self) -> None:
+        for item, visible in list(self._overlay_move_hidden_visual_visibility.items()):
+            if item is not None and isValid(item) and item.scene() is self._scene:
+                item.setVisible(visible)
+        self._overlay_move_hidden_visual_visibility.clear()
+        self._overlay_move_normal_visuals_hidden = False
+
+    def _set_overlay_move_preview_items_visible(self, visible: bool) -> None:
+        for item in (
+            self._overlay_move_preview_base_item,
+            self._overlay_move_preview_overlay_item,
+        ):
+            if item is not None and isValid(item):
+                item.setVisible(visible)
+
+    def _overlay_move_preview_base_ready(self) -> bool:
+        page = self._current_page
+        if page is None or not page.image_path:
+            return True
+        return bool(
+            self._overlay_move_preview_base_item is not None
+            and isValid(self._overlay_move_preview_base_item)
+        )
+
+    def _activate_overlay_move_preview_visuals(self, force: bool = False) -> None:
+        if not force and not self._overlay_move_preview_base_ready():
+            return
+        self._hide_overlay_move_normal_visuals()
+        self._set_overlay_move_preview_items_visible(True)
+        self.viewport().update()
+
+    def _cancel_overlay_move_preview_requests(self) -> None:
+        if self._overlay_move_preview_base_request_id:
+            self._rendering_service.cancel_request(
+                self._overlay_move_preview_base_request_id
+            )
+        self._overlay_move_preview_base_request_id = None
+        self._cancel_overlay_move_overlay_request()
+
+    def _cancel_overlay_move_overlay_request(self) -> None:
+        if self._overlay_move_preview_overlay_request_id:
+            self._rendering_service.cancel_request(
+                self._overlay_move_preview_overlay_request_id
+            )
+        self._overlay_move_preview_overlay_request_id = None
+        self._overlay_move_preview_overlay_request_scale = 0.0
+
+    def _invalidate_overlay_move_preview_requests(self) -> None:
+        self._overlay_move_preview_generation_id += 1
+        self._cancel_overlay_move_preview_requests()
+
+    def _clear_overlay_move_preview_visuals(self, restore_normal: bool) -> None:
+        self._invalidate_overlay_move_preview_requests()
+        for item in (
+            self._overlay_move_preview_base_item,
+            self._overlay_move_preview_overlay_item,
+        ):
+            if item is not None and isValid(item):
+                if isinstance(item, ImageBackgroundItem):
+                    item.clear_image()
+                elif isinstance(item, QGraphicsPixmapItem):
+                    item.setPixmap(QPixmap())
+                if item.scene() is self._scene:
+                    self._scene.removeItem(item)
+        self._overlay_move_preview_base_item = None
+        self._overlay_move_preview_overlay_item = None
+        if restore_normal:
+            self._restore_overlay_move_normal_visuals()
+        else:
+            self._overlay_move_hidden_visual_visibility.clear()
+            self._overlay_move_normal_visuals_hidden = False
+        self.viewport().update()
+
+    def _start_overlay_move_preview_setup(
+        self, overlay_rect: Tuple[float, float, float, float]
+    ) -> None:
+        page = self._current_page
+        if page is None:
+            return
+        self._clear_overlay_move_preview_visuals(restore_normal=True)
+        generation_id = self._overlay_move_preview_generation_id
+        self._ensure_overlay_move_white_canvas()
+        if page.image_path:
+            self._request_overlay_move_base_preview(generation_id)
+        if page.overlay_image_path:
+            self._request_overlay_move_overlay_preview(
+                generation_id,
+                overlay_rect,
+            )
+        self._activate_overlay_move_preview_visuals()
+
+    def _request_overlay_move_base_preview(self, generation_id: int) -> None:
+        page = self._current_page
+        if page is None or not page.image_path:
+            return
+        scale = self._base_raster_scale or self._scene_scale
+        weak_self = weakref.ref(self)
+
+        def on_loaded(result, _generation_id: int = generation_id) -> None:
+            view = weak_self()
+            if view is not None:
+                view._on_overlay_move_base_preview_loaded(result, _generation_id)
+
+        tint_rgb = (255, 80, 80) if page.image_show_mode == 2 else None
+        self._overlay_move_preview_base_request_id = (
+            self._rendering_service.render_page_async(
+                file_path=page.image_path,
+                page_index=page.page_index,
+                scale=scale,
+                rotation=0,
+                callback=on_loaded,
+                priority=0,
+                invert=page.invert,
+                bitonal=page.bitonal,
+                tint_rgb=tint_rgb,
+                apply_invert_effect=True,
+                apply_bitonal_effect=tint_rgb is None,
+            )
+        )
+
+    def _on_overlay_move_base_preview_loaded(self, result, generation_id: int) -> None:
+        if result.request_id != self._overlay_move_preview_base_request_id:
+            return
+        self._overlay_move_preview_base_request_id = None
+        if (
+            generation_id != self._overlay_move_preview_generation_id
+            or not result.success
+            or not result.image
+            or self._current_page is None
+        ):
+            return
+        data = {
+            "page": self._current_page,
+            "pdf_width_pts": self._pdf_width_pts,
+            "pdf_height_pts": self._pdf_height_pts,
+            "rotation": self._current_rotation,
+        }
+        scene_width, scene_height = self._logical_page_scene_dimensions(data, result)
+        old_item = self._overlay_move_preview_base_item
+        if (
+            old_item is not None
+            and isValid(old_item)
+            and old_item.scene() is self._scene
+        ):
+            old_item.clear_image()
+            self._scene.removeItem(old_item)
+        item = ImageBackgroundItem(result.image, scene_width, scene_height)
+        item.setZValue(0.05)
+        item.setVisible(self._overlay_move_normal_visuals_hidden)
+        self._scene.addItem(item)
+        self._overlay_move_preview_base_item = item
+        self._apply_overlay_move_preview_page_transform()
+        self._activate_overlay_move_preview_visuals()
+
+    def _overlay_move_overlay_render_scale(self) -> float:
+        page = self._current_page
+        if page is None or not page.overlay_image_path:
+            return self._scene_scale
+        if not page.overlay_image_path.lower().endswith(".pdf"):
+            return 1.0
+        return self._scene_scale
+
+    def _request_overlay_move_overlay_preview(
+        self,
+        generation_id: int,
+        overlay_rect: Tuple[float, float, float, float],
+    ) -> None:
+        page = self._overlay_move_page_for_rect(overlay_rect)
+        if page is None or not page.overlay_image_path:
+            return
+        if self._overlay_move_preview_overlay_request_id:
+            self._cancel_overlay_move_overlay_request()
+        render_scale = self._overlay_move_overlay_render_scale()
+        self._overlay_move_preview_overlay_request_scale = render_scale
+        weak_self = weakref.ref(self)
+
+        def on_loaded(result, _generation_id: int = generation_id) -> None:
+            view = weak_self()
+            if view is not None:
+                view._on_overlay_move_overlay_preview_loaded(result, _generation_id)
+
+        tint_rgb = (80, 80, 255) if page.image_show_mode == 2 else None
+        self._overlay_move_preview_overlay_request_id = (
+            self._rendering_service.render_overlay_async(
+                page=page,
+                bid_ref=self._current_bid_ref,
+                view_scale=self._scene_scale,
+                show_mode=page.image_show_mode,
+                rotation=self._active_page_raster_rotation(),
+                callback=on_loaded,
+                priority=0,
+                render_scale=render_scale,
+                apply_invert_effect=True,
+                apply_bitonal_effect=tint_rgb is None,
+            )
+        )
+
+    def _on_overlay_move_overlay_preview_loaded(
+        self, result, generation_id: int
+    ) -> None:
+        if result.request_id != self._overlay_move_preview_overlay_request_id:
+            return
+        render_scale = self._overlay_move_preview_overlay_request_scale
+        self._overlay_move_preview_overlay_request_id = None
+        self._overlay_move_preview_overlay_request_scale = 0.0
+        if (
+            generation_id != self._overlay_move_preview_generation_id
+            or not result.success
+            or not result.image
+        ):
+            return
+        preview_rect = self._overlay_move_preview_rect
+        page = (
+            self._overlay_move_page_for_rect(preview_rect)
+            if preview_rect
+            else self._current_page
+        )
+        if page is None:
+            return
+        if page.overlay_image_path and page.overlay_image_path.lower().endswith(".pdf"):
+            if render_scale > 0:
+                self._overlay_pdf_width_pts = float(result.image.width()) / render_scale
+                self._overlay_pdf_height_pts = (
+                    float(result.image.height()) / render_scale
+                )
+        pixmap = QPixmap.fromImage(result.image)
+        item = self._create_overlay_graphics_item(
+            pixmap,
+            page,
+            self._scene_scale,
+            page.image_show_mode,
+        )
+        if item is None:
+            return
+        item.setZValue(0.55)
+        item.setVisible(self._overlay_move_normal_visuals_hidden)
+        old_item = self._overlay_move_preview_overlay_item
+        if (
+            old_item is not None
+            and isValid(old_item)
+            and old_item.scene() is self._scene
+        ):
+            old_item.setPixmap(QPixmap())
+            self._scene.removeItem(old_item)
+        self._scene.addItem(item)
+        self._overlay_move_preview_overlay_item = item
+        self._activate_overlay_move_preview_visuals()
+
+    def _apply_overlay_move_preview_page_transform(self) -> None:
+        dims = self._get_page_rect_dimensions()
+        if dims is None:
+            return
+        transform = self._get_page_transform(*dims)
+        item = self._overlay_move_preview_base_item
+        if item is not None and isValid(item):
+            item.setTransform(transform)
+
+    def _apply_overlay_move_preview_rect_to_visuals(self) -> None:
+        preview_rect = self._overlay_move_preview_rect
+        page = self._overlay_move_page_for_rect(preview_rect) if preview_rect else None
+        item = self._overlay_move_preview_overlay_item
+        if page is None or item is None or not isValid(item):
+            self.viewport().update()
+            return
+        pixmap = item.pixmap()
+        transform = self._overlay_graphics_transform(
+            page,
+            pixmap.width(),
+            pixmap.height(),
+            self._scene_scale,
+        )
+        if transform is not None:
+            item.setTransform(transform)
+            item.update()
+        self.viewport().update()
+
+    def _accept_overlay_move_preview_rect(
+        self, overlay_rect: Tuple[float, float, float, float]
+    ) -> None:
+        if self._current_page is None:
+            return
+        self._invalidate_overlay_move_preview_requests()
+        self._current_page.overlay_rect = tuple(float(value) for value in overlay_rect)
+        self._current_render_identity = self._build_render_identity(
+            self._current_page, self._current_bid_ref
+        )
+        self._overlay_move_original_rect = None
+        self._overlay_move_preview_rect = None
+        self._overlay_move_anchor_scene = None
+        self._overlay_move_drag_start_rect = None
+        self._overlay_move_dragging = False
 
     def _outlined_icon_pixmap(self, icon_name: str, hex_color: str) -> QPixmap:
         svg_path = resource_path("resources", "icons", icon_name)
@@ -3164,15 +3543,17 @@ class TakeoffPlanView(
         page = self._current_page
         if page is None:
             return False
-        rect = self._overlay_rect_tuple(page)
+        rect = self._overlay_move_preview_rect or self._overlay_rect_tuple(page)
         if rect is None:
             return False
         if self._overlay_move_original_rect is None:
-            self._overlay_move_original_rect = rect
+            original_rect = self._overlay_rect_tuple(page)
+            self._overlay_move_original_rect = original_rect or rect
         self._overlay_move_preview_rect = rect
         self._overlay_move_anchor_scene = self.mapToScene(vp_pos)
         self._overlay_move_drag_start_rect = rect
         self._overlay_move_dragging = True
+        self._activate_overlay_move_preview_visuals()
         self._apply_cursor_mode("move_overlay")
         self.cursor_mode_change_requested.emit("move_overlay")
         self._update_cursor(vp_pos)
@@ -3204,7 +3585,7 @@ class TakeoffPlanView(
         if self._overlay_move_preview_rect == preview:
             return
         self._overlay_move_preview_rect = preview
-        self._set_current_overlay_rect(preview)
+        self._apply_overlay_move_preview_rect_to_visuals()
 
     def _finish_overlay_move_drag(self, scene_pos: QtCore.QPointF) -> None:
         if not self._overlay_move_dragging:
@@ -3218,49 +3599,6 @@ class TakeoffPlanView(
         self.cursor_mode_change_requested.emit("move_overlay_handle")
         self._update_cursor(self.mapFromScene(scene_pos))
 
-    def _set_current_overlay_rect(
-        self, overlay_rect: Tuple[float, float, float, float]
-    ) -> None:
-        if self._current_page is None:
-            return
-        self._current_page.overlay_rect = tuple(float(value) for value in overlay_rect)
-        self._current_render_identity = self._build_render_identity(
-            self._current_page, self._current_bid_ref
-        )
-        self._apply_overlay_rect_to_visuals()
-
-    def _apply_overlay_rect_to_visuals(self) -> None:
-        page = self._current_page
-        if page is None:
-            return
-        if self._is_composite_mode:
-            self._clear_tiles()
-            if self._can_zoom_rerender and not self._disable_high_resolution_images:
-                self._update_tile_coverage(self.transform().m11())
-        for item in self._overlay_items:
-            if not self._is_live_graphics_item(item):
-                continue
-            pixmap = item.pixmap()
-            transform = self._overlay_graphics_transform(
-                page, pixmap.width(), pixmap.height(), self._scene_scale
-            )
-            if transform is not None:
-                item.setTransform(transform)
-                item.update()
-        if self._primary_tiles_use_overlay_pdf():
-            transform = self._overlay_pdf_tile_transform()
-            for item in self._tile_items.values():
-                if self._is_live_graphics_item(item):
-                    item.setTransform(transform)
-                    item.update()
-        if self._uses_both_overlay_pdf_tiles():
-            transform = self._overlay_pdf_tile_transform()
-            for item in self._overlay_tile_items.values():
-                if self._is_live_graphics_item(item):
-                    item.setTransform(transform)
-                    item.update()
-        self.viewport().update()
-
     def _commit_overlay_move(self) -> None:
         preview_rect = self._overlay_move_preview_rect
         original_rect = self._overlay_move_original_rect
@@ -3269,7 +3607,11 @@ class TakeoffPlanView(
             return
 
         def rollback_failed_save() -> None:
-            self._set_current_overlay_rect(original_rect)
+            if self._current_page is not None:
+                self._current_page.overlay_rect = tuple(original_rect)
+                self._current_render_identity = self._build_render_identity(
+                    self._current_page, self._current_bid_ref
+                )
             self.cancel_overlay_move_mode(restore_preview=False)
             show_warning(
                 self,
@@ -3291,12 +3633,13 @@ class TakeoffPlanView(
         if result is None or not result.write_success:
             rollback_failed_save()
             return
-        self._overlay_move_original_rect = None
-        self._overlay_move_preview_rect = None
+        self._accept_overlay_move_preview_rect(preview_rect)
         self._apply_cursor_mode("select")
         self.cursor_mode_change_requested.emit("select")
         self._update_cursor()
-        if not result.reload_success:
+        if result.reload_success:
+            self._force_reload_current_page_visuals()
+        else:
             show_warning(
                 self,
                 "Move Overlay Image",
@@ -3511,7 +3854,10 @@ class TakeoffPlanView(
         bid_ref: Optional[BidRef] = None,
         annotations: Optional[List[BidAnnotation]] = None,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        force_visual_reload: bool = False,
     ) -> bool:
+        if self._overlay_move_suppresses_normal_tiles():
+            self.cancel_overlay_move_mode(restore_preview=True)
         resolved_bid_ref = bid_ref
         next_render_identity = self._build_render_identity(page, resolved_bid_ref)
         strategy = self._load_coordinator.determine_load_strategy(page)
@@ -3529,14 +3875,17 @@ class TakeoffPlanView(
             or self._loaded_visual_kind == expected_visual_kind
         )
         same_page_refresh = (
-            not project_changed
+            not force_visual_reload
+            and not project_changed
             and self._current_page is not None
             and self._current_render_identity == next_render_identity
             and has_loaded_visual_layer
         )
         self._begin_load_cycle(
             page,
-            preserve_current_view=same_page_refresh and self._load_view_applied,
+            preserve_current_view=(
+                (same_page_refresh or force_visual_reload) and self._load_view_applied
+            ),
         )
         if same_page_refresh:
             self._refresh_overlays(
@@ -4033,6 +4382,13 @@ class TakeoffPlanView(
         self._background_item = None
         self._overlay_items = []
         self._white_canvas_item = None
+        self._overlay_move_preview_base_item = None
+        self._overlay_move_preview_overlay_item = None
+        self._overlay_move_preview_base_request_id = None
+        self._overlay_move_preview_overlay_request_id = None
+        self._overlay_move_preview_overlay_request_scale = 0.0
+        self._overlay_move_hidden_visual_visibility.clear()
+        self._overlay_move_normal_visuals_hidden = False
         self._can_zoom_rerender = False
         self._is_composite_mode = False
         self._loaded_visual_kind = None

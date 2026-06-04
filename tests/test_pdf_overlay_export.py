@@ -68,6 +68,15 @@ class _Clearable:
         self.clear_calls += 1
 
 
+class _ImageCache(_Clearable):
+    def __init__(self, image):
+        super().__init__()
+        self.image = image
+
+    def get_page(self, *_args):
+        return self.image
+
+
 class _CoordinateSystem:
     def parse_position(self, _position):
         return []
@@ -184,6 +193,24 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual(calls, [(96.0, 0.0, 816.0, 1056.0)])
         self.assertTrue(exported_page.source_pdf.endswith("moved-overlay.pdf"))
         self.assertEqual(exported_page.page_index, 0)
+
+    def test_positioned_overlay_export_clips_to_page_size(self):
+        writer = _FakeWriter()
+        exporter = _make_exporter(writer)
+        overlay = QImage(10, 10, QImage.Format.Format_ARGB32)
+        overlay.fill(QColor(80, 80, 255).rgba())
+        exporter._export_page_cache = _ImageCache(overlay)
+        image = exporter._render_positioned_overlay_background(
+            _page(
+                overlay_image_path="overlay.pdf",
+                image_show_mode=SHOW_OVERLAY,
+                width_pts=72.0,
+                height_pts=72.0,
+                overlay_rect=(-48.0, -48.0, 96.0, 96.0),
+            )
+        )
+        self.assertIsNotNone(image)
+        self.assertEqual((image.width(), image.height()), (144, 144))
 
     def test_overlay_only_raster_export_uses_single_image_source_path(self):
         writer = _FakeWriter()

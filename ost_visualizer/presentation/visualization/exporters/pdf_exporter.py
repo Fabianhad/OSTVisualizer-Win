@@ -301,6 +301,7 @@ class PDFExporter:
         if not painter.isActive():
             return None
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.setClipRect(QRectF(0.0, 0.0, float(canvas_w), float(canvas_h)))
         painter.setTransform(transform)
         painter.drawImage(0, 0, overlay)
         painter.end()

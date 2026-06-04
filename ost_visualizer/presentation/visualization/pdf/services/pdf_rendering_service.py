@@ -42,6 +42,8 @@ class RenderRequest:
     cancelled: threading.Event
     callback: Callable[[RenderResult], None]
     use_cache: bool = True
+    apply_invert_effect: bool = True
+    apply_bitonal_effect: bool = True
     tile_x: int = 0
     tile_y: int = 0
     tile_w: int = 0
@@ -104,6 +106,8 @@ class PDFRenderingService:
         invert: bool = False,
         bitonal: bool = False,
         tint_rgb: Optional[tuple[int, int, int]] = None,
+        apply_invert_effect: bool = True,
+        apply_bitonal_effect: bool = True,
     ) -> str:
         request = RenderRequest(
             request_id=str(uuid.uuid4()),
@@ -123,6 +127,8 @@ class PDFRenderingService:
             cancelled=threading.Event(),
             callback=callback,
             use_cache=use_cache,
+            apply_invert_effect=apply_invert_effect,
+            apply_bitonal_effect=apply_bitonal_effect,
         )
         return self._enqueue_request(request)
 
@@ -206,6 +212,8 @@ class PDFRenderingService:
         callback: Callable[[RenderResult], None],
         priority: int = 0,
         render_scale: Optional[float] = None,
+        apply_invert_effect: bool = True,
+        apply_bitonal_effect: bool = True,
     ) -> str:
         scale = render_scale
         if scale is None:
@@ -227,6 +235,8 @@ class PDFRenderingService:
             show_mode=show_mode,
             cancelled=threading.Event(),
             callback=callback,
+            apply_invert_effect=apply_invert_effect,
+            apply_bitonal_effect=apply_bitonal_effect,
         )
         return self._enqueue_request(request)
 
@@ -495,8 +505,8 @@ class PDFRenderingService:
     def _apply_image_effects(self, request: RenderRequest, image):
         return apply_page_image_effects(
             image,
-            bitonal=request.bitonal,
-            invert=request.invert,
+            bitonal=request.bitonal and request.apply_bitonal_effect,
+            invert=request.invert and request.apply_invert_effect,
         )
 
     def _cleanup_request(self, request_id: str):

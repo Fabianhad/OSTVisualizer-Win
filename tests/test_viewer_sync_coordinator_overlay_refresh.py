@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QColorDialog,
     QGraphicsItem,
     QGraphicsPathItem,
+    QGraphicsPixmapItem,
     QGraphicsPolygonItem,
     QGraphicsRectItem,
     QGraphicsTextItem,
@@ -34,6 +35,7 @@ from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.services.page_load_strategy_service import (
+    LoadStrategy,
     PageLoadStrategyService,
 )
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
@@ -210,12 +212,74 @@ class FakeAnnotationRenderer:
 
 
 class FakeRenderingService:
+    def __init__(self):
+        self.page_requests = []
+        self.overlay_requests = []
+        self.composite_requests = []
+        self.cancelled_requests = []
+        self._request_counter = 0
+
+    def _next_request_id(self, prefix):
+        self._request_counter += 1
+        return f"{prefix}-{self._request_counter}"
+
+    def render_page_async(self, **kwargs):
+        request_id = self._next_request_id("page")
+        self.page_requests.append((request_id, kwargs))
+        return request_id
+
+    def render_overlay_async(self, **kwargs):
+        request_id = self._next_request_id("overlay")
+        self.overlay_requests.append((request_id, kwargs))
+        return request_id
+
+    def render_composite_async(self, **kwargs):
+        request_id = self._next_request_id("composite")
+        self.composite_requests.append((request_id, kwargs))
+        return request_id
+
+    def cancel_request(self, request_id):
+        self.cancelled_requests.append(request_id)
+
+    def extract_pdf_text_async(self, **_kwargs):
+        return self._next_request_id("text")
+
     def shutdown(self):
         pass
 
 
 class FakeLoadCoordinator:
-    pass
+    def determine_load_strategy(self, page):
+        load_composite = bool(
+            page.image_path and page.overlay_image_path and page.image_show_mode == 2
+        )
+        return LoadStrategy(
+            needs_async_loading=bool(page.image_path or page.overlay_image_path),
+            view_scale=2.0,
+            show_canvas=True,
+            pdf_width_pts=page.width_pts or 612.0,
+            pdf_height_pts=page.height_pts or 792.0,
+            placeholder_width=(page.width_pts or 612.0) * 2.0,
+            placeholder_height=(page.height_pts or 792.0) * 2.0,
+            load_composite=load_composite,
+            load_main=bool(page.image_path and not load_composite),
+            load_overlay=bool(page.overlay_image_path and not page.image_path),
+            main_scale=2.0,
+        )
+
+    def create_pending_page_data(self, page, strategy, pdf_width_pts, pdf_height_pts):
+        return {
+            "page": page,
+            "page_uid": page.uid,
+            "rotation": page.rotation,
+            "render_scale": strategy.main_scale,
+            "show_mode": page.image_show_mode,
+            "show_original": page.image_show_mode in (0, 2),
+            "show_overlay": page.image_show_mode in (1, 2) and page.has_overlay,
+            "pdf_width_pts": pdf_width_pts,
+            "pdf_height_pts": pdf_height_pts,
+            "view_scale": strategy.view_scale,
+        }
 
 
 class FakePlanView:
@@ -700,37 +764,6 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(source_rect, QtCore.QRectF(1.0, 1.0, 256.0, 256.0))
         view.cleanup()
 
-    def test_move_overlay_preview_updates_show_both_overlay_tiles(self):
-        view = self._make_plan_view()
-        page = Page(
-            uid="p1",
-            name="P1",
-            image_path="base.pdf",
-            overlay_image_path="overlay.pdf",
-            image_show_mode=2,
-            width_pts=612.0,
-            height_pts=792.0,
-            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
-        )
-        view._current_page = page
-        view._current_bid_page_uid = "p1"
-        view._scene_scale = 2.0
-        view._loaded_visual_kind = "overlay"
-        view._overlay_pdf_width_pts = 612.0
-        view._overlay_pdf_height_pts = 792.0
-        tile = TileGraphicsItem(
-            QImage(16, 16, QImage.Format.Format_ARGB32),
-            QtCore.QRectF(0.0, 0.0, 64.0, 64.0),
-            QtCore.QRectF(0.0, 0.0, 16.0, 16.0),
-        )
-        view._scene.addItem(tile)
-        view._tile_items = {}
-        view._overlay_tile_items = {TileKey(0, 0, 4.0): tile}
-        view._set_current_overlay_rect((96.0, 48.0, 816.0, 1056.0))
-        self.assertAlmostEqual(tile.transform().m31(), 144.0)
-        self.assertAlmostEqual(tile.transform().m32(), 72.0)
-        view.cleanup()
-
     def test_page_result_keeps_white_canvas_behind_transparent_raster(self):
         view = self._make_plan_view()
         page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
@@ -756,6 +789,252 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertLess(canvas.zValue(), view._background_item.zValue())
         view.cleanup()
 
+    def test_move_overlay_hover_handle_uses_move_cursor(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        handle_pos = view.mapFromScene(view._overlay_move_handle_item.pos())
+        self.assertEqual(view._resolve_cursor(handle_pos), view._move_overlay_cursor)
+        view.cleanup()
+
+    def test_move_overlay_preview_hides_stale_composite_after_base_ready(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        composite = ImageBackgroundItem(
+            QImage(20, 20, QImage.Format.Format_ARGB32),
+            1224.0,
+            1584.0,
+        )
+        view._scene.addItem(composite)
+        view._background_item = composite
+        view._loaded_visual_kind = "composite"
+        view._is_composite_mode = True
+        view._base_raster_scale = 2.0
+        self.assertTrue(view.show_overlay_move_handle())
+        self.assertTrue(composite.isVisible())
+        request_id, kwargs = view._rendering_service.page_requests[-1]
+        image = QImage(20, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor(255, 80, 80).rgba())
+        kwargs["callback"](RenderResult(request_id, True, image, None))
+        self.assertFalse(composite.isVisible())
+        self.assertIsNotNone(view._white_canvas_item)
+        self.assertIs(view._white_canvas_item.scene(), view._scene)
+        self.assertIsNotNone(view._overlay_move_preview_base_item)
+        self.assertTrue(view._overlay_move_preview_base_item.isVisible())
+        self.assertLess(
+            view._white_canvas_item.zValue(),
+            view._overlay_move_preview_base_item.zValue(),
+        )
+        view.cleanup()
+
+    def test_move_overlay_drag_before_base_ready_keeps_composite_visible(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        composite = ImageBackgroundItem(
+            QImage(20, 20, QImage.Format.Format_ARGB32),
+            1224.0,
+            1584.0,
+        )
+        view._scene.addItem(composite)
+        view._background_item = composite
+        view._loaded_visual_kind = "composite"
+        view._is_composite_mode = True
+        view._base_raster_scale = 2.0
+        self.assertTrue(view.show_overlay_move_handle())
+        handle_pos = view.mapFromScene(view._overlay_move_handle_item.pos())
+        self.assertTrue(view._begin_overlay_move(handle_pos))
+        self.assertTrue(composite.isVisible())
+        self.assertFalse(view._overlay_move_normal_visuals_hidden)
+        self.assertIsNone(view._overlay_move_preview_base_item)
+        view.cleanup()
+
+    def test_move_overlay_bitonal_preview_keeps_tinted_paper_transparent(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            bitonal=True,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
+        overlay_request_id, overlay_kwargs = view._rendering_service.overlay_requests[
+            -1
+        ]
+        self.assertEqual(base_kwargs["tint_rgb"], (255, 80, 80))
+        self.assertTrue(base_kwargs["bitonal"])
+        self.assertTrue(base_kwargs["apply_invert_effect"])
+        self.assertFalse(base_kwargs["apply_bitonal_effect"])
+        self.assertEqual(overlay_kwargs["show_mode"], 2)
+        self.assertTrue(overlay_kwargs["apply_invert_effect"])
+        self.assertFalse(overlay_kwargs["apply_bitonal_effect"])
+        base_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+        base_image.fill(QtCore.Qt.GlobalColor.transparent)
+        base_image.setPixelColor(1, 1, QColor(255, 80, 80, 255))
+        base_kwargs["callback"](RenderResult(base_request_id, True, base_image, None))
+        overlay_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+        overlay_image.fill(QtCore.Qt.GlobalColor.transparent)
+        overlay_image.setPixelColor(1, 1, QColor(80, 80, 255, 255))
+        overlay_kwargs["callback"](
+            RenderResult(overlay_request_id, True, overlay_image, None)
+        )
+        base_item = view._overlay_move_preview_base_item
+        overlay_item = view._overlay_move_preview_overlay_item
+        self.assertIsNotNone(base_item)
+        self.assertIsNotNone(overlay_item)
+        self.assertTrue(base_item.isVisible())
+        self.assertTrue(overlay_item.isVisible())
+        self.assertLess(view._white_canvas_item.zValue(), base_item.zValue())
+        self.assertLess(base_item.zValue(), overlay_item.zValue())
+        self.assertEqual(overlay_item.opacity(), 1.0)
+        self.assertEqual(
+            overlay_item.pixmap().toImage().pixelColor(0, 0).alpha(),
+            0,
+        )
+        view.cleanup()
+
+    def test_move_overlay_invert_preview_applies_invert_without_bitonal(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            invert=True,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
+        overlay_request_id, overlay_kwargs = view._rendering_service.overlay_requests[
+            -1
+        ]
+        self.assertTrue(base_kwargs["invert"])
+        self.assertFalse(base_kwargs["bitonal"])
+        self.assertTrue(base_kwargs["apply_invert_effect"])
+        self.assertFalse(base_kwargs["apply_bitonal_effect"])
+        self.assertTrue(overlay_kwargs["apply_invert_effect"])
+        self.assertFalse(overlay_kwargs["apply_bitonal_effect"])
+        base_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+        base_image.fill(QtCore.Qt.GlobalColor.transparent)
+        base_image.setPixelColor(1, 1, QColor(0, 175, 175, 255))
+        base_kwargs["callback"](RenderResult(base_request_id, True, base_image, None))
+        overlay_image = QImage(2, 2, QImage.Format.Format_ARGB32)
+        overlay_image.fill(QtCore.Qt.GlobalColor.transparent)
+        overlay_image.setPixelColor(1, 1, QColor(175, 175, 0, 255))
+        overlay_kwargs["callback"](
+            RenderResult(overlay_request_id, True, overlay_image, None)
+        )
+        base_item = view._overlay_move_preview_base_item
+        overlay_item = view._overlay_move_preview_overlay_item
+        self.assertIsNotNone(base_item)
+        self.assertIsNotNone(overlay_item)
+        self.assertEqual(
+            base_item._image.pixelColor(1, 1),
+            QColor(0, 175, 175, 255),
+        )
+        self.assertEqual(
+            overlay_item.pixmap().toImage().pixelColor(1, 1),
+            QColor(175, 175, 0, 255),
+        )
+        self.assertEqual(overlay_item.pixmap().toImage().pixelColor(0, 0).alpha(), 0)
+        view.cleanup()
+
+    def test_move_overlay_inverted_bitonal_preview_keeps_alpha_and_invert(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            invert=True,
+            bitonal=True,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        _base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
+        _overlay_request_id, overlay_kwargs = view._rendering_service.overlay_requests[
+            -1
+        ]
+        self.assertTrue(base_kwargs["invert"])
+        self.assertTrue(base_kwargs["bitonal"])
+        self.assertTrue(base_kwargs["apply_invert_effect"])
+        self.assertFalse(base_kwargs["apply_bitonal_effect"])
+        self.assertTrue(overlay_kwargs["apply_invert_effect"])
+        self.assertFalse(overlay_kwargs["apply_bitonal_effect"])
+        view.cleanup()
+
+    def test_move_overlay_drag_keeps_preview_base_stable(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.png",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        base = ImageBackgroundItem(
+            QImage(20, 20, QImage.Format.Format_ARGB32),
+            1224.0,
+            1584.0,
+        )
+        view._scene.addItem(base)
+        view._overlay_move_preview_base_item = base
+        view._overlay_move_original_rect = page.overlay_rect
+        view._overlay_move_preview_rect = page.overlay_rect
+        view._overlay_move_drag_start_rect = page.overlay_rect
+        view._overlay_move_anchor_scene = QtCore.QPointF(0.0, 0.0)
+        page_request_count = len(view._rendering_service.page_requests)
+        view._preview_overlay_move(QtCore.QPointF(144.0, 72.0))
+        self.assertIs(view._overlay_move_preview_base_item, base)
+        self.assertEqual(len(view._rendering_service.page_requests), page_request_count)
+        view.cleanup()
+
     def test_move_overlay_preview_translates_overlay_rect_in_page_pixels(self):
         view = self._make_plan_view()
         page = Page(
@@ -773,7 +1052,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._overlay_move_drag_start_rect = page.overlay_rect
         view._overlay_move_anchor_scene = QtCore.QPointF(0.0, 0.0)
         view._preview_overlay_move(QtCore.QPointF(144.0, 72.0))
-        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertEqual(view._overlay_move_preview_rect, (96.0, 48.0, 816.0, 1056.0))
         view.cleanup()
 
     def test_move_overlay_preview_updates_overlay_item_transform(self):
@@ -797,12 +1077,13 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             show_mode=1,
         )
         view._scene.addItem(item)
-        view._overlay_items.append(item)
+        view._overlay_move_preview_overlay_item = item
         view._overlay_move_original_rect = page.overlay_rect
         view._overlay_move_drag_start_rect = page.overlay_rect
         view._overlay_move_anchor_scene = QtCore.QPointF(0.0, 0.0)
         view._preview_overlay_move(QtCore.QPointF(144.0, 72.0))
-        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertEqual(view._overlay_move_preview_rect, (96.0, 48.0, 816.0, 1056.0))
         self.assertAlmostEqual(item.transform().m31(), 144.0)
         self.assertAlmostEqual(item.transform().m32(), 72.0)
         view.cleanup()
@@ -846,6 +1127,10 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._current_bid_page_uid = "p1"
         view._scene_scale = 2.0
         view.set_overlay_rect_save_handler(lambda rect: calls.append(rect) or result)
+        low_res_item = QGraphicsPixmapItem(QPixmap(10, 10))
+        low_res_item.setVisible(True)
+        view._scene.addItem(low_res_item)
+        view._overlay_move_preview_overlay_item = low_res_item
         view._overlay_move_original_rect = page.overlay_rect
         view._overlay_move_preview_rect = page.overlay_rect
         anchor_scene = view.mapToScene(QtCore.QPoint(0, 0))
@@ -857,11 +1142,15 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.mouseMoveEvent(self._left_move_event(release_vp.x(), release_vp.y()))
         view.mouseReleaseEvent(self._left_release_event(release_vp.x(), release_vp.y()))
         self.assertEqual(calls, [])
-        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
         self.assertEqual(view._cursor_mode, "move_overlay_handle")
         self.assertIsNotNone(view._overlay_move_handle_item)
         self.assertEqual(view._overlay_move_preview_rect, (96.0, 48.0, 816.0, 1056.0))
         self.assertEqual(view._overlay_move_original_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertIs(view._overlay_move_preview_overlay_item, low_res_item)
+        self.assertIs(low_res_item.scene(), view._scene)
+        self.assertTrue(low_res_item.isVisible())
+        self.assertEqual(view._rendering_service.overlay_requests, [])
         view.cleanup()
 
     def test_move_overlay_outside_click_commits_preview_and_exits_mode(self):
@@ -921,7 +1210,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.mouseReleaseEvent(
             self._left_release_event(first_release.x(), first_release.y())
         )
-        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertEqual(view._overlay_move_preview_rect, (96.0, 48.0, 816.0, 1056.0))
         second_press = view.mapFromScene(view._overlay_move_handle_item.pos())
         view.mousePressEvent(self._left_press_event(second_press.x(), second_press.y()))
         second_release = view.mapFromScene(
@@ -933,8 +1223,10 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.mouseReleaseEvent(
             self._left_release_event(second_release.x(), second_release.y())
         )
-        self.assertEqual(page.overlay_rect, (144.0, 72.0, 816.0, 1056.0))
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertEqual(view._overlay_move_preview_rect, (144.0, 72.0, 816.0, 1056.0))
         self.assertEqual(view._overlay_move_original_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertEqual(view._rendering_service.overlay_requests, [])
         view.cleanup()
 
     def test_move_overlay_cancel_restores_original_overlay_rect(self):
@@ -1036,6 +1328,251 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(view._cursor_mode, "select")
         self.assertIsNone(view._overlay_move_handle_item)
         warning.assert_called_once()
+        view.cleanup()
+
+    def test_move_overlay_reload_failure_keeps_accepted_preview_visible(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        result = type(
+            "Result",
+            (),
+            {"write_success": True, "reload_success": False},
+        )()
+        view._current_page = page
+        view._current_bid_page_uid = "p1"
+        view.set_overlay_rect_save_handler(lambda _rect: result)
+        preview_overlay = QGraphicsPixmapItem(QPixmap(10, 10))
+        view._scene.addItem(preview_overlay)
+        view._overlay_move_preview_overlay_item = preview_overlay
+        view._overlay_move_original_rect = page.overlay_rect
+        view._overlay_move_preview_rect = (96.0, 48.0, 816.0, 1056.0)
+        with patch(
+            "ost_visualizer.presentation.components.plan_view.view.show_warning"
+        ) as warning:
+            view._commit_overlay_move()
+        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        self.assertIs(preview_overlay.scene(), view._scene)
+        self.assertTrue(preview_overlay.isVisible())
+        self.assertEqual(view._rendering_service.composite_requests, [])
+        self.assertEqual(view._cursor_mode, "select")
+        warning.assert_called_once()
+        view.cleanup()
+
+    def test_move_overlay_reload_failure_cancels_pending_preview_requests(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        result = type(
+            "Result",
+            (),
+            {"write_success": True, "reload_success": False},
+        )()
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
+        overlay_request_id, overlay_kwargs = view._rendering_service.overlay_requests[
+            -1
+        ]
+        view.set_overlay_rect_save_handler(lambda _rect: result)
+        preview_overlay = QGraphicsPixmapItem(QPixmap(10, 10))
+        view._scene.addItem(preview_overlay)
+        view._overlay_move_preview_overlay_item = preview_overlay
+        view._overlay_move_preview_rect = (96.0, 48.0, 816.0, 1056.0)
+        with patch(
+            "ost_visualizer.presentation.components.plan_view.view.show_warning"
+        ):
+            view._commit_overlay_move()
+        self.assertIn(base_request_id, view._rendering_service.cancelled_requests)
+        self.assertIn(overlay_request_id, view._rendering_service.cancelled_requests)
+        self.assertIsNone(view._overlay_move_preview_base_request_id)
+        self.assertIsNone(view._overlay_move_preview_overlay_request_id)
+        self.assertEqual(view._overlay_move_preview_overlay_request_scale, 0.0)
+        stale_image = QImage(8, 8, QImage.Format.Format_ARGB32)
+        stale_image.fill(QColor(255, 255, 255).rgba())
+        base_kwargs["callback"](RenderResult(base_request_id, True, stale_image, None))
+        overlay_kwargs["callback"](
+            RenderResult(overlay_request_id, True, stale_image, None)
+        )
+        self.assertIsNone(view._overlay_move_preview_base_item)
+        self.assertIs(view._overlay_move_preview_overlay_item, preview_overlay)
+        self.assertIs(preview_overlay.scene(), view._scene)
+        self.assertTrue(preview_overlay.isVisible())
+        view.cleanup()
+
+    def test_move_overlay_cancel_clears_requests_and_ignores_stale_callbacks(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
+        overlay_request_id, overlay_kwargs = view._rendering_service.overlay_requests[
+            -1
+        ]
+        view.cancel_overlay_move_mode(restore_preview=True)
+        self.assertIn(base_request_id, view._rendering_service.cancelled_requests)
+        self.assertIn(overlay_request_id, view._rendering_service.cancelled_requests)
+        self.assertIsNone(view._overlay_move_preview_base_request_id)
+        self.assertIsNone(view._overlay_move_preview_overlay_request_id)
+        self.assertIsNone(view._overlay_move_preview_base_item)
+        self.assertIsNone(view._overlay_move_preview_overlay_item)
+        self.assertIsNone(view._overlay_move_handle_item)
+        stale_image = QImage(8, 8, QImage.Format.Format_ARGB32)
+        stale_image.fill(QColor(255, 255, 255).rgba())
+        base_kwargs["callback"](RenderResult(base_request_id, True, stale_image, None))
+        overlay_kwargs["callback"](
+            RenderResult(overlay_request_id, True, stale_image, None)
+        )
+        self.assertIsNone(view._overlay_move_preview_base_item)
+        self.assertIsNone(view._overlay_move_preview_overlay_item)
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        view.cleanup()
+
+    def test_move_overlay_page_reload_clears_preview_state_and_requests(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        base_request_id, _base_kwargs = view._rendering_service.page_requests[-1]
+        overlay_request_id, _overlay_kwargs = view._rendering_service.overlay_requests[
+            -1
+        ]
+        base_item = ImageBackgroundItem(
+            QImage(20, 20, QImage.Format.Format_ARGB32),
+            1224.0,
+            1584.0,
+        )
+        overlay_item = QGraphicsPixmapItem(QPixmap(10, 10))
+        view._scene.addItem(base_item)
+        view._scene.addItem(overlay_item)
+        view._overlay_move_preview_base_item = base_item
+        view._overlay_move_preview_overlay_item = overlay_item
+        page.overlay_rect = (96.0, 48.0, 816.0, 1056.0)
+        view._overlay_move_preview_rect = page.overlay_rect
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertIn(base_request_id, view._rendering_service.cancelled_requests)
+        self.assertIn(overlay_request_id, view._rendering_service.cancelled_requests)
+        self.assertIsNone(view._overlay_move_preview_base_request_id)
+        self.assertIsNone(view._overlay_move_preview_overlay_request_id)
+        self.assertIsNone(view._overlay_move_preview_base_item)
+        self.assertIsNone(view._overlay_move_preview_overlay_item)
+        self.assertIsNone(view._overlay_move_original_rect)
+        self.assertIsNone(view._overlay_move_preview_rect)
+        self.assertIsNone(view._overlay_move_handle_item)
+        self.assertIsNone(base_item.scene())
+        self.assertIsNone(overlay_item.scene())
+        view.cleanup()
+
+    def test_move_overlay_repeated_enter_cancel_does_not_reinstall_preview_items(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        for _ in range(2):
+            self.assertTrue(view.show_overlay_move_handle())
+            base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
+            overlay_request_id, overlay_kwargs = (
+                view._rendering_service.overlay_requests[-1]
+            )
+            view.cancel_overlay_move_mode(restore_preview=True)
+            stale_image = QImage(8, 8, QImage.Format.Format_ARGB32)
+            stale_image.fill(QColor(255, 255, 255).rgba())
+            base_kwargs["callback"](
+                RenderResult(base_request_id, True, stale_image, None)
+            )
+            overlay_kwargs["callback"](
+                RenderResult(overlay_request_id, True, stale_image, None)
+            )
+            self.assertIsNone(view._overlay_move_preview_base_item)
+            self.assertIsNone(view._overlay_move_preview_overlay_item)
+            self.assertIsNone(view._overlay_move_handle_item)
+        view.cleanup()
+
+    def test_move_overlay_commit_forces_normal_visual_reload(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        result = type(
+            "Result",
+            (),
+            {"write_success": True, "reload_success": True},
+        )()
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        view.set_overlay_rect_save_handler(lambda _rect: result)
+        view._overlay_move_preview_rect = (96.0, 48.0, 816.0, 1056.0)
+        page_request_id, _page_kwargs = view._rendering_service.page_requests[-1]
+        overlay_request_id, _overlay_kwargs = view._rendering_service.overlay_requests[
+            -1
+        ]
+        view._commit_overlay_move()
+        self.assertIn(page_request_id, view._rendering_service.cancelled_requests)
+        self.assertIn(overlay_request_id, view._rendering_service.cancelled_requests)
+        self.assertEqual(len(view._rendering_service.composite_requests), 1)
+        composite_request_id, composite_kwargs = (
+            view._rendering_service.composite_requests[-1]
+        )
+        self.assertEqual(composite_kwargs["page"].overlay_rect, page.overlay_rect)
+        image = QImage(20, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor(255, 255, 255).rgba())
+        composite_kwargs["callback"](
+            RenderResult(composite_request_id, True, image, None)
+        )
+        self.assertIsNotNone(view._background_item)
+        self.assertTrue(view._background_item.isVisible())
+        self.assertEqual(view._loaded_visual_kind, "composite")
+        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
         view.cleanup()
 
     def test_move_overlay_handle_is_removed_on_clear(self):

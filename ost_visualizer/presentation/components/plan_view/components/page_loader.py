@@ -242,16 +242,6 @@ class PageLoaderMixin:
         )
         return width, height
 
-    def _is_overlay_only_pdf_visual(self) -> bool:
-        page = self._current_page
-        return bool(
-            page
-            and self._loaded_visual_kind == "overlay"
-            and page.image_show_mode == _SHOW_MODE_OVERLAY_ONLY
-            and page.overlay_image_path
-            and page.overlay_image_path.lower().endswith(".pdf")
-        )
-
     def _uses_overlay_pdf_tiles(self) -> bool:
         return (
             self._primary_tiles_use_overlay_pdf() or self._uses_both_overlay_pdf_tiles()
@@ -895,6 +885,10 @@ class PageLoaderMixin:
         ):
             return
         self._tile_requests.pop(key, None)
+        if self._overlay_move_suppresses_normal_tiles():
+            self._sync_low_res_base_visibility_for_tiles()
+            self._sync_low_res_overlay_visibility_for_tiles()
+            return
         if (
             self._is_stale_generation(generation_id)
             or not result.success
@@ -984,6 +978,9 @@ class PageLoaderMixin:
         ):
             return
         self._overlay_tile_requests.pop(key, None)
+        if self._overlay_move_suppresses_normal_tiles():
+            self._sync_low_res_overlay_visibility_for_tiles()
+            return
         if (
             self._is_stale_generation(generation_id)
             or not result.success
@@ -1229,6 +1226,9 @@ class PageLoaderMixin:
 
     def _update_tile_coverage(self, view_m11: float) -> None:
         if not self._current_page:
+            return
+        if self._overlay_move_suppresses_normal_tiles():
+            self._cancel_tile_requests()
             return
         overlay_pdf_tiles = self._uses_overlay_pdf_tiles()
         if not (self._can_zoom_rerender or overlay_pdf_tiles):

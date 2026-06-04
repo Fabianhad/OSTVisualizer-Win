@@ -90,8 +90,8 @@ class ZoomHandlerMixin:
         self._apply_zoom_centered(1.0 / self.ZOOM_FACTOR)
 
     def _current_page_scene_context(self):
-        page = getattr(self, "_current_page", None)
-        scene_scale = getattr(self, "_scene_scale", 0.0)
+        page = self._current_page
+        scene_scale = self._scene_scale
         if page is None or scene_scale <= 0.0:
             return None
         width = page.effective_width_pts * scene_scale

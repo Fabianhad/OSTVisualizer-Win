@@ -61,11 +61,11 @@ class SelectionClipboardService:
 
     @property
     def items(self) -> List[Takeoff]:
-        return self._takeoffs
+        return self._takeoffs[:]
 
     @property
     def annotations(self) -> List[BidAnnotation]:
-        return self._annotations
+        return self._annotations[:]
 
     @property
     def source_bid_uid(self) -> Optional[str]:
