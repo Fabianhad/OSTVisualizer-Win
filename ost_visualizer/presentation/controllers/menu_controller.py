@@ -13,6 +13,7 @@ from ..managers.ui_access_manager import Feature
 from ..utils.image_show_mode import mode_to_flags
 from ..utils.messagebox import DB_LOCKED_HINT, show_critical, show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
+from ..utils.plan_tool_registry import PLAN_TOOL_ACTION_KEYS
 from ..utils.windows import remove_minimize_maximize
 
 _TAKEOFF_SCOPED_VARIABLE_KEYS = {
@@ -443,13 +444,7 @@ class MenuController:
         return list(self._export_formats)
 
     def _sync_tool_action_states(self, takeoff_active: bool) -> None:
-        for action_key in (
-            "select_tool",
-            "place_tool",
-            "zoom_tool",
-            "pan_tool",
-            "dimension_tool",
-        ):
+        for action_key in PLAN_TOOL_ACTION_KEYS:
             action = self._actions.get(action_key)
             if not action:
                 continue

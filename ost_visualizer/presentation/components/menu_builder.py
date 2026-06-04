@@ -4,6 +4,7 @@ from PySide6 import QtGui, QtWidgets
 from ..config import MAIN_TOOLBAR_LABEL, PLAN_TOOLS_TOOLBAR_LABEL, VIEW_TOOLBAR_LABEL
 from ..managers.icon_manager import IconManager
 from ..managers.shortcut_manager import ShortcutManager
+from ..utils.plan_tool_registry import PLAN_TOOL_MENU_ITEMS
 
 
 @dataclass
@@ -187,11 +188,7 @@ class MenuBuilder:
                 ("shared", "annotation_window"),
             ],
             "Tools": [
-                ("shared", "select_tool"),
-                ("shared", "place_tool"),
-                ("shared", "zoom_tool"),
-                ("shared", "pan_tool"),
-                ("shared", "dimension_tool"),
+                *PLAN_TOOL_MENU_ITEMS,
                 ("sep",),
                 ("shared", "backout_mode"),
                 ("sep",),

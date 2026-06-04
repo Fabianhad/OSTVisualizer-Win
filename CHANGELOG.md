@@ -14,7 +14,7 @@
 - Added separate Options controls for grid, PDF-line, takeoff, and right-angle snap thresholds.
 - Added a Reset All Settings button to the Options dialog that restores app preferences and workspace layout state to defaults.
 - Added embedded PDF text selection in the plan view with I-beam hover, drag-range highlighting, and copy support.
-- Added 2D rendering, toolbar placement, and Bluebeam-style PDF LineDimension export for BidDimensions annotations, including end ticks, feet/inches labels, text-label formatting, measurement metadata, and corrected PDF appearance bounds.
+- Added 2D rendering, shared toolbar/menu/context-menu placement, and Bluebeam-style PDF LineDimension export for BidDimensions annotations, including end ticks, feet/inches labels, text-label formatting, measurement metadata, and corrected PDF appearance bounds.
 - Added a Move Overlay Image toolbar action with separated red/base and blue/overlay live preview, preserving OST `OverlayRect` placement for PlanView and PDF export.
 
 ### Changed

@@ -39,6 +39,7 @@ class PageLoaderMixin:
         self._deferred_page_visual_result = None
         if deferred is None:
             self._set_page_overlay_items_visible(True)
+            self._sync_page_image_layer_visibility()
             return
         render_type, data, result = deferred
         if render_type == "composite":
@@ -48,6 +49,7 @@ class PageLoaderMixin:
         elif render_type == "overlay":
             self._apply_overlay_result(data, result)
         self._set_page_overlay_items_visible(True)
+        self._sync_page_image_layer_visibility()
 
     def _defer_page_visual_result(
         self, render_type: str, data: dict, result: RenderResult
@@ -349,6 +351,7 @@ class PageLoaderMixin:
         self._loaded_visual_kind = "composite"
         self._base_raster_scale = data["base_raster_scale"]
         self._apply_page_transform_to_items()
+        self._sync_page_image_layer_visibility()
         self._mark_load_geometry_ready()
         self._sync_overlay_move_hidden_normal_visuals()
 
@@ -373,6 +376,7 @@ class PageLoaderMixin:
         self._loaded_visual_kind = "page"
         self._base_raster_scale = data["base_raster_scale"]
         self._apply_page_transform_to_items()
+        self._sync_page_image_layer_visibility()
         self._update_scene_rect()
         if self._load_view_applied:
             self._update_tile_coverage(self.transform().m11())
@@ -418,6 +422,7 @@ class PageLoaderMixin:
             self._overlay_items.append(item)
             self._loaded_visual_kind = "overlay"
             self._base_raster_scale = render_scale
+            self._sync_page_image_layer_visibility()
             self._mark_load_geometry_ready()
             self._sync_overlay_move_hidden_normal_visuals()
 
@@ -488,27 +493,41 @@ class PageLoaderMixin:
 
     def _clear_tiles(self) -> None:
         self._clear_visible_frame()
-        self._set_low_res_base_item_visible(True)
-        self._set_low_res_overlay_items_visible(True)
+        self._sync_page_image_layer_visibility()
 
     def _clear_tile_grid(self) -> None:
         self._clear_visible_frame()
 
     def _set_low_res_base_item_visible(self, visible: bool) -> None:
-        if self._background_item is not None and isValid(self._background_item):
-            self._background_item.setVisible(visible)
+        background_item = getattr(self, "_background_item", None)
+        if background_item is not None and isValid(background_item):
+            background_item.setVisible(visible)
 
-    def _sync_low_res_base_visibility_for_tiles(self) -> None:
-        self._set_low_res_base_item_visible(True)
+    def _page_image_layer_visible(self) -> bool:
+        page = getattr(self, "_current_page", None)
+        return bool(page is None or page.layer_visible)
+
+    def _has_loaded_page_visual_items(self) -> bool:
+        background_item = getattr(self, "_background_item", None)
+        if background_item is not None and isValid(background_item):
+            return True
+        visible_frame_item = getattr(self, "_visible_frame_item", None)
+        if visible_frame_item is not None and isValid(visible_frame_item):
+            return True
+        return any(isValid(item) for item in getattr(self, "_overlay_items", []))
+
+    def _sync_page_image_layer_visibility(self) -> None:
+        visible = self._page_image_layer_visible()
+        self._set_low_res_base_item_visible(visible)
+        self._set_low_res_overlay_items_visible(visible)
+        visible_frame_item = getattr(self, "_visible_frame_item", None)
+        if visible_frame_item is not None and isValid(visible_frame_item):
+            visible_frame_item.setVisible(visible)
 
     def _set_low_res_overlay_items_visible(self, visible: bool) -> None:
-        for item in self._overlay_items:
+        for item in getattr(self, "_overlay_items", []):
             if isValid(item):
                 item.setVisible(visible)
-
-    def _sync_low_res_overlay_visibility_for_tiles(self) -> None:
-        if self._uses_overlay_pdf_tiles():
-            self._set_low_res_overlay_items_visible(True)
 
     def _tiles_active(self) -> bool:
         return bool(
@@ -800,8 +819,7 @@ class PageLoaderMixin:
                 )
             ):
                 self._cancel_visible_frame_request()
-            self._sync_low_res_base_visibility_for_tiles()
-            self._sync_low_res_overlay_visibility_for_tiles()
+            self._sync_page_image_layer_visibility()
             return
         if (
             self._visible_frame_request_id is not None
@@ -809,8 +827,7 @@ class PageLoaderMixin:
                 self._pending_visible_frame_metadata, context
             )
         ):
-            self._sync_low_res_base_visibility_for_tiles()
-            self._sync_low_res_overlay_visibility_for_tiles()
+            self._sync_page_image_layer_visibility()
             return
         page = self._current_page
         if page is None:
@@ -823,8 +840,7 @@ class PageLoaderMixin:
         self._visible_frame_kind = context["kind"]
         self._visible_frame_scale = context["scale"]
         self._pending_visible_frame_metadata = metadata
-        self._sync_low_res_base_visibility_for_tiles()
-        self._sync_low_res_overlay_visibility_for_tiles()
+        self._sync_page_image_layer_visibility()
         load_token = self._current_load_token
         render_identity = dict(self._current_render_identity or {})
         weak_self = weakref.ref(self)
@@ -902,8 +918,7 @@ class PageLoaderMixin:
         ):
             self._pending_visible_frame_metadata = None
             self._restore_visible_frame_state_from_current_metadata()
-            self._sync_low_res_base_visibility_for_tiles()
-            self._sync_low_res_overlay_visibility_for_tiles()
+            self._sync_page_image_layer_visibility()
             return
         old_item = self._visible_frame_item
         image = result.image
@@ -930,8 +945,7 @@ class PageLoaderMixin:
         self._visible_frame_scale = scale
         if old_item is not None:
             self._remove_tile_item(old_item)
-        self._sync_low_res_base_visibility_for_tiles()
-        self._sync_low_res_overlay_visibility_for_tiles()
+        self._sync_page_image_layer_visibility()
 
     def _request_optional_base_correction(
         self, base_raster_scale: float, generation_id: int
@@ -1050,6 +1064,7 @@ class PageLoaderMixin:
         self._replace_background_item(background_item)
         self._base_raster_scale = base_raster_scale
         self._apply_page_transform_to_items()
+        self._sync_page_image_layer_visibility()
         self._update_scene_rect()
 
     def _on_optional_overlay_base_correction_loaded(
@@ -1185,8 +1200,7 @@ class PageLoaderMixin:
         context = self._build_visible_frame_context(frame_scale)
         if context is None:
             self._clear_visible_frame()
-            self._sync_low_res_base_visibility_for_tiles()
-            self._sync_low_res_overlay_visibility_for_tiles()
+            self._sync_page_image_layer_visibility()
             return
         self._request_visible_frame(context)
 
@@ -1207,6 +1221,5 @@ class PageLoaderMixin:
         self._pending_visible_frame_metadata = None
         self._visible_frame_kind = None
         self._visible_frame_scale = 0.0
-        self._set_low_res_base_item_visible(True)
-        self._set_low_res_overlay_items_visible(True)
+        self._sync_page_image_layer_visibility()
         self._zoom_debouncer.cancel()

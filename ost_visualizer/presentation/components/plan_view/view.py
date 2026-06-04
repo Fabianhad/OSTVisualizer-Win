@@ -1735,7 +1735,6 @@ class TakeoffPlanView(
             "flip_y": page.flip_y,
             "invert": page.invert,
             "bitonal": page.bitonal,
-            "layer_visible": page.layer_visible,
             "width_pts": page.width_pts,
             "height_pts": page.height_pts,
             "overlay_rect": page.overlay_rect,
@@ -3864,7 +3863,9 @@ class TakeoffPlanView(
         next_render_identity = self._build_render_identity(page, resolved_bid_ref)
         strategy = self._load_coordinator.determine_load_strategy(page)
         project_changed = resolved_bid_ref != self._current_bid_ref
-        if strategy.load_composite:
+        if not page.layer_visible:
+            expected_visual_kind = None
+        elif strategy.load_composite:
             expected_visual_kind = "composite"
         elif strategy.load_main:
             expected_visual_kind = "page"
@@ -3899,6 +3900,7 @@ class TakeoffPlanView(
                 page_area_selections,
                 resolved_bid_ref,
             )
+            self._sync_page_image_layer_visibility()
             self._request_pdf_text_extraction()
             self._mark_load_geometry_ready()
             return True
@@ -4269,6 +4271,10 @@ class TakeoffPlanView(
         next_render_identity = self._build_render_identity(page, bid_ref)
         if self._current_render_identity != next_render_identity:
             return False
+        if page.layer_visible and not self._has_loaded_page_visual_items():
+            strategy = self._load_coordinator.determine_load_strategy(page)
+            if strategy.needs_async_loading:
+                return False
         self._refresh_overlays(
             page,
             takeoffs,
@@ -4278,6 +4284,7 @@ class TakeoffPlanView(
             page_area_selections,
             bid_ref,
         )
+        self._sync_page_image_layer_visibility()
         self._update_scene_rect()
         self.viewport().update()
         return True

@@ -2,23 +2,17 @@ from dataclasses import dataclass
 from PySide6 import QtGui, QtWidgets
 from ...domain.entities.condition import Condition
 from ..config import (
-    ACTION_PAN_LABEL,
-    ACTION_PLACE_LABEL,
     ACTION_RESET_VIEW_LABEL,
-    ACTION_SELECT_LABEL,
     ACTION_ZOOM_IN_LABEL,
-    ACTION_ZOOM_LABEL,
     ACTION_ZOOM_OUT_LABEL,
 )
 from ..managers.context_menu_manager import ContextMenuManager
+from .plan_tool_registry import PLAN_TOOL_CONTEXT_ACTIONS
 from .condition_icon import make_condition_color_icon
 from .overlay_context_menu import add_overlay_submenu_with_select
 
 CONTEXT_TOOLS_ACTIONS = (
-    (ACTION_SELECT_LABEL, "select_tool"),
-    (ACTION_PLACE_LABEL, "place_tool"),
-    (ACTION_ZOOM_LABEL, "zoom_tool"),
-    (ACTION_PAN_LABEL, "pan_tool"),
+    *PLAN_TOOL_CONTEXT_ACTIONS,
     None,
     ("Backout", "backout_mode"),
 )
@@ -144,7 +138,8 @@ def add_context_command_submenu(
     trigger_fn,
     action_state_fn,
 ) -> QtWidgets.QMenu:
-    submenu = menu.addMenu(title)
+    submenu = QtWidgets.QMenu(title, menu)
+    menu.addMenu(submenu)
     for entry in entries:
         if entry is None:
             submenu.addSeparator()
@@ -165,7 +160,8 @@ def add_reassign_condition_submenu(
     menu: QtWidgets.QMenu,
     conditions: dict[str, Condition],
 ) -> ReassignConditionSubmenu:
-    submenu = menu.addMenu("Reassign Condition")
+    submenu = QtWidgets.QMenu("Reassign Condition", menu)
+    menu.addMenu(submenu)
     actions: dict[QtGui.QAction, str] = {}
     ordered = sorted(
         conditions.values(),

@@ -18,26 +18,16 @@ from ..components.viewer_cursors import (
 from ..config import (
     ACTION_NEXT_PAGE_LABEL,
     ACTION_NEXT_PAGE_TOOLTIP,
-    ACTION_DIMENSION_LABEL,
-    ACTION_DIMENSION_TOOLTIP,
-    ACTION_PAN_LABEL,
-    ACTION_PAN_TOOLTIP,
     ACTION_PREVIOUS_PAGE_LABEL,
     ACTION_PREVIOUS_PAGE_TOOLTIP,
     ACTION_RESET_VIEW_LABEL,
     ACTION_RESET_VIEW_TOOLTIP,
-    ACTION_SELECT_LABEL,
-    ACTION_SELECT_TOOLTIP,
-    ACTION_PLACE_LABEL,
-    ACTION_PLACE_TOOLTIP,
     ACTION_ZOOM_IN_LABEL,
     ACTION_ZOOM_IN_TOOLTIP,
-    ACTION_ZOOM_LABEL,
     ACTION_MOVE_OVERLAY_IMAGE_LABEL,
     ACTION_MOVE_OVERLAY_IMAGE_TOOLTIP,
     ACTION_ZOOM_OUT_LABEL,
     ACTION_ZOOM_OUT_TOOLTIP,
-    ACTION_ZOOM_TOOLTIP,
     ANNOTATION_VIEW_WINDOW_ACTION_LABEL,
     ANNOTATION_WINDOW_TITLE,
     COMPACT_SPACING,
@@ -69,6 +59,7 @@ from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..managers.ui_access_manager import Feature
 from ..services.undo_redo_service import UndoRedoService
+from ..utils.plan_tool_registry import PLAN_TOOL_SPECS
 
 
 class _PlanRibbonToolBar(QtWidgets.QToolBar):
@@ -153,6 +144,7 @@ class ComponentBundle:
     reset_view_action: QtGui.QAction
     next_page_action: QtGui.QAction
     previous_page_action: QtGui.QAction
+    plan_tool_actions: dict[str, QtGui.QAction]
     select_action: QtGui.QAction
     pan_action: QtGui.QAction
     dimension_action: QtGui.QAction
@@ -333,39 +325,24 @@ class ComponentBuilder:
         page_nav_spacer = QtWidgets.QWidget()
         page_nav_spacer.setFixedWidth(6)
         main_toolbar.addWidget(page_nav_spacer)
-        cursor_group = QtGui.QActionGroup(viewer_container)
-        cursor_group.setExclusive(True)
-        select_action = QtGui.QAction(ACTION_SELECT_LABEL, viewer_container)
-        IconManager.apply(select_action, IconId.SELECT_TOOL)
-        select_action.setCheckable(True)
-        select_action.setChecked(True)
-        select_action.setToolTip(ACTION_SELECT_TOOLTIP)
-        cursor_group.addAction(select_action)
-        main_toolbar.addAction(select_action)
-        place_action = QtGui.QAction(ACTION_PLACE_LABEL, viewer_container)
-        IconManager.apply(place_action, IconId.PLACE_TOOL)
-        place_action.setCheckable(True)
-        place_action.setToolTip(ACTION_PLACE_TOOLTIP)
-        cursor_group.addAction(place_action)
-        main_toolbar.addAction(place_action)
-        pan_action = QtGui.QAction(ACTION_PAN_LABEL, viewer_container)
-        IconManager.apply(pan_action, IconId.PAN_TOOL)
-        pan_action.setCheckable(True)
-        pan_action.setToolTip(ACTION_PAN_TOOLTIP)
-        cursor_group.addAction(pan_action)
-        main_toolbar.addAction(pan_action)
-        dimension_action = QtGui.QAction(ACTION_DIMENSION_LABEL, viewer_container)
-        IconManager.apply(dimension_action, IconId.DIMENSION_TOOL)
-        dimension_action.setCheckable(True)
-        dimension_action.setToolTip(ACTION_DIMENSION_TOOLTIP)
-        cursor_group.addAction(dimension_action)
-        main_toolbar.addAction(dimension_action)
-        zoom_mode_action = QtGui.QAction(ACTION_ZOOM_LABEL, viewer_container)
-        IconManager.apply(zoom_mode_action, IconId.ZOOM_TOOL)
-        zoom_mode_action.setCheckable(True)
-        zoom_mode_action.setToolTip(ACTION_ZOOM_TOOLTIP)
-        cursor_group.addAction(zoom_mode_action)
-        main_toolbar.addAction(zoom_mode_action)
+        plan_tool_group = QtGui.QActionGroup(viewer_container)
+        plan_tool_group.setExclusive(True)
+        plan_tool_actions = {}
+        for spec in PLAN_TOOL_SPECS:
+            action = QtGui.QAction(spec.label, viewer_container)
+            IconManager.apply(action, spec.icon_id)
+            action.setCheckable(True)
+            action.setToolTip(spec.tooltip)
+            if spec.action_key == "select_tool":
+                action.setChecked(True)
+            plan_tool_group.addAction(action)
+            main_toolbar.addAction(action)
+            plan_tool_actions[spec.action_key] = action
+        select_action = plan_tool_actions["select_tool"]
+        place_action = plan_tool_actions["place_tool"]
+        pan_action = plan_tool_actions["pan_tool"]
+        dimension_action = plan_tool_actions["dimension_tool"]
+        zoom_mode_action = plan_tool_actions["zoom_tool"]
         _zoom_cursor = make_zoom_cursor()
         plan_view.set_zoom_cursor(_zoom_cursor)
         canvas.set_zoom_cursor(_zoom_cursor)
@@ -944,6 +921,7 @@ class ComponentBuilder:
             reset_view_action=fit_action,
             next_page_action=next_page_action,
             previous_page_action=previous_page_action,
+            plan_tool_actions=plan_tool_actions,
             select_action=select_action,
             pan_action=pan_action,
             dimension_action=dimension_action,

@@ -1,5 +1,6 @@
 import os
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -15,6 +16,7 @@ from PySide6.QtGui import (
     QPixmap,
     QTextCursor,
     QTextOption,
+    QTransform,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -3483,6 +3485,11 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._current_render_identity = TakeoffPlanView._build_render_identity(
             view, page, bid_ref
         )
+        view._current_page = page
+        view._background_item = None
+        view._visible_frame_item = None
+        view._overlay_items = []
+        view._load_coordinator = FakeLoadCoordinator()
         calls = []
         view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
         view._update_scene_rect = lambda: calls.append("update_scene_rect")
@@ -3529,6 +3536,119 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
                 page_area_selections={},
             )
         )
+
+    def test_image_layer_show_without_loaded_image_rejects_overlay_refresh(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        hidden_page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            layer_visible=False,
+        )
+        shown_page = replace(hidden_page, layer_visible=True)
+        bid_ref = BidRef(file_path="bid.mdb", bid_uid="bid-1")
+        view._current_bid_page_uid = hidden_page.uid
+        view._current_page = hidden_page
+        view._current_render_identity = TakeoffPlanView._build_render_identity(
+            view, hidden_page, bid_ref
+        )
+        view._background_item = None
+        view._visible_frame_item = None
+        view._overlay_items = []
+        view._load_coordinator = FakeLoadCoordinator()
+        view._refresh_overlays = lambda *_args: self.fail(
+            "overlay refresh should not run before the image is loaded"
+        )
+        self.assertFalse(
+            view.refresh_current_page_overlays(
+                page=shown_page,
+                takeoffs=[],
+                conditions={},
+                color_map={},
+                bid_ref=bid_ref,
+                annotations=[],
+                page_area_selections={},
+            )
+        )
+
+    def test_image_layer_toggle_refresh_preserves_page_visual_geometry(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            layer_visible=True,
+            width_pts=100.0,
+            height_pts=150.0,
+        )
+        bid_ref = BidRef(file_path="bid.mdb", bid_uid="bid-1")
+        image = QImage(20, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor("white"))
+        background = ImageBackgroundItem(image, 200.0, 300.0)
+        frame = TileGraphicsItem(
+            image,
+            QtCore.QRectF(12.25, 18.5, 80.0, 120.0),
+            QtCore.QRectF(0.0, 0.0, 20.0, 20.0),
+        )
+        frame_transform = QTransform()
+        frame_transform.translate(0.375, 0.625)
+        frame.setTransform(frame_transform)
+        overlay = QGraphicsPixmapItem(QPixmap.fromImage(image))
+        overlay_transform = QTransform()
+        overlay_transform.translate(3.5, 4.25)
+        overlay_transform.scale(1.2, 1.1)
+        overlay.setTransform(overlay_transform)
+        canvas = QGraphicsRectItem(0.0, 0.0, 200.0, 300.0)
+        view._scene.addItem(background)
+        view._scene.addItem(frame)
+        view._scene.addItem(overlay)
+        view._scene.addItem(canvas)
+        view._background_item = background
+        view._visible_frame_item = frame
+        view._overlay_items = [overlay]
+        view._white_canvas_item = canvas
+        view._current_bid_page_uid = page.uid
+        view._current_page = page
+        view._current_bid_ref = bid_ref
+        view._current_render_identity = view._build_render_identity(page, bid_ref)
+        view._loaded_visual_kind = "page"
+        view._pdf_width_pts = page.width_pts
+        view._pdf_height_pts = page.height_pts
+        view._scene_scale = 2.0
+        initial_items = (view._background_item, view._visible_frame_item, overlay)
+        initial_background_rect = background.sceneBoundingRect()
+        initial_frame_rect = frame.sceneBoundingRect()
+        initial_overlay_rect = overlay.sceneBoundingRect()
+        initial_frame_transform = frame.transform()
+        initial_view_transform = view.transform()
+        try:
+            for visible in (False, True, False, True, False, True):
+                refreshed = view.refresh_current_page_overlays(
+                    page=replace(page, layer_visible=visible),
+                    takeoffs=[],
+                    conditions={},
+                    color_map={},
+                    bid_ref=bid_ref,
+                    annotations=[],
+                    page_area_selections={},
+                )
+                self.assertTrue(refreshed)
+                self.assertIs(view._background_item, initial_items[0])
+                self.assertIs(view._visible_frame_item, initial_items[1])
+                self.assertIs(view._overlay_items[0], initial_items[2])
+                self.assertEqual(
+                    background.sceneBoundingRect(), initial_background_rect
+                )
+                self.assertEqual(frame.sceneBoundingRect(), initial_frame_rect)
+                self.assertEqual(overlay.sceneBoundingRect(), initial_overlay_rect)
+                self.assertEqual(frame.transform(), initial_frame_transform)
+                self.assertEqual(view.transform(), initial_view_transform)
+                self.assertEqual(background.isVisible(), visible)
+                self.assertEqual(frame.isVisible(), visible)
+                self.assertEqual(overlay.isVisible(), visible)
+                self.assertTrue(canvas.isVisible())
+        finally:
+            view.cleanup()
 
     def test_overlay_refresh_preserves_dirty_takeoff_position_without_flushing(self):
         view = self._make_plan_view()

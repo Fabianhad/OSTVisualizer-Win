@@ -861,23 +861,61 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertIn(("cmd", "Options...", "options"), tools_items)
         self.assertNotIn(("cmd", old_label, old_key), tools_items)
 
-    def test_dimension_tool_is_registered_after_pan_with_square_foot_icon(self):
-        root = Path(__file__).resolve().parents[1]
-        builder_source = (
-            root
-            / "ost_visualizer"
-            / "presentation"
-            / "builders"
-            / "component_builder.py"
-        ).read_text(encoding="utf-8")
-        self.assertLess(
-            builder_source.index("main_toolbar.addAction(pan_action)"),
-            builder_source.index("main_toolbar.addAction(dimension_action)"),
-        )
-        self.assertLess(
-            builder_source.index("main_toolbar.addAction(dimension_action)"),
-            builder_source.index("main_toolbar.addAction(zoom_mode_action)"),
-        )
+    def test_tools_menu_lists_dimension_after_cursor_tools_with_square_foot_icon(self):
+        labels = {
+            "select_tool": "Select",
+            "place_tool": "Place",
+            "pan_tool": "Pan",
+            "zoom_tool": "Zoom",
+            "dimension_tool": "Dimension",
+        }
+        shared_actions = {
+            key: QtGui.QAction(labels.get(key, key), None)
+            for key in (
+                "new_project",
+                "new_folder",
+                "new_database",
+                "open_files",
+                "undo",
+                "redo",
+                "cut",
+                "copy",
+                "paste",
+                "duplicate",
+                "delete",
+                "select_all",
+                "zoom_in",
+                "zoom_out",
+                "reset_view",
+                "next_page",
+                "previous_page",
+                "layers_sidebar",
+                "conditions_sidebar",
+                "status_bar",
+                "annotation_window",
+                "select_tool",
+                "place_tool",
+                "pan_tool",
+                "zoom_tool",
+                "dimension_tool",
+                "backout_mode",
+            )
+        }
+        result = MenuBuilder(None, {}, shared_actions=shared_actions).create_menu()
+        try:
+            tools_menu = result.menus["tools"]
+            action_texts = [
+                action.text()
+                for action in tools_menu.actions()
+                if not action.isSeparator()
+            ]
+            self.assertEqual(
+                action_texts[:5],
+                ["Select", "Place", "Pan", "Zoom", "Dimension"],
+            )
+            self.assertIs(tools_menu.actions()[4], shared_actions["dimension_tool"])
+        finally:
+            result.menu_bar.deleteLater()
         self.assertEqual(
             ICON_SPECS[IconId.DIMENSION_TOOL].svg_name,
             "square_foot_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",

@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.presentation.utils.view_context_menu import (
+    add_common_context_submenus,
     add_reassign_condition_submenu,
 )
 
@@ -54,6 +55,35 @@ class ViewContextMenuTests(unittest.TestCase):
                     not action.icon().isNull()
                     for action in reassign_menu.submenu.actions()
                 )
+            )
+        finally:
+            menu.deleteLater()
+
+    def test_plan_tools_context_submenu_uses_shared_tool_registry(self):
+        menu = QtWidgets.QMenu()
+        try:
+            add_common_context_submenus(
+                menu,
+                current_mode=0,
+                trigger_fn=lambda _key: None,
+                action_state_fn=lambda _key: {
+                    "enabled": True,
+                },
+                has_overlay_image=False,
+            )
+            tools_menu = menu.actions()[0].menu()
+            self.assertEqual(tools_menu.title(), "Tools")
+            self.assertEqual(
+                [action.text() for action in tools_menu.actions()],
+                [
+                    "Select",
+                    "Place",
+                    "Pan",
+                    "Zoom",
+                    "Dimension",
+                    "",
+                    "Backout",
+                ],
             )
         finally:
             menu.deleteLater()

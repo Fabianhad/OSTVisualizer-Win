@@ -115,5 +115,6 @@ class ContextMenuManager:
         text: str,
         entries: Sequence[ContextMenuEntry],
     ) -> tuple[QtWidgets.QMenu, dict[ContextActionId, QtGui.QAction]]:
-        submenu = menu.addMenu(text)
+        submenu = QtWidgets.QMenu(text, menu)
+        menu.addMenu(submenu)
         return submenu, ContextMenuManager.build(submenu, entries)

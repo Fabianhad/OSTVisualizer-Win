@@ -39,6 +39,7 @@ from .managers.ui_state_manager import UIStateManager
 from .services.bid_clipboard_service import BidClipboardService
 from .services.mcp_context_bridge import McpContextBridge
 from .utils.messagebox import show_warning
+from .utils.plan_tool_registry import PLAN_TOOL_ACTION_KEYS
 from .utils.qt_window_icon_provider import QtWindowIconProvider
 from .utils.themed_icon import rebuild_all_icons
 
@@ -341,11 +342,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 "reset_view": components.reset_view_action,
                 "next_page": components.next_page_action,
                 "previous_page": components.previous_page_action,
-                "select_tool": components.select_action,
-                "place_tool": components.place_action,
-                "zoom_tool": components.zoom_mode_action,
-                "pan_tool": components.pan_action,
-                "dimension_tool": components.dimension_action,
+                **{
+                    key: components.plan_tool_actions[key]
+                    for key in PLAN_TOOL_ACTION_KEYS
+                },
                 "backout_mode": components.backout_action,
                 "layers_sidebar": components.layers_toggle_action,
                 "conditions_sidebar": components.conditions_toggle_action,
