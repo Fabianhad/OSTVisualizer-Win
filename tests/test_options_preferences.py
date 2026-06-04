@@ -2359,7 +2359,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                             f"pixel mismatch at {x},{y}",
                         )
 
-    def test_visible_frame_placement_snaps_from_returned_bitmap_size(self):
+    def test_visible_frame_placement_uses_returned_bitmap_size_without_stretch(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._scene = QtWidgets.QGraphicsScene()
         view._scene_scale = 2.0
@@ -2396,8 +2396,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             rect.y(),
             math.floor(20.6 * 3.25 + 0.5) / 3.25 * 2.0,
         )
-        self.assertEqual(rect.width(), round(101 * 2.0 / 3.25))
-        self.assertEqual(rect.height(), round(83 * 2.0 / 3.25))
+        self.assertAlmostEqual(rect.width(), 101 * 2.0 / 3.25)
+        self.assertAlmostEqual(rect.height(), 83 * 2.0 / 3.25)
 
     def test_visible_frame_placement_uses_renderer_half_pixel_origin(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)

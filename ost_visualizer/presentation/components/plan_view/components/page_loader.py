@@ -644,13 +644,13 @@ class PageLoaderMixin:
             self._rendered_frame_origin(context["frame_y_pts"], scale)
             * self._scene_scale
         )
-        frame_scene_w = round(float(image.width()) * self._scene_scale / scale)
-        frame_scene_h = round(float(image.height()) * self._scene_scale / scale)
+        frame_scene_w = float(image.width()) * self._scene_scale / scale
+        frame_scene_h = float(image.height()) * self._scene_scale / scale
         return QRectF(
             float(frame_scene_x),
             float(frame_scene_y),
-            float(max(1, frame_scene_w)),
-            float(max(1, frame_scene_h)),
+            float(max(1.0, frame_scene_w)),
+            float(max(1.0, frame_scene_h)),
         )
 
     def _build_visible_frame_context(self, frame_scale: float) -> Optional[dict]:
