@@ -628,10 +628,22 @@ class PageLoaderMixin:
             context["source_h_pts"] * self._scene_scale,
         )
 
+    @staticmethod
+    def _rendered_frame_origin(value: float, scale: float) -> float:
+        if scale <= 0.0:
+            return value
+        return math.floor(value * scale + 0.5) / scale
+
     def _visible_frame_local_rect(self, context: dict, image) -> QRectF:
         scale = context["scale"]
-        frame_scene_x = round(context["frame_x_pts"] * self._scene_scale)
-        frame_scene_y = round(context["frame_y_pts"] * self._scene_scale)
+        frame_scene_x = (
+            self._rendered_frame_origin(context["frame_x_pts"], scale)
+            * self._scene_scale
+        )
+        frame_scene_y = (
+            self._rendered_frame_origin(context["frame_y_pts"], scale)
+            * self._scene_scale
+        )
         frame_scene_w = round(float(image.width()) * self._scene_scale / scale)
         frame_scene_h = round(float(image.height()) * self._scene_scale / scale)
         return QRectF(

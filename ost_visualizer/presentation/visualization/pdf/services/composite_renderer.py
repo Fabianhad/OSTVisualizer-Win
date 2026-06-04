@@ -16,6 +16,12 @@ def _quantize_render_scale(scale: float) -> float:
     return max(0.1, round(scale, 3))
 
 
+def _rendered_frame_origin(value: float, scale: float) -> float:
+    if scale <= 0.0:
+        return value
+    return math.floor(value * scale + 0.5) / scale
+
+
 class CompositeRenderer:
     MAX_CACHE_SIZE = 10
 
@@ -314,15 +320,22 @@ class CompositeRenderer:
         if not blue_frame:
             return
         blue_tinted = tint_image(blue_frame, 80, 80, 255)
+        rendered_source_x = _rendered_frame_origin(source_x, overlay_scale)
+        rendered_source_y = _rendered_frame_origin(source_y, overlay_scale)
+        rendered_frame_x = _rendered_frame_origin(frame_x, render_scale)
+        rendered_frame_y = _rendered_frame_origin(frame_y, render_scale)
         painter.save()
         image_to_source = QTransform()
         image_to_source.scale(1.0 / overlay_scale, 1.0 / overlay_scale)
         source_offset = QTransform()
-        source_offset.translate(source_x, source_y)
+        source_offset.translate(rendered_source_x, rendered_source_y)
         page_to_frame = QTransform()
         page_to_frame.scale(render_scale, render_scale)
         frame_offset = QTransform()
-        frame_offset.translate(-frame_x * render_scale, -frame_y * render_scale)
+        frame_offset.translate(
+            -rendered_frame_x * render_scale,
+            -rendered_frame_y * render_scale,
+        )
         transform = (
             image_to_source
             * source_offset

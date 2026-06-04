@@ -2050,6 +2050,36 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertIsNotNone(image)
         self.assertEqual(_first_blue_column(image), 20)
 
+    def test_composite_visible_frame_uses_renderer_rounded_page_origin(self):
+        renderer = CompositeRenderer(FakeOverlayMovementPageCache())
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            page_index=0,
+            width_pts=100.0,
+            height_pts=100.0,
+            overlay_rect=(
+                20.5 / 72.0 * 96.0,
+                0.0,
+                100.0 / 72.0 * 96.0,
+                100.0 / 72.0 * 96.0,
+            ),
+            image_show_mode=2,
+        )
+        image = renderer.render_composite_frame(
+            page,
+            scale=2.0,
+            frame_x_pts=10.25,
+            frame_y_pts=0.0,
+            frame_w_pts=40.0,
+            frame_h_pts=40.0,
+            rotation=0,
+        )
+        self.assertIsNotNone(image)
+        self.assertEqual(_first_blue_column(image), 20)
+
     def test_overlay_pdf_item_keeps_scene_size_when_rendered_above_view_scale(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         page = Page(
@@ -2358,10 +2388,28 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         self.assertIsNotNone(view._visible_frame_item)
         rect = view._visible_frame_item.boundingRect()
-        self.assertEqual(rect.x(), round(10.4 * 2.0))
-        self.assertEqual(rect.y(), round(20.6 * 2.0))
+        self.assertAlmostEqual(
+            rect.x(),
+            math.floor(10.4 * 3.25 + 0.5) / 3.25 * 2.0,
+        )
+        self.assertAlmostEqual(
+            rect.y(),
+            math.floor(20.6 * 3.25 + 0.5) / 3.25 * 2.0,
+        )
         self.assertEqual(rect.width(), round(101 * 2.0 / 3.25))
         self.assertEqual(rect.height(), round(83 * 2.0 / 3.25))
+
+    def test_visible_frame_placement_uses_renderer_half_pixel_origin(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._scene_scale = 2.0
+        context = _visible_frame_context("base")
+        context["scale"] = 2.0
+        context["frame_x_pts"] = 10.25
+        context["frame_y_pts"] = 20.25
+        image = QtGui.QImage(100, 100, QtGui.QImage.Format.Format_ARGB32)
+        rect = view._visible_frame_local_rect(context, image)
+        self.assertEqual(rect.x(), 21.0)
+        self.assertEqual(rect.y(), 41.0)
 
     def test_visible_frame_keeps_low_res_background_visible_after_install(self):
         view = _visible_frame_lifecycle_view()
