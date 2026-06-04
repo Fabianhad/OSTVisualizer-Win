@@ -146,31 +146,6 @@ class PageCache:
             file_path, page_index, quantized_scale, rotation
         )
 
-    def render_region_uncached(
-        self,
-        file_path: str,
-        page_index: int,
-        scale: float,
-        tile_x: int,
-        tile_y: int,
-        tile_w: int,
-        tile_h: int,
-        rotation: int = 0,
-    ) -> Optional[QImage]:
-        if not file_path:
-            return None
-        quantized_scale = self._quantize_scale(scale)
-        return self._get_renderer().render_region(
-            file_path,
-            page_index,
-            quantized_scale,
-            tile_x,
-            tile_y,
-            tile_w,
-            tile_h,
-            rotation,
-        )
-
     def render_frame_uncached(
         self,
         file_path: str,

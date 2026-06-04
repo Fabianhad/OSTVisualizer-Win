@@ -45,7 +45,6 @@ from ost_visualizer.presentation.components.plan_view.components.graphics_items 
     ClippedTextGraphicsItem,
     ImageBackgroundItem,
     TileGraphicsItem,
-    TileKey,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
@@ -216,6 +215,8 @@ class FakeRenderingService:
         self.page_requests = []
         self.overlay_requests = []
         self.composite_requests = []
+        self.frame_requests = []
+        self.composite_frame_requests = []
         self.cancelled_requests = []
         self._request_counter = 0
 
@@ -236,6 +237,16 @@ class FakeRenderingService:
     def render_composite_async(self, **kwargs):
         request_id = self._next_request_id("composite")
         self.composite_requests.append((request_id, kwargs))
+        return request_id
+
+    def render_frame_async(self, **kwargs):
+        request_id = self._next_request_id("frame")
+        self.frame_requests.append((request_id, kwargs))
+        return request_id
+
+    def render_composite_frame_async(self, **kwargs):
+        request_id = self._next_request_id("composite-frame")
+        self.composite_frame_requests.append((request_id, kwargs))
         return request_id
 
     def cancel_request(self, request_id):
@@ -518,123 +529,6 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(rendering_service.composite_calls[0]["page"], page)
         view.cleanup()
 
-    def test_show_both_high_resolution_tiles_request_red_base_and_blue_overlay(self):
-        class RecordingRenderingService:
-            def __init__(self):
-                self.calls = []
-
-            def render_region_async(self, **kwargs):
-                self.calls.append(kwargs)
-                return f"region-{len(self.calls)}"
-
-            def cancel_request(self, _request_id):
-                pass
-
-            def shutdown(self):
-                pass
-
-        view = self._make_plan_view()
-        rendering_service = RecordingRenderingService()
-        view._rendering_service = rendering_service
-        page = Page(
-            uid="p1",
-            name="P1",
-            image_path="base.pdf",
-            overlay_image_path="overlay.pdf",
-            image_show_mode=2,
-            width_pts=612.0,
-            height_pts=792.0,
-            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
-            rotation=90,
-        )
-        view._current_page = page
-        view._current_bid_page_uid = "p1"
-        view._current_rotation = page.rotation
-        view._current_load_token = "load-1"
-        view._current_render_identity = view._build_render_identity(page, None)
-        view._scene_scale = 2.0
-        view._tile_items = {}
-        view._tile_requests = {}
-        view._overlay_tile_items = {}
-        view._overlay_tile_requests = {}
-        view._loaded_visual_kind = "overlay"
-        view._overlay_pdf_width_pts = 612.0
-        view._overlay_pdf_height_pts = 792.0
-        view._is_composite_mode = False
-        view._can_zoom_rerender = True
-        view._tile_scale = 4.0
-        view._overlay_tile_scale = 4.0
-        view._pdf_width_pts = 612.0
-        view._pdf_height_pts = 792.0
-        view._page_render_generation_id = 1
-        self.assertTrue(view._uses_dynamic_tile_coverage())
-        key = TileKey(0, 0, 4.0)
-        base_image = QImage(16, 16, QImage.Format.Format_ARGB32)
-        base_image.fill(0xFFFFFFFF)
-        background = ImageBackgroundItem(base_image, 6048.0, 4320.0)
-        view._background_item = background
-        view._scene.addItem(background)
-        self.assertTrue(background.isVisible())
-        view._request_tile(key, generation_id=1, priority=2)
-        self.assertEqual(rendering_service.calls[0]["file_path"], "base.pdf")
-        self.assertEqual(rendering_service.calls[0]["rotation"], 0)
-        self.assertEqual(rendering_service.calls[0]["tint_rgb"], (255, 80, 80))
-        view._on_tile_loaded(
-            RenderResult(
-                request_id="region-1", success=True, image=base_image, error=None
-            ),
-            key,
-            "load-1",
-            view._current_render_identity,
-            generation_id=1,
-        )
-        self.assertIn(key, view._tile_items)
-        self.assertFalse(background.isVisible())
-        overlay_key = TileKey(0, 0, 4.0)
-        view._request_overlay_tile(overlay_key, generation_id=1, priority=2)
-        self.assertEqual(rendering_service.calls[1]["file_path"], "overlay.pdf")
-        self.assertEqual(rendering_service.calls[1]["rotation"], 90)
-        self.assertEqual(rendering_service.calls[1]["tint_rgb"], (80, 80, 255))
-        low_res = view._create_overlay_graphics_item(
-            QPixmap(100, 100),
-            page,
-            view_scale=2.0,
-            show_mode=2,
-        )
-        view._scene.addItem(low_res)
-        view._overlay_items.append(low_res)
-        self.assertTrue(low_res.isVisible())
-        image = QImage(16, 16, QImage.Format.Format_ARGB32)
-        image.fill(0xFFFFFFFF)
-        pending_key = TileKey(1, 0, 4.0)
-        view._overlay_tile_requests[pending_key] = "region-3"
-        view._on_overlay_tile_loaded(
-            RenderResult(request_id="region-2", success=True, image=image, error=None),
-            overlay_key,
-            "load-1",
-            view._current_render_identity,
-            generation_id=1,
-        )
-        self.assertIn(overlay_key, view._overlay_tile_items)
-        self.assertGreater(view._overlay_tile_items[overlay_key].zValue(), 0.5)
-        self.assertTrue(low_res.isVisible())
-        self.assertIn(pending_key, view._overlay_tile_requests)
-        view._on_overlay_tile_loaded(
-            RenderResult(request_id="region-3", success=True, image=image, error=None),
-            pending_key,
-            "load-1",
-            view._current_render_identity,
-            generation_id=1,
-        )
-        self.assertFalse(low_res.isVisible())
-        view._clear_tiles()
-        self.assertEqual(view._overlay_tile_items, {})
-        self.assertEqual(view._overlay_tile_requests, {})
-        self.assertEqual(view._overlay_tile_scale, 0.0)
-        self.assertTrue(background.isVisible())
-        self.assertTrue(low_res.isVisible())
-        view.cleanup()
-
     def test_show_both_optional_overlay_base_correction_uses_page_rotation(self):
         class RecordingRenderingService:
             def __init__(self):
@@ -670,8 +564,6 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._current_load_token = "load-1"
         view._current_render_identity = view._build_render_identity(page, None)
         view._scene_scale = 2.0
-        view._tile_items = {}
-        view._tile_requests = {}
         view._base_raster_request_id = None
         view._base_raster_request_scale = 0.0
         view._base_correction_request_generation_id = 0
@@ -687,7 +579,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(call["render_scale"], 3.0)
         view.cleanup()
 
-    def test_show_both_overlay_tile_transform_matches_low_res_overlay_item(self):
+    def test_show_both_overlay_visible_frame_transform_matches_low_res_overlay_item(self):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
@@ -728,7 +620,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertAlmostEqual(tile_rect.height(), low_rect.height(), places=5)
         view.cleanup()
 
-    def test_show_both_cropped_overlay_tile_maps_to_overlay_rect_subregion(self):
+    def test_show_both_cropped_overlay_visible_frame_maps_to_overlay_rect_subregion(self):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
@@ -746,9 +638,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._loaded_visual_kind = "overlay"
         view._overlay_pdf_width_pts = 612.0
         view._overlay_pdf_height_pts = 792.0
-        view.TILE_SIZE_PX = 256
-        key = TileKey(1, 1, 4.0)
-        local_rect, source_rect = view._tile_item_rects(key, overlay=True)
+        local_rect = QtCore.QRectF(128.0, 128.0, 128.0, 128.0)
+        source_rect = QtCore.QRectF(0.0, 0.0, 256.0, 256.0)
         tile = TileGraphicsItem(
             QImage(256, 256, QImage.Format.Format_ARGB32),
             local_rect,
@@ -1573,6 +1464,103 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view._background_item.isVisible())
         self.assertEqual(view._loaded_visual_kind, "composite")
         self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        view.cleanup()
+
+    def test_move_overlay_commit_invalidates_stale_visible_frame(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        result = type(
+            "Result",
+            (),
+            {"write_success": True, "reload_success": False},
+        )()
+        self._install_page_canvas(view, page)
+        stale_image = QImage(20, 20, QImage.Format.Format_ARGB32)
+        stale_image.fill(QColor(255, 255, 255).rgba())
+        stale_frame = TileGraphicsItem(
+            stale_image,
+            QtCore.QRectF(0.0, 0.0, 20.0, 20.0),
+            QtCore.QRectF(0.0, 0.0, 20.0, 20.0),
+        )
+        view._scene.addItem(stale_frame)
+        view._visible_frame_item = stale_frame
+        view._visible_frame_key = ("composite", "old-overlay-rect")
+        view._visible_frame_kind = "composite"
+        view._visible_frame_scale = 8.0
+        view._visible_frame_request_id = "old-frame-request"
+        preview_overlay = QGraphicsPixmapItem(QPixmap(10, 10))
+        view._scene.addItem(preview_overlay)
+        view._overlay_move_preview_overlay_item = preview_overlay
+        view._overlay_move_original_rect = page.overlay_rect
+        view._overlay_move_preview_rect = (96.0, 48.0, 816.0, 1056.0)
+        view.set_overlay_rect_save_handler(lambda _rect: result)
+
+        with patch(
+            "ost_visualizer.presentation.components.plan_view.view.show_warning"
+        ):
+            view._commit_overlay_move()
+
+        self.assertEqual(page.overlay_rect, (96.0, 48.0, 816.0, 1056.0))
+        self.assertIn("old-frame-request", view._rendering_service.cancelled_requests)
+        self.assertIsNone(stale_frame.scene())
+        self.assertIsNone(view._visible_frame_item)
+        self.assertIsNone(view._visible_frame_key)
+        self.assertEqual(view._visible_frame_scale, 0.0)
+        self.assertIs(preview_overlay.scene(), view._scene)
+        view.cleanup()
+
+    def test_move_overlay_commit_next_composite_frame_uses_committed_overlay_rect(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        result = type(
+            "Result",
+            (),
+            {"write_success": True, "reload_success": True},
+        )()
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        view.set_overlay_rect_save_handler(lambda _rect: result)
+        view._overlay_move_preview_rect = (96.0, 48.0, 816.0, 1056.0)
+        view._commit_overlay_move()
+        composite_request_id, composite_kwargs = (
+            view._rendering_service.composite_requests[-1]
+        )
+        image = QImage(200, 200, QImage.Format.Format_ARGB32)
+        image.fill(QColor(255, 255, 255).rgba())
+        composite_kwargs["callback"](
+            RenderResult(composite_request_id, True, image, None)
+        )
+
+        view._update_tile_coverage(4.0)
+
+        self.assertEqual(len(view._rendering_service.composite_frame_requests), 1)
+        _request_id, frame_kwargs = view._rendering_service.composite_frame_requests[-1]
+        self.assertEqual(
+            frame_kwargs["page"].overlay_rect,
+            (96.0, 48.0, 816.0, 1056.0),
+        )
+        self.assertIn(
+            (96.0, 48.0, 816.0, 1056.0),
+            view._visible_frame_key[-1],
+        )
         view.cleanup()
 
     def test_move_overlay_handle_is_removed_on_clear(self):

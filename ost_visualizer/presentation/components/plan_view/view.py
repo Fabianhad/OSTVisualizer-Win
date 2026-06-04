@@ -81,7 +81,6 @@ from .components.graphics_items import (
     ClippedTextGraphicsItem,
     ImageBackgroundItem,
     TileGraphicsItem,
-    TileKey,
 )
 from .components.input_handler import InputHandlerMixin
 from .components.page_loader import PageLoaderMixin
@@ -211,8 +210,7 @@ class TakeoffPlanView(
     MIN_ZOOM = 0.05
     MAX_ZOOM = 16.0
     ZOOM_FACTOR = 1.15
-    TILE_SIZE_PX: int = 1024
-    _TILE_ACTIVATE_RATIO: float = 1.1
+    _FRAME_ACTIVATE_RATIO: float = 1.1
 
     def __init__(
         self,
@@ -252,12 +250,6 @@ class TakeoffPlanView(
         self._pdf_height_pts: float = 0.0
         self._overlay_pdf_width_pts: float = 0.0
         self._overlay_pdf_height_pts: float = 0.0
-        self._tile_items: Dict[TileKey, TileGraphicsItem] = {}
-        self._tile_requests: Dict[TileKey, str] = {}
-        self._tile_scale: float = 0.0
-        self._overlay_tile_items: Dict[TileKey, TileGraphicsItem] = {}
-        self._overlay_tile_requests: Dict[TileKey, str] = {}
-        self._overlay_tile_scale: float = 0.0
         self._visible_frame_item: Optional[TileGraphicsItem] = None
         self._visible_frame_request_id: Optional[str] = None
         self._visible_frame_key: Optional[tuple] = None
@@ -3144,7 +3136,7 @@ class TakeoffPlanView(
             return None
 
     def _overlay_move_suppresses_normal_tiles(self) -> bool:
-        return getattr(self, "_overlay_move_original_rect", None) is not None
+        return self._overlay_move_original_rect is not None
 
     def _overlay_move_page_for_rect(
         self, overlay_rect: Tuple[float, float, float, float]
@@ -3179,8 +3171,6 @@ class TakeoffPlanView(
         if self._visible_frame_item is not None:
             items.append(self._visible_frame_item)
         items.extend(self._overlay_items)
-        items.extend(self._tile_items.values())
-        items.extend(self._overlay_tile_items.values())
         preview_items = {
             id(self._overlay_move_preview_base_item),
             id(self._overlay_move_preview_overlay_item),
@@ -3485,6 +3475,8 @@ class TakeoffPlanView(
         self._current_render_identity = self._build_render_identity(
             self._current_page, self._current_bid_ref
         )
+        self._clear_visible_frame()
+        self._cancel_optional_base_correction()
         self._overlay_move_original_rect = None
         self._overlay_move_preview_rect = None
         self._overlay_move_anchor_scene = None
@@ -4302,24 +4294,14 @@ class TakeoffPlanView(
             self._exit_annotation_place_mode()
         self._flush_dirty_rotations()
         self._flush_dirty_positions()
-        self._cancel_tile_requests()
+        self._cancel_high_res_frame_requests()
         if self._is_live_graphics_item(self._background_item):
             self._background_item.clear_image()
-        for item in self._tile_items.values():
-            if self._is_live_graphics_item(item):
-                item.clear_image()
-        for item in self._overlay_tile_items.values():
-            if self._is_live_graphics_item(item):
-                item.clear_image()
         if self._is_live_graphics_item(self._visible_frame_item):
             self._visible_frame_item.clear_image()
         for item in self._overlay_items:
             if self._is_live_graphics_item(item):
                 item.setPixmap(QPixmap())
-        self._tile_items.clear()
-        self._tile_scale = 0.0
-        self._overlay_tile_items.clear()
-        self._overlay_tile_scale = 0.0
         self._visible_frame_item = None
         self._visible_frame_key = None
         self._visible_frame_kind = None

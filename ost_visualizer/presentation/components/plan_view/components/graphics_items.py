@@ -1,6 +1,4 @@
 import math
-import math
-from dataclasses import dataclass
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsTextItem
@@ -76,13 +74,6 @@ class ImageBackgroundItem(_ImageGraphicsItem):
             QRectF(0.0, 0.0, scene_width, scene_height),
             QRectF(0.0, 0.0, float(image.width()), float(image.height())),
         )
-
-
-@dataclass(frozen=True)
-class TileKey:
-    col: int
-    row: int
-    scale: float
 
 
 class TileGraphicsItem(_ImageGraphicsItem):

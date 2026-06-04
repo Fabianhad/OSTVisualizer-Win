@@ -42,22 +42,6 @@ class IPageRenderingService(Protocol):
         apply_invert_effect: bool = True,
         apply_bitonal_effect: bool = True,
     ) -> str: ...
-    def render_region_async(
-        self,
-        file_path: str,
-        page_index: int,
-        scale: float,
-        rotation: int,
-        tile_x: int,
-        tile_y: int,
-        tile_w: int,
-        tile_h: int,
-        callback: Callable[[RenderResult], None],
-        priority: int = 1,
-        invert: bool = False,
-        bitonal: bool = False,
-        tint_rgb: tuple[int, int, int] | None = None,
-    ) -> str: ...
     def render_frame_async(
         self,
         file_path: str,
@@ -73,19 +57,6 @@ class IPageRenderingService(Protocol):
         invert: bool = False,
         bitonal: bool = False,
         tint_rgb: tuple[int, int, int] | None = None,
-    ) -> str: ...
-    def render_composite_region_async(
-        self,
-        page: Page,
-        bid_ref: BidRef | None,
-        scale: float,
-        rotation: int,
-        tile_x: int,
-        tile_y: int,
-        tile_w: int,
-        tile_h: int,
-        callback: Callable[[RenderResult], None],
-        priority: int = 1,
     ) -> str: ...
     def render_composite_frame_async(
         self,

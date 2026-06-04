@@ -504,72 +504,6 @@ namespace ost_pdf
         result.stride = stride;
         return result;
     }
-    std::optional<RenderedPage> PDFRenderer::render_page_region(
-        int page_index,
-        float scale,
-        int tile_x,
-        int tile_y,
-        int tile_w,
-        int tile_h,
-        int rotation)
-    {
-        if (!doc_ || page_index < 0 || page_index >= page_count())
-        {
-            return std::nullopt;
-        }
-        if (tile_w < 1 || tile_h < 1)
-        {
-            return std::nullopt;
-        }
-        rotation = normalize_user_rotation_deg(rotation);
-        FPDF_PAGE page = FPDF_LoadPage(DOC(), page_index);
-        if (!page)
-        {
-            return std::nullopt;
-        }
-        double pdf_width = FPDF_GetPageWidth(page);
-        double pdf_height = FPDF_GetPageHeight(page);
-        int full_w = static_cast<int>(pdf_width * scale + 0.5);
-        int full_h = static_cast<int>(pdf_height * scale + 0.5);
-        if (rotation == 1 || rotation == 3)
-        {
-            std::swap(full_w, full_h);
-        }
-        if (full_w < 1)
-            full_w = 1;
-        if (full_h < 1)
-            full_h = 1;
-        int stride = tile_w * 4;
-        std::vector<uint8_t> pixels(static_cast<size_t>(stride) * tile_h);
-        FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(
-            tile_w, tile_h,
-            FPDFBitmap_BGRA,
-            pixels.data(),
-            stride);
-        if (!bitmap)
-        {
-            FPDF_ClosePage(page);
-            return std::nullopt;
-        }
-        FPDFBitmap_FillRect(bitmap, 0, 0, tile_w, tile_h, 0xFFFFFFFF);
-        FPDF_RenderPageBitmap(
-            bitmap,
-            page,
-            -tile_x, -tile_y,
-            full_w,
-            full_h,
-            rotation,
-            FPDF_ANNOT | FPDF_LCD_TEXT);
-        FPDFBitmap_Destroy(bitmap);
-        FPDF_ClosePage(page);
-        RenderedPage result;
-        result.pixels = std::move(pixels);
-        result.width = tile_w;
-        result.height = tile_h;
-        result.stride = stride;
-        return result;
-    }
-
     std::optional<RenderedPage> PDFRenderer::render_page_frame(
         int page_index,
         float scale,
@@ -621,6 +555,18 @@ namespace ost_pdf
             render_width = 1;
         if (render_height < 1)
             render_height = 1;
+        int full_w = static_cast<int>(page_w * scale + 0.5);
+        int full_h = static_cast<int>(page_h * scale + 0.5);
+        if (rotation == 1 || rotation == 3)
+        {
+            std::swap(full_w, full_h);
+        }
+        if (full_w < 1)
+            full_w = 1;
+        if (full_h < 1)
+            full_h = 1;
+        int offset_x = static_cast<int>(left * scale + 0.5);
+        int offset_y = static_cast<int>(top * scale + 0.5);
 
         int stride = render_width * 4;
         std::vector<uint8_t> pixels(static_cast<size_t>(stride) * render_height);
@@ -635,54 +581,13 @@ namespace ost_pdf
             return std::nullopt;
         }
         FPDFBitmap_FillRect(bitmap, 0, 0, render_width, render_height, 0xFFFFFFFF);
-
-        FS_MATRIX matrix;
-        if (rotation == 0)
-        {
-            matrix.a = scale;
-            matrix.b = 0.0f;
-            matrix.c = 0.0f;
-            matrix.d = scale;
-            matrix.e = static_cast<float>(-left * scale);
-            matrix.f = static_cast<float>(-(page_h - bottom) * scale);
-        }
-        else if (rotation == 1)
-        {
-            matrix.a = 0.0f;
-            matrix.b = scale;
-            matrix.c = -scale;
-            matrix.d = 0.0f;
-            matrix.e = static_cast<float>((page_h - left) * scale);
-            matrix.f = static_cast<float>(-top * scale);
-        }
-        else if (rotation == 2)
-        {
-            matrix.a = -scale;
-            matrix.b = 0.0f;
-            matrix.c = 0.0f;
-            matrix.d = -scale;
-            matrix.e = static_cast<float>((page_w - left) * scale);
-            matrix.f = static_cast<float>(bottom * scale);
-        }
-        else
-        {
-            matrix.a = 0.0f;
-            matrix.b = -scale;
-            matrix.c = scale;
-            matrix.d = 0.0f;
-            matrix.e = static_cast<float>(-left * scale);
-            matrix.f = static_cast<float>((page_w - top) * scale);
-        }
-        FS_RECTF clip;
-        clip.left = 0.0f;
-        clip.top = 0.0f;
-        clip.right = static_cast<float>(render_width);
-        clip.bottom = static_cast<float>(render_height);
-        FPDF_RenderPageBitmapWithMatrix(
+        FPDF_RenderPageBitmap(
             bitmap,
             page,
-            &matrix,
-            &clip,
+            -offset_x, -offset_y,
+            full_w,
+            full_h,
+            rotation,
             FPDF_ANNOT | FPDF_LCD_TEXT);
 
         FPDFBitmap_Destroy(bitmap);

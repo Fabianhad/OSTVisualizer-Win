@@ -3,6 +3,7 @@ import os
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Optional
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -26,7 +27,6 @@ from ost_visualizer.presentation.components.page_combo import (
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
     ImageBackgroundItem,
     TileGraphicsItem,
-    TileKey,
 )
 from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
     PlacementModeMixin,
@@ -230,26 +230,10 @@ def _plan_view_with_tracking_viewport(cursor_mode="select"):
     return view, viewport
 
 
-class FakeCompositeRegionPageCache:
+class FakeCompositeFramePageCache:
     def __init__(self, source_size=(100.0, 100.0)):
         self.calls = []
         self.source_size = source_size
-
-    def render_region_uncached(
-        self,
-        file_path,
-        page_index,
-        scale,
-        tile_x,
-        tile_y,
-        tile_w,
-        tile_h,
-        rotation,
-    ):
-        self.calls.append(
-            (file_path, page_index, scale, tile_x, tile_y, tile_w, tile_h)
-        )
-        return QtGui.QImage(tile_w, tile_h, QtGui.QImage.Format.Format_ARGB32)
 
     def render_frame_uncached(
         self,
@@ -281,6 +265,49 @@ class FakeCompositeRegionPageCache:
 
     def get_page_size(self, _file_path, _page_index):
         return self.source_size
+
+
+class FakeOverlayMovementPageCache:
+    def get_page_size(self, _file_path, _page_index):
+        return (100.0, 100.0)
+
+    def render_frame_uncached(
+        self,
+        file_path,
+        page_index,
+        scale,
+        frame_x_pts,
+        frame_y_pts,
+        frame_w_pts,
+        frame_h_pts,
+        rotation,
+    ):
+        image = QtGui.QImage(
+            max(1, math.ceil(frame_w_pts * scale)),
+            max(1, math.ceil(frame_h_pts * scale)),
+            QtGui.QImage.Format.Format_ARGB32,
+        )
+        image.fill(QtGui.QColor(255, 255, 255))
+        if file_path == "overlay.pdf":
+            painter = QtGui.QPainter(image)
+            painter.setPen(QtGui.QColor(0, 0, 0))
+            line_x = round((0.0 - frame_x_pts) * scale)
+            if -1 <= line_x <= image.width():
+                painter.drawLine(line_x, 0, line_x, image.height() - 1)
+            painter.end()
+        return image
+
+
+def _first_blue_column(image: QtGui.QImage) -> Optional[int]:
+    for x in range(image.width()):
+        blue_pixels = 0
+        for y in range(image.height()):
+            color = image.pixelColor(x, y)
+            if color.blue() > 150 and color.red() < 140 and color.green() < 140:
+                blue_pixels += 1
+        if blue_pixels > image.height() // 2:
+            return x
+    return None
 
 
 def _write_colored_corner_pdf(path: Path) -> None:
@@ -1730,94 +1757,25 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._device_pixel_ratio = lambda: 1.0
         self.assertGreater(view._target_base_raster_scale(1.0, view_m11=4.0), 1.0)
 
-    def test_high_resolution_tile_scale_includes_view_scale_and_device_pixel_ratio(
+    def test_high_resolution_frame_scale_includes_view_scale_and_device_pixel_ratio(
         self,
     ):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._scene_scale = 2.0
         view.MAX_ZOOM = 8.0
         view._device_pixel_ratio = lambda: 1.5
-        self.assertEqual(view._compute_tile_scale(0.5), 1.5)
-        self.assertEqual(view._compute_tile_scale(10.0), 24.0)
+        self.assertEqual(view._compute_frame_scale(0.5), 1.5)
+        self.assertEqual(view._compute_frame_scale(10.0), 24.0)
 
-    def test_tile_scale_quantization_uses_stable_log_steps(self):
+    def test_frame_scale_quantization_uses_stable_log_steps(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
-        self.assertEqual(view._quantize_tile_scale(0.75), 1.0)
-        self.assertEqual(view._quantize_tile_scale(1.0), 1.0)
+        self.assertEqual(view._quantize_frame_scale(0.75), 1.0)
+        self.assertEqual(view._quantize_frame_scale(1.0), 1.0)
         self.assertAlmostEqual(
-            view._quantize_tile_scale(2.01),
+            view._quantize_frame_scale(2.01),
             2.181,
             places=3,
         )
-
-    def test_visible_tile_keys_carry_quantized_scale_identity(self):
-        view = TakeoffPlanView.__new__(TakeoffPlanView)
-        view._current_page = None
-        view._scene_scale = 2.0
-        view._pdf_width_pts = 256.0
-        view._pdf_height_pts = 256.0
-        view.TILE_SIZE_PX = 256
-        view._tile_raster_dimensions = lambda overlay=False: (256.0, 256.0)
-        keys = view._compute_visible_tile_keys(
-            QtCore.QRectF(0.0, 0.0, 128.0, 128.0),
-            2.01,
-            buffer=0,
-        )
-        self.assertEqual({key.scale for key in keys}, {2.181})
-        self.assertEqual({(key.col, key.row) for key in keys}, {(0, 0)})
-
-    def test_right_edge_tile_dimensions_use_pdfium_native_pixel_extent(self):
-        view = TakeoffPlanView.__new__(TakeoffPlanView)
-        view._current_page = None
-        view._scene_scale = 2.0
-        view._pdf_width_pts = 3024.0
-        view._pdf_height_pts = 2160.0
-        view.TILE_SIZE_PX = 1024
-
-        key = TileKey(10, 0, view._quantize_tile_scale(3.393393393393393))
-
-        self.assertEqual(key.scale, 3.668)
-        self.assertEqual(view._get_tile_px_rect(key), (10240, 0, 852, 1024))
-        self.assertEqual(view._get_tile_render_px_rect(key), (10240, 0, 852, 1024))
-
-    def test_tile_render_rect_matches_pdf_tile_without_bleed(self):
-        view = TakeoffPlanView.__new__(TakeoffPlanView)
-        view._current_page = None
-        view._scene_scale = 2.0
-        view._pdf_width_pts = 512.0
-        view._pdf_height_pts = 512.0
-        view.TILE_SIZE_PX = 256
-        view._is_composite_mode = False
-        key = TileKey(1, 1, 2.0)
-        self.assertEqual(view._get_tile_px_rect(key), (256, 256, 256, 256))
-        self.assertEqual(view._get_tile_render_px_rect(key), (256, 256, 256, 256))
-        self.assertEqual(
-            view._get_tile_local_rect(key),
-            QtCore.QRectF(256.0, 256.0, 256.0, 256.0),
-        )
-        self.assertEqual(
-            view._get_tile_render_local_rect(key),
-            QtCore.QRectF(256.0, 256.0, 256.0, 256.0),
-        )
-        item_rect, source_rect = view._tile_item_rects(key)
-        self.assertEqual(item_rect, QtCore.QRectF(256.0, 256.0, 256.0, 256.0))
-        self.assertEqual(source_rect, QtCore.QRectF(0.0, 0.0, 256.0, 256.0))
-
-    def test_pdf_tile_requests_do_not_use_bleed_padding(self):
-        view = TakeoffPlanView.__new__(TakeoffPlanView)
-        view._current_page = None
-        view._scene_scale = 2.0
-        view._pdf_width_pts = 1024.0
-        view._pdf_height_pts = 1024.0
-        view.TILE_SIZE_PX = 256
-        view._is_composite_mode = False
-        key = TileKey(1, 1, 1.0)
-
-        self.assertEqual(view._get_tile_render_px_rect(key), (256, 256, 256, 256))
-        item_rect, source_rect = view._tile_item_rects(key)
-
-        self.assertEqual(item_rect, view._get_tile_local_rect(key))
-        self.assertEqual(source_rect, QtCore.QRectF(0.0, 0.0, 256.0, 256.0))
 
     def test_finalized_page_load_requests_current_high_resolution_tiles(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -1854,6 +1812,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._current_page = object()
         view._loaded_visual_kind = None
         view._background_item = None
+        view._overlay_move_original_rect = None
         view._clear_tiles = lambda: calls.append("clear")
         view._cancel_optional_base_correction = lambda: calls.append("cancel")
         view._update_tile_coverage(4.0)
@@ -1912,125 +1871,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(page_cache.calls[0][2], 3.0)
         self.assertEqual(page_cache.calls[1][2], 2.0)
 
-    def test_composite_tile_pdf_overlay_uses_tile_scale_with_integer_full_scale_crop(
-        self,
-    ):
-        page_cache = FakeCompositeRegionPageCache(source_size=(3024.0, 2160.0))
-        renderer = CompositeRenderer(page_cache)
-        page = Page(
-            uid="page-1",
-            name="Page 1",
-            image_path="base.pdf",
-            overlay_image_path="overlay.pdf",
-            page_index=0,
-            width_pts=3024.0,
-            height_pts=2160.0,
-            overlay_rect=(0.066029, 0.025754, 4032.0, 2880.0),
-        )
-        renderer.render_composite_region(
-            page,
-            scale=32.0,
-            tile_x=74752,
-            tile_y=24576,
-            tile_w=1024,
-            tile_h=1024,
-            rotation=0,
-        )
-        self.assertEqual(page_cache.calls[0][2], 32.0)
-        self.assertEqual(page_cache.calls[1][2], 32.0)
-        self.assertEqual(
-            page_cache.calls[1],
-            ("overlay.pdf", 0, 32.0, 74750, 24575, 1024, 1024),
-        )
-
-    def test_composite_tile_fractional_right_edge_uses_quantized_render_scale(self):
-        page_cache = FakeCompositeRegionPageCache(source_size=(3024.0, 2160.0))
-        renderer = CompositeRenderer(page_cache)
-        page = Page(
-            uid="page-1",
-            name="Page 1",
-            image_path="base.pdf",
-            overlay_image_path="overlay.pdf",
-            page_index=0,
-            width_pts=3024.0,
-            height_pts=2160.0,
-            overlay_rect=(0.0, 0.0, 4032.0, 2880.0),
-        )
-        renderer.render_composite_region(
-            page,
-            scale=3.668016172818685,
-            tile_x=10240,
-            tile_y=0,
-            tile_w=852,
-            tile_h=1024,
-            rotation=0,
-        )
-        self.assertEqual(
-            page_cache.calls[0],
-            ("base.pdf", 0, 3.668, 10240, 0, 852, 1024),
-        )
-        self.assertEqual(
-            page_cache.calls[1],
-            ("overlay.pdf", 0, 3.668, 10240, 0, 852, 1024),
-        )
-
-    def test_composite_tile_scaled_overlay_uses_transformed_source_crop(self):
-        page_cache = FakeCompositeRegionPageCache()
-        renderer = CompositeRenderer(page_cache)
-        page = Page(
-            uid="page-1",
-            name="Page 1",
-            image_path="base.pdf",
-            overlay_image_path="overlay.pdf",
-            page_index=0,
-            width_pts=100.0,
-            height_pts=100.0,
-            overlay_rect=(0.0, 0.0, 50.0 / 72.0 * 96.0, 50.0 / 72.0 * 96.0),
-        )
-        renderer.render_composite_region(
-            page,
-            scale=4.0,
-            tile_x=32,
-            tile_y=32,
-            tile_w=64,
-            tile_h=64,
-            rotation=0,
-        )
-        self.assertEqual(page_cache.calls[0][2], 4.0)
-        self.assertEqual(
-            page_cache.calls[1],
-            ("overlay.pdf", 0, 2.0, 32, 32, 64, 64),
-        )
-
-    def test_composite_tile_near_native_overlay_uses_stable_integer_crop(self):
-        page_cache = FakeCompositeRegionPageCache()
-        renderer = CompositeRenderer(page_cache)
-        page = Page(
-            uid="page-1",
-            name="Page 1",
-            image_path="base.pdf",
-            overlay_image_path="overlay.pdf",
-            page_index=0,
-            width_pts=100.0,
-            height_pts=100.0,
-            overlay_rect=(0.0, 0.0, 99.9 / 72.0 * 96.0, 100.0 / 72.0 * 96.0),
-        )
-        renderer.render_composite_region(
-            page,
-            scale=4.0,
-            tile_x=32,
-            tile_y=32,
-            tile_w=64,
-            tile_h=64,
-            rotation=0,
-        )
-        self.assertEqual(
-            page_cache.calls[1],
-            ("overlay.pdf", 0, 3.998, 32, 32, 64, 64),
-        )
-
     def test_composite_visible_frame_renders_base_and_overlay_frames(self):
-        page_cache = FakeCompositeRegionPageCache()
+        page_cache = FakeCompositeFramePageCache()
         renderer = CompositeRenderer(page_cache)
         page = Page(
             uid="page-1",
@@ -2060,6 +1902,38 @@ class OptionsPreferencesTests(unittest.TestCase):
             page_cache.calls[1],
             ("overlay.pdf", 0, 4.0, 10.0, 20.0, 30.0, 40.0),
         )
+
+    def test_composite_visible_frame_scales_overlay_rect_translation(self):
+        renderer = CompositeRenderer(FakeOverlayMovementPageCache())
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            page_index=0,
+            width_pts=100.0,
+            height_pts=100.0,
+            overlay_rect=(
+                10.0 / 72.0 * 96.0,
+                0.0,
+                100.0 / 72.0 * 96.0,
+                100.0 / 72.0 * 96.0,
+            ),
+            image_show_mode=2,
+        )
+
+        image = renderer.render_composite_frame(
+            page,
+            scale=2.0,
+            frame_x_pts=0.0,
+            frame_y_pts=0.0,
+            frame_w_pts=100.0,
+            frame_h_pts=100.0,
+            rotation=0,
+        )
+
+        self.assertIsNotNone(image)
+        self.assertEqual(_first_blue_column(image), 20)
 
     def test_overlay_pdf_item_keeps_scene_size_when_rendered_above_view_scale(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -2213,7 +2087,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             ],
         )
 
-    def test_page_cache_quantizes_scale_before_full_region_and_frame_renders(self):
+    def test_page_cache_quantizes_scale_before_full_and_frame_renders(self):
         class FakeRenderer:
             def __init__(self):
                 self.calls = []
@@ -2221,20 +2095,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             def render(self, file_path, page_index, scale, rotation):
                 self.calls.append(("page", scale))
                 return QtGui.QImage(10, 10, QtGui.QImage.Format.Format_ARGB32)
-
-            def render_region(
-                self,
-                file_path,
-                page_index,
-                scale,
-                tile_x,
-                tile_y,
-                tile_w,
-                tile_h,
-                rotation,
-            ):
-                self.calls.append(("region", scale, tile_x, tile_y, tile_w, tile_h))
-                return QtGui.QImage(tile_w, tile_h, QtGui.QImage.Format.Format_ARGB32)
 
             def render_frame(
                 self,
@@ -2263,13 +2123,11 @@ class OptionsPreferencesTests(unittest.TestCase):
         cache = PageCache()
         cache._get_renderer = lambda: renderer
         cache.render_uncached("page.pdf", 0, 1.23456, 0)
-        cache.render_region_uncached("page.pdf", 0, 1.23456, 1, 2, 3, 4, 0)
         cache.render_frame_uncached("page.pdf", 0, 1.23456, 1.0, 2.0, 3.0, 4.0, 0)
         self.assertEqual(
             renderer.calls,
             [
                 ("page", 1.235),
-                ("region", 1.235, 1, 2, 3, 4),
                 ("frame", 1.235, 1.0, 2.0, 3.0, 4.0),
             ],
         )
@@ -2316,6 +2174,91 @@ class OptionsPreferencesTests(unittest.TestCase):
                 )
                 self.assertEqual(sample_corners(frame), sample_corners(full))
 
+    def test_pdf_subframe_render_matches_full_page_crop(self):
+        pdf_path = Path(os.environ.get("TEMP", ".")) / "ostv_frame_crop.pdf"
+        _write_colored_corner_pdf(pdf_path)
+        renderer = PageRenderer()
+        scale = 2.0
+        full = renderer.render(str(pdf_path), 0, scale, 0)
+        frames = [
+            (0.0, 0.0, 80.0, 40.0),
+            (70.0, 30.0, 60.0, 40.0),
+            (150.0, 60.0, 50.0, 40.0),
+        ]
+
+        for frame_x, frame_y, frame_w, frame_h in frames:
+            with self.subTest(frame=(frame_x, frame_y, frame_w, frame_h)):
+                frame = renderer.render_frame(
+                    str(pdf_path),
+                    0,
+                    scale,
+                    frame_x,
+                    frame_y,
+                    frame_w,
+                    frame_h,
+                    0,
+                )
+                crop = full.copy(
+                    QtCore.QRect(
+                        int(frame_x * scale + 0.5),
+                        int(frame_y * scale + 0.5),
+                        frame.width(),
+                        frame.height(),
+                    )
+                )
+                self.assertEqual(frame.size(), crop.size())
+                for y in range(frame.height()):
+                    for x in range(frame.width()):
+                        self.assertEqual(
+                            frame.pixel(x, y),
+                            crop.pixel(x, y),
+                            f"pixel mismatch at {x},{y}",
+                        )
+
+    def test_visible_frame_placement_snaps_from_returned_bitmap_size(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._scene = QtWidgets.QGraphicsScene()
+        view._scene_scale = 2.0
+        view._visible_frame_request_id = "frame-1"
+        view._visible_frame_item = None
+        view._visible_frame_key = ("base",)
+        view._visible_frame_kind = "base"
+        view._visible_frame_scale = 0.0
+        view._current_load_token = "load-1"
+        view._current_render_identity = {"page": "page-1"}
+        view._page_render_generation_id = 7
+        view._overlay_move_suppresses_normal_tiles = lambda: False
+        view._remove_tile_item = lambda _item: None
+        view._sync_low_res_base_visibility_for_tiles = lambda: None
+        view._sync_low_res_overlay_visibility_for_tiles = lambda: None
+        view._get_page_transform = lambda _w, _h: QtGui.QTransform()
+        image = QtGui.QImage(101, 83, QtGui.QImage.Format.Format_ARGB32)
+        image.fill(0xFFFFFFFF)
+        context = {
+            "kind": "base",
+            "key": ("base",),
+            "scale": 3.25,
+            "frame_x_pts": 10.4,
+            "frame_y_pts": 20.6,
+            "source_w_pts": 200.0,
+            "source_h_pts": 100.0,
+        }
+
+        view._on_visible_frame_loaded(
+            RenderResult("frame-1", True, image, None),
+            context,
+            "load-1",
+            {"page": "page-1"},
+            7,
+        )
+
+        self.assertIsNotNone(view._visible_frame_item)
+        rect = view._visible_frame_item.boundingRect()
+        self.assertEqual(rect.x(), round(10.4 * 2.0))
+        self.assertEqual(rect.y(), round(20.6 * 2.0))
+        self.assertEqual(rect.width(), round(101 * 2.0 / 3.25))
+        self.assertEqual(rect.height(), round(83 * 2.0 / 3.25))
+
     def test_background_images_smooth_but_high_resolution_tiles_stay_crisp_at_one_to_one(
         self,
     ):
@@ -2344,15 +2287,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         class FakeRenderingService:
             def __init__(self):
                 self.frame_calls = []
-                self.region_calls = []
 
             def render_frame_async(self, **kwargs):
                 self.frame_calls.append(kwargs)
                 return "frame-request"
-
-            def render_region_async(self, **kwargs):
-                self.region_calls.append(kwargs)
-                return "region-request"
 
             def cancel_request(self, request_id):
                 calls.append(("cancel", request_id))
@@ -2379,12 +2317,6 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._pdf_height_pts = 100.0
         view._overlay_pdf_width_pts = 100.0
         view._overlay_pdf_height_pts = 100.0
-        view._tile_scale = 0.0
-        view._tile_items = {}
-        view._tile_requests = {}
-        view._overlay_tile_scale = 0.0
-        view._overlay_tile_items = {}
-        view._overlay_tile_requests = {}
         view._overlay_items = []
         view._visible_frame_item = None
         view._visible_frame_request_id = None
@@ -2409,7 +2341,6 @@ class OptionsPreferencesTests(unittest.TestCase):
         view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
         view._update_tile_coverage(4.0)
         self.assertEqual(calls, ["clear_grid", "cancel_base"])
-        self.assertEqual(rendering_service.region_calls, [])
         self.assertEqual(len(rendering_service.frame_calls), 1)
         call = rendering_service.frame_calls[0]
         self.assertEqual(call["file_path"], "overlay.pdf")
@@ -2427,15 +2358,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         class FakeRenderingService:
             def __init__(self):
                 self.composite_frame_calls = []
-                self.composite_region_calls = []
 
             def render_composite_frame_async(self, **kwargs):
                 self.composite_frame_calls.append(kwargs)
                 return "composite-frame-request"
-
-            def render_composite_region_async(self, **kwargs):
-                self.composite_region_calls.append(kwargs)
-                return "composite-region-request"
 
             def cancel_request(self, request_id):
                 calls.append(("cancel", request_id))
@@ -2460,12 +2386,6 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._scene_scale = 2.0
         view._pdf_width_pts = 100.0
         view._pdf_height_pts = 100.0
-        view._tile_scale = 0.0
-        view._tile_items = {}
-        view._tile_requests = {}
-        view._overlay_tile_scale = 0.0
-        view._overlay_tile_items = {}
-        view._overlay_tile_requests = {}
         view._overlay_items = []
         view._visible_frame_item = None
         view._visible_frame_request_id = None
@@ -2489,7 +2409,6 @@ class OptionsPreferencesTests(unittest.TestCase):
         view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
         view._update_tile_coverage(4.0)
         self.assertEqual(calls, ["clear_grid", "cancel_base"])
-        self.assertEqual(rendering_service.composite_region_calls, [])
         self.assertEqual(len(rendering_service.composite_frame_calls), 1)
         call = rendering_service.composite_frame_calls[0]
         self.assertEqual(call["page"], view._current_page)
@@ -2499,48 +2418,43 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(call["frame_w_pts"], 25.0)
         self.assertEqual(call["frame_h_pts"], 25.0)
 
-    def test_overlay_only_pdf_tile_request_renders_overlay_source(self):
-        class FakeRenderingService:
-            def __init__(self):
-                self.calls = []
-
-            def render_region_async(self, **kwargs):
-                self.calls.append(kwargs)
-                return "tile-request"
-
-        rendering_service = FakeRenderingService()
+    def test_composite_visible_frame_key_changes_with_overlay_rect(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._current_page = Page(
             uid="page-1",
             name="Page 1",
             image_path="base.pdf",
             overlay_image_path="overlay.pdf",
-            image_show_mode=1,
+            image_show_mode=2,
             width_pts=100.0,
             height_pts=100.0,
-            invert=True,
-            bitonal=True,
+            overlay_rect=(0.0, 0.0, 133.333333, 133.333333),
         )
-        view._loaded_visual_kind = "overlay"
-        view._is_composite_mode = False
+        view._loaded_visual_kind = "composite"
+        view._can_zoom_rerender = True
         view._scene_scale = 2.0
-        view._current_rotation = view._current_page.rotation
-        view._overlay_pdf_width_pts = 100.0
-        view._overlay_pdf_height_pts = 100.0
-        view._tile_items = {}
-        view._tile_requests = {}
-        view._current_load_token = "load-1"
-        view._current_render_identity = {"page": "page-1"}
-        view._current_bid_ref = None
-        view._rendering_service = rendering_service
-        view._request_tile(TileKey(0, 0, 4.0), generation_id=1, priority=2)
-        self.assertEqual(len(rendering_service.calls), 1)
-        call = rendering_service.calls[0]
-        self.assertEqual(call["file_path"], "overlay.pdf")
-        self.assertEqual(call["page_index"], 0)
-        self.assertEqual(call["scale"], 4.0)
-        self.assertTrue(call["invert"])
-        self.assertTrue(call["bitonal"])
+        view._pdf_width_pts = 100.0
+        view._pdf_height_pts = 100.0
+        view._is_composite_mode = True
+        view._current_rotation = 0
+        view._current_flip_x = False
+        view._current_flip_y = False
+        view._overlay_rect_tuple = TakeoffPlanView._overlay_rect_tuple.__get__(
+            view,
+            TakeoffPlanView,
+        )
+        view._device_pixel_ratio = lambda: 1.0
+        view.mapToScene = lambda _rect: QtGui.QPolygonF(QtCore.QRectF(0, 0, 50, 50))
+        view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
+
+        first_context = view._build_visible_frame_context(8.0)
+        view._current_page.overlay_rect = (96.0, 48.0, 133.333333, 133.333333)
+        second_context = view._build_visible_frame_context(8.0)
+
+        self.assertIsNotNone(first_context)
+        self.assertIsNotNone(second_context)
+        self.assertNotEqual(first_context["key"], second_context["key"])
+        self.assertIn((96.0, 48.0, 133.333333, 133.333333), second_context["key"][-1])
 
     def test_overlay_only_pdf_high_resolution_disabled_requests_low_scale_base(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -2558,6 +2472,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._disable_high_resolution_images = True
         view._base_raster_scale = 3.0
         view._scene_scale = 2.0
+        view._overlay_move_original_rect = None
         view._clear_tiles = lambda: calls.append("clear")
         view._cancel_optional_base_correction = lambda: calls.append("cancel")
         view._advance_render_generation = lambda: 5

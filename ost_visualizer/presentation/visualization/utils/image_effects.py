@@ -6,7 +6,15 @@ def tint_image(image: QImage, r: int, g: int, b: int) -> QImage:
     gray = image.convertToFormat(QImage.Format.Format_Grayscale8)
     w = gray.width()
     h = gray.height()
-    gray_data = bytes(gray.constBits())
+    bytes_per_line = gray.bytesPerLine()
+    raw_data = bytes(gray.constBits())
+    if bytes_per_line == w:
+        gray_data = raw_data
+    else:
+        gray_data = b"".join(
+            raw_data[row * bytes_per_line : row * bytes_per_line + w]
+            for row in range(h)
+        )
     result = ost_image.tint_grayscale(gray_data, w, h, r, g, b, 235)
     return QImage(result.to_bytes(), w, h, QImage.Format.Format_ARGB32).copy()
 

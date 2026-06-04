@@ -68,14 +68,6 @@ namespace ost_pdf
             int page_index,
             float scale = 1.0f,
             int rotation = 0);
-        std::optional<RenderedPage> render_page_region(
-            int page_index,
-            float scale,
-            int tile_x,
-            int tile_y,
-            int tile_w,
-            int tile_h,
-            int rotation = 0);
         std::optional<RenderedPage> render_page_frame(
             int page_index,
             float scale,

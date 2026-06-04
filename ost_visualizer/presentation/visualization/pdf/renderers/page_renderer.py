@@ -115,41 +115,6 @@ class PageRenderer:
             )
         return image
 
-    def render_region(
-        self,
-        file_path: str,
-        page_index: int,
-        scale: float,
-        tile_x: int,
-        tile_y: int,
-        tile_w: int,
-        tile_h: int,
-        rotation: int = 0,
-    ) -> Optional[QImage]:
-        if not file_path:
-            return None
-        path = Path(file_path)
-        if not path.exists() or path.suffix.lower() != ".pdf":
-            return None
-        with self._pdfium_lock:
-            renderer = self._ensure_pdf_open_locked(file_path)
-            if not renderer:
-                return None
-            result = renderer.render_page_region(
-                page_index, scale, tile_x, tile_y, tile_w, tile_h, rotation
-            )
-        if not result:
-            return None
-        data = result.to_bytes()
-        qimage = QImage(
-            data,
-            result.width,
-            result.height,
-            result.stride,
-            QImage.Format.Format_ARGB32,
-        )
-        return qimage.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
-
     def render_frame(
         self,
         file_path: str,

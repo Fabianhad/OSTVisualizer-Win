@@ -139,33 +139,6 @@ Coordinates are PDF user-space points with the origin at the bottom-left
 of the loaded page. This does not perform OCR and returns an empty list
 when the page has no embedded text.
 )doc")
-            .def("render_page_region", &PDFRenderer::render_page_region,
-                 nb::arg("page_index"),
-                 nb::arg("scale"),
-                 nb::arg("tile_x"),
-                 nb::arg("tile_y"),
-                 nb::arg("tile_w"),
-                 nb::arg("tile_h"),
-                 nb::arg("rotation") = 0,
-                 nb::call_guard<nb::gil_scoped_release>(),
-                 R"doc(
-Render a rectangular sub-region of a PDF page.
-PDFium renders the full page geometry but clips output to the
-tile_w x tile_h bitmap. This avoids decoding off-screen pixels.
-Args:
-    page_index: Zero-based page index
-    scale:      Render scale applied to the *full* page (same as render_page)
-    tile_x:     Left pixel offset within the full scaled page
-    tile_y:     Top  pixel offset within the full scaled page
-    tile_w:     Output bitmap width  in pixels
-    tile_h:     Output bitmap height in pixels
-    rotation:   user-applied rotation in DEGREES (0/90/180/270).
-                Out-of-range values are normalized to the nearest
-                multiple of 90. PDF intrinsic rotation is already
-                applied by FPDF_LoadPage; this is additive on top.
-Returns:
-    RenderedPage with dimensions (tile_w, tile_h), or None on failure
-)doc")
             .def("render_page_frame", &PDFRenderer::render_page_frame,
                  nb::arg("page_index"),
                  nb::arg("scale"),

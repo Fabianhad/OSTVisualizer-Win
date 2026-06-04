@@ -6,7 +6,10 @@ from ost_visualizer.presentation.components.viewer_cursors import (
     recolor_pixmap,
 )
 from ost_visualizer.presentation.visualization.utils import ost_image
-from ost_visualizer.presentation.visualization.utils.image_effects import bitonal_image
+from ost_visualizer.presentation.visualization.utils.image_effects import (
+    bitonal_image,
+    tint_image,
+)
 
 
 def _app():
@@ -134,6 +137,22 @@ class ImageTintTests(unittest.TestCase):
         self.assertGreater(black[3], gray[3])
         self.assertGreater(gray[3], near_paper[3])
         self.assertGreater(near_paper[3], paper[3])
+
+    def test_tint_image_ignores_grayscale_scanline_padding(self):
+        image = QtGui.QImage(5, 2, QtGui.QImage.Format.Format_ARGB32)
+        image.fill(QtGui.QColor(255, 255, 255))
+        image.setPixelColor(2, 0, QtGui.QColor(0, 0, 0))
+        image.setPixelColor(2, 1, QtGui.QColor(0, 0, 0))
+
+        tinted = tint_image(image, 80, 80, 255)
+
+        for y in range(2):
+            for x in range(5):
+                pixel = tinted.pixelColor(x, y)
+                if x == 2:
+                    self.assertEqual(pixel, QtGui.QColor(80, 80, 255, 255))
+                else:
+                    self.assertEqual(pixel.alpha(), 0)
 
     def test_tint_red_and_blue_keep_alpha_coverage_behavior(self):
         red = _bgra_pixels(ost_image.tint_red(bytes([0, 128, 235]), 3, 1))
