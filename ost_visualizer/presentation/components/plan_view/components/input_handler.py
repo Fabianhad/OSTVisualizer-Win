@@ -1,5 +1,5 @@
 import math
-from typing import List, Optional
+from typing import Callable, List, Optional
 from PySide6 import QtCore
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QCursor, QMouseEvent, QPainterPath, QTransform, QWheelEvent
@@ -209,6 +209,17 @@ class InputHandlerMixin:
         if event.buttons() & Qt.MouseButton.LeftButton:
             return
         self._cancel_active_drag_interaction(restore_preview=True)
+
+    def _apply_pan_update(self, cur_vp: QtCore.QPoint) -> bool:
+        if not self._panning or not self._last_pan_point:
+            return False
+        delta = cur_vp - self._last_pan_point
+        self._last_pan_point = cur_vp
+        self.horizontalScrollBar().setValue(
+            self.horizontalScrollBar().value() - delta.x()
+        )
+        self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+        return True
 
     def _apply_wheel_zoom(self, event: QWheelEvent, delta_y: float) -> None:
         factor = self.ZOOM_FACTOR if delta_y > 0 else 1.0 / self.ZOOM_FACTOR
@@ -556,13 +567,7 @@ class InputHandlerMixin:
                 _can_start_drag = False
                 if len(self._selected_uids) == 1:
                     for info in self._handle_infos:
-                        center = info.item.mapToScene(QtCore.QPointF(0.0, 0.0))
-                        handle_vp = self.mapFromScene(center)
-                        half = info.item.rect().width() / 2
-                        if (
-                            abs(vp_pos.x() - handle_vp.x()) <= half + 2
-                            and abs(vp_pos.y() - handle_vp.y()) <= half + 2
-                        ):
+                        if self._is_handle_info_at_viewport_pos(info, vp_pos):
                             _can_start_drag = True
                             break
                 if not _can_start_drag:
@@ -641,13 +646,7 @@ class InputHandlerMixin:
                                 )
                             self._drag_handle_index = -1
                             for i, info in enumerate(self._handle_infos):
-                                center = info.item.mapToScene(QtCore.QPointF(0.0, 0.0))
-                                handle_vp = self.mapFromScene(center)
-                                half = info.item.rect().width() / 2
-                                if (
-                                    abs(vp_pos.x() - handle_vp.x()) <= half + 2
-                                    and abs(vp_pos.y() - handle_vp.y()) <= half + 2
-                                ):
+                                if self._is_handle_info_at_viewport_pos(info, vp_pos):
                                     self._drag_handle_index = i
                                     break
                             if takeoff:
@@ -757,15 +756,7 @@ class InputHandlerMixin:
         self._request_crosshair_repaint()
         self._clear_stale_drag_tracking_if_mouse_released(event)
         if self._cursor_mode == "place":
-            if self._panning and self._last_pan_point:
-                delta = cur_vp - self._last_pan_point
-                self._last_pan_point = cur_vp
-                self.horizontalScrollBar().setValue(
-                    self.horizontalScrollBar().value() - delta.x()
-                )
-                self.verticalScrollBar().setValue(
-                    self.verticalScrollBar().value() - delta.y()
-                )
+            if self._apply_pan_update(cur_vp):
                 event.accept()
                 return
             if not self._place_flashing:
@@ -779,30 +770,14 @@ class InputHandlerMixin:
             event.accept()
             return
         if self._cursor_mode == "annotation_place":
-            if self._panning and self._last_pan_point:
-                delta = cur_vp - self._last_pan_point
-                self._last_pan_point = cur_vp
-                self.horizontalScrollBar().setValue(
-                    self.horizontalScrollBar().value() - delta.x()
-                )
-                self.verticalScrollBar().setValue(
-                    self.verticalScrollBar().value() - delta.y()
-                )
+            if self._apply_pan_update(cur_vp):
                 event.accept()
                 return
             self.update_annotation_place_preview(self.mapToScene(cur_vp))
             event.accept()
             return
         if self._cursor_mode == "paste_backout":
-            if self._panning and self._last_pan_point:
-                delta = cur_vp - self._last_pan_point
-                self._last_pan_point = cur_vp
-                self.horizontalScrollBar().setValue(
-                    self.horizontalScrollBar().value() - delta.x()
-                )
-                self.verticalScrollBar().setValue(
-                    self.verticalScrollBar().value() - delta.y()
-                )
+            if self._apply_pan_update(cur_vp):
                 event.accept()
                 return
             self.update_paste_backout_preview(self.mapToScene(cur_vp))
@@ -995,14 +970,7 @@ class InputHandlerMixin:
                 if total.manhattanLength() >= threshold:
                     self._right_pan_dragged = True
                     self._suppress_next_context_menu = True
-            delta = cur_vp - self._last_pan_point
-            self._last_pan_point = cur_vp
-            self.horizontalScrollBar().setValue(
-                self.horizontalScrollBar().value() - delta.x()
-            )
-            self.verticalScrollBar().setValue(
-                self.verticalScrollBar().value() - delta.y()
-            )
+            self._apply_pan_update(cur_vp)
             if self._uses_dynamic_tile_coverage():
                 self._zoom_debouncer.handle_scale_changed(self.transform().m11())
             event.accept()
@@ -1542,6 +1510,15 @@ class InputHandlerMixin:
                 x1 += dx
         return x1, y1, x2, y2
 
+    def _is_handle_info_at_viewport_pos(self, info, vp_pos) -> bool:
+        center = info.item.mapToScene(QtCore.QPointF(0.0, 0.0))
+        handle_vp = self.mapFromScene(center)
+        half = info.item.rect().width() / 2
+        return (
+            abs(vp_pos.x() - handle_vp.x()) <= half + 2
+            and abs(vp_pos.y() - handle_vp.y()) <= half + 2
+        )
+
     def _update_rotation_handle_preview(self, snapped_deg: float) -> None:
         if (
             self._rotate_handle_item is None
@@ -1660,21 +1637,30 @@ class InputHandlerMixin:
             takeoff.position = new_pos
             self._dirty_positions[uid] = new_pos
             if is_area:
-                n_parent = len(orig_pos) // 2
-                if n_parent >= 3:
-                    pcx, pcy = polygon_centroid(orig_pos, n_parent)
-                    for child in self._current_takeoffs.values():
-                        if child.parent_uid != uid:
-                            continue
-                        child_orig = list(child.position)
-                        if child.uid not in self._position_before_edit:
-                            self._position_before_edit[child.uid] = child_orig
-                        child_new = rotate_points_around(
-                            child_orig, snapped_deg, pcx, pcy
-                        )
-                        child.position = child_new
-                        self._dirty_positions[child.uid] = child_new
+                self._rotate_area_children(uid, orig_pos, snapped_deg)
             self._flush_dirty_positions()
+
+    def _rotate_area_children(
+        self,
+        parent_uid: str,
+        orig_pos: List[float],
+        snapped_deg: float,
+        excluded_uids=None,
+    ) -> None:
+        n_parent = len(orig_pos) // 2
+        if n_parent < 3:
+            return
+        excluded_uids = excluded_uids or set()
+        pcx, pcy = polygon_centroid(orig_pos, n_parent)
+        for child in self._current_takeoffs.values():
+            if child.parent_uid != parent_uid or child.uid in excluded_uids:
+                continue
+            child_orig = list(child.position)
+            if child.uid not in self._position_before_edit:
+                self._position_before_edit[child.uid] = child_orig
+            child_new = rotate_points_around(child_orig, snapped_deg, pcx, pcy)
+            child.position = child_new
+            self._dirty_positions[child.uid] = child_new
 
     def _apply_multi_rotation(self, snapped_deg: float) -> None:
         ost_cx, ost_cy = self._rotate_ost_center
@@ -1716,20 +1702,12 @@ class InputHandlerMixin:
             condition = self._current_conditions.get(takeoff.condition_uid)
             if condition and condition.is_area:
                 orig_pos = self._rotation_drag_orig_positions[uid]
-                n_parent = len(orig_pos) // 2
-                if n_parent >= 3:
-                    pcx, pcy = polygon_centroid(orig_pos, n_parent)
-                    for child in self._current_takeoffs.values():
-                        if child.parent_uid != uid or child.uid in rotated_uids:
-                            continue
-                        child_orig = list(child.position)
-                        if child.uid not in self._position_before_edit:
-                            self._position_before_edit[child.uid] = child_orig
-                        child_new = rotate_points_around(
-                            child_orig, snapped_deg, pcx, pcy
-                        )
-                        child.position = child_new
-                        self._dirty_positions[child.uid] = child_new
+                self._rotate_area_children(
+                    uid,
+                    orig_pos,
+                    snapped_deg,
+                    excluded_uids=rotated_uids,
+                )
         if has_positions or has_rotations:
             self._flush_rotation_group()
 
@@ -2195,13 +2173,15 @@ class InputHandlerMixin:
             self._current_conditions,
         )
 
-    def _show_background_context_menu(self, event) -> None:
+    def _show_common_context_menu(
+        self, event, add_clipboard_actions: Callable[[QMenu], None]
+    ) -> None:
         menu = QMenu(self)
         current_mode, overlay_action, original_action = (
             self._add_common_context_submenus(menu)
         )
         menu.addSeparator()
-        self._add_context_command(menu, "Paste", "paste")
+        add_clipboard_actions(menu)
         menu.addSeparator()
         self._add_context_page_actions(menu, separate_delete=True)
         self.reset_ctrl_held()
@@ -2210,6 +2190,12 @@ class InputHandlerMixin:
             return
         self._resolve_context_overlay_action(
             action, current_mode, overlay_action, original_action
+        )
+
+    def _show_background_context_menu(self, event) -> None:
+        self._show_common_context_menu(
+            event,
+            lambda menu: self._add_context_command(menu, "Paste", "paste"),
         )
 
     def _add_pdf_text_context_clipboard_actions(self, menu: QMenu) -> None:
@@ -2226,20 +2212,8 @@ class InputHandlerMixin:
         self._add_context_command(menu, "Paste", "paste")
 
     def _show_pdf_text_context_menu(self, event) -> None:
-        menu = QMenu(self)
-        current_mode, overlay_action, original_action = (
-            self._add_common_context_submenus(menu)
-        )
-        menu.addSeparator()
-        self._add_pdf_text_context_clipboard_actions(menu)
-        menu.addSeparator()
-        self._add_context_page_actions(menu, separate_delete=True)
-        self.reset_ctrl_held()
-        action = menu.exec(event.globalPos())
-        if action is None:
-            return
-        self._resolve_context_overlay_action(
-            action, current_mode, overlay_action, original_action
+        self._show_common_context_menu(
+            event, self._add_pdf_text_context_clipboard_actions
         )
 
     def contextMenuEvent(self, event) -> None:

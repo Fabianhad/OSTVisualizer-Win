@@ -608,6 +608,34 @@ class PlacementModeMixin:
         if self._is_line_snap(snap_kind):
             self._add_place_handle(x, y)
 
+    def _add_preview_item(self, item, page_transform=None, target_list=None) -> None:
+        if page_transform is not None:
+            item.setTransform(page_transform)
+        self._scene.addItem(item)
+        (target_list if target_list is not None else self._place_preview_items).append(
+            item
+        )
+
+    def _add_dashed_path_preview(
+        self,
+        path: QPainterPath,
+        color: QColor,
+        z_value: float,
+        page_transform=None,
+        target_list=None,
+        pen_width: float = 1.0,
+    ) -> None:
+        dash_pen = QPen(color)
+        dash_pen.setWidthF(pen_width)
+        dash_pen.setStyle(Qt.PenStyle.DashLine)
+        dash_pen.setCosmetic(True)
+        item = QGraphicsPathItem()
+        item.setPath(path)
+        item.setPen(dash_pen)
+        item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        item.setZValue(z_value)
+        self._add_preview_item(item, page_transform, target_list)
+
     def clear_place_preview(self) -> None:
         if not self._place_preview_items and not self._backout_orig_parent_path:
             self._place_flashing = False
@@ -693,10 +721,7 @@ class PlacementModeMixin:
         path_item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         path_item.setZValue(15)
         page_transform = self._current_page_transform()
-        if page_transform is not None:
-            path_item.setTransform(page_transform)
-        self._scene.addItem(path_item)
-        self._place_preview_items.append(path_item)
+        self._add_preview_item(path_item, page_transform)
         text_item = create_dimension_text_item(
             dimension,
             annotation.color,
@@ -705,10 +730,7 @@ class PlacementModeMixin:
         )
         if text_item is not None:
             text_item.setZValue(16)
-            if page_transform is not None:
-                text_item.setTransform(page_transform)
-            self._scene.addItem(text_item)
-            self._place_preview_items.append(text_item)
+            self._add_preview_item(text_item, page_transform)
         self._request_place_preview_repaint()
 
     def handle_annotation_place_press(self, event) -> bool:
@@ -798,6 +820,19 @@ class PlacementModeMixin:
 
         QtCore.QTimer.singleShot(220, _restore)
 
+    def _condition_preview_color_and_opacity(
+        self, condition_uid: str, condition: Condition, default_opacity: float = 1.0
+    ) -> tuple[str, float]:
+        color_entry = self._current_color_map.get(condition_uid)
+        if color_entry is not None:
+            return self._color_service.as_hex_with_opacity(color_entry)
+        color_hex = (
+            self._color_service.int_to_hex(condition.color_fill)
+            if condition.color_fill
+            else "#808080"
+        )
+        return color_hex, default_opacity
+
     def update_place_preview(self, cursor_scene: QtCore.QPointF) -> None:
         self.clear_place_preview()
         cs = self._scene_builder.get_coordinate_system()
@@ -805,18 +840,9 @@ class PlacementModeMixin:
         condition = self._current_conditions.get(active_uid)
         if not condition:
             return
-        color_entry = self._current_color_map.get(active_uid)
-        if color_entry is not None:
-            color_hex, base_opacity = self._color_service.as_hex_with_opacity(
-                color_entry
-            )
-        else:
-            color_hex = (
-                self._color_service.int_to_hex(condition.color_fill)
-                if condition.color_fill
-                else "#808080"
-            )
-            base_opacity = 1.0
+        color_hex, base_opacity = self._condition_preview_color_and_opacity(
+            active_uid, condition
+        )
         preview_opacity = base_opacity
         qcolor = QColor(color_hex)
         cond_type = condition.condition_type
@@ -831,22 +857,9 @@ class PlacementModeMixin:
             tx = cs.transform_vertices_to_2d([pts[0][0], pts[0][1]])
             x1, y1 = tx[0], tx[1]
             x2, y2 = self._snap_angle_for_placement(x1, y1, cx, cy, snap_kind)
-            thickness_ost = condition.thickness if condition.thickness else 1.0
-            view_scale = cs.page_info.get("view_scale", 1.0)
-            thickness_px = cs.ost_to_pdf_points(thickness_ost) * view_scale
-            thickness_px = max(thickness_px, 2.0)
-            dx, dy = x2 - x1, y2 - y1
-            length = math.sqrt(dx * dx + dy * dy)
-            if length < 0.001:
+            path = self._build_linear_path(cs, condition, x1, y1, x2, y2)
+            if path.isEmpty():
                 return
-            dx_n, dy_n = dx / length, dy / length
-            px, py = -dy_n * thickness_px / 2, dx_n * thickness_px / 2
-            path = QPainterPath()
-            path.moveTo(x1 + px, y1 + py)
-            path.lineTo(x1 - px, y1 - py)
-            path.lineTo(x2 - px, y2 - py)
-            path.lineTo(x2 + px, y2 + py)
-            path.closeSubpath()
             item = QGraphicsPathItem()
             item.setPath(path)
             pattern_angle = compute_line_angle(x1, y1, x2, y2)
@@ -915,19 +928,9 @@ class PlacementModeMixin:
                     self._add_secondary_condition_previews(
                         rect_path, page_transform, preview_opacity
                     )
-                dash_pen = QPen(QColor(0, 0, 0))
-                dash_pen.setWidthF(1.0)
-                dash_pen.setStyle(Qt.PenStyle.DashLine)
-                dash_pen.setCosmetic(True)
-                border = QGraphicsPathItem()
-                border.setPath(rect_path)
-                border.setPen(dash_pen)
-                border.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-                border.setZValue(11)
-                if page_transform is not None:
-                    border.setTransform(page_transform)
-                self._scene.addItem(border)
-                self._place_preview_items.append(border)
+                self._add_dashed_path_preview(
+                    rect_path, QColor(0, 0, 0), 11, page_transform
+                )
                 x_min, x_max = min(sx1, cx), max(sx1, cx)
                 y_min, y_max = min(sy1, cy), max(sy1, cy)
                 mx, my = (x_min + x_max) / 2, (y_min + y_max) / 2
@@ -975,10 +978,7 @@ class PlacementModeMixin:
                 item.setBrush(QBrush(fill_color))
                 item.setOpacity(preview_opacity)
                 item.setZValue(10)
-                if page_transform is not None:
-                    item.setTransform(page_transform)
-                self._scene.addItem(item)
-                self._place_preview_items.append(item)
+                self._add_preview_item(item, page_transform)
             else:
                 item = QGraphicsPathItem()
                 item.setPath(path)
@@ -994,19 +994,7 @@ class PlacementModeMixin:
                     self._add_secondary_condition_previews(
                         path, page_transform, preview_opacity
                     )
-            dash_pen = QPen(QColor(0, 0, 0))
-            dash_pen.setWidthF(1.0)
-            dash_pen.setStyle(Qt.PenStyle.DashLine)
-            dash_pen.setCosmetic(True)
-            border = QGraphicsPathItem()
-            border.setPath(path)
-            border.setPen(dash_pen)
-            border.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            border.setZValue(11)
-            if page_transform is not None:
-                border.setTransform(page_transform)
-            self._scene.addItem(border)
-            self._place_preview_items.append(border)
+            self._add_dashed_path_preview(path, QColor(0, 0, 0), 11, page_transform)
             if endpoint.right_angle_indicator_active:
                 indicator_pen = QPen(QColor("#1f9d45"))
                 indicator_pen.setWidthF(2.0)
@@ -1019,10 +1007,7 @@ class PlacementModeMixin:
                 )
                 indicator.setPen(indicator_pen)
                 indicator.setZValue(12)
-                if page_transform is not None:
-                    indicator.setTransform(page_transform)
-                self._scene.addItem(indicator)
-                self._place_preview_items.append(indicator)
+                self._add_preview_item(indicator, page_transform)
             for hx, hy in scene_pts:
                 self._add_place_handle(hx, hy)
             self._add_place_handle(snapped_end[0], snapped_end[1])
@@ -1112,10 +1097,7 @@ class PlacementModeMixin:
                         pos_flat = [v for pt in self._place_points for v in pt]
                         if self._backout_parent_uid:
                             if not self._check_hole_overlap(pos_flat):
-                                self.clear_place_preview()
-                                self._place_points = []
-                                self._set_area_placement_in_progress(False)
-                                self._invalidate_snap_index()
+                                self._finish_area_placement_preview_state()
                                 self.hole_created.emit(
                                     self._backout_active_uid,
                                     pos_flat,
@@ -1123,10 +1105,7 @@ class PlacementModeMixin:
                                     self._backout_parent_uid,
                                 )
                         else:
-                            self.clear_place_preview()
-                            self._place_points = []
-                            self._set_area_placement_in_progress(False)
-                            self._invalidate_snap_index()
+                            self._finish_area_placement_preview_state()
                             self.takeoff_created.emit(
                                 self._place_session_uid,
                                 pos_flat,
@@ -1140,19 +1119,9 @@ class PlacementModeMixin:
                     ost_x, ost_y = endpoint.final_x, endpoint.final_y
                     candidate = self._place_points + [(ost_x, ost_y)]
                     if polyline_self_intersects(candidate):
-                        flash_uid = self._backout_active_uid or self._place_session_uid
-                        condition = self._current_conditions.get(flash_uid)
-                        color_entry = self._current_color_map.get(flash_uid)
-                        if color_entry is not None:
-                            flash_hex, _ = self._color_service.as_hex_with_opacity(
-                                color_entry
-                            )
-                        else:
-                            flash_hex = (
-                                self._color_service.int_to_hex(condition.color_fill)
-                                if condition and condition.color_fill
-                                else "#808080"
-                            )
+                        flash_hex, _ = self._condition_preview_color_and_opacity(
+                            active_uid, condition
+                        )
                         self._flash_invalid_preview(QColor(flash_hex))
                     elif not self._backout_parent_uid or (
                         self.is_inside_parent(ost_x, ost_y)
@@ -1211,10 +1180,7 @@ class PlacementModeMixin:
             )
         elif abs(ost_x2 - x1) >= min_len and abs(ost_y2 - y1) >= min_len:
             pos = [x1, y1, ost_x2, y1, ost_x2, ost_y2, x1, ost_y2]
-            self.clear_place_preview()
-            self._place_points = []
-            self._set_area_placement_in_progress(False)
-            self._invalidate_snap_index()
+            self._finish_area_placement_preview_state()
             self.takeoff_created.emit(
                 self._place_session_uid,
                 pos,
@@ -1304,6 +1270,12 @@ class PlacementModeMixin:
         self._backout_last_valid_ost = None
         self._set_area_placement_in_progress(False)
 
+    def _finish_area_placement_preview_state(self) -> None:
+        self.clear_place_preview()
+        self._place_points = []
+        self._set_area_placement_in_progress(False)
+        self._invalidate_snap_index()
+
     def _apply_pattern_preview(
         self,
         item: QGraphicsPathItem,
@@ -1337,16 +1309,10 @@ class PlacementModeMixin:
         else:
             item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         item.setZValue(10)
-        if page_transform is not None:
-            item.setTransform(page_transform)
-        self._scene.addItem(item)
-        self._place_preview_items.append(item)
+        self._add_preview_item(item, page_transform)
         for pitem in pattern_items:
             pitem.setZValue(10)
-            if page_transform is not None:
-                pitem.setTransform(page_transform)
-            self._scene.addItem(pitem)
-            self._place_preview_items.append(pitem)
+            self._add_preview_item(pitem, page_transform)
 
     def _add_secondary_condition_previews(
         self,
@@ -1362,18 +1328,9 @@ class PlacementModeMixin:
             cond = self._current_conditions.get(cond_uid)
             if not cond:
                 continue
-            color_entry = self._current_color_map.get(cond_uid)
-            if color_entry is not None:
-                color_hex, opacity = self._color_service.as_hex_with_opacity(
-                    color_entry
-                )
-            else:
-                color_hex = (
-                    self._color_service.int_to_hex(cond.color_fill)
-                    if cond.color_fill
-                    else "#808080"
-                )
-                opacity = base_opacity
+            color_hex, opacity = self._condition_preview_color_and_opacity(
+                cond_uid, cond, default_opacity=base_opacity
+            )
             qcolor = QColor(color_hex)
             if linear_endpoints and cs:
                 x1, y1, x2, y2 = linear_endpoints
@@ -1423,6 +1380,15 @@ class PlacementModeMixin:
             self._apply_cursor_mode("select")
             self.place_exited.emit()
 
+    @staticmethod
+    def _path_from_transformed_polygon(points: list) -> QPainterPath:
+        path = QPainterPath()
+        path.moveTo(points[0], points[1])
+        for i in range(2, len(points) - 1, 2):
+            path.lineTo(points[i], points[i + 1])
+        path.closeSubpath()
+        return path
+
     def _find_area_at(self, ost_x: float, ost_y: float) -> str:
         cs = self._scene_builder.get_coordinate_system()
         pt_tx = cs.transform_vertices_to_2d([ost_x, ost_y])
@@ -1437,11 +1403,7 @@ class PlacementModeMixin:
             if not t_pos or len(t_pos) < 6:
                 continue
             t_tx = cs.transform_vertices_to_2d(t_pos)
-            path = QPainterPath()
-            path.moveTo(t_tx[0], t_tx[1])
-            for i in range(2, len(t_tx) - 1, 2):
-                path.lineTo(t_tx[i], t_tx[i + 1])
-            path.closeSubpath()
+            path = self._path_from_transformed_polygon(t_tx)
             if path.contains(pt):
                 return t.uid
         return ""
@@ -1459,11 +1421,7 @@ class PlacementModeMixin:
             if not sib_pos or len(sib_pos) < 6:
                 continue
             sib_tx = cs.transform_vertices_to_2d(sib_pos)
-            sib_path = QPainterPath()
-            sib_path.moveTo(sib_tx[0], sib_tx[1])
-            for i in range(2, len(sib_tx) - 1, 2):
-                sib_path.lineTo(sib_tx[i], sib_tx[i + 1])
-            sib_path.closeSubpath()
+            sib_path = self._path_from_transformed_polygon(sib_tx)
             if sib_path.contains(pt):
                 return True
         return False
@@ -1476,21 +1434,13 @@ class PlacementModeMixin:
             return False
         cs = self._scene_builder.get_coordinate_system()
         new_tx = cs.transform_vertices_to_2d(pos_flat)
-        new_path = QPainterPath()
-        new_path.moveTo(new_tx[0], new_tx[1])
-        for i in range(2, len(new_tx) - 1, 2):
-            new_path.lineTo(new_tx[i], new_tx[i + 1])
-        new_path.closeSubpath()
+        new_path = self._path_from_transformed_polygon(new_tx)
         parent = self._current_takeoffs.get(parent_uid)
         if parent:
             parent_pos = cs.parse_position(parent.position)
             if parent_pos and len(parent_pos) >= 6:
                 parent_tx = cs.transform_vertices_to_2d(parent_pos)
-                parent_path = QPainterPath()
-                parent_path.moveTo(parent_tx[0], parent_tx[1])
-                for i in range(2, len(parent_tx) - 1, 2):
-                    parent_path.lineTo(parent_tx[i], parent_tx[i + 1])
-                parent_path.closeSubpath()
+                parent_path = self._path_from_transformed_polygon(parent_tx)
                 if not new_path.subtracted(parent_path).isEmpty():
                     return True
         for sibling in self._current_takeoffs.values():
@@ -1502,11 +1452,7 @@ class PlacementModeMixin:
             if not sib_pos or len(sib_pos) < 6:
                 continue
             sib_tx = cs.transform_vertices_to_2d(sib_pos)
-            sib_path = QPainterPath()
-            sib_path.moveTo(sib_tx[0], sib_tx[1])
-            for i in range(2, len(sib_tx) - 1, 2):
-                sib_path.lineTo(sib_tx[i], sib_tx[i + 1])
-            sib_path.closeSubpath()
+            sib_path = self._path_from_transformed_polygon(sib_tx)
             if new_path.intersects(sib_path):
                 return True
         return False
@@ -1520,11 +1466,7 @@ class PlacementModeMixin:
         if not parent_pos or len(parent_pos) < 6:
             return
         parent_tx = cs.transform_vertices_to_2d(parent_pos)
-        combined = QPainterPath()
-        combined.moveTo(parent_tx[0], parent_tx[1])
-        for i in range(2, len(parent_tx) - 1, 2):
-            combined.lineTo(parent_tx[i], parent_tx[i + 1])
-        combined.closeSubpath()
+        combined = self._path_from_transformed_polygon(parent_tx)
         for child in self._current_takeoffs.values():
             if child.parent_uid != self._backout_parent_uid:
                 continue
@@ -1532,11 +1474,7 @@ class PlacementModeMixin:
             if not child_pos or len(child_pos) < 6:
                 continue
             child_tx = cs.transform_vertices_to_2d(child_pos)
-            child_path = QPainterPath()
-            child_path.moveTo(child_tx[0], child_tx[1])
-            for i in range(2, len(child_tx) - 1, 2):
-                child_path.lineTo(child_tx[i], child_tx[i + 1])
-            child_path.closeSubpath()
+            child_path = self._path_from_transformed_polygon(child_tx)
             combined = combined.subtracted(child_path)
         combined = combined.subtracted(hole_path)
         parent_items = self._uid_to_items.get(self._backout_parent_uid, [])
@@ -1611,25 +1549,16 @@ class PlacementModeMixin:
             tx = cs.transform_vertices_to_2d(pos)
             if len(tx) < 4:
                 continue
-            path = QPainterPath()
-            path.moveTo(tx[0], tx[1])
-            for i in range(2, len(tx) - 1, 2):
-                path.lineTo(tx[i], tx[i + 1])
-            path.closeSubpath()
+            path = self._path_from_transformed_polygon(tx)
             color = QColor(30, 160, 70) if is_valid else QColor(200, 0, 0)
-            outline_pen = QPen(color)
-            outline_pen.setWidthF(2.0)
-            outline_pen.setStyle(Qt.PenStyle.DashLine)
-            outline_pen.setCosmetic(True)
-            outline = QGraphicsPathItem()
-            outline.setPath(path)
-            outline.setPen(outline_pen)
-            outline.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            outline.setZValue(15)
-            if page_transform is not None:
-                outline.setTransform(page_transform)
-            self._scene.addItem(outline)
-            self._paste_backout_preview_items.append(outline)
+            self._add_dashed_path_preview(
+                path,
+                color,
+                15,
+                page_transform,
+                target_list=self._paste_backout_preview_items,
+                pen_width=2.0,
+            )
 
     def refresh_paste_backout_preview_after_view_change(self) -> None:
         if self._last_mouse_vp_pos is not None:

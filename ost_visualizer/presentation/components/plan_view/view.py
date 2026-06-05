@@ -4,7 +4,7 @@ import weakref
 import uuid
 from dataclasses import replace
 from enum import Enum
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple, cast
 from PySide6 import QtCore, QtSvg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import (
@@ -531,7 +531,7 @@ class TakeoffPlanView(
         toolbar.move(8, 8)
         return toolbar
 
-    def _make_text_toggle_button(
+    def _make_text_button(
         self, parent: QFrame, icon_name: str, tooltip: str
     ) -> QPushButton:
         button = QPushButton(parent)
@@ -540,6 +540,12 @@ class TakeoffPlanView(
         button.setIconSize(QtCore.QSize(_TEXT_TOOL_ICON_SIZE, _TEXT_TOOL_ICON_SIZE))
         button.setToolTip(tooltip)
         apply_themed_icon(button, icon_name)
+        return button
+
+    def _make_text_toggle_button(
+        self, parent: QFrame, icon_name: str, tooltip: str
+    ) -> QPushButton:
+        button = self._make_text_button(parent, icon_name, tooltip)
         button.toggled.connect(self._apply_condition_text_format_from_signal)
         return button
 
@@ -550,12 +556,7 @@ class TakeoffPlanView(
         tooltip: str,
         alignment: Qt.AlignmentFlag,
     ) -> QPushButton:
-        button = QPushButton(parent)
-        button.setCheckable(True)
-        button.setFixedSize(_TEXT_TOOL_BUTTON_SIZE, _TEXT_TOOL_BUTTON_SIZE)
-        button.setIconSize(QtCore.QSize(_TEXT_TOOL_ICON_SIZE, _TEXT_TOOL_ICON_SIZE))
-        button.setToolTip(tooltip)
-        apply_themed_icon(button, icon_name)
+        button = self._make_text_button(parent, icon_name, tooltip)
         button.clicked.connect(
             lambda _checked=False, align=alignment: self._set_condition_text_alignment(
                 align
@@ -904,35 +905,54 @@ class TakeoffPlanView(
             return True
         return self._text_toolbar_contains_global_point(QCursor.pos())
 
-    def _text_annotation_item(self, uid: str) -> Optional[QGraphicsTextItem]:
+    def _first_uid_item(
+        self,
+        uid: str,
+        predicate: Callable[[QGraphicsItem], bool],
+    ) -> Optional[QGraphicsItem]:
         for item in self._uid_to_items.get(uid, []):
-            if (
-                isinstance(item, QGraphicsTextItem)
-                and item.data(2) != "condition_label"
-                and item.data(2) != NAMED_VIEW_LABEL_ITEM_KIND
-            ):
+            if predicate(item):
                 return item
         return None
 
+    def _text_annotation_item(self, uid: str) -> Optional[QGraphicsTextItem]:
+        return cast(
+            Optional[QGraphicsTextItem],
+            self._first_uid_item(
+                uid,
+                lambda item: (
+                    isinstance(item, QGraphicsTextItem)
+                    and item.data(2) != "condition_label"
+                    and item.data(2) != NAMED_VIEW_LABEL_ITEM_KIND
+                ),
+            ),
+        )
+
     def _named_view_label_item(self, uid: str) -> Optional[QGraphicsTextItem]:
-        for item in self._uid_to_items.get(uid, []):
-            if (
-                isinstance(item, QGraphicsTextItem)
-                and item.data(2) == NAMED_VIEW_LABEL_ITEM_KIND
-            ):
-                return item
-        return None
+        return cast(
+            Optional[QGraphicsTextItem],
+            self._first_uid_item(
+                uid,
+                lambda item: (
+                    isinstance(item, QGraphicsTextItem)
+                    and item.data(2) == NAMED_VIEW_LABEL_ITEM_KIND
+                ),
+            ),
+        )
 
     def _named_view_label_background_item(
         self, uid: str
     ) -> Optional[QGraphicsRectItem]:
-        for item in self._uid_to_items.get(uid, []):
-            if (
-                isinstance(item, QGraphicsRectItem)
-                and item.data(2) == NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND
-            ):
-                return item
-        return None
+        return cast(
+            Optional[QGraphicsRectItem],
+            self._first_uid_item(
+                uid,
+                lambda item: (
+                    isinstance(item, QGraphicsRectItem)
+                    and item.data(2) == NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND
+                ),
+            ),
+        )
 
     def _named_view_label_contains_scene_point(
         self, uid: str, scene_pos: QtCore.QPointF
@@ -1018,10 +1038,29 @@ class TakeoffPlanView(
         self._show_text_toolbar_for_item(item, annotation_uid=None)
 
     def _dimension_label_text_item(self, uid: str) -> Optional[QGraphicsTextItem]:
-        for item in self._uid_to_items.get(uid, []):
-            if self._is_dimension_text_label_item(item):
-                return item
-        return None
+        return cast(
+            Optional[QGraphicsTextItem],
+            self._first_uid_item(uid, self._is_dimension_text_label_item),
+        )
+
+    def _begin_inline_text_edit_for_item(
+        self,
+        item: QGraphicsTextItem,
+        text: str,
+        *,
+        cursor_pos: Optional[QtCore.QPoint] = None,
+        emit_mode_changed: bool,
+    ) -> None:
+        self._editing_text_original = text
+        item.setPlainText(self._editing_text_original)
+        self._set_inline_text_document(item.document())
+        item.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsFocusable, True)
+        item.setFocus(Qt.FocusReason.MouseFocusReason)
+        if cursor_pos is not None:
+            self._update_cursor(cursor_pos)
+        if emit_mode_changed:
+            self.text_annotation_edit_mode_changed.emit(True)
 
     def _begin_text_annotation_edit(self, uid: str) -> bool:
         if not self._can_begin_text_annotation_inline_edit():
@@ -1040,15 +1079,12 @@ class TakeoffPlanView(
         if item is None or ann is None:
             return False
         self._editing_text_annotation_uid = uid
-        self._editing_text_original = str(ann.properties.get("Text", ""))
-        item.setPlainText(self._editing_text_original)
-        self._set_inline_text_document(item.document())
-        item.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
-        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsFocusable, True)
-        item.setFocus(Qt.FocusReason.MouseFocusReason)
-        self._update_cursor(self._last_mouse_vp_pos)
-        if was_inactive:
-            self.text_annotation_edit_mode_changed.emit(True)
+        self._begin_inline_text_edit_for_item(
+            item,
+            str(ann.properties.get("Text", "")),
+            cursor_pos=self._last_mouse_vp_pos,
+            emit_mode_changed=was_inactive,
+        )
         return True
 
     def _begin_named_view_rename(self, uid: str) -> bool:
@@ -1068,12 +1104,11 @@ class TakeoffPlanView(
         self._clear_text_toolbar_target()
         self._editing_named_view_uid = uid
         self._editing_named_view_item = item
-        self._editing_text_original = str(ann.properties.get("Text", ""))
-        item.setPlainText(self._editing_text_original)
-        self._set_inline_text_document(item.document())
-        item.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
-        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsFocusable, True)
-        item.setFocus(Qt.FocusReason.MouseFocusReason)
+        self._begin_inline_text_edit_for_item(
+            item,
+            str(ann.properties.get("Text", "")),
+            emit_mode_changed=False,
+        )
         self._refresh_named_view_label_background(uid)
         if was_inactive:
             self.text_annotation_edit_mode_changed.emit(True)
@@ -1499,24 +1534,27 @@ class TakeoffPlanView(
         label_kind: str,
         exclude: Optional[QGraphicsTextItem] = None,
     ) -> Optional[QGraphicsTextItem]:
-        for candidate in self._uid_to_items.get(takeoff_uid, []):
-            if (
-                candidate is not exclude
-                and isinstance(candidate, QGraphicsTextItem)
-                and candidate.data(2) == "condition_label"
-                and candidate.data(3) == label_kind
-            ):
-                return candidate
-        return None
+        return cast(
+            Optional[QGraphicsTextItem],
+            self._first_uid_item(
+                takeoff_uid,
+                lambda candidate: (
+                    candidate is not exclude
+                    and isinstance(candidate, QGraphicsTextItem)
+                    and candidate.data(2) == "condition_label"
+                    and candidate.data(3) == label_kind
+                ),
+            ),
+        )
 
     def _condition_label_takeoff_path_item(self, takeoff_uid: str):
-        for candidate in self._uid_to_items.get(takeoff_uid, []):
-            if (
+        return self._first_uid_item(
+            takeoff_uid,
+            lambda candidate: (
                 isinstance(candidate, QGraphicsPathItem)
                 and candidate.data(2) != "condition_label"
-            ):
-                return candidate
-        return None
+            ),
+        )
 
     def _condition_label_path_centroid(
         self, path: QPainterPath
@@ -2223,12 +2261,7 @@ class TakeoffPlanView(
         if char_ref is None:
             self._clear_pdf_text_selection()
             return False
-        selection = self._pdf_text_selection_between(char_ref, char_ref)
-        if selection is None:
-            self._clear_pdf_text_selection()
-            return False
-        self._show_pdf_text_selection(selection)
-        return True
+        return self._show_pdf_text_char_selection(char_ref)
 
     def _pdf_text_selection_between(
         self, anchor: Tuple[int, int], focus: Tuple[int, int]
@@ -2269,18 +2302,21 @@ class TakeoffPlanView(
             return None
         return PdfTextSelection(selected_text, tuple(rects))
 
-    def _begin_pdf_text_selection(self, scene_pos: QtCore.QPointF) -> bool:
-        char_ref = self._pdf_text_char_at(scene_pos)
-        if char_ref is None:
-            return False
-        self._pdf_text_drag_anchor = char_ref
-        self._pdf_text_drag_focus = char_ref
+    def _show_pdf_text_char_selection(self, char_ref: Tuple[int, int]) -> bool:
         selection = self._pdf_text_selection_between(char_ref, char_ref)
         if selection is None:
             self._clear_pdf_text_selection()
             return False
         self._show_pdf_text_selection(selection)
         return True
+
+    def _begin_pdf_text_selection(self, scene_pos: QtCore.QPointF) -> bool:
+        char_ref = self._pdf_text_char_at(scene_pos)
+        if char_ref is None:
+            return False
+        self._pdf_text_drag_anchor = char_ref
+        self._pdf_text_drag_focus = char_ref
+        return self._show_pdf_text_char_selection(char_ref)
 
     def _update_pdf_text_selection_drag(self, scene_pos: QtCore.QPointF) -> bool:
         if self._pdf_text_drag_anchor is None:
@@ -2398,6 +2434,34 @@ class TakeoffPlanView(
     def get_annotation(self, uid: str):
         return self._current_annotations.get(uid)
 
+    def _restore_annotation_positions(self, changes: list) -> bool:
+        changed = False
+        for db_uid, ann_type, old_pos, _new_pos in changes:
+            if not old_pos:
+                continue
+            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
+                ann = self._current_annotations.get(key)
+                if ann is None:
+                    continue
+                ann.position = list(old_pos)
+                changed = True
+        return changed
+
+    def _restore_annotation_properties(self, changes: list) -> bool:
+        changed = False
+        for db_uid, ann_type, old_props, _new_props in changes:
+            if not old_props:
+                continue
+            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
+                ann = self._current_annotations.get(key)
+                if ann is None:
+                    continue
+                ann.properties.update(dict(old_props))
+                if "FontColor" in old_props:
+                    ann.color = int_color_to_hex(int(old_props["FontColor"] or 0))
+                changed = True
+        return changed
+
     def restore_flushed_positions(
         self, takeoff_changes: list, ann_changes: list
     ) -> None:
@@ -2408,15 +2472,7 @@ class TakeoffPlanView(
                 continue
             takeoff.position = list(old_pos)
             changed = True
-        for db_uid, ann_type, old_pos, _new_pos in ann_changes:
-            if not old_pos:
-                continue
-            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
-                ann = self._current_annotations.get(key)
-                if ann is None:
-                    continue
-                ann.position = list(old_pos)
-                changed = True
+        changed = self._restore_annotation_positions(ann_changes) or changed
         if changed:
             self._rebuild_current_overlays_from_model()
 
@@ -2443,45 +2499,14 @@ class TakeoffPlanView(
             self._rebuild_current_overlays_from_model()
 
     def restore_annotation_text_properties(self, changes: list) -> None:
-        changed = False
-        for db_uid, ann_type, old_props, _new_props in changes:
-            if not old_props:
-                continue
-            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
-                ann = self._current_annotations.get(key)
-                if ann is None:
-                    continue
-                ann.properties.update(dict(old_props))
-                if "FontColor" in old_props:
-                    ann.color = int_color_to_hex(int(old_props["FontColor"] or 0))
-                changed = True
-        if changed:
+        if self._restore_annotation_properties(changes):
             self._rebuild_current_overlays_from_model()
 
     def restore_annotation_text_and_positions(
         self, text_changes: list, ann_position_changes: list
     ) -> None:
-        changed = False
-        for db_uid, ann_type, old_props, _new_props in text_changes:
-            if not old_props:
-                continue
-            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
-                ann = self._current_annotations.get(key)
-                if ann is None:
-                    continue
-                ann.properties.update(dict(old_props))
-                if "FontColor" in old_props:
-                    ann.color = int_color_to_hex(int(old_props["FontColor"] or 0))
-                changed = True
-        for db_uid, ann_type, old_pos, _new_pos in ann_position_changes:
-            if not old_pos:
-                continue
-            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
-                ann = self._current_annotations.get(key)
-                if ann is None:
-                    continue
-                ann.position = list(old_pos)
-                changed = True
+        changed = self._restore_annotation_properties(text_changes)
+        changed = self._restore_annotation_positions(ann_position_changes) or changed
         if changed:
             self._rebuild_current_overlays_from_model()
 
@@ -3829,6 +3854,47 @@ class TakeoffPlanView(
         for item in self._selection_items:
             item.setVisible(visible)
 
+    def _build_current_overlay_items(
+        self,
+        takeoffs: List[Takeoff],
+        conditions: Dict[str, Condition],
+        color_map: Dict[str, str],
+        page_info,
+        page_area_selections: Optional[Dict[str, Optional[str]]],
+        annotations: Optional[List[BidAnnotation]],
+    ) -> None:
+        self._takeoff_items, self._uid_to_items = (
+            self._scene_builder.add_takeoff_overlays(
+                self._scene,
+                takeoffs,
+                conditions,
+                color_map,
+                page_info,
+                page_area_selections,
+            )
+        )
+        if annotations:
+            annotation_dict, db_uid_map = _build_annotation_dict(
+                annotations,
+                takeoff_uids=set(self._current_takeoffs.keys()),
+            )
+            annotation_items, hotlinks, ann_uid_to_items = (
+                self._scene_builder.add_annotation_overlays(
+                    self._scene,
+                    list(annotation_dict.items()),
+                    page_info,
+                    self._current_bid_page_uid,
+                )
+            )
+            self._takeoff_items.extend(annotation_items)
+            self._hotlink_items.extend(hotlinks)
+            self._uid_to_items.update(ann_uid_to_items)
+            self._current_annotations = annotation_dict
+            self._ann_db_uid_map = db_uid_map
+        else:
+            self._current_annotations = {}
+            self._ann_db_uid_map = {}
+
     def load_page(
         self,
         page: Page,
@@ -3966,37 +4032,14 @@ class TakeoffPlanView(
             strategy.view_scale,
             rotation,
         )
-        self._takeoff_items, self._uid_to_items = (
-            self._scene_builder.add_takeoff_overlays(
-                self._scene,
-                takeoffs,
-                conditions,
-                color_map,
-                page_info,
-                page_area_selections,
-            )
+        self._build_current_overlay_items(
+            takeoffs,
+            conditions,
+            color_map,
+            page_info,
+            page_area_selections,
+            annotations,
         )
-        if annotations:
-            annotation_dict, db_uid_map = _build_annotation_dict(
-                annotations,
-                takeoff_uids=set(self._current_takeoffs.keys()),
-            )
-            annotation_items, hotlinks, ann_uid_to_items = (
-                self._scene_builder.add_annotation_overlays(
-                    self._scene,
-                    list(annotation_dict.items()),
-                    page_info,
-                    self._current_bid_page_uid,
-                )
-            )
-            self._takeoff_items.extend(annotation_items)
-            self._hotlink_items.extend(hotlinks)
-            self._uid_to_items.update(ann_uid_to_items)
-            self._current_annotations = annotation_dict
-            self._ann_db_uid_map = db_uid_map
-        else:
-            self._current_annotations = {}
-            self._ann_db_uid_map = {}
         self._apply_page_transform_to_items()
         self._request_pdf_text_extraction()
         if self._defer_page_visual_reveal:
@@ -4204,36 +4247,14 @@ class TakeoffPlanView(
             self._scene_scale,
             rotation,
         )
-        self._takeoff_items, self._uid_to_items = (
-            self._scene_builder.add_takeoff_overlays(
-                self._scene,
-                takeoffs,
-                conditions,
-                color_map,
-                page_info,
-                page_area_selections,
-            )
+        self._build_current_overlay_items(
+            takeoffs,
+            conditions,
+            color_map,
+            page_info,
+            page_area_selections,
+            annotations,
         )
-        if annotations:
-            annotation_dict, db_uid_map = _build_annotation_dict(
-                annotations, takeoff_uids=set(self._current_takeoffs.keys())
-            )
-            annotation_items, hotlinks, ann_uid_to_items = (
-                self._scene_builder.add_annotation_overlays(
-                    self._scene,
-                    list(annotation_dict.items()),
-                    page_info,
-                    self._current_bid_page_uid,
-                )
-            )
-            self._takeoff_items.extend(annotation_items)
-            self._hotlink_items.extend(hotlinks)
-            self._uid_to_items.update(ann_uid_to_items)
-            self._current_annotations = annotation_dict
-            self._ann_db_uid_map = db_uid_map
-        else:
-            self._current_annotations = {}
-            self._ann_db_uid_map = {}
         self._apply_page_transform_to_items()
         if self._defer_page_visual_reveal:
             self._set_page_overlay_items_visible(False)
