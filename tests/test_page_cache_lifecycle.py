@@ -36,7 +36,10 @@ class PageCacheLifecycleTests(unittest.TestCase):
         cache.get_page_info("b.pdf", 0)
         cache.get_page_info("a.pdf", 0)
         cache.get_page_info("c.pdf", 0)
-        self.assertEqual(list(cache._page_info_cache.keys()), ["a.pdf:0", "c.pdf:0"])
+        self.assertEqual(
+            list(cache._page_info_cache.keys()),
+            [("a.pdf", None, 0), ("c.pdf", None, 0)],
+        )
         cache.get_page_info("b.pdf", 0)
         self.assertEqual(
             renderer.page_info_calls,
@@ -46,7 +49,10 @@ class PageCacheLifecycleTests(unittest.TestCase):
         cache.get_text_runs("b.pdf", 0)
         cache.get_text_runs("a.pdf", 0)
         cache.get_text_runs("c.pdf", 0)
-        self.assertEqual(list(cache._text_runs_cache.keys()), ["a.pdf:0", "c.pdf:0"])
+        self.assertEqual(
+            list(cache._text_runs_cache.keys()),
+            [("a.pdf", None, 0), ("c.pdf", None, 0)],
+        )
         cache.get_text_runs("b.pdf", 0)
         self.assertEqual(
             renderer.text_run_calls,
@@ -56,12 +62,18 @@ class PageCacheLifecycleTests(unittest.TestCase):
         cache.get_page_count("b.pdf")
         cache.get_page_count("a.pdf")
         cache.get_page_count("c.pdf")
-        self.assertEqual(list(cache._page_count_cache.keys()), ["a.pdf", "c.pdf"])
+        self.assertEqual(
+            list(cache._page_count_cache.keys()),
+            [("a.pdf", None), ("c.pdf", None)],
+        )
         cache.get_page_size("a.pdf", 0)
         cache.get_page_size("b.pdf", 0)
         cache.get_page_size("a.pdf", 0)
         cache.get_page_size("c.pdf", 0)
-        self.assertEqual(list(cache._page_size_cache.keys()), ["a.pdf:0", "c.pdf:0"])
+        self.assertEqual(
+            list(cache._page_size_cache.keys()),
+            [("a.pdf", None, 0), ("c.pdf", None, 0)],
+        )
 
 
 if __name__ == "__main__":

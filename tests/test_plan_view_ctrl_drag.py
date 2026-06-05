@@ -52,6 +52,9 @@ def _app():
 
 
 class BaseKeyHandler:
+    def keyPressEvent(self, _event):
+        pass
+
     def keyReleaseEvent(self, _event):
         pass
 
@@ -265,14 +268,24 @@ class FakeCursorViewport:
 
 
 class FakeKeyEvent:
-    def __init__(self, key=Qt.Key.Key_Control):
+    def __init__(
+        self, key=Qt.Key.Key_Control, modifiers=Qt.KeyboardModifier.NoModifier
+    ):
         self._key = key
+        self._modifiers = modifiers
+        self.accepted = False
 
     def key(self):
         return self._key
 
+    def modifiers(self):
+        return self._modifiers
+
     def isAutoRepeat(self):
         return False
+
+    def accept(self):
+        self.accepted = True
 
 
 class FakeSignal:
@@ -731,6 +744,27 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(handle.pos(), handle_orig)
         self.assertIsNone(view._drag_plan_item_uid)
         self.assertEqual(view._drag_item_orig_positions, {})
+
+    def test_ctrl_r_does_not_enter_rotate_mode_when_selection_disabled(self):
+        view = self._make_view({"t1"})
+        view._selection_enabled = False
+        view._rotate_handle_uid = None
+        view._advanced_mouse_controls_enabled = False
+        view.cursor_mode_change_requested = FakeSignal()
+        calls = []
+        view._create_rotate_handle = lambda _uids: calls.append("create") or True
+        view._create_slope_rotate_handle = lambda: calls.append("slope") or True
+        view._remove_rotate_handle = lambda: calls.append("remove")
+        view._apply_cursor_mode = lambda mode: calls.append(("mode", mode))
+        view.copy_selected_pdf_text = lambda: False
+        event = FakeKeyEvent(
+            Qt.Key.Key_R,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        InputHandlerMixin.keyPressEvent(view, event)
+        self.assertFalse(event.accepted)
+        self.assertEqual(calls, [])
+        self.assertEqual(view.cursor_mode_change_requested.emitted, [])
 
     def test_multi_takeoff_drag_preview_uses_snapped_item_deltas(self):
         view = self._make_view({"t1", "t2"})

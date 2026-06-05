@@ -469,7 +469,7 @@ class TakeoffPlanView(
         layout.setSpacing(3)
         self._condition_text_font_combo = QFontComboBox(toolbar)
         self._condition_text_font_combo.currentFontChanged.connect(
-            lambda _font: self._apply_condition_text_format()
+            self._apply_condition_text_format_from_signal
         )
         layout.addWidget(self._condition_text_font_combo)
         self._condition_text_size_combo = QComboBox(toolbar)
@@ -477,7 +477,7 @@ class TakeoffPlanView(
             self._condition_text_size_combo.addItem(str(size), size)
         self._condition_text_size_combo.setCurrentText("9")
         self._condition_text_size_combo.currentIndexChanged.connect(
-            lambda _index: self._apply_condition_text_format()
+            self._apply_condition_text_format_from_signal
         )
         layout.addWidget(self._condition_text_size_combo)
         self._condition_text_color_btn = QPushButton(toolbar)
@@ -540,7 +540,7 @@ class TakeoffPlanView(
         button.setIconSize(QtCore.QSize(_TEXT_TOOL_ICON_SIZE, _TEXT_TOOL_ICON_SIZE))
         button.setToolTip(tooltip)
         apply_themed_icon(button, icon_name)
-        button.toggled.connect(lambda _checked: self._apply_condition_text_format())
+        button.toggled.connect(self._apply_condition_text_format_from_signal)
         return button
 
     def _make_text_align_button(
@@ -751,6 +751,9 @@ class TakeoffPlanView(
         if uid is not None:
             self._refresh_dimension_text_label_layout(uid, item)
         self._refresh_selected_text_annotation_selection_visuals()
+
+    def _apply_condition_text_format_from_signal(self, *_args) -> None:
+        self._apply_condition_text_format()
 
     def _pick_condition_text_color(self) -> None:
         item = self._selected_text_item
@@ -4415,6 +4418,8 @@ class TakeoffPlanView(
     def set_cursor_mode(self, mode: str) -> None:
         if mode not in ("move_overlay", "move_overlay_handle"):
             self.cancel_overlay_move_mode(restore_preview=True)
+        if mode not in ("rotate", "slope_rotate"):
+            self._remove_rotate_handle()
         if mode != "select":
             self.finish_intelligent_paste_placement()
         if mode == "place":
@@ -4434,7 +4439,10 @@ class TakeoffPlanView(
     def activate_place_for_condition(
         self, condition_uid: str, all_condition_uids: list = None
     ) -> bool:
+        self.cancel_overlay_move_mode(restore_preview=True)
+        self._remove_rotate_handle()
         self.finish_intelligent_paste_placement()
+        self._exit_annotation_place_mode()
         if not PlacementModeMixin.enter_place_mode_for_condition(self, condition_uid):
             return False
         self._place_all_condition_uids = self._filter_place_conditions(
@@ -4448,6 +4456,8 @@ class TakeoffPlanView(
         return self.activate_annotation_placement("dimension")
 
     def activate_annotation_placement(self, annotation_type: str) -> bool:
+        self.cancel_overlay_move_mode(restore_preview=True)
+        self._remove_rotate_handle()
         self.finish_intelligent_paste_placement()
         if not self._current_bid_page_uid:
             return False
@@ -4520,7 +4530,12 @@ class TakeoffPlanView(
         extras_by_uid: Dict[str, Dict],
         source_bid_uid: Optional[str],
     ) -> bool:
+        self.cancel_overlay_move_mode(restore_preview=True)
+        self._remove_rotate_handle()
         self.finish_intelligent_paste_placement()
+        self._exit_place_mode()
+        self._exit_annotation_place_mode()
+        self._clear_backout_state()
         valid_takeoffs = [
             t for t in takeoffs if t and t.position and len(t.position) >= 6
         ]

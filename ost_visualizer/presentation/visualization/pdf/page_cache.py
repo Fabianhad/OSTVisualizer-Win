@@ -1,3 +1,4 @@
+import os
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ _TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES = 32 * 1024 * 1024
 @dataclass(frozen=True)
 class CacheKey:
     file_path: str
+    file_signature: Optional[tuple[int, int]]
     page_index: int
     scale: float
     rotation: int
@@ -23,6 +25,7 @@ class CacheKey:
 @dataclass(frozen=True)
 class TintedCacheKey:
     file_path: str
+    file_signature: Optional[tuple[int, int]]
     page_index: int
     scale: float
     rotation: int
@@ -62,6 +65,14 @@ class PageCache:
     def _quantize_scale(self, scale: float) -> float:
         return max(0.1, round(scale, 3))
 
+    @staticmethod
+    def _file_signature(file_path: str) -> Optional[tuple[int, int]]:
+        try:
+            stat = os.stat(file_path)
+        except OSError:
+            return None
+        return int(stat.st_mtime_ns), int(stat.st_size)
+
     def get_page(
         self,
         file_path: str,
@@ -72,7 +83,8 @@ class PageCache:
         if not file_path:
             return None
         quantized_scale = self._quantize_scale(scale)
-        key = CacheKey(file_path, page_index, quantized_scale, rotation)
+        file_signature = self._file_signature(file_path)
+        key = CacheKey(file_path, file_signature, page_index, quantized_scale, rotation)
         with self._in_flight_condition:
             if key in self._cache:
                 self._cache.move_to_end(key)
@@ -113,7 +125,10 @@ class PageCache:
             return None
         quantized_scale = self._quantize_scale(scale)
         r, g, b = tint_rgb
-        key = TintedCacheKey(file_path, page_index, quantized_scale, rotation, r, g, b)
+        file_signature = self._file_signature(file_path)
+        key = TintedCacheKey(
+            file_path, file_signature, page_index, quantized_scale, rotation, r, g, b
+        )
         with self._lock:
             if key in self._tinted_cache:
                 self._tinted_cache.move_to_end(key)
@@ -172,7 +187,7 @@ class PageCache:
         )
 
     def get_page_info(self, file_path: str, page_index: int = 0) -> Dict:
-        cache_key = f"{file_path}:{page_index}"
+        cache_key = (file_path, self._file_signature(file_path), page_index)
         with self._lock:
             if cache_key in self._page_info_cache:
                 self._page_info_cache.move_to_end(cache_key)
@@ -220,18 +235,19 @@ class PageCache:
             cache.popitem(last=False)
 
     def get_page_count(self, file_path: str) -> int:
+        cache_key = (file_path, self._file_signature(file_path))
         with self._lock:
-            if file_path in self._page_count_cache:
-                self._page_count_cache.move_to_end(file_path)
-                return self._page_count_cache[file_path]
+            if cache_key in self._page_count_cache:
+                self._page_count_cache.move_to_end(cache_key)
+                return self._page_count_cache[cache_key]
         renderer = self._get_renderer()
         count = renderer.get_page_count(file_path)
         with self._lock:
-            self._store_lru(self._page_count_cache, file_path, count)
+            self._store_lru(self._page_count_cache, cache_key, count)
         return count
 
     def get_page_size(self, file_path: str, page_index: int = 0) -> tuple:
-        cache_key = f"{file_path}:{page_index}"
+        cache_key = (file_path, self._file_signature(file_path), page_index)
         with self._lock:
             if cache_key in self._page_size_cache:
                 self._page_size_cache.move_to_end(cache_key)
@@ -243,7 +259,7 @@ class PageCache:
         return size
 
     def get_text_runs(self, file_path: str, page_index: int = 0) -> list:
-        cache_key = f"{file_path}:{page_index}"
+        cache_key = (file_path, self._file_signature(file_path), page_index)
         with self._lock:
             if cache_key in self._text_runs_cache:
                 self._text_runs_cache.move_to_end(cache_key)

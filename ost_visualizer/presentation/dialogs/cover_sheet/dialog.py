@@ -214,9 +214,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._btn_job_status_picker = QtWidgets.QPushButton("...")
         apply_no_highlight_button_policy(self._btn_job_status_picker)
         self._btn_job_status_picker.setFixedWidth(28)
-        self._btn_job_status_picker.clicked.connect(
-            lambda: self._open_job_statuses_dialog()
-        )
+        self._btn_job_status_picker.clicked.connect(self._open_job_statuses_picker)
         _js_row = QtWidgets.QHBoxLayout()
         _js_row.setSpacing(COMPACT_SPACING)
         _js_row.addWidget(self.combo_job_status, 1)
@@ -238,7 +236,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._btn_employees = QtWidgets.QPushButton("...")
         apply_no_highlight_button_policy(self._btn_employees)
         self._btn_employees.setFixedWidth(28)
-        self._btn_employees.clicked.connect(lambda: self._open_employees_dialog())
+        self._btn_employees.clicked.connect(self._open_employees_picker)
         _est_row = QtWidgets.QHBoxLayout()
         _est_row.setSpacing(COMPACT_SPACING)
         _est_row.addWidget(self.combo_estimator, 1)
@@ -707,6 +705,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def _open_job_statuses_picker(self, *_args) -> None:
+        self._open_job_statuses_dialog()
+
     def _open_employees_dialog(self, initial_first_name: Optional[str] = None) -> None:
         current_uid = self.combo_estimator.currentData() or ""
         dialog = EmployeesDialog(
@@ -758,6 +759,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self._active_sub_dialog = None
             dialog.cleanup()
             dialog.deleteLater()
+
+    def _open_employees_picker(self, *_args) -> None:
+        self._open_employees_dialog()
 
     def _open_bid_areas_dialog(self) -> None:
         bid_areas = []

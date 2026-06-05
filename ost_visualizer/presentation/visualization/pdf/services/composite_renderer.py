@@ -88,7 +88,7 @@ class CompositeRenderer:
                 str(page.page_index),
                 page.image_path or "",
                 page.overlay_image_path or "",
-                str(render_scale),
+                str(_quantize_render_scale(render_scale)),
                 str(raster_rotation),
                 str(page.image_show_mode),
                 str(page.layer_visible),

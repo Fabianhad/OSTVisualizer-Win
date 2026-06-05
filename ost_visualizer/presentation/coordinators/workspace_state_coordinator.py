@@ -330,10 +330,14 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             pass
 
     def request_save(self, *_args) -> None:
+        if self._cleaned_up:
+            return
         if self._save_timer is not None:
             self._save_timer.start()
 
     def eventFilter(self, watched, event) -> bool:
+        if self._cleaned_up:
+            return super().eventFilter(watched, event)
         event_type = event.type()
         if watched is self._host_window:
             if event_type in (
@@ -469,6 +473,8 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         QtCore.QTimer.singleShot(0, self._restore_detached_page_windows_when_ready)
 
     def _restore_detached_page_windows_when_ready(self) -> None:
+        if self._cleaned_up:
+            return
         self._takeoff_workspace_ready_restore_scheduled = False
         if not self._is_takeoff_workspace_stable():
             return
@@ -498,6 +504,8 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         )
 
     def _track_detached_window(self, key: str) -> None:
+        if self._cleaned_up:
+            return
         window = self._get_detached_window(key)
         if window is None:
             return

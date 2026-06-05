@@ -1647,6 +1647,21 @@ class OptionsPreferencesTests(unittest.TestCase):
             def finish_intelligent_paste_placement(self):
                 self.finished_intelligent_paste += 1
 
+            def cancel_overlay_move_mode(self, restore_preview=True):
+                pass
+
+            def _remove_rotate_handle(self):
+                pass
+
+            def _exit_place_mode(self):
+                pass
+
+            def _exit_annotation_place_mode(self):
+                pass
+
+            def _clear_backout_state(self):
+                pass
+
             def _apply_cursor_mode(self, mode):
                 self.cursor_modes.append(mode)
 
@@ -2026,6 +2041,41 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(page_cache.calls[0][2], 3.0)
         self.assertEqual(page_cache.calls[1][2], 2.0)
 
+    def test_composite_cache_key_uses_quantized_render_scale(self):
+        class FakePageCache:
+            def __init__(self):
+                self.calls = []
+
+            def get_tinted_page(self, file_path, page_index, scale, rotation, tint_rgb):
+                self.calls.append((file_path, page_index, scale, rotation, tint_rgb))
+                return QtGui.QImage(20, 20, QtGui.QImage.Format.Format_ARGB32)
+
+        page_cache = FakePageCache()
+        renderer = CompositeRenderer(page_cache)
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            page_index=0,
+            width_pts=100.0,
+            height_pts=100.0,
+        )
+        first = renderer.render_composite(
+            page,
+            bid_ref=None,
+            render_scale=1.2341,
+            raster_rotation=0,
+        )
+        second = renderer.render_composite(
+            page,
+            bid_ref=None,
+            render_scale=1.2342,
+            raster_rotation=0,
+        )
+        self.assertIs(first, second)
+        self.assertEqual(len(page_cache.calls), 2)
+
     def test_composite_visible_frame_renders_base_and_overlay_frames(self):
         page_cache = FakeCompositeFramePageCache()
         renderer = CompositeRenderer(page_cache)
@@ -2270,6 +2320,35 @@ class OptionsPreferencesTests(unittest.TestCase):
             ],
         )
 
+    def test_page_cache_key_changes_when_same_path_file_content_changes(self):
+        class FakeRenderer:
+            def __init__(self):
+                self.calls = []
+
+            def render(self, file_path, page_index, scale, rotation):
+                self.calls.append((file_path, page_index, scale, rotation))
+                return QtGui.QImage(
+                    len(self.calls),
+                    1,
+                    QtGui.QImage.Format.Format_ARGB32,
+                )
+
+        renderer = FakeRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        path = Path(os.environ.get("TEMP", ".")) / "ostv_page_cache_signature.pdf"
+        path.write_bytes(b"first")
+        try:
+            first = cache.get_page(str(path), 0, 1.0, 0)
+            first_again = cache.get_page(str(path), 0, 1.0, 0)
+            path.write_bytes(b"second-version")
+            second = cache.get_page(str(path), 0, 1.0, 0)
+        finally:
+            path.unlink(missing_ok=True)
+        self.assertIs(first, first_again)
+        self.assertIsNot(first, second)
+        self.assertEqual(len(renderer.calls), 2)
+
     def test_page_cache_quantizes_scale_before_full_and_frame_renders(self):
         class FakeRenderer:
             def __init__(self):
@@ -2314,6 +2393,38 @@ class OptionsPreferencesTests(unittest.TestCase):
                 ("frame", 1.235, 1.0, 2.0, 3.0, 4.0),
             ],
         )
+
+    def test_page_renderer_reopens_same_path_pdf_when_file_signature_changes(self):
+        class FakePdfRenderer:
+            def __init__(self):
+                self.open_calls = []
+                self.close_calls = 0
+
+            def open(self, file_path):
+                self.open_calls.append(file_path)
+                return True
+
+            def close(self):
+                self.close_calls += 1
+
+            def get_last_error(self):
+                return "fake"
+
+        fake_pdf = FakePdfRenderer()
+        renderer = PageRenderer()
+        renderer._get_pdf_renderer = lambda: fake_pdf
+        path = Path(os.environ.get("TEMP", ".")) / "ostv_renderer_signature.pdf"
+        path.write_bytes(b"first")
+        try:
+            renderer._ensure_pdf_open_locked(str(path))
+            renderer._ensure_pdf_open_locked(str(path))
+            path.write_bytes(b"second-version")
+            renderer._ensure_pdf_open_locked(str(path))
+        finally:
+            path.unlink(missing_ok=True)
+            renderer.close()
+        self.assertEqual(fake_pdf.open_calls, [str(path), str(path)])
+        self.assertGreaterEqual(fake_pdf.close_calls, 2)
 
     def test_pdf_frame_render_matches_full_page_orientation(self):
         pdf_path = Path(os.environ.get("TEMP", ".")) / "ostv_frame_orientation.pdf"

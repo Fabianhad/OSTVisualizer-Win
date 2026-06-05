@@ -827,6 +827,43 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_positions_flushed(takeoff_changes, ann_changes)
         self.assertEqual(plan_view.restored_positions, [([], ann_changes)])
 
+    def test_failed_annotation_position_save_registers_takeoff_position_undo(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        ann_write = FakeAnnotationWriteService()
+        ann_write.save_annotation_positions = lambda *args, **kwargs: False
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+        )
+        takeoff_changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
+        ann_changes = [("a1", "annotation", [1.0, 1.0], [2.0, 2.0])]
+        handler.on_positions_flushed(takeoff_changes, ann_changes)
+        undo.undo()
+        undo.redo()
+        self.assertEqual(undo.count, 1)
+        self.assertEqual(plan_view.restored_positions, [([], ann_changes)])
+        self.assertEqual(
+            write.position_calls,
+            [
+                ("bid.mdb", [("t1", [5.0, 6.0])], True),
+                ("bid.mdb", [("t1", [0.0, 0.0])], False),
+                ("bid.mdb", [("t1", [5.0, 6.0])], False),
+            ],
+        )
+        self.assertEqual(data.takeoffs["t1"].position, [5.0, 6.0])
+
     def test_annotation_text_property_changes_use_annotation_write_service(self):
         data = FakeProjectData()
         ann_write = FakeAnnotationWriteService()
@@ -1080,6 +1117,52 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.takeoffs["t1"].position, [3.0, 4.0])
         self.assertEqual(data.takeoffs["t1"].rotation, 0.0)
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
+
+    def test_group_rotation_failure_registers_position_undo(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+            rotation=0.0,
+        )
+        write = FakeWriteService()
+        write.save_takeoff_rotations = lambda *args, **kwargs: False
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+        )
+        handler.on_group_rotation_flushed(
+            [("t1", [0.0, 0.0], [3.0, 4.0])],
+            [],
+            [("t1", 0.0, 45.0)],
+        )
+        undo.undo()
+        undo.redo()
+        self.assertEqual(undo.count, 1)
+        self.assertEqual(
+            write.position_calls,
+            [
+                ("bid.mdb", [("t1", [3.0, 4.0])], False),
+                ("bid.mdb", [("t1", [0.0, 0.0])], False),
+                ("bid.mdb", [("t1", [3.0, 4.0])], False),
+            ],
+        )
+        self.assertEqual(data.takeoffs["t1"].position, [3.0, 4.0])
+        self.assertEqual(data.takeoffs["t1"].rotation, 0.0)
+        self.assertEqual(
+            [event for event, _kwargs in event_bus.events],
+            [AppEvents.TAKEOFFS_CHANGED] * 3,
+        )
 
     def test_simple_takeoff_delete_uses_targeted_path(self):
         data = FakeProjectData()

@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Dict, Optional
@@ -16,16 +17,30 @@ class PageRenderer:
     def __init__(self):
         self._pdf_renderer = None
         self._current_pdf_path: Optional[str] = None
+        self._current_pdf_signature: Optional[tuple[int, int]] = None
+
+    @staticmethod
+    def _file_signature(file_path: str) -> Optional[tuple[int, int]]:
+        try:
+            stat = os.stat(file_path)
+        except OSError:
+            return None
+        return int(stat.st_mtime_ns), int(stat.st_size)
 
     def _ensure_pdf_open_locked(self, file_path: str):
         renderer = self._get_pdf_renderer()
         if not renderer:
             logger.error("PDF rendering not available")
             return None
-        if self._current_pdf_path == file_path:
+        file_signature = self._file_signature(file_path)
+        if (
+            self._current_pdf_path == file_path
+            and self._current_pdf_signature == file_signature
+        ):
             return renderer
         renderer.close()
         self._current_pdf_path = None
+        self._current_pdf_signature = None
         if not renderer.open(file_path):
             path_obj = Path(file_path)
             pdfium_error = renderer.get_last_error()
@@ -40,6 +55,7 @@ class PageRenderer:
                 )
             return None
         self._current_pdf_path = file_path
+        self._current_pdf_signature = file_signature
         return renderer
 
     def _get_pdf_renderer(self):
@@ -234,3 +250,4 @@ class PageRenderer:
                 self._pdf_renderer.close()
                 self._pdf_renderer = None
             self._current_pdf_path = None
+            self._current_pdf_signature = None

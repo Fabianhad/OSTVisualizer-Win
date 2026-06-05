@@ -209,6 +209,40 @@ class PlanViewActionHandler:
         self._publish_saved_takeoff_position_rotation_changes(positions, rotations)
         return True
 
+    def _push_position_undo_for_committed_partial(
+        self,
+        db_path: str,
+        t_old: List[tuple],
+        t_new: List[tuple],
+        a_old: Optional[List[tuple]] = None,
+        a_new: Optional[List[tuple]] = None,
+    ) -> None:
+        a_old = a_old or []
+        a_new = a_new or []
+        if not (t_old or a_old):
+            return
+        use_reload_path = bool(a_old or a_new)
+
+        def _save_takeoff_positions(positions: List[tuple]) -> None:
+            if not positions:
+                return
+            if use_reload_path:
+                self._write_svc.save_takeoff_positions(db_path, positions)
+            else:
+                self._save_takeoff_positions_fast(db_path, positions)
+
+        def _undo_partial():
+            _save_takeoff_positions(t_old)
+            if a_old:
+                self._ann_write_svc.save_annotation_positions(db_path, a_old)
+
+        def _redo_partial():
+            _save_takeoff_positions(t_new)
+            if a_new:
+                self._ann_write_svc.save_annotation_positions(db_path, a_new)
+
+        self._undo_svc.push(_undo_partial, _redo_partial)
+
     def _delete_takeoffs_fast(self, db_path: str, takeoff_uids: List[str]) -> bool:
         if not takeoff_uids:
             return True
@@ -327,15 +361,16 @@ class PlanViewActionHandler:
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path or (not takeoff_changes and not ann_changes):
             return
+        t_old = [(uid, list(old)) for uid, old, _ in takeoff_changes if old]
+        t_new = [(uid, list(new)) for uid, _, new in takeoff_changes]
+        a_old = [(uid, t, list(old)) for uid, t, old, _ in ann_changes if old]
+        a_new = [(uid, t, list(new)) for uid, t, _, new in ann_changes]
         ok_t = True
         if takeoff_changes:
-            new_positions = [
-                (uid, list(new_pos)) for uid, _old, new_pos in takeoff_changes
-            ]
             if ann_changes:
-                ok_t = self._write_svc.save_takeoff_positions(db_path, new_positions)
+                ok_t = self._write_svc.save_takeoff_positions(db_path, t_new)
             else:
-                ok_t = self._save_takeoff_positions_fast(db_path, new_positions)
+                ok_t = self._save_takeoff_positions_fast(db_path, t_new)
             if not ok_t:
                 self._plan_view.restore_flushed_positions(takeoff_changes, ann_changes)
                 return
@@ -349,12 +384,9 @@ class PlanViewActionHandler:
                 ],
             )
         if not ok_a:
+            self._push_position_undo_for_committed_partial(db_path, t_old, t_new)
             self._plan_view.restore_flushed_positions([], ann_changes)
             return
-        t_old = [(uid, list(old)) for uid, old, _ in takeoff_changes if old]
-        t_new = [(uid, list(new)) for uid, _, new in takeoff_changes]
-        a_old = [(uid, t, list(old)) for uid, t, old, _ in ann_changes if old]
-        a_new = [(uid, t, list(new)) for uid, t, _, new in ann_changes]
         if not (t_old or a_old):
             return
 
@@ -515,6 +547,10 @@ class PlanViewActionHandler:
             return
         t_new = [(uid, list(new)) for uid, _, new in takeoff_changes]
         r_new = [(uid, new) for uid, _, new in rotation_changes]
+        t_old = [(uid, list(old)) for uid, old, _ in takeoff_changes if old]
+        a_old = [(uid, t, list(old)) for uid, t, old, _ in ann_changes if old]
+        a_new = [(uid, t, list(new)) for uid, t, _, new in ann_changes]
+        r_old = [(uid, old) for uid, old, _ in rotation_changes if old is not None]
         ok_t = True
         ok_r = True
         if ann_changes:
@@ -536,10 +572,16 @@ class PlanViewActionHandler:
                     )
                     self._plan_view.restore_flushed_rotations(rotation_changes)
                 elif not ok_a:
+                    self._push_position_undo_for_committed_partial(
+                        db_path, t_old, t_new
+                    )
                     self._plan_view.restore_flushed_positions([], ann_changes)
                     if not ok_r:
                         self._plan_view.restore_flushed_rotations(rotation_changes)
                 elif not ok_r:
+                    self._push_position_undo_for_committed_partial(
+                        db_path, t_old, t_new, a_old, a_new
+                    )
                     self._plan_view.restore_flushed_rotations(rotation_changes)
                 return
         else:
@@ -557,13 +599,12 @@ class PlanViewActionHandler:
             ):
                 if positions_saved:
                     self._publish_saved_takeoff_position_rotation_changes(t_new, [])
+                    self._push_position_undo_for_committed_partial(
+                        db_path, t_old, t_new
+                    )
                 self._plan_view.restore_flushed_rotations(rotation_changes)
                 return
             self._publish_saved_takeoff_position_rotation_changes(t_new, r_new)
-        t_old = [(uid, list(old)) for uid, old, _ in takeoff_changes if old]
-        a_old = [(uid, t, list(old)) for uid, t, old, _ in ann_changes if old]
-        a_new = [(uid, t, list(new)) for uid, t, _, new in ann_changes]
-        r_old = [(uid, old) for uid, old, _ in rotation_changes if old is not None]
 
         def _undo_group():
             if a_old:

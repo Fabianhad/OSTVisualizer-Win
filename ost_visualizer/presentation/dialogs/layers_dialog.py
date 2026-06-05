@@ -94,11 +94,9 @@ class LayersDialog(QtWidgets.QDialog):
         self.btn_cancel = self._button("Cancel", self.reject)
         btn_layout.addWidget(self.btn_cancel)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_check_all = self._button("Check All", lambda: self._set_all_show(True))
+        self.btn_check_all = self._button("Check All", self._check_all)
         btn_layout.addWidget(self.btn_check_all)
-        self.btn_uncheck_all = self._button(
-            "Uncheck All", lambda: self._set_all_show(False)
-        )
+        self.btn_uncheck_all = self._button("Uncheck All", self._uncheck_all)
         btn_layout.addWidget(self.btn_uncheck_all)
         btn_layout.addSpacing(RELAXED_SPACING)
         self.btn_new = self._button("New", self._on_new)
@@ -107,14 +105,26 @@ class LayersDialog(QtWidgets.QDialog):
         self.btn_delete.setEnabled(False)
         btn_layout.addWidget(self.btn_delete)
         btn_layout.addSpacing(RELAXED_SPACING)
-        self.btn_move_up = self._button("Move Up", lambda: self._move_selected(-1))
+        self.btn_move_up = self._button("Move Up", self._move_selected_up)
         self.btn_move_up.setEnabled(False)
         btn_layout.addWidget(self.btn_move_up)
-        self.btn_move_down = self._button("Move Down", lambda: self._move_selected(1))
+        self.btn_move_down = self._button("Move Down", self._move_selected_down)
         self.btn_move_down.setEnabled(False)
         btn_layout.addWidget(self.btn_move_down)
         btn_layout.addStretch()
         main_layout.addLayout(btn_layout)
+
+    def _check_all(self, *_args) -> None:
+        self._set_all_show(True)
+
+    def _uncheck_all(self, *_args) -> None:
+        self._set_all_show(False)
+
+    def _move_selected_up(self, *_args) -> None:
+        self._move_selected(-1)
+
+    def _move_selected_down(self, *_args) -> None:
+        self._move_selected(1)
 
     def _button(self, text: str, slot) -> QtWidgets.QPushButton:
         button = QtWidgets.QPushButton(text)

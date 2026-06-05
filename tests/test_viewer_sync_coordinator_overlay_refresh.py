@@ -1259,6 +1259,128 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIsNone(view._overlay_move_handle_item)
         view.cleanup()
 
+    def test_switching_cursor_mode_clears_rotate_handle(self):
+        view = self._make_plan_view()
+        handle = QGraphicsPathItem()
+        view._scene.addItem(handle)
+        view._rotate_handle_item = handle
+        view._rotate_handle_uid = "t1"
+        view._apply_cursor_mode("rotate")
+        view.set_cursor_mode("pan")
+        self.assertEqual(view._cursor_mode, "pan")
+        self.assertIsNone(view._rotate_handle_item)
+        self.assertIsNone(view._rotate_handle_uid)
+        self.assertIsNone(handle.scene())
+        view.cleanup()
+
+    def test_place_mode_cancels_move_overlay_state(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(96.0, 48.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        view._overlay_move_original_rect = (0.0, 0.0, 816.0, 1056.0)
+        view._overlay_move_preview_rect = page.overlay_rect
+        view._current_conditions = {
+            "c1": Condition(uid="c1", condition_type=Condition.TYPE_LINEAR)
+        }
+        view._annotation_place_type = "dimension"
+        view._annotation_place_points = [(1.0, 1.0)]
+        view._annotation_place_dragging = True
+        self.assertTrue(view.activate_place_for_condition("c1"))
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertEqual(view._cursor_mode, "place")
+        self.assertEqual(view._place_session_uid, "c1")
+        self.assertIsNone(view._annotation_place_type)
+        self.assertEqual(view._annotation_place_points, [])
+        self.assertFalse(view._annotation_place_dragging)
+        self.assertIsNone(view._overlay_move_handle_item)
+        self.assertIsNone(view._overlay_move_original_rect)
+        self.assertIsNone(view._overlay_move_preview_rect)
+        view.cleanup()
+
+    def test_dimension_mode_cancels_move_overlay_state(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(96.0, 48.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        view._overlay_move_original_rect = (0.0, 0.0, 816.0, 1056.0)
+        view._overlay_move_preview_rect = page.overlay_rect
+        self.assertTrue(view.activate_dimension_annotation_placement())
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertEqual(view._cursor_mode, "annotation_place")
+        self.assertEqual(view._annotation_place_type, "dimension")
+        self.assertIsNone(view._overlay_move_handle_item)
+        self.assertIsNone(view._overlay_move_original_rect)
+        self.assertIsNone(view._overlay_move_preview_rect)
+        view.cleanup()
+
+    def test_paste_backout_cancels_move_overlay_state(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(96.0, 48.0, 816.0, 1056.0),
+        )
+        self._install_page_canvas(view, page)
+        self.assertTrue(view.show_overlay_move_handle())
+        view._overlay_move_original_rect = (0.0, 0.0, 816.0, 1056.0)
+        view._overlay_move_preview_rect = page.overlay_rect
+        view._current_conditions = {
+            "area-condition": Condition(
+                uid="area-condition",
+                condition_type=Condition.TYPE_AREA,
+            )
+        }
+        view._current_takeoffs = {
+            "host": Takeoff(
+                uid="host",
+                condition_uid="area-condition",
+                position=[0.0, 0.0, 4.0, 0.0, 4.0, 4.0],
+                parent_uid="0",
+            )
+        }
+        view._place_session_uid = "area-condition"
+        view._place_points = [(0.0, 0.0)]
+        view._annotation_place_type = "dimension"
+        view._annotation_place_points = [(1.0, 1.0)]
+        view._annotation_place_dragging = True
+        hole = Takeoff(
+            uid="hole",
+            condition_uid="area-condition",
+            position=[1.0, 1.0, 2.0, 1.0, 2.0, 2.0],
+            parent_uid="source-parent",
+        )
+        self.assertTrue(view.begin_paste_backout([hole], {}, "7"))
+        self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
+        self.assertEqual(view._cursor_mode, "paste_backout")
+        self.assertTrue(view._paste_backout_active)
+        self.assertIsNone(view._place_session_uid)
+        self.assertEqual(view._place_points, [])
+        self.assertIsNone(view._annotation_place_type)
+        self.assertEqual(view._annotation_place_points, [])
+        self.assertFalse(view._annotation_place_dragging)
+        self.assertIsNone(view._overlay_move_handle_item)
+        self.assertIsNone(view._overlay_move_original_rect)
+        self.assertIsNone(view._overlay_move_preview_rect)
+        view.cleanup()
+
     def test_move_overlay_commit_saves_preview_overlay_rect(self):
         view = self._make_plan_view()
         page = Page(

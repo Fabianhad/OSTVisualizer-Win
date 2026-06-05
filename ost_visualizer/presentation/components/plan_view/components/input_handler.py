@@ -1875,7 +1875,11 @@ class InputHandlerMixin:
                 self.paste_requested.emit()
                 event.accept()
                 return
-            if event.key() == Qt.Key.Key_R and self._selected_uids:
+            if (
+                event.key() == Qt.Key.Key_R
+                and self._selection_enabled
+                and self._selected_uids
+            ):
                 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                     if self._cursor_mode == "slope_rotate":
                         self._remove_rotate_handle()

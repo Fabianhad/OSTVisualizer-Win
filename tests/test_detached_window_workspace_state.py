@@ -81,6 +81,7 @@ class FakeWorkspaceSaveTimer:
     def __init__(self, active=True):
         self._active = active
         self.stopped = False
+        self.started = False
 
     def isActive(self):
         return self._active
@@ -88,6 +89,10 @@ class FakeWorkspaceSaveTimer:
     def stop(self):
         self.stopped = True
         self._active = False
+
+    def start(self):
+        self.started = True
+        self._active = True
 
 
 class FakeWorkspaceStateModel:
@@ -430,6 +435,26 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             ],
         )
 
+    def test_late_request_save_after_cleanup_is_ignored(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        timer = FakeWorkspaceSaveTimer(active=False)
+        coordinator._cleaned_up = True
+        coordinator._save_timer = timer
+        coordinator.request_save()
+        self.assertFalse(timer.started)
+
+    def test_late_detached_restore_after_cleanup_is_ignored(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._cleaned_up = True
+        coordinator._takeoff_workspace_ready_restore_scheduled = True
+        coordinator._restore_detached_page_windows_when_ready()
+        self.assertTrue(coordinator._takeoff_workspace_ready_restore_scheduled)
+
+    def test_late_detached_tracking_after_cleanup_is_ignored(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._cleaned_up = True
+        coordinator._track_detached_window(WorkspaceStateCoordinator._DETACHED_VIEW)
+
     def test_reset_to_defaults_persists_default_workspace_and_reapplies_state(self):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
         timer = FakeWorkspaceSaveTimer(active=True)
@@ -482,6 +507,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         coordinator._tracked_detached_destroy_callbacks = {key: lambda *_args: None}
         coordinator._detached_restore_applied = {key: True}
         coordinator._save_timer = None
+        coordinator._cleaned_up = False
         coordinator._on_tracked_window_destroyed(key)
         self.assertEqual(coordinator._tracked_detached_windows, {})
         self.assertEqual(coordinator._tracked_detached_destroy_callbacks, {})

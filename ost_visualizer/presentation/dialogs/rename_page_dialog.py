@@ -81,8 +81,8 @@ class RenamePageDialog(QtWidgets.QDialog):
         self._next_btn = QtWidgets.QPushButton("Next Page")
         self._previous_btn.setFixedWidth(_NAV_BUTTON_WIDTH)
         self._next_btn.setFixedWidth(_NAV_BUTTON_WIDTH)
-        self._previous_btn.clicked.connect(lambda: self._go(-1))
-        self._next_btn.clicked.connect(lambda: self._go(1))
+        self._previous_btn.clicked.connect(self._go_previous)
+        self._next_btn.clicked.connect(self._go_next)
         nav_layout.addWidget(self._previous_btn)
         nav_layout.addWidget(self._next_btn)
         main_layout.addLayout(nav_layout)
@@ -97,6 +97,12 @@ class RenamePageDialog(QtWidgets.QDialog):
         if 0 <= self._current_index < len(self._pages):
             return self._pages[self._current_index]
         return None
+
+    def _go_previous(self, *_args) -> None:
+        self._go(-1)
+
+    def _go_next(self, *_args) -> None:
+        self._go(1)
 
     def _load_current_page(self) -> None:
         page = self._current_page()
