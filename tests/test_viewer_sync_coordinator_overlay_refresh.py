@@ -531,6 +531,57 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(rendering_service.composite_calls[0]["page"], page)
         view.cleanup()
 
+    def test_show_both_tif_overlay_loads_composite_instead_of_separate_layers(self):
+        class RecordingRenderingService:
+            def __init__(self):
+                self.page_calls = []
+                self.composite_calls = []
+
+            def render_page_async(self, **kwargs):
+                self.page_calls.append(kwargs)
+                return "page-1"
+
+            def render_composite_async(self, **kwargs):
+                self.composite_calls.append(kwargs)
+                return "composite-1"
+
+            def extract_pdf_text_async(self, **_kwargs):
+                return "text-1"
+
+            def cancel_request(self, _request_id):
+                pass
+
+            def shutdown(self):
+                pass
+
+        view = self._make_plan_view()
+        rendering_service = RecordingRenderingService()
+        view._rendering_service = rendering_service
+        view._load_coordinator = PageLoadStrategyService(FakePageSizeProvider())
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.tif",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(
+            view.load_page(
+                page=page,
+                takeoffs=[],
+                conditions={},
+                color_map={},
+            )
+        )
+        self.assertTrue(view._can_zoom_rerender)
+        self.assertEqual(rendering_service.page_calls, [])
+        self.assertEqual(len(rendering_service.composite_calls), 1)
+        self.assertEqual(rendering_service.composite_calls[0]["page"], page)
+        self.assertEqual(rendering_service.composite_calls[0]["render_scale"], 2.0)
+        view.cleanup()
+
     def test_show_both_optional_overlay_base_correction_uses_page_rotation(self):
         class RecordingRenderingService:
             def __init__(self):

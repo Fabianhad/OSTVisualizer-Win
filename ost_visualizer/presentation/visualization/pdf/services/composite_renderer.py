@@ -241,25 +241,17 @@ class CompositeRenderer:
                     cancelled_check,
                 )
             else:
-                blue = self._page_cache.get_tinted_page(
-                    page.overlay_image_path,
-                    0,
-                    1.0,
+                self._draw_overlay_raster_frame(
+                    painter,
+                    page,
+                    render_scale,
+                    frame_x,
+                    frame_y,
+                    frame_w,
+                    frame_h,
                     rotation,
-                    tint_rgb=(80, 80, 255),
+                    cancelled_check,
                 )
-                if blue:
-                    painter.save()
-                    painter.scale(render_scale, render_scale)
-                    painter.translate(-frame_x, -frame_y)
-                    self._draw_overlay_image(
-                        painter,
-                        blue,
-                        page,
-                        page.effective_width_pts,
-                        page.effective_height_pts,
-                    )
-                    painter.restore()
         painter.end()
         return result
 
@@ -276,9 +268,178 @@ class CompositeRenderer:
         cancelled_check=None,
     ) -> None:
         source_w, source_h = self._page_cache.get_page_size(page.overlay_image_path, 0)
+        context = self._build_overlay_frame_context(
+            page,
+            source_w,
+            source_h,
+            render_scale,
+            frame_x,
+            frame_y,
+            frame_w,
+            frame_h,
+        )
+        if context is None:
+            return
+        blue_frame = self._page_cache.render_frame_uncached(
+            page.overlay_image_path,
+            0,
+            context["overlay_scale"],
+            context["source_x"],
+            context["source_y"],
+            context["source_frame_w"],
+            context["source_frame_h"],
+            rotation,
+        )
+        if not blue_frame:
+            return
+        if cancelled_check and cancelled_check():
+            return
+        blue_tinted = tint_image(blue_frame, 80, 80, 255)
+        painter.save()
+        painter.setTransform(context["transform"])
+        painter.drawImage(0, 0, blue_tinted)
+        painter.restore()
+
+    def _draw_overlay_raster_frame(
+        self,
+        painter: QPainter,
+        page: Page,
+        render_scale: float,
+        frame_x: float,
+        frame_y: float,
+        frame_w: float,
+        frame_h: float,
+        rotation: int,
+        cancelled_check=None,
+    ) -> None:
+        source_w, source_h = self._page_cache.get_page_size(page.overlay_image_path, 0)
+        context = self._build_overlay_frame_context(
+            page,
+            source_w,
+            source_h,
+            render_scale,
+            frame_x,
+            frame_y,
+            frame_w,
+            frame_h,
+            image_scale=1.0,
+        )
+        if context is None:
+            self._draw_overlay_raster_fallback(
+                painter,
+                page,
+                render_scale,
+                frame_x,
+                frame_y,
+                rotation,
+            )
+            return
+        if cancelled_check and cancelled_check():
+            return
+        blue_source = self._page_cache.get_page(
+            page.overlay_image_path,
+            0,
+            context["overlay_scale"],
+            rotation,
+        )
+        if not blue_source:
+            return
+        source_x = context["source_x"]
+        source_y = context["source_y"]
+        source_frame_w = context["source_frame_w"]
+        source_frame_h = context["source_frame_h"]
+        overlay_scale = context["overlay_scale"]
+        source_left = max(0.0, source_x * overlay_scale)
+        source_top = max(0.0, source_y * overlay_scale)
+        source_right = max(
+            source_left,
+            (source_x + source_frame_w) * overlay_scale,
+        )
+        source_bottom = max(
+            source_top,
+            (source_y + source_frame_h) * overlay_scale,
+        )
+        source_left_i = max(
+            0,
+            min(blue_source.width(), int(math.floor(source_left))),
+        )
+        source_top_i = max(
+            0,
+            min(blue_source.height(), int(math.floor(source_top))),
+        )
+        source_right_i = max(
+            0,
+            min(blue_source.width(), int(math.ceil(source_right))),
+        )
+        source_bottom_i = max(
+            0,
+            min(blue_source.height(), int(math.ceil(source_bottom))),
+        )
+        source_frame_w_i = source_right_i - source_left_i
+        source_frame_h_i = source_bottom_i - source_top_i
+        if source_frame_w_i <= 0 or source_frame_h_i <= 0:
+            return
+        blue_frame_source = blue_source.copy(
+            source_left_i,
+            source_top_i,
+            source_frame_w_i,
+            source_frame_h_i,
+        )
+        if blue_frame_source.isNull():
+            return
+        if cancelled_check and cancelled_check():
+            return
+        blue_frame = tint_image(blue_frame_source, 80, 80, 255)
+        painter.save()
+        painter.setTransform(context["transform"])
+        painter.drawImage(0, 0, blue_frame)
+        painter.restore()
+
+    def _draw_overlay_raster_fallback(
+        self,
+        painter: QPainter,
+        page: Page,
+        render_scale: float,
+        frame_x: float,
+        frame_y: float,
+        rotation: int,
+    ) -> None:
+        blue = self._page_cache.get_tinted_page(
+            page.overlay_image_path,
+            0,
+            1.0,
+            rotation,
+            tint_rgb=(80, 80, 255),
+        )
+        if not blue:
+            return
+        painter.save()
+        painter.scale(render_scale, render_scale)
+        painter.translate(-frame_x, -frame_y)
+        self._draw_overlay_image(
+            painter,
+            blue,
+            page,
+            page.effective_width_pts,
+            page.effective_height_pts,
+        )
+        painter.restore()
+
+    def _build_overlay_frame_context(
+        self,
+        page: Page,
+        source_w: float,
+        source_h: float,
+        render_scale: float,
+        frame_x: float,
+        frame_y: float,
+        frame_w: float,
+        frame_h: float,
+        image_scale: Optional[float] = None,
+    ) -> Optional[dict[str, float | QTransform]]:
         rect_x, rect_y, rect_w, rect_h = page.overlay_rect_page_points()
         if source_w <= 0.0 or source_h <= 0.0 or rect_w <= 0.0 or rect_h <= 0.0:
-            return
+            return None
         total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
         source_to_page = self._build_transform(
             rect_x,
@@ -289,7 +450,7 @@ class CompositeRenderer:
         )
         page_to_source, ok = source_to_page.inverted()
         if not ok:
-            return
+            return None
         frame_rect = QRectF(frame_x, frame_y, frame_w, frame_h)
         source_rect = page_to_source.mapRect(frame_rect)
         source_x = max(0.0, min(source_w, math.floor(source_rect.left())))
@@ -299,32 +460,18 @@ class CompositeRenderer:
         source_frame_w = source_right - source_x
         source_frame_h = source_bottom - source_y
         if source_frame_w <= 0.0 or source_frame_h <= 0.0:
-            return
-        overlay_scale = self._overlay_pdf_frame_scale(
+            return None
+        overlay_scale = self._overlay_frame_scale(
             render_scale,
             rect_w / source_w,
             rect_h / source_h,
         )
-        blue_frame = self._page_cache.render_frame_uncached(
-            page.overlay_image_path,
-            0,
-            overlay_scale,
-            source_x,
-            source_y,
-            source_frame_w,
-            source_frame_h,
-            rotation,
-        )
-        if cancelled_check and cancelled_check():
-            return
-        if not blue_frame:
-            return
-        blue_tinted = tint_image(blue_frame, 80, 80, 255)
+        if image_scale is not None:
+            overlay_scale = _quantize_render_scale(max(0.1, image_scale))
         rendered_source_x = _rendered_frame_origin(source_x, overlay_scale)
         rendered_source_y = _rendered_frame_origin(source_y, overlay_scale)
         rendered_frame_x = _rendered_frame_origin(frame_x, render_scale)
         rendered_frame_y = _rendered_frame_origin(frame_y, render_scale)
-        painter.save()
         image_to_source = QTransform()
         image_to_source.scale(1.0 / overlay_scale, 1.0 / overlay_scale)
         source_offset = QTransform()
@@ -343,11 +490,16 @@ class CompositeRenderer:
             * page_to_frame
             * frame_offset
         )
-        painter.setTransform(transform)
-        painter.drawImage(0, 0, blue_tinted)
-        painter.restore()
+        return {
+            "overlay_scale": overlay_scale,
+            "source_x": source_x,
+            "source_y": source_y,
+            "source_frame_w": source_frame_w,
+            "source_frame_h": source_frame_h,
+            "transform": transform,
+        }
 
-    def _overlay_pdf_frame_scale(
+    def _overlay_frame_scale(
         self, render_scale: float, scale_x: float, scale_y: float
     ) -> float:
         overlay_scale = render_scale * max(abs(scale_x), abs(scale_y))

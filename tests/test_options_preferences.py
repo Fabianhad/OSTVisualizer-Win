@@ -268,6 +268,37 @@ class FakeCompositeFramePageCache:
 
 
 class FakeOverlayMovementPageCache:
+    def _source_image(
+        self,
+        scale,
+        color,
+    ):
+        image = QtGui.QImage(
+            max(1, math.ceil(100.0 * scale)),
+            max(1, math.ceil(100.0 * scale)),
+            QtGui.QImage.Format.Format_ARGB32,
+        )
+        image.fill(QtGui.QColor(255, 255, 255))
+        painter = QtGui.QPainter(image)
+        painter.setPen(color)
+        painter.drawLine(0, 0, 0, image.height() - 1)
+        painter.end()
+        return image
+
+    def get_page(self, _file_path, _page_index, scale, _rotation):
+        return self._source_image(scale, QtGui.QColor(0, 0, 0))
+
+    def get_tinted_page(
+        self,
+        _file_path,
+        _page_index,
+        scale,
+        _rotation,
+        tint_rgb=None,
+    ):
+        color = QtGui.QColor(*(tint_rgb or (0, 0, 0)))
+        return self._source_image(scale, color)
+
     def get_page_size(self, _file_path, _page_index):
         return (100.0, 100.0)
 
@@ -294,6 +325,102 @@ class FakeOverlayMovementPageCache:
             line_x = round((0.0 - frame_x_pts) * scale)
             if -1 <= line_x <= image.width():
                 painter.drawLine(line_x, 0, line_x, image.height() - 1)
+            painter.end()
+        return image
+
+
+class FakeShiftedSourceMarkerTifPageCache:
+    def __init__(self):
+        self.page_scales = []
+
+    def get_page(
+        self,
+        _file_path,
+        _page_index,
+        scale,
+        _rotation,
+    ):
+        self.page_scales.append(scale)
+        width = max(1, math.ceil(100.0 * scale))
+        height = max(1, math.ceil(100.0 * scale))
+        image = QtGui.QImage(
+            width,
+            height,
+            QtGui.QImage.Format.Format_ARGB32,
+        )
+        image.fill(QtGui.QColor(255, 255, 255))
+        painter = QtGui.QPainter(image)
+        painter.setPen(QtGui.QColor(0, 0, 0))
+        marker_x = round(0.5 * width)
+        painter.drawLine(marker_x, 0, marker_x, height - 1)
+        painter.end()
+        return image
+
+    def get_page_size(self, _file_path, _page_index):
+        return (100.0, 100.0)
+
+    def render_frame_uncached(
+        self,
+        file_path,
+        page_index,
+        scale,
+        frame_x_pts,
+        frame_y_pts,
+        frame_w_pts,
+        frame_h_pts,
+        rotation,
+    ):
+        image = QtGui.QImage(
+            max(1, math.ceil(frame_w_pts * scale)),
+            max(1, math.ceil(frame_h_pts * scale)),
+            QtGui.QImage.Format.Format_ARGB32,
+        )
+        image.fill(QtGui.QColor(255, 255, 255))
+        if file_path == "base.pdf":
+            painter = QtGui.QPainter(image)
+            painter.setPen(QtGui.QColor(0, 0, 0))
+            line_x = round((0.0 - frame_x_pts) * scale)
+            if -1 <= line_x <= image.width():
+                painter.drawLine(line_x, 0, line_x, image.height() - 1)
+            painter.end()
+        return image
+
+
+class FakeDenseMarkerOverlayMovementPageCache(FakeOverlayMovementPageCache):
+    def get_page(self, file_path, page_index, scale, rotation):
+        image = super().get_page(file_path, page_index, scale, rotation)
+        if file_path == "overlay.tif":
+            painter = QtGui.QPainter(image)
+            painter.fillRect(
+                QtCore.QRect(0, 0, max(1, image.width() // 2), image.height()),
+                QtGui.QColor(0, 0, 0),
+            )
+            painter.end()
+        return image
+
+    def get_tinted_page(
+        self,
+        file_path,
+        page_index,
+        scale,
+        rotation,
+        tint_rgb=None,
+    ):
+        image = super().get_tinted_page(
+            file_path,
+            page_index,
+            scale,
+            rotation,
+            tint_rgb=tint_rgb,
+        )
+        if file_path == "overlay.tif":
+            painter = QtGui.QPainter(image)
+            pen_color = QtGui.QColor(*tint_rgb) if tint_rgb else QtGui.QColor(0, 0, 0)
+            painter.setPen(pen_color)
+            painter.fillRect(
+                QtCore.QRect(0, 0, max(1, image.width() // 2), image.height()),
+                pen_color,
+            )
             painter.end()
         return image
 
@@ -2167,6 +2294,118 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         self.assertIsNotNone(image)
         self.assertEqual(_first_blue_column(image), 20)
+
+    def test_composite_visible_frame_uses_raster_overlay_frame_mapping(self):
+        renderer = CompositeRenderer(FakeOverlayMovementPageCache())
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.tif",
+            page_index=0,
+            width_pts=100.0,
+            height_pts=100.0,
+            overlay_rect=(
+                10.0 / 72.0 * 96.0,
+                0.0,
+                100.0 / 72.0 * 96.0,
+                100.0 / 72.0 * 96.0,
+            ),
+            image_show_mode=2,
+        )
+        image = renderer.render_composite_frame(
+            page,
+            scale=2.0,
+            frame_x_pts=0.0,
+            frame_y_pts=0.0,
+            frame_w_pts=100.0,
+            frame_h_pts=100.0,
+            rotation=0,
+        )
+        self.assertIsNotNone(image)
+        self.assertEqual(_first_blue_column(image), 20)
+
+    def test_composite_visible_frame_uses_raster_overlay_rotated_rect_mapping(self):
+        renderer = CompositeRenderer(FakeDenseMarkerOverlayMovementPageCache())
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.tif",
+            page_index=0,
+            width_pts=100.0,
+            height_pts=100.0,
+            overlay_rect=(
+                0.0,
+                0.0,
+                100.0 / 72.0 * 96.0,
+                100.0 / 72.0 * 96.0,
+            ),
+            overlay_rotation=0.2,
+            image_show_mode=2,
+        )
+        image = renderer.render_composite_frame(
+            page,
+            scale=2.0,
+            frame_x_pts=0.0,
+            frame_y_pts=0.0,
+            frame_w_pts=100.0,
+            frame_h_pts=100.0,
+            rotation=0,
+        )
+        self.assertIsNotNone(image)
+        self.assertEqual(_first_blue_column(image), 0)
+
+    def test_composite_visible_frame_tif_overlay_uses_source_mapping_when_frame_is_shifted(
+        self,
+    ):
+        page_cache = FakeShiftedSourceMarkerTifPageCache()
+        renderer = CompositeRenderer(page_cache)
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.tif",
+            page_index=0,
+            width_pts=100.0,
+            height_pts=100.0,
+            overlay_rect=(
+                10.0 / 72.0 * 96.0,
+                0.0,
+                100.0 / 72.0 * 96.0,
+                100.0 / 72.0 * 96.0,
+            ),
+            image_show_mode=2,
+            overlay_rotation=0.0,
+        )
+        first_frame = renderer.render_composite_frame(
+            page,
+            scale=2.0,
+            frame_x_pts=20.0,
+            frame_y_pts=5.0,
+            frame_w_pts=80.0,
+            frame_h_pts=80.0,
+            rotation=0,
+        )
+        second_frame = renderer.render_composite_frame(
+            page,
+            scale=2.0,
+            frame_x_pts=40.0,
+            frame_y_pts=5.0,
+            frame_w_pts=80.0,
+            frame_h_pts=80.0,
+            rotation=0,
+        )
+        self.assertIsNotNone(first_frame)
+        self.assertIsNotNone(second_frame)
+        first_col = _first_blue_column(first_frame)
+        second_col = _first_blue_column(second_frame)
+        self.assertIsNotNone(first_col)
+        self.assertIsNotNone(second_col)
+        self.assertLess(second_col, first_col)
+        self.assertGreaterEqual(first_col - second_col, 35)
+        self.assertLessEqual(first_col - second_col, 45)
+        self.assertEqual(page_cache.page_scales, [1.0, 1.0])
 
     def test_overlay_pdf_item_keeps_scene_size_when_rendered_above_view_scale(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
