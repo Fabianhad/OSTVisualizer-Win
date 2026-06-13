@@ -21,6 +21,9 @@ from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,
 )
+from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+    InsertAnnotationSpec,
+)
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
     AnnotationOperationsMixin,
 )
@@ -79,6 +82,9 @@ class _Schema:
     def optional_table_missing(self, _table):
         return False
 
+    def column_exists(self, _table, _column):
+        return True
+
 
 class _Logger:
     def exception(self, *_args, **_kwargs):
@@ -91,6 +97,8 @@ class _SqliteCursorWrapper:
         self._cursor = None
 
     def execute(self, query, *params):
+        if len(params) == 1 and isinstance(params[0], (list, tuple)):
+            params = tuple(params[0])
         self._cursor = self._conn.execute(query, params)
 
     def fetchone(self):
@@ -129,6 +137,25 @@ class _DimensionWriteOps(AnnotationOperationsMixin):
 
     def _require_write_columns(self, _schema, _table, _columns):
         pass
+
+    def _execute_insert_values(
+        self,
+        cursor,
+        _schema,
+        table,
+        values,
+        required_columns,
+        _operation,
+    ):
+        missing = [column for column in required_columns if column not in values]
+        if missing:
+            raise AssertionError(f"missing required columns: {missing}")
+        col_list = ", ".join(f"[{column}]" for column in values)
+        placeholders = ", ".join("?" for _ in values)
+        cursor.execute(
+            f"INSERT INTO [{table}] ({col_list}) VALUES ({placeholders})",
+            list(values.values()),
+        )
 
 
 class _ColorService:
@@ -183,6 +210,88 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(dimension.color, "#ff0000")
         self.assertEqual(dimension.properties["BidTakeoffFromUID"], "11")
         self.assertEqual(dimension.properties["BidTakeoffToUID"], "12")
+
+    def test_placeable_annotation_shapes_reload_from_existing_tables(self):
+        rows_by_table = {
+            "BidALines": [
+                SimpleNamespace(
+                    UID=11,
+                    BidPageUID=3,
+                    BidTakeoffFromUID=None,
+                    BidTakeoffToUID=None,
+                    Position=encode_position([0.0, 0.0, 10.0, 10.0]),
+                    Color=255,
+                    Width=2,
+                )
+            ],
+            "BidArrows": [
+                SimpleNamespace(
+                    UID=12,
+                    BidPageUID=3,
+                    BidTakeoffFromUID=None,
+                    BidTakeoffToUID=None,
+                    Position=encode_position([1.0, 2.0, 13.0, 14.0]),
+                    Color=255,
+                    Width=2,
+                )
+            ],
+            "BidAnnotationRects": [
+                SimpleNamespace(
+                    UID=13,
+                    BidPageUID=3,
+                    BidLayerUID=99,
+                    Position=encode_position([1.0, 2.0, 13.0, 14.0]),
+                    Color=255,
+                    Width=2,
+                )
+            ],
+            "BidAnnotationOvals": [
+                SimpleNamespace(
+                    UID=14,
+                    BidPageUID=3,
+                    BidLayerUID=99,
+                    Position=encode_position([2.0, 3.0, 14.0, 15.0]),
+                    Color=255,
+                    Width=2,
+                )
+            ],
+            "BidAnnotationPolygons": [
+                SimpleNamespace(
+                    UID=15,
+                    BidPageUID=3,
+                    BidLayerUID=99,
+                    Position=encode_position([0.0, 0.0, 12.0, 0.0, 6.0, 8.0]),
+                    Color=255,
+                    Width=2,
+                )
+            ],
+            "BidAnnotationClouds": [
+                SimpleNamespace(
+                    UID=16,
+                    BidPageUID=3,
+                    BidLayerUID=99,
+                    Position=encode_position([1.0, 1.0, 13.0, 1.0, 7.0, 9.0]),
+                    Color=255,
+                    Width=2,
+                )
+            ],
+        }
+        annotations = _Reader()._parse_bid_annotations_for_bid(
+            _FakeConnection(rows_by_table),
+            "1",
+            {"99": Layer(uid="99", name="Annotation", visible=True)},
+        )
+        by_type = {ann.annotation_type: ann for ann in annotations}
+        self.assertEqual(
+            set(by_type),
+            {"line", "arrow", "rect", "oval", "polygon", "cloud"},
+        )
+        self.assertEqual(by_type["arrow"].position, [1.0, 2.0, 13.0, 14.0])
+        self.assertEqual(
+            by_type["polygon"].position,
+            [0.0, 0.0, 12.0, 0.0, 6.0, 8.0],
+        )
+        self.assertFalse(by_type["line"].properties)
 
     def test_dimension_distance_uses_existing_feet_inches_rounding(self):
         self.assertEqual(format_dimension_distance(255.0), "21' - 3\"")
@@ -488,6 +597,118 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             """
         ).fetchone()
         self.assertEqual(row, ("Calibri", 0x332211, 18, 1, 1, 1))
+
+    def test_placeable_annotation_shapes_insert_through_annotation_write_path(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """
+            CREATE TABLE BidALines (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidTakeoffFromUID INTEGER,
+                BidTakeoffToUID INTEGER,
+                Position BLOB,
+                Color INTEGER,
+                Width INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE BidArrows (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidTakeoffFromUID INTEGER,
+                BidTakeoffToUID INTEGER,
+                Position BLOB,
+                Color INTEGER,
+                Width INTEGER
+            )
+            """
+        )
+        for table in (
+            "BidAnnotationRects",
+            "BidAnnotationOvals",
+            "BidAnnotationPolygons",
+            "BidAnnotationClouds",
+        ):
+            conn.execute(
+                f"""
+                CREATE TABLE {table} (
+                    UID INTEGER PRIMARY KEY,
+                    BidUID INTEGER,
+                    BidPageUID INTEGER,
+                    BidLayerUID INTEGER,
+                    Position BLOB,
+                    Color INTEGER,
+                    Width INTEGER
+                )
+                """
+            )
+        specs = [
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="line",
+                position=[0.0, 0.0, 10.0, 10.0],
+                color="#ff0000",
+                width=2.0,
+                properties={"BidTakeoffFromUID": "", "BidTakeoffToUID": ""},
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="arrow",
+                position=[1.0, 2.0, 13.0, 14.0],
+                color="#ff0000",
+                width=2.0,
+                properties={"BidTakeoffFromUID": "", "BidTakeoffToUID": ""},
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="rect",
+                position=[1.0, 2.0, 13.0, 14.0],
+                color="#ff0000",
+                width=2.0,
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="oval",
+                position=[2.0, 3.0, 14.0, 15.0],
+                color="#ff0000",
+                width=2.0,
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="polygon",
+                position=[0.0, 0.0, 12.0, 0.0, 6.0, 8.0],
+                color="#ff0000",
+                width=2.0,
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="cloud",
+                position=[1.0, 1.0, 13.0, 1.0, 7.0, 9.0],
+                color="#ff0000",
+                width=2.0,
+            ),
+        ]
+        new_uids = _DimensionWriteOps(conn).insert_annotations("bid.mdb", "1", specs)
+        self.assertEqual(new_uids, ["1", "1", "1", "1", "1", "1"])
+        expected_tables = {
+            "BidALines": "line",
+            "BidArrows": "arrow",
+            "BidAnnotationRects": "rect",
+            "BidAnnotationOvals": "oval",
+            "BidAnnotationPolygons": "polygon",
+            "BidAnnotationClouds": "cloud",
+        }
+        for table, annotation_type in expected_tables.items():
+            with self.subTest(annotation_type=annotation_type):
+                row = conn.execute(
+                    f"SELECT BidUID, BidPageUID, Color, Width FROM {table}"
+                ).fetchone()
+                self.assertEqual(row, (1, 3, 255, 2))
 
     def test_native_pdf_export_writes_horizontal_line_dimension_annotation(self):
         pdf_text = self._write_native_pdf_with_dimension(

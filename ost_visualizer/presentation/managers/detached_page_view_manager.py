@@ -388,6 +388,16 @@ class DetachedPageViewManager(IShutdownAware):
             crosshair_line_thickness=self.config_model.crosshair_line_thickness,
             mouse_unpressed_snap_angle=self.config_model.mouse_unpressed_snap_angle,
             mouse_pressed_snap_angle=self.config_model.mouse_pressed_snap_angle,
+            annotation_style_getter=(
+                self.parent_window.get_annotation_style
+                if hasattr(self.parent_window, "get_annotation_style")
+                else None
+            ),
+            annotation_style_setter=(
+                self.parent_window.set_annotation_style
+                if hasattr(self.parent_window, "set_annotation_style")
+                else None
+            ),
             **snap_preferences.to_kwargs(),
             parent=self.parent_window,
         )

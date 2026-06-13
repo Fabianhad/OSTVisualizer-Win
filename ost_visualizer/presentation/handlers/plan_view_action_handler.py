@@ -17,9 +17,7 @@ from ..services.selection_commands import (
     PasteTakeoffsCommand,
 )
 from ..utils.annotation_defaults import (
-    DIMENSION_ANNOTATION_COLOR,
-    DIMENSION_ANNOTATION_WIDTH,
-    dimension_annotation_properties,
+    build_placed_annotation_spec,
 )
 
 logger = logging.getLogger(__name__)
@@ -675,16 +673,9 @@ class PlanViewActionHandler:
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not annotation_type or not page_uid:
             return
-        if annotation_type != "dimension":
+        spec = build_placed_annotation_spec(annotation_type, page_uid, list(position))
+        if spec is None:
             return
-        spec = InsertAnnotationSpec(
-            page_uid=page_uid,
-            annotation_type="dimension",
-            position=list(position),
-            color=DIMENSION_ANNOTATION_COLOR,
-            width=DIMENSION_ANNOTATION_WIDTH,
-            properties=dimension_annotation_properties(),
-        )
         self._insert_annotations_with_undo(bid_ref, [spec])
 
     def on_hole_created(

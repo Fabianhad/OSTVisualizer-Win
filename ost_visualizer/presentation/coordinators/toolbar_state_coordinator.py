@@ -23,7 +23,7 @@ class ToolbarStateCoordinator:
         self._select_action: Optional[QtGui.QAction] = None
         self._select_all_action: Optional[QtGui.QAction] = None
         self._backout_action: Optional[QtGui.QAction] = None
-        self._dimension_action: Optional[QtGui.QAction] = None
+        self._annotation_tool_actions: list[QtGui.QAction] = []
         self._move_overlay_action: Optional[QtGui.QAction] = None
         self._cover_sheet_button: Optional[QtWidgets.QToolButton] = None
         self._page_settings_bar = None
@@ -68,8 +68,8 @@ class ToolbarStateCoordinator:
     def set_backout_action(self, action: QtGui.QAction) -> None:
         self._backout_action = action
 
-    def set_dimension_action(self, action: QtGui.QAction) -> None:
-        self._dimension_action = action
+    def set_annotation_tool_actions(self, actions: list[QtGui.QAction]) -> None:
+        self._annotation_tool_actions = list(dict.fromkeys(actions))
 
     def set_move_overlay_action(self, action: QtGui.QAction) -> None:
         self._move_overlay_action = action
@@ -312,20 +312,16 @@ class ToolbarStateCoordinator:
                     self.plan_view.reset_ctrl_held()
                     self.plan_view.set_cursor_mode("select")
                 self.set_select_checked()
-        can_place_dimension = (
+        can_place_annotation = (
             on_takeoff_tab
             and self._access.is_allowed(Feature.PLACE_PLAN_ITEMS)
             and bool(self.plan_view)
             and bool(self.plan_view.current_page_uid)
             and bool(self._view_stack and self._view_stack.currentIndex() == 1)
         )
-        if self._dimension_action:
-            self._dimension_action.setEnabled(can_place_dimension)
-            if (
-                not can_place_dimension
-                and self._dimension_action.isChecked()
-                and self._select_action
-            ):
+        for action in self._annotation_tool_actions:
+            action.setEnabled(can_place_annotation)
+            if not can_place_annotation and action.isChecked() and self._select_action:
                 self._select_action.setChecked(True)
         can_move_overlay = (
             self.is_takeoff_2d_view_active()
@@ -376,7 +372,7 @@ class ToolbarStateCoordinator:
         self._select_action = None
         self._select_all_action = None
         self._backout_action = None
-        self._dimension_action = None
+        self._annotation_tool_actions = []
         self._move_overlay_action = None
         self._cover_sheet_button = None
         self._page_settings_bar = None

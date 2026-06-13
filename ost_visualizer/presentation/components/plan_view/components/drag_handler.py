@@ -18,6 +18,7 @@ from ....visualization.pdf.renderers.annotation_item_renderer import (
 )
 from ....visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_geometry,
+    create_cloud_path_points,
 )
 from .geometry_utils import polygon_is_valid, signed_area
 from .graphics_items import ClippedTextGraphicsItem
@@ -41,6 +42,39 @@ def _line_line_intersect(
 
 
 class DragHandlerMixin:
+    def _build_area_annotation_path(
+        self, annotation_type: str, area_pts: List[Tuple[float, float]]
+    ) -> QPainterPath:
+        path = QPainterPath()
+        if not area_pts:
+            return path
+        if annotation_type == "cloud" and len(area_pts) >= 3:
+            segments = create_cloud_path_points(area_pts)
+            for idx, (_start, cp1, cp2, end) in enumerate(segments):
+                if idx == 0:
+                    path.moveTo(area_pts[0][0], area_pts[0][1])
+                path.cubicTo(cp1[0], cp1[1], cp2[0], cp2[1], end[0], end[1])
+            path.closeSubpath()
+            return path
+        path.moveTo(area_pts[0][0], area_pts[0][1])
+        for px, py in area_pts[1:]:
+            path.lineTo(px, py)
+        if len(area_pts) >= 3:
+            path.closeSubpath()
+        return path
+
+    def _polygon_edit_geometry_valid(
+        self, new_pos: List[float], area_pts: List[Tuple[float, float]]
+    ) -> bool:
+        if len(area_pts) < 3 or not polygon_is_valid(area_pts):
+            return False
+        if self._drag_last_valid_new_pos:
+            orig_sign = signed_area(self._drag_last_valid_new_pos)
+            new_sign = signed_area(new_pos)
+            if orig_sign and new_sign and (orig_sign > 0) != (new_sign > 0):
+                return False
+        return True
+
     def _update_dimension_preview_items(self, ann, uid: str, new_pos, cs) -> None:
         dimension = calculate_dimension_geometry(
             ann, new_pos, cs.transform_vertices_to_2d
@@ -381,16 +415,7 @@ class DragHandlerMixin:
             is_area_vertex_drag = self._drag_handle_index >= 0 and len(tx) >= 6
             area_valid = True
             if is_area_vertex_drag:
-                area_valid = len(area_pts) >= 3 and polygon_is_valid(area_pts)
-                if area_valid and self._drag_last_valid_new_pos:
-                    orig_sign = signed_area(self._drag_last_valid_new_pos)
-                    new_sign = signed_area(new_pos)
-                    if (
-                        orig_sign != 0
-                        and new_sign != 0
-                        and (orig_sign > 0) != (new_sign > 0)
-                    ):
-                        area_valid = False
+                area_valid = self._polygon_edit_geometry_valid(new_pos, area_pts)
             if area_valid and takeoff.is_hole:
                 area_valid = self._validate_hole_position(takeoff, new_pos, area_pts)
             if area_valid and not takeoff.is_hole and is_area_vertex_drag:
@@ -573,6 +598,11 @@ class DragHandlerMixin:
         elif atype in ("polygon", "cloud") and len(new_pos) >= 4:
             tx = cs.transform_vertices_to_2d(new_pos)
             area_pts = [(tx[i], tx[i + 1]) for i in range(0, len(tx) - 1, 2)]
+            is_vertex_drag = self._drag_handle_index >= 0 and len(area_pts) >= 3
+            if is_vertex_drag and not self._polygon_edit_geometry_valid(
+                new_pos, area_pts
+            ):
+                return
             n = len(area_pts)
             if n_h >= n:
                 for i in range(n):
@@ -586,11 +616,7 @@ class DragHandlerMixin:
                         mx, my = (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2
                         self._handle_infos[mid_i].item.setPos(self._pt_to_scene(mx, my))
             if not is_body:
-                new_path = QPainterPath()
-                new_path.moveTo(area_pts[0][0], area_pts[0][1])
-                for px, py in area_pts[1:]:
-                    new_path.lineTo(px, py)
-                new_path.closeSubpath()
+                new_path = self._build_area_annotation_path(atype, area_pts)
                 items = self._uid_to_items.get(uid, [])
                 if items and isinstance(items[0], QGraphicsPathItem):
                     items[0].setPos(0.0, 0.0)

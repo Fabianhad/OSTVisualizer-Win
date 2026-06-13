@@ -21,6 +21,12 @@ from ost_visualizer.presentation.windows.components.window import DetachedPageVi
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
 )
+from ost_visualizer.presentation.utils.plan_tool_registry import (
+    PLAN_ANNOTATION_TOOL_SPECS,
+)
+from ost_visualizer.presentation.windows.annotation_view_window import (
+    _ANNOTATION_WINDOW_CONFIG,
+)
 
 
 def _encoded_geometry(value: bytes = b"geometry") -> str:
@@ -187,6 +193,8 @@ class FakeDetachedPlanView:
         self.restored_text_properties = []
         self.restored_text_and_positions = []
         self.selected_uids = set()
+        self.annotation_key_map = {}
+        self.cleared = False
 
     def restore_flushed_positions(self, takeoff_changes, ann_changes):
         self.restored_positions.append((list(takeoff_changes), list(ann_changes)))
@@ -204,6 +212,35 @@ class FakeDetachedPlanView:
 
     def set_selected_uids(self, uids):
         self.selected_uids = set(uids)
+
+    def clear_selection(self):
+        self.cleared = True
+        self.selected_uids = set()
+
+    def find_annotation_keys_by_uid_type(self, uid_type_set):
+        return {
+            self.annotation_key_map[(uid, ann_type)]
+            for uid, ann_type in uid_type_set
+            if (uid, ann_type) in self.annotation_key_map
+        }
+
+
+class FakeAnnotationWriteService:
+    def __init__(self):
+        self.insert_calls = []
+        self.next_uids = ["ann-1"]
+
+    def insert_annotations(self, db_path, bid_uid, specs, ref_remap=None):
+        self.insert_calls.append((db_path, bid_uid, specs, ref_remap))
+        return list(self.next_uids[: len(specs)])
+
+
+class FakeUndoService:
+    def __init__(self):
+        self.pushes = []
+
+    def push(self, undo, redo):
+        self.pushes.append((undo, redo))
 
 
 class TrackableSignal:
@@ -234,6 +271,8 @@ class CleanupPlanView:
         self.annotation_text_properties_flushed = CleanupSignal()
         self.annotation_text_and_positions_flushed = CleanupSignal()
         self.elements_deleted = CleanupSignal()
+        self.annotation_created = CleanupSignal()
+        self.cursor_mode_change_requested = CleanupSignal()
         self.undo_requested = CleanupSignal()
         self.redo_requested = CleanupSignal()
         self.blocked = None
@@ -557,6 +596,41 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
 
 
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
+    def test_annotation_window_uses_shared_annotation_tool_specs_only(self):
+        self.assertEqual(
+            _ANNOTATION_WINDOW_CONFIG.annotation_tool_specs,
+            PLAN_ANNOTATION_TOOL_SPECS,
+        )
+        self.assertEqual(
+            [
+                spec.action_key
+                for spec in _ANNOTATION_WINDOW_CONFIG.annotation_tool_specs
+            ],
+            [
+                "dimension_tool",
+                "arrow_annotation_tool",
+                "line_annotation_tool",
+                "rectangle_annotation_tool",
+                "oval_annotation_tool",
+                "polygon_annotation_tool",
+                "cloud_annotation_tool",
+            ],
+        )
+        self.assertEqual(
+            [
+                spec.annotation_type
+                for spec in _ANNOTATION_WINDOW_CONFIG.annotation_tool_specs
+            ],
+            ["dimension", "arrow", "line", "rect", "oval", "polygon", "cloud"],
+        )
+        self.assertNotIn(
+            "place_tool",
+            [
+                spec.action_key
+                for spec in _ANNOTATION_WINDOW_CONFIG.annotation_tool_specs
+            ],
+        )
+
     def test_create_window_defers_first_show_until_after_manager_setup(self):
         calls = []
         factory_kwargs = []
@@ -836,6 +910,86 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
         window._on_elements_deleted(["a1"])
         self.assertEqual(plan_view.selected_uids, {"a1"})
+
+    def test_detached_annotation_creation_inserts_and_selects_annotation(
+        self,
+    ):
+        for annotation_type in (
+            "dimension",
+            "arrow",
+            "line",
+            "rect",
+            "oval",
+            "polygon",
+            "cloud",
+        ):
+            with self.subTest(annotation_type=annotation_type):
+                write_service = FakeAnnotationWriteService()
+                undo_service = FakeUndoService()
+                plan_view = FakeDetachedPlanView()
+                plan_view.annotation_key_map[("ann-1", annotation_type)] = (
+                    f"ann-1_{annotation_type}"
+                )
+                window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+                window._config = SimpleNamespace(allow_annotation_editing=True)
+                window._read_only = False
+                window._is_closing = False
+                window._ann_write_svc = write_service
+                window._undo_svc = undo_service
+                window.plan_view = plan_view
+                window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+                position = (
+                    [1.0, 2.0, 3.0, 4.0, 5.0, 2.0]
+                    if annotation_type in ("polygon", "cloud")
+                    else [1.0, 2.0, 3.0, 4.0]
+                )
+                window._on_annotation_created(annotation_type, position, "p1")
+                self.assertEqual(len(write_service.insert_calls), 1)
+                db_path, bid_uid, specs, ref_remap = write_service.insert_calls[0]
+                self.assertEqual((db_path, bid_uid, ref_remap), ("bid.mdb", "7", None))
+                self.assertEqual(specs[0].annotation_type, annotation_type)
+                self.assertEqual(specs[0].position, position)
+                self.assertEqual(plan_view.selected_uids, {f"ann-1_{annotation_type}"})
+                self.assertEqual(len(undo_service.pushes), 1)
+
+    def test_detached_dimension_annotation_creation_obeys_annotation_edit_gate(self):
+        write_service = FakeAnnotationWriteService()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = True
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        window._undo_svc = None
+        window.plan_view = FakeDetachedPlanView()
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._on_annotation_created("dimension", [1.0, 2.0, 3.0, 4.0], "p1")
+        self.assertEqual(write_service.insert_calls, [])
+
+    def test_detached_annotation_tool_activation_enters_annotation_placement(self):
+        calls = []
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window.plan_view = SimpleNamespace(
+            activate_annotation_placement=lambda annotation_type: calls.append(
+                annotation_type
+            )
+            or True
+        )
+        for annotation_type in (
+            "dimension",
+            "arrow",
+            "line",
+            "rect",
+            "oval",
+            "polygon",
+            "cloud",
+        ):
+            with self.subTest(annotation_type=annotation_type):
+                self.assertTrue(window._activate_annotation_tool(annotation_type))
+        self.assertEqual(
+            calls, ["dimension", "arrow", "line", "rect", "oval", "polygon", "cloud"]
+        )
 
     def test_detached_window_navigation_refresh_rebuilds_page_and_view_models(self):
         from ost_visualizer.presentation.windows.components.window import (

@@ -210,8 +210,8 @@ class UIEventCoordinator:
         action.toggled.connect(self._on_backout_toggled)
         self._toolbar.refresh_backout_action()
 
-    def set_dimension_action(self, action: QtGui.QAction) -> None:
-        self._toolbar.set_dimension_action(action)
+    def set_annotation_tool_actions(self, actions: list[QtGui.QAction]) -> None:
+        self._toolbar.set_annotation_tool_actions(actions)
         self._toolbar.refresh()
 
     def set_move_overlay_action(self, action: QtGui.QAction) -> None:

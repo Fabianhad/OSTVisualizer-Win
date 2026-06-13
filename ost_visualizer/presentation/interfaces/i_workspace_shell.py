@@ -1,5 +1,6 @@
 from typing import Any, Optional, Protocol
 from PySide6 import QtCore, QtGui, QtWidgets
+from ...domain.entities.annotation_style import AnnotationStyle
 
 
 class IWorkspaceShell(Protocol):
@@ -48,6 +49,14 @@ class IWorkspaceShell(Protocol):
     def set_workspace_toolbar_visibility_state(
         self, state: dict[str, bool]
     ) -> None: ...
+    def get_annotation_style(self) -> AnnotationStyle: ...
+    def set_annotation_style(
+        self,
+        color: str | None = None,
+        line_width: float | None = None,
+        *,
+        persist: bool = True,
+    ) -> AnnotationStyle: ...
     def sync_contextual_shell_visibility(self) -> None: ...
     def is_takeoff_tab_active(self) -> bool: ...
     def get_takeoff_plan_view(self) -> QtWidgets.QWidget: ...

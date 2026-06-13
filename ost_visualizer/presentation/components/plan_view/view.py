@@ -402,6 +402,7 @@ class TakeoffPlanView(
         self._annotation_place_type: Optional[str] = None
         self._annotation_place_points: List[Tuple[float, float]] = []
         self._annotation_place_dragging: bool = False
+        self._annotation_area_rect_dragging: bool = False
         self._place_preview_items: List[QGraphicsItem] = []
         self._takeoff_snap_index = None
         self._pdf_snap_index = None
@@ -4472,9 +4473,6 @@ class TakeoffPlanView(
         self._apply_cursor_mode("place")
         self.cursor_mode_change_requested.emit("place")
         return True
-
-    def activate_dimension_annotation_placement(self) -> bool:
-        return self.activate_annotation_placement("dimension")
 
     def activate_annotation_placement(self, annotation_type: str) -> bool:
         self.cancel_overlay_move_mode(restore_preview=True)

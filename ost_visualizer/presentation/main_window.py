@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
 from ..application.events.app_events import AppEvents
+from ..domain.entities.annotation_style import AnnotationStyle
 from ..domain.entities.file_state import normalize_path
 from .builders.component_builder import ComponentBuilder
 from .components.progress_dialog import ProgressDialog, ProgressReporter
@@ -38,8 +39,13 @@ from .managers.ui_access_manager import Feature, UIAccessManager
 from .managers.ui_state_manager import UIStateManager
 from .services.bid_clipboard_service import BidClipboardService
 from .services.mcp_context_bridge import McpContextBridge
+from .utils.annotation_defaults import (
+    get_annotation_style as get_active_annotation_style,
+    set_annotation_style as set_active_annotation_style,
+)
+from .utils.annotation_style_controls import apply_annotation_tool_icon_color
 from .utils.messagebox import show_warning
-from .utils.plan_tool_registry import PLAN_TOOL_ACTION_KEYS
+from .utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
 from .utils.qt_window_icon_provider import QtWindowIconProvider
 from .utils.themed_icon import rebuild_all_icons
 
@@ -110,6 +116,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._workspace_state_model = app_controller.get_service(
             "workspace_state_model"
         )
+        saved_annotation_style = (
+            self._workspace_state_model.state.takeoff_workspace.annotation_style
+        )
+        set_active_annotation_style(
+            color=saved_annotation_style.color,
+            line_width=saved_annotation_style.line_width,
+        )
         self.ui_state_manager = UIStateManager(self._config_model)
         self.ui_access_manager = UIAccessManager(
             event_bus=self.event_bus,
@@ -149,6 +162,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plan_view = components.plan_view
         self._view_stack = components.view_stack
         self._plan_tools_toolbar = components.plan_tools_toolbar
+        self._plan_tool_actions = components.plan_tool_actions
         self._overlay_tools_toolbar = components.overlay_tools_toolbar
         self._view_toolbar = components.view_toolbar
         self._main_toolbar = components.main_toolbar
@@ -262,7 +276,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handlers.ui_event.set_page_settings_bar(components.page_settings_bar)
         self.handlers.ui_event.set_select_action(components.select_action)
         self.handlers.ui_event.set_place_action(components.place_action)
-        self.handlers.ui_event.set_dimension_action(components.dimension_action)
+        self.handlers.ui_event.set_annotation_tool_actions(
+            [
+                components.plan_tool_actions[spec.action_key]
+                for spec in PLAN_ANNOTATION_TOOL_SPECS
+            ]
+        )
         self.handlers.ui_event.set_backout_action(components.backout_action)
         self.handlers.ui_event.set_move_overlay_action(components.move_overlay_action)
         self.handlers.ui_event.set_conditions_sidebar(components.conditions_sidebar)
@@ -790,6 +809,29 @@ class MainWindow(QtWidgets.QMainWindow):
             if key in state:
                 self._workspace_toolbar_visibility[key] = bool(state[key])
         self._apply_workspace_toolbar_visibility()
+
+    def get_annotation_style(self) -> AnnotationStyle:
+        return get_active_annotation_style()
+
+    def set_annotation_style(
+        self,
+        color: str | None = None,
+        line_width: float | None = None,
+        *,
+        persist: bool = True,
+    ) -> AnnotationStyle:
+        style = set_active_annotation_style(color=color, line_width=line_width)
+        self._refresh_annotation_style_controls()
+        if persist:
+            self._request_workspace_state_save()
+        return style
+
+    def _refresh_annotation_style_controls(self) -> None:
+        style = self.get_annotation_style()
+        apply_annotation_tool_icon_color(self._plan_tool_actions, style.color)
+        for window in (self.get_annotation_window(), self.get_view_window()):
+            if window is not None:
+                window.refresh_annotation_style()
 
     def set_workspace_toolbar_preference(self, key: str, visible: bool) -> None:
         self._set_workspace_toolbar_preference(key, visible)

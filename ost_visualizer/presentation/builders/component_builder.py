@@ -59,7 +59,11 @@ from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..managers.ui_access_manager import Feature
 from ..services.undo_redo_service import UndoRedoService
-from ..utils.plan_tool_registry import PLAN_TOOL_SPECS
+from ..utils.annotation_style_controls import (
+    apply_annotation_tool_icon_color,
+    create_annotation_tool_split_button,
+)
+from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_SPECS
 
 
 class _PlanRibbonToolBar(QtWidgets.QToolBar):
@@ -147,7 +151,6 @@ class ComponentBundle:
     plan_tool_actions: dict[str, QtGui.QAction]
     select_action: QtGui.QAction
     pan_action: QtGui.QAction
-    dimension_action: QtGui.QAction
     zoom_mode_action: QtGui.QAction
     backout_action: QtGui.QAction
     move_overlay_action: QtGui.QAction
@@ -336,12 +339,25 @@ class ComponentBuilder:
             if spec.action_key == "select_tool":
                 action.setChecked(True)
             plan_tool_group.addAction(action)
-            main_toolbar.addAction(action)
             plan_tool_actions[spec.action_key] = action
+            if spec.annotation_type is not None:
+                button = QtWidgets.QToolButton(viewer_container)
+                button.setDefaultAction(action)
+                button.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
+                split_button, _ = create_annotation_tool_split_button(
+                    viewer_container,
+                    button,
+                    self.window.get_annotation_style,
+                    self.window.set_annotation_style,
+                    icon_size=QtCore.QSize(*DEFAULT_ICON_SIZE),
+                )
+                main_toolbar.addWidget(split_button)
+            else:
+                main_toolbar.addAction(action)
+        apply_annotation_tool_icon_color(plan_tool_actions)
         select_action = plan_tool_actions["select_tool"]
         place_action = plan_tool_actions["place_tool"]
         pan_action = plan_tool_actions["pan_tool"]
-        dimension_action = plan_tool_actions["dimension_tool"]
         zoom_mode_action = plan_tool_actions["zoom_tool"]
         _zoom_cursor = make_zoom_cursor()
         plan_view.set_zoom_cursor(_zoom_cursor)
@@ -526,14 +542,20 @@ class ComponentBuilder:
             )
         )
 
-        def _on_dimension_toggled(checked: bool) -> None:
+        def _on_annotation_tool_toggled(checked: bool, annotation_type: str) -> None:
             if not checked:
                 return
-            if plan_view.activate_dimension_annotation_placement():
+            if plan_view.activate_annotation_placement(annotation_type):
                 return
             select_action.setChecked(True)
 
-        dimension_action.toggled.connect(_on_dimension_toggled)
+        for spec in PLAN_ANNOTATION_TOOL_SPECS:
+            action = plan_tool_actions[spec.action_key]
+            action.toggled.connect(
+                lambda checked, annotation_type=spec.annotation_type: (
+                    _on_annotation_tool_toggled(checked, annotation_type)
+                )
+            )
         zoom_mode_action.toggled.connect(
             lambda checked: (
                 plan_view.set_cursor_mode("zoom") if checked else None,
@@ -546,10 +568,18 @@ class ComponentBuilder:
                 "select": select_action,
                 "place": place_action,
                 "pan": pan_action,
-                "annotation_place": dimension_action,
                 "zoom": zoom_mode_action,
             }
             action = action_map.get(mode)
+            if mode == "annotation_place":
+                action = next(
+                    (
+                        plan_tool_actions[spec.action_key]
+                        for spec in PLAN_ANNOTATION_TOOL_SPECS
+                        if plan_tool_actions[spec.action_key].isChecked()
+                    ),
+                    plan_tool_actions[PLAN_ANNOTATION_TOOL_SPECS[0].action_key],
+                )
             if action and not action.isChecked():
                 action.setChecked(True)
 
@@ -924,7 +954,6 @@ class ComponentBuilder:
             plan_tool_actions=plan_tool_actions,
             select_action=select_action,
             pan_action=pan_action,
-            dimension_action=dimension_action,
             zoom_mode_action=zoom_mode_action,
             backout_action=backout_action,
             move_overlay_action=move_overlay_action,

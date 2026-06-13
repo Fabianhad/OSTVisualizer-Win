@@ -666,6 +666,7 @@ class InputHandlerMixin:
                                     self._drag_handle_corner_count = (
                                         len(ann.position) // 2
                                     )
+                                    self._drag_last_valid_new_pos = list(ann.position)
                                 elif atype in (
                                     "rect",
                                     "oval",
@@ -1180,6 +1181,13 @@ class InputHandlerMixin:
                         if (
                             condition
                             and condition.is_area
+                            and self._drag_last_valid_new_pos
+                        ):
+                            new_pos = self._drag_last_valid_new_pos
+                        if (
+                            _drag_ann
+                            and _drag_ann.annotation_type in ("polygon", "cloud")
+                            and self._drag_handle_index >= 0
                             and self._drag_last_valid_new_pos
                         ):
                             new_pos = self._drag_last_valid_new_pos

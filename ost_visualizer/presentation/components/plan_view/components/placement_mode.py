@@ -27,10 +27,11 @@ from ....visualization.pdf.renderers.annotation_item_renderer import (
 )
 from ....visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_geometry,
+    create_cloud_path_points,
 )
 from ....utils.annotation_defaults import (
-    DIMENSION_ANNOTATION_COLOR,
-    DIMENSION_ANNOTATION_WIDTH,
+    PLACEABLE_ANNOTATION_TYPES,
+    annotation_default_style,
     dimension_annotation_properties,
 )
 from .geometry_utils import polygon_is_valid, polyline_self_intersects
@@ -39,6 +40,8 @@ from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
 
 logger = logging.getLogger(__name__)
 _RIGHT_ANGLE_ALIGNMENT_TOLERANCE = 1e-6
+_AREA_ANNOTATION_TYPES = frozenset({"polygon", "cloud"})
+_DRAG_ANNOTATION_TYPES = PLACEABLE_ANNOTATION_TYPES - _AREA_ANNOTATION_TYPES
 
 
 class AreaPlacementEndpoint(NamedTuple):
@@ -134,6 +137,14 @@ class PlacementModeMixin:
             right_angle_candidate_active=right_angle_candidate_active,
             right_angle_indicator_active=right_angle_indicator_active,
         )
+
+    def _rectangle_position_from_corners(
+        self, x1: float, y1: float, x2: float, y2: float
+    ) -> list[float]:
+        return [x1, y1, x2, y1, x2, y2, x1, y2]
+
+    def _points_from_position(self, position: list[float]) -> list[tuple[float, float]]:
+        return [(position[i], position[i + 1]) for i in range(0, len(position) - 1, 2)]
 
     def _snap_angle_for_placement(
         self,
@@ -656,12 +667,13 @@ class PlacementModeMixin:
         self._place_preview_items.clear()
 
     def _enter_annotation_place_mode(self, annotation_type: str) -> bool:
-        if annotation_type != "dimension":
+        if annotation_type not in PLACEABLE_ANNOTATION_TYPES:
             return False
         self.clear_place_preview()
         self._annotation_place_type = annotation_type
         self._annotation_place_points = []
         self._annotation_place_dragging = False
+        self._annotation_area_rect_dragging = False
         return True
 
     def _exit_annotation_place_mode(self) -> None:
@@ -669,20 +681,134 @@ class PlacementModeMixin:
         self._annotation_place_type = None
         self._annotation_place_points = []
         self._annotation_place_dragging = False
+        self._annotation_area_rect_dragging = False
 
-    def _dimension_placement_position(
+    def _drag_annotation_placement_position(
         self, cursor_scene: QtCore.QPointF
     ) -> tuple[list, int]:
         ost_x, ost_y, _cx, _cy, snap_kind = self._placement_snap_from_scene(
             cursor_scene
         )
         x1, y1 = self._annotation_place_points[0]
-        x2, y2 = self._snap_angle_for_placement(x1, y1, ost_x, ost_y, snap_kind)
+        if self._annotation_place_type in ("dimension", "line", "arrow"):
+            x2, y2 = self._snap_angle_for_placement(x1, y1, ost_x, ost_y, snap_kind)
+        else:
+            x2, y2 = ost_x, ost_y
         return [x1, y1, x2, y2], snap_kind
+
+    def _annotation_preview_style(self) -> tuple[QColor, float]:
+        color_hex, width = annotation_default_style(self._annotation_place_type)
+        return QColor(color_hex), width
+
+    def _add_linear_annotation_preview(
+        self,
+        annotation_type: str,
+        position: list,
+        color: QColor,
+        width: float,
+        page_transform,
+    ) -> None:
+        cs = self._scene_builder.get_coordinate_system()
+        tx = cs.transform_vertices_to_2d(position)
+        if len(tx) < 4:
+            return
+        x1, y1, x2, y2 = tx[:4]
+        path = QPainterPath()
+        path.moveTo(x1, y1)
+        path.lineTo(x2, y2)
+        if annotation_type == "arrow":
+            arrow_size = max(width * 20.0, 24.0)
+            angle = math.atan2(y2 - y1, x2 - x1)
+            arrow_angle = math.radians(30.0)
+            left_x = x2 - arrow_size * math.cos(angle - arrow_angle)
+            left_y = y2 - arrow_size * math.sin(angle - arrow_angle)
+            right_x = x2 - arrow_size * math.cos(angle + arrow_angle)
+            right_y = y2 - arrow_size * math.sin(angle + arrow_angle)
+            path.moveTo(left_x, left_y)
+            path.lineTo(x2, y2)
+            path.lineTo(right_x, right_y)
+        self._add_annotation_path_preview(path, color, width, page_transform)
+
+    def _add_box_annotation_preview(
+        self,
+        annotation_type: str,
+        position: list,
+        color: QColor,
+        width: float,
+        page_transform,
+    ) -> None:
+        cs = self._scene_builder.get_coordinate_system()
+        tx = cs.transform_vertices_to_2d(position)
+        if len(tx) < 4:
+            return
+        x1, y1, x2, y2 = tx[:4]
+        rect = QtCore.QRectF(
+            min(x1, x2),
+            min(y1, y2),
+            abs(x2 - x1),
+            abs(y2 - y1),
+        )
+        path = QPainterPath()
+        if annotation_type == "oval":
+            path.addEllipse(rect)
+        else:
+            path.addRect(rect)
+        self._add_annotation_path_preview(path, color, width, page_transform)
+
+    def _add_area_annotation_preview(
+        self,
+        annotation_type: str,
+        points: list[tuple[float, float]],
+        color: QColor,
+        width: float,
+        page_transform,
+    ) -> None:
+        if len(points) < 2:
+            return
+        cs = self._scene_builder.get_coordinate_system()
+        flat_ost = [v for point in points for v in point]
+        flat_scene = cs.transform_vertices_to_2d(flat_ost)
+        scene_points = [
+            (flat_scene[i], flat_scene[i + 1]) for i in range(0, len(flat_scene) - 1, 2)
+        ]
+        if len(scene_points) < 2:
+            return
+        path = QPainterPath()
+        if annotation_type == "cloud" and len(scene_points) >= 3:
+            segments = create_cloud_path_points(scene_points)
+            for idx, (_start, cp1, cp2, end) in enumerate(segments):
+                if idx == 0:
+                    path.moveTo(scene_points[0][0], scene_points[0][1])
+                path.cubicTo(cp1[0], cp1[1], cp2[0], cp2[1], end[0], end[1])
+            path.closeSubpath()
+        else:
+            path.moveTo(scene_points[0][0], scene_points[0][1])
+            for x, y in scene_points[1:]:
+                path.lineTo(x, y)
+            if len(scene_points) >= 3:
+                path.closeSubpath()
+        self._add_annotation_path_preview(path, color, width, page_transform)
+        for hx, hy in scene_points:
+            self._add_place_handle(hx, hy)
+
+    def _add_annotation_path_preview(
+        self, path: QPainterPath, color: QColor, width: float, page_transform
+    ) -> None:
+        if path.isEmpty():
+            return
+        item = QGraphicsPathItem()
+        item.setPath(path)
+        pen = QPen(color)
+        pen.setWidthF(width)
+        pen.setCosmetic(True)
+        item.setPen(pen)
+        item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        item.setZValue(15)
+        self._add_preview_item(item, page_transform)
 
     def update_annotation_place_preview(self, cursor_scene: QtCore.QPointF) -> None:
         self.clear_place_preview()
-        if self._annotation_place_type != "dimension":
+        if self._annotation_place_type not in PLACEABLE_ANNOTATION_TYPES:
             return
         if not self._annotation_place_points:
             _ost_x, _ost_y, cx, cy, snap_kind = self._placement_snap_from_scene(
@@ -691,79 +817,164 @@ class PlacementModeMixin:
             self._add_snap_cursor_marker(cx, cy, snap_kind)
             self._request_place_preview_repaint()
             return
-        position, _snap_kind = self._dimension_placement_position(cursor_scene)
-        if math.hypot(position[2] - position[0], position[3] - position[1]) <= 1e-9:
-            return
-        annotation = BidAnnotation(
-            uid="__dimension_preview__",
-            annotation_type="dimension",
-            page_uid=self._current_bid_page_uid or "",
-            position=position,
-            color=DIMENSION_ANNOTATION_COLOR,
-            width=DIMENSION_ANNOTATION_WIDTH,
-            properties=dimension_annotation_properties(),
-        )
-        cs = self._scene_builder.get_coordinate_system()
-        dimension = calculate_dimension_geometry(
-            annotation, position, cs.transform_vertices_to_2d
-        )
-        if not dimension:
-            return
-        path = build_dimension_path(dimension, cs)
-        if path.isEmpty():
-            return
-        path_item = QGraphicsPathItem()
-        path_item.setPath(path)
-        pen = QPen(QColor(annotation.color))
-        pen.setWidthF(annotation.width)
-        pen.setCosmetic(True)
-        path_item.setPen(pen)
-        path_item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        path_item.setZValue(15)
         page_transform = self._current_page_transform()
-        self._add_preview_item(path_item, page_transform)
-        text_item = create_dimension_text_item(
-            dimension,
-            annotation.color,
-            cs,
-            DIMENSION_FONT_SIZE_ADJUSTMENT,
-        )
-        if text_item is not None:
-            text_item.setZValue(16)
-            self._add_preview_item(text_item, page_transform)
+        annotation_type = self._annotation_place_type
+        if annotation_type in _DRAG_ANNOTATION_TYPES:
+            position, _snap_kind = self._drag_annotation_placement_position(
+                cursor_scene
+            )
+            if math.hypot(position[2] - position[0], position[3] - position[1]) <= 1e-9:
+                return
+            if annotation_type == "dimension":
+                color_hex, width = annotation_default_style("dimension")
+                annotation = BidAnnotation(
+                    uid="__dimension_preview__",
+                    annotation_type="dimension",
+                    page_uid=self._current_bid_page_uid or "",
+                    position=position,
+                    color=color_hex,
+                    width=width,
+                    properties=dimension_annotation_properties(),
+                )
+                cs = self._scene_builder.get_coordinate_system()
+                dimension = calculate_dimension_geometry(
+                    annotation, position, cs.transform_vertices_to_2d
+                )
+                if not dimension:
+                    return
+                path = build_dimension_path(dimension, cs)
+                self._add_annotation_path_preview(
+                    path, QColor(annotation.color), annotation.width, page_transform
+                )
+                text_item = create_dimension_text_item(
+                    dimension,
+                    annotation.color,
+                    cs,
+                    DIMENSION_FONT_SIZE_ADJUSTMENT,
+                )
+                if text_item is not None:
+                    text_item.setZValue(16)
+                    self._add_preview_item(text_item, page_transform)
+            elif annotation_type in ("line", "arrow"):
+                color, width = self._annotation_preview_style()
+                self._add_linear_annotation_preview(
+                    annotation_type, position, color, width, page_transform
+                )
+            else:
+                color, width = self._annotation_preview_style()
+                self._add_box_annotation_preview(
+                    annotation_type, position, color, width, page_transform
+                )
+        else:
+            color, width = self._annotation_preview_style()
+            ost_x, ost_y, _cx, _cy, snap_kind = self._placement_snap_from_scene(
+                cursor_scene
+            )
+            if self._annotation_area_rect_dragging:
+                x1, y1 = self._annotation_place_points[0]
+                position = self._rectangle_position_from_corners(x1, y1, ost_x, ost_y)
+                points = self._points_from_position(position)
+                self._add_area_annotation_preview(
+                    annotation_type, points, color, width, page_transform
+                )
+                self._request_place_preview_repaint()
+                return
+            last_x, last_y = self._annotation_place_points[-1]
+            end_x, end_y = self._snap_angle_for_placement(
+                last_x, last_y, ost_x, ost_y, snap_kind
+            )
+            points = self._annotation_place_points + [(end_x, end_y)]
+            self._add_area_annotation_preview(
+                annotation_type, points, color, width, page_transform
+            )
         self._request_place_preview_repaint()
 
     def handle_annotation_place_press(self, event) -> bool:
-        if self._annotation_place_type != "dimension":
+        if self._annotation_place_type not in PLACEABLE_ANNOTATION_TYPES:
             return False
         scene_pos = self.mapToScene(event.pos())
-        if self._annotation_place_points and not self._annotation_place_dragging:
-            position, _snap_kind = self._dimension_placement_position(scene_pos)
-            if self._commit_dimension_annotation_placement(position):
+        if self._annotation_place_type in _DRAG_ANNOTATION_TYPES:
+            if self._annotation_place_points and not self._annotation_place_dragging:
+                position, _snap_kind = self._drag_annotation_placement_position(
+                    scene_pos
+                )
+                if self._commit_annotation_placement(
+                    self._annotation_place_type, position
+                ):
+                    event.accept()
+                    return True
+                self.update_annotation_place_preview(scene_pos)
                 event.accept()
                 return True
+            ost_x, ost_y, _cx, _cy, _snap_kind = self._placement_snap_from_scene(
+                scene_pos
+            )
+            self._selected_uids.clear()
+            self.update_selection_visuals()
+            self._annotation_place_points = [(ost_x, ost_y)]
+            self._annotation_place_dragging = True
             self.update_annotation_place_preview(scene_pos)
             event.accept()
             return True
-        ost_x, ost_y, _cx, _cy, _snap_kind = self._placement_snap_from_scene(scene_pos)
-        self._selected_uids.clear()
-        self.update_selection_visuals()
-        self._annotation_place_points = [(ost_x, ost_y)]
-        self._annotation_place_dragging = True
+        ost_x, ost_y, _cx, _cy, snap_kind = self._placement_snap_from_scene(scene_pos)
+        if self._annotation_area_rect_dragging:
+            self._annotation_area_rect_dragging = False
+        if not self._annotation_place_points:
+            self._selected_uids.clear()
+            self.update_selection_visuals()
+            self._annotation_place_points = [(ost_x, ost_y)]
+            self._annotation_area_rect_dragging = True
+            self.update_annotation_place_preview(scene_pos)
+            event.accept()
+            return True
+        if self._is_annotation_close_to_first(scene_pos):
+            position = [v for point in self._annotation_place_points for v in point]
+            self._commit_annotation_placement(self._annotation_place_type, position)
+            event.accept()
+            return True
+        last_x, last_y = self._annotation_place_points[-1]
+        ost_x, ost_y = self._snap_angle_for_placement(
+            last_x, last_y, ost_x, ost_y, snap_kind
+        )
+        candidate = self._annotation_place_points + [(ost_x, ost_y)]
+        if len(candidate) < 4 or not polyline_self_intersects(candidate):
+            self._annotation_place_points.append((ost_x, ost_y))
         self.update_annotation_place_preview(scene_pos)
         event.accept()
         return True
 
     def handle_annotation_place_release(self, event) -> bool:
         if (
-            self._annotation_place_type != "dimension"
+            self._annotation_place_type not in PLACEABLE_ANNOTATION_TYPES
             or not self._annotation_place_points
-            or not self._annotation_place_dragging
         ):
             return False
+        if self._annotation_place_type in _AREA_ANNOTATION_TYPES:
+            if self._annotation_area_rect_dragging:
+                scene_pos = self.mapToScene(event.pos())
+                ost_x2, ost_y2, _cx, _cy, _snap_kind = self._placement_snap_from_scene(
+                    scene_pos
+                )
+                x1, y1 = self._annotation_place_points[0]
+                min_len = self._snap_increments if self._snap_increments > 0 else 1e-6
+                self._annotation_area_rect_dragging = False
+                if abs(ost_x2 - x1) >= min_len and abs(ost_y2 - y1) >= min_len:
+                    position = self._rectangle_position_from_corners(
+                        x1, y1, ost_x2, ost_y2
+                    )
+                    if self._commit_annotation_placement(
+                        self._annotation_place_type, position
+                    ):
+                        event.accept()
+                        return True
+                self.update_annotation_place_preview(scene_pos)
+            event.accept()
+            return True
+        if not self._annotation_place_dragging:
+            return False
         scene_pos = self.mapToScene(event.pos())
-        position, _snap_kind = self._dimension_placement_position(scene_pos)
-        if self._commit_dimension_annotation_placement(position):
+        position, _snap_kind = self._drag_annotation_placement_position(scene_pos)
+        if self._commit_annotation_placement(self._annotation_place_type, position):
             event.accept()
             return True
         self._annotation_place_dragging = False
@@ -771,10 +982,35 @@ class PlacementModeMixin:
         event.accept()
         return True
 
-    def _commit_dimension_annotation_placement(self, position: list) -> bool:
+    def _is_annotation_close_to_first(self, scene_pos: QtCore.QPointF) -> bool:
+        if len(self._annotation_place_points) < 3:
+            return False
+        first_x, first_y = self._annotation_place_points[0]
+        first_scene = self._ost_to_scene_pos(first_x, first_y)
+        first_vp = self.mapFromScene(first_scene)
+        current_vp = self.mapFromScene(scene_pos)
+        dx = current_vp.x() - first_vp.x()
+        dy = current_vp.y() - first_vp.y()
+        return math.hypot(dx, dy) <= 12.0
+
+    def _commit_annotation_placement(
+        self, annotation_type: str, position: list
+    ) -> bool:
         min_len = self._snap_increments if self._snap_increments > 0 else 1e-6
-        distance = math.hypot(position[2] - position[0], position[3] - position[1])
-        if distance < min_len:
+        if annotation_type in _DRAG_ANNOTATION_TYPES:
+            distance = math.hypot(position[2] - position[0], position[3] - position[1])
+            if distance < min_len:
+                return False
+            if annotation_type in ("rect", "oval") and (
+                abs(position[2] - position[0]) < min_len
+                or abs(position[3] - position[1]) < min_len
+            ):
+                return False
+        elif annotation_type in _AREA_ANNOTATION_TYPES:
+            points = self._points_from_position(position)
+            if len(points) < 3 or not polygon_is_valid(points):
+                return False
+        else:
             return False
         page_uid = self._current_bid_page_uid or ""
         if not page_uid:
@@ -782,7 +1018,8 @@ class PlacementModeMixin:
         self.clear_place_preview()
         self._annotation_place_points = []
         self._annotation_place_dragging = False
-        self.annotation_created.emit("dimension", position, page_uid)
+        self._annotation_area_rect_dragging = False
+        self.annotation_created.emit(annotation_type, position, page_uid)
         return True
 
     def _flash_invalid_preview(self, condition_color: QColor) -> None:
@@ -897,7 +1134,9 @@ class PlacementModeMixin:
                     ost_x2 = ost_x
                     ost_y2 = ost_y
                     corners = [(x1, y1), (ost_x2, y1), (ost_x2, ost_y2), (x1, ost_y2)]
-                    pos_flat = [x1, y1, ost_x2, y1, ost_x2, ost_y2, x1, ost_y2]
+                    pos_flat = self._rectangle_position_from_corners(
+                        x1, y1, ost_x2, ost_y2
+                    )
                     all_inside = all(
                         self.is_inside_parent(px, py) for px, py in corners
                     )
@@ -1154,7 +1393,7 @@ class PlacementModeMixin:
             use_valid = abs(ost_x2 - x1) < min_len or abs(ost_y2 - y1) < min_len
             if not use_valid:
                 corners = [(x1, y1), (ost_x2, y1), (ost_x2, ost_y2), (x1, ost_y2)]
-                pos = [x1, y1, ost_x2, y1, ost_x2, ost_y2, x1, ost_y2]
+                pos = self._rectangle_position_from_corners(x1, y1, ost_x2, ost_y2)
                 use_valid = not all(
                     self.is_inside_parent(px, py) for px, py in corners
                 ) or self._check_hole_overlap(pos)
@@ -1166,7 +1405,7 @@ class PlacementModeMixin:
                 event.accept()
                 return True
             x2, y2 = ost_x2, ost_y2
-            pos = [x1, y1, x2, y1, x2, y2, x1, y2]
+            pos = self._rectangle_position_from_corners(x1, y1, x2, y2)
             self.clear_place_preview()
             self._place_points = []
             self._backout_last_valid_ost = None
@@ -1179,7 +1418,7 @@ class PlacementModeMixin:
                 self._backout_parent_uid,
             )
         elif abs(ost_x2 - x1) >= min_len and abs(ost_y2 - y1) >= min_len:
-            pos = [x1, y1, ost_x2, y1, ost_x2, ost_y2, x1, ost_y2]
+            pos = self._rectangle_position_from_corners(x1, y1, ost_x2, ost_y2)
             self._finish_area_placement_preview_state()
             self.takeoff_created.emit(
                 self._place_session_uid,

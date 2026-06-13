@@ -1370,7 +1370,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view.show_overlay_move_handle())
         view._overlay_move_original_rect = (0.0, 0.0, 816.0, 1056.0)
         view._overlay_move_preview_rect = page.overlay_rect
-        self.assertTrue(view.activate_dimension_annotation_placement())
+        self.assertTrue(view.activate_annotation_placement("dimension"))
         self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
         self.assertEqual(view._cursor_mode, "annotation_place")
         self.assertEqual(view._annotation_place_type, "dimension")

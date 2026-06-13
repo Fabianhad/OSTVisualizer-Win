@@ -6,7 +6,6 @@ from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.annotation import BidAnnotation
-from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.handlers.plan_view_action_handler import (
@@ -16,6 +15,10 @@ from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.services.selection_commands import (
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
+)
+from ost_visualizer.presentation.utils.annotation_defaults import (
+    build_placed_annotation_spec,
+    set_annotation_style,
 )
 
 
@@ -369,6 +372,44 @@ class FakeAccess:
 
 
 class PlanViewActionHandlerTests(unittest.TestCase):
+    def tearDown(self):
+        set_annotation_style(color="#ff0000", line_width=4.0)
+
+    def test_markup_annotation_default_line_width_is_four_pixels(self):
+        for annotation_type in ("arrow", "line", "rect", "oval", "polygon", "cloud"):
+            with self.subTest(annotation_type=annotation_type):
+                spec = build_placed_annotation_spec(
+                    annotation_type, "p1", [1.0, 2.0, 13.0, 14.0]
+                )
+                self.assertEqual(spec.width, 4.0)
+                self.assertEqual(spec.color, "#ff0000")
+
+    def test_selected_annotation_style_applies_to_new_markup_annotations(self):
+        set_annotation_style(color="#336699", line_width=9.0)
+        for annotation_type in ("arrow", "line", "rect", "oval", "polygon", "cloud"):
+            with self.subTest(annotation_type=annotation_type):
+                ann_write = FakeAnnotationWriteService()
+                handler = PlanViewActionHandler(
+                    plan_view=FakePlanView(),
+                    ui_state_manager=FakeUiState(),
+                    project_data_svc=FakeProjectData(),
+                    project_write_svc=FakeWriteService(),
+                    annotation_write_svc=ann_write,
+                    page_settings_bar=FakePageSettingsBar(),
+                    undo_svc=FakeUndoService(),
+                    event_bus=FakeEventBus(),
+                    ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+                )
+                position = (
+                    [1.0, 2.0, 13.0, 2.0, 8.0, 9.0]
+                    if annotation_type in ("polygon", "cloud")
+                    else [1.0, 2.0, 13.0, 2.0]
+                )
+                handler.on_annotation_created(annotation_type, position, "p1")
+                _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+                self.assertEqual(specs[0].color, "#336699")
+                self.assertEqual(specs[0].width, 9.0)
+
     def _paste_handler(
         self,
         plan_view=None,
@@ -476,47 +517,75 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.position_calls, [])
         self.assertEqual(write.calls, [])
 
-    def test_dimension_annotation_created_uses_annotation_write_path(self):
-        plan_view = FakePlanView()
-        plan_view.annotation_key_map = {("ann-1", "dimension"): "ann-1"}
-        ann_write = FakeAnnotationWriteService()
-        undo = FakeUndoService()
-        handler = PlanViewActionHandler(
-            plan_view=plan_view,
-            ui_state_manager=FakeUiState(),
-            project_data_svc=FakeProjectData(),
-            project_write_svc=FakeWriteService(),
-            annotation_write_svc=ann_write,
-            page_settings_bar=FakePageSettingsBar(),
-            undo_svc=undo,
-            event_bus=FakeEventBus(),
-            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
-        )
-        handler.on_annotation_created("dimension", [1.0, 2.0, 13.0, 2.0], "p1")
-        self.assertEqual(len(ann_write.insert_calls), 1)
-        _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
-        self.assertEqual(specs[0].annotation_type, "dimension")
-        self.assertEqual(specs[0].position, [1.0, 2.0, 13.0, 2.0])
-        self.assertEqual(specs[0].properties["FontName"], "Arial")
-        self.assertEqual(specs[0].properties["FontColor"], "#ff0000")
-        self.assertEqual(plan_view.selected, {"ann-1"})
-        self.assertEqual(undo.count, 1)
+    def test_annotation_created_uses_annotation_write_path(self):
+        for annotation_type in (
+            "dimension",
+            "arrow",
+            "line",
+            "rect",
+            "oval",
+            "polygon",
+            "cloud",
+        ):
+            with self.subTest(annotation_type=annotation_type):
+                plan_view = FakePlanView()
+                plan_view.annotation_key_map = {("ann-1", annotation_type): "ann-1"}
+                ann_write = FakeAnnotationWriteService()
+                undo = FakeUndoService()
+                handler = PlanViewActionHandler(
+                    plan_view=plan_view,
+                    ui_state_manager=FakeUiState(),
+                    project_data_svc=FakeProjectData(),
+                    project_write_svc=FakeWriteService(),
+                    annotation_write_svc=ann_write,
+                    page_settings_bar=FakePageSettingsBar(),
+                    undo_svc=undo,
+                    event_bus=FakeEventBus(),
+                    ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+                )
+                position = (
+                    [1.0, 2.0, 13.0, 2.0, 8.0, 9.0]
+                    if annotation_type in ("polygon", "cloud")
+                    else [1.0, 2.0, 13.0, 2.0]
+                )
+                handler.on_annotation_created(annotation_type, position, "p1")
+                self.assertEqual(len(ann_write.insert_calls), 1)
+                _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+                self.assertEqual(specs[0].annotation_type, annotation_type)
+                self.assertEqual(specs[0].position, position)
+                if annotation_type == "dimension":
+                    self.assertEqual(specs[0].properties["FontName"], "Arial")
+                    self.assertEqual(specs[0].properties["FontColor"], "#ff0000")
+                self.assertEqual(plan_view.selected, {"ann-1"})
+                self.assertEqual(undo.count, 1)
 
-    def test_denied_place_plan_items_access_blocks_dimension_placement_write(self):
-        ann_write = FakeAnnotationWriteService()
-        handler = PlanViewActionHandler(
-            plan_view=FakePlanView(),
-            ui_state_manager=FakeUiState(),
-            project_data_svc=FakeProjectData(),
-            project_write_svc=FakeWriteService(),
-            annotation_write_svc=ann_write,
-            page_settings_bar=FakePageSettingsBar(),
-            undo_svc=FakeUndoService(),
-            event_bus=FakeEventBus(),
-            ui_access_manager=FakeAccess(set()),
-        )
-        handler.on_annotation_created("dimension", [1.0, 2.0, 13.0, 2.0], "p1")
-        self.assertEqual(ann_write.insert_calls, [])
+    def test_denied_place_plan_items_access_blocks_annotation_placement_write(self):
+        for annotation_type in (
+            "dimension",
+            "arrow",
+            "line",
+            "rect",
+            "oval",
+            "polygon",
+            "cloud",
+        ):
+            with self.subTest(annotation_type=annotation_type):
+                ann_write = FakeAnnotationWriteService()
+                handler = PlanViewActionHandler(
+                    plan_view=FakePlanView(),
+                    ui_state_manager=FakeUiState(),
+                    project_data_svc=FakeProjectData(),
+                    project_write_svc=FakeWriteService(),
+                    annotation_write_svc=ann_write,
+                    page_settings_bar=FakePageSettingsBar(),
+                    undo_svc=FakeUndoService(),
+                    event_bus=FakeEventBus(),
+                    ui_access_manager=FakeAccess(set()),
+                )
+                handler.on_annotation_created(
+                    annotation_type, [1.0, 2.0, 13.0, 2.0], "p1"
+                )
+                self.assertEqual(ann_write.insert_calls, [])
 
     def test_denied_annotation_text_access_blocks_text_property_write(self):
         annotation_write = FakeAnnotationWriteService()

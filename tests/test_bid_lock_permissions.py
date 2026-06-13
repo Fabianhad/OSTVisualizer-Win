@@ -593,27 +593,41 @@ class BidLockPermissionTests(unittest.TestCase):
         manager = self._access_manager(project_data, ui_state)
         coordinator = ToolbarStateCoordinator(ui_state, manager, project_data)
         dimension_action = _FakeAction()
+        line_action = _FakeAction()
+        cloud_action = _FakeAction()
         plan_view = _FakePlanView()
-        coordinator.set_dimension_action(dimension_action)
+        coordinator.set_annotation_tool_actions(
+            [dimension_action, line_action, cloud_action]
+        )
         coordinator.set_plan_view(plan_view)
         coordinator.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
         coordinator.set_view_stack(_FakeTabWidget(1))
         coordinator.refresh()
         self.assertTrue(dimension_action.enabled)
+        self.assertTrue(line_action.enabled)
+        self.assertTrue(cloud_action.enabled)
         project_data.locked = True
         coordinator.refresh()
         self.assertFalse(dimension_action.enabled)
+        self.assertFalse(line_action.enabled)
+        self.assertFalse(cloud_action.enabled)
         project_data.locked = False
         manager.set_text_annotation_edit_active(True)
         coordinator.refresh()
         self.assertFalse(dimension_action.enabled)
+        self.assertFalse(line_action.enabled)
+        self.assertFalse(cloud_action.enabled)
         manager.set_text_annotation_edit_active(False)
         plan_view.current_page_uid = None
         coordinator.refresh()
         self.assertFalse(dimension_action.enabled)
+        self.assertFalse(line_action.enabled)
+        self.assertFalse(cloud_action.enabled)
         plan_view.current_page_uid = "page-1"
         coordinator.refresh()
         self.assertTrue(dimension_action.enabled)
+        self.assertTrue(line_action.enabled)
+        self.assertTrue(cloud_action.enabled)
 
     def test_takeoff_shortcuts_do_not_run_when_selection_access_denied(self):
         project_data = _ProjectData()

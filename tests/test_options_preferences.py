@@ -14,6 +14,7 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.config_service import ConfigService
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
@@ -53,9 +54,22 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 from ost_visualizer.presentation.dialogs.options import components as options_components
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.main_window import MainWindow
-from ost_visualizer.presentation.managers.icon_manager import ICON_SPECS, IconId
+from ost_visualizer.presentation.managers.icon_manager import (
+    ICON_SPECS,
+    IconId,
+    IconManager,
+)
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.utils.annotation_style_controls import (
+    apply_annotation_tool_icon_color,
+    create_annotation_style_button,
+    create_annotation_tool_split_button,
+)
 from ost_visualizer.presentation.utils.color_swatch import rounded_color_swatch
+from ost_visualizer.presentation.utils.plan_tool_registry import (
+    PLAN_ANNOTATION_TOOL_SPECS,
+    PLAN_TOOL_SPECS,
+)
 from ost_visualizer.presentation.utils.mcp_setup_config import (
     build_claude_desktop_config,
     build_codex_config_toml,
@@ -995,6 +1009,12 @@ class OptionsPreferencesTests(unittest.TestCase):
             "pan_tool": "Pan",
             "zoom_tool": "Zoom",
             "dimension_tool": "Dimension",
+            "arrow_annotation_tool": "Arrow",
+            "line_annotation_tool": "Line",
+            "rectangle_annotation_tool": "Rectangle",
+            "oval_annotation_tool": "Oval",
+            "polygon_annotation_tool": "Polygon",
+            "cloud_annotation_tool": "Cloud",
         }
         shared_actions = {
             key: QtGui.QAction(labels.get(key, key), None)
@@ -1025,6 +1045,12 @@ class OptionsPreferencesTests(unittest.TestCase):
                 "pan_tool",
                 "zoom_tool",
                 "dimension_tool",
+                "arrow_annotation_tool",
+                "line_annotation_tool",
+                "rectangle_annotation_tool",
+                "oval_annotation_tool",
+                "polygon_annotation_tool",
+                "cloud_annotation_tool",
                 "backout_mode",
             )
         }
@@ -1037,8 +1063,20 @@ class OptionsPreferencesTests(unittest.TestCase):
                 if not action.isSeparator()
             ]
             self.assertEqual(
-                action_texts[:5],
-                ["Select", "Place", "Pan", "Zoom", "Dimension"],
+                action_texts[:11],
+                [
+                    "Select",
+                    "Place",
+                    "Pan",
+                    "Zoom",
+                    "Dimension",
+                    "Arrow",
+                    "Line",
+                    "Rectangle",
+                    "Oval",
+                    "Polygon",
+                    "Cloud",
+                ],
             )
             self.assertIs(tools_menu.actions()[4], shared_actions["dimension_tool"])
         finally:
@@ -1047,6 +1085,131 @@ class OptionsPreferencesTests(unittest.TestCase):
             ICON_SPECS[IconId.DIMENSION_TOOL].svg_name,
             "square_foot_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
         )
+
+    def test_annotation_tool_icon_color_updates_only_annotation_actions(self):
+        actions = {}
+        for spec in PLAN_TOOL_SPECS:
+            action = QtGui.QAction(spec.label, None)
+            IconManager.apply(action, spec.icon_id)
+            actions[spec.action_key] = action
+        select_key = actions["select_tool"].icon().cacheKey()
+        dimension_key = actions["dimension_tool"].icon().cacheKey()
+        apply_annotation_tool_icon_color(actions, "#336699")
+        self.assertEqual(actions["select_tool"].icon().cacheKey(), select_key)
+        self.assertNotEqual(actions["dimension_tool"].icon().cacheKey(), dimension_key)
+        for spec in PLAN_ANNOTATION_TOOL_SPECS:
+            self.assertTrue(actions[spec.action_key].icon().cacheKey())
+
+    def test_annotation_style_button_exposes_widths_and_updates_style(self):
+        _app()
+        selected = []
+        current = AnnotationStyle("#ff0000", 4.0)
+
+        def get_style():
+            return current
+
+        def set_style(**kwargs):
+            nonlocal current
+            current = AnnotationStyle(
+                kwargs.get("color", current.color),
+                kwargs.get("line_width", current.line_width),
+            )
+            selected.append(current)
+            return current
+
+        parent = QtWidgets.QWidget()
+        button = create_annotation_style_button(parent, get_style, set_style)
+        try:
+            menu = button.menu()
+            width_actions = [
+                action for action in menu.actions() if isinstance(action.data(), int)
+            ]
+            self.assertEqual(
+                [action.text() for action in width_actions],
+                [f"{width}px" for width in range(1, 17)],
+            )
+            width_actions[7].trigger()
+            self.assertEqual(selected[-1].line_width, 8.0)
+            with mock.patch.object(
+                QtWidgets.QColorDialog,
+                "getColor",
+                return_value=QtGui.QColor("#445566"),
+            ):
+                menu.actions()[-1].trigger()
+            self.assertEqual(selected[-1].color, "#445566")
+        finally:
+            parent.deleteLater()
+
+    def test_annotation_split_tool_buttons_keep_activation_and_style_menu(self):
+        _app()
+        parent = QtWidgets.QWidget()
+        selected = []
+        current = AnnotationStyle("#ff0000", 4.0)
+
+        def get_style():
+            return current
+
+        def set_style(**kwargs):
+            nonlocal current
+            current = AnnotationStyle(
+                kwargs.get("color", current.color),
+                kwargs.get("line_width", current.line_width),
+            )
+            selected.append(current)
+            return current
+
+        try:
+            for spec in PLAN_ANNOTATION_TOOL_SPECS:
+                with self.subTest(action_key=spec.action_key):
+                    triggered = []
+                    action = QtGui.QAction(spec.label, parent)
+                    action.setCheckable(True)
+                    IconManager.apply(action, spec.icon_id)
+                    action.triggered.connect(
+                        lambda checked=False, key=spec.action_key: triggered.append(
+                            (key, checked)
+                        )
+                    )
+                    button = QtWidgets.QToolButton(parent)
+                    button.setDefaultAction(action)
+                    split_button, dropdown = create_annotation_tool_split_button(
+                        parent,
+                        button,
+                        get_style,
+                        set_style,
+                        icon_size=QtCore.QSize(24, 24),
+                    )
+                    self.assertTrue(split_button.property("annotationToolSplitButton"))
+                    self.assertTrue(button.property("annotationToolMainButton"))
+                    self.assertTrue(dropdown.property("annotationStyleDropdown"))
+                    self.assertEqual(
+                        dropdown.popupMode(),
+                        QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup,
+                    )
+                    width_actions = [
+                        action
+                        for action in dropdown.menu().actions()
+                        if isinstance(action.data(), int)
+                    ]
+                    self.assertEqual(len(width_actions), 16)
+                    button.click()
+                    self.assertEqual(triggered, [(spec.action_key, True)])
+                    width_actions[11].trigger()
+                    self.assertEqual(selected[-1].line_width, 12.0)
+        finally:
+            parent.deleteLater()
+
+    def test_plain_non_annotation_tool_button_has_no_style_dropdown_property(self):
+        _app()
+        parent = QtWidgets.QWidget()
+        try:
+            action = QtGui.QAction("Select", parent)
+            button = QtWidgets.QToolButton(parent)
+            button.setDefaultAction(action)
+            self.assertFalse(bool(button.property("annotationStyleDropdown")))
+            self.assertFalse(bool(button.property("annotationToolMainButton")))
+        finally:
+            parent.deleteLater()
 
     def test_update_app_options_updates_color_mode_and_publishes_changed_payload(self):
         repo = FakeConfigRepository()
@@ -1702,21 +1865,21 @@ class OptionsPreferencesTests(unittest.TestCase):
         MenuController._sync_tool_action_states(controller, True)
         self.assertEqual(explicit_refresh_calls, [1])
 
-    def test_dimension_action_does_not_use_backout_toggle_handler(self):
+    def test_annotation_tool_actions_do_not_use_backout_toggle_handler(self):
         _app()
 
         class FakeToolbar:
             def __init__(self):
                 self.backout_action = None
-                self.dimension_action = None
+                self.annotation_tool_actions = None
                 self.refresh_calls = 0
                 self.backout_refresh_calls = 0
 
             def set_backout_action(self, action):
                 self.backout_action = action
 
-            def set_dimension_action(self, action):
-                self.dimension_action = action
+            def set_annotation_tool_actions(self, actions):
+                self.annotation_tool_actions = actions
 
             def refresh(self):
                 self.refresh_calls += 1
@@ -1731,10 +1894,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         coordinator._on_backout_toggled = lambda checked: calls.append(checked)
         dimension_action = QtGui.QAction()
         dimension_action.setCheckable(True)
-        UIEventCoordinator.set_dimension_action(coordinator, dimension_action)
+        UIEventCoordinator.set_annotation_tool_actions(coordinator, [dimension_action])
         dimension_action.setChecked(True)
         self.assertEqual(calls, [])
-        self.assertIs(toolbar.dimension_action, dimension_action)
+        self.assertEqual(toolbar.annotation_tool_actions, [dimension_action])
         self.assertEqual(toolbar.refresh_calls, 1)
         self.assertEqual(toolbar.backout_refresh_calls, 0)
         backout_action = QtGui.QAction()

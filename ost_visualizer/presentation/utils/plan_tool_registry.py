@@ -1,11 +1,23 @@
 from dataclasses import dataclass
 from ..config import (
+    ACTION_ARROW_ANNOTATION_LABEL,
+    ACTION_ARROW_ANNOTATION_TOOLTIP,
+    ACTION_CLOUD_ANNOTATION_LABEL,
+    ACTION_CLOUD_ANNOTATION_TOOLTIP,
     ACTION_DIMENSION_LABEL,
     ACTION_DIMENSION_TOOLTIP,
+    ACTION_LINE_ANNOTATION_LABEL,
+    ACTION_LINE_ANNOTATION_TOOLTIP,
+    ACTION_OVAL_ANNOTATION_LABEL,
+    ACTION_OVAL_ANNOTATION_TOOLTIP,
     ACTION_PAN_LABEL,
     ACTION_PAN_TOOLTIP,
     ACTION_PLACE_LABEL,
     ACTION_PLACE_TOOLTIP,
+    ACTION_POLYGON_ANNOTATION_LABEL,
+    ACTION_POLYGON_ANNOTATION_TOOLTIP,
+    ACTION_RECTANGLE_ANNOTATION_LABEL,
+    ACTION_RECTANGLE_ANNOTATION_TOOLTIP,
     ACTION_SELECT_LABEL,
     ACTION_SELECT_TOOLTIP,
     ACTION_ZOOM_LABEL,
@@ -20,6 +32,7 @@ class PlanToolSpec:
     label: str
     tooltip: str
     icon_id: IconId
+    annotation_type: str | None = None
 
 
 PLAN_CURSOR_TOOL_SPECS = (
@@ -54,6 +67,49 @@ PLAN_ANNOTATION_TOOL_SPECS = (
         ACTION_DIMENSION_LABEL,
         ACTION_DIMENSION_TOOLTIP,
         IconId.DIMENSION_TOOL,
+        annotation_type="dimension",
+    ),
+    PlanToolSpec(
+        "arrow_annotation_tool",
+        ACTION_ARROW_ANNOTATION_LABEL,
+        ACTION_ARROW_ANNOTATION_TOOLTIP,
+        IconId.ARROW_ANNOTATION_TOOL,
+        annotation_type="arrow",
+    ),
+    PlanToolSpec(
+        "line_annotation_tool",
+        ACTION_LINE_ANNOTATION_LABEL,
+        ACTION_LINE_ANNOTATION_TOOLTIP,
+        IconId.LINE_ANNOTATION_TOOL,
+        annotation_type="line",
+    ),
+    PlanToolSpec(
+        "rectangle_annotation_tool",
+        ACTION_RECTANGLE_ANNOTATION_LABEL,
+        ACTION_RECTANGLE_ANNOTATION_TOOLTIP,
+        IconId.RECTANGLE_ANNOTATION_TOOL,
+        annotation_type="rect",
+    ),
+    PlanToolSpec(
+        "oval_annotation_tool",
+        ACTION_OVAL_ANNOTATION_LABEL,
+        ACTION_OVAL_ANNOTATION_TOOLTIP,
+        IconId.OVAL_ANNOTATION_TOOL,
+        annotation_type="oval",
+    ),
+    PlanToolSpec(
+        "polygon_annotation_tool",
+        ACTION_POLYGON_ANNOTATION_LABEL,
+        ACTION_POLYGON_ANNOTATION_TOOLTIP,
+        IconId.POLYGON_ANNOTATION_TOOL,
+        annotation_type="polygon",
+    ),
+    PlanToolSpec(
+        "cloud_annotation_tool",
+        ACTION_CLOUD_ANNOTATION_LABEL,
+        ACTION_CLOUD_ANNOTATION_TOOLTIP,
+        IconId.CLOUD_ANNOTATION_TOOL,
+        annotation_type="cloud",
     ),
 )
 PLAN_TOOL_SPECS = PLAN_CURSOR_TOOL_SPECS + PLAN_ANNOTATION_TOOL_SPECS

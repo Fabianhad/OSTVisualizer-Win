@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Union
 from PySide6 import QtGui, QtWidgets
-from ..utils.themed_icon import apply_themed_icon, themed_icon
+from ..utils.themed_icon import apply_themed_icon, build_colored_icon, themed_icon
 
 
 class IconId(Enum):
@@ -26,6 +26,12 @@ class IconId(Enum):
     PLACE_TOOL = "place_tool"
     PAN_TOOL = "pan_tool"
     DIMENSION_TOOL = "dimension_tool"
+    ARROW_ANNOTATION_TOOL = "arrow_annotation_tool"
+    LINE_ANNOTATION_TOOL = "line_annotation_tool"
+    RECTANGLE_ANNOTATION_TOOL = "rectangle_annotation_tool"
+    OVAL_ANNOTATION_TOOL = "oval_annotation_tool"
+    POLYGON_ANNOTATION_TOOL = "polygon_annotation_tool"
+    CLOUD_ANNOTATION_TOOL = "cloud_annotation_tool"
     ZOOM_TOOL = "zoom_tool"
     RESET_VIEW = "reset_view"
     ZOOM_IN = "zoom_in"
@@ -88,6 +94,24 @@ ICON_SPECS: Dict[IconId, IconSpec] = {
     IconId.DIMENSION_TOOL: IconSpec(
         "square_foot_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
     ),
+    IconId.ARROW_ANNOTATION_TOOL: IconSpec(
+        "arrow_annotation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.LINE_ANNOTATION_TOOL: IconSpec(
+        "line_annotation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.RECTANGLE_ANNOTATION_TOOL: IconSpec(
+        "rectangle_annotation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.OVAL_ANNOTATION_TOOL: IconSpec(
+        "oval_annotation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.POLYGON_ANNOTATION_TOOL: IconSpec(
+        "polygon_annotation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.CLOUD_ANNOTATION_TOOL: IconSpec(
+        "cloud_annotation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
     IconId.ZOOM_TOOL: IconSpec("search_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
     IconId.RESET_VIEW: IconSpec(
         "find_in_page_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
@@ -140,6 +164,12 @@ ACTION_ICONS: Dict[str, IconId] = {
     "place_tool": IconId.PLACE_TOOL,
     "pan_tool": IconId.PAN_TOOL,
     "dimension_tool": IconId.DIMENSION_TOOL,
+    "arrow_annotation_tool": IconId.ARROW_ANNOTATION_TOOL,
+    "line_annotation_tool": IconId.LINE_ANNOTATION_TOOL,
+    "rectangle_annotation_tool": IconId.RECTANGLE_ANNOTATION_TOOL,
+    "oval_annotation_tool": IconId.OVAL_ANNOTATION_TOOL,
+    "polygon_annotation_tool": IconId.POLYGON_ANNOTATION_TOOL,
+    "cloud_annotation_tool": IconId.CLOUD_ANNOTATION_TOOL,
     "zoom_tool": IconId.ZOOM_TOOL,
     "reset_view": IconId.RESET_VIEW,
     "zoom_in": IconId.ZOOM_IN,
@@ -163,8 +193,16 @@ class IconManager:
         return themed_icon(ICON_SPECS[icon_id].svg_name)
 
     @staticmethod
+    def colored_icon(icon_id: IconId, hex_color: str) -> QtGui.QIcon:
+        return build_colored_icon(ICON_SPECS[icon_id].svg_name, hex_color)
+
+    @staticmethod
     def apply(target: IconTarget, icon_id: IconId) -> None:
         apply_themed_icon(target, ICON_SPECS[icon_id].svg_name)
+
+    @staticmethod
+    def apply_colored(target: IconTarget, icon_id: IconId, hex_color: str) -> None:
+        target.setIcon(IconManager.colored_icon(icon_id, hex_color))
 
     @staticmethod
     def apply_to_action(action: QtGui.QAction, action_key: str) -> None:

@@ -7,7 +7,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPainterPath, QPen, QTransform
+from PySide6.QtGui import QColor, QPainterPath, QPen, QTransform
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsPathItem,
@@ -42,6 +42,7 @@ from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_ren
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import (
     format_dimension_distance,
 )
+from ost_visualizer.presentation.utils.annotation_defaults import set_annotation_style
 
 
 def _app():
@@ -49,6 +50,21 @@ def _app():
     if app is None:
         app = QApplication([])
     return app
+
+
+def _path_has_curve(path: QPainterPath) -> bool:
+    return any(
+        path.elementAt(index).type == QPainterPath.ElementType.CurveToElement
+        for index in range(path.elementCount())
+    )
+
+
+def _preview_paths(view) -> list[QGraphicsPathItem]:
+    return [
+        item
+        for item in view._place_preview_items
+        if isinstance(item, QGraphicsPathItem)
+    ]
 
 
 class BaseKeyHandler:
@@ -98,6 +114,7 @@ class AnnotationPlacementHarness(PlacementModeMixin):
         self._annotation_place_type = None
         self._annotation_place_points = []
         self._annotation_place_dragging = False
+        self._annotation_area_rect_dragging = False
         self._current_bid_page_uid = "page-1"
         self._snap_increments = 1.0
         self.annotation_created = _FakeSignal()
@@ -107,6 +124,21 @@ class AnnotationPlacementHarness(PlacementModeMixin):
 
     def _current_page_transform(self):
         return None
+
+    def mapToScene(self, point):
+        return QtCore.QPointF(point)
+
+    def mapFromScene(self, point):
+        return QtCore.QPoint(int(point.x()), int(point.y()))
+
+    def _ost_to_scene_pos(self, ost_x, ost_y):
+        return QtCore.QPointF(float(ost_x), float(ost_y))
+
+    def _pt_to_scene(self, x, y):
+        return QtCore.QPointF(float(x), float(y))
+
+    def _current_handle_background_color(self):
+        return QColor(255, 255, 255)
 
     def _request_place_preview_repaint(self):
         self.preview_repaints += 1
@@ -121,6 +153,72 @@ class AnnotationPlacementHarness(PlacementModeMixin):
 
     def update_selection_visuals(self):
         self.selection_updates += 1
+
+
+class AreaPlacementHarness(PlacementModeMixin):
+    def __init__(self):
+        self._place_flashing = False
+        self._place_points = []
+        self._place_area_rect_dragging = False
+        self._place_linear_dragging = False
+        self._backout_parent_uid = None
+        self._backout_active_uid = None
+        self._backout_orig_parent_path = None
+        self._scene_builder = _PlacementSceneBuilder()
+        self._place_session_uid = "area"
+        self._current_bid_page_uid = "page-1"
+        self._snap_increments = 1.0
+        self._current_conditions = {
+            "area": Condition(
+                uid="area",
+                condition_type=Condition.TYPE_AREA,
+                layer_visible=True,
+            )
+        }
+        self._selected_uids = {"old"}
+        self.takeoff_created = _FakeSignal()
+        self.preview_updates = 0
+        self.selection_updates = 0
+        self.area_progress_states = []
+        self.snap_invalidations = 0
+
+    def mapToScene(self, point):
+        return QtCore.QPointF(point)
+
+    def _placement_snap_from_scene(self, cursor_scene):
+        x = float(cursor_scene.x())
+        y = float(cursor_scene.y())
+        return x, y, x, y, 0
+
+    def update_selection_visuals(self):
+        self.selection_updates += 1
+
+    def update_place_preview(self, _scene_pos):
+        self.preview_updates += 1
+
+    def clear_place_preview(self):
+        pass
+
+    def _set_area_placement_in_progress(self, in_progress):
+        self.area_progress_states.append(in_progress)
+
+    def _invalidate_snap_index(self):
+        self.snap_invalidations += 1
+
+
+class _PlacementMouseEvent:
+    def __init__(self, x, y):
+        self._point = QtCore.QPoint(int(x), int(y))
+        self.accepted = False
+
+    def pos(self):
+        return self._point
+
+    def position(self):
+        return QtCore.QPointF(self._point)
+
+    def accept(self):
+        self.accepted = True
 
 
 class InputHandlerHarness(
@@ -963,6 +1061,48 @@ class CtrlDragTests(unittest.TestCase):
         view._drag_uid_orig_items = {"d1": list(items)}
         return view, ann
 
+    def _make_area_annotation_resize_view(self, annotation_type):
+        view = InputHandlerHarness()
+        view._scene = QGraphicsScene()
+        view._scene_builder = FakeSceneBuilder()
+        view._current_takeoffs = {}
+        view._current_conditions = {}
+        view._current_color_map = {}
+        view._takeoff_items = []
+        view._selection_items = []
+        view._drag_multi_orig_positions = {}
+        view._drag_last_valid_new_pos = []
+        view._pt_to_scene = lambda x, y: QtCore.QPointF(x, y)
+        view._current_page_transform = lambda: None
+        ann = BidAnnotation(
+            uid="a1",
+            annotation_type=annotation_type,
+            position=[0.0, 0.0, 60.0, 0.0, 60.0, 40.0, 0.0, 40.0],
+            color="#ff0000",
+        )
+        renderer = AnnotationItemRenderer(view._scene_builder.get_coordinate_system())
+        results, uid_to_items = renderer.create_all_annotation_items([("a1", ann)])
+        items = uid_to_items["a1"]
+        for item, _link in results:
+            view._scene.addItem(item)
+            view._takeoff_items.append(item)
+        view._current_annotations = {"a1": ann}
+        view._uid_to_items = {"a1": items}
+        view._handle_infos = [SimpleNamespace(item=FakeItem()) for _ in range(8)]
+        view._drag_plan_item_uid = "a1"
+        view._drag_handle_corner_count = 4
+        view._drag_orig_position = list(ann.position)
+        view._drag_last_valid_new_pos = list(ann.position)
+        view._drag_item_orig_positions = {id(item): item.pos() for item in items}
+        view._drag_item_orig_paths = {
+            id(item): QPainterPath(item.path())
+            for item in items
+            if isinstance(item, QGraphicsPathItem)
+        }
+        view._drag_item_orig_text_states = {}
+        view._drag_uid_orig_items = {"a1": list(items)}
+        return view, ann, items[0]
+
     def _dimension_label(self, view):
         for item in view._uid_to_items["d1"]:
             if isinstance(item, QGraphicsTextItem):
@@ -1045,6 +1185,17 @@ class CtrlDragTests(unittest.TestCase):
         )
         view.update_drag_handle_positions([0.0, 0.0, 20.0, 20.0], "t1")
         self.assertAlmostEqual(view._scene_builder.pattern_angles[-1], math.pi / 4.0)
+
+    def test_area_invalid_resize_keeps_previous_valid_geometry(self):
+        view, main_item, _old_pattern = self._make_pattern_resize_view(
+            Condition.TYPE_AREA
+        )
+        original_bounds = main_item.path().boundingRect()
+        original_valid = list(view._drag_last_valid_new_pos)
+        invalid_pos = [0.0, 0.0, 10.0, 10.0, 10.0, 0.0, 0.0, 10.0]
+        view.update_drag_handle_positions(invalid_pos, "t1")
+        self.assertEqual(view._drag_last_valid_new_pos, original_valid)
+        self.assertEqual(main_item.path().boundingRect(), original_bounds)
 
     def test_horizontal_bid_dimension_resize_updates_label_live(self):
         view, _ann = self._make_dimension_resize_view()
@@ -1133,6 +1284,98 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(view._uid_to_items["l1"], [line_item])
         self.assertEqual(line_item.path().elementCount(), 2)
 
+    def test_cloud_resize_preview_from_corner_keeps_cloud_silhouette(self):
+        view, ann, item = self._make_area_annotation_resize_view("cloud")
+        original_position = list(ann.position)
+        self.assertTrue(_path_has_curve(item.path()))
+        view._drag_handle_index = 2
+        view.update_drag_handle_positions(
+            [0.0, 0.0, 80.0, 0.0, 80.0, 50.0, 0.0, 40.0], "a1"
+        )
+        self.assertTrue(_path_has_curve(item.path()))
+        self.assertEqual(ann.position, original_position)
+
+    def test_cloud_resize_preview_from_midpoint_keeps_cloud_silhouette(self):
+        view, ann, item = self._make_area_annotation_resize_view("cloud")
+        original_position = list(ann.position)
+        self.assertTrue(_path_has_curve(item.path()))
+        view._drag_handle_index = 5
+        view.update_drag_handle_positions(
+            [0.0, 0.0, 60.0, 0.0, 70.0, 50.0, -10.0, 50.0], "a1"
+        )
+        self.assertTrue(_path_has_curve(item.path()))
+        self.assertEqual(ann.position, original_position)
+
+    def test_polygon_point_edit_cannot_create_self_intersection(self):
+        view, _ann, item = self._make_area_annotation_resize_view("polygon")
+        original_bounds = item.path().boundingRect()
+        original_valid = list(view._drag_last_valid_new_pos)
+        view._drag_handle_index = 1
+        view.update_drag_handle_positions(
+            [0.0, 0.0, 60.0, 40.0, 60.0, 0.0, 0.0, 40.0], "a1"
+        )
+        self.assertEqual(view._drag_last_valid_new_pos, original_valid)
+        self.assertEqual(item.path().boundingRect(), original_bounds)
+
+    def test_cloud_point_edit_cannot_create_self_intersection(self):
+        view, _ann, item = self._make_area_annotation_resize_view("cloud")
+        original_bounds = item.path().boundingRect()
+        original_valid = list(view._drag_last_valid_new_pos)
+        view._drag_handle_index = 1
+        view.update_drag_handle_positions(
+            [0.0, 0.0, 60.0, 40.0, 60.0, 0.0, 0.0, 40.0], "a1"
+        )
+        self.assertEqual(view._drag_last_valid_new_pos, original_valid)
+        self.assertEqual(item.path().boundingRect(), original_bounds)
+        self.assertTrue(_path_has_curve(item.path()))
+
+    def test_polygon_corner_resize_cannot_create_invalid_geometry(self):
+        view, _ann, item = self._make_area_annotation_resize_view("polygon")
+        original_bounds = item.path().boundingRect()
+        original_valid = list(view._drag_last_valid_new_pos)
+        view._drag_handle_index = 2
+        view.update_drag_handle_positions(
+            [0.0, 0.0, 60.0, 40.0, 60.0, 0.0, 0.0, 40.0], "a1"
+        )
+        self.assertEqual(view._drag_last_valid_new_pos, original_valid)
+        self.assertEqual(item.path().boundingRect(), original_bounds)
+
+    def test_cloud_midpoint_resize_cannot_create_invalid_geometry(self):
+        view, _ann, item = self._make_area_annotation_resize_view("cloud")
+        original_bounds = item.path().boundingRect()
+        original_valid = list(view._drag_last_valid_new_pos)
+        view._drag_handle_index = 5
+        view.update_drag_handle_positions(
+            [0.0, 0.0, 60.0, 40.0, 60.0, 0.0, 0.0, 40.0], "a1"
+        )
+        self.assertEqual(view._drag_last_valid_new_pos, original_valid)
+        self.assertEqual(item.path().boundingRect(), original_bounds)
+        self.assertTrue(_path_has_curve(item.path()))
+
+    def test_valid_polygon_and_cloud_edits_update_last_valid_geometry(self):
+        valid_pos = [0.0, 0.0, 80.0, 0.0, 80.0, 50.0, 0.0, 40.0]
+        for annotation_type in ("polygon", "cloud"):
+            with self.subTest(annotation_type=annotation_type):
+                view, _ann, item = self._make_area_annotation_resize_view(
+                    annotation_type
+                )
+                original_bounds = item.path().boundingRect()
+                view._drag_handle_index = 2
+                view.update_drag_handle_positions(valid_pos, "a1")
+                self.assertEqual(view._drag_last_valid_new_pos, valid_pos)
+                self.assertNotEqual(item.path().boundingRect(), original_bounds)
+
+    def test_polygon_resize_preview_stays_straight_polygon(self):
+        view, ann, item = self._make_area_annotation_resize_view("polygon")
+        original_position = list(ann.position)
+        self.assertFalse(_path_has_curve(item.path()))
+        view._drag_handle_index = 2
+        view.update_drag_handle_positions(
+            [0.0, 0.0, 80.0, 0.0, 80.0, 50.0, 0.0, 40.0], "a1"
+        )
+        self.assertFalse(_path_has_curve(item.path()))
+        self.assertEqual(ann.position, original_position)
+
     def test_cancel_resize_restores_original_pattern_items(self):
         view, main_item, old_pattern = self._make_pattern_resize_view(
             Condition.TYPE_AREA
@@ -1168,11 +1411,7 @@ class AnnotationPlacementTests(unittest.TestCase):
             for item in view._place_preview_items
             if isinstance(item, QGraphicsTextItem)
         ]
-        paths = [
-            item
-            for item in view._place_preview_items
-            if isinstance(item, QGraphicsPathItem)
-        ]
+        paths = _preview_paths(view)
         self.assertEqual(len(paths), 1)
         self.assertEqual(paths[0].path().elementCount(), 6)
         self.assertEqual(len(labels), 1)
@@ -1192,7 +1431,7 @@ class AnnotationPlacementTests(unittest.TestCase):
         view.update_annotation_place_preview(QtCore.QPointF(12.0, 0.0))
         self.assertTrue(view._place_preview_items)
         self.assertTrue(
-            view._commit_dimension_annotation_placement([0.0, 0.0, 12.0, 0.0])
+            view._commit_annotation_placement("dimension", [0.0, 0.0, 12.0, 0.0])
         )
         self.assertEqual(
             view.annotation_created.emitted,
@@ -1205,6 +1444,174 @@ class AnnotationPlacementTests(unittest.TestCase):
         view._exit_annotation_place_mode()
         self.assertEqual(view._annotation_place_type, None)
         self.assertEqual(view._place_preview_items, [])
+
+    def test_polygon_and_cloud_creation_rejects_self_intersection(self):
+        invalid_position = [0.0, 0.0, 12.0, 8.0, 12.0, 0.0, 0.0, 8.0]
+        for annotation_type in ("polygon", "cloud"):
+            with self.subTest(annotation_type=annotation_type):
+                view = AnnotationPlacementHarness()
+                self.assertFalse(
+                    view._commit_annotation_placement(
+                        annotation_type, list(invalid_position)
+                    )
+                )
+                self.assertEqual(view.annotation_created.emitted, [])
+
+    def test_polygon_and_cloud_simple_click_starts_click_point_placement(self):
+        for annotation_type in ("polygon", "cloud"):
+            with self.subTest(annotation_type=annotation_type):
+                view = AnnotationPlacementHarness()
+                self.assertTrue(view._enter_annotation_place_mode(annotation_type))
+                press = _PlacementMouseEvent(1, 2)
+                release = _PlacementMouseEvent(1, 2)
+                self.assertTrue(view.handle_annotation_place_press(press))
+                self.assertTrue(view.handle_annotation_place_release(release))
+                self.assertEqual(view._annotation_place_points, [(1.0, 2.0)])
+                self.assertFalse(view._annotation_area_rect_dragging)
+                self.assertEqual(view.annotation_created.emitted, [])
+
+    def test_polygon_and_cloud_click_drag_creates_area_like_rectangle(self):
+        set_annotation_style(color="#336699", line_width=7.0)
+        try:
+            for annotation_type in ("polygon", "cloud"):
+                with self.subTest(annotation_type=annotation_type):
+                    view = AnnotationPlacementHarness()
+                    self.assertTrue(view._enter_annotation_place_mode(annotation_type))
+                    press = _PlacementMouseEvent(0, 0)
+                    release = _PlacementMouseEvent(10, 8)
+                    self.assertTrue(view.handle_annotation_place_press(press))
+                    self.assertTrue(view._annotation_area_rect_dragging)
+                    view.update_annotation_place_preview(QtCore.QPointF(10.0, 8.0))
+                    paths = _preview_paths(view)
+                    self.assertTrue(paths)
+                    bounds = paths[0].path().boundingRect()
+                    if annotation_type == "cloud":
+                        self.assertTrue(
+                            bounds.contains(QtCore.QRectF(0.0, 0.0, 10.0, 8.0))
+                        )
+                    else:
+                        self.assertEqual(bounds, QtCore.QRectF(0.0, 0.0, 10.0, 8.0))
+                    self.assertEqual(paths[0].pen().color().name(), "#336699")
+                    self.assertEqual(paths[0].pen().widthF(), 7.0)
+                    self.assertEqual(
+                        _path_has_curve(paths[0].path()),
+                        annotation_type == "cloud",
+                    )
+                    self.assertTrue(view.handle_annotation_place_release(release))
+                    self.assertEqual(
+                        view.annotation_created.emitted,
+                        [
+                            (
+                                annotation_type,
+                                [0.0, 0.0, 10.0, 0.0, 10.0, 8.0, 0.0, 8.0],
+                                "page-1",
+                            )
+                        ],
+                    )
+                    self.assertEqual(view._annotation_place_points, [])
+                    self.assertFalse(view._annotation_area_rect_dragging)
+        finally:
+            set_annotation_style(color="#ff0000", line_width=4.0)
+
+    def test_area_takeoff_click_drag_rectangle_placement_is_unchanged(self):
+        view = AreaPlacementHarness()
+        press = _PlacementMouseEvent(0, 0)
+        release = _PlacementMouseEvent(10, 8)
+        view.handle_place_press(press)
+        self.assertTrue(press.accepted)
+        self.assertEqual(view._place_points, [(0.0, 0.0)])
+        self.assertTrue(view._place_area_rect_dragging)
+        self.assertEqual(view.area_progress_states, [True])
+        self.assertEqual(view.selection_updates, 1)
+        self.assertTrue(view.handle_place_release_area(release))
+        self.assertTrue(release.accepted)
+        self.assertEqual(
+            view.takeoff_created.emitted,
+            [("area", [0.0, 0.0, 10.0, 0.0, 10.0, 8.0, 0.0, 8.0], "page-1")],
+        )
+        self.assertEqual(view.area_progress_states, [True, False])
+        self.assertEqual(view.snap_invalidations, 1)
+
+    def test_drag_annotation_tools_use_press_drag_release_positions(self):
+        for annotation_type in ("line", "arrow", "rect", "oval"):
+            with self.subTest(annotation_type=annotation_type):
+                view = AnnotationPlacementHarness()
+                self.assertTrue(view._enter_annotation_place_mode(annotation_type))
+                press = _PlacementMouseEvent(1, 2)
+                release = _PlacementMouseEvent(13, 14)
+                self.assertTrue(view.handle_annotation_place_press(press))
+                self.assertTrue(press.accepted)
+                self.assertEqual(view._annotation_place_points, [(1.0, 2.0)])
+                self.assertTrue(view._annotation_place_dragging)
+                self.assertTrue(view.handle_annotation_place_release(release))
+                self.assertTrue(release.accepted)
+                self.assertEqual(
+                    view.annotation_created.emitted,
+                    [(annotation_type, [1.0, 2.0, 13.0, 14.0], "page-1")],
+                )
+
+    def test_arrow_preview_preserves_start_to_head_direction(self):
+        view = AnnotationPlacementHarness()
+        self.assertTrue(view._enter_annotation_place_mode("arrow"))
+        view._annotation_place_points = [(1.0, 2.0)]
+        view.update_annotation_place_preview(QtCore.QPointF(13.0, 14.0))
+        paths = _preview_paths(view)
+        self.assertEqual(len(paths), 1)
+        path = paths[0].path()
+        self.assertGreater(path.elementCount(), 2)
+        self.assertEqual((path.elementAt(0).x, path.elementAt(0).y), (1.0, 2.0))
+        self.assertEqual((path.elementAt(1).x, path.elementAt(1).y), (13.0, 14.0))
+
+    def test_box_annotation_previews_use_drag_bounds(self):
+        for annotation_type in ("rect", "oval"):
+            with self.subTest(annotation_type=annotation_type):
+                view = AnnotationPlacementHarness()
+                self.assertTrue(view._enter_annotation_place_mode(annotation_type))
+                view._annotation_place_points = [(1.0, 2.0)]
+                view.update_annotation_place_preview(QtCore.QPointF(13.0, 14.0))
+                paths = _preview_paths(view)
+                self.assertEqual(len(paths), 1)
+                self.assertEqual(
+                    paths[0].path().boundingRect(),
+                    QtCore.QRectF(1, 2, 12, 12),
+                )
+
+    def test_polygon_and_cloud_annotations_use_area_like_multi_point_completion(self):
+        for annotation_type in ("polygon", "cloud"):
+            with self.subTest(annotation_type=annotation_type):
+                view = AnnotationPlacementHarness()
+                self.assertTrue(view._enter_annotation_place_mode(annotation_type))
+                for point in ((0, 0), (12, 0), (6, 8)):
+                    self.assertTrue(
+                        view.handle_annotation_place_press(
+                            _PlacementMouseEvent(point[0], point[1])
+                        )
+                    )
+                self.assertEqual(
+                    view._annotation_place_points,
+                    [(0.0, 0.0), (12.0, 0.0), (6.0, 8.0)],
+                )
+                view.update_annotation_place_preview(QtCore.QPointF(1.0, 1.0))
+                paths = _preview_paths(view)
+                self.assertTrue(paths)
+                if annotation_type == "cloud":
+                    self.assertTrue(_path_has_curve(paths[0].path()))
+                else:
+                    self.assertFalse(_path_has_curve(paths[0].path()))
+                self.assertTrue(
+                    view.handle_annotation_place_press(_PlacementMouseEvent(1, 1))
+                )
+                self.assertEqual(
+                    view.annotation_created.emitted,
+                    [
+                        (
+                            annotation_type,
+                            [0.0, 0.0, 12.0, 0.0, 6.0, 8.0],
+                            "page-1",
+                        )
+                    ],
+                )
+                self.assertEqual(view._annotation_place_points, [])
 
 
 if __name__ == "__main__":

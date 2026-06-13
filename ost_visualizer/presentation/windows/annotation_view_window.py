@@ -1,4 +1,5 @@
 from ..config import ANNOTATION_WINDOW_TITLE
+from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 from .components.window import DetachedPageViewWindow, DetachedPageViewWindowConfig
 
 _ANNOTATION_WINDOW_CONFIG = DetachedPageViewWindowConfig(
@@ -8,6 +9,7 @@ _ANNOTATION_WINDOW_CONFIG = DetachedPageViewWindowConfig(
     default_cursor_mode="select",
     allow_annotation_editing=True,
     dropdown_state_key="annotation",
+    annotation_tool_specs=PLAN_ANNOTATION_TOOL_SPECS,
 )
 
 

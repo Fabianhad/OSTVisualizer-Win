@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import ClassVar, Dict, List, Optional
+from .annotation_style import AnnotationStyle
 
 
 def _coerce_optional_str(value) -> Optional[str]:
@@ -85,6 +86,7 @@ class TakeoffWorkspaceState:
     conditions_header_state_b64: Optional[str] = None
     layers_header_state_b64: Optional[str] = None
     conditions_group_by_type: bool = True
+    annotation_style: AnnotationStyle = field(default_factory=AnnotationStyle)
 
     def to_dict(self) -> dict:
         return {
@@ -102,6 +104,7 @@ class TakeoffWorkspaceState:
             "conditions_header_state_b64": self.conditions_header_state_b64,
             "layers_header_state_b64": self.layers_header_state_b64,
             "conditions_group_by_type": self.conditions_group_by_type,
+            "annotation_style": self.annotation_style.to_dict(),
         }
 
     @classmethod
@@ -133,6 +136,7 @@ class TakeoffWorkspaceState:
             conditions_group_by_type=_coerce_bool(
                 data.get("conditions_group_by_type"), True
             ),
+            annotation_style=AnnotationStyle.from_dict(data.get("annotation_style")),
         )
 
 
