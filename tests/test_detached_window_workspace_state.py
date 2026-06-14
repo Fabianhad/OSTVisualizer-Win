@@ -626,6 +626,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 "oval_annotation_tool",
                 "polygon_annotation_tool",
                 "cloud_annotation_tool",
+                "ink_annotation_tool",
             ],
         )
         self.assertEqual(
@@ -643,6 +644,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 "oval",
                 "polygon",
                 "cloud",
+                "ink",
             ],
         )
         self.assertNotIn(
@@ -945,6 +947,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             "oval",
             "polygon",
             "cloud",
+            "ink",
         ):
             with self.subTest(annotation_type=annotation_type):
                 write_service = FakeAnnotationWriteService()
@@ -1091,6 +1094,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             "oval",
             "polygon",
             "cloud",
+            "ink",
         ):
             with self.subTest(annotation_type=annotation_type):
                 self.assertTrue(window._activate_annotation_tool(annotation_type))
@@ -1106,6 +1110,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 "oval",
                 "polygon",
                 "cloud",
+                "ink",
             ],
         )
 

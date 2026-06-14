@@ -41,7 +41,10 @@ from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
 logger = logging.getLogger(__name__)
 _RIGHT_ANGLE_ALIGNMENT_TOLERANCE = 1e-6
 _AREA_ANNOTATION_TYPES = frozenset({"polygon", "cloud"})
-_DRAG_ANNOTATION_TYPES = PLACEABLE_ANNOTATION_TYPES - _AREA_ANNOTATION_TYPES
+_INK_ANNOTATION_TYPES = frozenset({"ink"})
+_DRAG_ANNOTATION_TYPES = (
+    PLACEABLE_ANNOTATION_TYPES - _AREA_ANNOTATION_TYPES - _INK_ANNOTATION_TYPES
+)
 _TEXT_SELECTION_OUTLINE_COLOR = QColor(128, 128, 128)
 
 
@@ -820,6 +823,26 @@ class PlacementModeMixin:
         for hx, hy in scene_points:
             self._add_place_handle(hx, hy)
 
+    def _add_ink_annotation_preview(
+        self,
+        points: list[tuple[float, float]],
+        color: QColor,
+        width: float,
+        page_transform,
+    ) -> None:
+        if len(points) < 2:
+            return
+        cs = self._scene_builder.get_coordinate_system()
+        flat_ost = [v for point in points for v in point]
+        flat_scene = cs.transform_vertices_to_2d(flat_ost)
+        if len(flat_scene) < 4:
+            return
+        path = QPainterPath()
+        path.moveTo(flat_scene[0], flat_scene[1])
+        for i in range(2, len(flat_scene) - 1, 2):
+            path.lineTo(flat_scene[i], flat_scene[i + 1])
+        self._add_annotation_path_preview(path, color, width, page_transform)
+
     def _add_annotation_path_preview(
         self, path: QPainterPath, color: QColor, width: float, page_transform
     ) -> None:
@@ -894,6 +917,12 @@ class PlacementModeMixin:
                 self._add_box_annotation_preview(
                     annotation_type, position, color, width, page_transform
                 )
+        elif annotation_type in _INK_ANNOTATION_TYPES:
+            color, width = self._annotation_preview_style()
+            self._append_ink_annotation_point(cursor_scene)
+            self._add_ink_annotation_preview(
+                self._annotation_place_points, color, width, page_transform
+            )
         else:
             color, width = self._annotation_preview_style()
             ost_x, ost_y, _cx, _cy, snap_kind = self._placement_snap_from_scene(
@@ -941,6 +970,15 @@ class PlacementModeMixin:
             self._selected_uids.clear()
             self.update_selection_visuals()
             self._annotation_place_points = [(ost_x, ost_y)]
+            self._annotation_place_dragging = True
+            self.update_annotation_place_preview(scene_pos)
+            event.accept()
+            return True
+        if self._annotation_place_type in _INK_ANNOTATION_TYPES:
+            point = self._ink_annotation_point_from_scene(scene_pos)
+            self._selected_uids.clear()
+            self.update_selection_visuals()
+            self._annotation_place_points = [point]
             self._annotation_place_dragging = True
             self.update_annotation_place_preview(scene_pos)
             event.accept()
@@ -999,6 +1037,20 @@ class PlacementModeMixin:
                 self.update_annotation_place_preview(scene_pos)
             event.accept()
             return True
+        if self._annotation_place_type in _INK_ANNOTATION_TYPES:
+            if not self._annotation_place_dragging:
+                return False
+            scene_pos = self.mapToScene(event.pos())
+            self._append_ink_annotation_point(scene_pos)
+            position = [v for point in self._annotation_place_points for v in point]
+            if self._commit_annotation_placement(self._annotation_place_type, position):
+                event.accept()
+                return True
+            self._annotation_place_dragging = False
+            self._annotation_place_points = []
+            self.clear_place_preview()
+            event.accept()
+            return True
         if not self._annotation_place_dragging:
             return False
         scene_pos = self.mapToScene(event.pos())
@@ -1022,6 +1074,21 @@ class PlacementModeMixin:
         dy = current_vp.y() - first_vp.y()
         return math.hypot(dx, dy) <= 12.0
 
+    def _ink_annotation_point_from_scene(
+        self, scene_pos: QtCore.QPointF
+    ) -> tuple[float, float]:
+        point = self._scene_pos_to_ost(scene_pos)
+        return float(point.x()), float(point.y())
+
+    def _append_ink_annotation_point(self, scene_pos: QtCore.QPointF) -> None:
+        point = self._ink_annotation_point_from_scene(scene_pos)
+        if not self._annotation_place_points:
+            self._annotation_place_points.append(point)
+            return
+        last_x, last_y = self._annotation_place_points[-1]
+        if math.hypot(point[0] - last_x, point[1] - last_y) > 1e-9:
+            self._annotation_place_points.append(point)
+
     def _commit_annotation_placement(
         self, annotation_type: str, position: list
     ) -> bool:
@@ -1037,6 +1104,16 @@ class PlacementModeMixin:
                 return False
             if annotation_type == "text":
                 position = self._text_position_from_drag_corners(position)
+        elif annotation_type in _INK_ANNOTATION_TYPES:
+            points = self._points_from_position(position)
+            if len(points) < 2:
+                return False
+            distance = sum(
+                math.hypot(bx - ax, by - ay)
+                for (ax, ay), (bx, by) in zip(points, points[1:])
+            )
+            if distance < min_len:
+                return False
         elif annotation_type in _AREA_ANNOTATION_TYPES:
             points = self._points_from_position(position)
             if len(points) < 3 or not polygon_is_valid(points):

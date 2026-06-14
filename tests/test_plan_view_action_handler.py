@@ -392,6 +392,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             "oval",
             "polygon",
             "cloud",
+            "ink",
         ):
             set_annotation_style_for_tool(
                 annotation_type,
@@ -406,7 +407,15 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             )
 
     def test_markup_annotation_default_line_width_is_four_pixels(self):
-        for annotation_type in ("arrow", "line", "rect", "oval", "polygon", "cloud"):
+        for annotation_type in (
+            "arrow",
+            "line",
+            "rect",
+            "oval",
+            "polygon",
+            "cloud",
+            "ink",
+        ):
             with self.subTest(annotation_type=annotation_type):
                 spec = build_placed_annotation_spec(
                     annotation_type, "p1", [1.0, 2.0, 13.0, 14.0]
@@ -427,6 +436,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             "oval",
             "polygon",
             "cloud",
+            "ink",
             "highlight",
         ):
             with self.subTest(annotation_type=annotation_type):
@@ -464,6 +474,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             "oval": ("#445500", 5.0),
             "polygon": ("#006666", 6.0),
             "cloud": ("#770077", 7.0),
+            "ink": ("#117777", 8.0),
             "highlight": ("#227788", 11.0),
             "text": ("#888800", 8.0),
             "dimension": ("#009999", 10.0),
@@ -642,6 +653,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             "oval",
             "polygon",
             "cloud",
+            "ink",
         ):
             with self.subTest(annotation_type=annotation_type):
                 plan_view = FakePlanView()
@@ -761,6 +773,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             "oval",
             "polygon",
             "cloud",
+            "ink",
         ):
             with self.subTest(annotation_type=annotation_type):
                 ann_write = FakeAnnotationWriteService()

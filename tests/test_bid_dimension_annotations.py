@@ -275,6 +275,15 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                     Width=2,
                 )
             ],
+            "BidAnnoInk": [
+                SimpleNamespace(
+                    UID=18,
+                    BidPageUID=3,
+                    Position=encode_position([0.0, 0.0, 5.0, 5.0, 10.0, 0.0]),
+                    Color=255,
+                    Width=2,
+                )
+            ],
             "BidHighlights": [
                 SimpleNamespace(
                     UID=17,
@@ -295,7 +304,16 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         by_type = {ann.annotation_type: ann for ann in annotations}
         self.assertEqual(
             set(by_type),
-            {"line", "arrow", "rect", "oval", "polygon", "cloud", "highlight"},
+            {
+                "line",
+                "arrow",
+                "rect",
+                "oval",
+                "polygon",
+                "cloud",
+                "ink",
+                "highlight",
+            },
         )
         self.assertEqual(by_type["arrow"].position, [1.0, 2.0, 13.0, 14.0])
         self.assertEqual(by_type["highlight"].color, "#ffff00")
@@ -304,6 +322,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             by_type["polygon"].position,
             [0.0, 0.0, 12.0, 0.0, 6.0, 8.0],
         )
+        self.assertEqual(by_type["ink"].position, [0.0, 0.0, 5.0, 5.0, 10.0, 0.0])
         self.assertFalse(by_type["line"].properties)
 
     def test_dimension_distance_uses_existing_feet_inches_rounding(self):
@@ -642,6 +661,18 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE BidAnnoInk (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                Color INTEGER,
+                Position BLOB,
+                Width INTEGER
+            )
+            """
+        )
         for table in (
             "BidAnnotationRects",
             "BidAnnotationOvals",
@@ -774,6 +805,13 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             ),
             InsertAnnotationSpec(
                 page_uid="3",
+                annotation_type="ink",
+                position=[0.0, 0.0, 5.0, 5.0, 10.0, 0.0],
+                color="#ff0000",
+                width=2.0,
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
                 annotation_type="highlight",
                 position=[3.0, 4.0, 15.0, 4.0, 15.0, 16.0, 3.0, 16.0],
                 color="#ffff00",
@@ -798,10 +836,11 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             ),
         ]
         new_uids = _DimensionWriteOps(conn).insert_annotations("bid.mdb", "1", specs)
-        self.assertEqual(new_uids, ["1", "1", "1", "1", "1", "1", "1", "1", "1"])
+        self.assertEqual(new_uids, ["1"] * 10)
         expected_tables = {
             "BidALines": "line",
             "BidArrows": "arrow",
+            "BidAnnoInk": "ink",
             "BidAnnotationRects": "rect",
             "BidAnnotationOvals": "oval",
             "BidAnnotationPolygons": "polygon",
@@ -866,6 +905,18 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 BidTakeoffToUID INTEGER,
                 Position BLOB,
                 Color INTEGER,
+                Width INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE BidAnnoInk (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                Color INTEGER,
+                Position BLOB,
                 Width INTEGER
             )
             """
@@ -946,6 +997,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             "oval": [2.0, 3.0, 14.0, 15.0],
             "polygon": [0.0, 0.0, 12.0, 0.0, 6.0, 8.0],
             "cloud": [1.0, 1.0, 13.0, 1.0, 7.0, 9.0],
+            "ink": [0.0, 0.0, 5.0, 5.0, 10.0, 0.0],
             "highlight": [3.0, 4.0, 15.0, 4.0, 15.0, 16.0, 3.0, 16.0],
             "text": [7.0, 8.0, 12.0, 12.0],
         }
@@ -1011,6 +1063,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             "oval": "BidAnnotationOvals",
             "polygon": "BidAnnotationPolygons",
             "cloud": "BidAnnotationClouds",
+            "ink": "BidAnnoInk",
         }
         for annotation_type, table in expected_shape_tables.items():
             with self.subTest(annotation_type=annotation_type):

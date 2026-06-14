@@ -135,6 +135,9 @@ class AnnotationPlacementHarness(PlacementModeMixin):
     def _ost_to_scene_pos(self, ost_x, ost_y):
         return QtCore.QPointF(float(ost_x), float(ost_y))
 
+    def _scene_pos_to_ost(self, scene_pos):
+        return QtCore.QPointF(float(scene_pos.x()), float(scene_pos.y()))
+
     def _pt_to_scene(self, x, y):
         return QtCore.QPointF(float(x), float(y))
 
@@ -1572,6 +1575,45 @@ class AnnotationPlacementTests(unittest.TestCase):
                         view.annotation_created.emitted,
                         [(annotation_type, expected_position, "page-1")],
                     )
+
+    def test_ink_annotation_uses_freehand_drag_preview_and_commit(self):
+        set_annotation_style_for_tool("ink", color="#224466", line_width=6.0)
+        try:
+            view = AnnotationPlacementHarness()
+            self.assertTrue(view._enter_annotation_place_mode("ink"))
+            press = _PlacementMouseEvent(1, 2)
+            release = _PlacementMouseEvent(9, 10)
+            self.assertTrue(view.handle_annotation_place_press(press))
+            self.assertTrue(view._annotation_place_dragging)
+            self.assertEqual(view._annotation_place_points, [(1.0, 2.0)])
+            view.update_annotation_place_preview(QtCore.QPointF(5.0, 7.0))
+            paths = _preview_paths(view)
+            self.assertEqual(len(paths), 1)
+            path = paths[0].path()
+            self.assertEqual(path.elementCount(), 2)
+            self.assertEqual((path.elementAt(0).x, path.elementAt(0).y), (1.0, 2.0))
+            self.assertEqual((path.elementAt(1).x, path.elementAt(1).y), (5.0, 7.0))
+            self.assertEqual(paths[0].pen().color().name(), "#224466")
+            self.assertEqual(paths[0].pen().widthF(), 6.0)
+            self.assertTrue(view.handle_annotation_place_release(release))
+            self.assertEqual(
+                view.annotation_created.emitted,
+                [("ink", [1.0, 2.0, 5.0, 7.0, 9.0, 10.0], "page-1")],
+            )
+            self.assertEqual(view._annotation_place_points, [])
+        finally:
+            set_annotation_style_for_tool("ink", color="#ff0000", line_width=4.0)
+
+    def test_tiny_ink_annotation_drag_does_not_persist(self):
+        view = AnnotationPlacementHarness()
+        self.assertTrue(view._enter_annotation_place_mode("ink"))
+        self.assertTrue(view.handle_annotation_place_press(_PlacementMouseEvent(1, 2)))
+        self.assertTrue(
+            view.handle_annotation_place_release(_PlacementMouseEvent(1, 2))
+        )
+        self.assertEqual(view.annotation_created.emitted, [])
+        self.assertFalse(view._annotation_place_dragging)
+        self.assertEqual(view._annotation_place_points, [])
 
     def test_arrow_preview_preserves_start_to_head_direction(self):
         view = AnnotationPlacementHarness()

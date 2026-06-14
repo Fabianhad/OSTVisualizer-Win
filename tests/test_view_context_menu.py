@@ -5,6 +5,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.presentation.managers.icon_manager import IconManager, IconId
+from ost_visualizer.presentation.utils.annotation_defaults import (
+    get_annotation_style_for_tool,
+    set_annotation_style_for_tool,
+)
 from ost_visualizer.presentation.utils.view_context_menu import (
     add_common_context_submenus,
     add_reassign_condition_submenu,
@@ -18,6 +23,20 @@ def _app():
     if app is None:
         app = QtWidgets.QApplication([])
     return app
+
+
+def _build_tools_context_menu():
+    menu = QtWidgets.QMenu()
+    add_common_context_submenus(
+        menu,
+        current_mode=0,
+        trigger_fn=lambda _key: None,
+        action_state_fn=lambda _key: {
+            "enabled": True,
+        },
+        has_overlay_image=False,
+    )
+    return menu, menu.actions()[0].menu()
 
 
 class ViewContextMenuTests(unittest.TestCase):
@@ -63,18 +82,8 @@ class ViewContextMenuTests(unittest.TestCase):
             menu.deleteLater()
 
     def test_plan_tools_context_submenu_uses_shared_tool_registry(self):
-        menu = QtWidgets.QMenu()
+        menu, tools_menu = _build_tools_context_menu()
         try:
-            add_common_context_submenus(
-                menu,
-                current_mode=0,
-                trigger_fn=lambda _key: None,
-                action_state_fn=lambda _key: {
-                    "enabled": True,
-                },
-                has_overlay_image=False,
-            )
-            tools_menu = menu.actions()[0].menu()
             self.assertEqual(tools_menu.title(), "Tools")
             self.assertEqual(
                 [action.text() for action in tools_menu.actions()],
@@ -92,12 +101,97 @@ class ViewContextMenuTests(unittest.TestCase):
                     "Oval",
                     "Polygon",
                     "Cloud",
+                    "Ink",
                     "",
                     "Backout",
                 ],
             )
         finally:
             menu.deleteLater()
+
+    def test_context_menu_annotation_tool_icons_use_per_tool_colors(self):
+        original_rect_style = get_annotation_style_for_tool("rect")
+        original_cloud_style = get_annotation_style_for_tool("cloud")
+        original_ink_style = get_annotation_style_for_tool("ink")
+        try:
+            set_annotation_style_for_tool("rect", color="#00aa00")
+            set_annotation_style_for_tool("cloud", color="#336699")
+            set_annotation_style_for_tool("ink", color="#8844cc")
+            menu, tools_menu = _build_tools_context_menu()
+            try:
+                actions = {action.text(): action for action in tools_menu.actions()}
+                rect_key = actions["Rectangle"].icon().cacheKey()
+                cloud_key = actions["Cloud"].icon().cacheKey()
+                ink_key = actions["Ink"].icon().cacheKey()
+                select_key = actions["Select"].icon().cacheKey()
+                self.assertEqual(
+                    rect_key,
+                    IconManager.colored_icon(
+                        IconId.RECTANGLE_ANNOTATION_TOOL, "#00aa00"
+                    ).cacheKey(),
+                )
+                self.assertEqual(
+                    cloud_key,
+                    IconManager.colored_icon(
+                        IconId.CLOUD_ANNOTATION_TOOL, "#336699"
+                    ).cacheKey(),
+                )
+                self.assertEqual(
+                    ink_key,
+                    IconManager.colored_icon(
+                        IconId.INK_ANNOTATION_TOOL, "#8844cc"
+                    ).cacheKey(),
+                )
+            finally:
+                menu.deleteLater()
+
+            set_annotation_style_for_tool("rect", color="#ff0000")
+            menu, tools_menu = _build_tools_context_menu()
+            try:
+                actions = {action.text(): action for action in tools_menu.actions()}
+                self.assertNotEqual(
+                    actions["Rectangle"].icon().cacheKey(),
+                    rect_key,
+                )
+                self.assertEqual(actions["Cloud"].icon().cacheKey(), cloud_key)
+                self.assertEqual(actions["Ink"].icon().cacheKey(), ink_key)
+                self.assertEqual(actions["Select"].icon().cacheKey(), select_key)
+            finally:
+                menu.deleteLater()
+        finally:
+            set_annotation_style_for_tool(
+                "rect",
+                color=original_rect_style.color,
+                line_width=original_rect_style.line_width,
+                font_name=original_rect_style.font_name,
+                font_size=original_rect_style.font_size,
+                font_bold=original_rect_style.font_bold,
+                font_italic=original_rect_style.font_italic,
+                font_underline=original_rect_style.font_underline,
+                text_align=original_rect_style.text_align,
+            )
+            set_annotation_style_for_tool(
+                "cloud",
+                color=original_cloud_style.color,
+                line_width=original_cloud_style.line_width,
+                font_name=original_cloud_style.font_name,
+                font_size=original_cloud_style.font_size,
+                font_bold=original_cloud_style.font_bold,
+                font_italic=original_cloud_style.font_italic,
+                font_underline=original_cloud_style.font_underline,
+                text_align=original_cloud_style.text_align,
+            )
+            set_annotation_style_for_tool(
+                "ink",
+                color=original_ink_style.color,
+                line_width=original_ink_style.line_width,
+                font_name=original_ink_style.font_name,
+                font_size=original_ink_style.font_size,
+                font_bold=original_ink_style.font_bold,
+                font_italic=original_ink_style.font_italic,
+                font_underline=original_ink_style.font_underline,
+                text_align=original_ink_style.text_align,
+            )
 
     def test_selected_line_annotation_context_shows_color_and_width(self):
         annotations = {
@@ -158,7 +252,7 @@ class ViewContextMenuTests(unittest.TestCase):
             menu.deleteLater()
 
     def test_selected_shape_annotation_context_capabilities(self):
-        for annotation_type in ("arrow", "rect", "oval", "polygon", "cloud"):
+        for annotation_type in ("arrow", "rect", "oval", "polygon", "cloud", "ink"):
             with self.subTest(annotation_type=annotation_type):
                 annotations = {
                     "ann-1": BidAnnotation(

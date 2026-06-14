@@ -34,6 +34,7 @@ class IconId(Enum):
     OVAL_ANNOTATION_TOOL = "oval_annotation_tool"
     POLYGON_ANNOTATION_TOOL = "polygon_annotation_tool"
     CLOUD_ANNOTATION_TOOL = "cloud_annotation_tool"
+    INK_ANNOTATION_TOOL = "ink_annotation_tool"
     ZOOM_TOOL = "zoom_tool"
     RESET_VIEW = "reset_view"
     ZOOM_IN = "zoom_in"
@@ -126,6 +127,9 @@ ICON_SPECS: Dict[IconId, IconSpec] = {
     IconId.CLOUD_ANNOTATION_TOOL: IconSpec(
         "cloud_annotation_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
     ),
+    IconId.INK_ANNOTATION_TOOL: IconSpec(
+        "gesture_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
     IconId.ZOOM_TOOL: IconSpec("search_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
     IconId.RESET_VIEW: IconSpec(
         "find_in_page_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
@@ -204,6 +208,7 @@ ACTION_ICONS: Dict[str, IconId] = {
     "oval_annotation_tool": IconId.OVAL_ANNOTATION_TOOL,
     "polygon_annotation_tool": IconId.POLYGON_ANNOTATION_TOOL,
     "cloud_annotation_tool": IconId.CLOUD_ANNOTATION_TOOL,
+    "ink_annotation_tool": IconId.INK_ANNOTATION_TOOL,
     "zoom_tool": IconId.ZOOM_TOOL,
     "reset_view": IconId.RESET_VIEW,
     "zoom_in": IconId.ZOOM_IN,

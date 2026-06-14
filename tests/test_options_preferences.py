@@ -1020,6 +1020,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             "oval_annotation_tool": "Oval",
             "polygon_annotation_tool": "Polygon",
             "cloud_annotation_tool": "Cloud",
+            "ink_annotation_tool": "Ink",
         }
         shared_actions = {
             key: QtGui.QAction(labels.get(key, key), None)
@@ -1058,6 +1059,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 "oval_annotation_tool",
                 "polygon_annotation_tool",
                 "cloud_annotation_tool",
+                "ink_annotation_tool",
                 "backout_mode",
             )
         }
@@ -1070,7 +1072,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 if not action.isSeparator()
             ]
             self.assertEqual(
-                action_texts[:13],
+                action_texts[:14],
                 [
                     "Select",
                     "Place",
@@ -1085,6 +1087,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                     "Oval",
                     "Polygon",
                     "Cloud",
+                    "Ink",
                 ],
             )
             self.assertIs(tools_menu.actions()[4], shared_actions["dimension_tool"])
@@ -1107,6 +1110,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(
             ICON_SPECS[IconId.HIGHLIGHT_ANNOTATION_TOOL].svg_name,
             "ink_marker_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
+        )
+        self.assertEqual(
+            ICON_SPECS[IconId.INK_ANNOTATION_TOOL].svg_name,
+            "gesture_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
         )
 
     def test_text_format_icons_are_registered(self):

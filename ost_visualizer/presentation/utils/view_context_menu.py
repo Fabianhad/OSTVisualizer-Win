@@ -9,6 +9,7 @@ from ..config import (
     ACTION_ZOOM_OUT_LABEL,
 )
 from ..managers.context_menu_manager import ContextMenuManager
+from .annotation_style_controls import apply_annotation_tool_icon_color
 from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_CONTEXT_ACTIONS
 from .condition_icon import make_condition_color_icon
 from .overlay_context_menu import add_overlay_submenu_with_select
@@ -70,6 +71,12 @@ class SelectedAnnotationStyleContextState:
 class AnnotationStyleContextActions:
     color_action: QtGui.QAction | None
     width_actions: dict[QtGui.QAction, float]
+
+
+@dataclass(frozen=True)
+class ContextCommandSubmenu:
+    submenu: QtWidgets.QMenu
+    actions_by_key: dict[str, QtGui.QAction]
 
 
 _ANNOTATION_CONTEXT_GENERIC_STYLE_EXCLUDED_TYPES = frozenset({"text"})
@@ -256,16 +263,19 @@ def add_context_command_submenu(
     entries: tuple,
     trigger_fn,
     action_state_fn,
-) -> QtWidgets.QMenu:
+) -> ContextCommandSubmenu:
     submenu = QtWidgets.QMenu(title, menu)
     menu.addMenu(submenu)
+    actions_by_key: dict[str, QtGui.QAction] = {}
     for entry in entries:
         if entry is None:
             submenu.addSeparator()
             continue
         label, action_key = entry
-        add_context_command(submenu, label, action_key, trigger_fn, action_state_fn)
-    return submenu
+        actions_by_key[action_key] = add_context_command(
+            submenu, label, action_key, trigger_fn, action_state_fn
+        )
+    return ContextCommandSubmenu(submenu, actions_by_key)
 
 
 def _condition_menu_label(condition: Condition) -> str:
@@ -313,9 +323,10 @@ def add_common_context_submenus(
     action_state_fn,
     has_overlay_image: bool | None = None,
 ) -> tuple[QtGui.QAction, QtGui.QAction]:
-    add_context_command_submenu(
+    tools_submenu = add_context_command_submenu(
         menu, "Tools", CONTEXT_TOOLS_ACTIONS, trigger_fn, action_state_fn
     )
+    apply_annotation_tool_icon_color(tools_submenu.actions_by_key)
     add_context_command_submenu(
         menu, "Zoom", CONTEXT_ZOOM_ACTIONS, trigger_fn, action_state_fn
     )
