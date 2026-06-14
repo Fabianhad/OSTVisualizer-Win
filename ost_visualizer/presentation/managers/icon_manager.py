@@ -26,6 +26,8 @@ class IconId(Enum):
     PLACE_TOOL = "place_tool"
     PAN_TOOL = "pan_tool"
     DIMENSION_TOOL = "dimension_tool"
+    HOTLINK_TOOL = "hotlink_tool"
+    NAMED_VIEW_TOOL = "named_view_tool"
     TEXT_ANNOTATION_TOOL = "text_annotation_tool"
     HIGHLIGHT_ANNOTATION_TOOL = "highlight_annotation_tool"
     ARROW_ANNOTATION_TOOL = "arrow_annotation_tool"
@@ -102,6 +104,10 @@ ICON_SPECS: Dict[IconId, IconSpec] = {
     IconId.PAN_TOOL: IconSpec("pan_tool_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
     IconId.DIMENSION_TOOL: IconSpec(
         "square_foot_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.HOTLINK_TOOL: IconSpec("hotlink_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
+    IconId.NAMED_VIEW_TOOL: IconSpec(
+        "named_view_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
     ),
     IconId.TEXT_ANNOTATION_TOOL: IconSpec(
         "serif_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
@@ -200,6 +206,8 @@ ACTION_ICONS: Dict[str, IconId] = {
     "place_tool": IconId.PLACE_TOOL,
     "pan_tool": IconId.PAN_TOOL,
     "dimension_tool": IconId.DIMENSION_TOOL,
+    "hotlink_tool": IconId.HOTLINK_TOOL,
+    "named_view_tool": IconId.NAMED_VIEW_TOOL,
     "text_annotation_tool": IconId.TEXT_ANNOTATION_TOOL,
     "highlight_annotation_tool": IconId.HIGHLIGHT_ANNOTATION_TOOL,
     "arrow_annotation_tool": IconId.ARROW_ANNOTATION_TOOL,

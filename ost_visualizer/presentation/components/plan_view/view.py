@@ -57,7 +57,10 @@ from ...interfaces.i_annotation_item_renderer import IAnnotationItemRenderer
 from ...interfaces.i_takeoff_renderer import ITakeoffRenderer
 from ...scene.scene_builder import SceneBuilder
 from ...utils.color_swatch import rounded_color_swatch
-from ...utils.annotation_defaults import text_annotation_properties
+from ...utils.annotation_defaults import (
+    annotation_default_style,
+    text_annotation_properties,
+)
 from ...utils.messagebox import show_warning
 from ...utils.theme import set_palette_background
 from ...utils.themed_icon import apply_themed_icon, current_text_hex, recolor_svg
@@ -190,6 +193,8 @@ class TakeoffPlanView(
     takeoff_created = Signal(str, list, str)
     annotation_created = Signal(str, list, str)
     text_annotation_created = Signal(list, str, dict)
+    named_view_created = Signal(list, str, dict)
+    hotlink_placement_requested = Signal(list, str)
     hole_created = Signal(str, list, str, str)
     elements_deleted = Signal(list)
     takeoff_selection_changed = Signal(list)
@@ -277,6 +282,7 @@ class TakeoffPlanView(
         self._right_pan_press_timer = QtCore.QElapsedTimer()
         self._right_pan_dragged: bool = False
         self._suppress_next_context_menu: bool = False
+        self._suppress_next_hotlink_click: bool = False
         self._ctrl_held: bool = False
         self._persistent_cursor_mode: str = "select"
         self._pre_zoom_persistent_mode: Optional[str] = None
@@ -400,6 +406,7 @@ class TakeoffPlanView(
         self._annotation_place_dragging: bool = False
         self._annotation_area_rect_dragging: bool = False
         self._draft_text_annotation_uid: Optional[str] = None
+        self._draft_named_view_uid: Optional[str] = None
         self._place_preview_items: List[QGraphicsItem] = []
         self._takeoff_snap_index = None
         self._pdf_snap_index = None
@@ -441,6 +448,7 @@ class TakeoffPlanView(
         self._editing_text_document = None
         self._editing_text_original: str = ""
         self._finishing_text_annotation_edit: bool = False
+        self._finishing_named_view_rename: bool = False
         self._text_annotation_inline_edit_enabled: bool = True
         self._text_annotation_inline_edit_allowed_fn = None
         self._condition_text_toolbar = self._build_condition_text_toolbar()
@@ -1119,6 +1127,90 @@ class TakeoffPlanView(
         self._draft_text_annotation_uid = None
         self.clear_selection_items()
 
+    def begin_named_view_draft(self, position: list, page_uid: str) -> bool:
+        if not page_uid or len(position) < 8:
+            return False
+        if not self._can_begin_text_annotation_inline_edit():
+            return False
+        self._finish_text_annotation_edit(commit=True)
+        if self._editing_named_view_uid is not None:
+            self._finish_named_view_rename(commit=True)
+        self._remove_named_view_draft()
+        uid = f"__named_view_draft__{uuid.uuid4().hex}"
+        color, _width = annotation_default_style("namedview")
+        ann = BidAnnotation(
+            uid=uid,
+            annotation_type="namedview",
+            page_uid=page_uid,
+            position=list(position[:8]),
+            color=color,
+            width=2.0,
+            properties={"Text": ""},
+            visible=True,
+        )
+        items = self._named_view_draft_items(ann)
+        for item in items:
+            self._scene.addItem(item)
+        self._current_annotations[uid] = ann
+        self._uid_to_items[uid] = items
+        self._draft_named_view_uid = uid
+        self._selected_uids = {uid}
+        self._on_selection_changed()
+        self.update_selection_visuals()
+        self._begin_named_view_rename(uid)
+        return True
+
+    def _named_view_draft_items(self, ann: BidAnnotation) -> List[QGraphicsItem]:
+        cs = self._scene_builder.get_coordinate_system()
+        tx = cs.transform_vertices_to_2d(ann.position[:8])
+        points = [(tx[i], tx[i + 1]) for i in range(0, len(tx) - 1, 2)]
+        min_x = min(x for x, _y in points)
+        max_x = max(x for x, _y in points)
+        min_y = min(y for _x, y in points)
+        max_y = max(y for _x, y in points)
+        green = QColor(ann.color)
+        rect_item = QGraphicsRectItem(
+            QtCore.QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+        )
+        rect_item.setBrush(Qt.GlobalColor.transparent)
+        pen = QPen(green)
+        pen.setWidthF(2.0)
+        pen.setCosmetic(True)
+        rect_item.setPen(pen)
+        rect_item.setZValue(2)
+        rect_item.setData(0, ann.uid)
+        background = QGraphicsRectItem(QtCore.QRectF(min_x, min_y, 1.0, 1.0))
+        background.setBrush(green)
+        background.setPen(Qt.PenStyle.NoPen)
+        background.setZValue(3)
+        background.setData(0, ann.uid)
+        background.setData(2, NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND)
+        label = QGraphicsTextItem("")
+        font = QFont("Arial", 10)
+        font.setBold(True)
+        label.setFont(font)
+        label.setDefaultTextColor(QColor("white"))
+        label.setPos(min_x - 1.0, min_y - 1.0)
+        label.setZValue(4)
+        label.setData(0, ann.uid)
+        label.setData(2, NAMED_VIEW_LABEL_ITEM_KIND)
+        return [rect_item, background, label]
+
+    def _is_named_view_draft_uid(self, uid: str) -> bool:
+        return bool(uid and uid == self._draft_named_view_uid)
+
+    def _remove_named_view_draft(self) -> None:
+        uid = self._draft_named_view_uid
+        if uid is None:
+            return
+        for item in self._uid_to_items.pop(uid, []):
+            if item.scene() is self._scene:
+                self._scene.removeItem(item)
+        self._current_annotations.pop(uid, None)
+        self._selected_uids.discard(uid)
+        self._draft_named_view_uid = None
+        self.clear_selection_items()
+
     def _begin_named_view_rename(self, uid: str) -> bool:
         if not self._can_begin_text_annotation_inline_edit():
             return False
@@ -1291,15 +1383,26 @@ class TakeoffPlanView(
             raise error
 
     def _finish_named_view_rename(self, commit: bool) -> None:
-        if self._editing_named_view_uid is None:
+        if self._finishing_named_view_rename or self._editing_named_view_uid is None:
             return
         uid = self._editing_named_view_uid
         item = self._editing_named_view_item
         ann = self._current_annotations.get(uid)
+        draft_payload: Optional[Tuple[List[float], str, Dict[str, object]]] = None
+        self._finishing_named_view_rename = True
         try:
             if item is not None:
                 if commit and ann is not None:
-                    self._persist_named_view_name(uid, item.toPlainText())
+                    text = item.toPlainText()
+                    if self._is_named_view_draft_uid(uid):
+                        if text.strip():
+                            draft_payload = (
+                                list(ann.position),
+                                ann.page_uid,
+                                {"Text": text.strip(), "Color": ann.color},
+                            )
+                    else:
+                        self._persist_named_view_name(uid, text)
                 elif not commit:
                     item.setPlainText(self._editing_text_original)
                 self._clear_inline_text_item_selection(item)
@@ -1311,6 +1414,12 @@ class TakeoffPlanView(
             self._editing_named_view_item = None
             self._editing_text_original = ""
             self.text_annotation_edit_mode_changed.emit(False)
+            self._finishing_named_view_rename = False
+        if self._is_named_view_draft_uid(uid):
+            self._remove_named_view_draft()
+        if draft_payload is not None:
+            position, page_uid, properties = draft_payload
+            self.named_view_created.emit(position, page_uid, properties)
         self._refresh_named_view_label_background(uid)
 
     def _persist_named_view_name(self, uid: str, text: str) -> None:
@@ -4767,6 +4876,8 @@ class TakeoffPlanView(
         self._editing_text_annotation_uid = None
         self._editing_named_view_uid = None
         self._editing_named_view_item = None
+        self._finishing_named_view_rename = False
+        self._draft_named_view_uid = None
         self._clear_inline_text_document()
         self._editing_text_original = ""
         self._text_annotation_inline_edit_allowed_fn = None

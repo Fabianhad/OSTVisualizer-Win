@@ -36,6 +36,7 @@ from ost_visualizer.presentation.components.plan_view.components.placement_mode 
 from ost_visualizer.presentation.components.plan_view.components.selection_manager import (
     SelectionManagerMixin,
 )
+from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
     AnnotationItemRenderer,
 )
@@ -118,10 +119,13 @@ class AnnotationPlacementHarness(PlacementModeMixin):
         self._current_bid_page_uid = "page-1"
         self._snap_increments = 1.0
         self.annotation_created = _FakeSignal()
+        self.hotlink_placement_requested = _FakeSignal()
         self.text_drafts = []
+        self.named_view_drafts = []
         self.preview_repaints = 0
         self.selection_updates = 0
         self._selected_uids = {"old"}
+        self._suppress_next_hotlink_click = False
 
     def _current_page_transform(self):
         return None
@@ -160,6 +164,10 @@ class AnnotationPlacementHarness(PlacementModeMixin):
 
     def begin_text_annotation_draft(self, position, page_uid):
         self.text_drafts.append((list(position), page_uid))
+        return True
+
+    def begin_named_view_draft(self, position, page_uid):
+        self.named_view_drafts.append((list(position), page_uid))
         return True
 
 
@@ -501,6 +509,7 @@ class CtrlDragTests(unittest.TestCase):
         view._rotate_handle_item = None
         view._panning = False
         view._right_pan_active = False
+        view._suppress_next_hotlink_click = False
         view._last_pan_point = None
         view._drag_plan_item_uid = None
         view._drag_handle_index = -2
@@ -593,7 +602,7 @@ class CtrlDragTests(unittest.TestCase):
                 ),
             )
         ]
-        view.find_takeoff_at = lambda _scene_pos: None
+        view.find_takeoff_at = lambda _scene_pos, cycle_from_uid=None: None
         view.find_takeoffs_at = lambda _scene_pos: []
         view.mapToScene = lambda _point: QtCore.QPointF(10.0, 10.0)
         return view
@@ -675,6 +684,104 @@ class CtrlDragTests(unittest.TestCase):
         self.assertTrue(release.accepted)
         self.assertEqual(len(view.hotlink_clicked.emitted), 1)
         self.assertEqual(view._selected_uids, set())
+
+    def test_suppressed_hotlink_release_does_not_open_after_placement(self):
+        view = self._make_hotlink_view(selected=False)
+        press = FakeMouseEvent()
+        view.mousePressEvent(press)
+        view._suppress_next_hotlink_click = True
+        release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(release)
+        self.assertTrue(release.accepted)
+        self.assertEqual(view.hotlink_clicked.emitted, [])
+        self.assertFalse(view._suppress_next_hotlink_click)
+
+        second_press = FakeMouseEvent()
+        view.mousePressEvent(second_press)
+        second_release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(second_release)
+        self.assertTrue(second_release.accepted)
+        self.assertEqual(len(view.hotlink_clicked.emitted), 1)
+
+    def test_suppressed_hotlink_release_away_from_hotlink_clears_guard(self):
+        view = self._make_hotlink_view(selected=False)
+        hotlink_items = list(view._hotlink_items)
+        view._suppress_next_hotlink_click = True
+        view._hotlink_items = []
+
+        press = FakeMouseEvent()
+        view.mousePressEvent(press)
+        release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(release)
+        self.assertFalse(view._suppress_next_hotlink_click)
+        self.assertEqual(view.hotlink_clicked.emitted, [])
+
+        view._hotlink_items = hotlink_items
+        press = FakeMouseEvent()
+        view.mousePressEvent(press)
+        second_release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(second_release)
+        self.assertEqual(len(view.hotlink_clicked.emitted), 1)
+
+    def test_named_view_draft_commit_ignores_reentrant_focus_commit(self):
+        position = [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]
+        view = SimpleNamespace()
+        view._finishing_named_view_rename = False
+        view._editing_named_view_uid = "draft"
+        view._draft_named_view_uid = "draft"
+        view._editing_text_original = ""
+        view._current_annotations = {
+            "draft": BidAnnotation(
+                uid="draft",
+                annotation_type="namedview",
+                page_uid="page-1",
+                position=position,
+                color="#008000",
+                properties={"Text": ""},
+            )
+        }
+        view.named_view_created = _FakeSignal()
+        view.text_annotation_edit_mode_changed = _FakeSignal()
+        view.removed_drafts = 0
+        view.refreshed_labels = []
+
+        class ReentrantItem:
+            def toPlainText(self):
+                return "Lobby"
+
+            def setTextInteractionFlags(self, _flags):
+                pass
+
+            def clearFocus(self):
+                TakeoffPlanView._finish_named_view_rename(view, True)
+
+        view._editing_named_view_item = ReentrantItem()
+        view._clear_inline_text_item_selection = lambda _item: None
+        view._clear_inline_text_document = lambda: None
+        view._is_named_view_draft_uid = lambda uid: uid == view._draft_named_view_uid
+
+        def remove_draft():
+            view.removed_drafts += 1
+            view._draft_named_view_uid = None
+
+        view._remove_named_view_draft = remove_draft
+        view._refresh_named_view_label_background = (
+            lambda uid: view.refreshed_labels.append(uid)
+        )
+
+        TakeoffPlanView._finish_named_view_rename(view, True)
+
+        self.assertEqual(view.removed_drafts, 1)
+        self.assertEqual(
+            view.named_view_created.emitted,
+            [
+                (
+                    position,
+                    "page-1",
+                    {"Text": "Lobby", "Color": "#008000"},
+                )
+            ],
+        )
 
     def test_selected_takeoff_hover_far_away_does_not_use_move_cursor(self):
         view = self._make_selected_path_takeoff_view()
@@ -1110,6 +1217,69 @@ class CtrlDragTests(unittest.TestCase):
         view._drag_item_orig_text_states = {}
         view._drag_uid_orig_items = {"a1": list(items)}
         return view, ann, items[0]
+
+    def _make_named_view_resize_view(self):
+        view = InputHandlerHarness()
+        view._snap_increments = 0
+        ann = BidAnnotation(
+            uid="nv1",
+            annotation_type="namedview",
+            position=[100.0, 80.0, 10.0, 20.0, 100.0, 20.0, 10.0, 80.0, 0.0],
+            color="#008000",
+        )
+        return view, ann
+
+    def test_named_view_handles_use_normalized_edit_corner_order(self):
+        _view, ann = self._make_named_view_resize_view()
+        self.assertEqual(
+            SelectionManagerMixin._get_ann_corners_ost(ann),
+            [10.0, 20.0, 100.0, 20.0, 100.0, 80.0, 10.0, 80.0],
+        )
+
+    def test_named_view_resize_top_middle_changes_top_edge_only(self):
+        view, ann = self._make_named_view_resize_view()
+        new_pos = view._compute_ann_resize(
+            ann,
+            ann.position,
+            0.0,
+            -5.0,
+            4,
+            4,
+        )
+        self.assertEqual(
+            new_pos,
+            [100.0, 80.0, 10.0, 15.0, 100.0, 15.0, 10.0, 80.0, 0.0],
+        )
+
+    def test_named_view_resize_bottom_middle_changes_bottom_edge_only(self):
+        view, ann = self._make_named_view_resize_view()
+        new_pos = view._compute_ann_resize(
+            ann,
+            ann.position,
+            0.0,
+            9.0,
+            6,
+            4,
+        )
+        self.assertEqual(
+            new_pos,
+            [100.0, 89.0, 10.0, 20.0, 100.0, 20.0, 10.0, 89.0, 0.0],
+        )
+
+    def test_named_view_resize_top_left_corner_changes_expected_corner(self):
+        view, ann = self._make_named_view_resize_view()
+        new_pos = view._compute_ann_resize(
+            ann,
+            ann.position,
+            -5.0,
+            -7.0,
+            0,
+            4,
+        )
+        self.assertEqual(
+            new_pos,
+            [100.0, 80.0, 5.0, 13.0, 100.0, 13.0, 5.0, 80.0, 0.0],
+        )
 
     def _dimension_label(self, view):
         for item in view._uid_to_items["d1"]:
@@ -1554,6 +1724,7 @@ class AnnotationPlacementTests(unittest.TestCase):
             "oval": [1.0, 2.0, 13.0, 14.0],
             "highlight": [1.0, 2.0, 13.0, 14.0],
             "text": [7.0, 8.0, 12.0, 12.0],
+            "namedview": [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
         }
         for annotation_type, expected_position in expected_positions.items():
             with self.subTest(annotation_type=annotation_type):
@@ -1570,11 +1741,38 @@ class AnnotationPlacementTests(unittest.TestCase):
                 if annotation_type == "text":
                     self.assertEqual(view.annotation_created.emitted, [])
                     self.assertEqual(view.text_drafts, [(expected_position, "page-1")])
+                elif annotation_type == "namedview":
+                    self.assertEqual(view.annotation_created.emitted, [])
+                    self.assertEqual(
+                        view.named_view_drafts, [(expected_position, "page-1")]
+                    )
                 else:
                     self.assertEqual(
                         view.annotation_created.emitted,
                         [(annotation_type, expected_position, "page-1")],
                     )
+
+    def test_hotlink_annotation_tool_requests_named_view_selection_on_press(self):
+        view = AnnotationPlacementHarness()
+        self.assertTrue(view._enter_annotation_place_mode("hotlink"))
+        press = _PlacementMouseEvent(9, 11)
+        self.assertTrue(view.handle_annotation_place_press(press))
+        self.assertTrue(press.accepted)
+        self.assertEqual(
+            view.hotlink_placement_requested.emitted,
+            [([9.0, 11.0], "page-1")],
+        )
+        self.assertEqual(view.annotation_created.emitted, [])
+        self.assertEqual(view._selected_uids, set())
+
+    def test_hotlink_click_suppression_is_cleared_when_switching_annotation_tools(self):
+        view = AnnotationPlacementHarness()
+        view._suppress_next_hotlink_click = True
+        self.assertTrue(view._enter_annotation_place_mode("rect"))
+        self.assertFalse(view._suppress_next_hotlink_click)
+        view._suppress_next_hotlink_click = True
+        view._exit_annotation_place_mode()
+        self.assertFalse(view._suppress_next_hotlink_click)
 
     def test_ink_annotation_uses_freehand_drag_preview_and_commit(self):
         set_annotation_style_for_tool("ink", color="#224466", line_width=6.0)

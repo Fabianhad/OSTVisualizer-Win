@@ -755,7 +755,10 @@ class InputHandlerMixin:
                 scene_pos = self.mapToScene(vp_pos)
                 hotlink_info = self.find_hotlink_at(scene_pos)
                 if hotlink_info:
-                    self.hotlink_clicked.emit(hotlink_info)
+                    suppress_hotlink_click = self._suppress_next_hotlink_click
+                    self._suppress_next_hotlink_click = False
+                    if not suppress_hotlink_click:
+                        self.hotlink_clicked.emit(hotlink_info)
                     event.accept()
                 else:
                     super().mousePressEvent(event)
@@ -1304,10 +1307,13 @@ class InputHandlerMixin:
                     hits = self.find_takeoffs_at(scene_pos)
                     if current_uid in hits and len(hits) > 1:
                         cycle_uid = current_uid
+                suppress_hotlink_click = self._suppress_next_hotlink_click
+                self._suppress_next_hotlink_click = False
                 hotlink_info = self.find_hotlink_at(scene_pos)
                 if hotlink_info:
                     self._clear_pdf_text_selection()
-                    self.hotlink_clicked.emit(hotlink_info)
+                    if not suppress_hotlink_click:
+                        self.hotlink_clicked.emit(hotlink_info)
                 else:
                     uid = self.find_takeoff_at(scene_pos, cycle_from_uid=cycle_uid)
                     if uid:

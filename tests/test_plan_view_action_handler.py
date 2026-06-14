@@ -1,5 +1,7 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
+from ost_visualizer.presentation.handlers import plan_view_action_handler as handler_module
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
@@ -42,6 +44,7 @@ class FakePlanView:
         self.restored_text_properties = []
         self.restored_text_and_positions = []
         self.restored_annotation_styles = []
+        self.activated_annotations = []
 
     def set_selected_uids(self, uids):
         self.selected = set(uids)
@@ -88,6 +91,10 @@ class FakePlanView:
     def cancel_place_mode(self):
         self.cancel_place_mode_calls += 1
 
+    def activate_annotation_placement(self, annotation_type):
+        self.activated_annotations.append(annotation_type)
+        return True
+
     def begin_paste_backout(self, holes, extras_by_uid, source_bid_uid):
         self.paste_backout_calls.append((holes, extras_by_uid, source_bid_uid))
 
@@ -115,6 +122,8 @@ class FakeProjectData:
         self.takeoffs = {}
         self.extras = {}
         self.named_view_updates = []
+        self.annotations = []
+        self.page_names = {"p1": "Page 1"}
         self.conditions = {
             "42": SimpleNamespace(layer_visible=True, condition_type="linear"),
             "c1": SimpleNamespace(layer_visible=True, condition_type="area"),
@@ -203,8 +212,20 @@ class FakeProjectData:
                 page_uids.append(takeoff.page_uid)
         return page_uids
 
-    def find_hotlinks_targeting(self, _uids):
-        return []
+    def find_hotlinks_targeting(self, uids):
+        target_uids = {str(uid) for uid in uids}
+        return [
+            annotation
+            for annotation in self.annotations
+            if annotation.is_hotlink
+            and annotation.hotlink_target_view_uid in target_uids
+        ]
+
+    def get_all_annotations(self):
+        return list(self.annotations)
+
+    def get_page_name(self, page_uid):
+        return self.page_names.get(page_uid, "")
 
 
 class FakeWriteService:
@@ -742,6 +763,155 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             {"Text": "   ", "FontColor": 0x336699},
         )
         self.assertEqual(ann_write.insert_calls, [])
+
+    def test_named_view_created_commits_non_empty_name_through_write_path(self):
+        plan_view = FakePlanView()
+        plan_view.annotation_key_map = {("ann-1", "namedview"): "ann-1_namedview"}
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+        )
+        position = [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]
+        handler.on_named_view_created(
+            position,
+            "p1",
+            {"Text": " Lobby View ", "Color": "#008000"},
+        )
+        self.assertEqual(len(ann_write.insert_calls), 1)
+        _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+        self.assertEqual(specs[0].annotation_type, "namedview")
+        self.assertEqual(specs[0].position, position)
+        self.assertEqual(specs[0].properties, {"Text": "Lobby View"})
+        self.assertEqual(specs[0].color, "#008000")
+        self.assertEqual(plan_view.selected, {"ann-1_namedview"})
+        self.assertEqual(undo.count, 1)
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.NAMED_VIEW_CREATED,
+                    {
+                        "named_view_uid": "ann-1",
+                        "page_uid": "p1",
+                        "name": "Lobby View",
+                    },
+                )
+            ],
+        )
+
+    def test_empty_named_view_commit_is_not_written(self):
+        ann_write = FakeAnnotationWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+        )
+        handler.on_named_view_created(
+            [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+            "p1",
+            {"Text": "   "},
+        )
+        self.assertEqual(ann_write.insert_calls, [])
+
+    def test_hotlink_request_uses_dialog_selection_and_write_path(self):
+        data = FakeProjectData()
+        data.annotations = [
+            BidAnnotation(
+                uid="nv1",
+                annotation_type="namedview",
+                page_uid="p2",
+                position=[13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+                properties={"Text": "Lobby"},
+            )
+        ]
+        data.page_names["p2"] = "A101"
+        ann_write = FakeAnnotationWriteService()
+        event_bus = FakeEventBus()
+        plan_view = FakePlanView(data)
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+        )
+
+        class FakeDialog:
+            captured_named_views = None
+
+            def __init__(self, named_views, parent=None):
+                FakeDialog.captured_named_views = list(named_views)
+
+            def exec(self):
+                return handler_module.QtWidgets.QDialog.DialogCode.Accepted
+
+            def result_data(self):
+                return SimpleNamespace(create_new=False, named_view_uid="nv1")
+
+        with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
+            handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
+
+        self.assertEqual(
+            FakeDialog.captured_named_views,
+            [("nv1", "p2", "A101", "Lobby")],
+        )
+        self.assertEqual(len(ann_write.insert_calls), 1)
+        _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+        self.assertEqual(specs[0].annotation_type, "hotlink")
+        self.assertEqual(specs[0].position, [9.0, 11.0])
+        self.assertEqual(specs[0].properties, {"BidPageViewUID": "nv1"})
+        self.assertEqual(event_bus.events, [])
+
+    def test_hotlink_create_new_switches_to_named_view_tool_without_write(self):
+        ann_write = FakeAnnotationWriteService()
+        plan_view = FakePlanView()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+        )
+
+        class FakeDialog:
+            def __init__(self, named_views, parent=None):
+                pass
+
+            def exec(self):
+                return handler_module.QtWidgets.QDialog.DialogCode.Accepted
+
+            def result_data(self):
+                return SimpleNamespace(create_new=True, named_view_uid="")
+
+        with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
+            handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
+
+        self.assertEqual(ann_write.insert_calls, [])
+        self.assertEqual(plan_view.activated_annotations, ["namedview"])
 
     def test_denied_place_plan_items_access_blocks_text_commit_write(self):
         ann_write = FakeAnnotationWriteService()
@@ -1574,6 +1744,88 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [event for event, _kwargs in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
+
+    def test_named_view_delete_with_linked_hotlink_no_cancels_delete(self):
+        data = FakeProjectData()
+        named_view = BidAnnotation(
+            uid="nv1",
+            annotation_type="namedview",
+            page_uid="p1",
+            position=[13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+            properties={"Text": "Lobby"},
+        )
+        hotlink = BidAnnotation(
+            uid="hl1",
+            annotation_type="hotlink",
+            page_uid="p1",
+            position=[5.0, 6.0],
+            properties={"BidPageViewUID": "nv1"},
+        )
+        data.annotations = [named_view, hotlink]
+        plan_view = FakePlanView(data)
+        plan_view.annotations = {"nv1": named_view}
+        ann_write = FakeAnnotationWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+        )
+
+        with patch.object(handler_module, "confirm", return_value=False) as confirm:
+            handler.on_elements_deleted(["nv1"])
+
+        confirm.assert_called_once()
+        self.assertEqual(ann_write.delete_calls, [])
+        self.assertEqual(plan_view.selected, {"nv1"})
+
+    def test_named_view_delete_with_linked_hotlink_deletes_hotlink_first(self):
+        data = FakeProjectData()
+        named_view = BidAnnotation(
+            uid="nv1",
+            annotation_type="namedview",
+            page_uid="p1",
+            position=[13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+            properties={"Text": "Lobby"},
+        )
+        hotlink = BidAnnotation(
+            uid="hl1",
+            annotation_type="hotlink",
+            page_uid="p1",
+            position=[5.0, 6.0],
+            properties={"BidPageViewUID": "nv1"},
+        )
+        data.annotations = [named_view, hotlink]
+        plan_view = FakePlanView(data)
+        plan_view.annotations = {"nv1": named_view}
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+        )
+
+        with patch.object(handler_module, "confirm", return_value=True) as confirm:
+            handler.on_elements_deleted(["nv1"])
+
+        confirm.assert_called_once()
+        self.assertEqual(
+            ann_write.delete_calls,
+            [("bid.mdb", [("hl1", "hotlink"), ("nv1", "namedview")])],
+        )
+        self.assertEqual(undo.count, 1)
 
     def test_paste_parent_child_undo_redo_preserves_parent_remap(self):
         parent = Takeoff(

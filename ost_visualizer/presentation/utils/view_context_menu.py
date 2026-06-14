@@ -79,8 +79,12 @@ class ContextCommandSubmenu:
     actions_by_key: dict[str, QtGui.QAction]
 
 
-_ANNOTATION_CONTEXT_GENERIC_STYLE_EXCLUDED_TYPES = frozenset({"text"})
-_ANNOTATION_CONTEXT_WIDTH_EXCLUDED_TYPES = frozenset({"dimension", "highlight", "text"})
+_ANNOTATION_CONTEXT_GENERIC_STYLE_EXCLUDED_TYPES = frozenset(
+    {"hotlink", "namedview", "text"}
+)
+_ANNOTATION_CONTEXT_WIDTH_EXCLUDED_TYPES = frozenset(
+    {"dimension", "highlight", "hotlink", "namedview", "text"}
+)
 _ANNOTATION_CONTEXT_COLOR_TYPES = frozenset(
     spec.annotation_type
     for spec in PLAN_ANNOTATION_TOOL_SPECS

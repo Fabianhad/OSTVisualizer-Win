@@ -100,6 +100,9 @@ class DetachedPageViewManager(IShutdownAware):
         self.event_bus.subscribe(
             AppEvents.NAMED_VIEW_RENAMED, self._on_named_view_renamed
         )
+        self.event_bus.subscribe(
+            AppEvents.NAMED_VIEW_CREATED, self._on_named_view_created
+        )
 
     def shutdown(self) -> None:
         if self.event_bus is not None:
@@ -108,6 +111,9 @@ class DetachedPageViewManager(IShutdownAware):
             )
             self.event_bus.unsubscribe(
                 AppEvents.NAMED_VIEW_RENAMED, self._on_named_view_renamed
+            )
+            self.event_bus.unsubscribe(
+                AppEvents.NAMED_VIEW_CREATED, self._on_named_view_created
             )
         if self._refresh_signaler is not None:
             self._refresh_signaler.cleanup()
@@ -145,6 +151,13 @@ class DetachedPageViewManager(IShutdownAware):
         self.project_data.update_named_view_names([(named_view_uid, name)])
         if self._window is not None:
             self._window.update_named_view_name(named_view_uid, name)
+
+    def _on_named_view_created(
+        self, named_view_uid: str, page_uid: str, name: str
+    ) -> None:
+        view = self.repository.get_active_view()
+        if view:
+            self._update_window_navigation(view)
 
     def _get_bid_for_view(self, view: AnnotationView):
         bid_ref = view.bid_ref if view else None
@@ -398,6 +411,7 @@ class DetachedPageViewManager(IShutdownAware):
                 if self.parent_window is not None
                 else None
             ),
+            linked_hotlink_resolver=self.project_data.find_hotlinks_targeting,
             **snap_preferences.to_kwargs(),
             parent=self.parent_window,
         )

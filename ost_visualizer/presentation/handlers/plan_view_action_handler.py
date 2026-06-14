@@ -1,11 +1,14 @@
 import logging
 from typing import Dict, List, Optional
+from PySide6 import QtWidgets
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.events.app_events import AppEvents
 from ...domain.entities.annotation import int_color_to_hex
+from ...domain.entities.named_view import build_named_view_from_annotation
 from ...domain.entities.takeoff import Takeoff
+from ..dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ..managers.ui_access_manager import Feature
 from ..resolvers.entity_resolver import EntityResolver
 from ..services.selection_clipboard_service import SelectionClipboardService
@@ -17,9 +20,14 @@ from ..services.selection_commands import (
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
 )
+from ..utils.annotation_delete import (
+    NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
+    order_annotations_for_delete,
+)
 from ..utils.annotation_defaults import (
     build_placed_annotation_spec,
 )
+from ..utils.messagebox import confirm
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +86,8 @@ class PlanViewActionHandler:
         pv.takeoff_created.connect(self.on_takeoff_created)
         pv.annotation_created.connect(self.on_annotation_created)
         pv.text_annotation_created.connect(self.on_text_annotation_created)
+        pv.named_view_created.connect(self.on_named_view_created)
+        pv.hotlink_placement_requested.connect(self.on_hotlink_placement_requested)
         pv.hole_created.connect(self.on_hole_created)
         pv.elements_deleted.connect(self.on_elements_deleted)
         pv.undo_requested.connect(self._undo_svc.undo)
@@ -729,6 +739,72 @@ class PlanViewActionHandler:
             spec.color = int_color_to_hex(font_color)
         self._insert_annotations_with_undo(bid_ref, [spec])
 
+    def on_named_view_created(
+        self, position: list, page_uid: str, properties: dict
+    ) -> None:
+        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
+            return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        name = str(properties.get("Text", "") or "").strip()
+        if not bid_ref or not page_uid or not name:
+            return
+        spec = build_placed_annotation_spec("namedview", page_uid, list(position))
+        if spec is None:
+            return
+        spec.properties = {"Text": name}
+        color = properties.get("Color")
+        if isinstance(color, str) and color:
+            spec.color = color
+        new_uids = self._insert_annotations_with_undo(bid_ref, [spec])
+        if new_uids:
+            self._event_bus.publish(
+                AppEvents.NAMED_VIEW_CREATED,
+                named_view_uid=new_uids[0],
+                page_uid=page_uid,
+                name=name,
+            )
+
+    def on_hotlink_placement_requested(self, position: list, page_uid: str) -> None:
+        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
+            return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if not bid_ref or not page_uid or len(position) < 2:
+            return
+        dialog = SelectNamedViewDialog(
+            self._collect_named_view_choices(),
+            parent=self._plan_view,
+        )
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        result = dialog.result_data()
+        if result.create_new:
+            self._plan_view.activate_annotation_placement("namedview")
+            return
+        if not result.named_view_uid:
+            return
+        spec = build_placed_annotation_spec("hotlink", page_uid, list(position[:2]))
+        if spec is None:
+            return
+        spec.properties = {"BidPageViewUID": result.named_view_uid}
+        self._insert_annotations_with_undo(bid_ref, [spec])
+
+    def _collect_named_view_choices(self) -> List[tuple[str, str, str, str]]:
+        choices: List[tuple[str, str, str, str]] = []
+        for annotation in self._data_svc.get_all_annotations():
+            named_view = build_named_view_from_annotation(annotation)
+            if named_view is None:
+                continue
+            page_name = self._data_svc.get_page_name(named_view.bid_page_uid)
+            choices.append(
+                (
+                    named_view.uid,
+                    named_view.bid_page_uid,
+                    page_name,
+                    named_view.name or named_view.uid,
+                )
+            )
+        return choices
+
     def on_hole_created(
         self, condition_uid: str, position: list, page_uid: str, parent_uid: str
     ) -> None:
@@ -902,10 +978,21 @@ class PlanViewActionHandler:
         }
         if deleted_namedview_uids:
             existing_ann_uids = {(a.uid, a.annotation_type) for a in saved_annotations}
-            for a in self._data_svc.find_hotlinks_targeting(deleted_namedview_uids):
+            linked_hotlinks = self._data_svc.find_hotlinks_targeting(
+                deleted_namedview_uids
+            )
+            if linked_hotlinks and not confirm(
+                self._plan_view,
+                "Delete Named View",
+                NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
+            ):
+                self._plan_view.set_selected_uids(set(uids))
+                return
+            for a in linked_hotlinks:
                 if (a.uid, a.annotation_type) not in existing_ann_uids:
                     saved_annotations.append(a)
                     existing_ann_uids.add((a.uid, a.annotation_type))
+            saved_annotations = order_annotations_for_delete(saved_annotations)
         takeoff_uids = list(takeoff_uids)
         takeoffs_deleted = False
         annotations_deleted = False

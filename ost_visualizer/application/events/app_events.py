@@ -70,6 +70,13 @@ class NamedViewRenamedEvent:
 
 
 @dataclass
+class NamedViewCreatedEvent:
+    named_view_uid: str
+    page_uid: str
+    name: str
+
+
+@dataclass
 class OstStatusChangedEvent:
     active: bool = False
 
@@ -86,4 +93,5 @@ class AppEvents:
     LICENSE_EXPIRED = LicenseExpiredEvent
     HOTLINK_CLICKED = HotlinkClickedEvent
     NAMED_VIEW_RENAMED = NamedViewRenamedEvent
+    NAMED_VIEW_CREATED = NamedViewCreatedEvent
     OST_STATUS_CHANGED = OstStatusChangedEvent

@@ -282,6 +282,8 @@ class CleanupPlanView:
         self.elements_deleted = CleanupSignal()
         self.annotation_created = CleanupSignal()
         self.text_annotation_created = CleanupSignal()
+        self.named_view_created = CleanupSignal()
+        self.hotlink_placement_requested = CleanupSignal()
         self.cursor_mode_change_requested = CleanupSignal()
         self.undo_requested = CleanupSignal()
         self.redo_requested = CleanupSignal()
@@ -627,6 +629,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 "polygon_annotation_tool",
                 "cloud_annotation_tool",
                 "ink_annotation_tool",
+                "hotlink_tool",
+                "named_view_tool",
             ],
         )
         self.assertEqual(
@@ -645,6 +649,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 "polygon",
                 "cloud",
                 "ink",
+                "hotlink",
+                "namedview",
             ],
         )
         self.assertNotIn(
@@ -665,6 +671,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             get_bid=lambda bid_ref: None,
             get_current_bid_file_path=lambda: None,
             get_all_takeoffs=lambda: [],
+            find_hotlinks_targeting=lambda _uids: [],
         )
         manager.config_model = Config()
         manager._coord_factory = SimpleNamespace(create=lambda: object())
@@ -1095,6 +1102,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             "polygon",
             "cloud",
             "ink",
+            "hotlink",
+            "namedview",
         ):
             with self.subTest(annotation_type=annotation_type):
                 self.assertTrue(window._activate_annotation_tool(annotation_type))
@@ -1111,6 +1120,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 "polygon",
                 "cloud",
                 "ink",
+                "hotlink",
+                "namedview",
             ],
         )
 

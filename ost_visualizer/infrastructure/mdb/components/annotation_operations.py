@@ -2,6 +2,7 @@ from types import MappingProxyType
 from typing import Dict, List, Optional, Tuple
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.paste_ref_remap_dto import PasteRefRemap
+from ....domain.entities.named_view import normalize_named_view_position
 from .constants import encode_position, hex_to_color_int
 
 
@@ -58,7 +59,12 @@ class AnnotationOperationsMixin:
                     if schema.optional_table_missing(table):
                         continue
                     self._require_write_columns(schema, table, ("UID", "Position"))
-                    position_bytes = encode_position(position)
+                    position_to_save = (
+                        normalize_named_view_position(position)
+                        if annotation_type == "namedview"
+                        else position
+                    )
+                    position_bytes = encode_position(position_to_save)
                     position_val = (
                         position_bytes.decode("latin-1")
                         if annotation_type in ("text", "callout")
@@ -207,6 +213,8 @@ class AnnotationOperationsMixin:
             "dimension",
             "text",
             "highlight",
+            "hotlink",
+            "namedview",
         ):
             self._require_write_columns(schema, table, ("UID", "Width"))
             assignments.append("[Width]=?")
@@ -281,7 +289,11 @@ class AnnotationOperationsMixin:
                 for spec in specs:
                     page_uid = spec.page_uid
                     annotation_type = spec.annotation_type
-                    position = spec.position
+                    position = (
+                        normalize_named_view_position(spec.position)
+                        if annotation_type == "namedview"
+                        else spec.position
+                    )
                     color = spec.color
                     width = spec.width
                     properties = spec.properties
@@ -490,7 +502,7 @@ class AnnotationOperationsMixin:
                     "Position": position_val,
                     "Color": color_int,
                 },
-                ("UID", "BidUID", "BidPageUID", "Position"),
+                ("UID", "BidUID", "BidPageUID", "BidPageViewUID", "Position"),
                 "insert_hotlink_annotation",
             )
         elif annotation_type == "namedview":
@@ -502,10 +514,11 @@ class AnnotationOperationsMixin:
                     "UID": uid,
                     "BidUID": bid_uid,
                     "BidPageUID": page_uid,
+                    "Name": self._named_view_name_value(properties),
                     "Position": position_val,
                     "Color": color_int,
                 },
-                ("UID", "BidUID", "BidPageUID", "Position"),
+                ("UID", "BidUID", "BidPageUID", "Name", "Position"),
                 "insert_namedview_annotation",
             )
         elif annotation_type == "ink":
@@ -565,7 +578,11 @@ class AnnotationOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
-                for table, uids in by_table.items():
+                for table in sorted(
+                    by_table,
+                    key=lambda value: 1 if value == "BidNamedViews" else 0,
+                ):
+                    uids = by_table[table]
                     if schema.optional_table_missing(table):
                         continue
                     self._require_write_columns(schema, table, ("UID",))

@@ -102,6 +102,8 @@ class ViewContextMenuTests(unittest.TestCase):
                     "Polygon",
                     "Cloud",
                     "Ink",
+                    "Hotlink",
+                    "Named View",
                     "",
                     "Backout",
                 ],

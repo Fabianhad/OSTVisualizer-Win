@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from .....domain.entities import shape as shapes
 from .....domain.entities.annotation import BidAnnotation
 from .....domain.entities.condition import Condition
+from .....domain.entities.named_view import named_view_position_from_bounds
 from ....visualization.core.geometry.takeoff_geometry import (
     compute_count_vertices,
     compute_line_angle,
@@ -42,8 +43,12 @@ logger = logging.getLogger(__name__)
 _RIGHT_ANGLE_ALIGNMENT_TOLERANCE = 1e-6
 _AREA_ANNOTATION_TYPES = frozenset({"polygon", "cloud"})
 _INK_ANNOTATION_TYPES = frozenset({"ink"})
+_POINT_ANNOTATION_TYPES = frozenset({"hotlink"})
 _DRAG_ANNOTATION_TYPES = (
-    PLACEABLE_ANNOTATION_TYPES - _AREA_ANNOTATION_TYPES - _INK_ANNOTATION_TYPES
+    PLACEABLE_ANNOTATION_TYPES
+    - _AREA_ANNOTATION_TYPES
+    - _INK_ANNOTATION_TYPES
+    - _POINT_ANNOTATION_TYPES
 )
 _TEXT_SELECTION_OUTLINE_COLOR = QColor(128, 128, 128)
 
@@ -674,6 +679,7 @@ class PlacementModeMixin:
         if annotation_type not in PLACEABLE_ANNOTATION_TYPES:
             return False
         self.clear_place_preview()
+        self._suppress_next_hotlink_click = False
         self._annotation_place_type = annotation_type
         self._annotation_place_points = []
         self._annotation_place_dragging = False
@@ -682,6 +688,7 @@ class PlacementModeMixin:
 
     def _exit_annotation_place_mode(self) -> None:
         self.clear_place_preview()
+        self._suppress_next_hotlink_click = False
         self._annotation_place_type = None
         self._annotation_place_points = []
         self._annotation_place_dragging = False
@@ -773,6 +780,14 @@ class PlacementModeMixin:
                 15,
                 page_transform,
                 pen_width=2.0,
+            )
+            return
+        if annotation_type == "namedview":
+            self._add_annotation_path_preview(
+                path,
+                color,
+                2.0,
+                page_transform,
             )
             return
         if annotation_type == "highlight":
@@ -951,6 +966,20 @@ class PlacementModeMixin:
         if self._annotation_place_type not in PLACEABLE_ANNOTATION_TYPES:
             return False
         scene_pos = self.mapToScene(event.pos())
+        if self._annotation_place_type in _POINT_ANNOTATION_TYPES:
+            ost_x, ost_y, _cx, _cy, _snap_kind = self._placement_snap_from_scene(
+                scene_pos
+            )
+            page_uid = self._current_bid_page_uid or ""
+            if not page_uid:
+                return False
+            self._selected_uids.clear()
+            self.update_selection_visuals()
+            self.clear_place_preview()
+            self._suppress_next_hotlink_click = True
+            self.hotlink_placement_requested.emit([ost_x, ost_y], page_uid)
+            event.accept()
+            return True
         if self._annotation_place_type in _DRAG_ANNOTATION_TYPES:
             if self._annotation_place_points and not self._annotation_place_dragging:
                 position, _snap_kind = self._drag_annotation_placement_position(
@@ -1097,13 +1126,21 @@ class PlacementModeMixin:
             distance = math.hypot(position[2] - position[0], position[3] - position[1])
             if distance < min_len:
                 return False
-            if annotation_type in ("rect", "oval", "text", "highlight") and (
+            if annotation_type in (
+                "rect",
+                "oval",
+                "text",
+                "highlight",
+                "namedview",
+            ) and (
                 abs(position[2] - position[0]) < min_len
                 or abs(position[3] - position[1]) < min_len
             ):
                 return False
             if annotation_type == "text":
                 position = self._text_position_from_drag_corners(position)
+            elif annotation_type == "namedview":
+                position = named_view_position_from_bounds(*position[:4])
         elif annotation_type in _INK_ANNOTATION_TYPES:
             points = self._points_from_position(position)
             if len(points) < 2:
@@ -1129,6 +1166,8 @@ class PlacementModeMixin:
         self._annotation_area_rect_dragging = False
         if annotation_type == "text":
             return bool(self.begin_text_annotation_draft(position, page_uid))
+        if annotation_type == "namedview":
+            return bool(self.begin_named_view_draft(position, page_uid))
         self.annotation_created.emit(annotation_type, position, page_uid)
         return True
 

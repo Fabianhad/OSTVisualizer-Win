@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QGraphicsTextItem,
 )
 from .....application.dtos.hotlink_dto import HotlinkDto
+from .....domain.entities.named_view import named_view_edit_position
 from ....visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_segments,
 )
@@ -557,7 +558,9 @@ class SelectionManagerMixin:
     def _get_ann_corners_ost(ann) -> list:
         pos = ann.position
         atype = ann.annotation_type
-        if atype in ("rect", "highlight", "namedview") and len(pos) >= 8:
+        if atype == "namedview":
+            return named_view_edit_position(pos)
+        if atype in ("rect", "highlight") and len(pos) >= 8:
             return [pos[0], pos[1], pos[6], pos[7], pos[2], pos[3], pos[4], pos[5]]
         if atype == "oval" and len(pos) >= 4:
             cx = (pos[0] + pos[2]) / 2

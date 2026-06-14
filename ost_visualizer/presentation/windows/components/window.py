@@ -37,9 +37,14 @@ from ...config import (
     SCALE_TOOLTIP,
     VIEW_LABEL,
 )
+from ...dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ...managers.icon_manager import IconId, IconManager
 from ...services.selection_commands import DeleteAnnotationsCommand
 from ...services.selection_commands import InsertAnnotationsCommand
+from ...utils.annotation_delete import (
+    NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
+    order_annotations_for_delete,
+)
 from ...utils.annotation_defaults import (
     build_placed_annotation_spec,
     get_annotation_style_for_tool,
@@ -50,6 +55,7 @@ from ...utils.annotation_style_controls import (
     create_annotation_tool_split_button,
 )
 from ...utils.named_view_focus import focus_plan_view_on_named_view
+from ...utils.messagebox import confirm
 from ...utils.plan_tool_registry import PlanToolSpec
 from ...utils.scales import ALL_SCALES
 
@@ -116,6 +122,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         snap_to_right_angle_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
         annotation_style_getter: Optional[Callable[[str], AnnotationStyle]] = None,
         annotation_style_setter: Optional[Callable[..., AnnotationStyle]] = None,
+        linked_hotlink_resolver: Optional[Callable[[set[str]], List]] = None,
         parent: Optional[QtWidgets.QWidget] = None,
     ):
         super().__init__(parent)
@@ -129,7 +136,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._config = config
         self._pages_with_takeoffs: set[str] = set(pages_with_takeoffs or ())
         self._on_page_selected: Optional[Callable[[str], None]] = on_page_selected
-        self._named_views: List[NamedViewEntry] = named_views or []
+        self._named_views: List[NamedViewEntry] = list(named_views or [])
         self._on_named_view_selected: Optional[Callable[[str, str], None]] = (
             on_named_view_selected
         )
@@ -181,6 +188,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._annotation_style_setter = (
             annotation_style_setter or set_annotation_style_for_tool
         )
+        self._linked_hotlink_resolver = linked_hotlink_resolver
         self.setWindowTitle(config.window_title)
         self.setWindowFlags(
             QtCore.Qt.WindowType.Window
@@ -402,6 +410,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.plan_view.elements_deleted.connect(self._on_elements_deleted)
         self.plan_view.annotation_created.connect(self._on_annotation_created)
         self.plan_view.text_annotation_created.connect(self._on_text_annotation_created)
+        self.plan_view.named_view_created.connect(self._on_named_view_created)
+        self.plan_view.hotlink_placement_requested.connect(
+            self._on_hotlink_placement_requested
+        )
         if self._undo_svc is not None:
             self.plan_view.undo_requested.connect(self._undo_svc.undo)
             self.plan_view.redo_requested.connect(self._undo_svc.redo)
@@ -1134,6 +1146,108 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
 
+    def _on_named_view_created(
+        self, position: list, page_uid: str, properties: dict
+    ) -> None:
+        if not self._config.allow_annotation_editing or self._read_only:
+            return
+        if (
+            self._is_closing
+            or self._ann_write_svc is None
+            or self.plan_view is None
+            or not page_uid
+        ):
+            return
+        name = str(properties.get("Text", "") or "").strip()
+        if not name:
+            return
+        bid_ref = self.view.bid_ref if self.view else None
+        if bid_ref is None:
+            return
+        spec = build_placed_annotation_spec("namedview", page_uid, list(position))
+        if spec is None:
+            return
+        spec.properties = {"Text": name}
+        color = properties.get("Color")
+        if isinstance(color, str) and color:
+            spec.color = color
+        new_uids = self._ann_write_svc.insert_annotations(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            [spec],
+        )
+        if not new_uids:
+            return
+        uid_type_set = {(new_uids[0], spec.annotation_type)}
+        keys = self.plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+        if keys:
+            self.plan_view.set_selected_uids(keys)
+        self.event_bus.publish(
+            AppEvents.NAMED_VIEW_CREATED,
+            named_view_uid=new_uids[0],
+            page_uid=page_uid,
+            name=name,
+        )
+        if self._undo_svc is None:
+            return
+        cmd = InsertAnnotationsCommand(
+            uids=list(new_uids),
+            bid_ref=bid_ref,
+            specs=[spec],
+            write_svc=self._ann_write_svc,
+            plan_view=self.plan_view,
+        )
+        self._undo_svc.push(cmd.undo, cmd.redo)
+
+    def _on_hotlink_placement_requested(self, position: list, page_uid: str) -> None:
+        if not self._config.allow_annotation_editing or self._read_only:
+            return
+        if (
+            self._is_closing
+            or self._ann_write_svc is None
+            or self.plan_view is None
+            or not page_uid
+            or len(position) < 2
+        ):
+            return
+        bid_ref = self.view.bid_ref if self.view else None
+        if bid_ref is None:
+            return
+        dialog = SelectNamedViewDialog(self._named_views, parent=self)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        result = dialog.result_data()
+        if result.create_new:
+            self.plan_view.activate_annotation_placement("namedview")
+            return
+        if not result.named_view_uid:
+            return
+        spec = build_placed_annotation_spec("hotlink", page_uid, list(position[:2]))
+        if spec is None:
+            return
+        spec.properties = {"BidPageViewUID": result.named_view_uid}
+        new_uids = self._ann_write_svc.insert_annotations(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            [spec],
+        )
+        if not new_uids:
+            return
+        uid_type_set = {(new_uids[0], spec.annotation_type)}
+        keys = self.plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+        if keys:
+            self.plan_view.set_selected_uids(keys)
+        if self._undo_svc is None:
+            return
+        cmd = InsertAnnotationsCommand(
+            uids=list(new_uids),
+            bid_ref=bid_ref,
+            specs=[spec],
+            write_svc=self._ann_write_svc,
+            plan_view=self.plan_view,
+        )
+        self._undo_svc.push(cmd.undo, cmd.redo)
+
     def _on_annotation_text_and_positions_flushed(
         self, text_changes: list, ann_position_changes: list
     ) -> None:
@@ -1214,6 +1328,34 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 saved_annotations.append(ann)
         if not saved_annotations:
             return
+        deleted_namedview_uids = {
+            str(annotation.uid)
+            for annotation in saved_annotations
+            if annotation.is_namedview
+        }
+        if deleted_namedview_uids:
+            linked_hotlinks = (
+                self._linked_hotlink_resolver(deleted_namedview_uids)
+                if self._linked_hotlink_resolver is not None
+                else []
+            )
+            if linked_hotlinks and not confirm(
+                self,
+                "Delete Named View",
+                NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
+            ):
+                self.plan_view.set_selected_uids(set(uids))
+                return
+            existing = {
+                (annotation.uid, annotation.annotation_type)
+                for annotation in saved_annotations
+            }
+            for annotation in linked_hotlinks:
+                key = (annotation.uid, annotation.annotation_type)
+                if key not in existing:
+                    saved_annotations.append(annotation)
+                    existing.add(key)
+            saved_annotations = order_annotations_for_delete(saved_annotations)
         if not self._ann_write_svc.delete_annotations(
             db_path,
             [(a.uid, a.annotation_type) for a in saved_annotations],
@@ -1264,6 +1406,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self.plan_view.annotation_created.disconnect(self._on_annotation_created)
             self.plan_view.text_annotation_created.disconnect(
                 self._on_text_annotation_created
+            )
+            self.plan_view.named_view_created.disconnect(self._on_named_view_created)
+            self.plan_view.hotlink_placement_requested.disconnect(
+                self._on_hotlink_placement_requested
             )
             self.plan_view.cursor_mode_change_requested.disconnect(
                 self._on_cursor_mode_change_requested

@@ -11,14 +11,27 @@ from ...domain.entities.annotation_style import (
 from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 
 DIMENSION_ANNOTATION_WIDTH = 1.0
+HOTLINK_DEFAULT_COLOR = "#ff0000"
+NAMED_VIEW_DEFAULT_COLOR = "#008000"
 PLACEABLE_ANNOTATION_TYPES = frozenset(
     spec.annotation_type
     for spec in PLAN_ANNOTATION_TOOL_SPECS
     if spec.annotation_type is not None
 )
 _STYLE_KEYS = tuple(sorted(PLACEABLE_ANNOTATION_TYPES))
+
+
+def _default_style_for_tool(annotation_type: str) -> AnnotationStyle:
+    if annotation_type == "namedview":
+        return AnnotationStyle(color=NAMED_VIEW_DEFAULT_COLOR)
+    if annotation_type == "hotlink":
+        return AnnotationStyle(color=HOTLINK_DEFAULT_COLOR)
+    return AnnotationStyle()
+
+
 _ANNOTATION_STYLES: dict[str, AnnotationStyle] = {
-    annotation_type: AnnotationStyle() for annotation_type in _STYLE_KEYS
+    annotation_type: _default_style_for_tool(annotation_type)
+    for annotation_type in _STYLE_KEYS
 }
 
 
@@ -63,7 +76,8 @@ def set_annotation_style_for_tool(
         ),
         line_width=(
             normalize_annotation_line_width(line_width, current.line_width)
-            if line_width is not None and key not in ("dimension", "text", "highlight")
+            if line_width is not None
+            and key not in ("dimension", "text", "highlight", "hotlink", "namedview")
             else current.line_width
         ),
         font_name=(
@@ -98,7 +112,7 @@ def set_annotation_style_for_tool(
 def set_annotation_styles_by_tool(
     styles: Mapping[str, AnnotationStyle | Mapping[str, object]],
 ) -> dict[str, AnnotationStyle]:
-    next_styles = {key: AnnotationStyle() for key in _STYLE_KEYS}
+    next_styles = {key: _default_style_for_tool(key) for key in _STYLE_KEYS}
     for annotation_type, raw_style in styles.items():
         key = _normalize_annotation_type(annotation_type)
         if isinstance(raw_style, AnnotationStyle):
@@ -154,6 +168,8 @@ def annotation_default_style(annotation_type: str) -> tuple[str, float]:
         return style.color, DIMENSION_ANNOTATION_WIDTH
     if key in ("text", "highlight"):
         return style.color, 0.0
+    if key in ("hotlink", "namedview"):
+        return style.color, 2.0
     return style.color, style.line_width
 
 
@@ -168,6 +184,10 @@ def annotation_default_properties(annotation_type: str) -> dict:
         }
     if key == "text":
         return text_annotation_properties()
+    if key == "namedview":
+        return {"Text": ""}
+    if key == "hotlink":
+        return {"BidPageViewUID": ""}
     return {}
 
 

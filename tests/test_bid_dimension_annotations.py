@@ -741,6 +741,32 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE BidNamedViews (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                Name TEXT,
+                Position BLOB,
+                Color INTEGER,
+                Origin INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE BidHotLinks (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidPageViewUID INTEGER,
+                BidLayerUID INTEGER,
+                Color INTEGER,
+                Position BLOB
+            )
+            """
+        )
         specs = [
             InsertAnnotationSpec(
                 page_uid="3",
@@ -834,9 +860,25 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                     "TextAlign": 0,
                 },
             ),
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="namedview",
+                position=[1.0, 2.0, 13.0, 2.0, 13.0, 14.0, 1.0, 14.0],
+                color="#008000",
+                width=2.0,
+                properties={"Text": "Lobby"},
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="hotlink",
+                position=[5.0, 6.0],
+                color="#ff0000",
+                width=2.0,
+                properties={"BidPageViewUID": "1"},
+            ),
         ]
         new_uids = _DimensionWriteOps(conn).insert_annotations("bid.mdb", "1", specs)
-        self.assertEqual(new_uids, ["1"] * 10)
+        self.assertEqual(new_uids, ["1"] * 12)
         expected_tables = {
             "BidALines": "line",
             "BidArrows": "arrow",
@@ -878,6 +920,22 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             text_row[6].encode("latin-1"),
             encode_position([7.0, 8.0, 12.0, 12.0]),
         )
+        named_view_row = conn.execute(
+            "SELECT BidUID, BidPageUID, Name, Color, Position FROM BidNamedViews"
+        ).fetchone()
+        self.assertEqual(named_view_row[:4], (1, 3, "Lobby", 32768))
+        self.assertEqual(
+            named_view_row[4],
+            encode_position([13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]),
+        )
+        hotlink_row = conn.execute(
+            """
+            SELECT BidUID, BidPageUID, BidPageViewUID, Color, Position
+              FROM BidHotLinks
+            """
+        ).fetchone()
+        self.assertEqual(hotlink_row[:4], (1, 3, 1, 255))
+        self.assertEqual(hotlink_row[4], encode_position([5.0, 6.0]))
 
     def test_annotation_style_updates_are_per_annotation_and_per_type(self):
         conn = sqlite3.connect(":memory:")
@@ -1083,6 +1141,43 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             "SELECT UID, Color FROM BidHighlights ORDER BY UID"
         ).fetchall()
         self.assertEqual(highlight_rows, [(1, 0x00AA00), (2, 0xFF0000)])
+
+    def test_delete_annotations_removes_hotlinks_before_named_views(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute(
+            """
+            CREATE TABLE BidNamedViews (
+                UID INTEGER PRIMARY KEY,
+                Name TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE BidHotLinks (
+                UID INTEGER PRIMARY KEY,
+                BidPageViewUID INTEGER REFERENCES BidNamedViews(UID)
+            )
+            """
+        )
+        conn.execute("INSERT INTO BidNamedViews (UID, Name) VALUES (1, 'Lobby')")
+        conn.execute("INSERT INTO BidHotLinks (UID, BidPageViewUID) VALUES (1, 1)")
+
+        result = _DimensionWriteOps(conn).delete_annotations(
+            "bid.mdb",
+            [("1", "namedview"), ("1", "hotlink")],
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidHotLinks").fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidNamedViews").fetchone()[0],
+            0,
+        )
 
     def test_renderer_uses_annotation_color_not_global_default_style(self):
         from ost_visualizer.presentation.utils.annotation_defaults import (

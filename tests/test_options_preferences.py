@@ -1021,6 +1021,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             "polygon_annotation_tool": "Polygon",
             "cloud_annotation_tool": "Cloud",
             "ink_annotation_tool": "Ink",
+            "hotlink_tool": "Hotlink",
+            "named_view_tool": "Named View",
         }
         shared_actions = {
             key: QtGui.QAction(labels.get(key, key), None)
@@ -1060,6 +1062,8 @@ class OptionsPreferencesTests(unittest.TestCase):
                 "polygon_annotation_tool",
                 "cloud_annotation_tool",
                 "ink_annotation_tool",
+                "hotlink_tool",
+                "named_view_tool",
                 "backout_mode",
             )
         }
@@ -1072,7 +1076,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 if not action.isSeparator()
             ]
             self.assertEqual(
-                action_texts[:14],
+                action_texts[:16],
                 [
                     "Select",
                     "Place",
@@ -1088,6 +1092,8 @@ class OptionsPreferencesTests(unittest.TestCase):
                     "Polygon",
                     "Cloud",
                     "Ink",
+                    "Hotlink",
+                    "Named View",
                 ],
             )
             self.assertIs(tools_menu.actions()[4], shared_actions["dimension_tool"])
@@ -1097,8 +1103,38 @@ class OptionsPreferencesTests(unittest.TestCase):
             self.assertIs(
                 tools_menu.actions()[6], shared_actions["highlight_annotation_tool"]
             )
+            self.assertIs(tools_menu.actions()[14], shared_actions["hotlink_tool"])
+            self.assertIs(
+                tools_menu.actions()[15], shared_actions["named_view_tool"]
+            )
         finally:
             result.menu_bar.deleteLater()
+        self.assertEqual(
+            ICON_SPECS[IconId.HOTLINK_TOOL].svg_name,
+            "hotlink_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
+        )
+        self.assertTrue(
+            (
+                REPO_ROOT
+                / "ost_visualizer"
+                / "resources"
+                / "icons"
+                / ICON_SPECS[IconId.HOTLINK_TOOL].svg_name
+            ).exists()
+        )
+        self.assertEqual(
+            ICON_SPECS[IconId.NAMED_VIEW_TOOL].svg_name,
+            "named_view_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
+        )
+        self.assertTrue(
+            (
+                REPO_ROOT
+                / "ost_visualizer"
+                / "resources"
+                / "icons"
+                / ICON_SPECS[IconId.NAMED_VIEW_TOOL].svg_name
+            ).exists()
+        )
         self.assertEqual(
             ICON_SPECS[IconId.DIMENSION_TOOL].svg_name,
             "square_foot_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
@@ -1489,11 +1525,15 @@ class OptionsPreferencesTests(unittest.TestCase):
                             if isinstance(action.data(), int)
                         ]
                         self.assertEqual(width_actions, [])
-                    elif spec.annotation_type == "highlight":
+                    elif spec.annotation_type in ("highlight", "hotlink", "namedview"):
                         self.assertIsNone(dropdown.menu())
-                        self.assertTrue(
-                            dropdown.property("highlightAnnotationDefaultColorPicker")
-                        )
+                        self.assertTrue(dropdown.property("annotationDefaultColorPicker"))
+                        if spec.annotation_type == "highlight":
+                            self.assertTrue(
+                                dropdown.property(
+                                    "highlightAnnotationDefaultColorPicker"
+                                )
+                            )
                     else:
                         width_actions = [
                             action

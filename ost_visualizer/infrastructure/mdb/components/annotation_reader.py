@@ -356,7 +356,7 @@ class AnnotationReaderMixin:
             try:
                 cursor.execute(
                     """
-                    SELECT UID, BidPageUID, Name, Position
+                    SELECT UID, BidPageUID, Name, Color, Position
                     FROM BidNamedViews
                     WHERE BidUID = ?
                     """,
@@ -374,7 +374,7 @@ class AnnotationReaderMixin:
                                 page_uid=str(row.BidPageUID) if row.BidPageUID else "",
                                 layer_uid=layer_uid,
                                 position=position,
-                                color="#008000",
+                                color=_resolve_color(row.Color, "#008000"),
                                 width=2.0,
                                 properties={"Text": name_str},
                                 visible=visible,

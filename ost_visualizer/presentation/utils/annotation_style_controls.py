@@ -9,6 +9,7 @@ from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 StyleGetter = Callable[[], AnnotationStyle]
 StyleSetter = Callable[..., AnnotationStyle]
 _TEXT_FONT_SIZES = (8, 9, 10, 11, 12, 14, 16, 18, 24, 36)
+_COLOR_ONLY_ANNOTATION_TYPES = frozenset({"highlight", "hotlink", "namedview"})
 
 
 def apply_annotation_tool_icon_color(
@@ -278,16 +279,18 @@ def create_annotation_style_button(
     if icon_size is not None:
         button.setIconSize(icon_size)
         button.setFixedWidth(max(14, min(18, icon_size.width() // 2 + 4)))
-    if annotation_type == "highlight":
-        button.setProperty("highlightAnnotationDefaultColorPicker", True)
+    if annotation_type in _COLOR_ONLY_ANNOTATION_TYPES:
+        button.setProperty("annotationDefaultColorPicker", True)
+        if annotation_type == "highlight":
+            button.setProperty("highlightAnnotationDefaultColorPicker", True)
 
-        def _choose_highlight_color() -> None:
+        def _choose_default_color() -> None:
             style = get_style()
             color = QtWidgets.QColorDialog.getColor(QtGui.QColor(style.color), parent)
             if color.isValid():
                 set_style(color=color.name())
 
-        button.clicked.connect(_choose_highlight_color)
+        button.clicked.connect(_choose_default_color)
         return button
     menu = create_annotation_style_menu(
         button,
