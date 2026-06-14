@@ -152,6 +152,68 @@ class AnnotationOperationsMixin:
             )
             return False
 
+    def save_annotation_styles(
+        self, db_path: str, updates: List[Tuple[str, str, Dict[str, object]]]
+    ) -> bool:
+        if not updates:
+            return True
+        try:
+            with self._connection(db_path) as conn:
+                schema = self._schema(conn)
+                cursor = conn.cursor()
+                for uid, annotation_type, properties in updates:
+                    table = self._ANNOTATION_TABLE.get(annotation_type)
+                    if not table or schema.optional_table_missing(table):
+                        continue
+                    assignments, values = self._style_update_assignments(
+                        schema,
+                        table,
+                        annotation_type,
+                        properties,
+                    )
+                    if not assignments:
+                        continue
+                    values.append(int(uid))
+                    cursor.execute(
+                        f"UPDATE [{table}] SET {', '.join(assignments)} WHERE [UID]=?",
+                        *values,
+                    )
+                return True
+        except Exception:
+            self.logger.exception(
+                "Failed to bulk save annotation styles in %s", db_path
+            )
+            return False
+
+    def _style_update_assignments(
+        self,
+        schema,
+        table: str,
+        annotation_type: str,
+        properties: Dict[str, object],
+    ) -> Tuple[List[str], List[object]]:
+        assignments: List[str] = []
+        values: List[object] = []
+        if "Color" in properties:
+            color_int = self._style_color_int(properties["Color"])
+            if annotation_type in ("dimension", "text"):
+                self._require_write_columns(schema, table, ("UID", "FontColor"))
+                assignments.append("[FontColor]=?")
+            else:
+                self._require_write_columns(schema, table, ("UID", "Color"))
+                assignments.append("[Color]=?")
+            values.append(color_int)
+        if "Width" in properties and annotation_type not in ("dimension", "text"):
+            self._require_write_columns(schema, table, ("UID", "Width"))
+            assignments.append("[Width]=?")
+            values.append(int(float(properties["Width"] or 0)))
+        return assignments, values
+
+    def _style_color_int(self, color: object) -> int:
+        if isinstance(color, str):
+            return hex_to_color_int(color)
+        return int(color or 0)
+
     @staticmethod
     def _text_annotation_name_value(properties: Dict[str, object]):
         text_content = properties.get("Text", "")

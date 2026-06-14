@@ -18,7 +18,7 @@ from ost_visualizer.presentation.services.selection_commands import (
 )
 from ost_visualizer.presentation.utils.annotation_defaults import (
     build_placed_annotation_spec,
-    set_annotation_style,
+    set_annotation_style_for_tool,
 )
 
 
@@ -41,6 +41,7 @@ class FakePlanView:
         self.restored_condition_text_properties = []
         self.restored_text_properties = []
         self.restored_text_and_positions = []
+        self.restored_annotation_styles = []
 
     def set_selected_uids(self, uids):
         self.selected = set(uids)
@@ -80,6 +81,9 @@ class FakePlanView:
         self.restored_text_and_positions.append(
             (list(text_changes), list(ann_position_changes))
         )
+
+    def restore_annotation_styles(self, changes):
+        self.restored_annotation_styles.append(list(changes))
 
     def cancel_place_mode(self):
         self.cancel_place_mode_calls += 1
@@ -289,6 +293,7 @@ class FakeAnnotationWriteService:
         self.position_calls = []
         self.text_property_calls = []
         self.text_and_position_calls = []
+        self.style_calls = []
         self.insert_calls = []
         self.delete_calls = []
         self.next_uids = ["ann-1"]
@@ -305,6 +310,10 @@ class FakeAnnotationWriteService:
         self, db_path, updates, positions
     ):
         self.text_and_position_calls.append((db_path, updates, positions))
+        return True
+
+    def save_annotation_styles(self, db_path, updates):
+        self.style_calls.append((db_path, updates))
         return True
 
     def insert_annotations(self, db_path, bid_uid, specs, ref_remap=None):
@@ -373,7 +382,19 @@ class FakeAccess:
 
 class PlanViewActionHandlerTests(unittest.TestCase):
     def tearDown(self):
-        set_annotation_style(color="#ff0000", line_width=4.0)
+        for annotation_type in (
+            "dimension",
+            "text",
+            "arrow",
+            "line",
+            "rect",
+            "oval",
+            "polygon",
+            "cloud",
+        ):
+            set_annotation_style_for_tool(
+                annotation_type, color="#ff0000", line_width=4.0
+            )
 
     def test_markup_annotation_default_line_width_is_four_pixels(self):
         for annotation_type in ("arrow", "line", "rect", "oval", "polygon", "cloud"):
@@ -384,10 +405,12 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 self.assertEqual(spec.width, 4.0)
                 self.assertEqual(spec.color, "#ff0000")
 
-    def test_selected_annotation_style_applies_to_new_markup_annotations(self):
-        set_annotation_style(color="#336699", line_width=9.0)
+    def test_per_tool_annotation_style_applies_to_new_markup_annotations(self):
         for annotation_type in ("arrow", "line", "rect", "oval", "polygon", "cloud"):
             with self.subTest(annotation_type=annotation_type):
+                set_annotation_style_for_tool(
+                    annotation_type, color="#336699", line_width=9.0
+                )
                 ann_write = FakeAnnotationWriteService()
                 handler = PlanViewActionHandler(
                     plan_view=FakePlanView(),
@@ -409,6 +432,40 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
                 self.assertEqual(specs[0].color, "#336699")
                 self.assertEqual(specs[0].width, 9.0)
+
+    def test_each_annotation_tool_default_is_independent(self):
+        defaults = {
+            "arrow": ("#110000", 2.0),
+            "line": ("#002200", 3.0),
+            "rect": ("#000033", 4.0),
+            "oval": ("#445500", 5.0),
+            "polygon": ("#006666", 6.0),
+            "cloud": ("#770077", 7.0),
+            "text": ("#888800", 8.0),
+            "dimension": ("#009999", 10.0),
+        }
+        for annotation_type, (color, width) in defaults.items():
+            set_annotation_style_for_tool(
+                annotation_type, color=color, line_width=width
+            )
+        for annotation_type, (color, width) in defaults.items():
+            with self.subTest(annotation_type=annotation_type):
+                spec = build_placed_annotation_spec(
+                    annotation_type, "p1", [1.0, 2.0, 13.0, 14.0]
+                )
+                self.assertEqual(spec.color, color)
+                if annotation_type == "dimension":
+                    self.assertEqual(spec.width, 1.0)
+                else:
+                    self.assertEqual(spec.width, width)
+        text_spec = build_placed_annotation_spec(
+            "text", "p1", [1.0, 2.0, 13.0, 14.0]
+        )
+        self.assertEqual(text_spec.properties["FontColor"], 0x008888)
+        dimension_spec = build_placed_annotation_spec(
+            "dimension", "p1", [1.0, 2.0, 13.0, 14.0]
+        )
+        self.assertEqual(dimension_spec.properties["FontColor"], "#009999")
 
     def _paste_handler(
         self,
@@ -559,6 +616,82 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 self.assertEqual(plan_view.selected, {"ann-1"})
                 self.assertEqual(undo.count, 1)
 
+    def test_text_annotation_created_commits_non_empty_text_through_write_path(self):
+        plan_view = FakePlanView()
+        plan_view.annotation_key_map = {("ann-1", "text"): "ann-1"}
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+        )
+        properties = {
+            "Text": "Hello",
+            "FontName": "Arial",
+            "FontColor": 0x336699,
+            "FontSize": 12,
+            "FontBold": False,
+            "FontItalic": False,
+            "FontUnderline": False,
+            "TextAlign": 0,
+        }
+        handler.on_text_annotation_created([7.0, 8.0, 12.0, 12.0], "p1", properties)
+        self.assertEqual(len(ann_write.insert_calls), 1)
+        _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+        self.assertEqual(specs[0].annotation_type, "text")
+        self.assertEqual(specs[0].position, [7.0, 8.0, 12.0, 12.0])
+        self.assertEqual(specs[0].properties, properties)
+        self.assertEqual(specs[0].color, "#996633")
+        self.assertEqual(plan_view.selected, {"ann-1"})
+        self.assertEqual(undo.count, 1)
+
+    def test_empty_text_annotation_commit_is_not_written(self):
+        ann_write = FakeAnnotationWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+        )
+        handler.on_text_annotation_created(
+            [7.0, 8.0, 12.0, 12.0],
+            "p1",
+            {"Text": "   ", "FontColor": 0x336699},
+        )
+        self.assertEqual(ann_write.insert_calls, [])
+
+    def test_denied_place_plan_items_access_blocks_text_commit_write(self):
+        ann_write = FakeAnnotationWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess(set()),
+        )
+        handler.on_text_annotation_created(
+            [7.0, 8.0, 12.0, 12.0],
+            "p1",
+            {"Text": "Hello", "FontColor": 0x336699},
+        )
+        self.assertEqual(ann_write.insert_calls, [])
+
     def test_denied_place_plan_items_access_blocks_annotation_placement_write(self):
         for annotation_type in (
             "dimension",
@@ -604,6 +737,62 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [("a1", "text", {"Text": "Old"}, {"Text": "New"})]
         )
         self.assertEqual(annotation_write.text_property_calls, [])
+
+    def test_annotation_style_change_writes_only_target_annotation(self):
+        annotation_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+        )
+        changes = [
+            (
+                "a1",
+                "rect",
+                {"Color": "#ff0000", "Width": 4.0},
+                {"Color": "#336699", "Width": 7.0},
+            )
+        ]
+        handler.on_annotation_styles_flushed(changes)
+        self.assertEqual(
+            annotation_write.style_calls,
+            [("bid.mdb", [("a1", "rect", {"Color": "#336699", "Width": 7.0})])],
+        )
+        self.assertEqual(undo.count, 1)
+        undo.undo()
+        undo.redo()
+        self.assertEqual(
+            annotation_write.style_calls[-2:],
+            [
+                ("bid.mdb", [("a1", "rect", {"Color": "#ff0000", "Width": 4.0})]),
+                ("bid.mdb", [("a1", "rect", {"Color": "#336699", "Width": 7.0})]),
+            ],
+        )
+
+    def test_denied_plan_item_access_blocks_annotation_style_write(self):
+        annotation_write = FakeAnnotationWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess(set()),
+        )
+        handler.on_annotation_styles_flushed(
+            [("a1", "rect", {"Color": "#ff0000"}, {"Color": "#336699"})]
+        )
+        self.assertEqual(annotation_write.style_calls, [])
 
     def test_condition_label_text_properties_write_takeoff_style_fields(self):
         data = FakeProjectData()

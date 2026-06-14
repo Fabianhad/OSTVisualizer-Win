@@ -40,8 +40,10 @@ from .managers.ui_state_manager import UIStateManager
 from .services.bid_clipboard_service import BidClipboardService
 from .services.mcp_context_bridge import McpContextBridge
 from .utils.annotation_defaults import (
-    get_annotation_style as get_active_annotation_style,
-    set_annotation_style as set_active_annotation_style,
+    get_annotation_style_for_tool as get_active_annotation_style_for_tool,
+    get_annotation_styles_by_tool as get_active_annotation_styles_by_tool,
+    set_annotation_style_for_tool as set_active_annotation_style_for_tool,
+    set_annotation_styles_by_tool as set_active_annotation_styles_by_tool,
 )
 from .utils.annotation_style_controls import apply_annotation_tool_icon_color
 from .utils.messagebox import show_warning
@@ -116,12 +118,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._workspace_state_model = app_controller.get_service(
             "workspace_state_model"
         )
-        saved_annotation_style = (
-            self._workspace_state_model.state.takeoff_workspace.annotation_style
-        )
-        set_active_annotation_style(
-            color=saved_annotation_style.color,
-            line_width=saved_annotation_style.line_width,
+        set_active_annotation_styles_by_tool(
+            self._workspace_state_model.state.takeoff_workspace.annotation_styles
         )
         self.ui_state_manager = UIStateManager(self._config_model)
         self.ui_access_manager = UIAccessManager(
@@ -810,28 +808,43 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._workspace_toolbar_visibility[key] = bool(state[key])
         self._apply_workspace_toolbar_visibility()
 
-    def get_annotation_style(self) -> AnnotationStyle:
-        return get_active_annotation_style()
+    def get_annotation_style_for_tool(self, annotation_type: str) -> AnnotationStyle:
+        return get_active_annotation_style_for_tool(annotation_type)
 
-    def set_annotation_style(
+    def get_annotation_styles_by_tool(self) -> dict[str, AnnotationStyle]:
+        return get_active_annotation_styles_by_tool()
+
+    def set_annotation_style_for_tool(
         self,
+        annotation_type: str,
         color: str | None = None,
         line_width: float | None = None,
         *,
         persist: bool = True,
     ) -> AnnotationStyle:
-        style = set_active_annotation_style(color=color, line_width=line_width)
-        self._refresh_annotation_style_controls()
+        style = set_active_annotation_style_for_tool(
+            annotation_type, color=color, line_width=line_width
+        )
+        self._refresh_annotation_style_controls(annotation_type)
         if persist:
             self._request_workspace_state_save()
         return style
 
-    def _refresh_annotation_style_controls(self) -> None:
-        style = self.get_annotation_style()
-        apply_annotation_tool_icon_color(self._plan_tool_actions, style.color)
+    def set_annotation_styles_by_tool(
+        self, styles: dict[str, AnnotationStyle], *, persist: bool = False
+    ) -> None:
+        set_active_annotation_styles_by_tool(styles)
+        self._refresh_annotation_style_controls()
+        if persist:
+            self._request_workspace_state_save()
+
+    def _refresh_annotation_style_controls(
+        self, annotation_type: str | None = None
+    ) -> None:
+        apply_annotation_tool_icon_color(self._plan_tool_actions, annotation_type)
         for window in (self.get_annotation_window(), self.get_view_window()):
             if window is not None:
-                window.refresh_annotation_style()
+                window.refresh_annotation_style(annotation_type)
 
     def set_workspace_toolbar_preference(self, key: str, visible: bool) -> None:
         self._set_workspace_toolbar_preference(key, visible)

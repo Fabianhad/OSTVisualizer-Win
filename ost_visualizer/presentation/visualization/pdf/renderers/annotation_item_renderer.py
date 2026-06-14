@@ -177,8 +177,6 @@ class AnnotationItemRenderer:
 
     def _render_text(self, text_info: Dict, color: str) -> List[AnnotationItemResult]:
         content = text_info.get("content", "")
-        if not content:
-            return []
         center_x = text_info["center_x"]
         center_y = text_info["center_y"]
         box_width = text_info["box_width"]

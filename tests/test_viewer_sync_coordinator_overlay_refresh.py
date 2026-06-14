@@ -2318,6 +2318,129 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertFalse(view._condition_text_toolbar.isHidden())
         view.cleanup()
 
+    def test_selected_annotation_style_change_updates_only_selected_annotation(self):
+        view = self._make_plan_view()
+        selected = BidAnnotation(
+            uid="a1",
+            annotation_type="rect",
+            position=[1.0, 2.0, 13.0, 14.0],
+            color="#ff0000",
+            width=4.0,
+        )
+        other = BidAnnotation(
+            uid="a2",
+            annotation_type="rect",
+            position=[20.0, 22.0, 33.0, 34.0],
+            color="#0000ff",
+            width=5.0,
+        )
+        view._current_annotations = {"a1": selected, "a2": other}
+        view._selected_uids = {"a1"}
+        emitted = []
+        view.annotation_styles_flushed.connect(lambda changes: emitted.extend(changes))
+        view.apply_annotation_style_to_selection(color="#336699", width=7.0)
+        self.assertEqual(selected.color, "#336699")
+        self.assertEqual(selected.width, 7.0)
+        self.assertEqual(other.color, "#0000ff")
+        self.assertEqual(other.width, 5.0)
+        self.assertEqual(
+            emitted,
+            [
+                (
+                    "a1",
+                    "rect",
+                    {"Color": "#ff0000", "Width": 4.0},
+                    {"Color": "#336699", "Width": 7.0},
+                )
+            ],
+        )
+        view.cleanup()
+
+    def test_default_annotation_style_change_does_not_repaint_existing_annotation(self):
+        from ost_visualizer.presentation.utils.annotation_defaults import (
+            set_annotation_style_for_tool,
+        )
+
+        view = self._make_plan_view()
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="rect",
+            position=[1.0, 2.0, 13.0, 14.0],
+            color="#336699",
+            width=4.0,
+        )
+        view._current_annotations = {"a1": annotation}
+        set_annotation_style_for_tool("rect", color="#ff0000", line_width=12.0)
+        try:
+            view._rebuild_current_overlays_from_model()
+            self.assertEqual(annotation.color, "#336699")
+            self.assertEqual(annotation.width, 4.0)
+        finally:
+            set_annotation_style_for_tool("rect", color="#ff0000", line_width=4.0)
+            view.cleanup()
+
+    def test_tool_dropdown_color_changes_default_without_mutating_annotations(self):
+        from ost_visualizer.presentation.utils.annotation_defaults import (
+            build_placed_annotation_spec,
+            get_annotation_style_for_tool,
+            set_annotation_style_for_tool,
+        )
+        from ost_visualizer.presentation.utils.annotation_style_controls import (
+            create_annotation_style_button,
+        )
+
+        view = self._make_plan_view()
+        selected = BidAnnotation(
+            uid="a1",
+            annotation_type="rect",
+            position=[1.0, 2.0, 13.0, 14.0],
+            color="#ff0000",
+            width=4.0,
+        )
+        other = BidAnnotation(
+            uid="a2",
+            annotation_type="rect",
+            position=[20.0, 22.0, 33.0, 34.0],
+            color="#0000ff",
+            width=5.0,
+        )
+        view._current_annotations = {"a1": selected, "a2": other}
+        view._selected_uids = {"a1"}
+        emitted = []
+        view.annotation_styles_flushed.connect(lambda changes: emitted.extend(changes))
+        original_style = get_annotation_style_for_tool("rect")
+        set_annotation_style_for_tool("rect", color="#00aa00", line_width=6.0)
+        button = create_annotation_style_button(
+            view,
+            lambda: get_annotation_style_for_tool("rect"),
+            lambda color=None, line_width=None: set_annotation_style_for_tool(
+                "rect", color=color, line_width=line_width
+            ),
+        )
+        try:
+            color_action = button.menu().actions()[-1]
+            self.assertEqual(color_action.text(), "Select Color...")
+            with patch.object(QColorDialog, "getColor", return_value=QColor("#445566")):
+                color_action.trigger()
+            self.assertEqual(get_annotation_style_for_tool("rect").color, "#445566")
+            self.assertEqual(selected.color, "#ff0000")
+            self.assertEqual(selected.width, 4.0)
+            self.assertEqual(other.color, "#0000ff")
+            self.assertEqual(other.width, 5.0)
+            self.assertEqual(emitted, [])
+            new_spec = build_placed_annotation_spec(
+                "rect", "page-1", [0.0, 0.0, 20.0, 20.0]
+            )
+            self.assertEqual(new_spec.color, "#445566")
+            self.assertEqual(new_spec.width, 6.0)
+        finally:
+            set_annotation_style_for_tool(
+                "rect",
+                color=original_style.color, line_width=original_style.line_width
+            )
+            button.deleteLater()
+            view.cleanup()
+
     def test_inline_text_annotation_edit_commits_text_property(self):
         view = self._make_plan_view()
         annotation, item = self._add_text_annotation(
@@ -3154,6 +3277,84 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(outline.width(), old_position[2])
         self.assertEqual(outline.height(), old_position[3])
         self.assertLess(item.boundingRect().width(), 100.0)
+        view.cleanup()
+
+    def test_text_annotation_draft_enters_inline_edit_without_flushing(self):
+        view = self._make_plan_view()
+        view._selection_enabled = True
+        emitted = []
+        flushed = []
+        view.text_annotation_created.connect(
+            lambda position, page_uid, properties: emitted.append(
+                (list(position), page_uid, dict(properties))
+            )
+        )
+        view.annotation_text_properties_flushed.connect(
+            lambda changes: flushed.extend(changes)
+        )
+        self.assertTrue(
+            view.begin_text_annotation_draft([100.0, 100.0, 80.0, 24.0], "page-1")
+        )
+        uid = view._draft_text_annotation_uid
+        self.assertIsNotNone(uid)
+        item = view._text_annotation_item(uid)
+        self.assertIsInstance(item, ClippedTextGraphicsItem)
+        self.assertTrue(view.is_text_annotation_inline_edit_active())
+        self.assertEqual(
+            item.textInteractionFlags(),
+            QtCore.Qt.TextInteractionFlag.TextEditorInteraction,
+        )
+        self.assertEqual(item.toPlainText(), "")
+        self.assertEqual(emitted, [])
+        self.assertEqual(flushed, [])
+        view.cleanup()
+
+    def test_empty_text_annotation_draft_commit_removes_item_without_create(self):
+        view = self._make_plan_view()
+        view._selection_enabled = True
+        emitted = []
+        view.text_annotation_created.connect(
+            lambda position, page_uid, properties: emitted.append(
+                (list(position), page_uid, dict(properties))
+            )
+        )
+        self.assertTrue(
+            view.begin_text_annotation_draft([100.0, 100.0, 80.0, 24.0], "page-1")
+        )
+        uid = view._draft_text_annotation_uid
+        item = view._text_annotation_item(uid)
+        item.setPlainText("   ")
+        view._finish_text_annotation_edit(commit=True)
+        self.assertEqual(emitted, [])
+        self.assertIsNone(view._draft_text_annotation_uid)
+        self.assertNotIn(uid, view._current_annotations)
+        self.assertIsNone(view._text_annotation_item(uid))
+        view.cleanup()
+
+    def test_non_empty_text_annotation_draft_commit_emits_create_once(self):
+        view = self._make_plan_view()
+        view._selection_enabled = True
+        emitted = []
+        view.text_annotation_created.connect(
+            lambda position, page_uid, properties: emitted.append(
+                (list(position), page_uid, dict(properties))
+            )
+        )
+        self.assertTrue(
+            view.begin_text_annotation_draft([100.0, 100.0, 80.0, 24.0], "page-1")
+        )
+        uid = view._draft_text_annotation_uid
+        item = view._text_annotation_item(uid)
+        item.setPlainText("Hello")
+        view._finish_text_annotation_edit(commit=True)
+        self.assertEqual(len(emitted), 1)
+        position, page_uid, properties = emitted[0]
+        self.assertEqual(position, [100.0, 100.0, 80.0, 24.0])
+        self.assertEqual(page_uid, "page-1")
+        self.assertEqual(properties["Text"], "Hello")
+        self.assertIsNone(view._draft_text_annotation_uid)
+        self.assertNotIn(uid, view._current_annotations)
+        self.assertIsNone(view._text_annotation_item(uid))
         view.cleanup()
 
     def test_overlay_refresh_after_inline_text_edit_keeps_textbox_width(self):

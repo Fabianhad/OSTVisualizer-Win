@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...domain.entities.annotation_style import (
     AnnotationStyle,
@@ -12,32 +13,72 @@ PLACEABLE_ANNOTATION_TYPES = frozenset(
     for spec in PLAN_ANNOTATION_TOOL_SPECS
     if spec.annotation_type is not None
 )
-_CURRENT_ANNOTATION_STYLE = AnnotationStyle()
+_STYLE_KEYS = tuple(sorted(PLACEABLE_ANNOTATION_TYPES))
+_ANNOTATION_STYLES: dict[str, AnnotationStyle] = {
+    annotation_type: AnnotationStyle() for annotation_type in _STYLE_KEYS
+}
 
 
-def get_annotation_style() -> AnnotationStyle:
-    return _CURRENT_ANNOTATION_STYLE
+def _normalize_annotation_type(annotation_type: str) -> str:
+    text = str(annotation_type or "").strip().lower()
+    if text not in PLACEABLE_ANNOTATION_TYPES:
+        raise ValueError(f"Unknown annotation tool type: {annotation_type!r}")
+    return text
 
 
-def set_annotation_style(color=None, line_width=None) -> AnnotationStyle:
-    global _CURRENT_ANNOTATION_STYLE
-    current = _CURRENT_ANNOTATION_STYLE
-    next_color = (
-        normalize_annotation_color(color, current.color)
-        if color is not None
-        else current.color
+def _style_for(annotation_type: str) -> AnnotationStyle:
+    key = _normalize_annotation_type(annotation_type)
+    return _ANNOTATION_STYLES[key]
+
+
+def get_annotation_style_for_tool(annotation_type: str) -> AnnotationStyle:
+    return _style_for(annotation_type)
+
+
+def get_annotation_styles_by_tool() -> dict[str, AnnotationStyle]:
+    return {key: _style_for(key) for key in _STYLE_KEYS}
+
+
+def set_annotation_style_for_tool(
+    annotation_type: str,
+    color=None,
+    line_width=None,
+) -> AnnotationStyle:
+    key = _normalize_annotation_type(annotation_type)
+    current = _style_for(key)
+    next_style = AnnotationStyle(
+        color=(
+            normalize_annotation_color(color, current.color)
+            if color is not None
+            else current.color
+        ),
+        line_width=(
+            normalize_annotation_line_width(line_width, current.line_width)
+            if line_width is not None
+            else current.line_width
+        ),
     )
-    next_width = (
-        normalize_annotation_line_width(line_width, current.line_width)
-        if line_width is not None
-        else current.line_width
-    )
-    _CURRENT_ANNOTATION_STYLE = AnnotationStyle(next_color, next_width)
-    return _CURRENT_ANNOTATION_STYLE
+    _ANNOTATION_STYLES[key] = next_style
+    return next_style
+
+
+def set_annotation_styles_by_tool(
+    styles: Mapping[str, AnnotationStyle | Mapping[str, object]],
+) -> dict[str, AnnotationStyle]:
+    next_styles = {key: AnnotationStyle() for key in _STYLE_KEYS}
+    for annotation_type, raw_style in styles.items():
+        key = _normalize_annotation_type(annotation_type)
+        if isinstance(raw_style, AnnotationStyle):
+            next_styles[key] = raw_style
+        else:
+            next_styles[key] = AnnotationStyle.from_dict(raw_style)
+    _ANNOTATION_STYLES.clear()
+    _ANNOTATION_STYLES.update(next_styles)
+    return get_annotation_styles_by_tool()
 
 
 def dimension_annotation_properties() -> dict:
-    font_color = normalize_annotation_color(get_annotation_style().color)
+    font_color = normalize_annotation_color(_style_for("dimension").color)
     return {
         "BidTakeoffFromUID": "",
         "BidTakeoffToUID": "",
@@ -50,21 +91,46 @@ def dimension_annotation_properties() -> dict:
     }
 
 
+def _annotation_color_int(color: str) -> int:
+    text = normalize_annotation_color(color).lstrip("#")
+    red = int(text[0:2], 16)
+    green = int(text[2:4], 16)
+    blue = int(text[4:6], 16)
+    return red | (green << 8) | (blue << 16)
+
+
+def text_annotation_properties() -> dict:
+    return {
+        "Text": "",
+        "FontName": "Arial",
+        "FontColor": _annotation_color_int(_style_for("text").color),
+        "FontSize": 12,
+        "FontBold": False,
+        "FontItalic": False,
+        "FontUnderline": False,
+        "TextAlign": 0,
+    }
+
+
 def annotation_default_style(annotation_type: str) -> tuple[str, float]:
-    style = get_annotation_style()
-    if annotation_type == "dimension":
+    key = _normalize_annotation_type(annotation_type)
+    style = _style_for(key)
+    if key == "dimension":
         return style.color, DIMENSION_ANNOTATION_WIDTH
     return style.color, style.line_width
 
 
 def annotation_default_properties(annotation_type: str) -> dict:
-    if annotation_type == "dimension":
+    key = _normalize_annotation_type(annotation_type)
+    if key == "dimension":
         return dimension_annotation_properties()
-    if annotation_type in ("line", "arrow"):
+    if key in ("line", "arrow"):
         return {
             "BidTakeoffFromUID": "",
             "BidTakeoffToUID": "",
         }
+    if key == "text":
+        return text_annotation_properties()
     return {}
 
 

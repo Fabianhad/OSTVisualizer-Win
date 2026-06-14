@@ -4,6 +4,7 @@ from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.events.app_events import AppEvents
+from ...domain.entities.annotation import int_color_to_hex
 from ...domain.entities.takeoff import Takeoff
 from ..managers.ui_access_manager import Feature
 from ..resolvers.entity_resolver import EntityResolver
@@ -68,6 +69,7 @@ class PlanViewActionHandler:
         pv.annotation_text_and_positions_flushed.connect(
             self.on_annotation_text_and_positions_flushed
         )
+        pv.annotation_styles_flushed.connect(self.on_annotation_styles_flushed)
         pv.condition_text_properties_flushed.connect(
             self.on_condition_text_properties_flushed
         )
@@ -75,6 +77,7 @@ class PlanViewActionHandler:
         pv.group_rotation_flushed.connect(self.on_group_rotation_flushed)
         pv.takeoff_created.connect(self.on_takeoff_created)
         pv.annotation_created.connect(self.on_annotation_created)
+        pv.text_annotation_created.connect(self.on_text_annotation_created)
         pv.hole_created.connect(self.on_hole_created)
         pv.elements_deleted.connect(self.on_elements_deleted)
         pv.undo_requested.connect(self._undo_svc.undo)
@@ -444,6 +447,37 @@ class PlanViewActionHandler:
 
         self._undo_svc.push(_undo_text_properties, _redo_text_properties)
 
+    def on_annotation_styles_flushed(self, changes: list) -> None:
+        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+            return
+        db_path = self._data_svc.get_current_bid_file_path()
+        if not db_path or not changes:
+            return
+        new_updates = [
+            (uid, ann_type, dict(new_style))
+            for uid, ann_type, _old_style, new_style in changes
+        ]
+        success = self._ann_write_svc.save_annotation_styles(db_path, new_updates)
+        if not success:
+            self._plan_view.restore_annotation_styles(changes)
+            return
+        old_updates = [
+            (uid, ann_type, dict(old_style))
+            for uid, ann_type, old_style, _new_style in changes
+            if old_style
+        ]
+        if not old_updates:
+            return
+        ann_write_svc = self._ann_write_svc
+
+        def _undo_styles():
+            ann_write_svc.save_annotation_styles(db_path, old_updates)
+
+        def _redo_styles():
+            ann_write_svc.save_annotation_styles(db_path, new_updates)
+
+        self._undo_svc.push(_undo_styles, _redo_styles)
+
     def _publish_named_view_renames(self, updates: list) -> None:
         renames = [
             (str(uid), str(properties["Text"] or ""))
@@ -678,6 +712,23 @@ class PlanViewActionHandler:
             return
         self._insert_annotations_with_undo(bid_ref, [spec])
 
+    def on_text_annotation_created(
+        self, position: list, page_uid: str, properties: dict
+    ) -> None:
+        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
+            return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if not bid_ref or not page_uid or not str(properties.get("Text", "")).strip():
+            return
+        spec = build_placed_annotation_spec("text", page_uid, list(position))
+        if spec is None:
+            return
+        spec.properties = dict(properties)
+        font_color = spec.properties.get("FontColor")
+        if isinstance(font_color, int):
+            spec.color = int_color_to_hex(font_color)
+        self._insert_annotations_with_undo(bid_ref, [spec])
+
     def on_hole_created(
         self, condition_uid: str, position: list, page_uid: str, parent_uid: str
     ) -> None:
@@ -700,14 +751,14 @@ class PlanViewActionHandler:
 
     def _insert_annotations_with_undo(
         self, bid_ref, specs: List[InsertAnnotationSpec]
-    ) -> bool:
+    ) -> List[str]:
         new_uids = self._ann_write_svc.insert_annotations(
             bid_ref.file_path,
             bid_ref.bid_uid,
             specs,
         )
         if not new_uids:
-            return False
+            return []
         uid_type_set = {
             (uid, specs[i].annotation_type) for i, uid in enumerate(new_uids)
         }
@@ -722,7 +773,7 @@ class PlanViewActionHandler:
             plan_view=self._plan_view,
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
-        return True
+        return list(new_uids)
 
     def on_paste_backouts_placed(self, placements: list, source_bid_uid) -> None:
         if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):

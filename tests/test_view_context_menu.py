@@ -81,6 +81,7 @@ class ViewContextMenuTests(unittest.TestCase):
                     "Pan",
                     "Zoom",
                     "Dimension",
+                    "Text",
                     "Arrow",
                     "Line",
                     "Rectangle",

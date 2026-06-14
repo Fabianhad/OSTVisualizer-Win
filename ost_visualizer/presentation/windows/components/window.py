@@ -9,6 +9,7 @@ from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ....domain.entities.annotation_style import AnnotationStyle
+from ....domain.entities.annotation import int_color_to_hex
 from ....domain.entities.annotation_view import AnnotationView
 from ....domain.entities.bid import Bid
 from ....domain.entities.config import Config
@@ -41,8 +42,8 @@ from ...services.selection_commands import DeleteAnnotationsCommand
 from ...services.selection_commands import InsertAnnotationsCommand
 from ...utils.annotation_defaults import (
     build_placed_annotation_spec,
-    get_annotation_style,
-    set_annotation_style,
+    get_annotation_style_for_tool,
+    set_annotation_style_for_tool,
 )
 from ...utils.annotation_style_controls import (
     apply_annotation_tool_icon_color,
@@ -113,7 +114,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         snap_to_takeoffs_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
         snap_to_right_angle_enabled: bool = False,
         snap_to_right_angle_threshold_px: int = Config.DEFAULT_SNAP_THRESHOLD_PX,
-        annotation_style_getter: Optional[Callable[[], AnnotationStyle]] = None,
+        annotation_style_getter: Optional[Callable[[str], AnnotationStyle]] = None,
         annotation_style_setter: Optional[Callable[..., AnnotationStyle]] = None,
         parent: Optional[QtWidgets.QWidget] = None,
     ):
@@ -174,8 +175,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._scale_combo: Optional[QtWidgets.QComboBox] = None
         self._btn_select: Optional[QtWidgets.QToolButton] = None
         self._annotation_tool_buttons: dict[str, QtWidgets.QToolButton] = {}
-        self._annotation_style_getter = annotation_style_getter or get_annotation_style
-        self._annotation_style_setter = annotation_style_setter or set_annotation_style
+        self._annotation_style_getter = (
+            annotation_style_getter or get_annotation_style_for_tool
+        )
+        self._annotation_style_setter = (
+            annotation_style_setter or set_annotation_style_for_tool
+        )
         self.setWindowTitle(config.window_title)
         self.setWindowFlags(
             QtCore.Qt.WindowType.Window
@@ -292,9 +297,18 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             split_button, _ = create_annotation_tool_split_button(
                 nav_bar,
                 button,
-                self._annotation_style_getter,
-                self._annotation_style_setter,
+                lambda annotation_type=spec.annotation_type: (
+                    self._annotation_style_getter(annotation_type)
+                ),
+                lambda color=None, line_width=None, annotation_type=spec.annotation_type: (
+                    self._annotation_style_setter(
+                        annotation_type,
+                        color=color,
+                        line_width=line_width,
+                    )
+                ),
                 icon_size=btn_size,
+                annotation_type=spec.annotation_type,
             )
             nav_layout.addWidget(split_button)
 
@@ -308,9 +322,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
             button.toggled.connect(_activate_annotation_tool)
         if self._config.annotation_tool_specs:
-            apply_annotation_tool_icon_color(
-                self._annotation_tool_buttons, self._annotation_style_getter().color
-            )
+            apply_annotation_tool_icon_color(self._annotation_tool_buttons)
         self._btn_pan = QtWidgets.QToolButton()
         IconManager.apply(self._btn_pan, IconId.PAN_TOOL)
         self._btn_pan.setIconSize(btn_size)
@@ -385,8 +397,12 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.plan_view.annotation_text_and_positions_flushed.connect(
             self._on_annotation_text_and_positions_flushed
         )
+        self.plan_view.annotation_styles_flushed.connect(
+            self._on_annotation_styles_flushed
+        )
         self.plan_view.elements_deleted.connect(self._on_elements_deleted)
         self.plan_view.annotation_created.connect(self._on_annotation_created)
+        self.plan_view.text_annotation_created.connect(self._on_text_annotation_created)
         if self._undo_svc is not None:
             self.plan_view.undo_requested.connect(self._undo_svc.undo)
             self.plan_view.redo_requested.connect(self._undo_svc.redo)
@@ -445,12 +461,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return False
         return bool(self.plan_view.activate_annotation_placement(annotation_type))
 
-    def refresh_annotation_style(self) -> None:
+    def refresh_annotation_style(self, annotation_type: str | None = None) -> None:
         if not self._annotation_tool_buttons:
             return
-        apply_annotation_tool_icon_color(
-            self._annotation_tool_buttons, self._annotation_style_getter().color
-        )
+        apply_annotation_tool_icon_color(self._annotation_tool_buttons, annotation_type)
 
     def _populate_page_combo(self, bid: Bid) -> None:
         self._page_combo.set_label_options(
@@ -989,6 +1003,41 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
         self._undo_svc.push(_undo_text_properties, _redo_text_properties)
 
+    def _on_annotation_styles_flushed(self, changes: list) -> None:
+        if not self._config.allow_annotation_editing or self._read_only:
+            return
+        if self._is_closing or self._ann_write_svc is None or not changes:
+            return
+        db_path = self._get_db_path()
+        if not db_path:
+            return
+        new_updates = [
+            (uid, ann_type, dict(new_style))
+            for uid, ann_type, _old_style, new_style in changes
+        ]
+        success = self._ann_write_svc.save_annotation_styles(db_path, new_updates)
+        if not success:
+            self.plan_view.restore_annotation_styles(changes)
+            return
+        if self._undo_svc is None:
+            return
+        old_updates = [
+            (uid, ann_type, dict(old_style))
+            for uid, ann_type, old_style, _new_style in changes
+            if old_style
+        ]
+        if not old_updates:
+            return
+        ann_write_svc = self._ann_write_svc
+
+        def _undo_styles():
+            ann_write_svc.save_annotation_styles(db_path, old_updates)
+
+        def _redo_styles():
+            ann_write_svc.save_annotation_styles(db_path, new_updates)
+
+        self._undo_svc.push(_undo_styles, _redo_styles)
+
     def _publish_named_view_renames(self, updates: list) -> None:
         for uid, ann_type, properties in updates:
             if ann_type != "namedview" or "Text" not in properties:
@@ -1019,6 +1068,51 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         spec = build_placed_annotation_spec(annotation_type, page_uid, list(position))
         if spec is None:
             return
+        new_uids = self._ann_write_svc.insert_annotations(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            [spec],
+        )
+        if not new_uids:
+            return
+        uid_type_set = {(new_uids[0], spec.annotation_type)}
+        keys = self.plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+        if keys:
+            self.plan_view.set_selected_uids(keys)
+        if self._undo_svc is None:
+            return
+        cmd = InsertAnnotationsCommand(
+            uids=list(new_uids),
+            bid_ref=bid_ref,
+            specs=[spec],
+            write_svc=self._ann_write_svc,
+            plan_view=self.plan_view,
+        )
+        self._undo_svc.push(cmd.undo, cmd.redo)
+
+    def _on_text_annotation_created(
+        self, position: list, page_uid: str, properties: dict
+    ) -> None:
+        if not self._config.allow_annotation_editing or self._read_only:
+            return
+        if (
+            self._is_closing
+            or self._ann_write_svc is None
+            or self.plan_view is None
+            or not page_uid
+            or not str(properties.get("Text", "")).strip()
+        ):
+            return
+        bid_ref = self.view.bid_ref if self.view else None
+        if bid_ref is None:
+            return
+        spec = build_placed_annotation_spec("text", page_uid, list(position))
+        if spec is None:
+            return
+        spec.properties = dict(properties)
+        font_color = spec.properties.get("FontColor")
+        if isinstance(font_color, int):
+            spec.color = int_color_to_hex(font_color)
         new_uids = self._ann_write_svc.insert_annotations(
             bid_ref.file_path,
             bid_ref.bid_uid,
@@ -1164,8 +1258,14 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self.plan_view.annotation_text_and_positions_flushed.disconnect(
                 self._on_annotation_text_and_positions_flushed
             )
+            self.plan_view.annotation_styles_flushed.disconnect(
+                self._on_annotation_styles_flushed
+            )
             self.plan_view.elements_deleted.disconnect(self._on_elements_deleted)
             self.plan_view.annotation_created.disconnect(self._on_annotation_created)
+            self.plan_view.text_annotation_created.disconnect(
+                self._on_text_annotation_created
+            )
             self.plan_view.cursor_mode_change_requested.disconnect(
                 self._on_cursor_mode_change_requested
             )

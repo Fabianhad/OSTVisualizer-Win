@@ -125,10 +125,8 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                 "plan_tools_toolbar": self._state.toolbar_visibility.plan_tools_toolbar_visible,
             }
         )
-        self._shell.set_annotation_style(
-            color=self._state.takeoff_workspace.annotation_style.color,
-            line_width=self._state.takeoff_workspace.annotation_style.line_width,
-            persist=False,
+        self._shell.set_annotation_styles_by_tool(
+            self._state.takeoff_workspace.annotation_styles, persist=False
         )
         if self._pending_splitter_sizes:
             self._shell.set_left_splitter_sizes(self._pending_splitter_sizes)
@@ -692,7 +690,9 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             previous.takeoff_workspace.dropdown_popup_sizes,
             self._shell.get_takeoff_dropdown_popup_sizes(),
         )
-        state.takeoff_workspace.annotation_style = self._shell.get_annotation_style()
+        state.takeoff_workspace.annotation_styles = (
+            self._shell.get_annotation_styles_by_tool()
+        )
         state.takeoff_workspace.conditions_header_state_b64 = self._encode_byte_array(
             self._shell.save_conditions_header_state()
         )

@@ -9,6 +9,9 @@ from ..use_cases.project.save_annotation_positions_use_case import (
 from ..use_cases.project.save_annotation_text_properties_use_case import (
     SaveAnnotationTextPropertiesUseCase,
 )
+from ..use_cases.project.save_annotation_styles_use_case import (
+    SaveAnnotationStylesUseCase,
+)
 from .active_bid_write_guard import ActiveBidWriteGuard
 from .base_write_service import BaseWriteService
 
@@ -18,6 +21,7 @@ class AnnotationWriteService(BaseWriteService):
         self,
         save_annotation_positions: SaveAnnotationPositionsUseCase,
         save_annotation_text_properties: SaveAnnotationTextPropertiesUseCase,
+        save_annotation_styles: SaveAnnotationStylesUseCase,
         insert_annotations: InsertAnnotationsUseCase,
         delete_annotations: DeleteAnnotationsUseCase,
         reload_database=None,
@@ -31,6 +35,7 @@ class AnnotationWriteService(BaseWriteService):
         self._bid_write_guard = bid_write_guard
         self._save_annotation_positions = save_annotation_positions
         self._save_annotation_text_properties = save_annotation_text_properties
+        self._save_annotation_styles = save_annotation_styles
         self._insert_annotations = insert_annotations
         self._delete_annotations = delete_annotations
 
@@ -54,6 +59,18 @@ class AnnotationWriteService(BaseWriteService):
         ):
             return False
         success = self._save_annotation_text_properties.execute(db_path, updates)
+        if success:
+            self.reload_and_notify(db_path)
+        return success
+
+    def save_annotation_styles(
+        self, db_path: str, updates: List[Tuple[str, str, dict]]
+    ) -> bool:
+        if self._bid_write_guard.blocks_active_locked_bid_write(
+            "save_annotation_styles", db_path
+        ):
+            return False
+        success = self._save_annotation_styles.execute(db_path, updates)
         if success:
             self.reload_and_notify(db_path)
         return success

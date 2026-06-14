@@ -16,29 +16,44 @@ class DomainLifecycleTests(unittest.TestCase):
     def test_workspace_active_view_constants_are_immutable_shared_state(self):
         self.assertIsInstance(TakeoffWorkspaceState.VALID_ACTIVE_VIEWS, frozenset)
 
-    def test_workspace_annotation_style_round_trips_and_clamps_values(self):
+    def test_workspace_annotation_styles_round_trip_and_clamp_values(self):
         state = WorkspaceState.from_dict(
             {
                 "takeoff_workspace": {
-                    "annotation_style": {
-                        "color": "336699",
-                        "line_width": 99,
+                    "annotation_styles": {
+                        "arrow": {
+                            "color": "336699",
+                            "line_width": 99,
+                        },
+                        "rect": {
+                            "color": "00aa00",
+                            "line_width": 2,
+                        },
                     }
                 }
             }
         )
-        self.assertEqual(state.takeoff_workspace.annotation_style.color, "#336699")
-        self.assertEqual(state.takeoff_workspace.annotation_style.line_width, 16.0)
+        self.assertEqual(
+            state.takeoff_workspace.annotation_styles["arrow"].color, "#336699"
+        )
+        self.assertEqual(
+            state.takeoff_workspace.annotation_styles["arrow"].line_width, 16.0
+        )
+        self.assertEqual(
+            state.takeoff_workspace.annotation_styles["rect"].color, "#00aa00"
+        )
+        self.assertEqual(
+            state.takeoff_workspace.annotation_styles["rect"].line_width, 2.0
+        )
         payload = state.to_dict()
         self.assertEqual(
-            payload["takeoff_workspace"]["annotation_style"],
+            payload["takeoff_workspace"]["annotation_styles"]["arrow"],
             {"color": "#336699", "line_width": 16.0},
         )
 
-    def test_workspace_annotation_style_defaults_to_red_four_pixels(self):
+    def test_workspace_annotation_styles_default_to_empty_map(self):
         state = WorkspaceState.from_dict({})
-        self.assertEqual(state.takeoff_workspace.annotation_style.color, "#ff0000")
-        self.assertEqual(state.takeoff_workspace.annotation_style.line_width, 4.0)
+        self.assertEqual(state.takeoff_workspace.annotation_styles, {})
 
 
 if __name__ == "__main__":

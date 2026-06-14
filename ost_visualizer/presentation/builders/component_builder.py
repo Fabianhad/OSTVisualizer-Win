@@ -347,9 +347,16 @@ class ComponentBuilder:
                 split_button, _ = create_annotation_tool_split_button(
                     viewer_container,
                     button,
-                    self.window.get_annotation_style,
-                    self.window.set_annotation_style,
+                    lambda annotation_type=spec.annotation_type: (
+                        self.window.get_annotation_style_for_tool(annotation_type)
+                    ),
+                    lambda color=None, line_width=None, annotation_type=spec.annotation_type: (
+                        self.window.set_annotation_style_for_tool(
+                            annotation_type, color=color, line_width=line_width
+                        )
+                    ),
                     icon_size=QtCore.QSize(*DEFAULT_ICON_SIZE),
+                    annotation_type=spec.annotation_type,
                 )
                 main_toolbar.addWidget(split_button)
             else:

@@ -20,6 +20,8 @@ from ..config import (
     ACTION_RECTANGLE_ANNOTATION_TOOLTIP,
     ACTION_SELECT_LABEL,
     ACTION_SELECT_TOOLTIP,
+    ACTION_TEXT_ANNOTATION_LABEL,
+    ACTION_TEXT_ANNOTATION_TOOLTIP,
     ACTION_ZOOM_LABEL,
     ACTION_ZOOM_TOOLTIP,
 )
@@ -68,6 +70,13 @@ PLAN_ANNOTATION_TOOL_SPECS = (
         ACTION_DIMENSION_TOOLTIP,
         IconId.DIMENSION_TOOL,
         annotation_type="dimension",
+    ),
+    PlanToolSpec(
+        "text_annotation_tool",
+        ACTION_TEXT_ANNOTATION_LABEL,
+        ACTION_TEXT_ANNOTATION_TOOLTIP,
+        IconId.TEXT_ANNOTATION_TOOL,
+        annotation_type="text",
     ),
     PlanToolSpec(
         "arrow_annotation_tool",

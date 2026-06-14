@@ -647,6 +647,25 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 )
                 """
             )
+        conn.execute(
+            """
+            CREATE TABLE BidTexts (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidLayerUID INTEGER,
+                Name BLOB,
+                FontName TEXT,
+                FontColor INTEGER,
+                FontSize INTEGER,
+                FontBold INTEGER,
+                FontItalic INTEGER,
+                FontUnderline INTEGER,
+                TextAlign INTEGER,
+                Position BLOB
+            )
+            """
+        )
         specs = [
             InsertAnnotationSpec(
                 page_uid="3",
@@ -692,9 +711,26 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 color="#ff0000",
                 width=2.0,
             ),
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="text",
+                position=[7.0, 8.0, 12.0, 12.0],
+                color="#336699",
+                width=4.0,
+                properties={
+                    "Text": "",
+                    "FontName": "Arial",
+                    "FontColor": 0x996633,
+                    "FontSize": 12,
+                    "FontBold": False,
+                    "FontItalic": False,
+                    "FontUnderline": False,
+                    "TextAlign": 0,
+                },
+            ),
         ]
         new_uids = _DimensionWriteOps(conn).insert_annotations("bid.mdb", "1", specs)
-        self.assertEqual(new_uids, ["1", "1", "1", "1", "1", "1"])
+        self.assertEqual(new_uids, ["1", "1", "1", "1", "1", "1", "1"])
         expected_tables = {
             "BidALines": "line",
             "BidArrows": "arrow",
@@ -709,6 +745,232 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                     f"SELECT BidUID, BidPageUID, Color, Width FROM {table}"
                 ).fetchone()
                 self.assertEqual(row, (1, 3, 255, 2))
+        text_row = conn.execute(
+            """
+            SELECT BidUID, BidPageUID, FontName, FontColor, FontSize, TextAlign, Position
+              FROM BidTexts
+            """
+        ).fetchone()
+        self.assertEqual(text_row[:6], (1, 3, "Arial", 0x996633, 12, 0))
+        self.assertEqual(
+            text_row[6].encode("latin-1"),
+            encode_position([7.0, 8.0, 12.0, 12.0]),
+        )
+
+    def test_annotation_style_updates_are_per_annotation_and_per_type(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """
+            CREATE TABLE BidALines (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidTakeoffFromUID INTEGER,
+                BidTakeoffToUID INTEGER,
+                Position BLOB,
+                Color INTEGER,
+                Width INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE BidArrows (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidTakeoffFromUID INTEGER,
+                BidTakeoffToUID INTEGER,
+                Position BLOB,
+                Color INTEGER,
+                Width INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE BidDimensions (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidTakeoffFromUID INTEGER,
+                BidTakeoffToUID INTEGER,
+                Position BLOB,
+                FontName TEXT,
+                FontColor INTEGER,
+                FontSize INTEGER,
+                FontBold INTEGER,
+                FontItalic INTEGER,
+                FontUnderline INTEGER
+            )
+            """
+        )
+        for table in (
+            "BidAnnotationRects",
+            "BidAnnotationOvals",
+            "BidAnnotationPolygons",
+            "BidAnnotationClouds",
+        ):
+            conn.execute(
+                f"""
+                CREATE TABLE {table} (
+                    UID INTEGER PRIMARY KEY,
+                    BidUID INTEGER,
+                    BidPageUID INTEGER,
+                    BidLayerUID INTEGER,
+                    Position BLOB,
+                    Color INTEGER,
+                    Width INTEGER
+                )
+                """
+            )
+        conn.execute(
+            """
+            CREATE TABLE BidTexts (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidLayerUID INTEGER,
+                Name BLOB,
+                FontName TEXT,
+                FontColor INTEGER,
+                FontSize INTEGER,
+                FontBold INTEGER,
+                FontItalic INTEGER,
+                FontUnderline INTEGER,
+                TextAlign INTEGER,
+                Position BLOB
+            )
+            """
+        )
+        base_positions = {
+            "line": [0.0, 0.0, 10.0, 10.0],
+            "arrow": [1.0, 2.0, 13.0, 14.0],
+            "dimension": [1.0, 2.0, 13.0, 14.0],
+            "rect": [1.0, 2.0, 13.0, 14.0],
+            "oval": [2.0, 3.0, 14.0, 15.0],
+            "polygon": [0.0, 0.0, 12.0, 0.0, 6.0, 8.0],
+            "cloud": [1.0, 1.0, 13.0, 1.0, 7.0, 9.0],
+            "text": [7.0, 8.0, 12.0, 12.0],
+        }
+        specs = []
+        for annotation_type, position in base_positions.items():
+            for color in ("#ff0000", "#0000ff"):
+                properties = {}
+                if annotation_type in ("line", "arrow", "dimension"):
+                    properties.update(
+                        {"BidTakeoffFromUID": "", "BidTakeoffToUID": ""}
+                    )
+                if annotation_type == "dimension":
+                    properties.update(
+                        {
+                            "FontName": "Arial",
+                            "FontColor": color,
+                            "FontSize": 10,
+                            "FontBold": False,
+                            "FontItalic": False,
+                            "FontUnderline": False,
+                        }
+                    )
+                if annotation_type == "text":
+                    color_text = color.lstrip("#")
+                    color_int = (
+                        int(color_text[0:2], 16)
+                        | (int(color_text[2:4], 16) << 8)
+                        | (int(color_text[4:6], 16) << 16)
+                    )
+                    properties.update(
+                        {
+                            "Text": "Text",
+                            "FontName": "Arial",
+                            "FontColor": color_int,
+                            "FontSize": 12,
+                            "FontBold": False,
+                            "FontItalic": False,
+                            "FontUnderline": False,
+                            "TextAlign": 0,
+                        }
+                    )
+                specs.append(
+                    InsertAnnotationSpec(
+                        page_uid="3",
+                        annotation_type=annotation_type,
+                        position=list(position),
+                        color=color,
+                        width=4.0,
+                        properties=properties,
+                    )
+                )
+        ops = _DimensionWriteOps(conn)
+        ops.insert_annotations("bid.mdb", "1", specs)
+        updates = [
+            ("1", annotation_type, {"Color": "#00aa00", "Width": 6.0})
+            for annotation_type in base_positions
+        ]
+        self.assertTrue(ops.save_annotation_styles("bid.mdb", updates))
+        expected_shape_tables = {
+            "line": "BidALines",
+            "arrow": "BidArrows",
+            "rect": "BidAnnotationRects",
+            "oval": "BidAnnotationOvals",
+            "polygon": "BidAnnotationPolygons",
+            "cloud": "BidAnnotationClouds",
+        }
+        for annotation_type, table in expected_shape_tables.items():
+            with self.subTest(annotation_type=annotation_type):
+                rows = conn.execute(
+                    f"SELECT UID, Color, Width FROM {table} ORDER BY UID"
+                ).fetchall()
+                self.assertEqual(rows, [(1, 0x00AA00, 6), (2, 0xFF0000, 4)])
+        dimension_rows = conn.execute(
+            "SELECT UID, FontColor FROM BidDimensions ORDER BY UID"
+        ).fetchall()
+        self.assertEqual(dimension_rows, [(1, 0x00AA00), (2, 0xFF0000)])
+        text_rows = conn.execute(
+            "SELECT UID, FontColor FROM BidTexts ORDER BY UID"
+        ).fetchall()
+        self.assertEqual(text_rows, [(1, 0x00AA00), (2, 0xFF0000)])
+
+    def test_renderer_uses_annotation_color_not_global_default_style(self):
+        from ost_visualizer.presentation.utils.annotation_defaults import (
+            set_annotation_style_for_tool,
+        )
+
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="rect",
+            position=[1.0, 2.0, 13.0, 14.0],
+            color="#336699",
+            width=4.0,
+        )
+        set_annotation_style_for_tool("rect", color="#ff0000", line_width=9.0)
+        try:
+            geometry = calculate_annotation_geometry(
+                annotation,
+                lambda position: list(position),
+            )
+            self.assertEqual(geometry["color"], "#336699")
+            self.assertEqual(geometry["width"], 4.0)
+        finally:
+            set_annotation_style_for_tool("rect", color="#ff0000", line_width=4.0)
+
+    def test_empty_text_annotation_renders_editable_text_item(self):
+        renderer = AnnotationItemRenderer(OSTCoordinateSystem())
+        annotation = BidAnnotation(
+            uid="text-1",
+            annotation_type="text",
+            page_uid="p1",
+            position=[60.0, 80.0, 40.0, 20.0],
+            color="#336699",
+            properties={"Text": "", "FontName": "Arial", "FontSize": 12},
+        )
+        results, uid_to_items = renderer.create_all_annotation_items(
+            [("text-1", annotation)], _page_info(), "p1"
+        )
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0][0], QGraphicsTextItem)
+        self.assertEqual(results[0][0].toPlainText(), "")
+        self.assertEqual(uid_to_items["text-1"], [results[0][0]])
 
     def test_native_pdf_export_writes_horizontal_line_dimension_annotation(self):
         pdf_text = self._write_native_pdf_with_dimension(

@@ -99,6 +99,9 @@ class IMdbWriter(Protocol):
     def save_annotation_text_properties(
         self, db_path: str, updates: List[Tuple[str, str, Dict[str, Any]]]
     ) -> bool: ...
+    def save_annotation_styles(
+        self, db_path: str, updates: List[Tuple[str, str, Dict[str, Any]]]
+    ) -> bool: ...
     def insert_takeoffs(
         self,
         db_path: str,

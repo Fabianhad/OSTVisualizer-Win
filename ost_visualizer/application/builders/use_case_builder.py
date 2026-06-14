@@ -50,6 +50,9 @@ from ..use_cases.project.save_annotation_positions_use_case import (
 from ..use_cases.project.save_annotation_text_properties_use_case import (
     SaveAnnotationTextPropertiesUseCase,
 )
+from ..use_cases.project.save_annotation_styles_use_case import (
+    SaveAnnotationStylesUseCase,
+)
 from ..use_cases.project.save_bid_areas_use_case import SaveBidAreasUseCase
 from ..use_cases.project.save_bid_selected_page_use_case import (
     SaveBidSelectedPageUseCase,
@@ -254,6 +257,7 @@ class UseCaseBuilder:
         save_annotation_text_properties_uc = SaveAnnotationTextPropertiesUseCase(
             mdb_writer
         )
+        save_annotation_styles_uc = SaveAnnotationStylesUseCase(mdb_writer)
         insert_annotations_uc = InsertAnnotationsUseCase(
             mdb_writer, ann_logger.getChild("Insert")
         )
@@ -396,6 +400,10 @@ class UseCaseBuilder:
             save_annotation_text_properties_uc,
         )
         self.container.register_instance(
+            "save_annotation_styles_use_case",
+            save_annotation_styles_uc,
+        )
+        self.container.register_instance(
             "insert_annotations_use_case", insert_annotations_uc
         )
         self.container.register_instance(
@@ -461,6 +469,7 @@ class UseCaseBuilder:
             AnnotationWriteService(
                 save_annotation_positions=save_annotation_positions_uc,
                 save_annotation_text_properties=save_annotation_text_properties_uc,
+                save_annotation_styles=save_annotation_styles_uc,
                 insert_annotations=insert_annotations_uc,
                 delete_annotations=delete_annotations_uc,
                 reload_database=reload_database_uc.execute,

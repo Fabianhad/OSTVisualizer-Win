@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 _RIGHT_ANGLE_ALIGNMENT_TOLERANCE = 1e-6
 _AREA_ANNOTATION_TYPES = frozenset({"polygon", "cloud"})
 _DRAG_ANNOTATION_TYPES = PLACEABLE_ANNOTATION_TYPES - _AREA_ANNOTATION_TYPES
+_TEXT_SELECTION_OUTLINE_COLOR = QColor(128, 128, 128)
 
 
 class AreaPlacementEndpoint(NamedTuple):
@@ -696,6 +697,15 @@ class PlacementModeMixin:
             x2, y2 = ost_x, ost_y
         return [x1, y1, x2, y2], snap_kind
 
+    def _text_position_from_drag_corners(self, position: list) -> list:
+        x1, y1, x2, y2 = position[:4]
+        return [
+            (x1 + x2) / 2.0,
+            (y1 + y2) / 2.0,
+            abs(x2 - x1),
+            abs(y2 - y1),
+        ]
+
     def _annotation_preview_style(self) -> tuple[QColor, float]:
         color_hex, width = annotation_default_style(self._annotation_place_type)
         return QColor(color_hex), width
@@ -753,6 +763,15 @@ class PlacementModeMixin:
             path.addEllipse(rect)
         else:
             path.addRect(rect)
+        if annotation_type == "text":
+            self._add_dashed_path_preview(
+                path,
+                _TEXT_SELECTION_OUTLINE_COLOR,
+                15,
+                page_transform,
+                pen_width=2.0,
+            )
+            return
         self._add_annotation_path_preview(path, color, width, page_transform)
 
     def _add_area_annotation_preview(
@@ -1001,11 +1020,13 @@ class PlacementModeMixin:
             distance = math.hypot(position[2] - position[0], position[3] - position[1])
             if distance < min_len:
                 return False
-            if annotation_type in ("rect", "oval") and (
+            if annotation_type in ("rect", "oval", "text") and (
                 abs(position[2] - position[0]) < min_len
                 or abs(position[3] - position[1]) < min_len
             ):
                 return False
+            if annotation_type == "text":
+                position = self._text_position_from_drag_corners(position)
         elif annotation_type in _AREA_ANNOTATION_TYPES:
             points = self._points_from_position(position)
             if len(points) < 3 or not polygon_is_valid(points):
@@ -1019,6 +1040,8 @@ class PlacementModeMixin:
         self._annotation_place_points = []
         self._annotation_place_dragging = False
         self._annotation_area_rect_dragging = False
+        if annotation_type == "text":
+            return bool(self.begin_text_annotation_draft(position, page_uid))
         self.annotation_created.emit(annotation_type, position, page_uid)
         return True
 

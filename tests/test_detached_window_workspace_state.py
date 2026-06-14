@@ -207,6 +207,9 @@ class FakeDetachedPlanView:
             (list(text_changes), list(ann_position_changes))
         )
 
+    def restore_annotation_styles(self, changes):
+        self.restored_annotation_styles = list(changes)
+
     def get_annotation(self, uid):
         return self.annotations.get(uid)
 
@@ -228,11 +231,16 @@ class FakeDetachedPlanView:
 class FakeAnnotationWriteService:
     def __init__(self):
         self.insert_calls = []
+        self.style_calls = []
         self.next_uids = ["ann-1"]
 
     def insert_annotations(self, db_path, bid_uid, specs, ref_remap=None):
         self.insert_calls.append((db_path, bid_uid, specs, ref_remap))
         return list(self.next_uids[: len(specs)])
+
+    def save_annotation_styles(self, db_path, updates):
+        self.style_calls.append((db_path, updates))
+        return True
 
 
 class FakeUndoService:
@@ -270,8 +278,10 @@ class CleanupPlanView:
         self.positions_flushed = CleanupSignal()
         self.annotation_text_properties_flushed = CleanupSignal()
         self.annotation_text_and_positions_flushed = CleanupSignal()
+        self.annotation_styles_flushed = CleanupSignal()
         self.elements_deleted = CleanupSignal()
         self.annotation_created = CleanupSignal()
+        self.text_annotation_created = CleanupSignal()
         self.cursor_mode_change_requested = CleanupSignal()
         self.undo_requested = CleanupSignal()
         self.redo_requested = CleanupSignal()
@@ -608,6 +618,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             ],
             [
                 "dimension_tool",
+                "text_annotation_tool",
                 "arrow_annotation_tool",
                 "line_annotation_tool",
                 "rectangle_annotation_tool",
@@ -621,7 +632,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 spec.annotation_type
                 for spec in _ANNOTATION_WINDOW_CONFIG.annotation_tool_specs
             ],
-            ["dimension", "arrow", "line", "rect", "oval", "polygon", "cloud"],
+            ["dimension", "text", "arrow", "line", "rect", "oval", "polygon", "cloud"],
         )
         self.assertNotIn(
             "place_tool",
@@ -952,6 +963,88 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 self.assertEqual(plan_view.selected_uids, {f"ann-1_{annotation_type}"})
                 self.assertEqual(len(undo_service.pushes), 1)
 
+    def test_detached_text_annotation_commit_uses_annotation_write_path(self):
+        write_service = FakeAnnotationWriteService()
+        undo_service = FakeUndoService()
+        plan_view = FakeDetachedPlanView()
+        plan_view.annotation_key_map[("ann-1", "text")] = "ann-1_text"
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        window._undo_svc = undo_service
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        properties = {
+            "Text": "Hello",
+            "FontName": "Arial",
+            "FontColor": 0x336699,
+            "FontSize": 12,
+            "FontBold": False,
+            "FontItalic": False,
+            "FontUnderline": False,
+            "TextAlign": 0,
+        }
+        window._on_text_annotation_created(
+            [7.0, 8.0, 12.0, 12.0],
+            "p1",
+            properties,
+        )
+        self.assertEqual(len(write_service.insert_calls), 1)
+        db_path, bid_uid, specs, ref_remap = write_service.insert_calls[0]
+        self.assertEqual((db_path, bid_uid, ref_remap), ("bid.mdb", "7", None))
+        self.assertEqual(specs[0].annotation_type, "text")
+        self.assertEqual(specs[0].position, [7.0, 8.0, 12.0, 12.0])
+        self.assertEqual(specs[0].properties, properties)
+        self.assertEqual(specs[0].color, "#996633")
+        self.assertEqual(plan_view.selected_uids, {"ann-1_text"})
+        self.assertEqual(len(undo_service.pushes), 1)
+
+    def test_detached_empty_text_annotation_commit_is_not_written(self):
+        write_service = FakeAnnotationWriteService()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        window._undo_svc = None
+        window.plan_view = FakeDetachedPlanView()
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._on_text_annotation_created(
+            [7.0, 8.0, 12.0, 12.0],
+            "p1",
+            {"Text": "   ", "FontColor": 0x336699},
+        )
+        self.assertEqual(write_service.insert_calls, [])
+
+    def test_detached_annotation_style_change_uses_style_write_path(self):
+        write_service = FakeAnnotationWriteService()
+        undo_service = FakeUndoService()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        window._undo_svc = undo_service
+        window.plan_view = FakeDetachedPlanView()
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._file_path = "bid.mdb"
+        changes = [
+            (
+                "a1",
+                "cloud",
+                {"Color": "#ff0000", "Width": 4.0},
+                {"Color": "#336699", "Width": 8.0},
+            )
+        ]
+        window._on_annotation_styles_flushed(changes)
+        self.assertEqual(
+            write_service.style_calls,
+            [("bid.mdb", [("a1", "cloud", {"Color": "#336699", "Width": 8.0})])],
+        )
+        self.assertEqual(len(undo_service.pushes), 1)
+
     def test_detached_dimension_annotation_creation_obeys_annotation_edit_gate(self):
         write_service = FakeAnnotationWriteService()
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
@@ -978,6 +1071,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         for annotation_type in (
             "dimension",
+            "text",
             "arrow",
             "line",
             "rect",
@@ -988,7 +1082,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             with self.subTest(annotation_type=annotation_type):
                 self.assertTrue(window._activate_annotation_tool(annotation_type))
         self.assertEqual(
-            calls, ["dimension", "arrow", "line", "rect", "oval", "polygon", "cloud"]
+            calls,
+            ["dimension", "text", "arrow", "line", "rect", "oval", "polygon", "cloud"],
         )
 
     def test_detached_window_navigation_refresh_rebuilds_page_and_view_models(self):

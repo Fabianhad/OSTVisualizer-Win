@@ -65,6 +65,9 @@ from ost_visualizer.presentation.utils.annotation_style_controls import (
     create_annotation_style_button,
     create_annotation_tool_split_button,
 )
+from ost_visualizer.presentation.utils.annotation_defaults import (
+    set_annotation_style_for_tool,
+)
 from ost_visualizer.presentation.utils.color_swatch import rounded_color_swatch
 from ost_visualizer.presentation.utils.plan_tool_registry import (
     PLAN_ANNOTATION_TOOL_SPECS,
@@ -1002,13 +1005,14 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertIn(("cmd", "Options...", "options"), tools_items)
         self.assertNotIn(("cmd", old_label, old_key), tools_items)
 
-    def test_tools_menu_lists_dimension_after_cursor_tools_with_square_foot_icon(self):
+    def test_tools_menu_lists_text_after_dimension_with_serif_icon(self):
         labels = {
             "select_tool": "Select",
             "place_tool": "Place",
             "pan_tool": "Pan",
             "zoom_tool": "Zoom",
             "dimension_tool": "Dimension",
+            "text_annotation_tool": "Text",
             "arrow_annotation_tool": "Arrow",
             "line_annotation_tool": "Line",
             "rectangle_annotation_tool": "Rectangle",
@@ -1045,6 +1049,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 "pan_tool",
                 "zoom_tool",
                 "dimension_tool",
+                "text_annotation_tool",
                 "arrow_annotation_tool",
                 "line_annotation_tool",
                 "rectangle_annotation_tool",
@@ -1063,13 +1068,14 @@ class OptionsPreferencesTests(unittest.TestCase):
                 if not action.isSeparator()
             ]
             self.assertEqual(
-                action_texts[:11],
+                action_texts[:12],
                 [
                     "Select",
                     "Place",
                     "Pan",
                     "Zoom",
                     "Dimension",
+                    "Text",
                     "Arrow",
                     "Line",
                     "Rectangle",
@@ -1079,11 +1085,18 @@ class OptionsPreferencesTests(unittest.TestCase):
                 ],
             )
             self.assertIs(tools_menu.actions()[4], shared_actions["dimension_tool"])
+            self.assertIs(
+                tools_menu.actions()[5], shared_actions["text_annotation_tool"]
+            )
         finally:
             result.menu_bar.deleteLater()
         self.assertEqual(
             ICON_SPECS[IconId.DIMENSION_TOOL].svg_name,
             "square_foot_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
+        )
+        self.assertEqual(
+            ICON_SPECS[IconId.TEXT_ANNOTATION_TOOL].svg_name,
+            "serif_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
         )
 
     def test_annotation_tool_icon_color_updates_only_annotation_actions(self):
@@ -1094,11 +1107,27 @@ class OptionsPreferencesTests(unittest.TestCase):
             actions[spec.action_key] = action
         select_key = actions["select_tool"].icon().cacheKey()
         dimension_key = actions["dimension_tool"].icon().cacheKey()
-        apply_annotation_tool_icon_color(actions, "#336699")
-        self.assertEqual(actions["select_tool"].icon().cacheKey(), select_key)
-        self.assertNotEqual(actions["dimension_tool"].icon().cacheKey(), dimension_key)
-        for spec in PLAN_ANNOTATION_TOOL_SPECS:
-            self.assertTrue(actions[spec.action_key].icon().cacheKey())
+        rect_key = actions["rectangle_annotation_tool"].icon().cacheKey()
+        set_annotation_style_for_tool("dimension", color="#336699")
+        set_annotation_style_for_tool("rect", color="#00aa00")
+        try:
+            apply_annotation_tool_icon_color(actions, "dimension")
+            self.assertEqual(actions["select_tool"].icon().cacheKey(), select_key)
+            self.assertNotEqual(
+                actions["dimension_tool"].icon().cacheKey(), dimension_key
+            )
+            self.assertEqual(
+                actions["rectangle_annotation_tool"].icon().cacheKey(), rect_key
+            )
+            apply_annotation_tool_icon_color(actions)
+            self.assertNotEqual(
+                actions["rectangle_annotation_tool"].icon().cacheKey(), rect_key
+            )
+            for spec in PLAN_ANNOTATION_TOOL_SPECS:
+                self.assertTrue(actions[spec.action_key].icon().cacheKey())
+        finally:
+            set_annotation_style_for_tool("dimension", color="#ff0000", line_width=4.0)
+            set_annotation_style_for_tool("rect", color="#ff0000", line_width=4.0)
 
     def test_annotation_style_button_exposes_widths_and_updates_style(self):
         _app()
@@ -1120,7 +1149,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         parent = QtWidgets.QWidget()
         button = create_annotation_style_button(parent, get_style, set_style)
         try:
+            self.assertTrue(button.property("annotationDefaultStyleDropdown"))
             menu = button.menu()
+            self.assertTrue(menu.property("annotationDefaultStyleMenu"))
             width_actions = [
                 action for action in menu.actions() if isinstance(action.data(), int)
             ]

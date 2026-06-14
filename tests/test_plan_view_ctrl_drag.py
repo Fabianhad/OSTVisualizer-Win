@@ -42,7 +42,7 @@ from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_ren
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import (
     format_dimension_distance,
 )
-from ost_visualizer.presentation.utils.annotation_defaults import set_annotation_style
+from ost_visualizer.presentation.utils.annotation_defaults import set_annotation_style_for_tool
 
 
 def _app():
@@ -118,6 +118,7 @@ class AnnotationPlacementHarness(PlacementModeMixin):
         self._current_bid_page_uid = "page-1"
         self._snap_increments = 1.0
         self.annotation_created = _FakeSignal()
+        self.text_drafts = []
         self.preview_repaints = 0
         self.selection_updates = 0
         self._selected_uids = {"old"}
@@ -153,6 +154,10 @@ class AnnotationPlacementHarness(PlacementModeMixin):
 
     def update_selection_visuals(self):
         self.selection_updates += 1
+
+    def begin_text_annotation_draft(self, position, page_uid):
+        self.text_drafts.append((list(position), page_uid))
+        return True
 
 
 class AreaPlacementHarness(PlacementModeMixin):
@@ -1471,7 +1476,10 @@ class AnnotationPlacementTests(unittest.TestCase):
                 self.assertEqual(view.annotation_created.emitted, [])
 
     def test_polygon_and_cloud_click_drag_creates_area_like_rectangle(self):
-        set_annotation_style(color="#336699", line_width=7.0)
+        for annotation_type in ("polygon", "cloud"):
+            set_annotation_style_for_tool(
+                annotation_type, color="#336699", line_width=7.0
+            )
         try:
             for annotation_type in ("polygon", "cloud"):
                 with self.subTest(annotation_type=annotation_type):
@@ -1511,7 +1519,10 @@ class AnnotationPlacementTests(unittest.TestCase):
                     self.assertEqual(view._annotation_place_points, [])
                     self.assertFalse(view._annotation_area_rect_dragging)
         finally:
-            set_annotation_style(color="#ff0000", line_width=4.0)
+            for annotation_type in ("polygon", "cloud"):
+                set_annotation_style_for_tool(
+                    annotation_type, color="#ff0000", line_width=4.0
+                )
 
     def test_area_takeoff_click_drag_rectangle_placement_is_unchanged(self):
         view = AreaPlacementHarness()
@@ -1533,7 +1544,14 @@ class AnnotationPlacementTests(unittest.TestCase):
         self.assertEqual(view.snap_invalidations, 1)
 
     def test_drag_annotation_tools_use_press_drag_release_positions(self):
-        for annotation_type in ("line", "arrow", "rect", "oval"):
+        expected_positions = {
+            "line": [1.0, 2.0, 13.0, 14.0],
+            "arrow": [1.0, 2.0, 13.0, 14.0],
+            "rect": [1.0, 2.0, 13.0, 14.0],
+            "oval": [1.0, 2.0, 13.0, 14.0],
+            "text": [7.0, 8.0, 12.0, 12.0],
+        }
+        for annotation_type, expected_position in expected_positions.items():
             with self.subTest(annotation_type=annotation_type):
                 view = AnnotationPlacementHarness()
                 self.assertTrue(view._enter_annotation_place_mode(annotation_type))
@@ -1545,10 +1563,14 @@ class AnnotationPlacementTests(unittest.TestCase):
                 self.assertTrue(view._annotation_place_dragging)
                 self.assertTrue(view.handle_annotation_place_release(release))
                 self.assertTrue(release.accepted)
-                self.assertEqual(
-                    view.annotation_created.emitted,
-                    [(annotation_type, [1.0, 2.0, 13.0, 14.0], "page-1")],
-                )
+                if annotation_type == "text":
+                    self.assertEqual(view.annotation_created.emitted, [])
+                    self.assertEqual(view.text_drafts, [(expected_position, "page-1")])
+                else:
+                    self.assertEqual(
+                        view.annotation_created.emitted,
+                        [(annotation_type, expected_position, "page-1")],
+                    )
 
     def test_arrow_preview_preserves_start_to_head_direction(self):
         view = AnnotationPlacementHarness()
@@ -1563,7 +1585,7 @@ class AnnotationPlacementTests(unittest.TestCase):
         self.assertEqual((path.elementAt(1).x, path.elementAt(1).y), (13.0, 14.0))
 
     def test_box_annotation_previews_use_drag_bounds(self):
-        for annotation_type in ("rect", "oval"):
+        for annotation_type in ("rect", "oval", "text"):
             with self.subTest(annotation_type=annotation_type):
                 view = AnnotationPlacementHarness()
                 self.assertTrue(view._enter_annotation_place_mode(annotation_type))
@@ -1575,6 +1597,12 @@ class AnnotationPlacementTests(unittest.TestCase):
                     paths[0].path().boundingRect(),
                     QtCore.QRectF(1, 2, 12, 12),
                 )
+                expected_style = (
+                    QtCore.Qt.PenStyle.DashLine
+                    if annotation_type == "text"
+                    else QtCore.Qt.PenStyle.SolidLine
+                )
+                self.assertEqual(paths[0].pen().style(), expected_style)
 
     def test_polygon_and_cloud_annotations_use_area_like_multi_point_completion(self):
         for annotation_type in ("polygon", "cloud"):

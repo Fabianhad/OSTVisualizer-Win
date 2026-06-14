@@ -59,6 +59,7 @@ from ...interfaces.i_annotation_item_renderer import IAnnotationItemRenderer
 from ...interfaces.i_takeoff_renderer import ITakeoffRenderer
 from ...scene.scene_builder import SceneBuilder
 from ...utils.color_swatch import rounded_color_swatch
+from ...utils.annotation_defaults import text_annotation_properties
 from ...utils.messagebox import show_warning
 from ...utils.theme import set_palette_background
 from ...utils.themed_icon import apply_themed_icon, current_text_hex, recolor_svg
@@ -188,12 +189,14 @@ class TakeoffPlanView(
     positions_flushed = Signal(list, list)
     annotation_text_properties_flushed = Signal(list)
     annotation_text_and_positions_flushed = Signal(list, list)
+    annotation_styles_flushed = Signal(list)
     condition_text_properties_flushed = Signal(list)
     text_annotation_edit_mode_changed = Signal(bool)
     rotations_flushed = Signal(list)
     group_rotation_flushed = Signal(list, list, list)
     takeoff_created = Signal(str, list, str)
     annotation_created = Signal(str, list, str)
+    text_annotation_created = Signal(list, str, dict)
     hole_created = Signal(str, list, str, str)
     elements_deleted = Signal(list)
     takeoff_selection_changed = Signal(list)
@@ -403,6 +406,7 @@ class TakeoffPlanView(
         self._annotation_place_points: List[Tuple[float, float]] = []
         self._annotation_place_dragging: bool = False
         self._annotation_area_rect_dragging: bool = False
+        self._draft_text_annotation_uid: Optional[str] = None
         self._place_preview_items: List[QGraphicsItem] = []
         self._takeoff_snap_index = None
         self._pdf_snap_index = None
@@ -1088,6 +1092,97 @@ class TakeoffPlanView(
         )
         return True
 
+    def _text_annotation_item_from_properties(
+        self, ann: BidAnnotation
+    ) -> ClippedTextGraphicsItem:
+        props = ann.properties
+        font = QFont(str(props.get("FontName", "Arial")))
+        font_size = max(int(props.get("FontSize", 12) or 12), 1)
+        scaled_font_size = (
+            self._scene_builder.get_coordinate_system().pdf_points_to_screen_pixels(
+                font_size
+            )
+            * DIMENSION_FONT_SIZE_ADJUSTMENT
+        )
+        font.setPointSize(max(int(scaled_font_size), 1))
+        font.setBold(bool(props.get("FontBold", False)))
+        font.setItalic(bool(props.get("FontItalic", False)))
+        font.setUnderline(bool(props.get("FontUnderline", False)))
+        item = ClippedTextGraphicsItem("", QtCore.QRectF(0.0, 0.0, 1.0, 1.0))
+        item.setData(0, ann.uid)
+        item.setFont(font)
+        item.setDefaultTextColor(QColor(ann.color))
+        option = QTextOption()
+        option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        text_align = int(props.get("TextAlign", 0) or 0)
+        if text_align == 1:
+            option.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        elif text_align == 2:
+            option.setAlignment(Qt.AlignmentFlag.AlignRight)
+        else:
+            option.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        item.document().setDefaultTextOption(option)
+        item.setZValue(2)
+        self._apply_text_annotation_box_to_item(ann, item)
+        return item
+
+    def begin_text_annotation_draft(self, position: list, page_uid: str) -> bool:
+        if not page_uid or len(position) < 4:
+            return False
+        if not self._can_begin_text_annotation_inline_edit():
+            return False
+        self._finish_named_view_rename(commit=True)
+        if self._editing_text_annotation_uid is not None:
+            self._finish_text_annotation_edit(commit=True)
+        self._remove_text_annotation_draft()
+        props = text_annotation_properties()
+        color = int_color_to_hex(int(props["FontColor"]))
+        uid = f"__text_draft__{uuid.uuid4().hex}"
+        ann = BidAnnotation(
+            uid=uid,
+            annotation_type="text",
+            page_uid=page_uid,
+            position=list(position[:4]),
+            color=color,
+            width=0.0,
+            properties=dict(props),
+            visible=True,
+        )
+        item = self._text_annotation_item_from_properties(ann)
+        self._scene.addItem(item)
+        self._current_annotations[uid] = ann
+        self._uid_to_items[uid] = [item]
+        self._draft_text_annotation_uid = uid
+        self._selected_uids = {uid}
+        self._on_selection_changed()
+        self.update_selection_visuals()
+        self._show_text_toolbar_for_item(item, annotation_uid=uid)
+        self._editing_text_annotation_uid = uid
+        self._begin_inline_text_edit_for_item(
+            item,
+            "",
+            cursor_pos=self._last_mouse_vp_pos,
+            emit_mode_changed=True,
+        )
+        return True
+
+    def _is_text_annotation_draft_uid(self, uid: str) -> bool:
+        return bool(uid and uid == self._draft_text_annotation_uid)
+
+    def _remove_text_annotation_draft(self) -> None:
+        uid = self._draft_text_annotation_uid
+        if uid is None:
+            return
+        for item in self._uid_to_items.pop(uid, []):
+            if item.scene() is self._scene:
+                self._scene.removeItem(item)
+        self._current_annotations.pop(uid, None)
+        self._selected_uids.discard(uid)
+        if self._selected_text_annotation_uid == uid:
+            self._clear_text_toolbar_target()
+        self._draft_text_annotation_uid = None
+        self.clear_selection_items()
+
     def _begin_named_view_rename(self, uid: str) -> bool:
         if not self._can_begin_text_annotation_inline_edit():
             return False
@@ -1209,20 +1304,42 @@ class TakeoffPlanView(
         item = self._text_annotation_item(uid)
         ann = self._current_annotations.get(uid)
         error: Optional[Exception] = None
+        draft_payload: Optional[Tuple[List[float], str, Dict[str, object]]] = None
         self._finishing_text_annotation_edit = True
         try:
             if item is not None:
                 if commit and ann is not None:
                     text = item.toPlainText()
-                    try:
-                        self._persist_text_annotation(
-                            uid,
-                            item,
-                            text_override=text,
-                            geometry_policy=TextAnnotationGeometryPolicy.PRESERVE_BOX,
-                        )
-                    except Exception as exc:
-                        error = exc
+                    if self._is_text_annotation_draft_uid(uid):
+                        if text.strip():
+                            try:
+                                self._persist_text_annotation(
+                                    uid,
+                                    item,
+                                    text_override=text,
+                                    geometry_policy=(
+                                        TextAnnotationGeometryPolicy.PRESERVE_BOX
+                                    ),
+                                )
+                                draft_payload = (
+                                    list(ann.position),
+                                    ann.page_uid,
+                                    dict(ann.properties),
+                                )
+                            except Exception as exc:
+                                error = exc
+                    else:
+                        try:
+                            self._persist_text_annotation(
+                                uid,
+                                item,
+                                text_override=text,
+                                geometry_policy=(
+                                    TextAnnotationGeometryPolicy.PRESERVE_BOX
+                                ),
+                            )
+                        except Exception as exc:
+                            error = exc
                 elif not commit:
                     item.setPlainText(self._editing_text_original)
                 self._clear_inline_text_item_selection(item)
@@ -1235,6 +1352,11 @@ class TakeoffPlanView(
             self.text_annotation_edit_mode_changed.emit(False)
         finally:
             self._finishing_text_annotation_edit = False
+        if self._is_text_annotation_draft_uid(uid):
+            self._remove_text_annotation_draft()
+        if draft_payload is not None and error is None:
+            position, page_uid, properties = draft_payload
+            self.text_annotation_created.emit(position, page_uid, properties)
         if error is not None:
             raise error
 
@@ -1717,6 +1839,10 @@ class TakeoffPlanView(
         old_props = {key: ann.properties.get(key) for key in keys}
         old_props["FontColor"] = self._annotation_font_color_int(ann)
         props_changed = any(old_props.get(key) != new_props.get(key) for key in keys)
+        if self._is_text_annotation_draft_uid(uid):
+            ann.properties.update(new_props)
+            ann.color = int_color_to_hex(int(new_props["FontColor"]))
+            return
         if not props_changed and position_change is None:
             return
         text_changes = []
@@ -1749,6 +1875,55 @@ class TakeoffPlanView(
         if not color.isValid():
             return 0
         return color.red() | (color.green() << 8) | (color.blue() << 16)
+
+    def _annotation_color_int(self, color_hex: str) -> int:
+        color = QColor(color_hex)
+        if not color.isValid():
+            return 0
+        return color.red() | (color.green() << 8) | (color.blue() << 16)
+
+    def apply_annotation_style_to_selection(
+        self, *, color: Optional[str] = None, width: Optional[float] = None
+    ) -> None:
+        changes = []
+        color_value = QColor(color).name() if color is not None else None
+        for uid in sorted(self._selected_uids):
+            ann = self._current_annotations.get(uid)
+            if ann is None:
+                continue
+            old_style: Dict[str, object] = {}
+            new_style: Dict[str, object] = {}
+            if color_value is not None and ann.color.lower() != color_value.lower():
+                old_style["Color"] = ann.color
+                new_style["Color"] = color_value
+            if (
+                width is not None
+                and not ann.is_text
+                and not ann.is_dimension
+                and not math.isclose(ann.width, float(width), rel_tol=0.0, abs_tol=1e-6)
+            ):
+                old_style["Width"] = ann.width
+                new_style["Width"] = float(width)
+            if not new_style:
+                continue
+            if "Color" in new_style:
+                ann.color = str(new_style["Color"])
+                if ann.is_text or ann.is_dimension:
+                    ann.properties["FontColor"] = self._annotation_color_int(ann.color)
+            if "Width" in new_style:
+                ann.width = float(new_style["Width"])
+            changes.append(
+                (
+                    self._ann_db_uid_map.get(uid, uid),
+                    ann.annotation_type,
+                    old_style,
+                    new_style,
+                )
+            )
+        if not changes:
+            return
+        self._rebuild_current_overlays_from_model()
+        self.annotation_styles_flushed.emit(changes)
 
     def set_context_menu_command_handlers(self, trigger_fn, action_state_fn) -> None:
         self._context_menu_command_trigger = trigger_fn
@@ -2463,6 +2638,26 @@ class TakeoffPlanView(
                 changed = True
         return changed
 
+    def _restore_annotation_styles(self, changes: list) -> bool:
+        changed = False
+        for db_uid, ann_type, old_style, _new_style in changes:
+            if not old_style:
+                continue
+            for key in self.find_annotation_keys_by_uid_type({(db_uid, ann_type)}):
+                ann = self._current_annotations.get(key)
+                if ann is None:
+                    continue
+                if "Color" in old_style:
+                    ann.color = str(old_style["Color"])
+                    if ann.is_text or ann.is_dimension:
+                        ann.properties["FontColor"] = self._annotation_color_int(
+                            ann.color
+                        )
+                if "Width" in old_style:
+                    ann.width = float(old_style["Width"])
+                changed = True
+        return changed
+
     def restore_flushed_positions(
         self, takeoff_changes: list, ann_changes: list
     ) -> None:
@@ -2501,6 +2696,10 @@ class TakeoffPlanView(
 
     def restore_annotation_text_properties(self, changes: list) -> None:
         if self._restore_annotation_properties(changes):
+            self._rebuild_current_overlays_from_model()
+
+    def restore_annotation_styles(self, changes: list) -> None:
+        if self._restore_annotation_styles(changes):
             self._rebuild_current_overlays_from_model()
 
     def restore_annotation_text_and_positions(
@@ -4347,6 +4546,7 @@ class TakeoffPlanView(
         self._handle_infos.clear()
         self._selected_uids.clear()
         self._clear_text_selection()
+        self._remove_text_annotation_draft()
         self._takeoff_items.clear()
         self._hotlink_items.clear()
         self._uid_to_items = {}

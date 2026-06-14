@@ -86,7 +86,7 @@ class TakeoffWorkspaceState:
     conditions_header_state_b64: Optional[str] = None
     layers_header_state_b64: Optional[str] = None
     conditions_group_by_type: bool = True
-    annotation_style: AnnotationStyle = field(default_factory=AnnotationStyle)
+    annotation_styles: Dict[str, AnnotationStyle] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -104,7 +104,10 @@ class TakeoffWorkspaceState:
             "conditions_header_state_b64": self.conditions_header_state_b64,
             "layers_header_state_b64": self.layers_header_state_b64,
             "conditions_group_by_type": self.conditions_group_by_type,
-            "annotation_style": self.annotation_style.to_dict(),
+            "annotation_styles": {
+                str(key): style.to_dict()
+                for key, style in self.annotation_styles.items()
+            },
         }
 
     @classmethod
@@ -136,7 +139,14 @@ class TakeoffWorkspaceState:
             conditions_group_by_type=_coerce_bool(
                 data.get("conditions_group_by_type"), True
             ),
-            annotation_style=AnnotationStyle.from_dict(data.get("annotation_style")),
+            annotation_styles={
+                str(key): AnnotationStyle.from_dict(value)
+                for key, value in (
+                    data.get("annotation_styles")
+                    if isinstance(data.get("annotation_styles"), dict)
+                    else {}
+                ).items()
+            },
         )
 
 
