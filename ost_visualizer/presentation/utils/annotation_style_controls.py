@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...domain.entities.annotation_style import AnnotationStyle
-from ..managers.icon_manager import IconManager
+from ..managers.icon_manager import IconId, IconManager
 from .annotation_defaults import get_annotation_style_for_tool
 from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 
@@ -154,10 +154,13 @@ def _create_font_annotation_style_menu(
     menu.addAction(color_action)
     bold_action = QtGui.QAction("Bold", menu)
     bold_action.setCheckable(True)
+    IconManager.apply(bold_action, IconId.FORMAT_BOLD)
     italic_action = QtGui.QAction("Italic", menu)
     italic_action.setCheckable(True)
+    IconManager.apply(italic_action, IconId.FORMAT_ITALIC)
     underline_action = QtGui.QAction("Underline", menu)
     underline_action.setCheckable(True)
+    IconManager.apply(underline_action, IconId.FORMAT_UNDERLINE)
     menu.addAction(bold_action)
     menu.addAction(italic_action)
     menu.addAction(underline_action)
@@ -172,10 +175,15 @@ def _create_font_annotation_style_menu(
             set_style(text_align=align)
             _refresh_text_menu_state()
 
-        for value, label in ((0, "Left"), (1, "Center"), (2, "Right")):
+        for value, label, icon_id in (
+            (0, "Left", IconId.FORMAT_ALIGN_LEFT),
+            (1, "Center", IconId.FORMAT_ALIGN_CENTER),
+            (2, "Right", IconId.FORMAT_ALIGN_RIGHT),
+        ):
             action = QtGui.QAction(label, align_menu)
             action.setCheckable(True)
             action.setData(value)
+            IconManager.apply(action, icon_id)
             align_group.addAction(action)
             align_menu.addAction(action)
             action.triggered.connect(

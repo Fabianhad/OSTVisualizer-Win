@@ -2356,6 +2356,37 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         view.cleanup()
 
+    def test_selected_annotation_style_change_does_not_update_tool_defaults(self):
+        from ost_visualizer.presentation.utils.annotation_defaults import (
+            get_annotation_style_for_tool,
+            set_annotation_style_for_tool,
+        )
+
+        original_style = get_annotation_style_for_tool("rect")
+        try:
+            set_annotation_style_for_tool("rect", color="#00aa00", line_width=6.0)
+            view = self._make_plan_view()
+            selected = BidAnnotation(
+                uid="a1",
+                annotation_type="rect",
+                position=[1.0, 2.0, 13.0, 14.0],
+                color="#ff0000",
+                width=4.0,
+            )
+            view._current_annotations = {"a1": selected}
+            view._selected_uids = {"a1"}
+            view.apply_annotation_style_to_selection(color="#336699", width=7.0)
+            default_style = get_annotation_style_for_tool("rect")
+            self.assertEqual(default_style.color, "#00aa00")
+            self.assertEqual(default_style.line_width, 6.0)
+            view.cleanup()
+        finally:
+            set_annotation_style_for_tool(
+                "rect",
+                color=original_style.color,
+                line_width=original_style.line_width,
+            )
+
     def test_default_annotation_style_change_does_not_repaint_existing_annotation(self):
         from ost_visualizer.presentation.utils.annotation_defaults import (
             set_annotation_style_for_tool,
@@ -2435,8 +2466,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             self.assertEqual(new_spec.width, 6.0)
         finally:
             set_annotation_style_for_tool(
-                "rect",
-                color=original_style.color, line_width=original_style.line_width
+                "rect", color=original_style.color, line_width=original_style.line_width
             )
             button.deleteLater()
             view.cleanup()

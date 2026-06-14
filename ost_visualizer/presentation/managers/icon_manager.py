@@ -50,6 +50,12 @@ class IconId(Enum):
     MOVE_UP = "move_up"
     MOVE_DOWN = "move_down"
     MOVE_OVERLAY_IMAGE = "move_overlay_image"
+    FORMAT_BOLD = "format_bold"
+    FORMAT_ITALIC = "format_italic"
+    FORMAT_UNDERLINE = "format_underline"
+    FORMAT_ALIGN_LEFT = "format_align_left"
+    FORMAT_ALIGN_CENTER = "format_align_center"
+    FORMAT_ALIGN_RIGHT = "format_align_right"
 
 
 @dataclass(frozen=True)
@@ -149,6 +155,24 @@ ICON_SPECS: Dict[IconId, IconSpec] = {
     ),
     IconId.MOVE_OVERLAY_IMAGE: IconSpec(
         "recenter_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.FORMAT_BOLD: IconSpec(
+        "format_bold_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.FORMAT_ITALIC: IconSpec(
+        "format_italic_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.FORMAT_UNDERLINE: IconSpec(
+        "format_underlined_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.FORMAT_ALIGN_LEFT: IconSpec(
+        "format_align_left_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.FORMAT_ALIGN_CENTER: IconSpec(
+        "format_align_center_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.FORMAT_ALIGN_RIGHT: IconSpec(
+        "format_align_right_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
     ),
 }
 ACTION_ICONS: Dict[str, IconId] = {

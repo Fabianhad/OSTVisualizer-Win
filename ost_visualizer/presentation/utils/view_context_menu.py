@@ -1,5 +1,7 @@
+import math
 from dataclasses import dataclass
 from PySide6 import QtGui, QtWidgets
+from ...domain.entities.annotation import BidAnnotation
 from ...domain.entities.condition import Condition
 from ..config import (
     ACTION_RESET_VIEW_LABEL,
@@ -7,7 +9,7 @@ from ..config import (
     ACTION_ZOOM_OUT_LABEL,
 )
 from ..managers.context_menu_manager import ContextMenuManager
-from .plan_tool_registry import PLAN_TOOL_CONTEXT_ACTIONS
+from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_CONTEXT_ACTIONS
 from .condition_icon import make_condition_color_icon
 from .overlay_context_menu import add_overlay_submenu_with_select
 
@@ -56,6 +58,36 @@ class ReassignConditionSubmenu:
     actions: dict[QtGui.QAction, str]
 
 
+@dataclass(frozen=True)
+class SelectedAnnotationStyleContextState:
+    annotation_uids: list[str]
+    show_color: bool
+    show_line_width: bool
+    current_line_width: float | None = None
+
+
+@dataclass(frozen=True)
+class AnnotationStyleContextActions:
+    color_action: QtGui.QAction | None
+    width_actions: dict[QtGui.QAction, float]
+
+
+_ANNOTATION_CONTEXT_GENERIC_STYLE_EXCLUDED_TYPES = frozenset({"text"})
+_ANNOTATION_CONTEXT_WIDTH_EXCLUDED_TYPES = frozenset({"dimension", "highlight", "text"})
+_ANNOTATION_CONTEXT_COLOR_TYPES = frozenset(
+    spec.annotation_type
+    for spec in PLAN_ANNOTATION_TOOL_SPECS
+    if spec.annotation_type
+    and spec.annotation_type not in _ANNOTATION_CONTEXT_GENERIC_STYLE_EXCLUDED_TYPES
+)
+_ANNOTATION_CONTEXT_WIDTH_TYPES = frozenset(
+    spec.annotation_type
+    for spec in PLAN_ANNOTATION_TOOL_SPECS
+    if spec.annotation_type
+    and spec.annotation_type not in _ANNOTATION_CONTEXT_WIDTH_EXCLUDED_TYPES
+)
+
+
 def build_selected_takeoff_context_state(
     takeoff_uids: list[str],
     resolve_takeoff,
@@ -88,6 +120,41 @@ def build_selected_takeoff_context_state(
         all_negative=bool(regular_takeoffs)
         and all(takeoff.is_negative for _uid, takeoff in regular_takeoffs),
         all_curved=all_curved,
+    )
+
+
+def build_selected_annotation_style_context_state(
+    annotation_uids: list[str],
+    resolve_annotation,
+) -> SelectedAnnotationStyleContextState:
+    selected_annotations: list[BidAnnotation] = []
+    selected_uids: list[str] = []
+    for uid in annotation_uids:
+        annotation = resolve_annotation(uid)
+        if annotation is None:
+            continue
+        selected_annotations.append(annotation)
+        selected_uids.append(uid)
+    if not selected_annotations:
+        return SelectedAnnotationStyleContextState([], False, False, None)
+    annotation_types = {
+        annotation.annotation_type for annotation in selected_annotations
+    }
+    show_line_width = annotation_types <= _ANNOTATION_CONTEXT_WIDTH_TYPES
+    current_line_width = None
+    if show_line_width:
+        widths = [float(annotation.width) for annotation in selected_annotations]
+        first_width = widths[0]
+        if all(
+            math.isclose(width, first_width, rel_tol=0.0, abs_tol=1e-6)
+            for width in widths
+        ):
+            current_line_width = first_width
+    return SelectedAnnotationStyleContextState(
+        annotation_uids=selected_uids,
+        show_color=annotation_types <= _ANNOTATION_CONTEXT_COLOR_TYPES,
+        show_line_width=show_line_width,
+        current_line_width=current_line_width,
     )
 
 
@@ -129,6 +196,58 @@ def add_context_command(
             action_key=action_key,
         ),
     )
+
+
+def add_selected_annotation_style_actions(
+    menu: QtWidgets.QMenu,
+    state: SelectedAnnotationStyleContextState,
+    *,
+    select_color_callback,
+    line_width_callback,
+    enabled: bool,
+) -> AnnotationStyleContextActions:
+    color_action = None
+    width_actions: dict[QtGui.QAction, float] = {}
+    if state.show_line_width:
+        line_width_menu = QtWidgets.QMenu("Line Width", menu)
+        menu.addMenu(line_width_menu)
+        width_group = QtGui.QActionGroup(line_width_menu)
+        width_group.setExclusive(True)
+        checked_width = None
+        if state.current_line_width is not None:
+            rounded_width = int(round(state.current_line_width))
+            if 1 <= rounded_width <= 16 and math.isclose(
+                state.current_line_width,
+                float(rounded_width),
+                rel_tol=0.0,
+                abs_tol=1e-6,
+            ):
+                checked_width = rounded_width
+        for width in range(1, 17):
+            action = QtGui.QAction(f"{width}px", line_width_menu)
+            action.setCheckable(True)
+            action.setChecked(width == checked_width)
+            action.setData(float(width))
+            action.setEnabled(enabled)
+            width_group.addAction(action)
+            line_width_menu.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, selected_width=float(width): (
+                    line_width_callback(selected_width)
+                )
+            )
+            width_actions[action] = float(width)
+    if state.show_color:
+        color_action = ContextMenuManager.add_action(
+            menu,
+            ContextMenuManager.action_spec(
+                None,
+                "Select Color...",
+                callback=select_color_callback,
+                enabled=enabled,
+            ),
+        )
+    return AnnotationStyleContextActions(color_action, width_actions)
 
 
 def add_context_command_submenu(

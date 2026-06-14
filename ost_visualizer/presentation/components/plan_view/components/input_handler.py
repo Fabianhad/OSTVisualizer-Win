@@ -2,9 +2,17 @@ import math
 from typing import Callable, List, Optional
 from PySide6 import QtCore
 from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QCursor, QMouseEvent, QPainterPath, QTransform, QWheelEvent
+from PySide6.QtGui import (
+    QColor,
+    QCursor,
+    QMouseEvent,
+    QPainterPath,
+    QTransform,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import (
     QApplication,
+    QColorDialog,
     QGraphicsPathItem,
     QGraphicsTextItem,
     QMenu,
@@ -15,12 +23,15 @@ from ....managers.context_menu_manager import ContextMenuManager
 from ....utils.overlay_context_menu import resolve_overlay_menu_action
 from ....utils.view_context_menu import (
     SelectedTakeoffContextState,
+    add_selected_annotation_style_actions,
     add_common_context_submenus,
     add_context_clipboard_actions,
     add_context_command,
     add_context_page_actions,
     add_reassign_condition_submenu,
+    build_selected_annotation_style_context_state,
     build_selected_takeoff_context_state,
+    context_command_state,
 )
 from .geometry_utils import (
     mirror_points_around,
@@ -2181,6 +2192,67 @@ class InputHandlerMixin:
             self._current_conditions,
         )
 
+    def _selected_annotation_style_context_state(self):
+        annotation_uids = [
+            uid for uid in self._selected_uids if uid in self._current_annotations
+        ]
+        return build_selected_annotation_style_context_state(
+            annotation_uids,
+            self._current_annotations.get,
+        )
+
+    def _selected_annotation_style_actions_enabled(self) -> bool:
+        if self._context_menu_action_state is None:
+            return True
+        return bool(
+            context_command_state(self._context_menu_action_state, "copy", "Copy")[
+                "enabled"
+            ]
+        )
+
+    def _select_context_annotation_color(self, annotation_uids: list[str]) -> None:
+        first_annotation = (
+            self._current_annotations.get(annotation_uids[0])
+            if annotation_uids
+            else None
+        )
+        initial_color = first_annotation.color if first_annotation else "#ff0000"
+        color = QColorDialog.getColor(QColor(initial_color), self)
+        if color.isValid():
+            self.apply_annotation_style_to_selection(color=color.name())
+
+    def _show_annotation_context_menu(self, event, annotation_state) -> None:
+        menu = QMenu(self)
+        style_actions = add_selected_annotation_style_actions(
+            menu,
+            annotation_state,
+            select_color_callback=lambda: self._select_context_annotation_color(
+                annotation_state.annotation_uids
+            ),
+            line_width_callback=lambda width: (
+                self.apply_annotation_style_to_selection(width=width)
+            ),
+            enabled=self._selected_annotation_style_actions_enabled(),
+        )
+        if style_actions.color_action or style_actions.width_actions:
+            menu.addSeparator()
+        current_mode, overlay_action, original_action = (
+            self._add_common_context_submenus(menu)
+        )
+        menu.addSeparator()
+        self._add_context_clipboard_actions(menu)
+        menu.addSeparator()
+        self._add_context_page_actions(menu)
+        self.reset_ctrl_held()
+        action = menu.exec(event.globalPos())
+        if action is None:
+            event.accept()
+            return
+        self._resolve_context_overlay_action(
+            action, current_mode, overlay_action, original_action
+        )
+        event.accept()
+
     def _show_common_context_menu(
         self, event, add_clipboard_actions: Callable[[QMenu], None]
     ) -> None:
@@ -2230,6 +2302,10 @@ class InputHandlerMixin:
             event.accept()
             return
         selected_state = self._selected_takeoff_context_state()
+        annotation_state = self._selected_annotation_style_context_state()
+        if not selected_state.takeoff_uids and annotation_state.annotation_uids:
+            self._show_annotation_context_menu(event, annotation_state)
+            return
         if not selected_state.takeoff_uids and self.has_selected_pdf_text():
             self._show_pdf_text_context_menu(event)
             event.accept()

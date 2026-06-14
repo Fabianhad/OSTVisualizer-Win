@@ -1109,6 +1109,33 @@ class OptionsPreferencesTests(unittest.TestCase):
             "ink_marker_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
         )
 
+    def test_text_format_icons_are_registered(self):
+        _app()
+        expected_icons = {
+            IconId.FORMAT_BOLD: (
+                "format_bold_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+            ),
+            IconId.FORMAT_ITALIC: (
+                "format_italic_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+            ),
+            IconId.FORMAT_UNDERLINE: (
+                "format_underlined_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+            ),
+            IconId.FORMAT_ALIGN_LEFT: (
+                "format_align_left_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+            ),
+            IconId.FORMAT_ALIGN_CENTER: (
+                "format_align_center_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+            ),
+            IconId.FORMAT_ALIGN_RIGHT: (
+                "format_align_right_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+            ),
+        }
+        for icon_id, svg_name in expected_icons.items():
+            with self.subTest(icon_id=icon_id):
+                self.assertEqual(ICON_SPECS[icon_id].svg_name, svg_name)
+                self.assertFalse(IconManager.icon(icon_id).isNull())
+
     def test_annotation_tool_icon_color_updates_only_annotation_actions(self):
         actions = {}
         for spec in PLAN_TOOL_SPECS:
@@ -1233,9 +1260,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 font_size=kwargs.get("font_size", current.font_size),
                 font_bold=kwargs.get("font_bold", current.font_bold),
                 font_italic=kwargs.get("font_italic", current.font_italic),
-                font_underline=kwargs.get(
-                    "font_underline", current.font_underline
-                ),
+                font_underline=kwargs.get("font_underline", current.font_underline),
                 text_align=kwargs.get("text_align", current.text_align),
             )
             selected.append(current)
@@ -1280,6 +1305,18 @@ class OptionsPreferencesTests(unittest.TestCase):
             italic_action = next(
                 action for action in menu.actions() if action.text() == "Italic"
             )
+            underline_action = next(
+                action for action in menu.actions() if action.text() == "Underline"
+            )
+            for action in (bold_action, italic_action, underline_action):
+                self.assertFalse(action.icon().isNull())
+            alignment_menu = next(
+                ref
+                for ref in menu._text_menu_refs
+                if isinstance(ref, QtWidgets.QMenu) and ref.title() == "Alignment"
+            )
+            for action in alignment_menu.actions():
+                self.assertFalse(action.icon().isNull())
             bold_action.trigger()
             italic_action.trigger()
             self.assertTrue(selected[-2].font_bold)
@@ -1317,9 +1354,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 font_size=kwargs.get("font_size", current.font_size),
                 font_bold=kwargs.get("font_bold", current.font_bold),
                 font_italic=kwargs.get("font_italic", current.font_italic),
-                font_underline=kwargs.get(
-                    "font_underline", current.font_underline
-                ),
+                font_underline=kwargs.get("font_underline", current.font_underline),
                 text_align=current.text_align,
             )
             selected.append(current)
@@ -1332,7 +1367,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         try:
             menu = button.menu()
             self.assertTrue(menu.property("dimensionAnnotationDefaultStyleMenu"))
-            self.assertIn("Select Color...", [action.text() for action in menu.actions()])
+            self.assertIn(
+                "Select Color...", [action.text() for action in menu.actions()]
+            )
             self.assertNotIn("Alignment", [action.text() for action in menu.actions()])
             width_actions = [
                 action for action in menu.actions() if isinstance(action.data(), int)
@@ -1354,9 +1391,13 @@ class OptionsPreferencesTests(unittest.TestCase):
                 ("Underline", "font_underline"),
             ):
                 with self.subTest(action_text=action_text):
-                    next(
-                        action for action in menu.actions() if action.text() == action_text
-                    ).trigger()
+                    action = next(
+                        action
+                        for action in menu.actions()
+                        if action.text() == action_text
+                    )
+                    self.assertFalse(action.icon().isNull())
+                    action.trigger()
                     self.assertTrue(getattr(selected[-1], attr))
         finally:
             parent.deleteLater()
