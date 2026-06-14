@@ -203,7 +203,11 @@ class AnnotationOperationsMixin:
                 self._require_write_columns(schema, table, ("UID", "Color"))
                 assignments.append("[Color]=?")
             values.append(color_int)
-        if "Width" in properties and annotation_type not in ("dimension", "text"):
+        if "Width" in properties and annotation_type not in (
+            "dimension",
+            "text",
+            "highlight",
+        ):
             self._require_write_columns(schema, table, ("UID", "Width"))
             assignments.append("[Width]=?")
             values.append(int(float(properties["Width"] or 0)))

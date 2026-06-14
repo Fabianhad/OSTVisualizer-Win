@@ -385,6 +385,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         for annotation_type in (
             "dimension",
             "text",
+            "highlight",
             "arrow",
             "line",
             "rect",
@@ -393,7 +394,15 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             "cloud",
         ):
             set_annotation_style_for_tool(
-                annotation_type, color="#ff0000", line_width=4.0
+                annotation_type,
+                color="#ff0000",
+                line_width=4.0,
+                font_name="Arial",
+                font_size=12,
+                font_bold=False,
+                font_italic=False,
+                font_underline=False,
+                text_align=0,
             )
 
     def test_markup_annotation_default_line_width_is_four_pixels(self):
@@ -404,9 +413,22 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 )
                 self.assertEqual(spec.width, 4.0)
                 self.assertEqual(spec.color, "#ff0000")
+        highlight_spec = build_placed_annotation_spec(
+            "highlight", "p1", [1.0, 2.0, 13.0, 14.0]
+        )
+        self.assertEqual(highlight_spec.width, 0.0)
+        self.assertEqual(highlight_spec.color, "#ff0000")
 
     def test_per_tool_annotation_style_applies_to_new_markup_annotations(self):
-        for annotation_type in ("arrow", "line", "rect", "oval", "polygon", "cloud"):
+        for annotation_type in (
+            "arrow",
+            "line",
+            "rect",
+            "oval",
+            "polygon",
+            "cloud",
+            "highlight",
+        ):
             with self.subTest(annotation_type=annotation_type):
                 set_annotation_style_for_tool(
                     annotation_type, color="#336699", line_width=9.0
@@ -431,7 +453,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 handler.on_annotation_created(annotation_type, position, "p1")
                 _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
                 self.assertEqual(specs[0].color, "#336699")
-                self.assertEqual(specs[0].width, 9.0)
+                expected_width = 0.0 if annotation_type == "highlight" else 9.0
+                self.assertEqual(specs[0].width, expected_width)
 
     def test_each_annotation_tool_default_is_independent(self):
         defaults = {
@@ -441,6 +464,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             "oval": ("#445500", 5.0),
             "polygon": ("#006666", 6.0),
             "cloud": ("#770077", 7.0),
+            "highlight": ("#227788", 11.0),
             "text": ("#888800", 8.0),
             "dimension": ("#009999", 10.0),
         }
@@ -448,6 +472,15 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             set_annotation_style_for_tool(
                 annotation_type, color=color, line_width=width
             )
+        set_annotation_style_for_tool(
+            "text",
+            font_name="Segoe UI",
+            font_size=18,
+            font_bold=True,
+            font_italic=True,
+            font_underline=True,
+            text_align=1,
+        )
         for annotation_type, (color, width) in defaults.items():
             with self.subTest(annotation_type=annotation_type):
                 spec = build_placed_annotation_spec(
@@ -456,16 +489,41 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 self.assertEqual(spec.color, color)
                 if annotation_type == "dimension":
                     self.assertEqual(spec.width, 1.0)
+                elif annotation_type in ("text", "highlight"):
+                    self.assertEqual(spec.width, 0.0)
                 else:
                     self.assertEqual(spec.width, width)
         text_spec = build_placed_annotation_spec(
             "text", "p1", [1.0, 2.0, 13.0, 14.0]
         )
         self.assertEqual(text_spec.properties["FontColor"], 0x008888)
+        self.assertEqual(text_spec.properties["FontName"], "Segoe UI")
+        self.assertEqual(text_spec.properties["FontSize"], 18)
+        self.assertTrue(text_spec.properties["FontBold"])
+        self.assertTrue(text_spec.properties["FontItalic"])
+        self.assertTrue(text_spec.properties["FontUnderline"])
+        self.assertEqual(text_spec.properties["TextAlign"], 1)
         dimension_spec = build_placed_annotation_spec(
             "dimension", "p1", [1.0, 2.0, 13.0, 14.0]
         )
         self.assertEqual(dimension_spec.properties["FontColor"], "#009999")
+        self.assertEqual(dimension_spec.width, 1.0)
+        set_annotation_style_for_tool(
+            "dimension",
+            font_name="Calibri",
+            font_size=16,
+            font_bold=True,
+            font_italic=True,
+            font_underline=True,
+        )
+        dimension_spec = build_placed_annotation_spec(
+            "dimension", "p1", [1.0, 2.0, 13.0, 14.0]
+        )
+        self.assertEqual(dimension_spec.properties["FontName"], "Calibri")
+        self.assertEqual(dimension_spec.properties["FontSize"], 16)
+        self.assertTrue(dimension_spec.properties["FontBold"])
+        self.assertTrue(dimension_spec.properties["FontItalic"])
+        self.assertTrue(dimension_spec.properties["FontUnderline"])
 
     def _paste_handler(
         self,
@@ -577,6 +635,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
     def test_annotation_created_uses_annotation_write_path(self):
         for annotation_type in (
             "dimension",
+            "highlight",
             "arrow",
             "line",
             "rect",
@@ -695,6 +754,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
     def test_denied_place_plan_items_access_blocks_annotation_placement_write(self):
         for annotation_type in (
             "dimension",
+            "highlight",
             "arrow",
             "line",
             "rect",

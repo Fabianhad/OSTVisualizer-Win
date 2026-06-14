@@ -350,9 +350,9 @@ class ComponentBuilder:
                     lambda annotation_type=spec.annotation_type: (
                         self.window.get_annotation_style_for_tool(annotation_type)
                     ),
-                    lambda color=None, line_width=None, annotation_type=spec.annotation_type: (
+                    lambda annotation_type=spec.annotation_type, **style_kwargs: (
                         self.window.set_annotation_style_for_tool(
-                            annotation_type, color=color, line_width=line_width
+                            annotation_type, **style_kwargs
                         )
                     ),
                     icon_size=QtCore.QSize(*DEFAULT_ICON_SIZE),

@@ -6,6 +6,8 @@ from ..config import (
     ACTION_CLOUD_ANNOTATION_TOOLTIP,
     ACTION_DIMENSION_LABEL,
     ACTION_DIMENSION_TOOLTIP,
+    ACTION_HIGHLIGHT_ANNOTATION_LABEL,
+    ACTION_HIGHLIGHT_ANNOTATION_TOOLTIP,
     ACTION_LINE_ANNOTATION_LABEL,
     ACTION_LINE_ANNOTATION_TOOLTIP,
     ACTION_OVAL_ANNOTATION_LABEL,
@@ -77,6 +79,13 @@ PLAN_ANNOTATION_TOOL_SPECS = (
         ACTION_TEXT_ANNOTATION_TOOLTIP,
         IconId.TEXT_ANNOTATION_TOOL,
         annotation_type="text",
+    ),
+    PlanToolSpec(
+        "highlight_annotation_tool",
+        ACTION_HIGHLIGHT_ANNOTATION_LABEL,
+        ACTION_HIGHLIGHT_ANNOTATION_TOOLTIP,
+        IconId.HIGHLIGHT_ANNOTATION_TOOL,
+        annotation_type="highlight",
     ),
     PlanToolSpec(
         "arrow_annotation_tool",

@@ -619,6 +619,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             [
                 "dimension_tool",
                 "text_annotation_tool",
+                "highlight_annotation_tool",
                 "arrow_annotation_tool",
                 "line_annotation_tool",
                 "rectangle_annotation_tool",
@@ -632,7 +633,17 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 spec.annotation_type
                 for spec in _ANNOTATION_WINDOW_CONFIG.annotation_tool_specs
             ],
-            ["dimension", "text", "arrow", "line", "rect", "oval", "polygon", "cloud"],
+            [
+                "dimension",
+                "text",
+                "highlight",
+                "arrow",
+                "line",
+                "rect",
+                "oval",
+                "polygon",
+                "cloud",
+            ],
         )
         self.assertNotIn(
             "place_tool",
@@ -927,6 +938,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
     ):
         for annotation_type in (
             "dimension",
+            "highlight",
             "arrow",
             "line",
             "rect",
@@ -1072,6 +1084,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         for annotation_type in (
             "dimension",
             "text",
+            "highlight",
             "arrow",
             "line",
             "rect",
@@ -1083,7 +1096,17 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 self.assertTrue(window._activate_annotation_tool(annotation_type))
         self.assertEqual(
             calls,
-            ["dimension", "text", "arrow", "line", "rect", "oval", "polygon", "cloud"],
+            [
+                "dimension",
+                "text",
+                "highlight",
+                "arrow",
+                "line",
+                "rect",
+                "oval",
+                "polygon",
+                "cloud",
+            ],
         )
 
     def test_detached_window_navigation_refresh_rebuilds_page_and_view_models(self):

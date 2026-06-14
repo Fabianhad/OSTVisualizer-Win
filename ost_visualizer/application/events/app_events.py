@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, List, Optional
+from ..dtos.mesh_geometry_dto import MeshGeometry
 
 
 @dataclass
@@ -39,7 +40,7 @@ class AppConfigUpdatedEvent:
 
 @dataclass
 class NativeSceneUpdatedEvent:
-    geometries: list
+    geometries: List[MeshGeometry]
     bounds: Optional[tuple] = None
 
 

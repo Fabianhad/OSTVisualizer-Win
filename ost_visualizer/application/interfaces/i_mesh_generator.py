@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Protocol, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 from ...domain.entities.condition import Condition
 from ...domain.entities.takeoff import Takeoff
 
@@ -29,5 +29,7 @@ class IMeshGenerator(Protocol):
         color_mode: str = "Solid",
         grayscale_enabled: bool = True,
     ) -> Tuple[
-        List[MeshData], Dict[str, str], Tuple[float, float, float, float, float, float]
+        List[MeshData],
+        Dict[str, Union[str, Dict[str, object]]],
+        Tuple[float, float, float, float, float, float],
     ]: ...

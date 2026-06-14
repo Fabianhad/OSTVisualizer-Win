@@ -3050,7 +3050,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             overflowing_text_rect.height(), item.boundingRect().height()
         )
 
-    def test_text_annotation_font_size_increase_resizes_box_around_center(self):
+    def test_text_annotation_font_size_increase_preserves_box_geometry(self):
         view = self._make_plan_view()
         annotation = BidAnnotation(
             uid="a1",
@@ -3067,8 +3067,10 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._selection_enabled = True
         view._selected_uids = {"a1"}
         view.update_selection_visuals(emit=False)
+        emitted_text = []
         combined_changes = []
         separate_position_changes = []
+        view.annotation_text_properties_flushed.connect(emitted_text.extend)
         view.annotation_text_and_positions_flushed.connect(
             lambda text, positions: combined_changes.append((text, positions))
         )
@@ -3080,27 +3082,24 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         size_index = view._condition_text_size_combo.findData(24)
         self.assertGreaterEqual(size_index, 0)
         view._condition_text_size_combo.setCurrentIndex(size_index)
-        self.assertEqual(annotation.position[:2], old_position[:2])
-        self.assertGreater(annotation.position[2], old_position[2])
-        self.assertGreater(annotation.position[3], old_position[3])
+        self.assertEqual(annotation.position, old_position)
         outline = self._first_selection_outline(view).polygon().boundingRect()
         self.assertEqual(outline.center(), QtCore.QPointF(100.0, 100.0))
-        self.assertEqual(outline.width(), annotation.position[2])
-        self.assertEqual(outline.height(), annotation.position[3])
+        self.assertEqual(outline.width(), old_position[2])
+        self.assertEqual(outline.height(), old_position[3])
         self.assertEqual(
             item.pos(),
             QtCore.QPointF(
-                100.0 - annotation.position[2] / 2.0,
-                100.0 - annotation.position[3] / 2.0,
+                100.0 - old_position[2] / 2.0,
+                100.0 - old_position[3] / 2.0,
             ),
         )
         self.assertEqual(separate_position_changes, [])
-        self.assertEqual(combined_changes[-1][1][0][2], old_position)
-        self.assertEqual(combined_changes[-1][1][0][3], annotation.position)
-        self.assertEqual(combined_changes[-1][0][0][3]["FontSize"], 24)
+        self.assertEqual(combined_changes, [])
+        self.assertEqual(emitted_text[-1][3]["FontSize"], 24)
         view.cleanup()
 
-    def test_text_annotation_style_and_box_change_flushes_atomically(self):
+    def test_text_annotation_style_change_flushes_without_box_change(self):
         view = self._make_plan_view()
         annotation = BidAnnotation(
             uid="a1",
@@ -3132,15 +3131,12 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         size_index = view._condition_text_size_combo.findData(24)
         self.assertGreaterEqual(size_index, 0)
         view._condition_text_size_combo.setCurrentIndex(size_index)
-        self.assertEqual(emitted_text, [])
+        self.assertEqual(len(emitted_text), 1)
         self.assertEqual(emitted_positions, [])
-        self.assertEqual(len(emitted_combined), 1)
-        text_changes, position_changes = emitted_combined[0]
-        self.assertEqual(text_changes[0][2]["FontSize"], 12)
-        self.assertEqual(text_changes[0][3]["FontSize"], 24)
-        self.assertEqual(position_changes[0][2], old_position)
-        self.assertEqual(position_changes[0][3], annotation.position)
-        self.assertEqual(annotation.position[:2], old_position[:2])
+        self.assertEqual(emitted_combined, [])
+        self.assertEqual(emitted_text[0][2]["FontSize"], 12)
+        self.assertEqual(emitted_text[0][3]["FontSize"], 24)
+        self.assertEqual(annotation.position, old_position)
         view.cleanup()
 
     def test_text_annotation_style_and_centered_box_survive_overlay_refresh(self):
@@ -3204,7 +3200,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(rebuilt.clip_rect().height(), annotation.position[3])
         view.cleanup()
 
-    def test_text_annotation_font_size_decrease_resizes_box_around_center(self):
+    def test_text_annotation_font_size_decrease_preserves_box_geometry(self):
         view = self._make_plan_view()
         annotation = BidAnnotation(
             uid="a1",
@@ -3227,13 +3223,11 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         size_index = view._condition_text_size_combo.findData(8)
         self.assertGreaterEqual(size_index, 0)
         view._condition_text_size_combo.setCurrentIndex(size_index)
-        self.assertEqual(annotation.position[:2], old_position[:2])
-        self.assertLess(annotation.position[2], old_position[2])
-        self.assertLess(annotation.position[3], old_position[3])
+        self.assertEqual(annotation.position, old_position)
         outline = self._first_selection_outline(view).polygon().boundingRect()
         self.assertEqual(outline.center(), QtCore.QPointF(100.0, 100.0))
-        self.assertEqual(outline.width(), annotation.position[2])
-        self.assertEqual(outline.height(), annotation.position[3])
+        self.assertEqual(outline.width(), old_position[2])
+        self.assertEqual(outline.height(), old_position[3])
         view.cleanup()
 
     def test_text_annotation_text_edit_preserves_box_and_wrapping(self):
@@ -3398,7 +3392,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(annotation.position, old_position)
         view.cleanup()
 
-    def test_text_annotation_autosize_updates_clip_rect(self):
+    def test_text_annotation_font_size_change_keeps_clip_rect_on_stored_box(self):
         view = self._make_plan_view()
         annotation = BidAnnotation(
             uid="a1",

@@ -8,6 +8,7 @@ from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 
 StyleGetter = Callable[[], AnnotationStyle]
 StyleSetter = Callable[..., AnnotationStyle]
+_TEXT_FONT_SIZES = (8, 9, 10, 11, 12, 14, 16, 18, 24, 36)
 
 
 def apply_annotation_tool_icon_color(
@@ -34,8 +35,51 @@ def create_annotation_style_menu(
         raise ValueError("Annotation style menu requires a tool-specific getter")
     if set_style is None:
         raise ValueError("Annotation style menu requires a tool-specific setter")
+    if annotation_type == "text":
+        return _create_font_annotation_style_menu(
+            parent,
+            get_style,
+            set_style,
+            include_alignment=True,
+            color_label="Select Font Color...",
+            menu_property="textAnnotationDefaultStyleMenu",
+        )
+    if annotation_type == "dimension":
+        return _create_font_annotation_style_menu(
+            parent,
+            get_style,
+            set_style,
+            include_alignment=False,
+            color_label="Select Color...",
+            menu_property="dimensionAnnotationDefaultStyleMenu",
+        )
     menu = QtWidgets.QMenu(parent)
     menu.setProperty("annotationDefaultStyleMenu", True)
+    refresh_shape_width_actions = _add_shape_line_width_menu_items(
+        menu, get_style, set_style
+    )
+    menu.addSeparator()
+    color_action = QtGui.QAction("Select Color...", menu)
+    menu.addAction(color_action)
+
+    def _choose_default_color() -> None:
+        style = get_style()
+        color = QtWidgets.QColorDialog.getColor(QtGui.QColor(style.color), parent)
+        if color.isValid():
+            set_style(color=color.name())
+        refresh_shape_width_actions()
+
+    color_action.triggered.connect(lambda _checked=False: _choose_default_color())
+    menu.aboutToShow.connect(refresh_shape_width_actions)
+    refresh_shape_width_actions()
+    return menu
+
+
+def _add_shape_line_width_menu_items(
+    menu: QtWidgets.QMenu,
+    get_style: StyleGetter,
+    set_style: StyleSetter,
+) -> Callable[[], None]:
     width_group = QtGui.QActionGroup(menu)
     width_group.setExclusive(True)
     width_actions: dict[int, QtGui.QAction] = {}
@@ -56,9 +100,6 @@ def create_annotation_style_menu(
             )
         )
         width_actions[width] = action
-    menu.addSeparator()
-    color_action = QtGui.QAction("Select Color...", menu)
-    menu.addAction(color_action)
 
     def _refresh_checked_width() -> None:
         style = get_style()
@@ -66,19 +107,129 @@ def create_annotation_style_menu(
         for option_width, action in width_actions.items():
             action.setChecked(option_width == width)
 
-    def _on_menu_about_to_show() -> None:
-        _refresh_checked_width()
+    return _refresh_checked_width
 
-    def _choose_default_color() -> None:
+
+def _create_font_annotation_style_menu(
+    parent: QtWidgets.QWidget,
+    get_style: StyleGetter,
+    set_style: StyleSetter,
+    *,
+    include_alignment: bool,
+    color_label: str,
+    menu_property: str,
+) -> QtWidgets.QMenu:
+    menu = QtWidgets.QMenu(parent)
+    menu.setProperty("annotationDefaultStyleMenu", True)
+    menu.setProperty("fontAnnotationDefaultStyleMenu", True)
+    menu.setProperty(menu_property, True)
+    menu_refs: list[object] = []
+    font_action = QtWidgets.QWidgetAction(menu)
+    font_combo = QtWidgets.QFontComboBox(menu)
+    font_combo.setToolTip("Font family")
+    font_action.setDefaultWidget(font_combo)
+    menu.addAction(font_action)
+    size_menu = menu.addMenu("Font Size")
+    menu_refs.extend((font_combo, size_menu))
+    size_group = QtGui.QActionGroup(size_menu)
+    size_group.setExclusive(True)
+    size_actions: dict[int, QtGui.QAction] = {}
+
+    def _set_font_size(size: int) -> None:
+        set_style(font_size=size)
+        _refresh_text_menu_state()
+
+    for size in _TEXT_FONT_SIZES:
+        action = QtGui.QAction(str(size), size_menu)
+        action.setCheckable(True)
+        action.setData(size)
+        size_group.addAction(action)
+        size_menu.addAction(action)
+        action.triggered.connect(
+            lambda _checked=False, selected_size=size: _set_font_size(selected_size)
+        )
+        size_actions[size] = action
+    menu.addSeparator()
+    color_action = QtGui.QAction(color_label, menu)
+    menu.addAction(color_action)
+    bold_action = QtGui.QAction("Bold", menu)
+    bold_action.setCheckable(True)
+    italic_action = QtGui.QAction("Italic", menu)
+    italic_action.setCheckable(True)
+    underline_action = QtGui.QAction("Underline", menu)
+    underline_action.setCheckable(True)
+    menu.addAction(bold_action)
+    menu.addAction(italic_action)
+    menu.addAction(underline_action)
+    align_actions: dict[int, QtGui.QAction] = {}
+    if include_alignment:
+        align_menu = menu.addMenu("Alignment")
+        menu_refs.append(align_menu)
+        align_group = QtGui.QActionGroup(align_menu)
+        align_group.setExclusive(True)
+
+        def _set_text_align(align: int) -> None:
+            set_style(text_align=align)
+            _refresh_text_menu_state()
+
+        for value, label in ((0, "Left"), (1, "Center"), (2, "Right")):
+            action = QtGui.QAction(label, align_menu)
+            action.setCheckable(True)
+            action.setData(value)
+            align_group.addAction(action)
+            align_menu.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, selected_align=value: _set_text_align(
+                    selected_align
+                )
+            )
+            align_actions[value] = action
+        menu_refs.append(align_group)
+    menu._text_menu_refs = tuple(menu_refs)
+
+    def _refresh_text_menu_state() -> None:
+        style = get_style()
+        font_combo.blockSignals(True)
+        font_combo.setCurrentFont(QtGui.QFont(style.font_name))
+        font_combo.blockSignals(False)
+        for size, action in size_actions.items():
+            action.setChecked(size == int(style.font_size))
+        bold_action.setChecked(bool(style.font_bold))
+        italic_action.setChecked(bool(style.font_italic))
+        underline_action.setChecked(bool(style.font_underline))
+        for align, action in align_actions.items():
+            action.setChecked(align == int(style.text_align))
+
+    def _choose_default_text_color() -> None:
         style = get_style()
         color = QtWidgets.QColorDialog.getColor(QtGui.QColor(style.color), parent)
         if color.isValid():
             set_style(color=color.name())
-        _refresh_checked_width()
+        _refresh_text_menu_state()
 
-    color_action.triggered.connect(lambda _checked=False: _choose_default_color())
-    menu.aboutToShow.connect(_on_menu_about_to_show)
-    _refresh_checked_width()
+    def _set_font_name(font: QtGui.QFont) -> None:
+        set_style(font_name=font.family())
+        _refresh_text_menu_state()
+
+    def _set_bold(checked: bool = False) -> None:
+        set_style(font_bold=bool(checked))
+        _refresh_text_menu_state()
+
+    def _set_italic(checked: bool = False) -> None:
+        set_style(font_italic=bool(checked))
+        _refresh_text_menu_state()
+
+    def _set_underline(checked: bool = False) -> None:
+        set_style(font_underline=bool(checked))
+        _refresh_text_menu_state()
+
+    font_combo.currentFontChanged.connect(_set_font_name)
+    color_action.triggered.connect(lambda _checked=False: _choose_default_text_color())
+    bold_action.triggered.connect(_set_bold)
+    italic_action.triggered.connect(_set_italic)
+    underline_action.triggered.connect(_set_underline)
+    menu.aboutToShow.connect(_refresh_text_menu_state)
+    _refresh_text_menu_state()
     return menu
 
 
@@ -102,6 +253,7 @@ def create_annotation_style_button(
     button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
     button.setProperty("annotationStyleDropdown", True)
     button.setProperty("annotationDefaultStyleDropdown", True)
+    button.setProperty("annotationType", annotation_type or "")
     button.setStyleSheet(
         """
         QToolButton {
@@ -118,6 +270,17 @@ def create_annotation_style_button(
     if icon_size is not None:
         button.setIconSize(icon_size)
         button.setFixedWidth(max(14, min(18, icon_size.width() // 2 + 4)))
+    if annotation_type == "highlight":
+        button.setProperty("highlightAnnotationDefaultColorPicker", True)
+
+        def _choose_highlight_color() -> None:
+            style = get_style()
+            color = QtWidgets.QColorDialog.getColor(QtGui.QColor(style.color), parent)
+            if color.isValid():
+                set_style(color=color.name())
+
+        button.clicked.connect(_choose_highlight_color)
+        return button
     menu = create_annotation_style_menu(
         button,
         get_style,

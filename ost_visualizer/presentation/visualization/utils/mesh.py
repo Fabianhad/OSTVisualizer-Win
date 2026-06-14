@@ -1,6 +1,7 @@
 from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Tuple, Union
+from ....application.dtos.mesh_geometry_dto import MeshGeometry
 from ....application.interfaces.i_color_service import IColorService
 
 if TYPE_CHECKING:
@@ -200,10 +201,10 @@ def prepare_vertices_for_shading(
 
 def meshes_to_geometries(
     meshes: Sequence[MeshData],
-    mesh_colors: Dict[str, Union[str, Dict[str, float]]],
+    mesh_colors: Dict[str, Union[str, Dict[str, object]]],
     color_service: IColorService,
-) -> Tuple[List[Dict[str, Sequence[float]]], Bounds]:
-    geometries: List[Dict[str, Sequence[float]]] = []
+) -> Tuple[List[MeshGeometry], Bounds]:
+    geometries: List[MeshGeometry] = []
     min_x = min_y = min_z = float("inf")
     max_x = max_y = max_z = float("-inf")
     for idx, mesh in enumerate(meshes):
@@ -236,16 +237,20 @@ def meshes_to_geometries(
             continue
         color_entry = mesh_colors.get(f"mesh_{idx}", "#808080")
         color, opacity = color_service.as_hex_with_opacity(color_entry)
-        geometry = {
-            "vertices": vertex_buffer,
-            "faces": index_buffer,
-            "normals": normal_buffer,
-            "color": color,
-            "opacity": opacity,
-        }
+        condition_uid = ""
+        takeoff_uid = ""
         if isinstance(color_entry, dict):
-            geometry["condition_uid"] = color_entry.get("condition_uid", "")
-            geometry["takeoff_uid"] = color_entry.get("takeoff_uid", "")
+            condition_uid = str(color_entry.get("condition_uid", ""))
+            takeoff_uid = str(color_entry.get("takeoff_uid", ""))
+        geometry = MeshGeometry(
+            vertices=vertex_buffer,
+            normals=normal_buffer,
+            indices=index_buffer,
+            color=color,
+            opacity=opacity,
+            condition_uid=condition_uid,
+            takeoff_uid=takeoff_uid,
+        )
         geometries.append(geometry)
     if min_x == float("inf"):
         bounds = (-1000, 1000, -1000, 1000, -10, 10)

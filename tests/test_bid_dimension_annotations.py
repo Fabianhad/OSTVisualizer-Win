@@ -65,7 +65,6 @@ class _FakeCursor:
                 return rows
         return []
 
-
 class _FakeConnection:
     def __init__(self, rows_by_table):
         self.rows_by_table = rows_by_table
@@ -208,6 +207,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(dimension.page_uid, "3")
         self.assertEqual(dimension.position, [0.0, 0.0, 255.0, 0.0])
         self.assertEqual(dimension.color, "#ff0000")
+        self.assertEqual(dimension.width, 1.0)
         self.assertEqual(dimension.properties["BidTakeoffFromUID"], "11")
         self.assertEqual(dimension.properties["BidTakeoffToUID"], "12")
 
@@ -275,6 +275,17 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                     Width=2,
                 )
             ],
+            "BidHighlights": [
+                SimpleNamespace(
+                    UID=17,
+                    BidPageUID=3,
+                    BidLayerUID=99,
+                    Position=encode_position(
+                        [3.0, 4.0, 15.0, 4.0, 15.0, 16.0, 3.0, 16.0]
+                    ),
+                    Color=0x00FFFF,
+                )
+            ],
         }
         annotations = _Reader()._parse_bid_annotations_for_bid(
             _FakeConnection(rows_by_table),
@@ -284,9 +295,11 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         by_type = {ann.annotation_type: ann for ann in annotations}
         self.assertEqual(
             set(by_type),
-            {"line", "arrow", "rect", "oval", "polygon", "cloud"},
+            {"line", "arrow", "rect", "oval", "polygon", "cloud", "highlight"},
         )
         self.assertEqual(by_type["arrow"].position, [1.0, 2.0, 13.0, 14.0])
+        self.assertEqual(by_type["highlight"].color, "#ffff00")
+        self.assertEqual(by_type["highlight"].width, 0.0)
         self.assertEqual(
             by_type["polygon"].position,
             [0.0, 0.0, 12.0, 0.0, 6.0, 8.0],
@@ -318,6 +331,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(items[1].toPlainText(), "21' - 3\"")
         self.assertEqual(items[1].data(2), DIMENSION_LABEL_ITEM_KIND)
         self.assertEqual(items[0].path().elementCount(), 6)
+        self.assertEqual(items[0].pen().widthF(), 1.0)
         self.assertEqual([item.data(0) for item in uid_to_items["d1"]], ["d1", "d1"])
 
     def test_vertical_dimension_renders_perpendicular_ticks(self):
@@ -649,6 +663,36 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             )
         conn.execute(
             """
+            CREATE TABLE BidHighlights (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidLayerUID INTEGER,
+                Color INTEGER,
+                Position BLOB
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE BidDimensions (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidTakeoffFromUID INTEGER,
+                BidTakeoffToUID INTEGER,
+                Position BLOB,
+                FontName TEXT,
+                FontColor INTEGER,
+                FontSize INTEGER,
+                FontBold INTEGER,
+                FontItalic INTEGER,
+                FontUnderline INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE BidTexts (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER,
@@ -685,6 +729,23 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             ),
             InsertAnnotationSpec(
                 page_uid="3",
+                annotation_type="dimension",
+                position=[1.0, 2.0, 13.0, 14.0],
+                color="#ff0000",
+                width=3.0,
+                properties={
+                    "BidTakeoffFromUID": "",
+                    "BidTakeoffToUID": "",
+                    "FontName": "Arial",
+                    "FontColor": "#ff0000",
+                    "FontSize": 12,
+                    "FontBold": False,
+                    "FontItalic": False,
+                    "FontUnderline": False,
+                },
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
                 annotation_type="rect",
                 position=[1.0, 2.0, 13.0, 14.0],
                 color="#ff0000",
@@ -713,6 +774,13 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             ),
             InsertAnnotationSpec(
                 page_uid="3",
+                annotation_type="highlight",
+                position=[3.0, 4.0, 15.0, 4.0, 15.0, 16.0, 3.0, 16.0],
+                color="#ffff00",
+                width=9.0,
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
                 annotation_type="text",
                 position=[7.0, 8.0, 12.0, 12.0],
                 color="#336699",
@@ -730,7 +798,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             ),
         ]
         new_uids = _DimensionWriteOps(conn).insert_annotations("bid.mdb", "1", specs)
-        self.assertEqual(new_uids, ["1", "1", "1", "1", "1", "1", "1"])
+        self.assertEqual(new_uids, ["1", "1", "1", "1", "1", "1", "1", "1", "1"])
         expected_tables = {
             "BidALines": "line",
             "BidArrows": "arrow",
@@ -745,6 +813,21 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                     f"SELECT BidUID, BidPageUID, Color, Width FROM {table}"
                 ).fetchone()
                 self.assertEqual(row, (1, 3, 255, 2))
+        highlight_row = conn.execute(
+            "SELECT BidUID, BidPageUID, Color, Position FROM BidHighlights"
+        ).fetchone()
+        self.assertEqual(highlight_row[:3], (1, 3, 0x00FFFF))
+        self.assertEqual(
+            highlight_row[3],
+            encode_position([3.0, 4.0, 15.0, 4.0, 15.0, 16.0, 3.0, 16.0]),
+        )
+        dimension_row = conn.execute(
+            """
+            SELECT BidUID, BidPageUID, FontName, FontColor, FontSize
+              FROM BidDimensions
+            """
+        ).fetchone()
+        self.assertEqual(dimension_row, (1, 3, "Arial", 255, 12))
         text_row = conn.execute(
             """
             SELECT BidUID, BidPageUID, FontName, FontColor, FontSize, TextAlign, Position
@@ -843,6 +926,18 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE BidHighlights (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidLayerUID INTEGER,
+                Color INTEGER,
+                Position BLOB
+            )
+            """
+        )
         base_positions = {
             "line": [0.0, 0.0, 10.0, 10.0],
             "arrow": [1.0, 2.0, 13.0, 14.0],
@@ -851,6 +946,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             "oval": [2.0, 3.0, 14.0, 15.0],
             "polygon": [0.0, 0.0, 12.0, 0.0, 6.0, 8.0],
             "cloud": [1.0, 1.0, 13.0, 1.0, 7.0, 9.0],
+            "highlight": [3.0, 4.0, 15.0, 4.0, 15.0, 16.0, 3.0, 16.0],
             "text": [7.0, 8.0, 12.0, 12.0],
         }
         specs = []
@@ -930,6 +1026,10 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             "SELECT UID, FontColor FROM BidTexts ORDER BY UID"
         ).fetchall()
         self.assertEqual(text_rows, [(1, 0x00AA00), (2, 0xFF0000)])
+        highlight_rows = conn.execute(
+            "SELECT UID, Color FROM BidHighlights ORDER BY UID"
+        ).fetchall()
+        self.assertEqual(highlight_rows, [(1, 0x00AA00), (2, 0xFF0000)])
 
     def test_renderer_uses_annotation_color_not_global_default_style(self):
         from ost_visualizer.presentation.utils.annotation_defaults import (

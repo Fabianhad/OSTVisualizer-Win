@@ -1013,6 +1013,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             "zoom_tool": "Zoom",
             "dimension_tool": "Dimension",
             "text_annotation_tool": "Text",
+            "highlight_annotation_tool": "Highlight",
             "arrow_annotation_tool": "Arrow",
             "line_annotation_tool": "Line",
             "rectangle_annotation_tool": "Rectangle",
@@ -1050,6 +1051,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 "zoom_tool",
                 "dimension_tool",
                 "text_annotation_tool",
+                "highlight_annotation_tool",
                 "arrow_annotation_tool",
                 "line_annotation_tool",
                 "rectangle_annotation_tool",
@@ -1068,7 +1070,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 if not action.isSeparator()
             ]
             self.assertEqual(
-                action_texts[:12],
+                action_texts[:13],
                 [
                     "Select",
                     "Place",
@@ -1076,6 +1078,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                     "Zoom",
                     "Dimension",
                     "Text",
+                    "Highlight",
                     "Arrow",
                     "Line",
                     "Rectangle",
@@ -1088,6 +1091,9 @@ class OptionsPreferencesTests(unittest.TestCase):
             self.assertIs(
                 tools_menu.actions()[5], shared_actions["text_annotation_tool"]
             )
+            self.assertIs(
+                tools_menu.actions()[6], shared_actions["highlight_annotation_tool"]
+            )
         finally:
             result.menu_bar.deleteLater()
         self.assertEqual(
@@ -1097,6 +1103,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(
             ICON_SPECS[IconId.TEXT_ANNOTATION_TOOL].svg_name,
             "serif_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
+        )
+        self.assertEqual(
+            ICON_SPECS[IconId.HIGHLIGHT_ANNOTATION_TOOL].svg_name,
+            "ink_marker_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg",
         )
 
     def test_annotation_tool_icon_color_updates_only_annotation_actions(self):
@@ -1128,6 +1138,41 @@ class OptionsPreferencesTests(unittest.TestCase):
         finally:
             set_annotation_style_for_tool("dimension", color="#ff0000", line_width=4.0)
             set_annotation_style_for_tool("rect", color="#ff0000", line_width=4.0)
+
+    def test_highlight_annotation_style_button_opens_direct_color_picker(self):
+        _app()
+        selected = []
+        current = AnnotationStyle("#ff0000", 4.0)
+
+        def get_style():
+            return current
+
+        def set_style(**kwargs):
+            nonlocal current
+            current = AnnotationStyle(
+                color=kwargs.get("color", current.color),
+                line_width=current.line_width,
+            )
+            selected.append(current)
+            return current
+
+        parent = QtWidgets.QWidget()
+        button = create_annotation_style_button(
+            parent, get_style, set_style, annotation_type="highlight"
+        )
+        try:
+            self.assertTrue(button.property("highlightAnnotationDefaultColorPicker"))
+            self.assertIsNone(button.menu())
+            with mock.patch.object(
+                QtWidgets.QColorDialog,
+                "getColor",
+                return_value=QtGui.QColor("#445566"),
+            ):
+                button.click()
+            self.assertEqual(selected[-1].color, "#445566")
+            self.assertEqual(selected[-1].line_width, 4.0)
+        finally:
+            parent.deleteLater()
 
     def test_annotation_style_button_exposes_widths_and_updates_style(self):
         _app()
@@ -1171,6 +1216,151 @@ class OptionsPreferencesTests(unittest.TestCase):
         finally:
             parent.deleteLater()
 
+    def test_text_annotation_style_button_exposes_text_controls_without_widths(self):
+        _app()
+        selected = []
+        current = AnnotationStyle("#ff0000", 4.0)
+
+        def get_style():
+            return current
+
+        def set_style(**kwargs):
+            nonlocal current
+            current = AnnotationStyle(
+                color=kwargs.get("color", current.color),
+                line_width=current.line_width,
+                font_name=kwargs.get("font_name", current.font_name),
+                font_size=kwargs.get("font_size", current.font_size),
+                font_bold=kwargs.get("font_bold", current.font_bold),
+                font_italic=kwargs.get("font_italic", current.font_italic),
+                font_underline=kwargs.get(
+                    "font_underline", current.font_underline
+                ),
+                text_align=kwargs.get("text_align", current.text_align),
+            )
+            selected.append(current)
+            return current
+
+        parent = QtWidgets.QWidget()
+        button = create_annotation_style_button(
+            parent, get_style, set_style, annotation_type="text"
+        )
+        try:
+            menu = button.menu()
+            self.assertTrue(menu.property("textAnnotationDefaultStyleMenu"))
+            self.assertNotIn(
+                "px",
+                " ".join(action.text() for action in menu.actions()),
+            )
+            self.assertIn("Select Font Color...", [a.text() for a in menu.actions()])
+            font_widgets = [
+                action.defaultWidget()
+                for action in menu.actions()
+                if isinstance(action, QtWidgets.QWidgetAction)
+            ]
+            self.assertTrue(
+                any(
+                    isinstance(widget, QtWidgets.QFontComboBox)
+                    for widget in font_widgets
+                )
+            )
+            size_menu = next(
+                ref
+                for ref in menu._text_menu_refs
+                if isinstance(ref, QtWidgets.QMenu) and ref.title() == "Font Size"
+            )
+            size_action = next(
+                action for action in size_menu.actions() if action.data() == 24
+            )
+            size_action.trigger()
+            self.assertEqual(selected[-1].font_size, 24)
+            bold_action = next(
+                action for action in menu.actions() if action.text() == "Bold"
+            )
+            italic_action = next(
+                action for action in menu.actions() if action.text() == "Italic"
+            )
+            bold_action.trigger()
+            italic_action.trigger()
+            self.assertTrue(selected[-2].font_bold)
+            self.assertTrue(selected[-1].font_italic)
+            with mock.patch.object(
+                QtWidgets.QColorDialog,
+                "getColor",
+                return_value=QtGui.QColor("#445566"),
+            ):
+                next(
+                    action
+                    for action in menu.actions()
+                    if action.text() == "Select Font Color..."
+                ).trigger()
+            self.assertEqual(selected[-1].color, "#445566")
+        finally:
+            parent.deleteLater()
+
+    def test_dimension_annotation_style_button_exposes_font_controls_without_widths(
+        self,
+    ):
+        _app()
+        selected = []
+        current = AnnotationStyle("#ff0000", 4.0)
+
+        def get_style():
+            return current
+
+        def set_style(**kwargs):
+            nonlocal current
+            current = AnnotationStyle(
+                color=kwargs.get("color", current.color),
+                line_width=kwargs.get("line_width", current.line_width),
+                font_name=kwargs.get("font_name", current.font_name),
+                font_size=kwargs.get("font_size", current.font_size),
+                font_bold=kwargs.get("font_bold", current.font_bold),
+                font_italic=kwargs.get("font_italic", current.font_italic),
+                font_underline=kwargs.get(
+                    "font_underline", current.font_underline
+                ),
+                text_align=current.text_align,
+            )
+            selected.append(current)
+            return current
+
+        parent = QtWidgets.QWidget()
+        button = create_annotation_style_button(
+            parent, get_style, set_style, annotation_type="dimension"
+        )
+        try:
+            menu = button.menu()
+            self.assertTrue(menu.property("dimensionAnnotationDefaultStyleMenu"))
+            self.assertIn("Select Color...", [action.text() for action in menu.actions()])
+            self.assertNotIn("Alignment", [action.text() for action in menu.actions()])
+            width_actions = [
+                action for action in menu.actions() if isinstance(action.data(), int)
+            ]
+            self.assertEqual(width_actions, [])
+            size_menu = next(
+                ref
+                for ref in menu._text_menu_refs
+                if isinstance(ref, QtWidgets.QMenu) and ref.title() == "Font Size"
+            )
+            size_action = next(
+                action for action in size_menu.actions() if action.data() == 18
+            )
+            size_action.trigger()
+            self.assertEqual(selected[-1].font_size, 18)
+            for action_text, attr in (
+                ("Bold", "font_bold"),
+                ("Italic", "font_italic"),
+                ("Underline", "font_underline"),
+            ):
+                with self.subTest(action_text=action_text):
+                    next(
+                        action for action in menu.actions() if action.text() == action_text
+                    ).trigger()
+                    self.assertTrue(getattr(selected[-1], attr))
+        finally:
+            parent.deleteLater()
+
     def test_annotation_split_tool_buttons_keep_activation_and_style_menu(self):
         _app()
         parent = QtWidgets.QWidget()
@@ -1209,6 +1399,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                         get_style,
                         set_style,
                         icon_size=QtCore.QSize(24, 24),
+                        annotation_type=spec.annotation_type,
                     )
                     self.assertTrue(split_button.property("annotationToolSplitButton"))
                     self.assertTrue(button.property("annotationToolMainButton"))
@@ -1217,16 +1408,53 @@ class OptionsPreferencesTests(unittest.TestCase):
                         dropdown.popupMode(),
                         QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup,
                     )
-                    width_actions = [
-                        action
-                        for action in dropdown.menu().actions()
-                        if isinstance(action.data(), int)
-                    ]
-                    self.assertEqual(len(width_actions), 16)
                     button.click()
                     self.assertEqual(triggered, [(spec.action_key, True)])
-                    width_actions[11].trigger()
-                    self.assertEqual(selected[-1].line_width, 12.0)
+                    if spec.annotation_type == "text":
+                        self.assertTrue(
+                            dropdown.menu().property("textAnnotationDefaultStyleMenu")
+                        )
+                        self.assertNotIn(
+                            "px",
+                            " ".join(
+                                action.text() for action in dropdown.menu().actions()
+                            ),
+                        )
+                    elif spec.annotation_type == "dimension":
+                        menu = dropdown.menu()
+                        self.assertTrue(
+                            menu.property("dimensionAnnotationDefaultStyleMenu")
+                        )
+                        self.assertIsNone(
+                            next(
+                                (
+                                    action
+                                    for action in menu.actions()
+                                    if action.text() == "Alignment"
+                                ),
+                                None,
+                            )
+                        )
+                        width_actions = [
+                            action
+                            for action in menu.actions()
+                            if isinstance(action.data(), int)
+                        ]
+                        self.assertEqual(width_actions, [])
+                    elif spec.annotation_type == "highlight":
+                        self.assertIsNone(dropdown.menu())
+                        self.assertTrue(
+                            dropdown.property("highlightAnnotationDefaultColorPicker")
+                        )
+                    else:
+                        width_actions = [
+                            action
+                            for action in dropdown.menu().actions()
+                            if isinstance(action.data(), int)
+                        ]
+                        self.assertEqual(len(width_actions), 16)
+                        width_actions[11].trigger()
+                        self.assertEqual(selected[-1].line_width, 12.0)
         finally:
             parent.deleteLater()
 

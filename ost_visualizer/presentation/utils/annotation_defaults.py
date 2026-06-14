@@ -4,6 +4,9 @@ from ...domain.entities.annotation_style import (
     AnnotationStyle,
     normalize_annotation_color,
     normalize_annotation_line_width,
+    normalize_text_align,
+    normalize_text_font_name,
+    normalize_text_font_size,
 )
 from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 
@@ -43,6 +46,12 @@ def set_annotation_style_for_tool(
     annotation_type: str,
     color=None,
     line_width=None,
+    font_name=None,
+    font_size=None,
+    font_bold=None,
+    font_italic=None,
+    font_underline=None,
+    text_align=None,
 ) -> AnnotationStyle:
     key = _normalize_annotation_type(annotation_type)
     current = _style_for(key)
@@ -54,8 +63,32 @@ def set_annotation_style_for_tool(
         ),
         line_width=(
             normalize_annotation_line_width(line_width, current.line_width)
-            if line_width is not None
+            if line_width is not None and key not in ("dimension", "text", "highlight")
             else current.line_width
+        ),
+        font_name=(
+            normalize_text_font_name(font_name, current.font_name)
+            if font_name is not None
+            else current.font_name
+        ),
+        font_size=(
+            normalize_text_font_size(font_size, current.font_size)
+            if font_size is not None
+            else current.font_size
+        ),
+        font_bold=bool(font_bold) if font_bold is not None else current.font_bold,
+        font_italic=(
+            bool(font_italic) if font_italic is not None else current.font_italic
+        ),
+        font_underline=(
+            bool(font_underline)
+            if font_underline is not None
+            else current.font_underline
+        ),
+        text_align=(
+            normalize_text_align(text_align, current.text_align)
+            if text_align is not None
+            else current.text_align
         ),
     )
     _ANNOTATION_STYLES[key] = next_style
@@ -78,16 +111,17 @@ def set_annotation_styles_by_tool(
 
 
 def dimension_annotation_properties() -> dict:
-    font_color = normalize_annotation_color(_style_for("dimension").color)
+    style = _style_for("dimension")
+    font_color = normalize_annotation_color(style.color)
     return {
         "BidTakeoffFromUID": "",
         "BidTakeoffToUID": "",
-        "FontName": "Arial",
+        "FontName": style.font_name,
         "FontColor": font_color,
-        "FontSize": 10,
-        "FontBold": False,
-        "FontItalic": False,
-        "FontUnderline": False,
+        "FontSize": style.font_size,
+        "FontBold": style.font_bold,
+        "FontItalic": style.font_italic,
+        "FontUnderline": style.font_underline,
     }
 
 
@@ -100,15 +134,16 @@ def _annotation_color_int(color: str) -> int:
 
 
 def text_annotation_properties() -> dict:
+    style = _style_for("text")
     return {
         "Text": "",
-        "FontName": "Arial",
-        "FontColor": _annotation_color_int(_style_for("text").color),
-        "FontSize": 12,
-        "FontBold": False,
-        "FontItalic": False,
-        "FontUnderline": False,
-        "TextAlign": 0,
+        "FontName": style.font_name,
+        "FontColor": _annotation_color_int(style.color),
+        "FontSize": style.font_size,
+        "FontBold": style.font_bold,
+        "FontItalic": style.font_italic,
+        "FontUnderline": style.font_underline,
+        "TextAlign": style.text_align,
     }
 
 
@@ -117,6 +152,8 @@ def annotation_default_style(annotation_type: str) -> tuple[str, float]:
     style = _style_for(key)
     if key == "dimension":
         return style.color, DIMENSION_ANNOTATION_WIDTH
+    if key in ("text", "highlight"):
+        return style.color, 0.0
     return style.color, style.line_width
 
 

@@ -1549,6 +1549,7 @@ class AnnotationPlacementTests(unittest.TestCase):
             "arrow": [1.0, 2.0, 13.0, 14.0],
             "rect": [1.0, 2.0, 13.0, 14.0],
             "oval": [1.0, 2.0, 13.0, 14.0],
+            "highlight": [1.0, 2.0, 13.0, 14.0],
             "text": [7.0, 8.0, 12.0, 12.0],
         }
         for annotation_type, expected_position in expected_positions.items():
@@ -1585,7 +1586,7 @@ class AnnotationPlacementTests(unittest.TestCase):
         self.assertEqual((path.elementAt(1).x, path.elementAt(1).y), (13.0, 14.0))
 
     def test_box_annotation_previews_use_drag_bounds(self):
-        for annotation_type in ("rect", "oval", "text"):
+        for annotation_type in ("rect", "oval", "text", "highlight"):
             with self.subTest(annotation_type=annotation_type):
                 view = AnnotationPlacementHarness()
                 self.assertTrue(view._enter_annotation_place_mode(annotation_type))
@@ -1597,12 +1598,19 @@ class AnnotationPlacementTests(unittest.TestCase):
                     paths[0].path().boundingRect(),
                     QtCore.QRectF(1, 2, 12, 12),
                 )
-                expected_style = (
-                    QtCore.Qt.PenStyle.DashLine
-                    if annotation_type == "text"
-                    else QtCore.Qt.PenStyle.SolidLine
-                )
-                self.assertEqual(paths[0].pen().style(), expected_style)
+                if annotation_type == "text":
+                    self.assertEqual(
+                        paths[0].pen().style(), QtCore.Qt.PenStyle.DashLine
+                    )
+                elif annotation_type == "highlight":
+                    self.assertEqual(
+                        paths[0].pen().style(), QtCore.Qt.PenStyle.NoPen
+                    )
+                    self.assertGreater(paths[0].brush().color().alpha(), 0)
+                else:
+                    self.assertEqual(
+                        paths[0].pen().style(), QtCore.Qt.PenStyle.SolidLine
+                    )
 
     def test_polygon_and_cloud_annotations_use_area_like_multi_point_completion(self):
         for annotation_type in ("polygon", "cloud"):

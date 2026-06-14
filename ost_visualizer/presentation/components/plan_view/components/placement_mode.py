@@ -772,6 +772,16 @@ class PlacementModeMixin:
                 pen_width=2.0,
             )
             return
+        if annotation_type == "highlight":
+            item = QGraphicsPathItem()
+            item.setPath(path)
+            highlight_color = QColor(color)
+            highlight_color.setAlphaF(0.3)
+            item.setPen(QPen(Qt.PenStyle.NoPen))
+            item.setBrush(QBrush(highlight_color))
+            item.setZValue(15)
+            self._add_preview_item(item, page_transform)
+            return
         self._add_annotation_path_preview(path, color, width, page_transform)
 
     def _add_area_annotation_preview(
@@ -1020,7 +1030,7 @@ class PlacementModeMixin:
             distance = math.hypot(position[2] - position[0], position[3] - position[1])
             if distance < min_len:
                 return False
-            if annotation_type in ("rect", "oval", "text") and (
+            if annotation_type in ("rect", "oval", "text", "highlight") and (
                 abs(position[2] - position[0]) < min_len
                 or abs(position[3] - position[1]) < min_len
             ):

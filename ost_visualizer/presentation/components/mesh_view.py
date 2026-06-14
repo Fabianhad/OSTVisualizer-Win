@@ -640,6 +640,14 @@ class OpenGLViewer(QtWidgets.QWidget):
         takeoff_uids: Optional[Sequence[str]] = None,
     ) -> None:
         if QtCore.QThread.currentThread() != self.thread():
+            self._validate_mesh_buffer_lengths(
+                vertices_list,
+                normals_list,
+                indices_list,
+                colors,
+                condition_uids,
+                takeoff_uids,
+            )
             self._pending_data = {
                 "vertices": vertices_list,
                 "normals": normals_list,
@@ -663,6 +671,35 @@ class OpenGLViewer(QtWidgets.QWidget):
             takeoff_uids,
         )
 
+    @staticmethod
+    def _validate_mesh_buffer_lengths(
+        vertices_list: Sequence[Sequence[float]],
+        normals_list: Sequence[Sequence[float]],
+        indices_list: Sequence[Sequence[int]],
+        colors: Sequence[object],
+        condition_uids: Optional[Sequence[str]] = None,
+        takeoff_uids: Optional[Sequence[str]] = None,
+    ) -> None:
+        expected = len(vertices_list)
+        lengths = {
+            "normals": len(normals_list),
+            "indices": len(indices_list),
+            "colors": len(colors),
+        }
+        if condition_uids is not None:
+            lengths["condition_uids"] = len(condition_uids)
+        if takeoff_uids is not None:
+            lengths["takeoff_uids"] = len(takeoff_uids)
+        mismatched = {
+            name: length for name, length in lengths.items() if length != expected
+        }
+        if mismatched:
+            raise ValueError(
+                "Mesh render buffers must have matching lengths: "
+                f"vertices={expected}, "
+                + ", ".join(f"{name}={length}" for name, length in mismatched.items())
+            )
+
     @QtCore.Slot()
     def _apply_pending(self) -> None:
         if self._pending_data is None:
@@ -681,14 +718,22 @@ class OpenGLViewer(QtWidgets.QWidget):
 
     def _do_apply_mesh_data(
         self,
-        vertices_list,
-        normals_list,
-        indices_list,
-        colors,
+        vertices_list: Sequence[Sequence[float]],
+        normals_list: Sequence[Sequence[float]],
+        indices_list: Sequence[Sequence[int]],
+        colors: Sequence[object],
         bid_ref: Optional[BidRef] = None,
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
     ) -> None:
+        self._validate_mesh_buffer_lengths(
+            vertices_list,
+            normals_list,
+            indices_list,
+            colors,
+            condition_uids,
+            takeoff_uids,
+        )
         if not self._ensure_renderer():
             return
         is_same_scene = bid_ref is not None and bid_ref == self._current_bid_ref

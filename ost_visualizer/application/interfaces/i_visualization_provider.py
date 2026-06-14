@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Protocol, Sequence, Tuple, Union
+from ..dtos.mesh_geometry_dto import MeshGeometry
 from .i_exporter import IExportStrategy
 from .i_mesh_generator import IMeshGenerator, MeshData
 
@@ -12,5 +13,5 @@ class IVisualizationProvider(Protocol):
     def convert_meshes_to_geometries(
         self,
         meshes: Sequence[MeshData],
-        mesh_colors: Dict[str, Union[str, Dict[str, float]]],
-    ) -> Tuple[List[Dict[str, Any]], Bounds]: ...
+        mesh_colors: Dict[str, Union[str, Dict[str, object]]],
+    ) -> Tuple[List[MeshGeometry], Bounds]: ...

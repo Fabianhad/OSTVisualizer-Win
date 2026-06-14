@@ -47,8 +47,12 @@ class DomainLifecycleTests(unittest.TestCase):
         )
         payload = state.to_dict()
         self.assertEqual(
-            payload["takeoff_workspace"]["annotation_styles"]["arrow"],
-            {"color": "#336699", "line_width": 16.0},
+            payload["takeoff_workspace"]["annotation_styles"]["arrow"]["color"],
+            "#336699",
+        )
+        self.assertEqual(
+            payload["takeoff_workspace"]["annotation_styles"]["arrow"]["line_width"],
+            16.0,
         )
 
     def test_workspace_annotation_styles_default_to_empty_map(self):

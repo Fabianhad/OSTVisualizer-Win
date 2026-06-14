@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from ..application.dtos.mesh_geometry_dto import MeshGeometry
 from ..application.interfaces.i_color_service import IColorService
 from ..application.interfaces.i_coordinate_transformer_factory import (
     ICoordinateTransformerFactory,
@@ -349,6 +350,6 @@ class VisualizationProvider(IVisualizationProvider):
     def convert_meshes_to_geometries(
         self,
         meshes: Sequence[MeshData],
-        mesh_colors: Dict[str, Union[str, Dict[str, float]]],
-    ) -> Tuple[List[Dict[str, Any]], Bounds]:
+        mesh_colors: Dict[str, Union[str, Dict[str, object]]],
+    ) -> Tuple[List[MeshGeometry], Bounds]:
         return meshes_to_geometries(meshes, mesh_colors, self._color_service)

@@ -1,6 +1,15 @@
 import unittest
+from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
+from ost_visualizer.presentation.visualization.utils.mesh import meshes_to_geometries
 from ost_visualizer.presentation.windows.mesh_view_window import MeshViewWindow
+
+
+class FakeColorService:
+    def as_hex_with_opacity(self, color_entry):
+        if isinstance(color_entry, dict):
+            return color_entry["color"], color_entry["opacity"]
+        return color_entry, 1.0
 
 
 class FakeMeshSignal:
@@ -34,7 +43,46 @@ class FakeMeshScene:
             self.selected.discard(index)
 
 
+class FakeSourceMesh:
+    vertices = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+    faces = [(0, 1, 2)]
+
+
 class TestMeshViewLifecycle(unittest.TestCase):
+    def test_meshes_to_geometries_returns_typed_mesh_geometry(self):
+        geometries, _bounds = meshes_to_geometries(
+            [FakeSourceMesh()],
+            {
+                "mesh_0": {
+                    "color": "#112233",
+                    "opacity": 0.5,
+                    "condition_uid": "condition-1",
+                    "takeoff_uid": "takeoff-1",
+                }
+            },
+            FakeColorService(),
+        )
+
+        self.assertEqual(1, len(geometries))
+        geometry = geometries[0]
+        self.assertIsInstance(geometry, MeshGeometry)
+        self.assertEqual("#112233", geometry.color)
+        self.assertEqual(0.5, geometry.opacity)
+        self.assertEqual("condition-1", geometry.condition_uid)
+        self.assertEqual("takeoff-1", geometry.takeoff_uid)
+        self.assertEqual([0, 1, 2], geometry.indices)
+
+    def test_mesh_buffer_length_mismatch_raises_clear_error(self):
+        with self.assertRaisesRegex(ValueError, "matching lengths"):
+            OpenGLViewer._validate_mesh_buffer_lengths(
+                [[0.0, 0.0, 0.0]],
+                [],
+                [[0, 1, 2]],
+                [{"color": "#ffffff", "opacity": 1.0}],
+                ["condition-1"],
+                ["takeoff-1"],
+            )
+
     def test_cleanup_clears_external_callback_references(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
         retained = object()

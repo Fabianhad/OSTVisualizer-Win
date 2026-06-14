@@ -276,10 +276,10 @@ class MeshViewWindow(QtWidgets.QMainWindow):
 
     def apply_mesh_data(
         self,
-        vertices_list: Sequence,
-        normals_list: Sequence,
-        indices_list: Sequence,
-        colors: Sequence,
+        vertices_list: Sequence[Sequence[float]],
+        normals_list: Sequence[Sequence[float]],
+        indices_list: Sequence[Sequence[int]],
+        colors: Sequence[object],
         bid_ref: Optional[BidRef] = None,
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,

@@ -73,7 +73,7 @@ def process_takeoffs_to_meshes(
     takeoff_service: ITakeoffDomainService,
     page_area_selections: Optional[Dict[str, Optional[str]]] = None,
     **config_options,
-) -> Tuple[List[MeshData], Dict[str, str], Bounds]:
+) -> Tuple[List[MeshData], Dict[str, Union[Dict[str, object], str]], Bounds]:
     if not bid_takeoffs:
         return [], {}, calculate_mesh_bounds([])
     mesh_factory = MeshFactory(coord_system)
@@ -124,7 +124,7 @@ def process_takeoffs_to_meshes(
                 temp_idx += 1
     meshes_with_metadata = apply_boolean_operations(meshes_with_metadata)
     meshes: List[MeshData] = []
-    mesh_colors: Dict[str, Union[Dict[str, float], str]] = {}
+    mesh_colors: Dict[str, Union[Dict[str, object], str]] = {}
     for mesh_idx, (mesh, metadata) in enumerate(meshes_with_metadata):
         meshes.append(mesh)
         mesh_colors[f"mesh_{mesh_idx}"] = {

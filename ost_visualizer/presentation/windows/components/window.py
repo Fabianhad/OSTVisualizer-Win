@@ -300,11 +300,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 lambda annotation_type=spec.annotation_type: (
                     self._annotation_style_getter(annotation_type)
                 ),
-                lambda color=None, line_width=None, annotation_type=spec.annotation_type: (
+                lambda annotation_type=spec.annotation_type, **style_kwargs: (
                     self._annotation_style_setter(
                         annotation_type,
-                        color=color,
-                        line_width=line_width,
+                        **style_kwargs,
                     )
                 ),
                 icon_size=btn_size,

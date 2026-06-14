@@ -819,11 +819,25 @@ class MainWindow(QtWidgets.QMainWindow):
         annotation_type: str,
         color: str | None = None,
         line_width: float | None = None,
+        font_name: str | None = None,
+        font_size: int | None = None,
+        font_bold: bool | None = None,
+        font_italic: bool | None = None,
+        font_underline: bool | None = None,
+        text_align: int | None = None,
         *,
         persist: bool = True,
     ) -> AnnotationStyle:
         style = set_active_annotation_style_for_tool(
-            annotation_type, color=color, line_width=line_width
+            annotation_type,
+            color=color,
+            line_width=line_width,
+            font_name=font_name,
+            font_size=font_size,
+            font_bold=font_bold,
+            font_italic=font_italic,
+            font_underline=font_underline,
+            text_align=text_align,
         )
         self._refresh_annotation_style_controls(annotation_type)
         if persist:

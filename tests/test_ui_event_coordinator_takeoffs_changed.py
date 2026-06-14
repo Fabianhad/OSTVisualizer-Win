@@ -1,4 +1,5 @@
 import unittest
+from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
 from ost_visualizer.application.services.project_write_service import WriteReloadResult
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyData
@@ -62,6 +63,27 @@ class FakeViewer:
 
     def update_viewers(self, page_uids):
         self.viewer_pages.append(list(page_uids))
+
+
+class FakeMeshReceiver:
+    def __init__(self):
+        self.mesh_calls = []
+
+    def apply_mesh_data(self, *args, **kwargs):
+        self.mesh_calls.append((args, kwargs))
+
+
+class FakeMeshPlanSignaler:
+    def __init__(self):
+        self.requests = 0
+
+    def request_update(self):
+        self.requests += 1
+
+
+class FakeMeshAccess:
+    def is_allowed(self, feature):
+        return feature == Feature.VIEW_3D
 
 
 class FakeSidebar:
@@ -346,6 +368,39 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator._sidebar.quantity_updates, 1)
         self.assertEqual(coordinator.main_window.menu_controller.updates, 1)
         self.assertEqual(coordinator._toolbar.refreshes, 1)
+
+    def test_native_scene_update_consumes_mesh_geometry_dtos(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._nav = FakeNav()
+        coordinator.ui_access_manager = FakeMeshAccess()
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.project_data = FakeProjectData()
+        coordinator.opengl_viewer = FakeMeshReceiver()
+        coordinator._mesh_window = FakeMeshReceiver()
+        coordinator._plan_view_signaler = FakeMeshPlanSignaler()
+        coordinator._last_mesh_args = None
+        coordinator._last_mesh_kwargs = None
+        geometry = MeshGeometry(
+            vertices=[0.0, 0.0, 0.0],
+            normals=[0.0, 1.0, 0.0],
+            indices=[0, 1, 2],
+            color="#123456",
+            opacity=0.75,
+            condition_uid="condition-1",
+            takeoff_uid="takeoff-1",
+        )
+
+        coordinator._on_native_scene_updated(geometries=[geometry])
+
+        self.assertEqual(1, len(coordinator.opengl_viewer.mesh_calls))
+        args, kwargs = coordinator.opengl_viewer.mesh_calls[0]
+        self.assertEqual(([[0.0, 0.0, 0.0]], [[0.0, 1.0, 0.0]], [[0, 1, 2]]), args[:3])
+        self.assertEqual([{"color": "#123456", "opacity": 0.75}], args[3])
+        self.assertEqual(["condition-1"], kwargs["condition_uids"])
+        self.assertEqual(["takeoff-1"], kwargs["takeoff_uids"])
+        self.assertEqual(coordinator._last_mesh_args, args)
+        self.assertEqual(coordinator._last_mesh_kwargs, kwargs)
+        self.assertEqual(1, coordinator._plan_view_signaler.requests)
 
     def test_condition_selection_in_3d_does_not_enter_place_mode(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

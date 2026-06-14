@@ -1,7 +1,8 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QObject, Signal
+from ...application.dtos.mesh_geometry_dto import MeshGeometry
 from ...application.events.app_events import AppEvents
 from ...domain.entities.bid import Bid
 from ...domain.entities.file_state import normalize_path
@@ -44,6 +45,30 @@ from .toolbar_state_coordinator import ToolbarStateCoordinator
 from .viewer_sync_coordinator import ViewerSyncCoordinator
 
 logger = logging.getLogger(__name__)
+MeshRenderBuffers = Tuple[
+    List[List[float]],
+    List[List[float]],
+    List[List[int]],
+    List[Dict[str, Union[float, str]]],
+    List[str],
+    List[str],
+]
+
+
+def _mesh_geometries_to_render_buffers(
+    geometries: List[MeshGeometry],
+) -> MeshRenderBuffers:
+    return (
+        [geometry.vertices for geometry in geometries],
+        [geometry.normals for geometry in geometries],
+        [geometry.indices for geometry in geometries],
+        [
+            {"color": geometry.color, "opacity": geometry.opacity}
+            for geometry in geometries
+        ],
+        [geometry.condition_uid for geometry in geometries],
+        [geometry.takeoff_uid for geometry in geometries],
+    )
 
 
 class _MainThreadSignaler(QObject):
@@ -1452,24 +1477,21 @@ class UIEventCoordinator:
             if self._mesh_window:
                 self._mesh_window.clear_scene()
             return
-        geometries = kwargs.get("geometries") or []
+        geometries: List[MeshGeometry] = kwargs["geometries"]
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        mesh_args = (
-            [g.get("vertices", []) for g in geometries],
-            [g.get("normals", []) for g in geometries],
-            [g.get("faces", []) for g in geometries],
-            [
-                {
-                    "color": g.get("color", "#808080"),
-                    "opacity": g.get("opacity", 1.0),
-                }
-                for g in geometries
-            ],
-        )
+        (
+            vertices,
+            normals,
+            indices,
+            colors,
+            condition_uids,
+            takeoff_uids,
+        ) = _mesh_geometries_to_render_buffers(geometries)
+        mesh_args = (vertices, normals, indices, colors)
         mesh_kwargs = {
             "bid_ref": bid_ref,
-            "condition_uids": [g.get("condition_uid", "") for g in geometries],
-            "takeoff_uids": [g.get("takeoff_uid", "") for g in geometries],
+            "condition_uids": condition_uids,
+            "takeoff_uids": takeoff_uids,
         }
         self._last_mesh_args = mesh_args
         self._last_mesh_kwargs = mesh_kwargs

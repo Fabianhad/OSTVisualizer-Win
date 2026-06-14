@@ -82,6 +82,7 @@ class ViewContextMenuTests(unittest.TestCase):
                     "Zoom",
                     "Dimension",
                     "Text",
+                    "Highlight",
                     "Arrow",
                     "Line",
                     "Rectangle",

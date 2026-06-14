@@ -3,7 +3,6 @@ import os
 import weakref
 import uuid
 from dataclasses import replace
-from enum import Enum
 from typing import Callable, Dict, List, Optional, Set, Tuple, cast
 from PySide6 import QtCore, QtSvg
 from PySide6.QtCore import Qt, Signal
@@ -19,7 +18,6 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QTextCursor,
-    QTextDocument,
     QTextOption,
 )
 from PySide6.QtWidgets import (
@@ -112,11 +110,6 @@ _TEXT_TOOL_ALIGN_RIGHT_ICON = (
     "format_align_right_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
 )
 _MOVE_OVERLAY_ICON = "recenter_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
-
-
-class TextAnnotationGeometryPolicy(Enum):
-    PRESERVE_BOX = "preserve_box"
-    AUTOSIZE_BOX = "autosize_box"
 
 
 def _build_annotation_dict(
@@ -751,9 +744,7 @@ class TakeoffPlanView(
         item.setFont(font)
         if uid is None:
             self._refresh_condition_text_label_layout(item)
-        self._persist_selected_text_annotation(
-            geometry_policy=TextAnnotationGeometryPolicy.AUTOSIZE_BOX
-        )
+        self._persist_selected_text_annotation()
         if uid is not None:
             self._refresh_dimension_text_label_layout(uid, item)
         self._refresh_selected_text_annotation_selection_visuals()
@@ -772,9 +763,7 @@ class TakeoffPlanView(
             self._update_condition_text_color_swatch(color)
             if uid is None:
                 self._refresh_condition_text_label_layout(item)
-            self._persist_selected_text_annotation(
-                geometry_policy=TextAnnotationGeometryPolicy.PRESERVE_BOX
-            )
+            self._persist_selected_text_annotation()
             if uid is not None:
                 self._refresh_dimension_text_label_layout(uid, item)
 
@@ -788,9 +777,7 @@ class TakeoffPlanView(
         self._set_condition_text_control_signals_blocked(True)
         self._sync_condition_text_alignment_buttons(alignment)
         self._set_condition_text_control_signals_blocked(False)
-        self._persist_selected_text_annotation(
-            geometry_policy=TextAnnotationGeometryPolicy.PRESERVE_BOX
-        )
+        self._persist_selected_text_annotation()
         self._refresh_selected_text_annotation_selection_visuals()
 
     def _refresh_selected_text_annotation_selection_visuals(self) -> None:
@@ -798,57 +785,6 @@ class TakeoffPlanView(
         if uid is None or uid not in self._selected_uids:
             return
         self.update_selection_visuals(emit=False)
-
-    def _autosize_text_annotation_box(
-        self,
-        uid: str,
-        item: QGraphicsTextItem,
-        text_override: Optional[str] = None,
-    ) -> Optional[Tuple[str, str, List[float], List[float]]]:
-        ann = self._current_annotations.get(uid)
-        if ann is None or not ann.is_text or len(ann.position) < 4:
-            return None
-        scene_width, scene_height = self._text_annotation_document_scene_size(
-            item, text_override
-        )
-        cs = self._scene_builder.get_coordinate_system()
-        ost_per_scene_px = 1.0 / cs.ost_to_screen_pixels(1.0)
-        new_width = max(scene_width * ost_per_scene_px, 0.01)
-        new_height = max(scene_height * ost_per_scene_px, 0.01)
-        old_position = list(ann.position)
-        if math.isclose(
-            old_position[2], new_width, rel_tol=0.0, abs_tol=1e-6
-        ) and math.isclose(old_position[3], new_height, rel_tol=0.0, abs_tol=1e-6):
-            self._apply_text_annotation_box_to_item(ann, item)
-            return None
-        new_position = list(old_position)
-        new_position[2] = new_width
-        new_position[3] = new_height
-        ann.position = new_position
-        self._apply_text_annotation_box_to_item(ann, item)
-        self._refresh_selected_text_annotation_selection_visuals()
-        return (
-            self._ann_db_uid_map.get(uid, uid),
-            ann.annotation_type,
-            old_position,
-            list(new_position),
-        )
-
-    def _text_annotation_document_scene_size(
-        self,
-        item: QGraphicsTextItem,
-        text_override: Optional[str] = None,
-    ) -> Tuple[float, float]:
-        document = QTextDocument()
-        document.setDefaultFont(item.font())
-        document.setDefaultTextOption(QTextOption(item.document().defaultTextOption()))
-        document.setDocumentMargin(item.document().documentMargin())
-        document.setPlainText(
-            text_override if text_override is not None else item.toPlainText()
-        )
-        document.setTextWidth(-1)
-        size = document.size()
-        return max(size.width(), 1.0), max(size.height(), 1.0)
 
     def _apply_text_annotation_box_to_item(
         self, ann: BidAnnotation, item: QGraphicsTextItem
@@ -1317,9 +1253,6 @@ class TakeoffPlanView(
                                     uid,
                                     item,
                                     text_override=text,
-                                    geometry_policy=(
-                                        TextAnnotationGeometryPolicy.PRESERVE_BOX
-                                    ),
                                 )
                                 draft_payload = (
                                     list(ann.position),
@@ -1334,9 +1267,6 @@ class TakeoffPlanView(
                                 uid,
                                 item,
                                 text_override=text,
-                                geometry_policy=(
-                                    TextAnnotationGeometryPolicy.PRESERVE_BOX
-                                ),
                             )
                         except Exception as exc:
                             error = exc
@@ -1522,10 +1452,6 @@ class TakeoffPlanView(
     def _persist_selected_text_annotation(
         self,
         text_override: Optional[str] = None,
-        *,
-        geometry_policy: TextAnnotationGeometryPolicy = (
-            TextAnnotationGeometryPolicy.AUTOSIZE_BOX
-        ),
     ) -> None:
         uid = self._selected_text_annotation_uid
         item = self._selected_text_item
@@ -1542,7 +1468,6 @@ class TakeoffPlanView(
             uid,
             item,
             text_override,
-            geometry_policy=geometry_policy,
         )
 
     def _refresh_dimension_text_label_layout(
@@ -1819,22 +1744,12 @@ class TakeoffPlanView(
         uid: str,
         item: QGraphicsTextItem,
         text_override: Optional[str] = None,
-        *,
-        geometry_policy: TextAnnotationGeometryPolicy = (
-            TextAnnotationGeometryPolicy.AUTOSIZE_BOX
-        ),
     ) -> None:
         ann = self._current_annotations.get(uid)
         new_props = self._text_annotation_properties(uid, item, text_override)
         if ann is None or new_props is None:
             return
-        if geometry_policy == TextAnnotationGeometryPolicy.PRESERVE_BOX:
-            self._apply_text_annotation_box_to_item(ann, item)
-            position_change = None
-        else:
-            position_change = self._autosize_text_annotation_box(
-                uid, item, text_override
-            )
+        self._apply_text_annotation_box_to_item(ann, item)
         keys = tuple(new_props.keys())
         old_props = {key: ann.properties.get(key) for key in keys}
         old_props["FontColor"] = self._annotation_font_color_int(ann)
@@ -1843,29 +1758,20 @@ class TakeoffPlanView(
             ann.properties.update(new_props)
             ann.color = int_color_to_hex(int(new_props["FontColor"]))
             return
-        if not props_changed and position_change is None:
+        if not props_changed:
             return
-        text_changes = []
-        if props_changed:
-            ann.properties.update(new_props)
-            ann.color = int_color_to_hex(int(new_props["FontColor"]))
-            text_changes.append(
+        ann.properties.update(new_props)
+        ann.color = int_color_to_hex(int(new_props["FontColor"]))
+        self.annotation_text_properties_flushed.emit(
+            [
                 (
                     self._ann_db_uid_map.get(uid, uid),
                     ann.annotation_type,
                     old_props,
                     dict(new_props),
                 )
-            )
-        position_changes = [position_change] if position_change is not None else []
-        if text_changes and position_changes:
-            self.annotation_text_and_positions_flushed.emit(
-                text_changes, position_changes
-            )
-        elif text_changes:
-            self.annotation_text_properties_flushed.emit(text_changes)
-        else:
-            self.positions_flushed.emit([], position_changes)
+            ]
+        )
 
     def _annotation_font_color_int(self, annotation: BidAnnotation) -> int:
         value = annotation.properties.get("FontColor")
@@ -1900,6 +1806,7 @@ class TakeoffPlanView(
                 width is not None
                 and not ann.is_text
                 and not ann.is_dimension
+                and not ann.is_highlight
                 and not math.isclose(ann.width, float(width), rel_tol=0.0, abs_tol=1e-6)
             ):
                 old_style["Width"] = ann.width

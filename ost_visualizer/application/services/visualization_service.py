@@ -1,6 +1,7 @@
 import logging
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+from ..dtos.mesh_geometry_dto import MeshGeometry
 from ...domain.services.project_data_service import ProjectDataService
 from ..events.app_events import AppEvents
 from ..interfaces.i_thread_scene_notifier import IThreadSceneNotifier
@@ -45,7 +46,9 @@ class VisualizationService:
         )
         self._mesh_worker.start()
 
-    def _publish_native_scene(self, meshes: List, mesh_colors: Dict[str, str]) -> None:
+    def _publish_native_scene(
+        self, meshes: List, mesh_colors: Dict[str, Union[str, Dict[str, object]]]
+    ) -> None:
         geometries, bounds = self._visualization_provider.convert_meshes_to_geometries(
             meshes, mesh_colors
         )
@@ -128,7 +131,9 @@ class VisualizationService:
             except Exception as exc:
                 logger.exception("Mesh generation error: %s", exc)
 
-    def _on_scene_ready(self, geometries: List, bounds: Any, gen_id: int) -> None:
+    def _on_scene_ready(
+        self, geometries: List[MeshGeometry], bounds: Any, gen_id: int
+    ) -> None:
         with self._mesh_generation_lock:
             if gen_id != self._mesh_generation_id:
                 return
