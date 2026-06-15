@@ -3381,6 +3381,149 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIsNone(view._text_annotation_item(uid))
         view.cleanup()
 
+    def test_duplicate_named_view_draft_commit_keeps_inline_edit_active(self):
+        from ost_visualizer.presentation.utils.named_view_validation import (
+            show_duplicate_named_view_name,
+        )
+
+        for close_method in ("ok", "close"):
+            with self.subTest(close_method=close_method):
+                view = self._make_plan_view()
+                view._selection_enabled = True
+                emitted = []
+                validator_calls = []
+                view.named_view_created.connect(
+                    lambda position, page_uid, properties: emitted.append(
+                        (list(position), page_uid, dict(properties))
+                    )
+                )
+
+                def validate(name, exclude_uid=None):
+                    validator_calls.append((name, exclude_uid))
+                    show_duplicate_named_view_name(view)
+                    return False
+
+                view.set_named_view_name_validator(validate)
+                self.assertTrue(
+                    view.begin_named_view_draft(
+                        [10.0, 20.0, 50.0, 20.0, 50.0, 60.0, 10.0, 60.0],
+                        "page-1",
+                    )
+                )
+                uid = view._draft_named_view_uid
+                item = view._editing_named_view_item
+                item.setPlainText(" Lobby ")
+                with patch(
+                    "ost_visualizer.presentation.utils.named_view_validation.show_warning"
+                ) as warning:
+                    view._finish_named_view_rename(commit=True)
+                self.assertEqual(emitted, [])
+                self.assertEqual(validator_calls, [("Lobby", uid)])
+                self.assertEqual(view._draft_named_view_uid, uid)
+                self.assertIn(uid, view._current_annotations)
+                self.assertTrue(view.is_text_annotation_inline_edit_active())
+                self.assertEqual(item.toPlainText(), " Lobby ")
+                self.assertEqual(
+                    item.textInteractionFlags(),
+                    QtCore.Qt.TextInteractionFlag.TextEditorInteraction,
+                )
+                self.assertEqual(
+                    warning.call_args.args[2],
+                    "Named view should have unique name",
+                )
+                warning.assert_called_once()
+                view.set_named_view_name_validator(None)
+                view._finish_named_view_rename(commit=False)
+                view.cleanup()
+
+    def test_duplicate_named_view_close_then_unique_commit_succeeds_once(self):
+        view = self._make_plan_view()
+        view._selection_enabled = True
+        emitted = []
+        duplicate = True
+        view.named_view_created.connect(
+            lambda position, page_uid, properties: emitted.append(
+                (list(position), page_uid, dict(properties))
+            )
+        )
+
+        def validate(_name, _exclude_uid=None):
+            return not duplicate
+
+        view.set_named_view_name_validator(validate)
+        self.assertTrue(
+            view.begin_named_view_draft(
+                [10.0, 20.0, 50.0, 20.0, 50.0, 60.0, 10.0, 60.0],
+                "page-1",
+            )
+        )
+        uid = view._draft_named_view_uid
+        item = view._editing_named_view_item
+        item.setPlainText("Lobby")
+        view._finish_named_view_rename(commit=True)
+        self.assertEqual(emitted, [])
+        self.assertEqual(view._draft_named_view_uid, uid)
+        self.assertTrue(view.is_text_annotation_inline_edit_active())
+        duplicate = False
+        item.setPlainText("Lobby 2")
+        view._finish_named_view_rename(commit=True)
+        self.assertEqual(len(emitted), 1)
+        self.assertEqual(
+            emitted[0][0], [10.0, 20.0, 50.0, 20.0, 50.0, 60.0, 10.0, 60.0]
+        )
+        self.assertEqual(emitted[0][1], "page-1")
+        self.assertEqual(emitted[0][2]["Text"], "Lobby 2")
+        self.assertIsNone(view._draft_named_view_uid)
+        self.assertNotIn(uid, view._current_annotations)
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+        view.cleanup()
+
+    def test_empty_named_view_draft_commit_removes_item_without_create(self):
+        view = self._make_plan_view()
+        view._selection_enabled = True
+        emitted = []
+        view.named_view_created.connect(
+            lambda position, page_uid, properties: emitted.append(
+                (list(position), page_uid, dict(properties))
+            )
+        )
+        self.assertTrue(
+            view.begin_named_view_draft(
+                [10.0, 20.0, 50.0, 20.0, 50.0, 60.0, 10.0, 60.0],
+                "page-1",
+            )
+        )
+        uid = view._draft_named_view_uid
+        view._editing_named_view_item.setPlainText("   ")
+        view._finish_named_view_rename(commit=True)
+        self.assertEqual(emitted, [])
+        self.assertIsNone(view._draft_named_view_uid)
+        self.assertNotIn(uid, view._current_annotations)
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+        view.cleanup()
+
+    def test_named_view_draft_font_matches_final_renderer_font(self):
+        from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
+            create_named_view_label_font,
+        )
+
+        view = self._make_plan_view()
+        view._selection_enabled = True
+        self.assertTrue(
+            view.begin_named_view_draft(
+                [10.0, 20.0, 50.0, 20.0, 50.0, 60.0, 10.0, 60.0],
+                "page-1",
+            )
+        )
+        item = view._editing_named_view_item
+        expected = create_named_view_label_font(
+            view._scene_builder.get_coordinate_system()
+        )
+        self.assertEqual(item.font().family(), expected.family())
+        self.assertEqual(item.font().pointSize(), expected.pointSize())
+        self.assertEqual(item.font().bold(), expected.bold())
+        view.cleanup()
+
     def test_overlay_refresh_after_inline_text_edit_keeps_textbox_width(self):
         view = self._make_plan_view()
         page = Page(uid="page-1", name="Page 1")

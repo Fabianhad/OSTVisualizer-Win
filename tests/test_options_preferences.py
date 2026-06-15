@@ -847,15 +847,14 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         dialog._disable_high_res_check.setChecked(False)
         self.assertTrue(_apply_button(dialog).isEnabled())
-        with mock.patch.object(
-            QtWidgets.QMessageBox,
-            "question",
-            return_value=QtWidgets.QMessageBox.StandardButton.Yes,
-        ) as question:
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.options.dialog.confirm",
+            return_value=True,
+        ) as confirm:
             _reset_all_button(dialog).click()
         reset_callback.assert_called_once(self, "Options reset click")
-        question.assert_called_once()
-        args = question.call_args.args
+        confirm.assert_called_once()
+        args = confirm.call_args.args
         self.assertIs(args[0], dialog)
         self.assertEqual(args[1], OPTIONS_LABEL_RESET_ALL_SETTINGS)
         self.assertEqual(
@@ -866,7 +865,6 @@ class OptionsPreferencesTests(unittest.TestCase):
                 "This cannot be undone. Do you want to reset these now?"
             ),
         )
-        self.assertEqual(args[4], QtWidgets.QMessageBox.StandardButton.No)
         self.assertEqual(dialog.get_config(), Config())
         self.assertFalse(_apply_button(dialog).isEnabled())
         self.assertTrue(dialog._toolbar_text_check.isChecked())
@@ -883,10 +881,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog = OptionsDialog(initial, reset_callback=reset_callback)
         dialog._disable_high_res_check.setChecked(True)
         self.assertTrue(_apply_button(dialog).isEnabled())
-        with mock.patch.object(
-            QtWidgets.QMessageBox,
-            "question",
-            return_value=QtWidgets.QMessageBox.StandardButton.No,
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.options.dialog.confirm",
+            return_value=False,
         ):
             _reset_all_button(dialog).click()
         self.assertEqual(reset_callback.call_count, 0)
@@ -1104,9 +1101,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 tools_menu.actions()[6], shared_actions["highlight_annotation_tool"]
             )
             self.assertIs(tools_menu.actions()[14], shared_actions["hotlink_tool"])
-            self.assertIs(
-                tools_menu.actions()[15], shared_actions["named_view_tool"]
-            )
+            self.assertIs(tools_menu.actions()[15], shared_actions["named_view_tool"])
         finally:
             result.menu_bar.deleteLater()
         self.assertEqual(
@@ -1527,7 +1522,9 @@ class OptionsPreferencesTests(unittest.TestCase):
                         self.assertEqual(width_actions, [])
                     elif spec.annotation_type in ("highlight", "hotlink", "namedview"):
                         self.assertIsNone(dropdown.menu())
-                        self.assertTrue(dropdown.property("annotationDefaultColorPicker"))
+                        self.assertTrue(
+                            dropdown.property("annotationDefaultColorPicker")
+                        )
                         if spec.annotation_type == "highlight":
                             self.assertTrue(
                                 dropdown.property(

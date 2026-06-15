@@ -58,6 +58,7 @@
 - Fixed PDF export default filenames so page names that already end in `.pdf` do not produce `.pdf.pdf`.
 - Cleared stale detached page-window, PDF renderer, export background, and MCP bridge references during cleanup, and bounded PDF metadata caches across page/file switches.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.
+- Fixed Named View placement to reject duplicate names without closing the inline editor, match draft label sizing to the committed label, and keep Hotlink/Named View placement tools active after successful placement.
 - Fixed text annotation selected/edit outlines to use the real textbox resize bounds and clipped overflowing text to the textbox.
 - Centered area Display Dimension labels inside the takeoff while keeping Display Name labels below the takeoff.
 - Cleared stale condition text label selection outlines when selecting another label or text annotation.

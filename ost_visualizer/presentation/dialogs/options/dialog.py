@@ -12,6 +12,7 @@ from ...config import (
     OPTIONS_WINDOW_HEIGHT,
     OPTIONS_WINDOW_WIDTH,
 )
+from ...utils.messagebox import confirm
 from ...utils.windows import remove_minimize_maximize
 from .components import McpSetupTab, OptionsTab
 
@@ -349,15 +350,11 @@ class OptionsDialog(QtWidgets.QDialog):
         return self.get_config()
 
     def _reset_all_settings(self) -> None:
-        reply = QtWidgets.QMessageBox.question(
+        if not confirm(
             self,
             OPTIONS_LABEL_RESET_ALL_SETTINGS,
             self._RESET_ALL_SETTINGS_MESSAGE,
-            QtWidgets.QMessageBox.StandardButton.Yes
-            | QtWidgets.QMessageBox.StandardButton.No,
-            QtWidgets.QMessageBox.StandardButton.No,
-        )
-        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+        ):
             return
         next_config = self._reset_callback() if self._reset_callback else Config()
         self._config = replace(next_config)

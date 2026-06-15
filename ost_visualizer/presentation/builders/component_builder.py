@@ -579,14 +579,24 @@ class ComponentBuilder:
             }
             action = action_map.get(mode)
             if mode == "annotation_place":
+                annotation_type = plan_view.annotation_place_type
                 action = next(
                     (
                         plan_tool_actions[spec.action_key]
                         for spec in PLAN_ANNOTATION_TOOL_SPECS
-                        if plan_tool_actions[spec.action_key].isChecked()
+                        if spec.annotation_type == annotation_type
                     ),
-                    plan_tool_actions[PLAN_ANNOTATION_TOOL_SPECS[0].action_key],
+                    None,
                 )
+                if action is None:
+                    action = next(
+                        (
+                            plan_tool_actions[spec.action_key]
+                            for spec in PLAN_ANNOTATION_TOOL_SPECS
+                            if plan_tool_actions[spec.action_key].isChecked()
+                        ),
+                        plan_tool_actions[PLAN_ANNOTATION_TOOL_SPECS[0].action_key],
+                    )
             if action and not action.isChecked():
                 action.setChecked(True)
 

@@ -62,7 +62,6 @@ class TestMeshViewLifecycle(unittest.TestCase):
             },
             FakeColorService(),
         )
-
         self.assertEqual(1, len(geometries))
         geometry = geometries[0]
         self.assertIsInstance(geometry, MeshGeometry)

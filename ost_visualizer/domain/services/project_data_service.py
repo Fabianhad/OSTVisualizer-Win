@@ -124,6 +124,99 @@ class ProjectDataService:
     def get_all_annotations(self) -> List[BidAnnotation]:
         return self.model.get_all_annotations()
 
+    def add_annotations(self, annotations: List[BidAnnotation]) -> None:
+        if annotations:
+            self.model.add_annotations(annotations)
+
+    def remove_annotations_by_keys(
+        self, annotation_keys: Iterable[Tuple[str, str]]
+    ) -> List[str]:
+        return self.model.remove_annotations_by_keys(annotation_keys)
+
+    def get_page_uids_for_annotation_keys(
+        self, annotation_keys: Iterable[Tuple[str, str]]
+    ) -> List[str]:
+        wanted = {
+            (str(uid), str(annotation_type)) for uid, annotation_type in annotation_keys
+        }
+        if not wanted:
+            return []
+        page_uids: List[str] = []
+        seen = set()
+        for annotation in self.model.get_all_annotations():
+            key = (str(annotation.uid), str(annotation.annotation_type))
+            if (
+                key in wanted
+                and annotation.page_uid
+                and annotation.page_uid not in seen
+            ):
+                page_uids.append(annotation.page_uid)
+                seen.add(annotation.page_uid)
+        return page_uids
+
+    def update_annotation_positions(
+        self, positions: Iterable[Tuple[str, str, List[float]]]
+    ) -> List[str]:
+        changes = [
+            (str(uid), str(annotation_type), list(position))
+            for uid, annotation_type, position in positions
+        ]
+        page_uids = self.get_page_uids_for_annotation_keys(
+            (uid, annotation_type) for uid, annotation_type, _pos in changes
+        )
+        by_key = {
+            (uid, annotation_type): position
+            for uid, annotation_type, position in changes
+        }
+        for annotation in self.model.get_all_annotations():
+            position = by_key.get((annotation.uid, annotation.annotation_type))
+            if position is not None:
+                annotation.position = list(position)
+        return page_uids
+
+    def update_annotation_text_properties(
+        self, updates: Iterable[Tuple[str, str, Dict[str, object]]]
+    ) -> List[str]:
+        changes = [
+            (str(uid), str(annotation_type), dict(properties))
+            for uid, annotation_type, properties in updates
+        ]
+        page_uids = self.get_page_uids_for_annotation_keys(
+            (uid, annotation_type) for uid, annotation_type, _props in changes
+        )
+        by_key = {
+            (uid, annotation_type): properties
+            for uid, annotation_type, properties in changes
+        }
+        for annotation in self.model.get_all_annotations():
+            properties = by_key.get((annotation.uid, annotation.annotation_type))
+            if properties is not None:
+                annotation.properties.update(properties)
+        return page_uids
+
+    def update_annotation_styles(
+        self, updates: Iterable[Tuple[str, str, Dict[str, object]]]
+    ) -> List[str]:
+        changes = [
+            (str(uid), str(annotation_type), dict(style))
+            for uid, annotation_type, style in updates
+        ]
+        page_uids = self.get_page_uids_for_annotation_keys(
+            (uid, annotation_type) for uid, annotation_type, _style in changes
+        )
+        by_key = {
+            (uid, annotation_type): style for uid, annotation_type, style in changes
+        }
+        for annotation in self.model.get_all_annotations():
+            style = by_key.get((annotation.uid, annotation.annotation_type))
+            if style is None:
+                continue
+            if "Color" in style:
+                annotation.color = str(style["Color"])
+            if "Width" in style:
+                annotation.width = float(style["Width"] or 0.0)
+        return page_uids
+
     def update_named_view_names(self, updates: Iterable[Tuple[str, str]]) -> List[str]:
         changes = [(str(uid), str(name)) for uid, name in updates]
         by_uid = {uid: name for uid, name in changes}

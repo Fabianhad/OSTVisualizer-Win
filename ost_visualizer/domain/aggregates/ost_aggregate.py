@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from ..entities.annotation import BidAnnotation
 from ..entities.bid import Bid
 from ..entities.cdn_type import CdnType
@@ -64,6 +64,14 @@ class OstAggregate:
 
     def set_annotations(self, annotations: List[BidAnnotation]) -> None:
         self._page_selection.set_annotations(annotations)
+
+    def add_annotations(self, annotations: List[BidAnnotation]) -> None:
+        self._page_selection.add_annotations(annotations)
+
+    def remove_annotations_by_keys(
+        self, annotation_keys: Iterable[Tuple[str, str]]
+    ) -> List[str]:
+        return self._page_selection.remove_annotations_by_keys(annotation_keys)
 
     def select_pages(self, page_uids: Iterable[str]) -> List[str]:
         return self._page_selection.select_pages(page_uids)

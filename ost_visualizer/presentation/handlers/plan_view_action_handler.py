@@ -5,8 +5,11 @@ from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.events.app_events import AppEvents
-from ...domain.entities.annotation import int_color_to_hex
-from ...domain.entities.named_view import build_named_view_from_annotation
+from ...domain.entities.annotation import BidAnnotation, int_color_to_hex
+from ...domain.entities.named_view import (
+    build_named_view_from_annotation,
+    normalize_named_view_position,
+)
 from ...domain.entities.takeoff import Takeoff
 from ..dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ..managers.ui_access_manager import Feature
@@ -15,7 +18,6 @@ from ..services.selection_clipboard_service import SelectionClipboardService
 from ..services.selection_commands import (
     DeleteAnnotationsCommand,
     DeleteTakeoffsCommand,
-    InsertAnnotationsCommand,
     InsertTakeoffsCommand,
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
@@ -28,6 +30,10 @@ from ..utils.annotation_defaults import (
     build_placed_annotation_spec,
 )
 from ..utils.messagebox import confirm
+from ..utils.named_view_validation import (
+    named_view_name_exists,
+    show_duplicate_named_view_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +94,7 @@ class PlanViewActionHandler:
         pv.text_annotation_created.connect(self.on_text_annotation_created)
         pv.named_view_created.connect(self.on_named_view_created)
         pv.hotlink_placement_requested.connect(self.on_hotlink_placement_requested)
+        pv.set_named_view_name_validator(self._validate_named_view_name)
         pv.hole_created.connect(self.on_hole_created)
         pv.elements_deleted.connect(self.on_elements_deleted)
         pv.undo_requested.connect(self._undo_svc.undo)
@@ -220,6 +227,78 @@ class PlanViewActionHandler:
         self._publish_saved_takeoff_position_rotation_changes(positions, rotations)
         return True
 
+    def _save_annotation_positions_fast(
+        self, db_path: str, positions: List[tuple]
+    ) -> bool:
+        if not positions:
+            return True
+        if not self._ann_write_svc.save_annotation_positions(
+            db_path, positions, reload_database=False
+        ):
+            return False
+        page_uids = self._data_svc.update_annotation_positions(positions)
+        self._publish_annotations_changed_for_pages(
+            page_uids,
+            self._annotation_uids_from_changes(positions),
+            self._annotation_types_from_changes(positions),
+        )
+        return True
+
+    def _save_annotation_text_properties_fast(
+        self, db_path: str, updates: List[tuple]
+    ) -> bool:
+        if not updates:
+            return True
+        if not self._ann_write_svc.save_annotation_text_properties(
+            db_path, updates, reload_database=False
+        ):
+            return False
+        page_uids = self._data_svc.update_annotation_text_properties(updates)
+        self._publish_annotations_changed_for_pages(
+            page_uids,
+            self._annotation_uids_from_changes(updates),
+            self._annotation_types_from_changes(updates),
+        )
+        return True
+
+    def _save_annotation_styles_fast(self, db_path: str, updates: List[tuple]) -> bool:
+        if not updates:
+            return True
+        if not self._ann_write_svc.save_annotation_styles(
+            db_path, updates, reload_database=False
+        ):
+            return False
+        page_uids = self._data_svc.update_annotation_styles(updates)
+        self._publish_annotations_changed_for_pages(
+            page_uids,
+            self._annotation_uids_from_changes(updates),
+            self._annotation_types_from_changes(updates),
+        )
+        return True
+
+    def _save_annotation_text_and_positions_fast(
+        self, db_path: str, updates: List[tuple], positions: List[tuple]
+    ) -> bool:
+        if not updates and not positions:
+            return True
+        if not self._ann_write_svc.save_annotation_text_properties_and_positions(
+            db_path, updates, positions, reload_database=False
+        ):
+            return False
+        page_uids = []
+        if updates:
+            page_uids.extend(self._data_svc.update_annotation_text_properties(updates))
+        if positions:
+            page_uids.extend(self._data_svc.update_annotation_positions(positions))
+        annotation_uids = self._annotation_uids_from_changes(updates)
+        annotation_uids.extend(self._annotation_uids_from_changes(positions))
+        annotation_types = self._annotation_types_from_changes(updates)
+        annotation_types.extend(self._annotation_types_from_changes(positions))
+        self._publish_annotations_changed_for_pages(
+            page_uids, annotation_uids, annotation_types
+        )
+        return True
+
     def _push_position_undo_for_committed_partial(
         self,
         db_path: str,
@@ -232,25 +311,21 @@ class PlanViewActionHandler:
         a_new = a_new or []
         if not (t_old or a_old):
             return
-        use_reload_path = bool(a_old or a_new)
 
         def _save_takeoff_positions(positions: List[tuple]) -> None:
             if not positions:
                 return
-            if use_reload_path:
-                self._write_svc.save_takeoff_positions(db_path, positions)
-            else:
-                self._save_takeoff_positions_fast(db_path, positions)
+            self._save_takeoff_positions_fast(db_path, positions)
 
         def _undo_partial():
             _save_takeoff_positions(t_old)
             if a_old:
-                self._ann_write_svc.save_annotation_positions(db_path, a_old)
+                self._save_annotation_positions_fast(db_path, a_old)
 
         def _redo_partial():
             _save_takeoff_positions(t_new)
             if a_new:
-                self._ann_write_svc.save_annotation_positions(db_path, a_new)
+                self._save_annotation_positions_fast(db_path, a_new)
 
         self._undo_svc.push(_undo_partial, _redo_partial)
 
@@ -378,16 +453,13 @@ class PlanViewActionHandler:
         a_new = [(uid, t, list(new)) for uid, t, _, new in ann_changes]
         ok_t = True
         if takeoff_changes:
-            if ann_changes:
-                ok_t = self._write_svc.save_takeoff_positions(db_path, t_new)
-            else:
-                ok_t = self._save_takeoff_positions_fast(db_path, t_new)
+            ok_t = self._save_takeoff_positions_fast(db_path, t_new)
             if not ok_t:
                 self._plan_view.restore_flushed_positions(takeoff_changes, ann_changes)
                 return
         ok_a = True
         if ann_changes:
-            ok_a = self._ann_write_svc.save_annotation_positions(
+            ok_a = self._save_annotation_positions_fast(
                 db_path,
                 [
                     (uid, ann_type, new_pos)
@@ -403,21 +475,15 @@ class PlanViewActionHandler:
 
         def _undo_move():
             if t_old:
-                if a_old:
-                    self._write_svc.save_takeoff_positions(db_path, t_old)
-                else:
-                    self._save_takeoff_positions_fast(db_path, t_old)
+                self._save_takeoff_positions_fast(db_path, t_old)
             if a_old:
-                self._ann_write_svc.save_annotation_positions(db_path, a_old)
+                self._save_annotation_positions_fast(db_path, a_old)
 
         def _redo_move():
             if t_new:
-                if a_new:
-                    self._write_svc.save_takeoff_positions(db_path, t_new)
-                else:
-                    self._save_takeoff_positions_fast(db_path, t_new)
+                self._save_takeoff_positions_fast(db_path, t_new)
             if a_new:
-                self._ann_write_svc.save_annotation_positions(db_path, a_new)
+                self._save_annotation_positions_fast(db_path, a_new)
 
         self._undo_svc.push(_undo_move, _redo_move)
 
@@ -431,9 +497,7 @@ class PlanViewActionHandler:
             (uid, ann_type, dict(new_props))
             for uid, ann_type, _old_props, new_props in changes
         ]
-        success = self._ann_write_svc.save_annotation_text_properties(
-            db_path, new_updates
-        )
+        success = self._save_annotation_text_properties_fast(db_path, new_updates)
         if not success:
             self._plan_view.restore_annotation_text_properties(changes)
             return
@@ -445,14 +509,13 @@ class PlanViewActionHandler:
         ]
         if not old_updates:
             return
-        ann_write_svc = self._ann_write_svc
 
         def _undo_text_properties():
-            if ann_write_svc.save_annotation_text_properties(db_path, old_updates):
+            if self._save_annotation_text_properties_fast(db_path, old_updates):
                 self._publish_named_view_renames(old_updates)
 
         def _redo_text_properties():
-            if ann_write_svc.save_annotation_text_properties(db_path, new_updates):
+            if self._save_annotation_text_properties_fast(db_path, new_updates):
                 self._publish_named_view_renames(new_updates)
 
         self._undo_svc.push(_undo_text_properties, _redo_text_properties)
@@ -467,7 +530,7 @@ class PlanViewActionHandler:
             (uid, ann_type, dict(new_style))
             for uid, ann_type, _old_style, new_style in changes
         ]
-        success = self._ann_write_svc.save_annotation_styles(db_path, new_updates)
+        success = self._save_annotation_styles_fast(db_path, new_updates)
         if not success:
             self._plan_view.restore_annotation_styles(changes)
             return
@@ -478,13 +541,12 @@ class PlanViewActionHandler:
         ]
         if not old_updates:
             return
-        ann_write_svc = self._ann_write_svc
 
         def _undo_styles():
-            ann_write_svc.save_annotation_styles(db_path, old_updates)
+            self._save_annotation_styles_fast(db_path, old_updates)
 
         def _redo_styles():
-            ann_write_svc.save_annotation_styles(db_path, new_updates)
+            self._save_annotation_styles_fast(db_path, new_updates)
 
         self._undo_svc.push(_undo_styles, _redo_styles)
 
@@ -520,7 +582,7 @@ class PlanViewActionHandler:
             (uid, ann_type, list(new_pos))
             for uid, ann_type, _old_pos, new_pos in ann_position_changes
         ]
-        success = self._ann_write_svc.save_annotation_text_properties_and_positions(
+        success = self._save_annotation_text_and_positions_fast(
             db_path, new_updates, new_positions
         )
         if not success:
@@ -540,15 +602,14 @@ class PlanViewActionHandler:
         ]
         if not (old_updates or old_positions):
             return
-        ann_write_svc = self._ann_write_svc
 
         def _undo_text_and_position():
-            ann_write_svc.save_annotation_text_properties_and_positions(
+            self._save_annotation_text_and_positions_fast(
                 db_path, old_updates, old_positions
             )
 
         def _redo_text_and_position():
-            ann_write_svc.save_annotation_text_properties_and_positions(
+            self._save_annotation_text_and_positions_fast(
                 db_path, new_updates, new_positions
             )
 
@@ -597,8 +658,8 @@ class PlanViewActionHandler:
         ok_r = True
         if ann_changes:
             if t_new:
-                ok_t = self._write_svc.save_takeoff_positions(db_path, t_new)
-            ok_a = self._ann_write_svc.save_annotation_positions(
+                ok_t = self._save_takeoff_positions_fast(db_path, t_new)
+            ok_a = self._save_annotation_positions_fast(
                 db_path,
                 [
                     (uid, ann_type, new_pos)
@@ -606,7 +667,7 @@ class PlanViewActionHandler:
                 ],
             )
             if r_new:
-                ok_r = self._write_svc.save_takeoff_rotations(db_path, r_new)
+                ok_r = self._save_takeoff_rotations_fast(db_path, r_new)
             if not (ok_t and ok_a and ok_r):
                 if not ok_t:
                     self._plan_view.restore_flushed_positions(
@@ -651,20 +712,20 @@ class PlanViewActionHandler:
         def _undo_group():
             if a_old:
                 if t_old:
-                    self._write_svc.save_takeoff_positions(db_path, t_old)
-                self._ann_write_svc.save_annotation_positions(db_path, a_old)
+                    self._save_takeoff_positions_fast(db_path, t_old)
+                self._save_annotation_positions_fast(db_path, a_old)
                 if r_old:
-                    self._write_svc.save_takeoff_rotations(db_path, r_old)
+                    self._save_takeoff_rotations_fast(db_path, r_old)
             else:
                 self._save_takeoff_position_rotation_fast(db_path, t_old, r_old)
 
         def _redo_group():
             if a_new:
                 if t_new:
-                    self._write_svc.save_takeoff_positions(db_path, t_new)
-                self._ann_write_svc.save_annotation_positions(db_path, a_new)
+                    self._save_takeoff_positions_fast(db_path, t_new)
+                self._save_annotation_positions_fast(db_path, a_new)
                 if r_new:
-                    self._write_svc.save_takeoff_rotations(db_path, r_new)
+                    self._save_takeoff_rotations_fast(db_path, r_new)
             else:
                 self._save_takeoff_position_rotation_fast(db_path, t_new, r_new)
 
@@ -748,6 +809,8 @@ class PlanViewActionHandler:
         name = str(properties.get("Text", "") or "").strip()
         if not bid_ref or not page_uid or not name:
             return
+        if not self._validate_named_view_name(name, None):
+            return
         spec = build_placed_annotation_spec("namedview", page_uid, list(position))
         if spec is None:
             return
@@ -763,6 +826,7 @@ class PlanViewActionHandler:
                 page_uid=page_uid,
                 name=name,
             )
+            self._plan_view.activate_annotation_placement("namedview")
 
     def on_hotlink_placement_requested(self, position: list, page_uid: str) -> None:
         if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
@@ -786,7 +850,21 @@ class PlanViewActionHandler:
         if spec is None:
             return
         spec.properties = {"BidPageViewUID": result.named_view_uid}
-        self._insert_annotations_with_undo(bid_ref, [spec])
+        new_uids = self._insert_annotations_with_undo(bid_ref, [spec])
+        if new_uids:
+            self._plan_view.activate_annotation_placement("hotlink")
+
+    def _validate_named_view_name(
+        self, name: str, exclude_uid: Optional[str] = None
+    ) -> bool:
+        if named_view_name_exists(
+            self._collect_named_view_choices(),
+            name,
+            exclude_uid=exclude_uid,
+        ):
+            show_duplicate_named_view_name(self._plan_view)
+            return False
+        return True
 
     def _collect_named_view_choices(self) -> List[tuple[str, str, str, str]]:
         choices: List[tuple[str, str, str, str]] = []
@@ -832,24 +910,247 @@ class PlanViewActionHandler:
             bid_ref.file_path,
             bid_ref.bid_uid,
             specs,
+            reload_database=False,
         )
         if not new_uids:
             return []
+        self._add_inserted_annotations_to_model(new_uids, specs)
+        page_uids = self._annotation_page_uids_for_specs(specs[: len(new_uids)])
+        self._publish_annotations_changed_for_pages(
+            page_uids, new_uids, self._annotation_types_from_specs(specs)
+        )
         uid_type_set = {
             (uid, specs[i].annotation_type) for i, uid in enumerate(new_uids)
         }
         keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
         if keys:
             self._plan_view.set_selected_uids(keys)
-        cmd = InsertAnnotationsCommand(
-            uids=new_uids,
-            bid_ref=bid_ref,
-            specs=specs[: len(new_uids)],
-            write_svc=self._ann_write_svc,
-            plan_view=self._plan_view,
-        )
-        self._undo_svc.push(cmd.undo, cmd.redo)
+        current_uids = list(new_uids)
+        current_specs = specs[: len(new_uids)]
+
+        def _undo_insert():
+            if self._delete_annotations_fast(
+                bid_ref.file_path, list(current_uids), current_specs
+            ):
+                self._plan_view.clear_selection()
+
+        def _redo_insert():
+            redone_uids = self._insert_annotations_fast(bid_ref, current_specs)
+            current_uids[:] = list(redone_uids)
+            if redone_uids:
+                uid_type_set = {
+                    (uid, current_specs[i].annotation_type)
+                    for i, uid in enumerate(redone_uids)
+                }
+                keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+                self._plan_view.set_selected_uids(keys)
+
+        self._undo_svc.push(_undo_insert, _redo_insert)
         return list(new_uids)
+
+    def _insert_annotations_fast(
+        self,
+        bid_ref,
+        specs: List[InsertAnnotationSpec],
+        ref_remap: Optional[PasteRefRemap] = None,
+    ) -> List[str]:
+        new_uids = self._ann_write_svc.insert_annotations(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            specs,
+            ref_remap=ref_remap,
+            reload_database=False,
+        )
+        if not new_uids:
+            return []
+        self._add_inserted_annotations_to_model(new_uids, specs)
+        page_uids = self._annotation_page_uids_for_specs(specs[: len(new_uids)])
+        self._publish_annotations_changed_for_pages(
+            page_uids, new_uids, self._annotation_types_from_specs(specs)
+        )
+        return list(new_uids)
+
+    def _delete_annotations_fast(
+        self, db_path: str, uids: List[str], specs: List[InsertAnnotationSpec]
+    ) -> bool:
+        if not uids:
+            return True
+        annotation_keys = [
+            (uid, specs[i].annotation_type) for i, uid in enumerate(uids)
+        ]
+        if not self._ann_write_svc.delete_annotations(
+            db_path, annotation_keys, reload_database=False
+        ):
+            return False
+        page_uids = self._data_svc.remove_annotations_by_keys(annotation_keys)
+        self._publish_annotations_changed_for_pages(
+            page_uids, uids, self._annotation_types_from_specs(specs)
+        )
+        return True
+
+    def _delete_saved_annotations_fast(
+        self, db_path: str, saved_annotations: List[BidAnnotation]
+    ) -> bool:
+        if not saved_annotations:
+            return True
+        annotation_keys = [
+            (annotation.uid, annotation.annotation_type)
+            for annotation in saved_annotations
+        ]
+        if not self._ann_write_svc.delete_annotations(
+            db_path, annotation_keys, reload_database=False
+        ):
+            return False
+        annotation_uids = [annotation.uid for annotation in saved_annotations]
+        annotation_types = [
+            annotation.annotation_type for annotation in saved_annotations
+        ]
+        page_uids = self._data_svc.remove_annotations_by_keys(annotation_keys)
+        self._publish_annotations_changed_for_pages(
+            page_uids, annotation_uids, annotation_types
+        )
+        self._publish_named_view_deletes(saved_annotations)
+        return True
+
+    def _insert_saved_annotations_fast(
+        self, bid_ref, saved_annotations: List[BidAnnotation]
+    ) -> List[BidAnnotation]:
+        if not saved_annotations:
+            return []
+        restored: List[BidAnnotation] = []
+        ref_remap = PasteRefRemap()
+        named_views = [
+            annotation for annotation in saved_annotations if annotation.is_namedview
+        ]
+        others = [
+            annotation
+            for annotation in saved_annotations
+            if not annotation.is_namedview
+        ]
+        if named_views:
+            specs = self._annotation_specs_from_saved(named_views)
+            new_uids = self._insert_annotations_fast(bid_ref, specs)
+            for annotation, new_uid in zip(named_views, new_uids):
+                ref_remap.namedview_uids[str(annotation.uid)] = str(new_uid)
+                restored.append(self._annotation_with_uid(annotation, new_uid))
+        if others:
+            specs = self._annotation_specs_from_saved(others)
+            new_uids = self._insert_annotations_fast(
+                bid_ref, specs, ref_remap=ref_remap
+            )
+            for annotation, new_uid in zip(others, new_uids):
+                restored.append(self._annotation_with_uid(annotation, new_uid))
+        return restored
+
+    @staticmethod
+    def _annotation_specs_from_saved(
+        annotations: List[BidAnnotation],
+    ) -> List[InsertAnnotationSpec]:
+        return [
+            InsertAnnotationSpec(
+                page_uid=annotation.page_uid,
+                annotation_type=annotation.annotation_type,
+                position=list(annotation.position),
+                color=annotation.color,
+                width=annotation.width,
+                properties=dict(annotation.properties),
+                layer_uid=annotation.layer_uid,
+            )
+            for annotation in annotations
+        ]
+
+    @staticmethod
+    def _annotation_with_uid(annotation: BidAnnotation, uid: str) -> BidAnnotation:
+        return BidAnnotation(
+            uid=str(uid),
+            annotation_type=annotation.annotation_type,
+            page_uid=annotation.page_uid,
+            layer_uid=annotation.layer_uid,
+            position=list(annotation.position),
+            color=annotation.color,
+            width=annotation.width,
+            properties=dict(annotation.properties),
+            visible=annotation.visible,
+        )
+
+    def _add_inserted_annotations_to_model(
+        self, new_uids: List[str], specs: List[InsertAnnotationSpec]
+    ) -> None:
+        annotations = []
+        for uid, spec in zip(new_uids, specs):
+            position = (
+                normalize_named_view_position(spec.position)
+                if spec.annotation_type == "namedview"
+                else list(spec.position)
+            )
+            annotations.append(
+                BidAnnotation(
+                    uid=str(uid),
+                    annotation_type=str(spec.annotation_type),
+                    page_uid=str(spec.page_uid),
+                    layer_uid=str(spec.layer_uid or ""),
+                    position=position,
+                    color=str(spec.color),
+                    width=float(spec.width or 0.0),
+                    properties=dict(spec.properties),
+                    visible=True,
+                )
+            )
+        self._data_svc.add_annotations(annotations)
+
+    def _annotation_page_uids_for_specs(
+        self, specs: List[InsertAnnotationSpec]
+    ) -> List[str]:
+        return self._unique_ordered(str(spec.page_uid) for spec in specs)
+
+    @staticmethod
+    def _annotation_uids_from_changes(changes: List[tuple]) -> List[str]:
+        return [str(uid) for uid, _annotation_type, _payload in changes]
+
+    @staticmethod
+    def _annotation_types_from_changes(changes: List[tuple]) -> List[str]:
+        return [str(annotation_type) for _uid, annotation_type, _payload in changes]
+
+    @staticmethod
+    def _annotation_types_from_specs(
+        specs: List[InsertAnnotationSpec],
+    ) -> List[str]:
+        return [str(spec.annotation_type) for spec in specs]
+
+    @staticmethod
+    def _unique_ordered(values) -> List[str]:
+        result: List[str] = []
+        seen = set()
+        for value in values:
+            if value and value not in seen:
+                result.append(value)
+                seen.add(value)
+        return result
+
+    def _publish_annotations_changed_for_pages(
+        self,
+        page_uids: List[str],
+        annotation_uids: List[str],
+        annotation_types: List[str],
+    ) -> None:
+        event_types = [str(t) for t in annotation_types[: len(annotation_uids)]]
+        for page_uid in page_uids:
+            self._event_bus.publish(
+                AppEvents.ANNOTATIONS_CHANGED,
+                page_uid=page_uid,
+                annotation_uids=list(annotation_uids),
+                annotation_types=list(event_types),
+            )
+
+    def _publish_named_view_deletes(self, annotations: List[BidAnnotation]) -> None:
+        named_view_uids = [
+            str(annotation.uid) for annotation in annotations if annotation.is_namedview
+        ]
+        if named_view_uids:
+            self._event_bus.publish(
+                AppEvents.NAMED_VIEW_DELETED,
+                named_view_uids=named_view_uids,
+            )
 
     def on_paste_backouts_placed(self, placements: list, source_bid_uid) -> None:
         if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
@@ -1038,6 +1339,34 @@ class PlanViewActionHandler:
                     self._plan_view.clear_selection()
 
             self._undo_svc.push(_undo_delete, _redo_delete)
+            return
+        if saved_annotations and not takeoff_uids:
+            current_annotations = list(saved_annotations)
+            if not self._delete_saved_annotations_fast(db_path, current_annotations):
+                self._plan_view.set_selected_uids(set(uids))
+                return
+
+            def _undo_annotation_delete():
+                nonlocal current_annotations
+                restored = self._insert_saved_annotations_fast(
+                    bid_ref, current_annotations
+                )
+                if restored:
+                    current_annotations = restored
+                    uid_type_set = {
+                        (annotation.uid, annotation.annotation_type)
+                        for annotation in current_annotations
+                    }
+                    keys = self._plan_view.find_annotation_keys_by_uid_type(
+                        uid_type_set
+                    )
+                    self._plan_view.set_selected_uids(keys)
+
+            def _redo_annotation_delete():
+                if self._delete_saved_annotations_fast(db_path, current_annotations):
+                    self._plan_view.clear_selection()
+
+            self._undo_svc.push(_undo_annotation_delete, _redo_annotation_delete)
             return
         if takeoff_uids:
             takeoffs_deleted = self._write_svc.delete_takeoffs(db_path, takeoff_uids)

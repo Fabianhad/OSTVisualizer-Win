@@ -1,4 +1,4 @@
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 from ..entities.annotation import BidAnnotation
 from ..entities.page import Page
 from ..entities.takeoff import Takeoff
@@ -18,6 +18,43 @@ class PageSelectionService:
 
     def set_annotations(self, annotations: List[BidAnnotation]) -> None:
         self._annotations = list(annotations)
+
+    def add_annotations(self, annotations: List[BidAnnotation]) -> None:
+        if not annotations:
+            return
+        replacement_keys = {
+            (str(annotation.uid), str(annotation.annotation_type))
+            for annotation in annotations
+        }
+        self._annotations = [
+            annotation
+            for annotation in self._annotations
+            if (str(annotation.uid), str(annotation.annotation_type))
+            not in replacement_keys
+        ]
+        self._annotations.extend(annotations)
+
+    def remove_annotations_by_keys(
+        self, annotation_keys: Iterable[Tuple[str, str]]
+    ) -> List[str]:
+        wanted = {
+            (str(uid), str(annotation_type)) for uid, annotation_type in annotation_keys
+        }
+        if not wanted:
+            return []
+        page_uids: List[str] = []
+        seen_pages = set()
+        kept: List[BidAnnotation] = []
+        for annotation in self._annotations:
+            key = (str(annotation.uid), str(annotation.annotation_type))
+            if key not in wanted:
+                kept.append(annotation)
+                continue
+            if annotation.page_uid and annotation.page_uid not in seen_pages:
+                page_uids.append(annotation.page_uid)
+                seen_pages.add(annotation.page_uid)
+        self._annotations = kept
+        return page_uids
 
     def clear(self) -> None:
         self.pages.clear()

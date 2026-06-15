@@ -1088,6 +1088,8 @@ class PlacementModeMixin:
             event.accept()
             return True
         self._annotation_place_dragging = False
+        self._annotation_place_points = []
+        self.clear_place_preview()
         self.update_annotation_place_preview(scene_pos)
         event.accept()
         return True

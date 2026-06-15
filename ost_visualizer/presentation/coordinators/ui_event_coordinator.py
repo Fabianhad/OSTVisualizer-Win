@@ -868,6 +868,7 @@ class UIEventCoordinator:
         self._subscribe(AppEvents.FILE_OPENED, self._on_file_opened)
         self._subscribe(AppEvents.DATABASE_REFRESHED, self._on_database_refreshed)
         self._subscribe(AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed)
+        self._subscribe(AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed)
         self._subscribe(AppEvents.FILE_UNLOADED, self._on_file_unloaded)
         self._subscribe(AppEvents.FILE_SELECTED, self._on_file_selected)
         self._subscribe(AppEvents.APP_CONFIG_UPDATED, self._on_app_config_updated)
@@ -1246,6 +1247,11 @@ class UIEventCoordinator:
         else:
             self._update_plan_view_for_active()
         self._viewer.update_viewers(self.project_data.get_selected_page_uids())
+        self._update_export_menu_state()
+        self._restore_project_tree_bid_selection_if_needed()
+
+    def _on_annotations_changed(self, **kwargs) -> None:
+        self._update_plan_view(kwargs["page_uid"])
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
 

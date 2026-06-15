@@ -146,7 +146,6 @@ class ViewContextMenuTests(unittest.TestCase):
                 )
             finally:
                 menu.deleteLater()
-
             set_annotation_style_for_tool("rect", color="#ff0000")
             menu, tools_menu = _build_tools_context_menu()
             try:

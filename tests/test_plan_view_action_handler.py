@@ -1,7 +1,9 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from ost_visualizer.presentation.handlers import plan_view_action_handler as handler_module
+from ost_visualizer.presentation.handlers import (
+    plan_view_action_handler as handler_module,
+)
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
@@ -10,6 +12,7 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.services.page_selection_service import PageSelectionService
 from ost_visualizer.presentation.handlers.plan_view_action_handler import (
     PlanViewActionHandler,
 )
@@ -45,6 +48,7 @@ class FakePlanView:
         self.restored_text_and_positions = []
         self.restored_annotation_styles = []
         self.activated_annotations = []
+        self.named_view_name_validator = None
 
     def set_selected_uids(self, uids):
         self.selected = set(uids)
@@ -95,6 +99,9 @@ class FakePlanView:
         self.activated_annotations.append(annotation_type)
         return True
 
+    def set_named_view_name_validator(self, validator):
+        self.named_view_name_validator = validator
+
     def begin_paste_backout(self, holes, extras_by_uid, source_bid_uid):
         self.paste_backout_calls.append((holes, extras_by_uid, source_bid_uid))
 
@@ -123,6 +130,8 @@ class FakeProjectData:
         self.extras = {}
         self.named_view_updates = []
         self.annotations = []
+        self.added_annotations = []
+        self.removed_annotation_uids = []
         self.page_names = {"p1": "Page 1"}
         self.conditions = {
             "42": SimpleNamespace(layer_visible=True, condition_type="linear"),
@@ -152,6 +161,8 @@ class FakeProjectData:
     def update_takeoff_positions(self, positions):
         page_uids = []
         for uid, position in positions:
+            if uid not in self.takeoffs:
+                continue
             takeoff = self.takeoffs[uid]
             takeoff.position = list(position)
             if takeoff.page_uid not in page_uids:
@@ -203,6 +214,79 @@ class FakeProjectData:
     def update_named_view_names(self, updates):
         self.named_view_updates.extend(list(updates))
         return []
+
+    def add_annotations(self, annotations):
+        self.added_annotations.extend(annotations)
+        replacement_keys = {
+            (str(annotation.uid), str(annotation.annotation_type))
+            for annotation in annotations
+        }
+        self.annotations = [
+            annotation
+            for annotation in self.annotations
+            if (str(annotation.uid), str(annotation.annotation_type))
+            not in replacement_keys
+        ]
+        self.annotations.extend(annotations)
+
+    def remove_annotations_by_keys(self, annotation_keys):
+        page_uids = []
+        wanted = {
+            (str(uid), str(annotation_type)) for uid, annotation_type in annotation_keys
+        }
+        self.removed_annotation_uids.extend(uid for uid, _type in annotation_keys)
+        kept = []
+        for annotation in self.annotations:
+            key = (str(annotation.uid), str(annotation.annotation_type))
+            if key not in wanted:
+                kept.append(annotation)
+                continue
+            if annotation.page_uid not in page_uids:
+                page_uids.append(annotation.page_uid)
+        self.annotations = kept
+        return page_uids
+
+    def update_annotation_positions(self, positions):
+        page_uids = []
+        for uid, annotation_type, position in positions:
+            for annotation in self.annotations:
+                if (
+                    annotation.uid == uid
+                    and annotation.annotation_type == annotation_type
+                ):
+                    annotation.position = list(position)
+                    if annotation.page_uid not in page_uids:
+                        page_uids.append(annotation.page_uid)
+        return page_uids
+
+    def update_annotation_text_properties(self, updates):
+        page_uids = []
+        for uid, annotation_type, properties in updates:
+            for annotation in self.annotations:
+                if (
+                    annotation.uid == uid
+                    and annotation.annotation_type == annotation_type
+                ):
+                    annotation.properties.update(dict(properties))
+                    if annotation.page_uid not in page_uids:
+                        page_uids.append(annotation.page_uid)
+        return page_uids
+
+    def update_annotation_styles(self, updates):
+        page_uids = []
+        for uid, annotation_type, style in updates:
+            for annotation in self.annotations:
+                if (
+                    annotation.uid == uid
+                    and annotation.annotation_type == annotation_type
+                ):
+                    if "Color" in style:
+                        annotation.color = style["Color"]
+                    if "Width" in style:
+                        annotation.width = float(style["Width"])
+                    if annotation.page_uid not in page_uids:
+                        page_uids.append(annotation.page_uid)
+        return page_uids
 
     def remove_takeoffs(self, uids):
         page_uids = []
@@ -319,30 +403,34 @@ class FakeAnnotationWriteService:
         self.delete_calls = []
         self.next_uids = ["ann-1"]
 
-    def save_annotation_positions(self, db_path, positions):
-        self.position_calls.append((db_path, positions))
+    def save_annotation_positions(self, db_path, positions, reload_database=True):
+        self.position_calls.append((db_path, positions, reload_database))
         return True
 
-    def save_annotation_text_properties(self, db_path, updates):
-        self.text_property_calls.append((db_path, updates))
+    def save_annotation_text_properties(self, db_path, updates, reload_database=True):
+        self.text_property_calls.append((db_path, updates, reload_database))
         return True
 
     def save_annotation_text_properties_and_positions(
-        self, db_path, updates, positions
+        self, db_path, updates, positions, reload_database=True
     ):
-        self.text_and_position_calls.append((db_path, updates, positions))
+        self.text_and_position_calls.append(
+            (db_path, updates, positions, reload_database)
+        )
         return True
 
-    def save_annotation_styles(self, db_path, updates):
-        self.style_calls.append((db_path, updates))
+    def save_annotation_styles(self, db_path, updates, reload_database=True):
+        self.style_calls.append((db_path, updates, reload_database))
         return True
 
-    def insert_annotations(self, db_path, bid_uid, specs, ref_remap=None):
-        self.insert_calls.append((db_path, bid_uid, specs, ref_remap))
+    def insert_annotations(
+        self, db_path, bid_uid, specs, ref_remap=None, reload_database=True
+    ):
+        self.insert_calls.append((db_path, bid_uid, specs, ref_remap, reload_database))
         return list(self.next_uids[: len(specs)])
 
-    def delete_annotations(self, db_path, annotation_keys):
-        self.delete_calls.append((db_path, annotation_keys))
+    def delete_annotations(self, db_path, annotation_keys, reload_database=True):
+        self.delete_calls.append((db_path, annotation_keys, reload_database))
         return True
 
 
@@ -482,8 +570,11 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     else [1.0, 2.0, 13.0, 2.0]
                 )
                 handler.on_annotation_created(annotation_type, position, "p1")
-                _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+                _db_path, _bid_uid, specs, _ref_remap, reload_database = (
+                    ann_write.insert_calls[0]
+                )
                 self.assertEqual(specs[0].color, "#336699")
+                self.assertFalse(reload_database)
                 expected_width = 0.0 if annotation_type == "highlight" else 9.0
                 self.assertEqual(specs[0].width, expected_width)
 
@@ -525,9 +616,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     self.assertEqual(spec.width, 0.0)
                 else:
                     self.assertEqual(spec.width, width)
-        text_spec = build_placed_annotation_spec(
-            "text", "p1", [1.0, 2.0, 13.0, 14.0]
-        )
+        text_spec = build_placed_annotation_spec("text", "p1", [1.0, 2.0, 13.0, 14.0])
         self.assertEqual(text_spec.properties["FontColor"], 0x008888)
         self.assertEqual(text_spec.properties["FontName"], "Segoe UI")
         self.assertEqual(text_spec.properties["FontSize"], 18)
@@ -699,9 +788,12 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 )
                 handler.on_annotation_created(annotation_type, position, "p1")
                 self.assertEqual(len(ann_write.insert_calls), 1)
-                _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+                _db_path, _bid_uid, specs, _ref_remap, reload_database = (
+                    ann_write.insert_calls[0]
+                )
                 self.assertEqual(specs[0].annotation_type, annotation_type)
                 self.assertEqual(specs[0].position, position)
+                self.assertFalse(reload_database)
                 if annotation_type == "dimension":
                     self.assertEqual(specs[0].properties["FontName"], "Arial")
                     self.assertEqual(specs[0].properties["FontColor"], "#ff0000")
@@ -736,13 +828,191 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         }
         handler.on_text_annotation_created([7.0, 8.0, 12.0, 12.0], "p1", properties)
         self.assertEqual(len(ann_write.insert_calls), 1)
-        _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+        _db_path, _bid_uid, specs, _ref_remap, reload_database = ann_write.insert_calls[
+            0
+        ]
         self.assertEqual(specs[0].annotation_type, "text")
         self.assertEqual(specs[0].position, [7.0, 8.0, 12.0, 12.0])
         self.assertEqual(specs[0].properties, properties)
         self.assertEqual(specs[0].color, "#996633")
+        self.assertFalse(reload_database)
         self.assertEqual(plan_view.selected, {"ann-1"})
         self.assertEqual(undo.count, 1)
+
+    def test_non_navigation_annotation_placement_emits_only_annotation_refresh(self):
+        data = FakeProjectData()
+        plan_view = FakePlanView()
+        plan_view.annotation_key_map = {("ann-1", "rect"): "ann-1"}
+        ann_write = FakeAnnotationWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+        )
+        handler.on_annotation_created("rect", [1.0, 2.0, 5.0, 6.0], "p1")
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.ANNOTATIONS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "annotation_uids": ["ann-1"],
+                        "annotation_types": ["rect"],
+                    },
+                )
+            ],
+        )
+        self.assertEqual(len(data.added_annotations), 1)
+        self.assertEqual(data.added_annotations[0].annotation_type, "rect")
+        self.assertEqual(data.added_annotations[0].position, [1.0, 2.0, 5.0, 6.0])
+
+    def test_in_memory_annotation_add_replaces_existing_uid(self):
+        service = PageSelectionService()
+        service.set_annotations(
+            [
+                BidAnnotation(
+                    uid="a1",
+                    annotation_type="rect",
+                    page_uid="p1",
+                    position=[1.0, 1.0],
+                ),
+                BidAnnotation(
+                    uid="a1",
+                    annotation_type="oval",
+                    page_uid="p1",
+                    position=[4.0, 4.0],
+                ),
+                BidAnnotation(
+                    uid="a2",
+                    annotation_type="oval",
+                    page_uid="p1",
+                    position=[2.0, 2.0],
+                ),
+            ]
+        )
+        service.add_annotations(
+            [
+                BidAnnotation(
+                    uid="a1",
+                    annotation_type="rect",
+                    page_uid="p2",
+                    position=[3.0, 3.0],
+                )
+            ]
+        )
+        annotations = service.get_all_annotations()
+        self.assertEqual(
+            [(a.uid, a.annotation_type) for a in annotations],
+            [("a1", "oval"), ("a2", "oval"), ("a1", "rect")],
+        )
+        self.assertEqual(annotations[0].page_uid, "p1")
+        self.assertEqual(annotations[0].position, [4.0, 4.0])
+        self.assertEqual(annotations[-1].page_uid, "p2")
+        self.assertEqual(annotations[-1].position, [3.0, 3.0])
+
+    def test_in_memory_annotation_remove_by_key_preserves_same_uid_other_type(self):
+        service = PageSelectionService()
+        service.set_annotations(
+            [
+                BidAnnotation(uid="a1", annotation_type="rect", page_uid="p1"),
+                BidAnnotation(uid="a1", annotation_type="oval", page_uid="p2"),
+            ]
+        )
+        page_uids = service.remove_annotations_by_keys([("a1", "rect")])
+        self.assertEqual(page_uids, ["p1"])
+        self.assertEqual(
+            [
+                (a.uid, a.annotation_type, a.page_uid)
+                for a in service.get_all_annotations()
+            ],
+            [("a1", "oval", "p2")],
+        )
+
+    def test_unknown_annotation_update_does_not_emit_refresh(self):
+        data = FakeProjectData()
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type="rect",
+                page_uid="p1",
+                position=[1.0, 2.0],
+            )
+        ]
+        ann_write = FakeAnnotationWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+        )
+        handler.on_annotation_styles_flushed(
+            [("missing", "rect", {"Color": "#000000"}, {"Color": "#ffffff"})]
+        )
+        self.assertEqual(
+            ann_write.style_calls,
+            [("bid.mdb", [("missing", "rect", {"Color": "#ffffff"})], False)],
+        )
+        self.assertEqual(event_bus.events, [])
+        self.assertEqual(data.annotations[0].color, "#FF0000")
+
+    def test_unknown_annotation_delete_does_not_emit_refresh(self):
+        data = FakeProjectData()
+        data.annotations = [
+            BidAnnotation(uid="a1", annotation_type="rect", page_uid="p1")
+        ]
+        page_uids = data.remove_annotations_by_keys([("missing", "rect")])
+        self.assertEqual(page_uids, [])
+        self.assertEqual([annotation.uid for annotation in data.annotations], ["a1"])
+
+    def test_annotation_placement_undo_redo_uses_page_scoped_refresh(self):
+        data = FakeProjectData()
+        plan_view = FakePlanView()
+        plan_view.annotation_key_map = {
+            ("ann-1", "rect"): "ann-1",
+            ("ann-2", "rect"): "ann-2",
+        }
+        ann_write = FakeAnnotationWriteService()
+        ann_write.next_uids = ["ann-1", "ann-2"]
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+        )
+        handler.on_annotation_created("rect", [1.0, 2.0, 5.0, 6.0], "p1")
+        ann_write.next_uids = ["ann-2"]
+        undo.undo()
+        undo.redo()
+        self.assertEqual([call[4] for call in ann_write.insert_calls], [False, False])
+        self.assertEqual(
+            ann_write.delete_calls, [("bid.mdb", [("ann-1", "rect")], False)]
+        )
+        self.assertEqual(
+            [event[0] for event in event_bus.events],
+            [AppEvents.ANNOTATIONS_CHANGED] * 3,
+        )
+        self.assertEqual(data.removed_annotation_uids, ["ann-1"])
+        self.assertEqual(plan_view.selected, {"ann-2"})
 
     def test_empty_text_annotation_commit_is_not_written(self):
         ann_write = FakeAnnotationWriteService()
@@ -788,16 +1058,27 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             {"Text": " Lobby View ", "Color": "#008000"},
         )
         self.assertEqual(len(ann_write.insert_calls), 1)
-        _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+        _db_path, _bid_uid, specs, _ref_remap, reload_database = ann_write.insert_calls[
+            0
+        ]
         self.assertEqual(specs[0].annotation_type, "namedview")
         self.assertEqual(specs[0].position, position)
         self.assertEqual(specs[0].properties, {"Text": "Lobby View"})
         self.assertEqual(specs[0].color, "#008000")
+        self.assertFalse(reload_database)
         self.assertEqual(plan_view.selected, {"ann-1_namedview"})
         self.assertEqual(undo.count, 1)
         self.assertEqual(
             event_bus.events,
             [
+                (
+                    AppEvents.ANNOTATIONS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "annotation_uids": ["ann-1"],
+                        "annotation_types": ["namedview"],
+                    },
+                ),
                 (
                     AppEvents.NAMED_VIEW_CREATED,
                     {
@@ -805,7 +1086,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                         "page_uid": "p1",
                         "name": "Lobby View",
                     },
-                )
+                ),
             ],
         )
 
@@ -870,17 +1151,31 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
         with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
-
         self.assertEqual(
             FakeDialog.captured_named_views,
             [("nv1", "p2", "A101", "Lobby")],
         )
         self.assertEqual(len(ann_write.insert_calls), 1)
-        _db_path, _bid_uid, specs, _ref_remap = ann_write.insert_calls[0]
+        _db_path, _bid_uid, specs, _ref_remap, reload_database = ann_write.insert_calls[
+            0
+        ]
         self.assertEqual(specs[0].annotation_type, "hotlink")
         self.assertEqual(specs[0].position, [9.0, 11.0])
         self.assertEqual(specs[0].properties, {"BidPageViewUID": "nv1"})
-        self.assertEqual(event_bus.events, [])
+        self.assertFalse(reload_database)
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.ANNOTATIONS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "annotation_uids": ["ann-1"],
+                        "annotation_types": ["hotlink"],
+                    },
+                )
+            ],
+        )
 
     def test_hotlink_create_new_switches_to_named_view_tool_without_write(self):
         ann_write = FakeAnnotationWriteService()
@@ -909,7 +1204,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
         with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
-
         self.assertEqual(ann_write.insert_calls, [])
         self.assertEqual(plan_view.activated_annotations, ["namedview"])
 
@@ -982,17 +1276,22 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(annotation_write.text_property_calls, [])
 
     def test_annotation_style_change_writes_only_target_annotation(self):
+        data = FakeProjectData()
+        data.annotations = [
+            BidAnnotation(uid="a1", annotation_type="rect", page_uid="p1")
+        ]
         annotation_write = FakeAnnotationWriteService()
         undo = FakeUndoService()
+        event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(),
             ui_state_manager=FakeUiState(),
-            project_data_svc=FakeProjectData(),
+            project_data_svc=data,
             project_write_svc=FakeWriteService(),
             annotation_write_svc=annotation_write,
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
-            event_bus=FakeEventBus(),
+            event_bus=event_bus,
             ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
         changes = [
@@ -1006,16 +1305,71 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_annotation_styles_flushed(changes)
         self.assertEqual(
             annotation_write.style_calls,
-            [("bid.mdb", [("a1", "rect", {"Color": "#336699", "Width": 7.0})])],
+            [
+                (
+                    "bid.mdb",
+                    [("a1", "rect", {"Color": "#336699", "Width": 7.0})],
+                    False,
+                )
+            ],
         )
+        self.assertEqual(data.annotations[0].color, "#336699")
+        self.assertEqual(data.annotations[0].width, 7.0)
+        self.assertEqual(event_bus.events[0][0], AppEvents.ANNOTATIONS_CHANGED)
         self.assertEqual(undo.count, 1)
         undo.undo()
         undo.redo()
         self.assertEqual(
             annotation_write.style_calls[-2:],
             [
-                ("bid.mdb", [("a1", "rect", {"Color": "#ff0000", "Width": 4.0})]),
-                ("bid.mdb", [("a1", "rect", {"Color": "#336699", "Width": 7.0})]),
+                (
+                    "bid.mdb",
+                    [("a1", "rect", {"Color": "#ff0000", "Width": 4.0})],
+                    False,
+                ),
+                (
+                    "bid.mdb",
+                    [("a1", "rect", {"Color": "#336699", "Width": 7.0})],
+                    False,
+                ),
+            ],
+        )
+
+    def test_annotation_style_change_page_scope_matches_uid_and_type(self):
+        data = FakeProjectData()
+        data.annotations = [
+            BidAnnotation(uid="a1", annotation_type="rect", page_uid="p1"),
+            BidAnnotation(uid="a1", annotation_type="oval", page_uid="p2"),
+        ]
+        annotation_write = FakeAnnotationWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+        )
+        handler.on_annotation_styles_flushed(
+            [("a1", "rect", {"Color": "#ff0000"}, {"Color": "#336699"})]
+        )
+        self.assertEqual(data.annotations[0].color, "#336699")
+        self.assertEqual(data.annotations[1].color, "#FF0000")
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.ANNOTATIONS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "annotation_uids": ["a1"],
+                        "annotation_types": ["rect"],
+                    },
+                )
             ],
         )
 
@@ -1289,11 +1643,19 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_positions_flushed(changes, [])
         self.assertEqual(plan_view.restored_positions, [(changes, [])])
 
-    def test_mixed_takeoff_annotation_position_keeps_reload_path(self):
+    def test_mixed_takeoff_annotation_position_uses_page_scoped_events(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
             uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
         )
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type="annotation",
+                page_uid="p1",
+                position=[1.0, 1.0],
+            )
+        ]
         write = FakeWriteService()
         ann_write = FakeAnnotationWriteService()
         event_bus = FakeEventBus()
@@ -1311,9 +1673,14 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [("t1", [0.0, 0.0], [5.0, 6.0])],
             [("a1", "annotation", [1.0, 1.0], [2.0, 2.0])],
         )
-        self.assertEqual(write.position_calls[0][2], True)
-        self.assertEqual(ann_write.position_calls[0][0], "bid.mdb")
-        self.assertEqual(event_bus.events, [])
+        self.assertEqual(write.position_calls[0][2], False)
+        self.assertEqual(ann_write.position_calls[0][2], False)
+        self.assertEqual(data.takeoffs["t1"].position, [5.0, 6.0])
+        self.assertEqual(data.annotations[0].position, [2.0, 2.0])
+        self.assertEqual(
+            [event for event, _kwargs in event_bus.events],
+            [AppEvents.TAKEOFFS_CHANGED, AppEvents.ANNOTATIONS_CHANGED],
+        )
 
     def test_failed_annotation_position_save_restores_only_annotations(self):
         plan_view = FakePlanView()
@@ -1358,7 +1725,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(
             write.position_calls,
             [
-                ("bid.mdb", [("t1", [5.0, 6.0])], True),
+                ("bid.mdb", [("t1", [5.0, 6.0])], False),
                 ("bid.mdb", [("t1", [0.0, 0.0])], False),
                 ("bid.mdb", [("t1", [5.0, 6.0])], False),
             ],
@@ -1367,8 +1734,17 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
     def test_annotation_text_property_changes_use_annotation_write_service(self):
         data = FakeProjectData()
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type="text",
+                page_uid="p1",
+                properties={"Text": "Old", "FontBold": False},
+            )
+        ]
         ann_write = FakeAnnotationWriteService()
         undo = FakeUndoService()
+        event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(data),
             ui_state_manager=FakeUiState(),
@@ -1377,7 +1753,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             annotation_write_svc=ann_write,
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
-            event_bus=FakeEventBus(),
+            event_bus=event_bus,
         )
         handler.on_annotation_text_properties_flushed(
             [
@@ -1391,15 +1767,25 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         self.assertEqual(
             ann_write.text_property_calls[0],
-            ("bid.mdb", [("a1", "text", {"Text": "New", "FontBold": True})]),
+            ("bid.mdb", [("a1", "text", {"Text": "New", "FontBold": True})], False),
         )
+        self.assertEqual(data.annotations[0].properties["Text"], "New")
+        self.assertEqual(event_bus.events[0][0], AppEvents.ANNOTATIONS_CHANGED)
         undo.undo()
         undo.redo()
         self.assertEqual(
             ann_write.text_property_calls[1:],
             [
-                ("bid.mdb", [("a1", "text", {"Text": "Old", "FontBold": False})]),
-                ("bid.mdb", [("a1", "text", {"Text": "New", "FontBold": True})]),
+                (
+                    "bid.mdb",
+                    [("a1", "text", {"Text": "Old", "FontBold": False})],
+                    False,
+                ),
+                (
+                    "bid.mdb",
+                    [("a1", "text", {"Text": "New", "FontBold": True})],
+                    False,
+                ),
             ],
         )
 
@@ -1421,6 +1807,14 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
     def test_named_view_rename_publishes_combo_refresh_event(self):
         data = FakeProjectData()
+        data.annotations = [
+            BidAnnotation(
+                uid="nv1",
+                annotation_type="namedview",
+                page_uid="p1",
+                properties={"Text": "Old"},
+            )
+        ]
         event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(data),
@@ -1440,19 +1834,31 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             event_bus.events,
             [
                 (
+                    AppEvents.ANNOTATIONS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "annotation_uids": ["nv1"],
+                        "annotation_types": ["namedview"],
+                    },
+                ),
+                (
                     AppEvents.NAMED_VIEW_RENAMED,
                     {"named_view_uid": "nv1", "name": "New"},
-                )
+                ),
             ],
         )
 
     def test_annotation_text_and_box_changes_are_saved_together(self):
+        data = FakeProjectData()
+        data.annotations = [
+            BidAnnotation(uid="a1", annotation_type="text", page_uid="p1")
+        ]
         ann_write = FakeAnnotationWriteService()
         undo = FakeUndoService()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(),
             ui_state_manager=FakeUiState(),
-            project_data_svc=FakeProjectData(),
+            project_data_svc=data,
             project_write_svc=FakeWriteService(),
             annotation_write_svc=ann_write,
             page_settings_bar=FakePageSettingsBar(),
@@ -1476,6 +1882,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 "bid.mdb",
                 [("a1", "text", {"FontSize": 24, "FontColor": 0x332211})],
                 [("a1", "text", [100.0, 100.0, 80.0, 30.0])],
+                False,
             ),
         )
         self.assertEqual(ann_write.text_property_calls, [])
@@ -1489,11 +1896,13 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     "bid.mdb",
                     [("a1", "text", {"FontSize": 12, "FontColor": 0})],
                     [("a1", "text", [100.0, 100.0, 40.0, 15.0])],
+                    False,
                 ),
                 (
                     "bid.mdb",
                     [("a1", "text", {"FontSize": 24, "FontColor": 0x332211})],
                     [("a1", "text", [100.0, 100.0, 80.0, 30.0])],
+                    False,
                 ),
             ],
         )
@@ -1745,26 +2154,115 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
-    def test_named_view_delete_with_linked_hotlink_no_cancels_delete(self):
+    def test_named_view_delete_with_linked_hotlink_no_or_close_cancels_delete(self):
+        for response in (False, None):
+            with self.subTest(response=response):
+                data = FakeProjectData()
+                named_view = BidAnnotation(
+                    uid="nv1",
+                    annotation_type="namedview",
+                    page_uid="p1",
+                    position=[13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+                    properties={"Text": "Lobby"},
+                )
+                hotlink = BidAnnotation(
+                    uid="hl1",
+                    annotation_type="hotlink",
+                    page_uid="p1",
+                    position=[5.0, 6.0],
+                    properties={"BidPageViewUID": "nv1"},
+                )
+                data.annotations = [named_view, hotlink]
+                plan_view = FakePlanView(data)
+                plan_view.annotations = {"nv1": named_view}
+                ann_write = FakeAnnotationWriteService()
+                handler = PlanViewActionHandler(
+                    plan_view=plan_view,
+                    ui_state_manager=FakeUiState(),
+                    project_data_svc=data,
+                    project_write_svc=FakeWriteService(),
+                    annotation_write_svc=ann_write,
+                    page_settings_bar=FakePageSettingsBar(),
+                    undo_svc=FakeUndoService(),
+                    event_bus=FakeEventBus(),
+                    ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+                )
+                with patch.object(
+                    handler_module, "confirm", return_value=response
+                ) as confirm:
+                    handler.on_elements_deleted(["nv1"])
+                confirm.assert_called_once_with(
+                    plan_view,
+                    "Delete Named View",
+                    "This named view has hotlinks connected to it.\n"
+                    "Do you want to delete it and the associated hotlinks?",
+                )
+                self.assertEqual(ann_write.delete_calls, [])
+                self.assertEqual(plan_view.selected, {"nv1"})
+
+    def test_annotation_delete_uses_page_scoped_refresh_and_model_remove(self):
         data = FakeProjectData()
-        named_view = BidAnnotation(
-            uid="nv1",
-            annotation_type="namedview",
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="rect",
             page_uid="p1",
-            position=[13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
-            properties={"Text": "Lobby"},
+            position=[1.0, 2.0, 3.0, 4.0],
         )
-        hotlink = BidAnnotation(
-            uid="hl1",
-            annotation_type="hotlink",
-            page_uid="p1",
-            position=[5.0, 6.0],
-            properties={"BidPageViewUID": "nv1"},
-        )
-        data.annotations = [named_view, hotlink]
+        data.annotations = [annotation]
         plan_view = FakePlanView(data)
-        plan_view.annotations = {"nv1": named_view}
+        plan_view.annotations = {"a1": annotation}
+        plan_view.annotation_key_map = {("ann-1", "rect"): "ann-1"}
         ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+        )
+        handler.on_elements_deleted(["a1"])
+        undo.undo()
+        undo.redo()
+        self.assertEqual(
+            ann_write.delete_calls,
+            [
+                ("bid.mdb", [("a1", "rect")], False),
+                ("bid.mdb", [("ann-1", "rect")], False),
+            ],
+        )
+        self.assertEqual([call[4] for call in ann_write.insert_calls], [False])
+        self.assertEqual(
+            [event for event, _kwargs in event_bus.events],
+            [AppEvents.ANNOTATIONS_CHANGED] * 3,
+        )
+        self.assertEqual(data.removed_annotation_uids, ["a1", "ann-1"])
+        self.assertEqual(plan_view.selected, set())
+
+    def test_annotation_delete_matches_uid_and_type(self):
+        data = FakeProjectData()
+        rect = BidAnnotation(
+            uid="shared",
+            annotation_type="rect",
+            page_uid="p1",
+            position=[1.0, 2.0, 3.0, 4.0],
+        )
+        oval = BidAnnotation(
+            uid="shared",
+            annotation_type="oval",
+            page_uid="p2",
+            position=[5.0, 6.0, 7.0, 8.0],
+        )
+        data.annotations = [rect, oval]
+        plan_view = FakePlanView(data)
+        plan_view.annotations = {"rect-item": rect}
+        ann_write = FakeAnnotationWriteService()
+        event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=plan_view,
             ui_state_manager=FakeUiState(),
@@ -1773,16 +2271,31 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             annotation_write_svc=ann_write,
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
-            event_bus=FakeEventBus(),
+            event_bus=event_bus,
             ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
-
-        with patch.object(handler_module, "confirm", return_value=False) as confirm:
-            handler.on_elements_deleted(["nv1"])
-
-        confirm.assert_called_once()
-        self.assertEqual(ann_write.delete_calls, [])
-        self.assertEqual(plan_view.selected, {"nv1"})
+        handler.on_elements_deleted(["rect-item"])
+        self.assertEqual(
+            ann_write.delete_calls,
+            [("bid.mdb", [("shared", "rect")], False)],
+        )
+        self.assertEqual(
+            [(a.uid, a.annotation_type, a.page_uid) for a in data.annotations],
+            [("shared", "oval", "p2")],
+        )
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.ANNOTATIONS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "annotation_uids": ["shared"],
+                        "annotation_types": ["rect"],
+                    },
+                )
+            ],
+        )
 
     def test_named_view_delete_with_linked_hotlink_deletes_hotlink_first(self):
         data = FakeProjectData()
@@ -1805,6 +2318,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         plan_view.annotations = {"nv1": named_view}
         ann_write = FakeAnnotationWriteService()
         undo = FakeUndoService()
+        event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=plan_view,
             ui_state_manager=FakeUiState(),
@@ -1813,17 +2327,25 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             annotation_write_svc=ann_write,
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
-            event_bus=FakeEventBus(),
+            event_bus=event_bus,
             ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
-
         with patch.object(handler_module, "confirm", return_value=True) as confirm:
             handler.on_elements_deleted(["nv1"])
-
-        confirm.assert_called_once()
+        confirm.assert_called_once_with(
+            plan_view,
+            "Delete Named View",
+            "This named view has hotlinks connected to it.\n"
+            "Do you want to delete it and the associated hotlinks?",
+        )
         self.assertEqual(
             ann_write.delete_calls,
-            [("bid.mdb", [("hl1", "hotlink"), ("nv1", "namedview")])],
+            [("bid.mdb", [("hl1", "hotlink"), ("nv1", "namedview")], False)],
+        )
+        self.assertEqual(data.annotations, [])
+        self.assertEqual(
+            [event for event, _kwargs in event_bus.events],
+            [AppEvents.ANNOTATIONS_CHANGED, AppEvents.NAMED_VIEW_DELETED],
         )
         self.assertEqual(undo.count, 1)
 

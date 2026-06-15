@@ -43,7 +43,9 @@ from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_ren
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import (
     format_dimension_distance,
 )
-from ost_visualizer.presentation.utils.annotation_defaults import set_annotation_style_for_tool
+from ost_visualizer.presentation.utils.annotation_defaults import (
+    set_annotation_style_for_tool,
+)
 
 
 def _app():
@@ -244,6 +246,8 @@ class InputHandlerHarness(
         self.selected_text_annotation_uids = []
         self.editing_text_annotation_uids = []
         self.editing_named_view_uids = []
+        self.finished_inline_edits = []
+        self.annotation_place_presses = []
         self._editing_text_annotation_uid = None
         self._editing_named_view_uid = None
 
@@ -286,11 +290,18 @@ class InputHandlerHarness(
     def _finish_text_annotation_edit(self, _commit):
         pass
 
-    def _finish_active_inline_text_edit(self, _commit):
-        pass
+    def _finish_active_inline_text_edit(self, commit):
+        self.finished_inline_edits.append(commit)
+        self._editing_text_annotation_uid = None
+        self._editing_named_view_uid = None
 
     def _active_inline_text_editor_contains_scene_point(self, _scene_pos):
         return False
+
+    def handle_annotation_place_press(self, event):
+        self.annotation_place_presses.append(event.pos())
+        event.accept()
+        return True
 
     def _refresh_condition_text_labels_for_takeoff(self, takeoff_uid):
         path_item = None
@@ -634,6 +645,18 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(view._drag_handle_index, -2)
         self.assertEqual(view._drag_item_orig_positions, {})
 
+    def test_named_view_click_away_commit_does_not_start_annotation_placement(self):
+        view = self._make_view(set())
+        view._cursor_mode = "annotation_place"
+        view._editing_named_view_uid = "draft"
+        view.find_takeoff_at = lambda _scene_pos, cycle_from_uid=None: None
+        view.find_takeoffs_at = lambda _scene_pos: []
+        event = FakeMouseEvent(x=40, y=50)
+        view.mousePressEvent(event)
+        self.assertTrue(event.accepted)
+        self.assertEqual(view.finished_inline_edits, [True])
+        self.assertEqual(view.annotation_place_presses, [])
+
     def test_single_click_hotlink_does_not_select_it(self):
         view = self._make_hotlink_view(selected=False)
         view.find_takeoff_at = lambda _scene_pos: "h1"
@@ -695,7 +718,6 @@ class CtrlDragTests(unittest.TestCase):
         self.assertTrue(release.accepted)
         self.assertEqual(view.hotlink_clicked.emitted, [])
         self.assertFalse(view._suppress_next_hotlink_click)
-
         second_press = FakeMouseEvent()
         view.mousePressEvent(second_press)
         second_release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
@@ -708,14 +730,12 @@ class CtrlDragTests(unittest.TestCase):
         hotlink_items = list(view._hotlink_items)
         view._suppress_next_hotlink_click = True
         view._hotlink_items = []
-
         press = FakeMouseEvent()
         view.mousePressEvent(press)
         release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
         view.mouseReleaseEvent(release)
         self.assertFalse(view._suppress_next_hotlink_click)
         self.assertEqual(view.hotlink_clicked.emitted, [])
-
         view._hotlink_items = hotlink_items
         press = FakeMouseEvent()
         view.mousePressEvent(press)
@@ -729,6 +749,7 @@ class CtrlDragTests(unittest.TestCase):
         view._finishing_named_view_rename = False
         view._editing_named_view_uid = "draft"
         view._draft_named_view_uid = "draft"
+        view._named_view_name_validator = None
         view._editing_text_original = ""
         view._current_annotations = {
             "draft": BidAnnotation(
@@ -768,9 +789,7 @@ class CtrlDragTests(unittest.TestCase):
         view._refresh_named_view_label_background = (
             lambda uid: view.refreshed_labels.append(uid)
         )
-
         TakeoffPlanView._finish_named_view_rename(view, True)
-
         self.assertEqual(view.removed_drafts, 1)
         self.assertEqual(
             view.named_view_created.emitted,
@@ -782,6 +801,71 @@ class CtrlDragTests(unittest.TestCase):
                 )
             ],
         )
+
+    def test_duplicate_named_view_focus_restore_does_not_reenter_commit(self):
+        position = [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]
+        view = SimpleNamespace()
+        view._finishing_named_view_rename = False
+        view._editing_named_view_uid = "draft"
+        view._draft_named_view_uid = "draft"
+        view._editing_text_original = ""
+        view._current_annotations = {
+            "draft": BidAnnotation(
+                uid="draft",
+                annotation_type="namedview",
+                page_uid="page-1",
+                position=position,
+                color="#008000",
+                properties={"Text": ""},
+            )
+        }
+        view.named_view_created = _FakeSignal()
+        view.text_annotation_edit_mode_changed = _FakeSignal()
+        view.refreshed_labels = []
+        validator_calls = []
+
+        class ReentrantInvalidItem:
+            def __init__(self):
+                self.text = "Lobby"
+                self.focus_restores = 0
+
+            def toPlainText(self):
+                return self.text
+
+            def setFocus(self, _reason):
+                self.focus_restores += 1
+                TakeoffPlanView._finish_named_view_rename(view, True)
+
+            def setTextInteractionFlags(self, _flags):
+                pass
+
+            def clearFocus(self):
+                pass
+
+        item = ReentrantInvalidItem()
+
+        def validate(name, exclude_uid=None):
+            validator_calls.append((name, exclude_uid))
+            return False
+
+        view._editing_named_view_item = item
+        view._named_view_name_validator = validate
+        view._clear_inline_text_item_selection = lambda _item: None
+        view._clear_inline_text_document = lambda: None
+        view._is_named_view_draft_uid = lambda uid: uid == view._draft_named_view_uid
+        view._remove_named_view_draft = lambda: self.fail(
+            "duplicate commit must keep the draft"
+        )
+        view._refresh_named_view_label_background = (
+            lambda uid: view.refreshed_labels.append(uid)
+        )
+        TakeoffPlanView._finish_named_view_rename(view, True)
+        self.assertEqual(validator_calls, [("Lobby", "draft")])
+        self.assertEqual(item.focus_restores, 1)
+        self.assertEqual(view.named_view_created.emitted, [])
+        self.assertEqual(view._editing_named_view_uid, "draft")
+        self.assertEqual(view._draft_named_view_uid, "draft")
+        self.assertEqual(view.refreshed_labels, ["draft"])
 
     def test_selected_takeoff_hover_far_away_does_not_use_move_cursor(self):
         view = self._make_selected_path_takeoff_view()
@@ -1691,6 +1775,7 @@ class AnnotationPlacementTests(unittest.TestCase):
                     )
                     self.assertEqual(view._annotation_place_points, [])
                     self.assertFalse(view._annotation_area_rect_dragging)
+                    self.assertEqual(view._annotation_place_type, annotation_type)
         finally:
             for annotation_type in ("polygon", "cloud"):
                 set_annotation_style_for_tool(
@@ -1751,6 +1836,21 @@ class AnnotationPlacementTests(unittest.TestCase):
                         view.annotation_created.emitted,
                         [(annotation_type, expected_position, "page-1")],
                     )
+                self.assertEqual(view._annotation_place_points, [])
+                self.assertFalse(view._annotation_place_dragging)
+                self.assertEqual(view._annotation_place_type, annotation_type)
+
+    def test_named_view_single_click_does_not_create_draft(self):
+        view = AnnotationPlacementHarness()
+        self.assertTrue(view._enter_annotation_place_mode("namedview"))
+        press = _PlacementMouseEvent(1, 2)
+        release = _PlacementMouseEvent(1, 2)
+        self.assertTrue(view.handle_annotation_place_press(press))
+        self.assertTrue(view.handle_annotation_place_release(release))
+        self.assertEqual(view.named_view_drafts, [])
+        self.assertEqual(view._annotation_place_points, [])
+        self.assertFalse(view._annotation_place_dragging)
+        self.assertEqual(view._annotation_place_type, "namedview")
 
     def test_hotlink_annotation_tool_requests_named_view_selection_on_press(self):
         view = AnnotationPlacementHarness()
@@ -1764,6 +1864,7 @@ class AnnotationPlacementTests(unittest.TestCase):
         )
         self.assertEqual(view.annotation_created.emitted, [])
         self.assertEqual(view._selected_uids, set())
+        self.assertEqual(view._annotation_place_type, "hotlink")
 
     def test_hotlink_click_suppression_is_cleared_when_switching_annotation_tools(self):
         view = AnnotationPlacementHarness()
@@ -1843,9 +1944,7 @@ class AnnotationPlacementTests(unittest.TestCase):
                         paths[0].pen().style(), QtCore.Qt.PenStyle.DashLine
                     )
                 elif annotation_type == "highlight":
-                    self.assertEqual(
-                        paths[0].pen().style(), QtCore.Qt.PenStyle.NoPen
-                    )
+                    self.assertEqual(paths[0].pen().style(), QtCore.Qt.PenStyle.NoPen)
                     self.assertGreater(paths[0].brush().color().alpha(), 0)
                 else:
                     self.assertEqual(

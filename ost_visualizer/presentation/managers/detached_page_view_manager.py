@@ -103,6 +103,12 @@ class DetachedPageViewManager(IShutdownAware):
         self.event_bus.subscribe(
             AppEvents.NAMED_VIEW_CREATED, self._on_named_view_created
         )
+        self.event_bus.subscribe(
+            AppEvents.NAMED_VIEW_DELETED, self._on_named_view_deleted
+        )
+        self.event_bus.subscribe(
+            AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed
+        )
 
     def shutdown(self) -> None:
         if self.event_bus is not None:
@@ -114,6 +120,12 @@ class DetachedPageViewManager(IShutdownAware):
             )
             self.event_bus.unsubscribe(
                 AppEvents.NAMED_VIEW_CREATED, self._on_named_view_created
+            )
+            self.event_bus.unsubscribe(
+                AppEvents.NAMED_VIEW_DELETED, self._on_named_view_deleted
+            )
+            self.event_bus.unsubscribe(
+                AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed
             )
         if self._refresh_signaler is not None:
             self._refresh_signaler.cleanup()
@@ -158,6 +170,21 @@ class DetachedPageViewManager(IShutdownAware):
         view = self.repository.get_active_view()
         if view:
             self._update_window_navigation(view)
+
+    def _on_named_view_deleted(self, **_kwargs) -> None:
+        view = self.repository.get_active_view()
+        if view:
+            self._update_window_navigation(view)
+
+    def _on_annotations_changed(self, page_uid: str = "", **_kwargs) -> None:
+        if not self.is_view_open():
+            return
+        view = self.repository.get_active_view()
+        if not view:
+            return
+        if page_uid and view.page_uid != page_uid:
+            return
+        self._refresh_signaler.request_refresh()
 
     def _get_bid_for_view(self, view: AnnotationView):
         bid_ref = view.bid_ref if view else None

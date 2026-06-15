@@ -56,6 +56,10 @@ from ...utils.annotation_style_controls import (
 )
 from ...utils.named_view_focus import focus_plan_view_on_named_view
 from ...utils.messagebox import confirm
+from ...utils.named_view_validation import (
+    named_view_name_exists,
+    show_duplicate_named_view_name,
+)
 from ...utils.plan_tool_registry import PlanToolSpec
 from ...utils.scales import ALL_SCALES
 
@@ -375,6 +379,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.plan_view.set_text_annotation_inline_edit_enabled(
             self._selection_enabled()
         )
+        self.plan_view.set_named_view_name_validator(self._validate_named_view_name)
         self.plan_view.set_roping_selection_method(self._roping_selection_method)
         self.plan_view.set_disable_high_resolution_images(
             self._disable_high_resolution_images
@@ -458,6 +463,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _on_cursor_mode_change_requested(self, mode: str) -> None:
         if mode != "annotation_place":
             return
+        annotation_type = self.plan_view.annotation_place_type
+        for spec in self._config.annotation_tool_specs:
+            button = self._annotation_tool_buttons.get(spec.action_key)
+            if button is not None and spec.annotation_type == annotation_type:
+                if not button.isChecked():
+                    button.setChecked(True)
+                return
         for button in self._annotation_tool_buttons.values():
             if button.isChecked():
                 return
@@ -471,6 +483,14 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if not self._selection_enabled() or self.plan_view is None:
             return False
         return bool(self.plan_view.activate_annotation_placement(annotation_type))
+
+    def _validate_named_view_name(
+        self, name: str, exclude_uid: Optional[str] = None
+    ) -> bool:
+        if named_view_name_exists(self._named_views, name, exclude_uid=exclude_uid):
+            show_duplicate_named_view_name(self)
+            return False
+        return True
 
     def refresh_annotation_style(self, annotation_type: str | None = None) -> None:
         if not self._annotation_tool_buttons:
@@ -1161,6 +1181,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         name = str(properties.get("Text", "") or "").strip()
         if not name:
             return
+        if not self._validate_named_view_name(name, None):
+            return
         bid_ref = self.view.bid_ref if self.view else None
         if bid_ref is None:
             return
@@ -1188,6 +1210,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             page_uid=page_uid,
             name=name,
         )
+        self.plan_view.activate_annotation_placement("namedview")
         if self._undo_svc is None:
             return
         cmd = InsertAnnotationsCommand(
@@ -1237,6 +1260,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         keys = self.plan_view.find_annotation_keys_by_uid_type(uid_type_set)
         if keys:
             self.plan_view.set_selected_uids(keys)
+        self.plan_view.activate_annotation_placement("hotlink")
         if self._undo_svc is None:
             return
         cmd = InsertAnnotationsCommand(

@@ -1,6 +1,8 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 from PySide6 import QtCore
+from PySide6 import QtWidgets
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.use_cases.annotation_view.open_annotation_view_use_case import (
     OpenAnnotationViewUseCase,
@@ -195,6 +197,7 @@ class FakeDetachedPlanView:
         self.selected_uids = set()
         self.annotation_key_map = {}
         self.cleared = False
+        self.activate_calls = []
 
     def restore_flushed_positions(self, takeoff_changes, ann_changes):
         self.restored_positions.append((list(takeoff_changes), list(ann_changes)))
@@ -227,19 +230,30 @@ class FakeDetachedPlanView:
             if (uid, ann_type) in self.annotation_key_map
         }
 
+    def activate_annotation_placement(self, annotation_type):
+        self.activate_calls.append(annotation_type)
+        return True
+
 
 class FakeAnnotationWriteService:
     def __init__(self):
         self.insert_calls = []
         self.style_calls = []
+        self.delete_calls = []
         self.next_uids = ["ann-1"]
 
-    def insert_annotations(self, db_path, bid_uid, specs, ref_remap=None):
+    def insert_annotations(
+        self, db_path, bid_uid, specs, ref_remap=None, reload_database=True
+    ):
         self.insert_calls.append((db_path, bid_uid, specs, ref_remap))
         return list(self.next_uids[: len(specs)])
 
-    def save_annotation_styles(self, db_path, updates):
+    def save_annotation_styles(self, db_path, updates, reload_database=True):
         self.style_calls.append((db_path, updates))
+        return True
+
+    def delete_annotations(self, db_path, annotation_keys, reload_database=True):
+        self.delete_calls.append((db_path, list(annotation_keys)))
         return True
 
 
@@ -1039,6 +1053,215 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             {"Text": "   ", "FontColor": 0x336699},
         )
         self.assertEqual(write_service.insert_calls, [])
+
+    def test_detached_duplicate_named_view_shows_message_and_writes_zero_specs(self):
+        write_service = FakeAnnotationWriteService()
+        plan_view = FakeDetachedPlanView()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        window._undo_svc = None
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._named_views = [("nv1", "p1", "Page 1", "Lobby")]
+        window.event_bus = SimpleNamespace(publish=lambda *args, **kwargs: None)
+        with patch(
+            "ost_visualizer.presentation.utils.named_view_validation.show_warning"
+        ) as warning:
+            window._on_named_view_created(
+                [1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 1.0, 4.0],
+                "p1",
+                {"Text": " lobby "},
+            )
+        self.assertEqual(write_service.insert_calls, [])
+        self.assertEqual(plan_view.activate_calls, [])
+        self.assertEqual(
+            warning.call_args.args[2], "Named view should have unique name"
+        )
+
+    def test_detached_named_view_commit_reactivates_named_view_tool(self):
+        write_service = FakeAnnotationWriteService()
+        undo_service = FakeUndoService()
+        plan_view = FakeDetachedPlanView()
+        plan_view.annotation_key_map[("ann-1", "namedview")] = "ann-1_namedview"
+        events = []
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        window._undo_svc = undo_service
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._named_views = [("nv1", "p1", "Page 1", "Existing")]
+        window.event_bus = SimpleNamespace(
+            publish=lambda *args, **kwargs: events.append((args, kwargs))
+        )
+        window._on_named_view_created(
+            [1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 1.0, 4.0],
+            "p1",
+            {"Text": "Lobby"},
+        )
+        self.assertEqual(len(write_service.insert_calls), 1)
+        self.assertEqual(
+            write_service.insert_calls[0][2][0].annotation_type, "namedview"
+        )
+        self.assertEqual(
+            write_service.insert_calls[0][2][0].properties, {"Text": "Lobby"}
+        )
+        self.assertEqual(plan_view.activate_calls, ["namedview"])
+        self.assertEqual(plan_view.selected_uids, {"ann-1_namedview"})
+        self.assertEqual(len(undo_service.pushes), 1)
+        self.assertEqual(events[0][0][0], AppEvents.NAMED_VIEW_CREATED)
+
+    def test_detached_hotlink_commit_reactivates_hotlink_tool(self):
+        write_service = FakeAnnotationWriteService()
+        undo_service = FakeUndoService()
+        plan_view = FakeDetachedPlanView()
+        plan_view.annotation_key_map[("ann-1", "hotlink")] = "ann-1_hotlink"
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        window._undo_svc = undo_service
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._named_views = [("nv1", "p1", "Page 1", "Lobby")]
+        dialog = SimpleNamespace(
+            exec=lambda: QtWidgets.QDialog.DialogCode.Accepted,
+            result_data=lambda: SimpleNamespace(create_new=False, named_view_uid="nv1"),
+        )
+        with patch(
+            "ost_visualizer.presentation.windows.components.window."
+            "SelectNamedViewDialog",
+            return_value=dialog,
+        ):
+            window._on_hotlink_placement_requested([5.0, 6.0], "p1")
+        self.assertEqual(len(write_service.insert_calls), 1)
+        self.assertEqual(write_service.insert_calls[0][2][0].annotation_type, "hotlink")
+        self.assertEqual(
+            write_service.insert_calls[0][2][0].properties,
+            {"BidPageViewUID": "nv1"},
+        )
+        self.assertEqual(plan_view.activate_calls, ["hotlink"])
+        self.assertEqual(plan_view.selected_uids, {"ann-1_hotlink"})
+        self.assertEqual(len(undo_service.pushes), 1)
+
+    def test_detached_hotlink_create_new_switches_to_named_view_tool(self):
+        write_service = FakeAnnotationWriteService()
+        plan_view = FakeDetachedPlanView()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        window._undo_svc = None
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._named_views = []
+        dialog = SimpleNamespace(
+            exec=lambda: QtWidgets.QDialog.DialogCode.Accepted,
+            result_data=lambda: SimpleNamespace(create_new=True, named_view_uid=""),
+        )
+        with patch(
+            "ost_visualizer.presentation.windows.components.window."
+            "SelectNamedViewDialog",
+            return_value=dialog,
+        ):
+            window._on_hotlink_placement_requested([5.0, 6.0], "p1")
+        self.assertEqual(write_service.insert_calls, [])
+        self.assertEqual(plan_view.activate_calls, ["namedview"])
+
+    def test_detached_named_view_delete_with_linked_hotlink_no_or_close_cancels(self):
+        for response in (False, None):
+            with self.subTest(response=response):
+                named_view = BidAnnotation(
+                    uid="nv1",
+                    annotation_type="namedview",
+                    page_uid="p1",
+                    position=[13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+                    properties={"Text": "Lobby"},
+                )
+                hotlink = BidAnnotation(
+                    uid="hl1",
+                    annotation_type="hotlink",
+                    page_uid="p1",
+                    position=[5.0, 6.0],
+                    properties={"BidPageViewUID": "nv1"},
+                )
+                write_service = FakeAnnotationWriteService()
+                plan_view = FakeDetachedPlanView([named_view])
+                window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+                window._config = SimpleNamespace(allow_annotation_editing=True)
+                window._read_only = False
+                window._is_closing = False
+                window._ann_write_svc = write_service
+                window._undo_svc = FakeUndoService()
+                window.plan_view = plan_view
+                window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+                window._get_db_path = lambda: "bid.mdb"
+                window._linked_hotlink_resolver = lambda _uids: [hotlink]
+                with patch(
+                    "ost_visualizer.presentation.windows.components.window.confirm",
+                    return_value=response,
+                ) as confirm:
+                    window._on_elements_deleted(["nv1"])
+                confirm.assert_called_once_with(
+                    window,
+                    "Delete Named View",
+                    "This named view has hotlinks connected to it.\n"
+                    "Do you want to delete it and the associated hotlinks?",
+                )
+                self.assertEqual(write_service.delete_calls, [])
+                self.assertEqual(plan_view.selected_uids, {"nv1"})
+
+    def test_detached_named_view_delete_yes_deletes_linked_hotlink_first(self):
+        named_view = BidAnnotation(
+            uid="nv1",
+            annotation_type="namedview",
+            page_uid="p1",
+            position=[13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+            properties={"Text": "Lobby"},
+        )
+        hotlink = BidAnnotation(
+            uid="hl1",
+            annotation_type="hotlink",
+            page_uid="p1",
+            position=[5.0, 6.0],
+            properties={"BidPageViewUID": "nv1"},
+        )
+        write_service = FakeAnnotationWriteService()
+        undo_service = FakeUndoService()
+        plan_view = FakeDetachedPlanView([named_view])
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        window._undo_svc = undo_service
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._get_db_path = lambda: "bid.mdb"
+        window._linked_hotlink_resolver = lambda _uids: [hotlink]
+        with patch(
+            "ost_visualizer.presentation.windows.components.window.confirm",
+            return_value=True,
+        ) as confirm:
+            window._on_elements_deleted(["nv1"])
+        confirm.assert_called_once_with(
+            window,
+            "Delete Named View",
+            "This named view has hotlinks connected to it.\n"
+            "Do you want to delete it and the associated hotlinks?",
+        )
+        self.assertEqual(
+            write_service.delete_calls,
+            [("bid.mdb", [("hl1", "hotlink"), ("nv1", "namedview")])],
+        )
+        self.assertEqual(len(undo_service.pushes), 1)
 
     def test_detached_annotation_style_change_uses_style_write_path(self):
         write_service = FakeAnnotationWriteService()

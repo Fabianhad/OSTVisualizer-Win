@@ -67,6 +67,7 @@ from ...utils.themed_icon import apply_themed_icon, current_text_hex, recolor_sv
 from ...utils.zoom_debouncer import ZoomDebouncer
 from ...visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
+    create_named_view_label_font,
     update_dimension_text_item,
 )
 from ...visualization.pdf.renderers.annotation_renderer import (
@@ -407,6 +408,9 @@ class TakeoffPlanView(
         self._annotation_area_rect_dragging: bool = False
         self._draft_text_annotation_uid: Optional[str] = None
         self._draft_named_view_uid: Optional[str] = None
+        self._named_view_name_validator: Optional[
+            Callable[[str, Optional[str]], bool]
+        ] = None
         self._place_preview_items: List[QGraphicsItem] = []
         self._takeoff_snap_index = None
         self._pdf_snap_index = None
@@ -1186,9 +1190,7 @@ class TakeoffPlanView(
         background.setData(0, ann.uid)
         background.setData(2, NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND)
         label = QGraphicsTextItem("")
-        font = QFont("Arial", 10)
-        font.setBold(True)
-        label.setFont(font)
+        label.setFont(create_named_view_label_font(cs))
         label.setDefaultTextColor(QColor("white"))
         label.setPos(min_x - 1.0, min_y - 1.0)
         label.setZValue(4)
@@ -1388,21 +1390,40 @@ class TakeoffPlanView(
         uid = self._editing_named_view_uid
         item = self._editing_named_view_item
         ann = self._current_annotations.get(uid)
+        pending_text = item.toPlainText() if item is not None else ""
+        pending_text_stripped = pending_text.strip()
+        if (
+            commit
+            and item is not None
+            and ann is not None
+            and pending_text_stripped
+            and self._named_view_name_validator is not None
+        ):
+            self._finishing_named_view_rename = True
+            try:
+                is_valid_name = self._named_view_name_validator(
+                    pending_text_stripped, uid
+                )
+                if not is_valid_name:
+                    self._refresh_named_view_label_background(uid)
+                    item.setFocus(Qt.FocusReason.OtherFocusReason)
+                    return
+            finally:
+                self._finishing_named_view_rename = False
         draft_payload: Optional[Tuple[List[float], str, Dict[str, object]]] = None
         self._finishing_named_view_rename = True
         try:
             if item is not None:
                 if commit and ann is not None:
-                    text = item.toPlainText()
                     if self._is_named_view_draft_uid(uid):
-                        if text.strip():
+                        if pending_text_stripped:
                             draft_payload = (
                                 list(ann.position),
                                 ann.page_uid,
-                                {"Text": text.strip(), "Color": ann.color},
+                                {"Text": pending_text_stripped, "Color": ann.color},
                             )
                     else:
-                        self._persist_named_view_name(uid, text)
+                        self._persist_named_view_name(uid, pending_text_stripped)
                 elif not commit:
                     item.setPlainText(self._editing_text_original)
                 self._clear_inline_text_item_selection(item)
@@ -1473,6 +1494,9 @@ class TakeoffPlanView(
 
     def set_text_annotation_inline_edit_allowed_fn(self, allowed_fn) -> None:
         self._text_annotation_inline_edit_allowed_fn = allowed_fn
+
+    def set_named_view_name_validator(self, validator) -> None:
+        self._named_view_name_validator = validator
 
     def _can_begin_text_annotation_inline_edit(self) -> bool:
         if not self._text_annotation_inline_edit_enabled or not self._selection_enabled:
@@ -4705,6 +4729,10 @@ class TakeoffPlanView(
         self.cursor_mode_change_requested.emit("annotation_place")
         return True
 
+    @property
+    def annotation_place_type(self) -> Optional[str]:
+        return self._annotation_place_type
+
     def _filter_place_conditions(self, active_uid: str, uids: list) -> list:
         if len(uids) <= 1:
             return []
@@ -4878,6 +4906,7 @@ class TakeoffPlanView(
         self._editing_named_view_item = None
         self._finishing_named_view_rename = False
         self._draft_named_view_uid = None
+        self._named_view_name_validator = None
         self._clear_inline_text_document()
         self._editing_text_original = ""
         self._text_annotation_inline_edit_allowed_fn = None

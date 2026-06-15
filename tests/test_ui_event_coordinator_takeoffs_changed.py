@@ -389,9 +389,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             condition_uid="condition-1",
             takeoff_uid="takeoff-1",
         )
-
         coordinator._on_native_scene_updated(geometries=[geometry])
-
         self.assertEqual(1, len(coordinator.opengl_viewer.mesh_calls))
         args, kwargs = coordinator.opengl_viewer.mesh_calls[0]
         self.assertEqual(([[0.0, 0.0, 0.0]], [[0.0, 1.0, 0.0]], [[0, 1, 2]]), args[:3])

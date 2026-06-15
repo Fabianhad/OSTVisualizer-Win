@@ -65,6 +65,7 @@ class _FakeCursor:
                 return rows
         return []
 
+
 class _FakeConnection:
     def __init__(self, rows_by_table):
         self.rows_by_table = rows_by_table
@@ -1064,9 +1065,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             for color in ("#ff0000", "#0000ff"):
                 properties = {}
                 if annotation_type in ("line", "arrow", "dimension"):
-                    properties.update(
-                        {"BidTakeoffFromUID": "", "BidTakeoffToUID": ""}
-                    )
+                    properties.update({"BidTakeoffFromUID": "", "BidTakeoffToUID": ""})
                 if annotation_type == "dimension":
                     properties.update(
                         {
@@ -1163,12 +1162,10 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         )
         conn.execute("INSERT INTO BidNamedViews (UID, Name) VALUES (1, 'Lobby')")
         conn.execute("INSERT INTO BidHotLinks (UID, BidPageViewUID) VALUES (1, 1)")
-
         result = _DimensionWriteOps(conn).delete_annotations(
             "bid.mdb",
             [("1", "namedview"), ("1", "hotlink")],
         )
-
         self.assertTrue(result)
         self.assertEqual(
             conn.execute("SELECT COUNT(*) FROM BidHotLinks").fetchone()[0],

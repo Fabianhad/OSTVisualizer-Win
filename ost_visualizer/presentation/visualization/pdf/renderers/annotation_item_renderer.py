@@ -29,6 +29,17 @@ AnnotationItemsResult = Tuple[
     "List[AnnotationItemResult]", "Dict[str, List[QGraphicsItem]]"
 ]
 DIMENSION_FONT_SIZE_ADJUSTMENT = 0.75
+NAMED_VIEW_FONT_SIZE_ADJUSTMENT = 0.75
+
+
+def create_named_view_label_font(coord_system) -> QFont:
+    scaled_font_size = max(
+        10,
+        coord_system.pdf_points_to_screen_pixels(12) * NAMED_VIEW_FONT_SIZE_ADJUSTMENT,
+    )
+    font = QFont("Arial", int(scaled_font_size))
+    font.setBold(True)
+    return font
 
 
 def build_dimension_path(dimension: Dict, coord_system) -> QPainterPath:
@@ -387,12 +398,7 @@ class AnnotationItemRenderer:
         rect_item.setZValue(2)
         results: List[AnnotationItemResult] = [(rect_item, None)]
         if content:
-            scaled_font_size = max(
-                10,
-                self._cs.pdf_points_to_screen_pixels(12) * self.FONT_SIZE_ADJUSTMENT,
-            )
-            font = QFont("Arial", int(scaled_font_size))
-            font.setBold(True)
+            font = create_named_view_label_font(self._cs)
             metrics = QFontMetrics(font)
             text_width = metrics.horizontalAdvance(content)
             text_height = metrics.height()

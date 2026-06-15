@@ -20,6 +20,13 @@ class TakeoffsChangedEvent:
 
 
 @dataclass
+class AnnotationsChangedEvent:
+    page_uid: str = ""
+    annotation_uids: list = field(default_factory=list)
+    annotation_types: list = field(default_factory=list)
+
+
+@dataclass
 class FileUnloadedEvent:
     file_path: str = ""
     active_context_removed: bool = True
@@ -77,6 +84,11 @@ class NamedViewCreatedEvent:
 
 
 @dataclass
+class NamedViewDeletedEvent:
+    named_view_uids: list = field(default_factory=list)
+
+
+@dataclass
 class OstStatusChangedEvent:
     active: bool = False
 
@@ -85,6 +97,7 @@ class AppEvents:
     FILE_OPENED = FileOpenedEvent
     DATABASE_REFRESHED = DatabaseRefreshedEvent
     TAKEOFFS_CHANGED = TakeoffsChangedEvent
+    ANNOTATIONS_CHANGED = AnnotationsChangedEvent
     FILE_UNLOADED = FileUnloadedEvent
     FILE_SELECTED = FileSelectedEvent
     APP_CONFIG_UPDATED = AppConfigUpdatedEvent
@@ -94,4 +107,5 @@ class AppEvents:
     HOTLINK_CLICKED = HotlinkClickedEvent
     NAMED_VIEW_RENAMED = NamedViewRenamedEvent
     NAMED_VIEW_CREATED = NamedViewCreatedEvent
+    NAMED_VIEW_DELETED = NamedViewDeletedEvent
     OST_STATUS_CHANGED = OstStatusChangedEvent

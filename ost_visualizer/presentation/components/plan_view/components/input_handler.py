@@ -357,6 +357,8 @@ class InputHandlerMixin:
                 super().mousePressEvent(event)
                 return
             self._finish_active_inline_text_edit(commit=True)
+            event.accept()
+            return
         rotate_handle_press = (
             event.button() == Qt.MouseButton.LeftButton
             and self._cursor_mode in ("rotate", "slope_rotate")
