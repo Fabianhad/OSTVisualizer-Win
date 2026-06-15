@@ -61,6 +61,9 @@
 - Fixed Named View placement to reject duplicate names without closing the inline editor, match draft label sizing to the committed label, and keep Hotlink/Named View placement tools active after successful placement.
 - Fixed Hotlink placement so the placement click no longer falls through into Hotlink navigation and opens the Annotation View window.
 - Loaded existing named views from older OST databases whose `BidNamedViews` table does not include the newer `Color` column, restoring named-view lists and hotlink navigation.
+- Kept newly placed annotations visible while the Annotation/View window is open by refreshing detached windows against their target page UID.
+- Constrained detached Annotation/View window startup geometry to one screen before maximizing, avoiding multi-monitor spanning restores.
+- Matched Edit Condition dimension input heights across Windows styles.
 - Fixed text annotation selected/edit outlines to use the real textbox resize bounds and clipped overflowing text to the textbox.
 - Centered area Display Dimension labels inside the takeoff while keeping Display Name labels below the takeoff.
 - Cleared stale condition text label selection outlines when selecting another label or text annotation.

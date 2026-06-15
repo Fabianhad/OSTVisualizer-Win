@@ -254,6 +254,26 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
         dialog.close()
 
+    def test_edit_condition_dimension_inputs_use_consistent_heights(self):
+        condition = Condition(
+            uid="c1",
+            name="Condition 1",
+            condition_type=Condition.TYPE_COUNT,
+            height=12.0,
+            width=24.0,
+            depth=6.0,
+            display_size=100.0,
+        )
+        dialog = self._make_dialog(condition)
+        dialog.show()
+        self.app.processEvents()
+        expected_height = dialog._display_size_edit.height()
+        self.assertEqual(dialog._dim_r0c1_stack.height(), expected_height)
+        self.assertEqual(dialog._dim_r0c3_stack.height(), expected_height)
+        self.assertEqual(dialog._height_edit.height(), expected_height)
+        self.assertEqual(dialog._width_edit.height(), expected_height)
+        dialog.close()
+
     def test_delete_key_invokes_condition_delete_for_tree_selection(self):
         sidebar, deleted = self._make_sidebar_with_selected_condition()
         sidebar.show()

@@ -755,13 +755,11 @@ class CtrlDragTests(unittest.TestCase):
         placement_release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
         view.mouseReleaseEvent(placement_release)
         self.assertFalse(view.annotation_place_release_consumed)
-
         view._cursor_mode = "select"
         press = FakeMouseEvent()
         view.mousePressEvent(press)
         click_release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
         view.mouseReleaseEvent(click_release)
-
         self.assertTrue(click_release.accepted)
         self.assertEqual(len(view.hotlink_clicked.emitted), 1)
 

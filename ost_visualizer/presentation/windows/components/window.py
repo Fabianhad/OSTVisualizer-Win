@@ -230,6 +230,32 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self._initial_geometry and not self._initial_geometry.isEmpty():
             self.restoreGeometry(self._initial_geometry)
 
+    def _available_geometry_for_initial_show(self) -> Optional[QtCore.QRect]:
+        center = self.frameGeometry().center()
+        screen = QtWidgets.QApplication.screenAt(center)
+        if screen is None:
+            screen = self.screen()
+        if screen is None and self.parentWidget() is not None:
+            screen = self.parentWidget().screen()
+        if screen is None:
+            screen = QtWidgets.QApplication.primaryScreen()
+        return screen.availableGeometry() if screen is not None else None
+
+    def _constrain_initial_geometry_to_single_screen(self) -> None:
+        available = self._available_geometry_for_initial_show()
+        if available is None or available.isEmpty():
+            return
+        frame = self.frameGeometry()
+        if available.contains(frame):
+            return
+        width = min(max(frame.width(), self.minimumWidth(), 1), available.width())
+        height = min(max(frame.height(), self.minimumHeight(), 1), available.height())
+        max_x = available.right() - width + 1
+        max_y = available.bottom() - height + 1
+        x = min(max(frame.x(), available.x()), max_x)
+        y = min(max(frame.y(), available.y()), max_y)
+        self.setGeometry(QtCore.QRect(x, y, width, height))
+
     def show_when_page_ready(self) -> None:
         if self._is_closing or self.isVisible():
             return
@@ -833,6 +859,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         geometry = self._initial_geometry
         if geometry and not geometry.isEmpty():
             self.restoreGeometry(geometry)
+        self._constrain_initial_geometry_to_single_screen()
         if self._initial_show_maximized:
             self.showMaximized()
             return

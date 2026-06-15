@@ -182,7 +182,7 @@ class DetachedPageViewManager(IShutdownAware):
         view = self.repository.get_active_view()
         if not view:
             return
-        if page_uid and view.page_uid != page_uid:
+        if page_uid and view.target_page_uid != page_uid:
             return
         self._refresh_signaler.request_refresh()
 

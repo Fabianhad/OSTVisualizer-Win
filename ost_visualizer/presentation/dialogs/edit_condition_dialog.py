@@ -133,6 +133,13 @@ _DEFAULT_COUNT_WIDTH_IN = 12.0
 _DEFAULT_COUNT_WIDTH_MM = 300.0
 
 
+def _match_stacked_line_edit_height(
+    stack: QtWidgets.QStackedWidget, *edits: QtWidgets.QLineEdit
+) -> None:
+    height = max(edit.sizeHint().height() for edit in edits)
+    stack.setFixedHeight(height)
+
+
 def _flbl(text: str) -> QtWidgets.QLabel:
     lbl = QtWidgets.QLabel(text)
     lbl.setAlignment(_ra)
@@ -462,6 +469,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         r0c1 = QtWidgets.QStackedWidget()
         r0c1.addWidget(self._height_edit)
         r0c1.addWidget(self._thickness_edit)
+        _match_stacked_line_edit_height(r0c1, self._height_edit, self._thickness_edit)
         self._dim_r0c1_stack = r0c1
         grid.addWidget(r0c1, 0, 1)
         self._dim_r0_lbl2 = _flbl("Width")
@@ -475,6 +483,7 @@ class EditConditionDialog(QtWidgets.QDialog):
         r0c3 = QtWidgets.QStackedWidget()
         r0c3.addWidget(self._width_edit)
         r0c3.addWidget(self._thickness_edit2)
+        _match_stacked_line_edit_height(r0c3, self._width_edit, self._thickness_edit2)
         self._dim_r0c3_stack = r0c3
         grid.addWidget(r0c3, 0, 3)
         self._dim_row1_label_stack = QtWidgets.QStackedWidget()

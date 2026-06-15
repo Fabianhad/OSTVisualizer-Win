@@ -188,6 +188,28 @@ class FakeDetachedWindow:
             self.installed_filters.remove(event_filter)
 
 
+class FakeInitialGeometryWindow:
+    def __init__(self, frame: QtCore.QRect, available: QtCore.QRect):
+        self._frame = QtCore.QRect(frame)
+        self._available = QtCore.QRect(available)
+        self.applied_geometry = None
+
+    def _available_geometry_for_initial_show(self):
+        return QtCore.QRect(self._available)
+
+    def frameGeometry(self):
+        return QtCore.QRect(self._frame)
+
+    def minimumWidth(self):
+        return 1
+
+    def minimumHeight(self):
+        return 1
+
+    def setGeometry(self, geometry):
+        self.applied_geometry = QtCore.QRect(geometry)
+
+
 class FakeDetachedPlanView:
     def __init__(self, annotations=None):
         self.annotations = {ann.uid: ann for ann in annotations or []}
@@ -419,6 +441,15 @@ class FakePageCombo:
 
 
 class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
+    def test_initial_show_geometry_is_constrained_to_one_screen(self):
+        window = FakeInitialGeometryWindow(
+            frame=QtCore.QRect(-120, 20, 4200, 1100),
+            available=QtCore.QRect(0, 0, 1920, 1040),
+        )
+        DetachedPageViewWindow._constrain_initial_geometry_to_single_screen(window)
+        self.assertIsNotNone(window.applied_geometry)
+        self.assertTrue(window._available.contains(window.applied_geometry))
+
     def _coordinator_for_window(
         self,
         window,
@@ -779,6 +810,19 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             calls,
             [("navigation", "view-1"), ("read_only", False), ("page", "p1")],
         )
+
+    def test_annotation_change_refresh_uses_target_page_uid(self):
+        calls = []
+        view = SimpleNamespace(target_page_uid="p1")
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = object()
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._refresh_signaler = SimpleNamespace(
+            request_refresh=lambda: calls.append("refresh")
+        )
+        manager._on_annotations_changed(page_uid="p1")
+        manager._on_annotations_changed(page_uid="p2")
+        self.assertEqual(calls, ["refresh"])
 
     def test_failed_detached_scale_save_refreshes_window_state(self):
         calls = []
