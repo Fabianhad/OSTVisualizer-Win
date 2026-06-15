@@ -906,27 +906,17 @@ class PlanViewActionHandler:
     def _insert_annotations_with_undo(
         self, bid_ref, specs: List[InsertAnnotationSpec]
     ) -> List[str]:
-        new_uids = self._ann_write_svc.insert_annotations(
-            bid_ref.file_path,
-            bid_ref.bid_uid,
-            specs,
-            reload_database=False,
-        )
+        new_uids = self._insert_annotations_fast(bid_ref, specs)
         if not new_uids:
             return []
-        self._add_inserted_annotations_to_model(new_uids, specs)
-        page_uids = self._annotation_page_uids_for_specs(specs[: len(new_uids)])
-        self._publish_annotations_changed_for_pages(
-            page_uids, new_uids, self._annotation_types_from_specs(specs)
-        )
+        current_specs = specs[: len(new_uids)]
         uid_type_set = {
-            (uid, specs[i].annotation_type) for i, uid in enumerate(new_uids)
+            (uid, current_specs[i].annotation_type) for i, uid in enumerate(new_uids)
         }
         keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
         if keys:
             self._plan_view.set_selected_uids(keys)
         current_uids = list(new_uids)
-        current_specs = specs[: len(new_uids)]
 
         def _undo_insert():
             if self._delete_annotations_fast(
@@ -963,10 +953,11 @@ class PlanViewActionHandler:
         )
         if not new_uids:
             return []
-        self._add_inserted_annotations_to_model(new_uids, specs)
-        page_uids = self._annotation_page_uids_for_specs(specs[: len(new_uids)])
+        inserted_specs = specs[: len(new_uids)]
+        self._add_inserted_annotations_to_model(new_uids, inserted_specs)
+        page_uids = self._annotation_page_uids_for_specs(inserted_specs)
         self._publish_annotations_changed_for_pages(
-            page_uids, new_uids, self._annotation_types_from_specs(specs)
+            page_uids, new_uids, self._annotation_types_from_specs(inserted_specs)
         )
         return list(new_uids)
 
@@ -1133,8 +1124,12 @@ class PlanViewActionHandler:
         annotation_uids: List[str],
         annotation_types: List[str],
     ) -> None:
-        event_types = [str(t) for t in annotation_types[: len(annotation_uids)]]
+        event_types = [str(t) for t in annotation_types]
+        seen = set()
         for page_uid in page_uids:
+            if not page_uid or page_uid in seen:
+                continue
+            seen.add(page_uid)
             self._event_bus.publish(
                 AppEvents.ANNOTATIONS_CHANGED,
                 page_uid=page_uid,

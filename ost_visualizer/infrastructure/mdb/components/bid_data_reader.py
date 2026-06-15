@@ -71,7 +71,7 @@ class BidDataReaderMixin:
                 connection, bid_uid, schema
             )
             bid_annotations = self._parse_bid_annotations_for_bid(
-                connection, bid_uid, bid_layers
+                connection, bid_uid, bid_layers, schema
             )
             bid_condition_folders = self._parse_bid_condition_folders_for_bid(
                 connection, bid_uid, schema

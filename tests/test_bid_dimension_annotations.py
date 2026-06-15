@@ -74,8 +74,29 @@ class _FakeConnection:
         return _FakeCursor(self.rows_by_table)
 
 
+class _FakeSchema:
+    def __init__(self, columns_by_table=None):
+        self.columns_by_table = columns_by_table or {}
+
+    def column_exists(self, table_name, column_name):
+        return column_name in self.columns_by_table.get(table_name, set())
+
+    def optional_column(self, table_name, column_name, default_sql, alias=None):
+        alias_name = alias or column_name
+        if self.column_exists(table_name, column_name):
+            return f"[{column_name}]"
+        return f"{default_sql} AS [{alias_name}]"
+
+
 class _Reader(AnnotationReaderMixin):
     pass
+
+
+def _annotation_reader_schema(*, named_view_has_color=True):
+    named_view_columns = {"UID", "BidUID", "BidPageUID", "Name", "Position"}
+    if named_view_has_color:
+        named_view_columns.add("Color")
+    return _FakeSchema({"BidNamedViews": named_view_columns})
 
 
 class _Schema:
@@ -200,6 +221,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             _FakeConnection({"BidDimensions": [row]}),
             "1",
             {"99": Layer(uid="99", name="Annotation", visible=True)},
+            _annotation_reader_schema(),
         )
         dimensions = [ann for ann in annotations if ann.is_dimension]
         self.assertEqual(len(dimensions), 1)
@@ -301,6 +323,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             _FakeConnection(rows_by_table),
             "1",
             {"99": Layer(uid="99", name="Annotation", visible=True)},
+            _annotation_reader_schema(),
         )
         by_type = {ann.annotation_type: ann for ann in annotations}
         self.assertEqual(
@@ -325,6 +348,114 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         )
         self.assertEqual(by_type["ink"].position, [0.0, 0.0, 5.0, 5.0, 10.0, 0.0])
         self.assertFalse(by_type["line"].properties)
+
+    def test_old_schema_named_view_without_color_column_uses_default_color(self):
+        row = SimpleNamespace(
+            UID=29280,
+            BidPageUID=133266,
+            Name="12/S3.04",
+            Color=None,
+            Position=encode_position(
+                [
+                    1577.16,
+                    2209.582,
+                    2305.93,
+                    2828.142,
+                    1577.16,
+                    2828.142,
+                    2305.93,
+                    2209.582,
+                    0.0,
+                ]
+            ),
+        )
+        annotations = _Reader()._parse_bid_annotations_for_bid(
+            _FakeConnection({"BidNamedViews": [row]}),
+            "731",
+            {"99": Layer(uid="99", name="Annotation", visible=True)},
+            _annotation_reader_schema(named_view_has_color=False),
+        )
+        named_views = [ann for ann in annotations if ann.is_namedview]
+        self.assertEqual(len(named_views), 1)
+        self.assertEqual(named_views[0].uid, "29280")
+        self.assertEqual(named_views[0].page_uid, "133266")
+        self.assertEqual(named_views[0].properties["Text"], "12/S3.04")
+        self.assertEqual(named_views[0].color, "#008000")
+        self.assertEqual(len(named_views[0].position), 9)
+
+    def test_new_schema_named_view_with_color_column_preserves_color(self):
+        row = SimpleNamespace(
+            UID=6519,
+            BidPageUID=6518,
+            Name="SP3.02/9",
+            Color=0x00AA00,
+            Position=encode_position(
+                [
+                    494.708,
+                    2832.397,
+                    1558.459,
+                    1437.986,
+                    494.708,
+                    1437.986,
+                    1558.459,
+                    2832.397,
+                    0.0,
+                ]
+            ),
+        )
+        annotations = _Reader()._parse_bid_annotations_for_bid(
+            _FakeConnection({"BidNamedViews": [row]}),
+            "5326",
+            {"99": Layer(uid="99", name="Annotation", visible=True)},
+            _annotation_reader_schema(named_view_has_color=True),
+        )
+        named_view = next(ann for ann in annotations if ann.is_namedview)
+        self.assertEqual(named_view.uid, "6519")
+        self.assertEqual(named_view.page_uid, "6518")
+        self.assertEqual(named_view.properties["Text"], "SP3.02/9")
+        self.assertEqual(named_view.color, "#00aa00")
+
+    def test_old_schema_hotlink_target_resolves_to_loaded_named_view(self):
+        named_view = SimpleNamespace(
+            UID=29280,
+            BidPageUID=133266,
+            Name="12/S3.04",
+            Color=None,
+            Position=encode_position(
+                [
+                    1577.16,
+                    2209.582,
+                    2305.93,
+                    2828.142,
+                    1577.16,
+                    2828.142,
+                    2305.93,
+                    2209.582,
+                    0.0,
+                ]
+            ),
+        )
+        hotlink = SimpleNamespace(
+            UID=68459,
+            BidPageUID=133230,
+            BidPageViewUID=29280,
+            BidLayerUID=99,
+            Color=255,
+            Position=encode_position([1719.334, 283.375]),
+        )
+        annotations = _Reader()._parse_bid_annotations_for_bid(
+            _FakeConnection({"BidNamedViews": [named_view], "BidHotLinks": [hotlink]}),
+            "731",
+            {"99": Layer(uid="99", name="Annotation", visible=True)},
+            _annotation_reader_schema(named_view_has_color=False),
+        )
+        named_view_uids = {ann.uid for ann in annotations if ann.is_namedview}
+        hotlinks = [ann for ann in annotations if ann.is_hotlink]
+        self.assertEqual(named_view_uids, {"29280"})
+        self.assertEqual(len(hotlinks), 1)
+        self.assertEqual(hotlinks[0].page_uid, "133230")
+        self.assertEqual(hotlinks[0].hotlink_target_view_uid, "29280")
+        self.assertIn(hotlinks[0].hotlink_target_view_uid, named_view_uids)
 
     def test_dimension_distance_uses_existing_feet_inches_rounding(self):
         self.assertEqual(format_dimension_distance(255.0), "21' - 3\"")

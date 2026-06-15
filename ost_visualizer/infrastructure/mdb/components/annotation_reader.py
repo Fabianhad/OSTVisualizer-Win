@@ -4,6 +4,7 @@ from ....domain.entities.annotation import BidAnnotation, int_color_to_hex
 from ....domain.entities.layer import BidLayers, get_layer_uid_by_name, is_layer_visible
 from ...parsers.position_parser import parse_position_bytes
 from ...parsers.utils.parser import decode_value
+from ..schema_compatibility import MdbSchemaInspector
 
 
 def _resolve_color(raw_color: Any, default: str = "#FF0000") -> str:
@@ -20,6 +21,7 @@ class AnnotationReaderMixin:
         connection: "pyodbc.Connection",
         bid_uid: str,
         bid_layers: BidLayers,
+        schema: MdbSchemaInspector,
     ) -> List[BidAnnotation]:
         bid_annotations: List[BidAnnotation] = []
         annotation_layer_uid = get_layer_uid_by_name(bid_layers, "Annotation")
@@ -354,9 +356,10 @@ class AnnotationReaderMixin:
             except pyodbc.Error as e:
                 pass
             try:
+                color_column = schema.optional_column("BidNamedViews", "Color", "NULL")
                 cursor.execute(
-                    """
-                    SELECT UID, BidPageUID, Name, Color, Position
+                    f"""
+                    SELECT UID, BidPageUID, Name, {color_column}, Position
                     FROM BidNamedViews
                     WHERE BidUID = ?
                     """,
