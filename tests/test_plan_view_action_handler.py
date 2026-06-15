@@ -316,6 +316,7 @@ class FakeWriteService:
     def __init__(self):
         self.calls = []
         self.condition_calls = []
+        self.condition_duplicate_calls = []
         self.update_condition_calls = []
         self.position_calls = []
         self.rotation_calls = []
@@ -370,6 +371,25 @@ class FakeWriteService:
     def reload_and_notify(self, db_path):
         self.reloads.append(db_path)
         return True
+
+    def duplicate_conditions_to_bid(
+        self,
+        db_path,
+        source_bid_uid,
+        target_bid_uid,
+        source_condition_uids,
+        reload_database=True,
+    ):
+        self.condition_duplicate_calls.append(
+            (
+                db_path,
+                source_bid_uid,
+                target_bid_uid,
+                list(source_condition_uids),
+                reload_database,
+            )
+        )
+        return {str(uid): f"new-{uid}" for uid in source_condition_uids}
 
     def update_condition(
         self,
@@ -2096,6 +2116,67 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertNotIn("t1", data.takeoffs)
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
 
+    def test_count_takeoff_delete_with_known_extras_uses_targeted_path(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="count", page_uid="p1", position=[4.0, 5.0]
+        )
+        data.extras["t1"] = {
+            "Count": 0.0,
+            "Quantity": 0.0,
+            "GUID": "{OLD}",
+            "NameFontName": "Arial",
+            "NameFontSize": 12,
+        }
+        write = FakeWriteService()
+        write.next_uids = ["t2"]
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        plan_view = FakePlanView(data)
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+        )
+        handler.on_elements_deleted(["t1"])
+        undo.undo()
+        undo.redo()
+        self.assertEqual([call[2] for call in write.delete_calls], [False, False])
+        self.assertEqual([call[3] for call in write.calls], [False])
+        self.assertNotIn("t2", data.takeoffs)
+        self.assertEqual(
+            [event for event, _kwargs in event_bus.events],
+            [AppEvents.TAKEOFFS_CHANGED] * 3,
+        )
+
+    def test_takeoff_delete_with_unknown_extras_keeps_full_reload(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+        )
+        data.extras["t1"] = {"UnsupportedColumn": "value"}
+        write = FakeWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+        )
+        handler.on_elements_deleted(["t1"])
+        self.assertEqual(write.delete_calls, [("bid.mdb", ["t1"], True)])
+        self.assertIn("t1", data.takeoffs)
+        self.assertEqual(event_bus.events, [])
+
     def test_failed_simple_takeoff_delete_reselects_original_uids(self):
         class FailingDeleteWriteService(FakeWriteService):
             def delete_takeoffs(self, db_path, uids, reload_database=True):
@@ -2402,6 +2483,43 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(write.calls[-1][2][0].raw_extras, {"Raw": "kept"})
         self.assertEqual(plan_view.selected, {"redo-parent", "redo-hole"})
 
+    def test_paste_parent_child_with_known_extras_keeps_full_reload(self):
+        parent = Takeoff(
+            uid="old-parent",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[0.0, 0.0, 2.0, 0.0, 2.0, 2.0],
+            parent_uid="0",
+        )
+        hole = Takeoff(
+            uid="old-hole",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[0.5, 0.5, 1.0, 0.5, 1.0, 1.0],
+            parent_uid="old-parent",
+        )
+        data = FakeProjectData()
+        write = FakeWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+        )
+        handler._clipboard_svc = FakeClipboard(
+            [parent, hole],
+            extras={"old-parent": {"GUID": "{P}"}, "old-hole": {"GUID": "{H}"}},
+        )
+        handler.on_paste_requested()
+        self.assertEqual([call[3] for call in write.calls], [True, True])
+        self.assertEqual(data.added_takeoffs, [])
+        self.assertEqual(event_bus.events, [])
+
     def test_intelligent_paste_enabled_pastes_regular_takeoff_at_mouse(self):
         source = Takeoff(
             uid="source",
@@ -2428,6 +2546,112 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(len(write.calls), 1)
         self.assertEqual(write.calls[0][2][0].position, [50.0, 75.0, 54.0, 75.0])
         self.assertEqual(plan_view.intelligent_paste_calls, [(["100"], (10.0, 20.0))])
+
+    def test_count_takeoff_paste_with_known_extras_uses_targeted_path(self):
+        source = Takeoff(
+            uid="source-count",
+            condition_uid="count",
+            page_uid="source-page",
+            position=[10.0, 20.0],
+            parent_uid="0",
+        )
+        data = FakeProjectData()
+        plan_view = FakePlanView(data)
+        plan_view.mouse_ost_position = (50.0, 75.0)
+        write = FakeWriteService()
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+        )
+        handler._clipboard_svc = FakeClipboard(
+            [source],
+            extras={
+                "source-count": {
+                    "Count": 0.0,
+                    "Quantity": 0.0,
+                    "GUID": "{OLD}",
+                    "NameFontName": "Arial",
+                    "NameFontSize": 12,
+                }
+            },
+        )
+        handler.on_paste_requested()
+        undo.undo()
+        undo.redo()
+        self.assertEqual([call[3] for call in write.calls], [False, False])
+        self.assertEqual([call[2] for call in write.delete_calls], [False])
+        self.assertEqual(write.calls[0][2][0].position, [50.0, 75.0])
+        self.assertEqual(plan_view.selected, {"101"})
+        self.assertEqual(len(data.takeoffs), 1)
+        pasted = data.takeoffs["101"]
+        self.assertEqual(pasted.condition_uid, "count")
+        self.assertEqual(pasted.name_font_name, "Arial")
+        self.assertEqual(pasted.name_font_size, 12)
+        self.assertEqual(
+            [event for event, _kwargs in event_bus.events],
+            [AppEvents.TAKEOFFS_CHANGED] * 3,
+        )
+
+    def test_takeoff_paste_with_unknown_extras_keeps_full_reload(self):
+        source = self._copied_takeoff()
+        data = FakeProjectData()
+        write = FakeWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+        )
+        handler._clipboard_svc = FakeClipboard(
+            [source], extras={"source": {"UnsupportedColumn": "value"}}
+        )
+        handler.on_paste_requested()
+        self.assertEqual(write.calls[0][3], True)
+        self.assertEqual(data.added_takeoffs, [])
+        self.assertEqual(event_bus.events, [])
+
+    def test_cross_bid_takeoff_paste_after_condition_remap_keeps_full_reload(self):
+        source = self._copied_takeoff()
+        data = FakeProjectData()
+        write = FakeWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+        )
+        handler._clipboard_svc = FakeClipboard(
+            [source],
+            source_bid_uid="source-bid",
+            source_file_path="bid.mdb",
+        )
+        handler.on_paste_requested()
+        self.assertEqual(
+            write.condition_duplicate_calls,
+            [("bid.mdb", "source-bid", "7", ["c1"], False)],
+        )
+        self.assertEqual(write.calls[0][2][0].condition_uid, "new-c1")
+        self.assertEqual(write.calls[0][3], True)
+        self.assertEqual(data.added_takeoffs, [])
+        self.assertEqual(event_bus.events, [])
 
     def test_intelligent_paste_disabled_uses_standard_offset_paste(self):
         source = Takeoff(
@@ -2533,6 +2757,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_paste_requested()
         self.assertEqual(len(write.calls), 1)
         self.assertEqual(len(ann_write.insert_calls), 1)
+        self.assertFalse(write.calls[0][3])
+        self.assertFalse(ann_write.insert_calls[0][4])
         self.assertEqual(write.calls[0][2][0].position, [50.0, 75.0, 54.0, 75.0])
         self.assertEqual(
             ann_write.insert_calls[0][2][0].position,

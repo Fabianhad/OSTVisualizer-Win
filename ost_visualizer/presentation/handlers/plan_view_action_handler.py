@@ -36,6 +36,38 @@ from ..utils.named_view_validation import (
 )
 
 logger = logging.getLogger(__name__)
+_SAME_BID_FAST_TAKEOFF_EXTRA_COLUMNS = frozenset(
+    {
+        "BidZoneUID",
+        "BidTypAreaUID",
+        "No",
+        "Quantity",
+        "Count",
+        "GridOffsetX",
+        "GridOffsetY",
+        "GridRotation",
+        "FontName",
+        "FontColor",
+        "FontSize",
+        "FontBold",
+        "FontItalic",
+        "FontUnderline",
+        "TypGroupTakeoffUID",
+        "TypPageTakeoffUID",
+        "TakeoffModified",
+        "TypGroupUID",
+        "TypGroupMarkerUID",
+        "FlipX",
+        "FlipY",
+        "GUID",
+        "NameFontName",
+        "NameFontColor",
+        "NameFontSize",
+        "NameFontBold",
+        "NameFontItalic",
+        "NameFontUnderline",
+    }
+)
 
 
 class PlanViewActionHandler:
@@ -358,6 +390,12 @@ class PlanViewActionHandler:
                 page_uids.append(spec.page_uid)
         self._publish_takeoffs_changed_for_pages(page_uids, list(new_uids))
         return new_uids
+
+    def _same_bid_takeoff_extras_allow_fast_refresh(self, extras: dict) -> bool:
+        return set(extras).issubset(_SAME_BID_FAST_TAKEOFF_EXTRA_COLUMNS)
+
+    def _takeoff_specs_allow_fast_refresh(self, specs: List[InsertTakeoffSpec]) -> bool:
+        return all(not spec.raw_extras for spec in specs)
 
     def on_assign_to_area(self, uids: list) -> None:
         if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
@@ -1180,7 +1218,9 @@ class PlanViewActionHandler:
     def _insert_takeoffs_with_undo(
         self, bid_ref, specs: List[InsertTakeoffSpec], fast_refresh: bool = False
     ) -> bool:
-        use_fast_refresh = fast_refresh and all(not spec.raw_extras for spec in specs)
+        use_fast_refresh = fast_refresh and self._takeoff_specs_allow_fast_refresh(
+            specs
+        )
         new_uids = self._write_svc.insert_takeoffs(
             bid_ref.file_path,
             bid_ref.bid_uid,
@@ -1229,20 +1269,53 @@ class PlanViewActionHandler:
     ) -> None:
         takeoffs = []
         for uid, spec in zip(new_uids, specs):
-            takeoffs.append(
-                Takeoff(
-                    uid=str(uid),
-                    condition_uid=str(spec.condition_uid),
-                    page_uid=str(spec.page_uid),
-                    area_uid=str(spec.area_uid or "0"),
-                    position=list(spec.position),
-                    rotation=spec.rotation,
-                    curve=spec.curve,
-                    parent_uid=str(spec.parent_uid or "0"),
-                    is_negative=spec.is_negative,
-                )
+            takeoff = Takeoff(
+                uid=str(uid),
+                condition_uid=str(spec.condition_uid),
+                page_uid=str(spec.page_uid),
+                area_uid=str(spec.area_uid or "0"),
+                position=list(spec.position),
+                rotation=spec.rotation,
+                curve=spec.curve,
+                parent_uid=str(spec.parent_uid or "0"),
+                is_negative=spec.is_negative,
             )
+            self._apply_takeoff_raw_extras(takeoff, spec.raw_extras)
+            takeoffs.append(takeoff)
         self._data_svc.add_takeoffs(takeoffs)
+
+    @staticmethod
+    def _int_extra_or_none(extras: dict, key: str, *, abs_value: bool = False):
+        value = extras.get(key)
+        if value in (None, ""):
+            return None
+        value = int(value)
+        return abs(value) if abs_value else value
+
+    @staticmethod
+    def _str_extra_or_none(extras: dict, key: str):
+        value = extras.get(key)
+        return str(value) if value else None
+
+    def _apply_takeoff_raw_extras(self, takeoff: Takeoff, extras: dict) -> None:
+        if not extras:
+            return
+        takeoff.dimension_font_name = self._str_extra_or_none(extras, "FontName")
+        takeoff.dimension_font_color = self._int_extra_or_none(extras, "FontColor")
+        takeoff.dimension_font_size = self._int_extra_or_none(
+            extras, "FontSize", abs_value=True
+        )
+        takeoff.dimension_font_bold = bool(extras.get("FontBold", False))
+        takeoff.dimension_font_italic = bool(extras.get("FontItalic", False))
+        takeoff.dimension_font_underline = bool(extras.get("FontUnderline", False))
+        takeoff.name_font_name = self._str_extra_or_none(extras, "NameFontName")
+        takeoff.name_font_color = self._int_extra_or_none(extras, "NameFontColor")
+        takeoff.name_font_size = self._int_extra_or_none(
+            extras, "NameFontSize", abs_value=True
+        )
+        takeoff.name_font_bold = bool(extras.get("NameFontBold", False))
+        takeoff.name_font_italic = bool(extras.get("NameFontItalic", False))
+        takeoff.name_font_underline = bool(extras.get("NameFontUnderline", False))
 
     def on_elements_deleted(self, uids: list) -> None:
         if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
@@ -1293,13 +1366,15 @@ class PlanViewActionHandler:
         takeoffs_deleted = False
         annotations_deleted = False
         simple_takeoff_delete = bool(saved_takeoffs) and not saved_annotations
+        saved_takeoff_extras = {}
         if simple_takeoff_delete:
             for takeoff in saved_takeoffs:
                 if takeoff.parent_uid not in ("0", "", None):
                     simple_takeoff_delete = False
                     break
                 extras = self._data_svc.get_takeoff_extras(takeoff.uid)
-                if extras:
+                saved_takeoff_extras[takeoff.uid] = dict(extras)
+                if not self._same_bid_takeoff_extras_allow_fast_refresh(extras):
                     simple_takeoff_delete = False
                     break
         if simple_takeoff_delete:
@@ -1313,6 +1388,7 @@ class PlanViewActionHandler:
                     curve=t.curve,
                     rotation=t.rotation,
                     is_negative=t.is_negative,
+                    raw_extras=dict(saved_takeoff_extras.get(t.uid, {})),
                 )
                 for t in saved_takeoffs
             ]
@@ -1506,6 +1582,25 @@ class PlanViewActionHandler:
         )
         if condition_uid_map is None:
             return
+        clipboard_takeoffs = regulars + holes
+        takeoff_extras_by_uid = {
+            str(t.uid): dict(self._clipboard_svc.get_extras(t.uid))
+            for t in clipboard_takeoffs
+        }
+        same_bid_paste = (
+            source_bid_uid == bid_ref.bid_uid and source_file_path == bid_ref.file_path
+        )
+        use_fast_takeoff_paste = (
+            bool(clipboard_takeoffs)
+            and not holes
+            and same_bid_paste
+            and all(
+                self._same_bid_takeoff_extras_allow_fast_refresh(
+                    takeoff_extras_by_uid[str(t.uid)]
+                )
+                for t in clipboard_takeoffs
+            )
+        )
         paste_dx, paste_dy, intelligent_source_anchor = self._paste_translation(
             regulars, clipboard_anns
         )
@@ -1521,14 +1616,17 @@ class PlanViewActionHandler:
                 curve=t.curve,
                 rotation=t.rotation,
                 is_negative=t.is_negative,
-                raw_extras=dict(self._clipboard_svc.get_extras(t.uid)),
+                raw_extras=dict(takeoff_extras_by_uid[str(t.uid)]),
                 source_bid_uid=source_bid_uid,
             )
             for t in regulars
         ]
         new_regular_uids = (
             self._write_svc.insert_takeoffs(
-                bid_ref.file_path, bid_ref.bid_uid, regular_specs
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                regular_specs,
+                reload_database=not use_fast_takeoff_paste,
             )
             if regular_specs
             else []
@@ -1549,14 +1647,17 @@ class PlanViewActionHandler:
                 curve=t.curve,
                 rotation=t.rotation,
                 is_negative=t.is_negative,
-                raw_extras=dict(self._clipboard_svc.get_extras(t.uid)),
+                raw_extras=dict(takeoff_extras_by_uid[str(t.uid)]),
                 source_bid_uid=source_bid_uid,
             )
             for t in holes
         ]
         new_hole_uids = (
             self._write_svc.insert_takeoffs(
-                bid_ref.file_path, bid_ref.bid_uid, hole_specs
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                hole_specs,
+                reload_database=not use_fast_takeoff_paste,
             )
             if hole_specs
             else []
@@ -1569,8 +1670,9 @@ class PlanViewActionHandler:
             str(pasted_source_items[i].uid): str(new_takeoff_uids[i])
             for i in range(len(new_takeoff_uids))
         }
-        pasted_takeoffs = [
-            Takeoff(
+        pasted_takeoffs = []
+        for i in range(len(new_takeoff_uids)):
+            takeoff = Takeoff(
                 uid=new_takeoff_uids[i],
                 condition_uid=takeoff_specs[i].condition_uid,
                 page_uid=page_uid,
@@ -1581,12 +1683,13 @@ class PlanViewActionHandler:
                 rotation=pasted_source_items[i].rotation,
                 is_negative=pasted_source_items[i].is_negative,
             )
-            for i in range(len(new_takeoff_uids))
-        ]
+            self._apply_takeoff_raw_extras(takeoff, takeoff_specs[i].raw_extras)
+            pasted_takeoffs.append(takeoff)
+        if pasted_takeoffs and use_fast_takeoff_paste:
+            self._data_svc.add_takeoffs(pasted_takeoffs)
+            self._publish_takeoffs_changed_for_pages([page_uid], new_takeoff_uids)
         pasted_takeoff_extras = {
-            pasted_source_items[i].uid: dict(
-                self._clipboard_svc.get_extras(pasted_source_items[i].uid)
-            )
+            pasted_source_items[i].uid: dict(takeoff_specs[i].raw_extras)
             for i in range(len(new_takeoff_uids))
         }
         ann_specs = []
@@ -1605,13 +1708,22 @@ class PlanViewActionHandler:
             )
         new_ann_uids: list = []
         if ann_specs:
-            new_ann_uids = self._ann_write_svc.insert_annotations(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                ann_specs,
-                ref_remap=PasteRefRemap(takeoff_uids=dict(takeoff_uid_remap)),
-            )
+            ref_remap = PasteRefRemap(takeoff_uids=dict(takeoff_uid_remap))
+            use_fast_annotation_paste = not pasted_takeoffs or use_fast_takeoff_paste
+            if use_fast_annotation_paste:
+                new_ann_uids = self._insert_annotations_fast(
+                    bid_ref, ann_specs, ref_remap=ref_remap
+                )
+            else:
+                new_ann_uids = self._ann_write_svc.insert_annotations(
+                    bid_ref.file_path,
+                    bid_ref.bid_uid,
+                    ann_specs,
+                    ref_remap=ref_remap,
+                )
             ann_specs = ann_specs[: len(new_ann_uids)]
+        else:
+            use_fast_annotation_paste = False
         takeoff_uids = {t.uid for t in pasted_takeoffs}
         ann_uid_type_set = set()
         for i, uid in enumerate(new_ann_uids):
@@ -1639,6 +1751,12 @@ class PlanViewActionHandler:
                 source_parent_uids=[t.parent_uid for t in pasted_source_items],
                 source_bid_uid=source_bid_uid,
                 takeoff_extras=pasted_takeoff_extras,
+                insert_takeoffs_fn=(
+                    self._insert_takeoffs_fast if use_fast_takeoff_paste else None
+                ),
+                delete_takeoffs_fn=(
+                    self._delete_takeoffs_fast if use_fast_takeoff_paste else None
+                ),
             )
             paste_cmds.append(takeoff_cmd)
         if new_ann_uids and ann_specs:
@@ -1650,6 +1768,16 @@ class PlanViewActionHandler:
                     write_svc=self._ann_write_svc,
                     plan_view=self._plan_view,
                     sibling_takeoff_cmd=takeoff_cmd,
+                    insert_annotations_fn=(
+                        self._insert_annotations_fast
+                        if use_fast_annotation_paste
+                        else None
+                    ),
+                    delete_annotations_fn=(
+                        self._delete_annotations_fast
+                        if use_fast_annotation_paste
+                        else None
+                    ),
                 )
             )
         if paste_cmds:
