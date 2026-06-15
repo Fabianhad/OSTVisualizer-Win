@@ -248,6 +248,8 @@ class InputHandlerHarness(
         self.editing_named_view_uids = []
         self.finished_inline_edits = []
         self.annotation_place_presses = []
+        self.annotation_place_releases = []
+        self.annotation_place_release_consumed = False
         self._editing_text_annotation_uid = None
         self._editing_named_view_uid = None
 
@@ -302,6 +304,14 @@ class InputHandlerHarness(
         self.annotation_place_presses.append(event.pos())
         event.accept()
         return True
+
+    def handle_annotation_place_release(self, event):
+        self.annotation_place_releases.append(event.pos())
+        if self.annotation_place_release_consumed:
+            self.annotation_place_release_consumed = False
+            event.accept()
+            return True
+        return False
 
     def _refresh_condition_text_labels_for_takeoff(self, takeoff_uid):
         path_item = None
@@ -723,6 +733,36 @@ class CtrlDragTests(unittest.TestCase):
         second_release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
         view.mouseReleaseEvent(second_release)
         self.assertTrue(second_release.accepted)
+        self.assertEqual(len(view.hotlink_clicked.emitted), 1)
+
+    def test_hotlink_placement_release_does_not_emit_hotlink_clicked(self):
+        view = self._make_hotlink_view(selected=False)
+        view._cursor_mode = "annotation_place"
+        view._annotation_place_type = "hotlink"
+        view.annotation_place_release_consumed = True
+        release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(release)
+        self.assertTrue(release.accepted)
+        self.assertEqual(len(view.annotation_place_releases), 1)
+        self.assertEqual(view.hotlink_clicked.emitted, [])
+        self.assertFalse(view.annotation_place_release_consumed)
+
+    def test_real_hotlink_click_after_placement_release_still_opens(self):
+        view = self._make_hotlink_view(selected=False)
+        view._cursor_mode = "annotation_place"
+        view._annotation_place_type = "hotlink"
+        view.annotation_place_release_consumed = True
+        placement_release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(placement_release)
+        self.assertFalse(view.annotation_place_release_consumed)
+
+        view._cursor_mode = "select"
+        press = FakeMouseEvent()
+        view.mousePressEvent(press)
+        click_release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(click_release)
+
+        self.assertTrue(click_release.accepted)
         self.assertEqual(len(view.hotlink_clicked.emitted), 1)
 
     def test_suppressed_hotlink_release_away_from_hotlink_clears_guard(self):
@@ -1865,6 +1905,16 @@ class AnnotationPlacementTests(unittest.TestCase):
         self.assertEqual(view.annotation_created.emitted, [])
         self.assertEqual(view._selected_uids, set())
         self.assertEqual(view._annotation_place_type, "hotlink")
+
+    def test_hotlink_annotation_release_consumes_placement_gesture(self):
+        view = AnnotationPlacementHarness()
+        self.assertTrue(view._enter_annotation_place_mode("hotlink"))
+        press = _PlacementMouseEvent(9, 11)
+        self.assertTrue(view.handle_annotation_place_press(press))
+        release = _PlacementMouseEvent(9, 11)
+        self.assertTrue(view.handle_annotation_place_release(release))
+        self.assertTrue(release.accepted)
+        self.assertFalse(view._suppress_next_hotlink_click)
 
     def test_hotlink_click_suppression_is_cleared_when_switching_annotation_tools(self):
         view = AnnotationPlacementHarness()

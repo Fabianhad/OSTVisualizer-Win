@@ -1040,6 +1040,12 @@ class PlacementModeMixin:
         return True
 
     def handle_annotation_place_release(self, event) -> bool:
+        if self._annotation_place_type in _POINT_ANNOTATION_TYPES:
+            if not self._suppress_next_hotlink_click:
+                return False
+            self._suppress_next_hotlink_click = False
+            event.accept()
+            return True
         if (
             self._annotation_place_type not in PLACEABLE_ANNOTATION_TYPES
             or not self._annotation_place_points
