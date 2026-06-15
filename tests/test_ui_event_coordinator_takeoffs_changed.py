@@ -369,6 +369,25 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.main_window.menu_controller.updates, 1)
         self.assertEqual(coordinator._toolbar.refreshes, 1)
 
+    def test_takeoffs_changed_uses_active_page_when_model_selection_is_empty(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.project_data = FakeProjectData()
+        coordinator.project_data.selected_page_uids = []
+        coordinator.takeoff_sidebar = FakeTakeoffSidebar()
+        coordinator._page_settings_bar = FakePageSettingsBar()
+        coordinator._viewer = FakeViewer()
+        coordinator._sidebar = FakeSidebar()
+        coordinator._toolbar = FakeToolbar()
+        coordinator.main_window = FakeMainWindow()
+        coordinator._pending_hotlink_page_uid = None
+        coordinator._pending_hotlink_named_view = None
+
+        coordinator._on_takeoffs_changed(page_uid="page-1", takeoff_uids=["t-1"])
+
+        self.assertEqual(coordinator._viewer.plan_pages, ["page-1"])
+        self.assertEqual(coordinator._viewer.viewer_pages, [["page-1"]])
+
     def test_native_scene_update_consumes_mesh_geometry_dtos(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._nav = FakeNav()
