@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QPainterPath, QPen, QTransform
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsPathItem,
+    QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsTextItem,
 )
@@ -1133,6 +1134,72 @@ class CtrlDragTests(unittest.TestCase):
         self.assertFalse(event.accepted)
         self.assertEqual(calls, [])
         self.assertEqual(view.cursor_mode_change_requested.emitted, [])
+
+    def test_ctrl_r_clears_snap_preview_without_removing_selection_items(self):
+        view = self._make_view({"t1"})
+        scene = QGraphicsScene()
+        snap_preview = QGraphicsRectItem(0.0, 0.0, 4.0, 4.0)
+        selection_item = QGraphicsPathItem()
+        scene.addItem(snap_preview)
+        scene.addItem(selection_item)
+        view._scene = scene
+        view._place_preview_items = [snap_preview]
+        view._place_flashing = False
+        view._backout_orig_parent_path = None
+        view.clear_place_preview = lambda: PlacementModeMixin.clear_place_preview(view)
+        view._rotate_handle_uid = None
+        view.cursor_mode_change_requested = FakeSignal()
+        view._create_rotate_handle = lambda uids: set(uids) == {"t1"}
+
+        def apply_cursor_mode(mode):
+            view._cursor_mode = mode
+
+        view._apply_cursor_mode = apply_cursor_mode
+        view.copy_selected_pdf_text = lambda: False
+        event = FakeKeyEvent(
+            Qt.Key.Key_R,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        InputHandlerMixin.keyPressEvent(view, event)
+        self.assertTrue(event.accepted)
+        self.assertEqual(view._cursor_mode, "rotate")
+        self.assertEqual(view._place_preview_items, [])
+        self.assertIsNone(snap_preview.scene())
+        self.assertIs(selection_item.scene(), scene)
+        self.assertEqual(view.cursor_mode_change_requested.emitted, [("rotate",)])
+
+    def test_ctrl_shift_r_clears_snap_preview_before_slope_rotate(self):
+        view = self._make_view({"t1"})
+        scene = QGraphicsScene()
+        snap_preview = QGraphicsRectItem(0.0, 0.0, 4.0, 4.0)
+        selection_item = QGraphicsPathItem()
+        scene.addItem(snap_preview)
+        scene.addItem(selection_item)
+        view._scene = scene
+        view._place_preview_items = [snap_preview]
+        view._place_flashing = False
+        view._backout_orig_parent_path = None
+        view.clear_place_preview = lambda: PlacementModeMixin.clear_place_preview(view)
+        view._cursor_mode = "select"
+        view.cursor_mode_change_requested = FakeSignal()
+        view._create_slope_rotate_handle = lambda: True
+
+        def apply_cursor_mode(mode):
+            view._cursor_mode = mode
+
+        view._apply_cursor_mode = apply_cursor_mode
+        view.copy_selected_pdf_text = lambda: False
+        event = FakeKeyEvent(
+            Qt.Key.Key_R,
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+        )
+        InputHandlerMixin.keyPressEvent(view, event)
+        self.assertTrue(event.accepted)
+        self.assertEqual(view._cursor_mode, "slope_rotate")
+        self.assertEqual(view._place_preview_items, [])
+        self.assertIsNone(snap_preview.scene())
+        self.assertIs(selection_item.scene(), scene)
+        self.assertEqual(view.cursor_mode_change_requested.emitted, [("slope_rotate",)])
 
     def test_multi_takeoff_drag_preview_uses_snapped_item_deltas(self):
         view = self._make_view({"t1", "t2"})

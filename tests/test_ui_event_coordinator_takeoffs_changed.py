@@ -463,7 +463,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator._toolbar.select_checked, 1)
         self.assertEqual(highlighted, [{"c1"}])
 
-    def test_clearing_takeoff_selection_clears_takeoff_owned_condition_highlight(self):
+    def test_clearing_takeoff_selection_keeps_takeoff_selected_condition(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
 
         class UiState:
@@ -495,10 +495,100 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
         coordinator._takeoff_highlight_condition_uids = set()
+        coordinator._last_takeoff_selection_context_by_source = {}
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator._sync_selection(coordinator._SOURCE_2D, [])
-        self.assertEqual(coordinator.ui_state_manager.highlighted_condition_uids, set())
-        self.assertEqual(coordinator.conditions_sidebar.highlights, [{"c1"}, set()])
+        self.assertEqual(
+            coordinator.ui_state_manager.highlighted_condition_uids, {"c1"}
+        )
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [{"c1"}])
+
+    def test_repeated_takeoff_selection_sync_does_not_override_dialog_condition(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+
+        class UiState:
+            def __init__(self):
+                self.highlighted_condition_uids = set()
+
+            def set_highlighted_conditions(self, uids):
+                self.highlighted_condition_uids = set(uids)
+
+        class ProjectData:
+            def get_all_takeoffs(self):
+                return [type("Takeoff", (), {"uid": "t1", "condition_uid": "c1"})()]
+
+        class Sidebar:
+            def __init__(self):
+                self.highlights = []
+
+            def highlight_conditions(self, uids):
+                self.highlights.append(set(uids))
+
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator.conditions_sidebar = Sidebar()
+        coordinator.plan_view = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
+        coordinator._placement = FakePlacement()
+        coordinator._toolbar = FakeToolbar()
+        coordinator._tab_widget = FakeTabWidget(index=1)
+        coordinator._nav = type("Nav", (), {"is_refreshing": False})()
+        coordinator._takeoff_highlight_condition_uids = set()
+        coordinator._last_takeoff_selection_context_by_source = {}
+        coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
+        coordinator.highlight_sidebar({"c2"})
+        coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
+        self.assertEqual(
+            coordinator.ui_state_manager.highlighted_condition_uids, {"c2"}
+        )
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [{"c1"}, {"c2"}])
+
+    def test_new_takeoff_selection_after_dialog_condition_still_updates_condition(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+
+        class UiState:
+            def __init__(self):
+                self.highlighted_condition_uids = set()
+
+            def set_highlighted_conditions(self, uids):
+                self.highlighted_condition_uids = set(uids)
+
+        class ProjectData:
+            def get_all_takeoffs(self):
+                return [
+                    type("Takeoff", (), {"uid": "t1", "condition_uid": "c1"})(),
+                    type("Takeoff", (), {"uid": "t2", "condition_uid": "c3"})(),
+                ]
+
+        class Sidebar:
+            def __init__(self):
+                self.highlights = []
+
+            def highlight_conditions(self, uids):
+                self.highlights.append(set(uids))
+
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator.conditions_sidebar = Sidebar()
+        coordinator.plan_view = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
+        coordinator._placement = FakePlacement()
+        coordinator._toolbar = FakeToolbar()
+        coordinator._tab_widget = FakeTabWidget(index=1)
+        coordinator._nav = type("Nav", (), {"is_refreshing": False})()
+        coordinator._takeoff_highlight_condition_uids = set()
+        coordinator._last_takeoff_selection_context_by_source = {}
+        coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
+        coordinator.highlight_sidebar({"c2"})
+        coordinator._sync_selection(coordinator._SOURCE_2D, ["t2"])
+        self.assertEqual(
+            coordinator.ui_state_manager.highlighted_condition_uids, {"c3"}
+        )
+        self.assertEqual(
+            coordinator.conditions_sidebar.highlights, [{"c1"}, {"c2"}, {"c3"}]
+        )
 
     def test_late_takeoff_selection_signal_after_cleanup_is_ignored(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -533,6 +623,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
         coordinator._takeoff_highlight_condition_uids = set()
+        coordinator._last_takeoff_selection_context_by_source = {}
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator._sync_selection(coordinator._SOURCE_2D, [])
         self.assertEqual(
@@ -862,6 +953,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._pending_takeoff_selected_area_uid = ""
         coordinator._pending_takeoff_place_condition_uid = None
         coordinator._pending_takeoff_place_condition_uids = []
+        coordinator._last_takeoff_selection_context_by_source = {}
         coordinator._page_settings_bar = None
         coordinator._clear_mesh_replay_buffer = lambda: None
         return coordinator

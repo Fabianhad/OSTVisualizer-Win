@@ -1882,9 +1882,11 @@ class InputHandlerMixin:
                         self._remove_rotate_handle()
                         self._apply_cursor_mode("select")
                         self.cursor_mode_change_requested.emit("select")
-                    elif self._create_slope_rotate_handle():
-                        self._apply_cursor_mode("slope_rotate")
-                        self.cursor_mode_change_requested.emit("slope_rotate")
+                    else:
+                        self.clear_place_preview()
+                        if self._create_slope_rotate_handle():
+                            self._apply_cursor_mode("slope_rotate")
+                            self.cursor_mode_change_requested.emit("slope_rotate")
                     event.accept()
                     return
                 if self._rotate_handle_uid is not None:
@@ -1892,6 +1894,7 @@ class InputHandlerMixin:
                     self._apply_cursor_mode("select")
                     self.cursor_mode_change_requested.emit("select")
                 else:
+                    self.clear_place_preview()
                     if self._create_rotate_handle(self._selected_uids):
                         self._apply_cursor_mode("rotate")
                         self.cursor_mode_change_requested.emit("rotate")

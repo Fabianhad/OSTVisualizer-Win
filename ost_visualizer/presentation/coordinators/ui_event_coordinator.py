@@ -175,6 +175,9 @@ class UIEventCoordinator:
         self._pending_takeoff_place_condition_uid: Optional[str] = None
         self._pending_takeoff_place_condition_uids: List[str] = []
         self._takeoff_highlight_condition_uids: set = set()
+        self._last_takeoff_selection_context_by_source: Dict[
+            str, Tuple[Tuple[str, ...], Tuple[str, ...]]
+        ] = {}
         self._pending_hotlink_page_uid: Optional[str] = None
         self._pending_hotlink_named_view: Optional[NamedView] = None
         self._plan_view_signaler = _MainThreadSignaler(main_window)
@@ -533,6 +536,7 @@ class UIEventCoordinator:
     def _reset_takeoff_workspace_state(self) -> None:
         self._takeoff_workspace_bid_ref = None
         self._clear_staged_takeoff_restore()
+        self._last_takeoff_selection_context_by_source.clear()
         self._sidebar.clear_sidebars()
         if self._page_settings_bar:
             self._page_settings_bar.clear_bid()
@@ -778,8 +782,15 @@ class UIEventCoordinator:
             return
         if takeoff_uids:
             cond_uids = self._takeoff_uids_to_condition_uids(takeoff_uids)
+            selection_context = (tuple(sorted(takeoff_uids)), tuple(sorted(cond_uids)))
+            selection_changed = (
+                self._last_takeoff_selection_context_by_source.get(source)
+                != selection_context
+            )
+            self._last_takeoff_selection_context_by_source[source] = selection_context
             self._takeoff_highlight_condition_uids = set(cond_uids)
-            self.highlight_sidebar(cond_uids)
+            if selection_changed:
+                self.highlight_sidebar(cond_uids)
             if source != self._SOURCE_2D and self.plan_view:
                 self.plan_view.set_selected_uids(set(takeoff_uids), emit=False)
             if source != self._SOURCE_3D and self.opengl_viewer:
@@ -798,19 +809,7 @@ class UIEventCoordinator:
                 ):
                     self._placement.enter(new_uid, list(cond_uids))
         else:
-            takeoff_highlight = set(self._takeoff_highlight_condition_uids)
-            placement_owns_highlight = bool(
-                self._placement.is_active
-                and self._placement.condition_uid
-                and self._placement.condition_uid in takeoff_highlight
-            )
-            if (
-                takeoff_highlight
-                and not placement_owns_highlight
-                and self.ui_state_manager.highlighted_condition_uids
-                == takeoff_highlight
-            ):
-                self.highlight_sidebar(set())
+            self._last_takeoff_selection_context_by_source[source] = ((), ())
             self._takeoff_highlight_condition_uids = set()
             if source != self._SOURCE_2D and self.plan_view:
                 self.plan_view.clear_selection(emit=False)
