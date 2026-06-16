@@ -19,6 +19,7 @@ from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.components.plan_view.components.drag_handler import (
     DragHandlerMixin,
 )
@@ -633,6 +634,20 @@ class CtrlDragTests(unittest.TestCase):
         view = self._make_view({"t1"})
         view._scene = QGraphicsScene()
         view._annotation_only_selection = False
+        view._current_conditions = {
+            "c": Condition(
+                uid="c",
+                condition_type=Condition.TYPE_LINEAR,
+                layer_visible=True,
+            )
+        }
+        view._current_takeoffs = {
+            "t1": Takeoff(
+                uid="t1",
+                condition_uid="c",
+                position=[0.0, 0.0, 10.0, 0.0],
+            )
+        }
         path = QPainterPath()
         path.addRect(0.0, 0.0, 10.0, 10.0)
         item = QGraphicsPathItem(path)

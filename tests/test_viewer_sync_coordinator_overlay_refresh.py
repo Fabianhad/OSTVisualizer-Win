@@ -112,6 +112,9 @@ class FakeCoordinateSystem:
     scale_ratio = 72.0
     view_scale = 1.0
 
+    def parse_position(self, position):
+        return list(position)
+
     def ost_to_screen_pixels(self, value):
         return value
 
@@ -3785,6 +3788,159 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view.handle_inline_text_shortcut("select_all"))
         self.assertEqual(item.textCursor().selectedText(), "Before")
         self.assertEqual(view._selected_uids, {"a1"})
+        view.cleanup()
+
+    def test_select_all_ignores_takeoffs_hidden_by_condition_layer(self):
+        view = self._make_plan_view()
+        conditions = {
+            "visible-area": Condition(
+                uid="visible-area",
+                condition_type=Condition.TYPE_AREA,
+                layer_visible=True,
+            ),
+            "hidden-area": Condition(
+                uid="hidden-area",
+                condition_type=Condition.TYPE_AREA,
+                layer_visible=False,
+            ),
+            "visible-linear": Condition(
+                uid="visible-linear",
+                condition_type=Condition.TYPE_LINEAR,
+                layer_visible=True,
+            ),
+            "hidden-linear": Condition(
+                uid="hidden-linear",
+                condition_type=Condition.TYPE_LINEAR,
+                layer_visible=False,
+            ),
+            "visible-count": Condition(
+                uid="visible-count",
+                condition_type=Condition.TYPE_COUNT,
+                layer_visible=True,
+            ),
+            "hidden-count": Condition(
+                uid="hidden-count",
+                condition_type=Condition.TYPE_COUNT,
+                layer_visible=False,
+            ),
+        }
+        view._current_conditions = conditions
+        view._current_takeoffs = {
+            "visible-area": Takeoff(
+                uid="visible-area",
+                condition_uid="visible-area",
+                position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0],
+            ),
+            "hidden-area": Takeoff(
+                uid="hidden-area",
+                condition_uid="hidden-area",
+                position=[30.0, 0.0, 50.0, 0.0, 50.0, 20.0],
+            ),
+            "visible-linear": Takeoff(
+                uid="visible-linear",
+                condition_uid="visible-linear",
+                position=[0.0, 30.0, 20.0, 30.0],
+            ),
+            "hidden-linear": Takeoff(
+                uid="hidden-linear",
+                condition_uid="hidden-linear",
+                position=[30.0, 30.0, 50.0, 30.0],
+            ),
+            "visible-count": Takeoff(
+                uid="visible-count",
+                condition_uid="visible-count",
+                position=[10.0, 50.0],
+            ),
+            "hidden-count": Takeoff(
+                uid="hidden-count",
+                condition_uid="hidden-count",
+                position=[40.0, 50.0],
+            ),
+        }
+        view._current_annotations = {}
+        view._uid_to_items = {}
+        view._selection_enabled = True
+        view._cursor_mode = "select"
+        for uid in ("visible-area", "visible-linear", "visible-count"):
+            item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+            item.setData(0, uid)
+            view._scene.addItem(item)
+            view._uid_to_items[uid] = [item]
+        view.select_all()
+        self.assertEqual(
+            view._selected_uids,
+            {"visible-area", "visible-linear", "visible-count"},
+        )
+        self.assertTrue(view._selection_items)
+        self.assertTrue(
+            all(
+                item.data(0) not in {"hidden-area", "hidden-linear", "hidden-count"}
+                for item in view._selection_items
+            )
+        )
+        view.cleanup()
+
+    def test_select_all_ignores_hidden_annotations(self):
+        view = self._make_plan_view()
+        view._current_takeoffs = {}
+        view._current_conditions = {}
+        view._selection_enabled = True
+        view._cursor_mode = "select"
+        view._current_annotations = {
+            "visible-ann": BidAnnotation(
+                uid="visible-ann",
+                annotation_type="rect",
+                position=[0.0, 0.0, 20.0, 20.0],
+                visible=True,
+            ),
+            "hidden-ann": BidAnnotation(
+                uid="hidden-ann",
+                annotation_type="rect",
+                position=[30.0, 30.0, 50.0, 50.0],
+                visible=False,
+            ),
+        }
+        view._uid_to_items = {}
+        visible_item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        visible_item.setData(0, "visible-ann")
+        view._scene.addItem(visible_item)
+        view._uid_to_items["visible-ann"] = [visible_item]
+        view.select_all()
+        self.assertEqual(view._selected_uids, {"visible-ann"})
+        self.assertTrue(
+            all(item.data(0) != "hidden-ann" for item in view._selection_items)
+        )
+        view.cleanup()
+
+    def test_hidden_layer_prunes_existing_takeoff_selection(self):
+        view = self._make_plan_view()
+        condition = Condition(
+            uid="area-condition",
+            condition_type=Condition.TYPE_AREA,
+            layer_visible=True,
+        )
+        view._current_conditions = {condition.uid: condition}
+        view._current_takeoffs = {
+            "area": Takeoff(
+                uid="area",
+                condition_uid=condition.uid,
+                position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0],
+            )
+        }
+        view._current_annotations = {}
+        item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        item.setData(0, "area")
+        view._scene.addItem(item)
+        view._uid_to_items = {"area": [item]}
+        emitted = []
+        view.takeoff_selection_changed.connect(lambda uids: emitted.append(list(uids)))
+        view.set_selected_uids({"area"})
+        self.assertEqual(view._selected_uids, {"area"})
+        condition.layer_visible = False
+        view.update_selection_visuals()
+        self.assertEqual(view._selected_uids, set())
+        self.assertEqual(view._selection_items, [])
+        self.assertEqual(emitted[-1], [])
         view.cleanup()
 
     def test_cancel_inline_text_annotation_edit_restores_original_text(self):

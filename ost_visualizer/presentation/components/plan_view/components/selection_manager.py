@@ -67,11 +67,12 @@ class SelectionManagerMixin:
     def _is_selectable(self, uid: str) -> bool:
         if self._annotation_only_selection:
             ann = self._current_annotations.get(uid)
-            return bool(ann and ann.is_interactive)
-        if uid in self._current_takeoffs:
-            return True
+            return bool(ann and ann.visible and ann.is_interactive)
+        takeoff = self._current_takeoffs.get(uid)
+        if takeoff is not None:
+            return takeoff.is_visible(self._current_conditions)
         ann = self._current_annotations.get(uid)
-        return bool(ann and ann.is_interactive)
+        return bool(ann and ann.visible and ann.is_interactive)
 
     def find_takeoffs_at(self, scene_pos) -> List[str]:
         seen: Set[str] = set()
@@ -89,6 +90,7 @@ class SelectionManagerMixin:
         for uid, ann in self._current_annotations.items():
             if (
                 uid not in seen
+                and ann.visible
                 and ann.is_text
                 and ann.is_interactive
                 and self._text_annotation_contains_scene_point(uid, scene_pos)
@@ -110,7 +112,7 @@ class SelectionManagerMixin:
             check_pos = scene_pos
         cs = self._scene_builder.get_coordinate_system()
         for uid, ann in uid_ann_pairs:
-            if not ann.is_interactive:
+            if not ann.visible or not ann.is_interactive:
                 continue
             if ann.annotation_type not in ann.LINEAR_TYPES:
                 continue
@@ -166,7 +168,8 @@ class SelectionManagerMixin:
     def find_text_annotation_at(self, scene_pos: QtCore.QPointF) -> Optional[str]:
         for uid, ann in self._current_annotations.items():
             if (
-                ann.is_text
+                ann.visible
+                and ann.is_text
                 and ann.is_interactive
                 and self._text_annotation_contains_scene_point(uid, scene_pos)
             ):
@@ -209,7 +212,7 @@ class SelectionManagerMixin:
     def find_selected_movable_at(self, scene_pos: QtCore.QPointF) -> Optional[str]:
         for uid in self._selected_uids:
             ann = self._current_annotations.get(uid)
-            if ann is not None and ann.is_text:
+            if ann is not None and ann.visible and ann.is_text:
                 if self._text_annotation_contains_scene_point(uid, scene_pos):
                     return uid
         for item, link_info in self._hotlink_items:
@@ -226,6 +229,7 @@ class SelectionManagerMixin:
             ann = self._current_annotations.get(uid)
             if (
                 ann is not None
+                and ann.visible
                 and ann.is_interactive
                 and ann.annotation_type in ann.LINEAR_TYPES
             ):
@@ -284,6 +288,7 @@ class SelectionManagerMixin:
         )
 
     def set_selected_uids(self, uids: set, emit: bool = True) -> None:
+        uids = {uid for uid in uids if self._is_selectable(uid)}
         if self._selected_uids == uids:
             return
         self._selected_uids = set(uids)
@@ -335,7 +340,12 @@ class SelectionManagerMixin:
         all_keys = set(self._current_takeoffs.keys()) | set(
             self._current_annotations.keys()
         )
-        valid = self._selected_uids & all_keys
+        valid = {
+            uid for uid in self._selected_uids & all_keys if self._is_selectable(uid)
+        }
+        if valid != self._selected_uids:
+            self._selected_uids = set(valid)
+            self._on_selection_changed()
         if not valid:
             if emit:
                 self.takeoff_selection_changed.emit([])

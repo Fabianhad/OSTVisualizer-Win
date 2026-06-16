@@ -57,6 +57,7 @@
 - Replaced high-resolution PDF tile refresh with visible-frame PDFium offset rendering, renderer-rounded placement, bitmap-sized frame display, and buffered cache replacement to avoid blurry, drifting, distorted, or blank zoomed PDF overlay views.
 - Fixed saved page view positions to round-trip OST `CurrentX`/`CurrentY` values as 96-DPI page pixels.
 - Fixed PDF export so hidden takeoff/annotation layers stay hidden and OST numeric text alignment exports as left, center, or right.
+- Fixed plan-view Ctrl+A so hidden-layer takeoffs and hidden annotations are not selected internally.
 - Fixed PDF export default filenames so page names that already end in `.pdf` do not produce `.pdf.pdf`.
 - Cleared stale detached page-window, PDF renderer, export background, and MCP bridge references during cleanup, and bounded PDF metadata caches across page/file switches.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.
