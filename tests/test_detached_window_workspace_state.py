@@ -584,16 +584,147 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         key = WorkspaceStateCoordinator._DETACHED_ANNOTATION
         coordinator._tracked_detached_destroy_callbacks = {key: callback}
         window.installEventFilter(coordinator)
-        window.dropdown_size_changed.connect(coordinator.request_save)
+        window.dropdown_size_changed.connect(coordinator._on_dropdown_size_changed)
         window.destroyed.connect(callback)
         coordinator._untrack_detached_window(key, window)
         self.assertEqual(window.installed_filters, [])
         self.assertEqual(
             window.dropdown_size_changed.disconnected,
-            [coordinator.request_save],
+            [coordinator._on_dropdown_size_changed],
         )
         self.assertEqual(window.destroyed.disconnected, [callback])
         self.assertEqual(coordinator._tracked_detached_destroy_callbacks, {})
+
+    def test_detached_dropdown_resize_caches_sizes_before_debounced_save(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        timer = FakeWorkspaceSaveTimer(active=False)
+        coordinator._cleaned_up = False
+        coordinator._save_timer = timer
+        coordinator._state = WorkspaceState()
+        coordinator._state.takeoff_workspace.dropdown_popup_sizes = {
+            "annotation_page": [320, 360]
+        }
+        coordinator._shell = SimpleNamespace(
+            get_takeoff_dropdown_popup_sizes=lambda: {
+                "annotation_page": [0, 360],
+                "annotation_named_views": [640, 420],
+                "view_page": [700, 500],
+                "view_named_views": [710, 510],
+                "unknown_popup": [900, 900],
+            }
+        )
+        coordinator._on_dropdown_size_changed()
+        self.assertTrue(timer.started)
+        self.assertEqual(
+            coordinator._state.takeoff_workspace.dropdown_popup_sizes,
+            {
+                "annotation_page": [320, 360],
+                "annotation_named_views": [640, 420],
+                "view_page": [700, 500],
+                "view_named_views": [710, 510],
+            },
+        )
+
+    def test_detached_dropdown_sizes_survive_closed_window_state_capture(self):
+        class CaptureShell:
+            def __init__(self):
+                self.dropdown_sizes = {"main_page": [220, 330]}
+
+            def get_takeoff_splitter_sizes(self):
+                return [300, 700]
+
+            def get_left_splitter_sizes(self):
+                return [180, 240]
+
+            def is_conditions_sidebar_visible(self):
+                return True
+
+            def is_layers_sidebar_visible(self):
+                return True
+
+            def saveGeometry(self):
+                return QtCore.QByteArray(b"main-geometry")
+
+            def saveState(self, _version):
+                return QtCore.QByteArray(b"main-state")
+
+            def isMaximized(self):
+                return False
+
+            def is_status_bar_visible(self):
+                return True
+
+            def save_project_header_state(self):
+                return QtCore.QByteArray(b"project-header")
+
+            def get_project_expanded_node_keys(self):
+                return []
+
+            def is_project_group_by_job_status(self):
+                return False
+
+            def get_project_selected_node(self):
+                return None
+
+            def get_active_takeoff_view(self):
+                return "2d"
+
+            def is_takeoff_2d_tab_visible(self):
+                return True
+
+            def is_takeoff_3d_tab_visible(self):
+                return True
+
+            def get_workspace_toolbar_visibility_state(self):
+                return {}
+
+            def get_takeoff_dropdown_popup_sizes(self):
+                return dict(self.dropdown_sizes)
+
+            def get_annotation_styles_by_tool(self):
+                return {}
+
+            def save_conditions_header_state(self):
+                return QtCore.QByteArray(b"conditions-header")
+
+            def is_conditions_group_by_type_enabled(self):
+                return True
+
+            def save_layers_header_state(self):
+                return QtCore.QByteArray(b"layers-header")
+
+            def get_mesh_window(self):
+                return None
+
+            def get_annotation_window(self):
+                return None
+
+            def get_view_window(self):
+                return None
+
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._shell = CaptureShell()
+        coordinator._state = WorkspaceState()
+        coordinator._pending_mesh_restore = False
+        coordinator._pending_annotation_restore = False
+        coordinator._pending_view_restore = False
+        coordinator._state.takeoff_workspace.dropdown_popup_sizes = {
+            "annotation_page": [640, 420],
+            "annotation_named_views": [650, 430],
+            "view_page": [700, 500],
+            "view_named_views": [710, 510],
+        }
+        captured = coordinator._capture_current_state()
+        self.assertEqual(
+            captured.takeoff_workspace.dropdown_popup_sizes,
+            {
+                "annotation_page": [640, 420],
+                "annotation_named_views": [650, 430],
+                "view_page": [700, 500],
+                "view_named_views": [710, 510],
+                "main_page": [220, 330],
+            },
+        )
 
     def test_tracked_window_destroy_drops_reference_after_cleanup(self):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)

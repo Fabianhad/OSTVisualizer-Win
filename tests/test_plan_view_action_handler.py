@@ -16,6 +16,9 @@ from ost_visualizer.domain.services.page_selection_service import PageSelectionS
 from ost_visualizer.presentation.handlers.plan_view_action_handler import (
     PlanViewActionHandler,
 )
+from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
+    ViewerSyncCoordinator,
+)
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.services.selection_commands import (
     PasteAnnotationsCommand,
@@ -1522,6 +1525,88 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
         self.assertEqual(event_bus.events[0][1]["takeoff_uids"], ["100"])
         self.assertEqual(plan_view.cancel_place_mode_calls, 0)
+
+    def test_arrow_page_switch_then_fast_place_keeps_new_takeoff_selected(self):
+        class ArrowUiState(FakeUiState):
+            active_page_uid = "p2"
+
+        class ValidatingPlanView(FakePlanView):
+            def __init__(self, data):
+                super().__init__(data)
+                self.current_page_uid = "p2"
+                self._current_takeoffs = {}
+                self.clear_calls = 0
+
+            def set_selected_uids(self, uids):
+                self.selected = {uid for uid in uids if uid in self._current_takeoffs}
+
+            def clear(self):
+                self.clear_calls += 1
+                self.current_page_uid = None
+                self._current_takeoffs = {}
+                self.selected = set()
+
+        class VisualizationService:
+            def __init__(self):
+                self.mesh_pages = []
+
+            def refresh_mesh_view(self, page_uids):
+                self.mesh_pages.append(list(page_uids))
+
+        class OpenGLViewer:
+            def __init__(self):
+                self.clears = 0
+
+            def clear_scene(self):
+                self.clears += 1
+
+        class SyncEventBus(FakeEventBus):
+            def __init__(self, on_takeoffs_changed):
+                super().__init__()
+                self._on_takeoffs_changed = on_takeoffs_changed
+
+            def publish(self, event_name, **kwargs):
+                super().publish(event_name, **kwargs)
+                if event_name == AppEvents.TAKEOFFS_CHANGED:
+                    self._on_takeoffs_changed(**kwargs)
+
+        data = FakeProjectData()
+        plan_view = ValidatingPlanView(data)
+        visualization = VisualizationService()
+        viewer = ViewerSyncCoordinator(
+            ui_state_manager=ArrowUiState(),
+            ui_access_manager=None,
+            color_service=None,
+            project_data=data,
+            visualization_service=visualization,
+        )
+        viewer.plan_view = plan_view
+        viewer.opengl_viewer = OpenGLViewer()
+
+        def on_takeoffs_changed(page_uid, **_kwargs):
+            plan_view.current_page_uid = page_uid
+            plan_view._current_takeoffs = {
+                uid: takeoff
+                for uid, takeoff in data.takeoffs.items()
+                if takeoff.page_uid == page_uid
+            }
+            viewer.update_viewers([])
+
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=ArrowUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=SyncEventBus(on_takeoffs_changed),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "p2")
+        self.assertEqual(plan_view.selected, {"100"})
+        self.assertEqual(plan_view.current_page_uid, "p2")
+        self.assertEqual(plan_view.clear_calls, 0)
+        self.assertEqual(visualization.mesh_pages, [[]])
 
     def test_raw_extra_insert_keeps_full_reload(self):
         plan_view = FakePlanView()

@@ -1,18 +1,18 @@
 import logging
 import os
-import threading
 from pathlib import Path
 from typing import Dict, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QImageReader
 from .. import ost_pdf
+from ..pdfium_lock import pdfium_lock
 
 logger = logging.getLogger(__name__)
 
 
 class PageRenderer:
     IMAGE_EXTENSIONS = {".tif", ".tiff"}
-    _pdfium_lock = threading.Lock()
+    _pdfium_lock = pdfium_lock
 
     def __init__(self):
         self._pdf_renderer = None

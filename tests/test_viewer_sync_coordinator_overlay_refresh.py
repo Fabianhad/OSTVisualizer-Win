@@ -97,8 +97,11 @@ class FakeColorService:
 
 
 class FakeVisualizationService:
-    def refresh_mesh_view(self, _page_uids):
-        pass
+    def __init__(self):
+        self.mesh_pages = []
+
+    def refresh_mesh_view(self, page_uids):
+        self.mesh_pages.append(list(page_uids))
 
 
 class FakeLinearGeometry:
@@ -301,7 +304,12 @@ class FakePlanView:
         self.overlay_result = overlay_result
         self.overlay_calls = 0
         self.load_calls = 0
+        self.clear_calls = 0
         self.snap_settings = []
+
+    def clear(self):
+        self.clear_calls += 1
+        self.current_page_uid = None
 
     def refresh_current_page_overlays(self, **_kwargs):
         self.overlay_calls += 1
@@ -317,19 +325,20 @@ class FakePlanView:
 
 class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
     def _make_coordinator(self, plan_view):
+        visualization_service = FakeVisualizationService()
         coordinator = ViewerSyncCoordinator(
             ui_state_manager=FakeUiState(),
             ui_access_manager=None,
             color_service=FakeColorService(),
             project_data=FakeProjectData(),
-            visualization_service=FakeVisualizationService(),
+            visualization_service=visualization_service,
         )
         coordinator.plan_view = plan_view
-        return coordinator
+        return coordinator, visualization_service
 
     def test_same_loaded_page_uses_overlay_refresh_without_load_page(self):
         plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
-        coordinator = self._make_coordinator(plan_view)
+        coordinator, _visualization_service = self._make_coordinator(plan_view)
         coordinator.update_plan_view("page-1")
         self.assertEqual(plan_view.overlay_calls, 1)
         self.assertEqual(plan_view.load_calls, 0)
@@ -337,17 +346,25 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
 
     def test_different_current_page_uses_full_load_page(self):
         plan_view = FakePlanView(current_page_uid="page-2", overlay_result=True)
-        coordinator = self._make_coordinator(plan_view)
+        coordinator, _visualization_service = self._make_coordinator(plan_view)
         coordinator.update_plan_view("page-1")
         self.assertEqual(plan_view.overlay_calls, 0)
         self.assertEqual(plan_view.load_calls, 1)
 
     def test_same_page_render_identity_mismatch_falls_back_to_load_page(self):
         plan_view = FakePlanView(current_page_uid="page-1", overlay_result=False)
-        coordinator = self._make_coordinator(plan_view)
+        coordinator, _visualization_service = self._make_coordinator(plan_view)
         coordinator.update_plan_view("page-1")
         self.assertEqual(plan_view.overlay_calls, 1)
         self.assertEqual(plan_view.load_calls, 1)
+
+    def test_empty_mesh_refresh_does_not_clear_active_plan_view(self):
+        plan_view = FakePlanView(current_page_uid="page-2")
+        coordinator, visualization_service = self._make_coordinator(plan_view)
+        coordinator.update_viewers([])
+        self.assertEqual(plan_view.clear_calls, 0)
+        self.assertEqual(plan_view.current_page_uid, "page-2")
+        self.assertEqual(visualization_service.mesh_pages, [[]])
 
 
 class FakeViewport:

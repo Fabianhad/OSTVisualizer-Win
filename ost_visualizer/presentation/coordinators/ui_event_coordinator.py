@@ -1246,20 +1246,9 @@ class UIEventCoordinator:
             self._update_plan_view(page_uid)
         else:
             self._update_plan_view_for_active()
-        self._viewer.update_viewers(self._takeoffs_changed_viewer_page_uids(page_uid))
+        self._viewer.update_viewers(self.project_data.get_selected_page_uids())
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
-
-    def _takeoffs_changed_viewer_page_uids(self, page_uid: Optional[str]) -> List[str]:
-        page_uids = self.project_data.get_selected_page_uids()
-        if page_uids:
-            return page_uids
-        active_page_uid = self.ui_state_manager.active_page_uid
-        if active_page_uid:
-            return [active_page_uid]
-        if page_uid:
-            return [page_uid]
-        return []
 
     def _on_annotations_changed(self, **kwargs) -> None:
         self._update_plan_view(kwargs["page_uid"])

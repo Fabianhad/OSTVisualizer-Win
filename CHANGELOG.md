@@ -50,6 +50,7 @@
 - Tightened MCP JSON-RPC request validation and removed an arbitrary hierarchy fallback for unmatched database files.
 - Fixed Intelligent Paste so copied takeoffs and annotations paste at the cursor, support temporary original-axis snap guides only during the first drag, and stop using that snap state after release or cancel.
 - Made same-bid count/takeoff paste and delete use page-scoped refresh when copied takeoff columns are known, avoiding full database reloads for normal count paste/delete workflows.
+- Fixed newly placed takeoffs not staying selected after arrow-page navigation by keeping empty 3D mesh refreshes from clearing the active 2D plan view.
 - Fixed Cover Sheet page image paths so saved `BidPages.ImagePath` values use Windows backslashes for OST compatibility.
 - Fixed plan-view crashes when toggling original/overlay image visibility after image graphics items had already been cleared.
 - Fixed overlay image placement to honor OST `OverlayRect` alignment values when displaying and exporting red/blue overlays.
@@ -61,9 +62,11 @@
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.
 - Fixed Named View placement to reject duplicate names without closing the inline editor, match draft label sizing to the committed label, and keep Hotlink/Named View placement tools active after successful placement.
 - Fixed Hotlink placement so the placement click no longer falls through into Hotlink navigation and opens the Annotation View window.
+- Fixed a plan-view crash that could occur when PDF-line snap previews rebuilt while switching pages.
 - Loaded existing named views from older OST databases whose `BidNamedViews` table does not include the newer `Color` column, restoring named-view lists and hotlink navigation.
 - Kept newly placed annotations visible while the Annotation/View window is open by refreshing detached windows against their target page UID.
 - Constrained detached Annotation/View window startup geometry to one screen before maximizing, avoiding multi-monitor spanning restores.
+- Persisted resized Annotation/View and View window page/named-view dropdown popups across window close and restart.
 - Matched Edit Condition dimension input heights across Windows styles.
 - Fixed text annotation selected/edit outlines to use the real textbox resize bounds and clipped overflowing text to the textbox.
 - Centered area Display Dimension labels inside the takeoff while keeping Display Name labels below the takeoff.

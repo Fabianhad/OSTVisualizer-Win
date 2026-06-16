@@ -101,8 +101,8 @@ class ViewerSyncCoordinator:
                 )
 
     def update_viewers(self, page_uids: List[str]) -> None:
-        if not page_uids:
-            self.clear_viewer()
+        if not page_uids and self.opengl_viewer:
+            self.opengl_viewer.clear_scene()
         self._visualization_service.refresh_mesh_view(page_uids)
 
     def update_license_visualization_state(self) -> None:

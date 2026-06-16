@@ -77,9 +77,11 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         self._shell.get_view_stack().currentChanged.connect(self.request_save)
         self._shell.get_takeoff_splitter().splitterMoved.connect(self.request_save)
         self._shell.get_left_splitter().splitterMoved.connect(self.request_save)
-        self._shell.takeoff_sidebar.popup_size_changed.connect(self.request_save)
+        self._shell.takeoff_sidebar.popup_size_changed.connect(
+            self._on_dropdown_size_changed
+        )
         self._shell.get_page_settings_bar().dropdown_size_changed.connect(
-            self.request_save
+            self._on_dropdown_size_changed
         )
         self._shell.get_layers_toggle_action().toggled.connect(self.request_save)
         self._shell.get_conditions_toggle_action().toggled.connect(self.request_save)
@@ -284,11 +286,12 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             self._shell.get_left_splitter().splitterMoved, self.request_save
         )
         self._disconnect(
-            self._shell.takeoff_sidebar.popup_size_changed, self.request_save
+            self._shell.takeoff_sidebar.popup_size_changed,
+            self._on_dropdown_size_changed,
         )
         self._disconnect(
             self._shell.get_page_settings_bar().dropdown_size_changed,
-            self.request_save,
+            self._on_dropdown_size_changed,
         )
         self._disconnect(
             self._shell.get_layers_toggle_action().toggled, self.request_save
@@ -526,7 +529,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         window.installEventFilter(self)
         if key in (self._DETACHED_ANNOTATION, self._DETACHED_VIEW):
             try:
-                window.dropdown_size_changed.connect(self.request_save)
+                window.dropdown_size_changed.connect(self._on_dropdown_size_changed)
             except RuntimeError:
                 pass
         destroyed_callback = (
@@ -563,7 +566,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             pass
         if key in (self._DETACHED_ANNOTATION, self._DETACHED_VIEW):
             try:
-                window.dropdown_size_changed.disconnect(self.request_save)
+                window.dropdown_size_changed.disconnect(self._on_dropdown_size_changed)
             except (RuntimeError, TypeError):
                 pass
         callback = self._tracked_detached_destroy_callbacks.pop(key, None)
@@ -611,6 +614,16 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                 self._state.takeoff_workspace.dropdown_popup_sizes
             )
         self._detached_restore_applied[key] = True
+
+    def _on_dropdown_size_changed(self, *_args) -> None:
+        if self._cleaned_up:
+            return
+        self._state.takeoff_workspace.dropdown_popup_sizes = (
+            self._capture_dropdown_popup_sizes(
+                self._state.takeoff_workspace.dropdown_popup_sizes
+            )
+        )
+        self.request_save()
 
     def _save_now(self) -> None:
         try:
@@ -686,9 +699,10 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         )
         state.takeoff_workspace.left_splitter_sizes = splitter_sizes
         state.takeoff_workspace.takeoff_splitter_sizes = takeoff_splitter_sizes
-        state.takeoff_workspace.dropdown_popup_sizes = self._merge_dropdown_popup_sizes(
-            previous.takeoff_workspace.dropdown_popup_sizes,
-            self._shell.get_takeoff_dropdown_popup_sizes(),
+        state.takeoff_workspace.dropdown_popup_sizes = (
+            self._capture_dropdown_popup_sizes(
+                previous.takeoff_workspace.dropdown_popup_sizes
+            )
         )
         state.takeoff_workspace.annotation_styles = (
             self._shell.get_annotation_styles_by_tool()
@@ -726,6 +740,14 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             and (view_window is not None or self._pending_view_restore),
         )
         return state
+
+    def _capture_dropdown_popup_sizes(
+        self, previous: dict[str, list[int]]
+    ) -> dict[str, list[int]]:
+        return self._merge_dropdown_popup_sizes(
+            previous,
+            self._shell.get_takeoff_dropdown_popup_sizes(),
+        )
 
     def _merge_dropdown_popup_sizes(
         self,

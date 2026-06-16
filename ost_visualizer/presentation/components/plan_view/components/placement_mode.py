@@ -35,6 +35,7 @@ from ....utils.annotation_defaults import (
     annotation_default_style,
     dimension_annotation_properties,
 )
+from ....visualization.pdf.pdfium_lock import pdfium_lock
 from .geometry_utils import polygon_is_valid, polyline_self_intersects
 from .handle_style import apply_takeoff_handle_style
 from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
@@ -197,6 +198,14 @@ class PlacementModeMixin:
     def _invalidate_snap_index(self) -> None:
         self._takeoff_snap_index_dirty = True
         self._pdf_snap_index_dirty = True
+
+    def _pdf_snap_available_for_current_page(self) -> bool:
+        page = self._current_page
+        return bool(
+            page is not None
+            and self._current_bid_page_uid == page.uid
+            and self._load_geometry_ready
+        )
 
     def _pdf_intelligence_source(self):
         page = self._current_page
@@ -384,6 +393,8 @@ class PlacementModeMixin:
         return segments
 
     def _build_pdf_snap_segments(self) -> list:
+        if not self._pdf_snap_available_for_current_page():
+            return []
         cache_key = self._pdf_snap_cache_key()
         if cache_key is None:
             return []
@@ -393,16 +404,17 @@ class PlacementModeMixin:
         source_layer, file_path, page_index = self._pdf_intelligence_source()
         renderer = ost_pdf.PDFRenderer()
         try:
-            if not renderer.open(file_path):
-                logger.warning(
-                    "Could not open PDF for snap vector extraction: %s",
-                    file_path,
-                )
-                self._pdf_snap_segments_cache_key = cache_key
-                self._pdf_snap_segments_cache = []
-                return []
-            raw_segments = renderer.extract_path_segments(page_index)
-            page_info = renderer.page_info(page_index)
+            with pdfium_lock:
+                if not renderer.open(file_path):
+                    logger.warning(
+                        "Could not open PDF for snap vector extraction: %s",
+                        file_path,
+                    )
+                    self._pdf_snap_segments_cache_key = cache_key
+                    self._pdf_snap_segments_cache = []
+                    return []
+                raw_segments = renderer.extract_path_segments(page_index)
+                page_info = renderer.page_info(page_index)
             page_width_pts = 0.0
             page_height_pts = 0.0
             if page_info is not None:
@@ -479,7 +491,8 @@ class PlacementModeMixin:
             self._pdf_snap_segments_cache = []
             return []
         finally:
-            renderer.close()
+            with pdfium_lock:
+                renderer.close()
 
     def _ensure_takeoff_snap_index(self) -> SnapIndex:
         if self._takeoff_snap_index is None:
@@ -492,7 +505,7 @@ class PlacementModeMixin:
     def _ensure_pdf_snap_index(self) -> SnapIndex:
         if self._pdf_snap_index is None:
             self._pdf_snap_index = SnapIndex()
-        if self._pdf_snap_index_dirty:
+        if self._pdf_snap_index_dirty and self._pdf_snap_available_for_current_page():
             self._pdf_snap_index.build(self._build_pdf_snap_segments())
             self._pdf_snap_index_dirty = False
         return self._pdf_snap_index
@@ -547,7 +560,11 @@ class PlacementModeMixin:
     def _query_pdf_line_snap(
         self, ost_x: float, ost_y: float, threshold_px: int
     ) -> tuple | None:
-        if not self._snap_to_pdf_lines_enabled or threshold_px <= 0:
+        if (
+            not self._snap_to_pdf_lines_enabled
+            or threshold_px <= 0
+            or not self._pdf_snap_available_for_current_page()
+        ):
             return None
         return self._ensure_pdf_snap_index().query(
             float(ost_x),

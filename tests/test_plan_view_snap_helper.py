@@ -175,6 +175,8 @@ class PlacementHarness(placement_mode.PlacementModeMixin):
             height_pts=100.0,
             page_index=0,
         )
+        self._current_bid_page_uid = self._current_page.uid
+        self._load_geometry_ready = True
         self._pdf_height_pts = 100.0
         self._pdf_width_pts = 200.0
         self._scene_builder = FakeSceneBuilder()
@@ -525,6 +527,50 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._ensure_pdf_snap_index()
         self.assertEqual(FakePDFRenderer.open_calls, 1)
         self.assertEqual(FakePDFRenderer.extract_calls, 0)
+
+    def test_pdf_snap_waits_until_page_load_geometry_is_ready(self):
+        harness = PlacementHarness()
+        harness._load_geometry_ready = False
+        self.assertIsNone(harness._query_pdf_line_snap(10.0, 20.0, 8))
+        self.assertEqual(FakePDFRenderer.open_calls, 0)
+        self.assertTrue(harness._pdf_snap_index_dirty)
+        harness._load_geometry_ready = True
+        harness._ensure_pdf_snap_index()
+        self.assertEqual(FakePDFRenderer.extract_calls, 1)
+        self.assertFalse(harness._pdf_snap_index_dirty)
+
+    def test_pdf_snap_waits_for_current_page_uid_to_match_page(self):
+        harness = PlacementHarness()
+        harness._current_bid_page_uid = "previous-page"
+        self.assertIsNone(harness._query_pdf_line_snap(10.0, 20.0, 8))
+        self.assertEqual(FakePDFRenderer.open_calls, 0)
+        self.assertTrue(harness._pdf_snap_index_dirty)
+        harness._current_bid_page_uid = harness._current_page.uid
+        harness._ensure_pdf_snap_index()
+        self.assertEqual(FakePDFRenderer.extract_calls, 1)
+        self.assertFalse(harness._pdf_snap_index_dirty)
+
+    def test_pdf_snap_extraction_uses_shared_pdfium_lock(self):
+        class RecordingLock:
+            def __init__(self):
+                self.entered = 0
+                self.exited = 0
+
+            def __enter__(self):
+                self.entered += 1
+
+            def __exit__(self, _exc_type, _exc, _tb):
+                self.exited += 1
+
+        lock = RecordingLock()
+        original_lock = placement_mode.pdfium_lock
+        placement_mode.pdfium_lock = lock
+        try:
+            PlacementHarness()._ensure_pdf_snap_index()
+        finally:
+            placement_mode.pdfium_lock = original_lock
+        self.assertEqual(lock.entered, 2)
+        self.assertEqual(lock.exited, 2)
 
     def test_grid_fallback_still_rounds_when_snap_index_is_empty(self):
         from PySide6 import QtCore

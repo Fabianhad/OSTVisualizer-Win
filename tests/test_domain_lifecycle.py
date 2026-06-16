@@ -59,6 +59,23 @@ class DomainLifecycleTests(unittest.TestCase):
         state = WorkspaceState.from_dict({})
         self.assertEqual(state.takeoff_workspace.annotation_styles, {})
 
+    def test_workspace_dropdown_popup_sizes_ignore_invalid_values(self):
+        state = WorkspaceState.from_dict(
+            {
+                "takeoff_workspace": {
+                    "dropdown_popup_sizes": {
+                        "annotation_page": [0, 360],
+                        "view_page": ["700", "500"],
+                        "main_page": ["bad", 400],
+                    }
+                }
+            }
+        )
+        self.assertEqual(
+            state.takeoff_workspace.dropdown_popup_sizes,
+            {"view_page": [700, 500]},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
