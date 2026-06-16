@@ -1526,8 +1526,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(event_bus.events[0][1]["takeoff_uids"], ["100"])
         self.assertEqual(plan_view.cancel_place_mode_calls, 0)
 
-    def test_arrow_page_switch_then_fast_place_keeps_new_takeoff_selected(self):
-        class ArrowUiState(FakeUiState):
+    def test_unchecked_3d_page_fast_place_keeps_new_takeoff_selected(self):
+        class ActiveUncheckedPageUiState(FakeUiState):
             active_page_uid = "p2"
 
         class ValidatingPlanView(FakePlanView):
@@ -1559,6 +1559,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
             def clear_scene(self):
                 self.clears += 1
+                # Programmatic 3D clears must not emit mesh_clicked([]).
 
         class SyncEventBus(FakeEventBus):
             def __init__(self, on_takeoffs_changed):
@@ -1571,10 +1572,11 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     self._on_takeoffs_changed(**kwargs)
 
         data = FakeProjectData()
+        data.selected_page_uids = []
         plan_view = ValidatingPlanView(data)
         visualization = VisualizationService()
         viewer = ViewerSyncCoordinator(
-            ui_state_manager=ArrowUiState(),
+            ui_state_manager=ActiveUncheckedPageUiState(),
             ui_access_manager=None,
             color_service=None,
             project_data=data,
@@ -1594,7 +1596,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
         handler = PlanViewActionHandler(
             plan_view=plan_view,
-            ui_state_manager=ArrowUiState(),
+            ui_state_manager=ActiveUncheckedPageUiState(),
             project_data_svc=data,
             project_write_svc=FakeWriteService(),
             annotation_write_svc=None,
@@ -1606,6 +1608,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(plan_view.selected, {"100"})
         self.assertEqual(plan_view.current_page_uid, "p2")
         self.assertEqual(plan_view.clear_calls, 0)
+        self.assertEqual(viewer.opengl_viewer.clears, 1)
         self.assertEqual(visualization.mesh_pages, [[]])
 
     def test_raw_extra_insert_keeps_full_reload(self):

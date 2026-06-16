@@ -50,7 +50,7 @@
 - Tightened MCP JSON-RPC request validation and removed an arbitrary hierarchy fallback for unmatched database files.
 - Fixed Intelligent Paste so copied takeoffs and annotations paste at the cursor, support temporary original-axis snap guides only during the first drag, and stop using that snap state after release or cancel.
 - Made same-bid count/takeoff paste and delete use page-scoped refresh when copied takeoff columns are known, avoiding full database reloads for normal count paste/delete workflows.
-- Fixed newly placed takeoffs not staying selected after arrow-page navigation by keeping empty 3D mesh refreshes from clearing the active 2D plan view.
+- Fixed newly placed takeoffs not staying selected on the active 2D page when that page is not checked for 3D viewing.
 - Fixed Cover Sheet page image paths so saved `BidPages.ImagePath` values use Windows backslashes for OST compatibility.
 - Fixed plan-view crashes when toggling original/overlay image visibility after image graphics items had already been cleared.
 - Fixed overlay image placement to honor OST `OverlayRect` alignment values when displaying and exporting red/blue overlays.

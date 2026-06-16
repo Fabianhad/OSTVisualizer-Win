@@ -1,4 +1,5 @@
 import unittest
+from PySide6 import QtCore
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
 from ost_visualizer.presentation.visualization.utils.mesh import meshes_to_geometries
@@ -21,8 +22,9 @@ class FakeMeshSignal:
 
 
 class FakeMeshScene:
-    def __init__(self, takeoff_uids):
+    def __init__(self, takeoff_uids, condition_uids=None):
         self.takeoff_uids = list(takeoff_uids)
+        self.condition_uids = list(condition_uids or ["condition"] * len(takeoff_uids))
         self.selected = set()
         self.clear_calls = 0
 
@@ -31,6 +33,9 @@ class FakeMeshScene:
 
     def get_takeoff_uid(self, index):
         return self.takeoff_uids[index]
+
+    def get_condition_uid(self, index):
+        return self.condition_uids[index]
 
     def clear_selection(self):
         self.clear_calls += 1
@@ -41,6 +46,37 @@ class FakeMeshScene:
             self.selected.add(index)
         else:
             self.selected.discard(index)
+
+    def clear(self):
+        self.takeoff_uids = []
+        self.selected.clear()
+
+
+class FakeMeshCamera:
+    def __init__(self):
+        self.reset_calls = 0
+
+    def reset(self):
+        self.reset_calls += 1
+
+
+class FakeMeshRenderer:
+    def __init__(self, scene):
+        self.scene = scene
+        self.camera = FakeMeshCamera()
+        self.suspend_calls = 0
+
+    def suspend(self):
+        self.suspend_calls += 1
+
+
+class FakePickingMeshRenderer(FakeMeshRenderer):
+    def __init__(self, scene, pick_index):
+        super().__init__(scene)
+        self.pick_index = pick_index
+
+    def pick(self, _px, _py):
+        return self.pick_index
 
 
 class FakeSourceMesh:
@@ -110,7 +146,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual((False, False), viewer._curved_check_fn(["uid"]))
         self.assertEqual({}, viewer._context_menu_conditions_fn())
 
-    def test_scene_rebuild_drops_missing_selected_takeoffs(self):
+    def test_scene_rebuild_drops_missing_selected_takeoffs_without_broadcasting(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
         scene = FakeMeshScene(["keep"])
         viewer._renderer = type("Renderer", (), {"scene": scene})()
@@ -119,7 +155,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         OpenGLViewer._reconcile_selected_takeoffs_with_scene(viewer)
         self.assertEqual(viewer.get_selected_takeoff_uids(), ["keep"])
         self.assertEqual(scene.selected, {0})
-        self.assertEqual(viewer.mesh_clicked.emitted, [["keep"]])
+        self.assertEqual(viewer.mesh_clicked.emitted, [])
 
     def test_scene_rebuild_reapplies_valid_cached_selection(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
@@ -131,6 +167,39 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(viewer.get_selected_takeoff_uids(), ["keep"])
         self.assertEqual(scene.selected, {0})
         self.assertEqual(viewer.mesh_clicked.emitted, [])
+
+    def test_programmatic_clear_scene_does_not_broadcast_empty_mesh_selection(self):
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        scene = FakeMeshScene(["selected"])
+        renderer = FakeMeshRenderer(scene)
+        viewer._renderer = renderer
+        viewer._selected_takeoff_uids = ["selected"]
+        viewer._pending_data = object()
+        viewer._current_bid_ref = object()
+        viewer._pending_camera_reset = False
+        viewer._render_suspended = False
+        viewer._zoom_reference_distance = 3.0
+        viewer.mesh_clicked = FakeMeshSignal()
+        viewer.update = lambda: None
+        OpenGLViewer._do_clear(viewer)
+        self.assertEqual(viewer.get_selected_takeoff_uids(), [])
+        self.assertEqual(viewer.mesh_clicked.emitted, [])
+        self.assertEqual(renderer.camera.reset_calls, 1)
+        self.assertEqual(renderer.suspend_calls, 1)
+
+    def test_user_mesh_pick_broadcasts_selected_takeoff(self):
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        scene = FakeMeshScene(["selected"])
+        viewer._renderer = FakePickingMeshRenderer(scene, 0)
+        viewer._pick_enabled = True
+        viewer._selected_takeoff_uids = []
+        viewer.mesh_clicked = FakeMeshSignal()
+        viewer.devicePixelRatioF = lambda: 1.0
+        viewer.update = lambda: None
+        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(10, 20), ctrl=False)
+        self.assertEqual(viewer.get_selected_takeoff_uids(), ["selected"])
+        self.assertEqual(scene.selected, {0})
+        self.assertEqual(viewer.mesh_clicked.emitted, [["selected"]])
 
     def test_mesh_window_cleanup_clears_external_callback_references(self):
         window = MeshViewWindow.__new__(MeshViewWindow)
