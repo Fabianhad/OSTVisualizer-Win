@@ -679,7 +679,8 @@ class PlacementModeMixin:
         if annotation_type not in PLACEABLE_ANNOTATION_TYPES:
             return False
         self.clear_place_preview()
-        self._suppress_next_hotlink_click = False
+        if annotation_type not in _POINT_ANNOTATION_TYPES:
+            self._point_annotation_release_pending = False
         self._annotation_place_type = annotation_type
         self._annotation_place_points = []
         self._annotation_place_dragging = False
@@ -688,7 +689,7 @@ class PlacementModeMixin:
 
     def _exit_annotation_place_mode(self) -> None:
         self.clear_place_preview()
-        self._suppress_next_hotlink_click = False
+        self._point_annotation_release_pending = False
         self._annotation_place_type = None
         self._annotation_place_points = []
         self._annotation_place_dragging = False
@@ -976,7 +977,7 @@ class PlacementModeMixin:
             self._selected_uids.clear()
             self.update_selection_visuals()
             self.clear_place_preview()
-            self._suppress_next_hotlink_click = True
+            self._point_annotation_release_pending = True
             self.hotlink_placement_requested.emit([ost_x, ost_y], page_uid)
             event.accept()
             return True
@@ -1040,10 +1041,8 @@ class PlacementModeMixin:
         return True
 
     def handle_annotation_place_release(self, event) -> bool:
-        if self._annotation_place_type in _POINT_ANNOTATION_TYPES:
-            if not self._suppress_next_hotlink_click:
-                return False
-            self._suppress_next_hotlink_click = False
+        if self._point_annotation_release_pending:
+            self._point_annotation_release_pending = False
             event.accept()
             return True
         if (

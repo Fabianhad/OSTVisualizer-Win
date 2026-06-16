@@ -452,7 +452,8 @@ class InputHandlerMixin:
             self._cursor_mode == "annotation_place"
             and event.button() == Qt.MouseButton.LeftButton
         ):
-            self.handle_annotation_place_press(event)
+            if self.handle_annotation_place_press(event):
+                return
         elif (
             self._cursor_mode == "paste_backout"
             and event.button() == Qt.MouseButton.LeftButton
@@ -757,10 +758,7 @@ class InputHandlerMixin:
                 scene_pos = self.mapToScene(vp_pos)
                 hotlink_info = self.find_hotlink_at(scene_pos)
                 if hotlink_info:
-                    suppress_hotlink_click = self._suppress_next_hotlink_click
-                    self._suppress_next_hotlink_click = False
-                    if not suppress_hotlink_click:
-                        self.hotlink_clicked.emit(hotlink_info)
+                    self.hotlink_clicked.emit(hotlink_info)
                     event.accept()
                 else:
                     super().mousePressEvent(event)
@@ -1018,10 +1016,7 @@ class InputHandlerMixin:
                 return
             if self.handle_place_release_linear(event):
                 return
-        if (
-            self._cursor_mode == "annotation_place"
-            and event.button() == Qt.MouseButton.LeftButton
-        ):
+        if event.button() == Qt.MouseButton.LeftButton:
             if self.handle_annotation_place_release(event):
                 return
         if (
@@ -1309,13 +1304,10 @@ class InputHandlerMixin:
                     hits = self.find_takeoffs_at(scene_pos)
                     if current_uid in hits and len(hits) > 1:
                         cycle_uid = current_uid
-                suppress_hotlink_click = self._suppress_next_hotlink_click
-                self._suppress_next_hotlink_click = False
                 hotlink_info = self.find_hotlink_at(scene_pos)
                 if hotlink_info:
                     self._clear_pdf_text_selection()
-                    if not suppress_hotlink_click:
-                        self.hotlink_clicked.emit(hotlink_info)
+                    self.hotlink_clicked.emit(hotlink_info)
                 else:
                     uid = self.find_takeoff_at(scene_pos, cycle_from_uid=cycle_uid)
                     if uid:

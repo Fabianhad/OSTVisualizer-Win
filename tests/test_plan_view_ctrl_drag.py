@@ -127,7 +127,7 @@ class AnnotationPlacementHarness(PlacementModeMixin):
         self.preview_repaints = 0
         self.selection_updates = 0
         self._selected_uids = {"old"}
-        self._suppress_next_hotlink_click = False
+        self._point_annotation_release_pending = False
 
     def _current_page_transform(self):
         return None
@@ -530,7 +530,7 @@ class CtrlDragTests(unittest.TestCase):
         view._rotate_handle_item = None
         view._panning = False
         view._right_pan_active = False
-        view._suppress_next_hotlink_click = False
+        view._point_annotation_release_pending = False
         view._last_pan_point = None
         view._drag_plan_item_uid = None
         view._drag_handle_index = -2
@@ -718,34 +718,39 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(len(view.hotlink_clicked.emitted), 1)
         self.assertEqual(view._selected_uids, set())
 
-    def test_suppressed_hotlink_release_does_not_open_after_placement(self):
-        view = self._make_hotlink_view(selected=False)
-        press = FakeMouseEvent()
-        view.mousePressEvent(press)
-        view._suppress_next_hotlink_click = True
-        release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
-        view.mouseReleaseEvent(release)
-        self.assertTrue(release.accepted)
-        self.assertEqual(view.hotlink_clicked.emitted, [])
-        self.assertFalse(view._suppress_next_hotlink_click)
-        second_press = FakeMouseEvent()
-        view.mousePressEvent(second_press)
-        second_release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
-        view.mouseReleaseEvent(second_release)
-        self.assertTrue(second_release.accepted)
-        self.assertEqual(len(view.hotlink_clicked.emitted), 1)
-
-    def test_hotlink_placement_release_does_not_emit_hotlink_clicked(self):
+    def test_hotlink_placement_release_skips_hotlink_hit_testing(self):
         view = self._make_hotlink_view(selected=False)
         view._cursor_mode = "annotation_place"
         view._annotation_place_type = "hotlink"
         view.annotation_place_release_consumed = True
+        calls = []
+        view.find_hotlink_at = lambda _scene_pos: calls.append("hit-test") or None
         release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
         view.mouseReleaseEvent(release)
         self.assertTrue(release.accepted)
-        self.assertEqual(len(view.annotation_place_releases), 1)
+        self.assertEqual(calls, [])
         self.assertEqual(view.hotlink_clicked.emitted, [])
-        self.assertFalse(view.annotation_place_release_consumed)
+
+    def test_hotlink_placement_press_does_not_fall_through_to_hit_testing(self):
+        view = self._make_hotlink_view(selected=False)
+        view._cursor_mode = "annotation_place"
+        view._annotation_place_type = "hotlink"
+        press_calls = []
+        hit_test_calls = []
+
+        def _place_press(event):
+            press_calls.append(event.pos())
+            event.accept()
+            return True
+
+        view.handle_annotation_place_press = _place_press
+        view.find_hotlink_at = lambda _scene_pos: hit_test_calls.append("hit") or None
+        press = FakeMouseEvent()
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        self.assertEqual(len(press_calls), 1)
+        self.assertEqual(hit_test_calls, [])
+        self.assertEqual(view.hotlink_clicked.emitted, [])
 
     def test_real_hotlink_click_after_placement_release_still_opens(self):
         view = self._make_hotlink_view(selected=False)
@@ -763,16 +768,44 @@ class CtrlDragTests(unittest.TestCase):
         self.assertTrue(click_release.accepted)
         self.assertEqual(len(view.hotlink_clicked.emitted), 1)
 
-    def test_suppressed_hotlink_release_away_from_hotlink_clears_guard(self):
+    def test_repeated_hotlink_placements_do_not_navigate_but_later_clicks_do(self):
+        view = self._make_hotlink_view(selected=False)
+        hit_test_calls = []
+
+        def _place_press(event):
+            event.accept()
+            view.annotation_place_release_consumed = True
+            return True
+
+        view.handle_annotation_place_press = _place_press
+        view.find_hotlink_at = lambda _scene_pos: hit_test_calls.append("hit") or "h1"
+        for expected_clicks in (1, 2):
+            view._cursor_mode = "annotation_place"
+            view._annotation_place_type = "hotlink"
+            calls_before_placement = len(hit_test_calls)
+            view.mousePressEvent(FakeMouseEvent())
+            placement_release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+            view.mouseReleaseEvent(placement_release)
+            self.assertTrue(placement_release.accepted)
+            self.assertEqual(len(view.hotlink_clicked.emitted), expected_clicks - 1)
+            self.assertEqual(len(hit_test_calls), calls_before_placement)
+            view._cursor_mode = "select"
+            calls_before_click = len(hit_test_calls)
+            view.mousePressEvent(FakeMouseEvent())
+            view.mouseReleaseEvent(FakeMouseEvent(buttons=Qt.MouseButton.NoButton))
+            self.assertEqual(len(view.hotlink_clicked.emitted), expected_clicks)
+            self.assertGreater(len(hit_test_calls), calls_before_click)
+
+    def test_cancelled_hotlink_placement_release_allows_next_click(self):
         view = self._make_hotlink_view(selected=False)
         hotlink_items = list(view._hotlink_items)
-        view._suppress_next_hotlink_click = True
+        view.annotation_place_release_consumed = True
         view._hotlink_items = []
         press = FakeMouseEvent()
         view.mousePressEvent(press)
         release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
         view.mouseReleaseEvent(release)
-        self.assertFalse(view._suppress_next_hotlink_click)
+        self.assertFalse(view.annotation_place_release_consumed)
         self.assertEqual(view.hotlink_clicked.emitted, [])
         view._hotlink_items = hotlink_items
         press = FakeMouseEvent()
@@ -1912,16 +1945,36 @@ class AnnotationPlacementTests(unittest.TestCase):
         release = _PlacementMouseEvent(9, 11)
         self.assertTrue(view.handle_annotation_place_release(release))
         self.assertTrue(release.accepted)
-        self.assertFalse(view._suppress_next_hotlink_click)
+        second_release = _PlacementMouseEvent(9, 11)
+        self.assertFalse(view.handle_annotation_place_release(second_release))
+        self.assertFalse(second_release.accepted)
 
-    def test_hotlink_click_suppression_is_cleared_when_switching_annotation_tools(self):
+    def test_hotlink_annotation_release_survives_tool_reactivation_after_dialog(self):
         view = AnnotationPlacementHarness()
-        view._suppress_next_hotlink_click = True
-        self.assertTrue(view._enter_annotation_place_mode("rect"))
-        self.assertFalse(view._suppress_next_hotlink_click)
-        view._suppress_next_hotlink_click = True
+        self.assertTrue(view._enter_annotation_place_mode("hotlink"))
+        self.assertTrue(view.handle_annotation_place_press(_PlacementMouseEvent(9, 11)))
+        self.assertTrue(view._enter_annotation_place_mode("hotlink"))
+        release = _PlacementMouseEvent(9, 11)
+        self.assertTrue(view.handle_annotation_place_release(release))
+        self.assertTrue(release.accepted)
+
+    def test_point_annotation_pending_release_is_cleared_when_exiting_tool(self):
+        view = AnnotationPlacementHarness()
+        self.assertTrue(view._enter_annotation_place_mode("hotlink"))
+        self.assertTrue(view.handle_annotation_place_press(_PlacementMouseEvent(9, 11)))
         view._exit_annotation_place_mode()
-        self.assertFalse(view._suppress_next_hotlink_click)
+        release = _PlacementMouseEvent(9, 11)
+        self.assertFalse(view.handle_annotation_place_release(release))
+        self.assertFalse(release.accepted)
+
+    def test_point_annotation_pending_release_is_cleared_when_switching_tool(self):
+        view = AnnotationPlacementHarness()
+        self.assertTrue(view._enter_annotation_place_mode("hotlink"))
+        self.assertTrue(view.handle_annotation_place_press(_PlacementMouseEvent(9, 11)))
+        self.assertTrue(view._enter_annotation_place_mode("rect"))
+        release = _PlacementMouseEvent(9, 11)
+        self.assertFalse(view.handle_annotation_place_release(release))
+        self.assertFalse(release.accepted)
 
     def test_ink_annotation_uses_freehand_drag_preview_and_commit(self):
         set_annotation_style_for_tool("ink", color="#224466", line_width=6.0)

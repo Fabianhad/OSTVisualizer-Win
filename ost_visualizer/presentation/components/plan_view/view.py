@@ -283,7 +283,7 @@ class TakeoffPlanView(
         self._right_pan_press_timer = QtCore.QElapsedTimer()
         self._right_pan_dragged: bool = False
         self._suppress_next_context_menu: bool = False
-        self._suppress_next_hotlink_click: bool = False
+        self._point_annotation_release_pending: bool = False
         self._ctrl_held: bool = False
         self._persistent_cursor_mode: str = "select"
         self._pre_zoom_persistent_mode: Optional[str] = None

@@ -382,9 +382,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.main_window = FakeMainWindow()
         coordinator._pending_hotlink_page_uid = None
         coordinator._pending_hotlink_named_view = None
-
         coordinator._on_takeoffs_changed(page_uid="page-1", takeoff_uids=["t-1"])
-
         self.assertEqual(coordinator._viewer.plan_pages, ["page-1"])
         self.assertEqual(coordinator._viewer.viewer_pages, [["page-1"]])
 
