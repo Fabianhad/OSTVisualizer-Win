@@ -1729,6 +1729,33 @@ class OptionsPreferencesTests(unittest.TestCase):
             ["ost_visualizer/application/services/config_service.py"],
         )
 
+    def test_user_facing_reset_view_actions_use_plan_view_reset_view(self):
+        component_builder = (
+            REPO_ROOT
+            / "ost_visualizer"
+            / "presentation"
+            / "builders"
+            / "component_builder.py"
+        ).read_text(encoding="utf-8")
+        detached_window = (
+            REPO_ROOT
+            / "ost_visualizer"
+            / "presentation"
+            / "windows"
+            / "components"
+            / "window.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("plan_view.reset_view()", component_builder)
+        self.assertNotIn("plan_view.fit_to_page()", component_builder)
+        self.assertIn(
+            "self._btn_fit.clicked.connect(self.plan_view.reset_view)",
+            detached_window,
+        )
+        self.assertNotIn(
+            "self._btn_fit.clicked.connect(self.plan_view.fit_to_page)",
+            detached_window,
+        )
+
     def test_invalid_color_mode_uses_config_aggregate_validation_policy(self):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)
@@ -2590,6 +2617,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         calls = []
         view._load_geometry_ready = True
         view._load_view_applied = False
+        view._load_user_view_changed = False
         view._load_waiting_for_visibility = True
         view._saved_scroll_state = object()
         view.isVisible = lambda: True
@@ -2607,6 +2635,25 @@ class OptionsPreferencesTests(unittest.TestCase):
             calls,
             [("view", True), ("tiles", 3.5), ("loaded",)],
         )
+
+    def test_finalized_page_load_preserves_user_changed_loading_zoom(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        calls = []
+        view._load_geometry_ready = True
+        view._load_view_applied = False
+        view._load_user_view_changed = True
+        view._load_waiting_for_visibility = True
+        view._saved_scroll_state = object()
+        view.isVisible = lambda: True
+        view._apply_current_view_contract = lambda consume_scroll_state: calls.append(
+            ("view", consume_scroll_state)
+        )
+        view._uses_dynamic_tile_coverage = lambda: False
+        view.page_fully_loaded = SimpleNamespace(emit=lambda: calls.append(("loaded",)))
+        self.assertTrue(view._finalize_page_load_if_ready())
+        self.assertTrue(view._load_view_applied)
+        self.assertIsNone(view._saved_scroll_state)
+        self.assertEqual(calls, [("loaded",)])
 
     def test_high_resolution_preference_disables_tiles(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -3693,7 +3740,10 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_failed_page_render_releases_pending_request_id(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._current_render_requests = ["req-1"]
+        view._current_load_token = "token"
+        view._current_render_identity = {}
         view._pending_page_data = {"load_token": "token", "render_identity": {}}
+        view._mark_load_geometry_ready = lambda: None
         with self.assertLogs(
             "ost_visualizer.presentation.components.plan_view.components.page_loader",
             level="WARNING",

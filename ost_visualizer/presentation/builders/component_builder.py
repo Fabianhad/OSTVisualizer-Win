@@ -607,7 +607,7 @@ class ComponentBuilder:
                 canvas.reset_view()
                 _update_combo(1.0)
             else:
-                plan_view.fit_to_page()
+                plan_view.reset_view()
 
         fit_action.triggered.connect(_on_fit)
         zoom_in_action.triggered.connect(_on_zoom_in)

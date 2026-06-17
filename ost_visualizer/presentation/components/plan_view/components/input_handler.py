@@ -226,6 +226,7 @@ class InputHandlerMixin:
             return False
         delta = cur_vp - self._last_pan_point
         self._last_pan_point = cur_vp
+        self._mark_user_view_changed_during_load()
         self.horizontalScrollBar().setValue(
             self.horizontalScrollBar().value() - delta.x()
         )
@@ -236,6 +237,7 @@ class InputHandlerMixin:
         factor = self.ZOOM_FACTOR if delta_y > 0 else 1.0 / self.ZOOM_FACTOR
         cursor_vp = event.position().toPoint()
         scene_before = self.mapToScene(cursor_vp)
+        self._mark_user_view_changed_during_load()
         self._apply_zoom(factor)
         new_vp = self.mapFromScene(scene_before)
         self.horizontalScrollBar().setValue(
@@ -262,10 +264,12 @@ class InputHandlerMixin:
         if advanced_mouse_controls and mods & Qt.KeyboardModifier.ControlModifier:
             self._apply_wheel_zoom(event, delta_y)
         elif advanced_mouse_controls and mods & Qt.KeyboardModifier.ShiftModifier:
+            self._mark_user_view_changed_during_load()
             self.horizontalScrollBar().setValue(
                 self.horizontalScrollBar().value() - int(delta_y)
             )
         else:
+            self._mark_user_view_changed_during_load()
             self.verticalScrollBar().setValue(
                 self.verticalScrollBar().value() - int(delta_y)
             )
@@ -421,6 +425,7 @@ class InputHandlerMixin:
                 event.accept()
                 return
             if self._cursor_mode == "zoom" or self._ctrl_held:
+                self._mark_user_view_changed_during_load()
                 self._apply_zoom(1.0 / self.ZOOM_FACTOR)
             self._right_pan_active = True
             self._right_pan_press_pos = vp_pos
@@ -1078,6 +1083,7 @@ class InputHandlerMixin:
             self._select_band_dragged = False
             self._zoom_press_ctrl = False
             if zoom_click and not was_dragged and self._drag_plan_item_uid is None:
+                self._mark_user_view_changed_during_load()
                 self._apply_zoom(self.ZOOM_FACTOR)
                 event.accept()
                 return
@@ -1353,11 +1359,13 @@ class InputHandlerMixin:
             if rect.width() > 5 and rect.height() > 5:
                 scene_rect = self.mapToScene(rect).boundingRect()
                 if scene_rect.isValid():
+                    self._mark_user_view_changed_during_load()
                     self.fitInView(scene_rect, Qt.AspectRatioMode.KeepAspectRatio)
                     new_scale = self.transform().m11()
                     self._zoom_debouncer.handle_scale_changed(new_scale)
                     self.zoom_changed.emit(new_scale * self._scene_scale * 0.333)
             elif self._cursor_mode == "zoom":
+                self._mark_user_view_changed_during_load()
                 self._apply_zoom(self.ZOOM_FACTOR)
             event.accept()
         elif self._panning and event.button() == Qt.MouseButton.LeftButton:

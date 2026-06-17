@@ -1905,6 +1905,195 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(calls, ["fit"])
         view.cleanup()
 
+    def test_user_zoom_during_async_page_load_survives_image_success(self):
+        view = self._make_plan_view()
+        view.resize(300, 300)
+        view.show()
+        QApplication.processEvents()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        self.assertFalse(view._load_view_applied)
+        view.zoom_in()
+        zoomed_scale = view.transform().m11()
+        request_id, request = view._rendering_service.page_requests[-1]
+        result = RenderResult(
+            request_id=request_id,
+            success=True,
+            image=QImage(1224, 1584, QImage.Format.Format_ARGB32),
+            error=None,
+        )
+        request["callback"](result)
+        QApplication.processEvents()
+        self.assertTrue(view._load_view_applied)
+        self.assertAlmostEqual(view.transform().m11(), zoomed_scale)
+        view.cleanup()
+
+    def test_reset_view_during_async_page_load_overrides_restored_zoom(self):
+        view = self._make_plan_view()
+        view.resize(300, 300)
+        view.show()
+        QApplication.processEvents()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            zoom_fac=1.332,
+            current_x=408.0,
+            current_y=528.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        restored_scale = view.transform().m11()
+        view.reset_view()
+        reset_scale = view.transform().m11()
+        self.assertTrue(view._load_user_view_changed)
+        self.assertNotAlmostEqual(reset_scale, restored_scale)
+        self.assertAlmostEqual(page.zoom_fac, view.get_view_state()[0])
+        request_id, request = view._rendering_service.page_requests[-1]
+        result = RenderResult(
+            request_id=request_id,
+            success=True,
+            image=QImage(1224, 1584, QImage.Format.Format_ARGB32),
+            error=None,
+        )
+        request["callback"](result)
+        QApplication.processEvents()
+        self.assertTrue(view._load_view_applied)
+        self.assertAlmostEqual(view.transform().m11(), reset_scale)
+        view.cleanup()
+
+    def test_pan_during_async_page_load_counts_as_user_view_change(self):
+        view = self._make_plan_view()
+        view.resize(300, 300)
+        view.show()
+        QApplication.processEvents()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            zoom_fac=1.332,
+            current_x=408.0,
+            current_y=528.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        view._panning = True
+        view._last_pan_point = QtCore.QPoint(10, 10)
+        self.assertTrue(view._apply_pan_update(QtCore.QPoint(20, 20)))
+        self.assertTrue(view._load_user_view_changed)
+        request_id, request = view._rendering_service.page_requests[-1]
+        result = RenderResult(
+            request_id=request_id,
+            success=True,
+            image=QImage(1224, 1584, QImage.Format.Format_ARGB32),
+            error=None,
+        )
+        request["callback"](result)
+        QApplication.processEvents()
+        self.assertTrue(view._load_view_applied)
+        view.cleanup()
+
+    def test_async_page_load_still_fits_when_user_does_not_zoom(self):
+        view = self._make_plan_view()
+        view.resize(300, 300)
+        view.show()
+        QApplication.processEvents()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        loading_scale = view.transform().m11()
+        request_id, request = view._rendering_service.page_requests[-1]
+        result = RenderResult(
+            request_id=request_id,
+            success=True,
+            image=QImage(1224, 1584, QImage.Format.Format_ARGB32),
+            error=None,
+        )
+        request["callback"](result)
+        QApplication.processEvents()
+        self.assertTrue(view._load_view_applied)
+        self.assertFalse(view._load_user_view_changed)
+        self.assertAlmostEqual(view.transform().m11(), loading_scale, delta=0.001)
+        view.cleanup()
+
+    def test_user_zoom_during_failed_async_page_load_leaves_canvas_stable(self):
+        view = self._make_plan_view()
+        view.resize(300, 300)
+        view.show()
+        QApplication.processEvents()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="missing.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        view.zoom_in()
+        zoomed_scale = view.transform().m11()
+        request_id, request = view._rendering_service.page_requests[-1]
+        result = RenderResult(
+            request_id=request_id,
+            success=False,
+            image=None,
+            error="missing",
+        )
+        request["callback"](result)
+        QApplication.processEvents()
+        self.assertTrue(view._load_view_applied)
+        self.assertIsNone(view._pending_page_data)
+        self.assertAlmostEqual(view.transform().m11(), zoomed_scale)
+        view._apply_pending_visible_view_state()
+        self.assertAlmostEqual(view.transform().m11(), zoomed_scale)
+        view.cleanup()
+
+    def test_reset_view_during_failed_async_page_load_leaves_canvas_stable(self):
+        view = self._make_plan_view()
+        view.resize(300, 300)
+        view.show()
+        QApplication.processEvents()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="missing.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            zoom_fac=1.332,
+            current_x=408.0,
+            current_y=528.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        view.reset_view()
+        reset_scale = view.transform().m11()
+        request_id, request = view._rendering_service.page_requests[-1]
+        result = RenderResult(
+            request_id=request_id,
+            success=False,
+            image=None,
+            error="missing",
+        )
+        request["callback"](result)
+        QApplication.processEvents()
+        self.assertTrue(view._load_view_applied)
+        self.assertIsNone(view._pending_page_data)
+        self.assertAlmostEqual(view.transform().m11(), reset_scale)
+        view._apply_pending_visible_view_state()
+        self.assertAlmostEqual(view.transform().m11(), reset_scale)
+        view.cleanup()
+
     def test_current_x_current_y_do_not_affect_overlay_placement(self):
         view = self._make_plan_view()
         page = Page(
@@ -2366,12 +2555,12 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(
             emitted,
             [
-                (
+                [
                     "a1",
                     "rect",
                     {"Color": "#ff0000", "Width": 4.0},
                     {"Color": "#336699", "Width": 7.0},
-                )
+                ]
             ],
         )
         view.cleanup()
@@ -2585,7 +2774,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(annotation.properties["Text"], "After")
         self.assertEqual(
             emitted,
-            [("nv1", "namedview", {"Text": "Before"}, {"Text": "After"})],
+            [["nv1", "namedview", {"Text": "Before"}, {"Text": "After"}]],
         )
         self.assertEqual(
             label.textInteractionFlags(),
@@ -4370,7 +4559,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         bid_ref = BidRef(file_path="bid.mdb", bid_uid="bid-1")
         condition = Condition(uid="c1", name="Condition", layer_visible=True)
         stale_takeoff = Takeoff(
-            uid="t1",
+            uid="1",
             condition_uid="c1",
             page_uid="page-1",
             position=[0.0, 0.0, 10.0, 10.0],
@@ -4378,8 +4567,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         dirty_position = [50.0, 60.0, 70.0, 80.0]
         view._current_bid_page_uid = page.uid
         view._current_render_identity = view._build_render_identity(page, bid_ref)
-        view._dirty_positions = {"t1": list(dirty_position)}
-        view._position_before_edit = {"t1": list(stale_takeoff.position)}
+        view._dirty_positions = {"1": list(dirty_position)}
+        view._position_before_edit = {"1": list(stale_takeoff.position)}
         emitted = []
         view.positions_flushed.connect(
             lambda takeoffs, annotations: emitted.append((takeoffs, annotations))
@@ -4395,8 +4584,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
                 page_area_selections={},
             )
             self.assertTrue(refreshed)
-            self.assertEqual(view.get_takeoff("t1").position, dirty_position)
-            self.assertEqual(view._dirty_positions, {"t1": dirty_position})
+            self.assertEqual(view.get_takeoff("1").position, dirty_position)
+            self.assertEqual(view._dirty_positions, {"1": dirty_position})
             self.assertEqual(emitted, [])
         finally:
             view.cleanup()

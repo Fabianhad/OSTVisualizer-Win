@@ -565,6 +565,14 @@ class SelectionManagerMixin:
         return outline
 
     @staticmethod
+    def _copy_item_transform_to_border(
+        source: QGraphicsItem, border: QGraphicsPathItem
+    ) -> None:
+        border.setPos(source.pos())
+        border.setTransformOriginPoint(source.transformOriginPoint())
+        border.setRotation(source.rotation())
+
+    @staticmethod
     def _get_ann_corners_ost(ann) -> list:
         pos = ann.position
         atype = ann.annotation_type
@@ -643,9 +651,7 @@ class SelectionManagerMixin:
                 border = None
                 if isinstance(item, QGraphicsPathItem):
                     border = QGraphicsPathItem(item.path())
-                    border.setPos(item.pos())
-                    border.setTransformOriginPoint(item.transformOriginPoint())
-                    border.setRotation(item.rotation())
+                    self._copy_item_transform_to_border(item, border)
                 elif isinstance(item, QGraphicsRectItem):
                     path = QPainterPath()
                     path.addRect(item.rect())
@@ -655,8 +661,7 @@ class SelectionManagerMixin:
                     path = QPainterPath()
                     path.addRect(item.boundingRect())
                     border = QGraphicsPathItem(path)
-                    border.setPos(item.pos())
-                    border.setRotation(item.rotation())
+                    self._copy_item_transform_to_border(item, border)
                 if border is not None:
                     border.setData(0, uid)
                     border.setPen(yellow_pen)

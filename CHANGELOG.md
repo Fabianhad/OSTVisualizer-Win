@@ -78,9 +78,12 @@
 - Kept text annotation textbox resizing centered when font or style changes resize the box, while inline text edits preserve the existing textbox bounds, wrapping, and editor selection state.
 - Updated the shared text-format toolbar with formatting icons and a live text-color swatch.
 - Fixed text annotation style and autosized textbox updates so overlay refreshes keep the new formatting and centered box.
+- Fixed plan-view takeoff overlay stacking so newer takeoffs remain above older takeoffs after page switches and overlay rebuilds.
 - Fixed the native OpenGL viewer so it no longer promotes splitter ancestors into `QSplitterClassWindow` native windows.
 - Fixed condition Display Name/Dimension label formatting so supported font style fields persist through overlay rebuilds instead of resetting after takeoff refreshes.
 - Fixed condition Display Name/Dimension label formatting so label boxes recompute immediately after toolbar style changes.
+- Fixed plan-view zoom and Reset View changes made while a page image is loading or fails to load so async image completion and white-canvas fallback no longer reset the user's view.
+- Fixed rotated Dimension annotation text highlights so multi-selection yellow outlines follow the rendered text bounds.
 - Stored generated condition label formatting on `BidTakeoffs`, using `Font*` for Display Dimension labels and `NameFont*` for Display Name labels.
 - Placed area Display Name labels at the centroid when no dimension label is shown, or below the centered dimension label when both are enabled.
 - Kept the text-format toolbar open after formatting generated Display Name and Display Dimension labels across overlay refreshes.

@@ -17,6 +17,31 @@ from ..interfaces.i_annotation_item_renderer import IAnnotationItemRenderer
 from ..interfaces.i_takeoff_renderer import ITakeoffRenderer
 from ..utils.page_info_builder import build_page_info as build_page_info_util
 
+_TAKEOFF_BODY_Z = 0.5
+_TAKEOFF_LABEL_Z = 20.0
+_TAKEOFF_DRAW_ORDER_STEP = 0.0000001
+
+
+def _numeric_takeoff_uid(uid: str) -> int:
+    uid_text = str(uid).strip()
+    if not uid_text.isdecimal():
+        raise ValueError(f"Takeoff UID must be numeric for draw ordering: {uid!r}")
+    return int(uid_text)
+
+
+def _takeoffs_in_draw_order(takeoffs: List[Takeoff]) -> List[Takeoff]:
+    indexed_takeoffs = list(enumerate(takeoffs))
+
+    def sort_key(indexed_takeoff: tuple[int, Takeoff]) -> tuple[int, int]:
+        index, takeoff = indexed_takeoff
+        return (_numeric_takeoff_uid(takeoff.uid), index)
+
+    return [takeoff for _index, takeoff in sorted(indexed_takeoffs, key=sort_key)]
+
+
+def _takeoff_z_value(base_z: float, draw_index: int) -> float:
+    return base_z + (draw_index * _TAKEOFF_DRAW_ORDER_STEP)
+
 
 class SceneBuilder:
     def __init__(
@@ -87,8 +112,13 @@ class SceneBuilder:
     ) -> Tuple[List[Any], Dict[str, List[Any]]]:
         takeoff_items = []
         uid_to_items: Dict[str, List[Any]] = {}
+        ordered_takeoffs = _takeoffs_in_draw_order(takeoffs)
+        uid_to_draw_index = {
+            str(takeoff.uid): draw_index
+            for draw_index, takeoff in enumerate(ordered_takeoffs)
+        }
         items = self._takeoff_renderer.create_all_path_items(
-            takeoffs=takeoffs,
+            takeoffs=ordered_takeoffs,
             conditions=conditions,
             color_map=color_map,
             opacity=0.5,
@@ -100,8 +130,11 @@ class SceneBuilder:
                 item_or_items if isinstance(item_or_items, list) else [item_or_items]
             )
             for item in items_to_add:
-                if item.data(2) != "condition_label":
-                    item.setZValue(1)
+                draw_index = uid_to_draw_index[str(uid)]
+                if item.data(2) == "condition_label":
+                    item.setZValue(_takeoff_z_value(_TAKEOFF_LABEL_Z, draw_index))
+                else:
+                    item.setZValue(_takeoff_z_value(_TAKEOFF_BODY_Z, draw_index))
                 scene.addItem(item)
                 takeoff_items.append(item)
             uid_to_items[uid] = items_to_add

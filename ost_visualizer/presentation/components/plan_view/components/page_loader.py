@@ -140,10 +140,15 @@ class PageLoaderMixin:
             self._current_render_requests.remove(result.request_id)
         else:
             return None
+        data = self._pending_page_data
         if not result.success or not result.image:
             logger.warning("%s render failed: %s", render_type, result.error)
+            if data and self._is_current_async_result(
+                data.get("load_token"), data.get("render_identity")
+            ):
+                self._pending_page_data = None
+                self._mark_load_geometry_ready()
             return None
-        data = self._pending_page_data
         if not data:
             return None
         if not self._is_current_async_result(

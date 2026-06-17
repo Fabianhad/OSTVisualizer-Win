@@ -465,7 +465,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._btn_pan.toggled.connect(
             lambda checked: self.plan_view.set_cursor_mode("pan") if checked else None
         )
-        self._btn_fit.clicked.connect(self.plan_view.fit_to_page)
+        self._btn_fit.clicked.connect(self.plan_view.reset_view)
         self._btn_zoom_in.clicked.connect(self.plan_view.zoom_in)
         self._btn_zoom_out.clicked.connect(self.plan_view.zoom_out)
         self._btn_zoom_mode.toggled.connect(

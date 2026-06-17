@@ -337,6 +337,7 @@ class TakeoffPlanView(
         self._default_auto_zoom_level: int = 0
         self._load_geometry_ready: bool = False
         self._load_view_applied: bool = False
+        self._load_user_view_changed: bool = False
         self._load_waiting_for_visibility: bool = False
         self._load_geometry_notified: bool = False
         self._saved_scroll_state: Optional[Tuple[int, int]] = None
@@ -2080,10 +2081,14 @@ class TakeoffPlanView(
             )
         )
 
-    def _capture_view_state_to_page(self, page: Optional[Page]) -> None:
+    def _capture_view_state_to_page(
+        self, page: Optional[Page], *, allow_pending_load: bool = False
+    ) -> None:
         if page is None or self._current_bid_page_uid != page.uid:
             return
-        if not self._load_view_applied or not self._scene.sceneRect().isValid():
+        if (
+            not self._load_view_applied and not allow_pending_load
+        ) or not self._scene.sceneRect().isValid():
             return
         zoom_fac, cx, cy = self.get_view_state()
         if zoom_fac <= 0:
@@ -2126,8 +2131,13 @@ class TakeoffPlanView(
             self._load_initial_view_mode = "fit"
         self._load_geometry_ready = False
         self._load_view_applied = False
+        self._load_user_view_changed = False
         self._load_waiting_for_visibility = False
         self._load_geometry_notified = False
+
+    def _mark_user_view_changed_during_load(self) -> None:
+        if not self._load_view_applied:
+            self._load_user_view_changed = True
 
     def _mark_load_geometry_ready(self) -> None:
         self._update_scene_rect()
@@ -2182,7 +2192,10 @@ class TakeoffPlanView(
             self._load_waiting_for_visibility = True
             return False
         self._load_waiting_for_visibility = False
-        self._apply_current_view_contract(consume_scroll_state=True)
+        if self._load_user_view_changed:
+            self._saved_scroll_state = None
+        else:
+            self._apply_current_view_contract(consume_scroll_state=True)
         self._saved_scroll_state = None
         self._load_view_applied = True
         if self._uses_dynamic_tile_coverage():
@@ -4671,6 +4684,7 @@ class TakeoffPlanView(
         self._clear_pdf_text_cache()
         self._load_geometry_ready = False
         self._load_view_applied = False
+        self._load_user_view_changed = False
         self._load_waiting_for_visibility = False
         self._load_geometry_notified = False
         self._saved_scroll_state = None

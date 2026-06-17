@@ -1,8 +1,6 @@
 import inspect
 import unittest
-
 from PySide6 import QtCore, QtWidgets
-
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
 
 
@@ -28,15 +26,12 @@ class QtNativeWindowWarningTests(unittest.TestCase):
         layout.addWidget(native_child)
         splitter.addWidget(host)
         window.setCentralWidget(splitter)
-
         window.show()
         app.processEvents()
-
         self.assertTrue(
             native_child.testAttribute(QtCore.Qt.WidgetAttribute.WA_NativeWindow)
         )
         self.assertIsNone(splitter.windowHandle())
-
         window.close()
         app.processEvents()
 
@@ -44,7 +39,6 @@ class QtNativeWindowWarningTests(unittest.TestCase):
         source = inspect.getsource(OpenGLViewer.__init__)
         guard_index = source.index("WA_DontCreateNativeAncestors")
         native_index = source.index("WA_NativeWindow")
-
         self.assertLess(guard_index, native_index)
 
 
