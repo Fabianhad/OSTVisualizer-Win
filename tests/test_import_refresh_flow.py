@@ -58,6 +58,11 @@ class FakeUiState:
         return None
 
 
+class FakeDeferredPersistence:
+    def flush_for_file(self, _file_path):
+        return True
+
+
 class FakeProgressDialog:
     error = None
     result_code = QtWidgets.QDialog.DialogCode.Accepted
@@ -136,6 +141,7 @@ class ImportRefreshFlowTests(unittest.TestCase):
             project_data_service=FakeProjectData(),
             import_service=service,
             ui_state_manager=FakeUiState(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         original_dialog = import_handler_module.ProgressDialog
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
@@ -166,6 +172,7 @@ class ImportRefreshFlowTests(unittest.TestCase):
             project_data_service=FakeProjectData(),
             import_service=service,
             ui_state_manager=FakeUiState(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         original_dialog = import_handler_module.ProgressDialog
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName

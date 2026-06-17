@@ -109,6 +109,36 @@ class BidLayersSidebar(QtWidgets.QWidget):
     def set_toggle_callback(self, callback: Callable[[str, bool], None]) -> None:
         self._on_toggle = callback
 
+    def get_layer(self, layer_uid: str) -> Optional[BidLayer]:
+        for layer in self._layers:
+            if str(layer.uid) == str(layer_uid):
+                return layer
+        return None
+
+    def get_layers(self) -> List[BidLayer]:
+        return list(self._layers)
+
+    def set_layer_visible(self, layer_uid: str, show: bool) -> None:
+        for row, layer in enumerate(self._layers):
+            if str(layer.uid) != str(layer_uid):
+                continue
+            layer.show = bool(show)
+            if row < len(self._checkboxes):
+                checkbox = self._checkboxes[row]
+                checkbox.blockSignals(True)
+                checkbox.setChecked(bool(show))
+                checkbox.blockSignals(False)
+            return
+
+    def set_all_layers_visible(self, show: bool) -> None:
+        for row, layer in enumerate(self._layers):
+            layer.show = bool(show)
+            if row < len(self._checkboxes):
+                checkbox = self._checkboxes[row]
+                checkbox.blockSignals(True)
+                checkbox.setChecked(bool(show))
+                checkbox.blockSignals(False)
+
     def save_header_state(self) -> QtCore.QByteArray:
         return self._table.header().saveState()
 

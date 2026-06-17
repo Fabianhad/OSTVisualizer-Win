@@ -108,6 +108,7 @@ class UIEventCoordinator:
         icon_provider,
         project_write_service,
         project_read_service,
+        deferred_persistence_manager,
     ):
         self.main_window = main_window
         self.ui_state_manager = ui_state_manager
@@ -120,6 +121,7 @@ class UIEventCoordinator:
         self._icon_provider = icon_provider
         self._project_write_service = project_write_service
         self._project_read_service = project_read_service
+        self._deferred_persistence = deferred_persistence_manager
         self.conditions_sidebar = None
         self.takeoff_sidebar = None
         self.opengl_viewer = None
@@ -1208,9 +1210,11 @@ class UIEventCoordinator:
         self.opengl_viewer = None
         self.plan_view = None
         self._condition_handler = None
+        self._deferred_persistence = None
 
-    def flush_current_page_state(self) -> None:
+    def flush_current_page_state(self) -> bool:
         self._save_current_page_view_state()
+        return bool(self._deferred_persistence.flush())
 
     def _on_file_opened(self, **kwargs) -> None:
         self._save_current_page_view_state()
@@ -1695,7 +1699,6 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return
-        write_svc = self._project_write_service
         active_page_uid = self.ui_state_manager.active_page_uid
         page_uid = self.plan_view.current_page_uid if self.plan_view else None
         if page_uid and self.plan_view.is_view_state_stable:
@@ -1706,14 +1709,22 @@ class UIEventCoordinator:
                     page.zoom_fac = zoom_fac
                     page.current_x = cx
                     page.current_y = cy
-                write_svc.save_page_view_state(
+                self._deferred_persistence.schedule_page_view_state(
                     bid_ref.file_path, page_uid, zoom_fac, cx, cy
                 )
         page_to_save = selected_page_override or page_uid or active_page_uid
         if page_to_save:
-            write_svc.save_bid_selected_page(
+            self._deferred_persistence.schedule_bid_selected_page(
                 bid_ref.file_path, bid_ref.bid_uid, page_to_save
             )
+
+    def _flush_deferred_for_file(self, file_path: Optional[str]) -> bool:
+        if not file_path:
+            return True
+        return bool(self._deferred_persistence.flush_for_file(file_path))
+
+    def flush_deferred_for_file(self, file_path: Optional[str]) -> bool:
+        return self._flush_deferred_for_file(file_path)
 
     def _sync_overlay_display_mode(self, page_uid: Optional[str]) -> None:
         if not page_uid:
@@ -1815,6 +1826,9 @@ class UIEventCoordinator:
     def _on_page_scale_changed(
         self, file_path: str, page_uid: str, sf1: float, sf2: float
     ) -> None:
+        if not self._flush_deferred_for_file(file_path):
+            self._update_page_settings_bar(page_uid)
+            return
         write_svc = self._project_write_service
         success = False
         try:
@@ -1878,6 +1892,8 @@ class UIEventCoordinator:
         flip_x = (not page.flip_x) if toggle_flip_x else page.flip_x
         flip_y = (not page.flip_y) if toggle_flip_y else page.flip_y
         self._save_current_page_view_state(selected_page_override=page_uid)
+        if not self._flush_deferred_for_file(bid_ref.file_path):
+            return
         self._project_write_service.save_page_image_adjustments(
             bid_ref.file_path,
             [page_uid],
@@ -1930,6 +1946,8 @@ class UIEventCoordinator:
                 if uid and self.project_data.get_page(uid)
             ]
         if not page_uids:
+            return False
+        if not self._flush_deferred_for_file(file_path):
             return False
         return self._project_write_service.save_page_image_adjustments(
             file_path,
@@ -1984,6 +2002,8 @@ class UIEventCoordinator:
             ]
         if not page_uids:
             return False
+        if not self._flush_deferred_for_file(file_path):
+            return False
         if len(page_uids) == 1:
             return self._project_write_service.save_page_scale(
                 file_path,
@@ -2037,6 +2057,8 @@ class UIEventCoordinator:
     def _save_page_name(self, file_path: str, page_uid: str, new_name: str) -> bool:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             return False
+        if not self._flush_deferred_for_file(file_path):
+            return False
         return self._project_write_service.save_page_name(file_path, page_uid, new_name)
 
     def can_delete_current_page(self) -> bool:
@@ -2074,6 +2096,9 @@ class UIEventCoordinator:
             ):
                 return
         if not self._stage_selection_after_page_delete(page_uid):
+            return
+        if not self._flush_deferred_for_file(bid_ref.file_path):
+            self._clear_staged_takeoff_restore()
             return
         if not self._project_write_service.delete_pages(bid_ref.file_path, [page_uid]):
             self._clear_staged_takeoff_restore()
@@ -2171,6 +2196,8 @@ class UIEventCoordinator:
         self, file_path: str, page_uid: str, overlay_image_path: str
     ) -> None:
         self._save_current_page_view_state(selected_page_override=page_uid)
+        if not self._flush_deferred_for_file(file_path):
+            return
         self._project_write_service.save_page_overlay_image(
             file_path, page_uid, overlay_image_path
         )
@@ -2181,6 +2208,10 @@ class UIEventCoordinator:
         previous_area_uid = (
             self.project_data.get_page_area_selections().get(page_uid) or ""
         )
+        if not self._flush_deferred_for_file(file_path):
+            self.ui_state_manager.selected_area_uid = previous_area_uid
+            self._update_page_settings_bar(page_uid)
+            return
         write_svc = self._project_write_service
         success = False
         try:
@@ -2202,20 +2233,12 @@ class UIEventCoordinator:
             return
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             return
-        try:
-            success = self._project_write_service.save_page_show_mode(
-                bid_ref.file_path, page_uid, show_mode
-            )
-        except Exception:
-            logger.warning("Failed to save page show mode", exc_info=True)
-            self._update_export_menu_state()
-            return
-        if not success:
-            self._update_export_menu_state()
-            return
         page = self.project_data.get_page(page_uid)
         if page:
             page.image_show_mode = show_mode
+        self._deferred_persistence.schedule_page_show_mode(
+            bid_ref.file_path, page_uid, show_mode
+        )
         self._sync_overlay_display_mode(page_uid)
         if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
             self._update_plan_view(page_uid)
@@ -2223,20 +2246,18 @@ class UIEventCoordinator:
 
     def toggle_page_invert(self, invert: bool) -> None:
         self._toggle_page_image_flag(
+            "invert",
             lambda page: page.invert,
             self._set_page_invert,
             bool(invert),
-            self._project_write_service.save_page_invert,
-            "Failed to save page invert state",
         )
 
     def toggle_page_bitonal(self, bitonal: bool) -> None:
         self._toggle_page_image_flag(
+            "bitonal",
             lambda page: page.bitonal,
             self._set_page_bitonal,
             bool(bitonal),
-            self._project_write_service.save_page_bitonal,
-            "Failed to save page bitonal state",
         )
 
     @staticmethod
@@ -2248,7 +2269,7 @@ class UIEventCoordinator:
         page.bitonal = value
 
     def _toggle_page_image_flag(
-        self, read_fn, write_fn, value: bool, save_fn, failure_message: str
+        self, flag_name: str, read_fn, write_fn, value: bool
     ) -> None:
         page_uid = self.ui_state_manager.active_page_uid
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -2263,17 +2284,15 @@ class UIEventCoordinator:
             self._update_export_menu_state()
             return
         self._save_current_page_view_state(selected_page_override=page_uid)
-        previous = read_fn(page)
         write_fn(page, value)
-        try:
-            success = save_fn(bid_ref.file_path, page_uid, value)
-        except Exception:
-            logger.warning(failure_message, exc_info=True)
-            success = False
-        if not success:
-            write_fn(page, previous)
-            self._update_export_menu_state()
-            return
+        if flag_name == "invert":
+            self._deferred_persistence.schedule_page_invert(
+                bid_ref.file_path, page_uid, value
+            )
+        elif flag_name == "bitonal":
+            self._deferred_persistence.schedule_page_bitonal(
+                bid_ref.file_path, page_uid, value
+            )
         if self.plan_view and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
             self._update_plan_view(page_uid)
         self._update_export_menu_state()
@@ -2282,16 +2301,36 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return
-        write_svc = self._project_write_service
-        success = False
-        try:
-            success = bool(
-                write_svc.update_layer_show(bid_ref.file_path, layer_uid, show)
-            )
-        except Exception:
-            logger.warning("Failed to update layer visibility", exc_info=True)
-        if not success:
-            self._sidebar.load_bid_layers_sidebar()
+        self.update_layer_visibility_deferred(layer_uid, show)
+
+    def update_layer_visibility_deferred(self, layer_uid: str, show: bool) -> bool:
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if not bid_ref:
+            return False
+        layer = (
+            self._sidebar.bid_layers_sidebar.get_layer(layer_uid)
+            if self._sidebar.bid_layers_sidebar
+            else None
+        )
+        image_layer = bool(layer and layer.name.strip().lower() == "image")
+        changed_pages = self.project_data.update_layer_visibility(
+            layer_uid, show, image_layer=image_layer
+        )
+        if self._sidebar.bid_layers_sidebar:
+            self._sidebar.bid_layers_sidebar.set_layer_visible(layer_uid, show)
+        self._reload_conditions_sidebar_from_memory()
+        self._deferred_persistence.schedule_layer_show(
+            bid_ref.file_path, layer_uid, show
+        )
+        pages_to_update = changed_pages or [self.ui_state_manager.active_page_uid]
+        for page_uid in pages_to_update:
+            if page_uid:
+                self._update_plan_view(page_uid)
+        self._viewer.update_viewers(self.project_data.get_selected_page_uids())
+        self._sidebar.update_conditions_quantities()
+        self._update_export_menu_state()
+        self.ensure_select_mode()
+        return True
 
     def _on_layer_added(self, name: str, after_sequence: int) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -2299,6 +2338,8 @@ class UIEventCoordinator:
             return
         sidebar = self._sidebar.bid_layers_sidebar
         if not sidebar:
+            return
+        if not self._flush_deferred_for_file(bid_ref.file_path):
             return
         try:
             result = self._project_write_service.insert_layer_result(
@@ -2325,6 +2366,8 @@ class UIEventCoordinator:
         if not bid_ref:
             return
         write_svc = self._project_write_service
+        if not self._flush_deferred_for_file(bid_ref.file_path):
+            return
         try:
             write_svc.delete_layer(bid_ref.file_path, layer_uid)
         except Exception:
@@ -2334,18 +2377,47 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return
-        write_svc = self._project_write_service
-        success = False
-        try:
-            success = bool(
-                write_svc.update_all_layers_show(
-                    bid_ref.file_path, bid_ref.bid_uid, show
-                )
+        self.update_all_layers_visibility_deferred(show)
+
+    def update_all_layers_visibility_deferred(self, show: bool) -> bool:
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if not bid_ref:
+            return False
+        changed_pages = self.project_data.update_all_layer_visibility(show)
+        if self._sidebar.bid_layers_sidebar:
+            layers = self._sidebar.bid_layers_sidebar.get_layers()
+            self._sidebar.bid_layers_sidebar.set_all_layers_visible(show)
+        else:
+            layers = self._project_read_service.get_merged_bid_layers(
+                bid_ref.file_path, bid_ref.bid_uid
             )
-        except Exception:
-            logger.warning("Failed to update all layers visibility", exc_info=True)
-        if not success:
-            self._sidebar.load_bid_layers_sidebar()
+        self._reload_conditions_sidebar_from_memory()
+        for layer in layers:
+            self._deferred_persistence.schedule_layer_show(
+                bid_ref.file_path, layer.uid, show
+            )
+        pages_to_update = changed_pages or [self.ui_state_manager.active_page_uid]
+        for page_uid in pages_to_update:
+            if page_uid:
+                self._update_plan_view(page_uid)
+        self._viewer.update_viewers(self.project_data.get_selected_page_uids())
+        self._sidebar.update_conditions_quantities()
+        self._update_export_menu_state()
+        self.ensure_select_mode()
+        return True
+
+    def _reload_conditions_sidebar_from_memory(self) -> None:
+        if not self.conditions_sidebar:
+            return
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        bid = self.project_data.get_bid(bid_ref) if bid_ref else None
+        project_name = bid.name if bid else ""
+        self.conditions_sidebar.load_conditions(
+            self.project_data.get_bid_conditions(),
+            self.project_data.get_bid_condition_folders(),
+            project_name,
+            self.ui_state_manager.state.grayscale_enabled,
+        )
 
     def _on_layer_moved(self, layer_uid: str, direction: int) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -2356,6 +2428,8 @@ class UIEventCoordinator:
             return
         neighbor_uid = sidebar.get_neighbor_uid(direction)
         if not neighbor_uid:
+            return
+        if not self._flush_deferred_for_file(bid_ref.file_path):
             return
         try:
             self._project_write_service.swap_layer_sequence(
@@ -2370,6 +2444,9 @@ class UIEventCoordinator:
             return
         write_svc = self._project_write_service
         success = False
+        if not self._flush_deferred_for_file(bid_ref.file_path):
+            self._sidebar.load_bid_layers_sidebar()
+            return
         try:
             success = bool(
                 write_svc.update_layer_name(bid_ref.file_path, layer_uid, new_name)

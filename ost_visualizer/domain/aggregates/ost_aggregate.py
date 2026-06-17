@@ -88,6 +88,9 @@ class OstAggregate:
     def get_page(self, page_uid: str) -> Optional[Page]:
         return self._page_selection.get_page(page_uid)
 
+    def get_all_pages(self) -> List[Page]:
+        return list(self._page_selection.pages.values())
+
     def get_page_name(self, page_uid: str) -> str:
         return self._page_selection.get_page_name(page_uid)
 

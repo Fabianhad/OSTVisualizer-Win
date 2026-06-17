@@ -14,11 +14,13 @@ class ImportHandler:
         project_data_service,
         import_service,
         ui_state_manager,
+        deferred_persistence_manager,
     ):
         self.window = window
         self.ui_state_manager = ui_state_manager
         self.project_data = project_data_service
         self._import_service = import_service
+        self._deferred_persistence = deferred_persistence_manager
 
     def import_ost(self) -> None:
         self._import_file(
@@ -50,6 +52,8 @@ class ImportHandler:
             f"{format_name} Files (*.{extension})",
         )
         if not filename:
+            return
+        if not self._deferred_persistence.flush_for_file(target_db):
             return
         target_project_uid = self._resolve_target_project_uid()
         try:

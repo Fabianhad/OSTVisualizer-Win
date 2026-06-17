@@ -18,6 +18,7 @@ class CoverSheetHandler:
         event_bus,
         ui_state_manager,
         ui_access_manager,
+        deferred_persistence_manager,
     ) -> None:
         self.window = window
         self.icon_provider = icon_provider
@@ -28,6 +29,7 @@ class CoverSheetHandler:
         self._write_service = project_write_service
         self._infrastructure_provider = infrastructure_provider
         self._event_bus = event_bus
+        self._deferred_persistence = deferred_persistence_manager
 
     def open_cover_sheet(self) -> None:
         if not self._ui_access_manager.is_allowed(Feature.COVER_SHEET):
@@ -56,6 +58,7 @@ class CoverSheetHandler:
             project_read_service=self._read_service,
             project_write_service=self._write_service,
             bid_ref=bid_ref,
+            deferred_persistence_manager=self._deferred_persistence,
         )
         dialog = CoverSheetDialog(
             self.icon_provider,
@@ -149,9 +152,9 @@ class CoverSheetHandler:
             project_read_service=self._read_service,
             project_write_service=self._write_service,
             bid_ref=bid_ref,
+            deferred_persistence_manager=self._deferred_persistence,
         )
-        if context.save_cover_sheet(updates):
-            context.refresh()
+        if context.save_cover_sheet(updates) and context.refresh():
             return True
         show_critical(
             self.window,

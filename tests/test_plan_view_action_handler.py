@@ -121,6 +121,7 @@ class FakePlanView:
 
 class FakeUiState:
     place_condition_uids = []
+    active_page_uid = "p1"
 
     def get_selected_bid_ref(self):
         return BidRef(file_path="bid.mdb", bid_uid="7")
@@ -136,6 +137,7 @@ class FakeProjectData:
         self.added_annotations = []
         self.removed_annotation_uids = []
         self.page_names = {"p1": "Page 1"}
+        self.pages = {"p1": SimpleNamespace(uid="p1", overlay_rect=None)}
         self.conditions = {
             "42": SimpleNamespace(layer_visible=True, condition_type="linear"),
             "c1": SimpleNamespace(layer_visible=True, condition_type="area"),
@@ -148,6 +150,9 @@ class FakeProjectData:
 
     def get_current_bid_file_path(self):
         return "bid.mdb"
+
+    def get_page(self, page_uid):
+        return self.pages.get(page_uid)
 
     def get_takeoff(self, uid):
         return self.takeoffs.get(uid)
@@ -416,6 +421,14 @@ class FakeWriteService:
         return SimpleNamespace(success=True)
 
 
+class FakeDeferredPersistence:
+    def __init__(self):
+        self.overlay_rect_calls = []
+
+    def schedule_page_overlay_rect(self, db_path, page_uid, overlay_rect):
+        self.overlay_rect_calls.append((db_path, page_uid, overlay_rect))
+
+
 class FakeAnnotationWriteService:
     def __init__(self):
         self.position_calls = []
@@ -585,6 +598,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     page_settings_bar=FakePageSettingsBar(),
                     undo_svc=FakeUndoService(),
                     event_bus=FakeEventBus(),
+                    deferred_persistence_manager=FakeDeferredPersistence(),
                     ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
                 )
                 position = (
@@ -669,6 +683,32 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertTrue(dimension_spec.properties["FontItalic"])
         self.assertTrue(dimension_spec.properties["FontUnderline"])
 
+    def test_overlay_rect_updates_model_immediately_and_defers_persistence(self):
+        data = FakeProjectData()
+        write = FakeWriteService()
+        deferred = FakeDeferredPersistence()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            ui_access_manager=FakeAccess({Feature.EDIT_PAGE_SETTINGS}),
+            deferred_persistence_manager=deferred,
+        )
+
+        result = handler.save_current_page_overlay_rect((1, 2.5, 3, 4.25))
+
+        self.assertTrue(result.write_success)
+        self.assertEqual(data.get_page("p1").overlay_rect, (1.0, 2.5, 3.0, 4.25))
+        self.assertEqual(
+            deferred.overlay_rect_calls,
+            [("bid.mdb", "p1", (1.0, 2.5, 3.0, 4.25))],
+        )
+
     def _paste_handler(
         self,
         plan_view=None,
@@ -686,6 +726,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
 
     def _copied_takeoff(self, position=None):
@@ -741,6 +782,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_set_curved(["t1", "t2"], True)
         self.assertEqual(len(write.curve_calls), 2)
@@ -767,6 +809,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess(set()),
         )
         handler.on_elements_deleted(["t1"])
@@ -802,6 +845,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     page_settings_bar=FakePageSettingsBar(),
                     undo_svc=undo,
                     event_bus=FakeEventBus(),
+                    deferred_persistence_manager=FakeDeferredPersistence(),
                     ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
                 )
                 position = (
@@ -837,6 +881,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
         )
         properties = {
@@ -877,6 +922,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
         )
         handler.on_annotation_created("rect", [1.0, 2.0, 5.0, 6.0], "p1")
@@ -980,6 +1026,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_annotation_styles_flushed(
             [("missing", "rect", {"Color": "#000000"}, {"Color": "#ffffff"})]
@@ -1020,6 +1067,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
         )
         handler.on_annotation_created("rect", [1.0, 2.0, 5.0, 6.0], "p1")
@@ -1048,6 +1096,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
         )
         handler.on_text_annotation_created(
@@ -1072,6 +1121,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
         )
         position = [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]
@@ -1124,6 +1174,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
         )
         handler.on_named_view_created(
@@ -1157,6 +1208,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
         )
 
@@ -1212,6 +1264,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
         )
 
@@ -1241,6 +1294,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess(set()),
         )
         handler.on_text_annotation_created(
@@ -1273,6 +1327,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     page_settings_bar=FakePageSettingsBar(),
                     undo_svc=FakeUndoService(),
                     event_bus=FakeEventBus(),
+                    deferred_persistence_manager=FakeDeferredPersistence(),
                     ui_access_manager=FakeAccess(set()),
                 )
                 handler.on_annotation_created(
@@ -1291,6 +1346,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
         handler.on_annotation_text_properties_flushed(
@@ -1315,6 +1371,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
         changes = [
@@ -1375,6 +1432,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
         handler.on_annotation_styles_flushed(
@@ -1407,6 +1465,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess(set()),
         )
         handler.on_annotation_styles_flushed(
@@ -1428,6 +1487,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.EDIT_CONDITION}),
         )
         handler.on_condition_text_properties_flushed(
@@ -1485,6 +1545,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.EDIT_CONDITION}),
         )
         changes = [
@@ -1513,6 +1574,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_takeoff_created("42", [1.0, 2.0], "9")
         self.assertEqual(write.calls[0][3], False)
@@ -1603,6 +1665,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=SyncEventBus(on_takeoffs_changed),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_takeoff_created("42", [1.0, 2.0], "p2")
         self.assertEqual(plan_view.selected, {"100"})
@@ -1624,6 +1687,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         spec = InsertTakeoffSpec(
             condition_uid="42",
@@ -1655,6 +1719,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_reassign_condition(["t1", "missing"], "42")
         handler.on_reassign_condition(["t1"], "missing-condition")
@@ -1680,6 +1745,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_set_curved(["t1", "t2", "t3"], True)
         self.assertEqual(len(write.curve_calls), 3)
@@ -1703,6 +1769,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_positions_flushed([("t1", [0.0, 0.0], [5.0, 6.0])], [])
         self.assertEqual(write.position_calls[0][2], False)
@@ -1729,6 +1796,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_positions_flushed([("t1", [0.0, 0.0], [5.0, 6.0])], [])
         undo.undo()
@@ -1776,6 +1844,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_positions_flushed(
             [("t1", [0.0, 0.0], [5.0, 6.0])],
@@ -1822,6 +1891,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         takeoff_changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
         ann_changes = [("a1", "annotation", [1.0, 1.0], [2.0, 2.0])]
@@ -1862,6 +1932,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_annotation_text_properties_flushed(
             [
@@ -1933,6 +2004,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_annotation_text_properties_flushed(
             [("nv1", "namedview", {"Text": "Old"}, {"Text": "New"})]
@@ -1972,6 +2044,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_annotation_text_and_positions_flushed(
             [
@@ -2055,6 +2128,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_rotations_flushed([("t1", 0.0, 90.0)])
         self.assertEqual(write.rotation_calls[0][2], False)
@@ -2091,6 +2165,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_group_rotation_flushed(
             [("t1", [0.0, 0.0], [3.0, 4.0])],
@@ -2126,6 +2201,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         position_changes = [("t1", [0.0, 0.0], [3.0, 4.0])]
         rotation_changes = [("t1", 0.0, 45.0)]
@@ -2158,6 +2234,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_group_rotation_flushed(
             [("t1", [0.0, 0.0], [3.0, 4.0])],
@@ -2198,6 +2275,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_elements_deleted(["t1"])
         self.assertEqual(write.delete_calls[0][2], False)
@@ -2230,6 +2308,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_elements_deleted(["t1"])
         undo.undo()
@@ -2259,6 +2338,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_elements_deleted(["t1"])
         self.assertEqual(write.delete_calls, [("bid.mdb", ["t1"], True)])
@@ -2286,6 +2366,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_elements_deleted(["t1"])
         self.assertEqual(plan_view.selected, {"t1"})
@@ -2310,6 +2391,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_elements_deleted(["t1"])
         undo.undo()
@@ -2354,6 +2436,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     page_settings_bar=FakePageSettingsBar(),
                     undo_svc=FakeUndoService(),
                     event_bus=FakeEventBus(),
+                    deferred_persistence_manager=FakeDeferredPersistence(),
                     ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
                 )
                 with patch.object(
@@ -2393,6 +2476,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
         handler.on_elements_deleted(["a1"])
@@ -2441,6 +2525,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
         handler.on_elements_deleted(["rect-item"])
@@ -2497,6 +2582,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
         with patch.object(handler_module, "confirm", return_value=True) as confirm:
@@ -2546,6 +2632,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler._clipboard_svc = FakeClipboard(
             [parent, hole],
@@ -2598,6 +2685,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler._clipboard_svc = FakeClipboard(
             [parent, hole],
@@ -2628,6 +2716,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler._clipboard_svc = FakeClipboard([source])
         handler.on_paste_requested()
@@ -2658,6 +2747,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=undo,
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler._clipboard_svc = FakeClipboard(
             [source],
@@ -2702,6 +2792,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler._clipboard_svc = FakeClipboard(
             [source], extras={"source": {"UnsupportedColumn": "value"}}
@@ -2725,6 +2816,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler._clipboard_svc = FakeClipboard(
             [source],
@@ -2761,6 +2853,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler._clipboard_svc = FakeClipboard([source])
         handler.on_paste_requested()
@@ -2923,6 +3016,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler._clipboard_svc = FakeClipboard([hole])
         handler.on_paste_requested()
@@ -2948,6 +3042,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler._clipboard_svc = FakeClipboard([hole])
         handler.on_paste_requested()
@@ -2973,6 +3068,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
         )
         handler._clipboard_svc = FakeClipboard([hole])

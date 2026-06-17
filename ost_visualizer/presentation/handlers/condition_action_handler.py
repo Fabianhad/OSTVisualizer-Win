@@ -1,6 +1,7 @@
 import logging
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Optional
 from PySide6.QtCore import QSignalBlocker
 from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
@@ -45,6 +46,9 @@ class ConditionActionHandler:
             return None, None
         return bid_ref, self._write_service
 
+    def _flush_deferred_for_bid(self, bid_ref) -> bool:
+        return self._coordinator.flush_deferred_for_file(bid_ref.file_path)
+
     def _is_metric(self) -> bool:
         bid = self._project_data.get_current_bid()
         return bool(bid and bid.measure_base == 1)
@@ -66,12 +70,10 @@ class ConditionActionHandler:
                 bid_ref.file_path, layer_uids
             ),
             "layer_update_show_fn": lambda layer_uid, show: (
-                write_service.update_layer_show(bid_ref.file_path, layer_uid, show)
+                self._coordinator.update_layer_visibility_deferred(layer_uid, show)
             ),
             "layer_update_all_show_fn": lambda show: (
-                write_service.update_all_layers_show(
-                    bid_ref.file_path, bid_ref.bid_uid, show
-                )
+                self._coordinator.update_all_layers_visibility_deferred(show)
             ),
             "layer_update_name_fn": lambda layer_uid, name: (
                 write_service.update_layer_name(bid_ref.file_path, layer_uid, name)
@@ -109,6 +111,8 @@ class ConditionActionHandler:
         )
 
     def _save_condition_types_from_dialog(self, bid_ref, write_service, changes):
+        if not self._flush_deferred_for_bid(bid_ref):
+            return None
         result = write_service.save_condition_types_result(bid_ref.file_path, changes)
         if not result.write_success:
             return None
@@ -201,6 +205,10 @@ class ConditionActionHandler:
         created_refresh_failed = [False]
 
         def save_new_condition(_cond_uid, dto):
+            if not self._flush_deferred_for_bid(bid_ref):
+                return UpdateConditionResultDto(
+                    success=False, error="Failed to save pending visual state."
+                )
             changes = dto.get_changes()
             cond_type = changes.get("condition_type", synthetic.condition_type)
             td = TYPE_DEFAULTS.get(cond_type, {})
@@ -356,6 +364,8 @@ class ConditionActionHandler:
     def _move_conditions_to_target(
         self, bid_ref, write_service, condition_uids: list, target: dict, sidebar
     ) -> None:
+        if not self._flush_deferred_for_bid(bid_ref):
+            return
         moved_uids = []
         target_kind = target.get("kind")
         for condition_uid in condition_uids:
@@ -391,6 +401,8 @@ class ConditionActionHandler:
     def _duplicate_conditions_result(
         self, bid_ref, write_service, condition_uids: list, sidebar
     ):
+        if not self._flush_deferred_for_bid(bid_ref):
+            return SimpleNamespace(value=[], refresh_failed=False, write_success=False)
         if sidebar:
             with QSignalBlocker(sidebar):
                 return write_service.duplicate_conditions_result(
@@ -435,6 +447,8 @@ class ConditionActionHandler:
         confirmed_uids = confirm_delete_conditions(sidebar.window(), names)
         if not confirmed_uids:
             return
+        if not self._flush_deferred_for_bid(bid_ref):
+            return
         success = write_service.delete_conditions(
             bid_ref.file_path, bid_ref.bid_uid, confirmed_uids
         )
@@ -472,6 +486,8 @@ class ConditionActionHandler:
             "This cannot be undone",
         ):
             return
+        if not self._flush_deferred_for_bid(bid_ref):
+            return
         success = write_service.renumber_conditions(
             bid_ref.file_path, bid_ref.bid_uid, ordered_uids
         )
@@ -494,6 +510,8 @@ class ConditionActionHandler:
         if not sidebar:
             return
         parent = parent_uid or None
+        if not self._flush_deferred_for_bid(bid_ref):
+            return
         result = write_service.create_condition_folder_result(
             bid_ref.file_path, bid_ref.bid_uid, "New Folder", parent
         )
@@ -513,6 +531,8 @@ class ConditionActionHandler:
         bid_ref, write_service = self._get_bid_ref_and_write_service()
         if not bid_ref or not write_service:
             return
+        if not self._flush_deferred_for_bid(bid_ref):
+            return
         success = write_service.rename_condition_folder(
             bid_ref.file_path, folder_uid, new_name
         )
@@ -531,6 +551,8 @@ class ConditionActionHandler:
             sidebar.set_pending_condition_selection(condition_uid)
         dto = UpdateConditionDto()
         dto.set("name", new_name)
+        if not self._flush_deferred_for_bid(bid_ref):
+            return
         result = write_service.update_condition(
             bid_ref.file_path,
             bid_ref.bid_uid,
@@ -556,6 +578,8 @@ class ConditionActionHandler:
         bid_ref, write_service = self._get_bid_ref_and_write_service()
         if not bid_ref or not write_service:
             return
+        if not self._flush_deferred_for_bid(bid_ref):
+            return
         success = write_service.delete_condition_folders(bid_ref.file_path, folder_uids)
         if not success:
             logger.warning("Failed to delete condition folders %s", folder_uids)
@@ -570,6 +594,8 @@ class ConditionActionHandler:
             return
         dto = UpdateConditionDto()
         dto.set("folder_uid", folder_uid or None)
+        if not self._flush_deferred_for_bid(bid_ref):
+            return
         result = write_service.update_condition(
             bid_ref.file_path, bid_ref.bid_uid, condition_uid, dto
         )
@@ -602,6 +628,8 @@ class ConditionActionHandler:
             return
         sidebar = self._coordinator.conditions_sidebar
         changed_uids = []
+        if not self._flush_deferred_for_bid(bid_ref):
+            return
         for condition_uid in condition_uids:
             dto = UpdateConditionDto()
             dto.set(field_name, value)
@@ -679,6 +707,10 @@ class ConditionActionHandler:
             return cond_uid in cond_uids_with_takeoffs
 
         def save_condition(cond_uid, dto):
+            if not self._flush_deferred_for_bid(bid_ref):
+                return UpdateConditionResultDto(
+                    success=False, error="Failed to save pending visual state."
+                )
             with QSignalBlocker(sidebar):
                 result = write_service.update_condition(
                     bid_ref.file_path,

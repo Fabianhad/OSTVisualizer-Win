@@ -45,6 +45,7 @@ class MenuController:
         event_bus,
         file_loading_service,
         create_new_database_fn,
+        deferred_persistence_manager,
         shared_actions=None,
     ):
         self.window = window
@@ -60,6 +61,7 @@ class MenuController:
         self._event_bus = event_bus
         self._file_loading_service = file_loading_service
         self._create_new_database_fn = create_new_database_fn
+        self._deferred_persistence = deferred_persistence_manager
         self._shared_actions = dict(shared_actions or {})
         self.menu_bar: QtWidgets.QMenuBar | None = None
         self._actions: Dict[str, QtWidgets.QAction] = {}
@@ -68,6 +70,11 @@ class MenuController:
         self._state_getters: Dict[str, Callable[[], object]] = {}
         self._export_formats: List[str] = export_service.get_available_formats()
         self._tool_action_enabled_state: Dict[str, bool] = {}
+
+    def _flush_deferred_for_file(self, file_path: Optional[str]) -> bool:
+        if not file_path:
+            return True
+        return bool(self._deferred_persistence.flush_for_file(file_path))
 
     def create_menu(self) -> QtWidgets.QMenuBar:
         menu_callbacks = self._get_menu_callbacks()
@@ -681,17 +688,20 @@ class MenuController:
             self.window,
             data,
             has_license=self.ui_access_manager.has_license(),
-            save_job_statuses_fn=lambda ch: self._project_write_service.save_job_statuses(
-                file_path, ch
+            save_job_statuses_fn=lambda ch: (
+                self._flush_deferred_for_file(file_path)
+                and self._project_write_service.save_job_statuses(file_path, ch)
             ),
             reload_job_statuses_fn=lambda: self._project_read_service.get_job_statuses(
                 file_path
             ),
-            save_employees_fn=lambda ch: self._project_write_service.save_employees(
-                file_path, ch
+            save_employees_fn=lambda ch: (
+                self._flush_deferred_for_file(file_path)
+                and self._project_write_service.save_employees(file_path, ch)
             ),
-            save_pay_classes_fn=lambda ch: self._project_write_service.save_pay_classes(
-                file_path, ch
+            save_pay_classes_fn=lambda ch: (
+                self._flush_deferred_for_file(file_path)
+                and self._project_write_service.save_pay_classes(file_path, ch)
             ),
             reload_employees_fn=lambda: self._project_read_service.get_employees_and_pay_classes(
                 file_path
@@ -704,6 +714,8 @@ class MenuController:
             if result != QtWidgets.QDialog.DialogCode.Accepted:
                 return
             updates = dialog.get_updates()
+            if not self._flush_deferred_for_file(file_path):
+                return
             create_result = self._project_write_service.create_bid_result(
                 file_path, target_project_uid, updates
             )
@@ -746,6 +758,8 @@ class MenuController:
         if not self.ui_access_manager.can_create_project_tree_items(
             file_path is not None
         ):
+            return
+        if not self._flush_deferred_for_file(file_path):
             return
         create_result = self._project_write_service.create_project_result(
             file_path, "New Project"

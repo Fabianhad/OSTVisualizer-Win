@@ -17,6 +17,7 @@ class FileOperationHandler:
         file_loading_service,
         working_directory_service,
         unload_file_fn,
+        deferred_persistence_manager,
         ui_state_manager=None,
     ):
         self.window = window
@@ -28,6 +29,7 @@ class FileOperationHandler:
         self._working_directory_service = working_directory_service
         self._unload_file_fn = unload_file_fn
         self.ui_state_manager = ui_state_manager
+        self._deferred_persistence = deferred_persistence_manager
 
     def open_files(self) -> None:
         self._file_state_model.reload()
@@ -68,6 +70,12 @@ class FileOperationHandler:
                     ),
                     norm_path,
                 )
+                if not self._deferred_persistence.flush_for_file(raw):
+                    for entry in final_entries:
+                        if entry.normalized_path == norm_path:
+                            entry.is_checked = True
+                            break
+                    continue
                 if not self._unload_file_fn(raw):
                     for entry in final_entries:
                         if entry.normalized_path == norm_path:
@@ -78,6 +86,8 @@ class FileOperationHandler:
                         "Unload File",
                         f"Failed to unload {raw}.",
                     )
+                else:
+                    self._deferred_persistence.cancel_for_file(raw)
             norms_to_load = new_checked_entries.keys() - old_checked_files
             if norms_to_load:
                 loaded_norms = self._load_specific_files(
@@ -114,6 +124,9 @@ class FileOperationHandler:
         file_path = None
         if self.ui_state_manager and self.ui_state_manager.selected_file_path:
             file_path = self.ui_state_manager.selected_file_path
+        if file_path:
+            if not self._deferred_persistence.flush_for_file(file_path):
+                return
         success = self._unload_file_fn(file_path)
         if not success:
             show_warning(
@@ -121,6 +134,7 @@ class FileOperationHandler:
             )
             return
         if file_path:
+            self._deferred_persistence.cancel_for_file(file_path)
             norm = normalize_path(file_path)
             entries = self._file_state_model.file_entries
             for entry in entries:

@@ -53,6 +53,11 @@ class FakePageSettingsBar:
         self.calls.append((bid_areas_with_takeoff, page_areas_with_takeoff))
 
 
+class FakeDeferredPersistence:
+    def flush_for_file(self, _file_path):
+        return True
+
+
 class FakeViewer:
     def __init__(self):
         self.plan_pages = []
@@ -922,6 +927,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             coordinator._pending_takeoff_selected_area_uid = ""
             coordinator._pending_takeoff_place_condition_uid = None
             coordinator._pending_takeoff_place_condition_uids = []
+            coordinator._deferred_persistence = FakeDeferredPersistence()
             coordinator.delete_current_page()
             self.assertIsNone(coordinator._pending_takeoff_page_uids)
             self.assertIsNone(coordinator._pending_takeoff_active_page_uid)

@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 from PySide6 import QtWidgets
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
@@ -70,6 +71,12 @@ _SAME_BID_FAST_TAKEOFF_EXTRA_COLUMNS = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class _DeferredWriteResult:
+    write_success: bool = True
+    refresh_failed: bool = False
+
+
 class PlanViewActionHandler:
     def __init__(
         self,
@@ -81,6 +88,7 @@ class PlanViewActionHandler:
         page_settings_bar,
         undo_svc,
         event_bus,
+        deferred_persistence_manager,
         ui_access_manager=None,
     ):
         self._plan_view = plan_view
@@ -92,6 +100,7 @@ class PlanViewActionHandler:
         self._undo_svc = undo_svc
         self._event_bus = event_bus
         self._ui_access_manager = ui_access_manager
+        self._deferred_persistence = deferred_persistence_manager
         self._clipboard_svc = SelectionClipboardService()
         self._resolver = EntityResolver(plan_view, project_data_svc)
 
@@ -142,14 +151,14 @@ class PlanViewActionHandler:
         page_uid = self._ui_state.active_page_uid
         if not bid_ref or not page_uid:
             return None
-        result = self._write_svc.save_page_overlay_rect_result(
-            bid_ref.file_path, page_uid, overlay_rect
+        rect = tuple(float(value) for value in overlay_rect)
+        page = self._data_svc.get_page(page_uid)
+        if page is not None:
+            page.overlay_rect = rect
+        self._deferred_persistence.schedule_page_overlay_rect(
+            bid_ref.file_path, page_uid, rect
         )
-        if result.write_success:
-            page = self._data_svc.get_page(page_uid)
-            if page is not None:
-                page.overlay_rect = tuple(float(value) for value in overlay_rect)
-        return result
+        return _DeferredWriteResult()
 
     def can_paste_to_current_bid(self) -> bool:
         if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):

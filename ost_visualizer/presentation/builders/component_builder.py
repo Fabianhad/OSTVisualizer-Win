@@ -186,6 +186,7 @@ class ComponentBuilder:
         register_hotlink_adapter_fn,
         ui_state_manager,
         ui_event_handler,
+        deferred_persistence_manager,
         ui_access_manager=None,
     ) -> ComponentBundle:
         central_widget = QtWidgets.QWidget()
@@ -419,6 +420,7 @@ class ComponentBuilder:
             undo_svc=_undo_svc,
             event_bus=event_bus,
             ui_access_manager=ui_access_manager,
+            deferred_persistence_manager=deferred_persistence_manager,
         )
         _plan_view_handler.connect_signals()
         _last_2d_zoom = [1.0]
@@ -1003,6 +1005,7 @@ class ComponentBuilder:
         event_bus,
         file_loading_service,
         create_new_database_fn,
+        deferred_persistence_manager,
         shared_actions=None,
     ) -> MenuController:
         menu_controller = MenuController(
@@ -1021,6 +1024,7 @@ class ComponentBuilder:
             file_loading_service=file_loading_service,
             create_new_database_fn=create_new_database_fn,
             shared_actions=shared_actions,
+            deferred_persistence_manager=deferred_persistence_manager,
         )
         menu_bar = menu_controller.create_menu()
         self.window.setMenuBar(menu_bar)

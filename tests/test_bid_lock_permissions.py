@@ -279,6 +279,11 @@ class _PartialPasteWriteService:
         self.notifications.append(file_path)
 
 
+class _FakeDeferredPersistence:
+    def flush_for_file(self, _file_path):
+        return True
+
+
 def _write_service(project_data, reload_success=True):
     logger = logging.getLogger(__name__ + ".write_service")
     logger.propagate = False
@@ -422,6 +427,7 @@ class BidLockPermissionTests(unittest.TestCase):
         coordinator = SimpleNamespace(
             ui_access_manager=access,
             conditions_sidebar=None,
+            flush_deferred_for_file=lambda _file_path: True,
         )
         ui_state = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
@@ -476,6 +482,7 @@ class BidLockPermissionTests(unittest.TestCase):
             conditions_sidebar=None,
             refresh_conditions_ui=lambda: None,
             highlight_sidebar=lambda _uids: None,
+            flush_deferred_for_file=lambda _file_path: True,
         )
         ui_state = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
@@ -512,6 +519,7 @@ class BidLockPermissionTests(unittest.TestCase):
             _is_takeoff_2d_view_active=lambda: True,
             refresh_conditions_ui=lambda: None,
             highlight_sidebar=lambda _uids: None,
+            flush_deferred_for_file=lambda _file_path: True,
         )
         ui_state = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
@@ -771,6 +779,7 @@ class BidLockPermissionTests(unittest.TestCase):
             project_data_service=project_data,
             project_write_service=write_service,
             ui_state_manager=SimpleNamespace(),
+            deferred_persistence_manager=_FakeDeferredPersistence(),
         )
 
         def run_progress(_label, task_fn, **_kwargs):
@@ -1001,7 +1010,10 @@ class BidLockPermissionTests(unittest.TestCase):
     def test_condition_dialog_layer_insert_warns_when_refresh_fails(self):
         warnings = []
         bid_ref = BidRef("db.mdb", "bid-1")
-        coordinator = SimpleNamespace(conditions_sidebar=None)
+        coordinator = SimpleNamespace(
+            conditions_sidebar=None,
+            flush_deferred_for_file=lambda _file_path: True,
+        )
         write_service = SimpleNamespace(
             insert_layer_result=lambda _file_path, _bid_uid, _name, _sequence: (
                 WriteReloadResult("layer-new", write_success=True, reload_success=False)
@@ -1032,7 +1044,10 @@ class BidLockPermissionTests(unittest.TestCase):
     def test_condition_dialog_condition_type_save_warns_when_refresh_fails(self):
         warnings = []
         bid_ref = BidRef("db.mdb", "bid-1")
-        coordinator = SimpleNamespace(conditions_sidebar=None)
+        coordinator = SimpleNamespace(
+            conditions_sidebar=None,
+            flush_deferred_for_file=lambda _file_path: True,
+        )
         write_service = SimpleNamespace(
             save_condition_types_result=lambda _file_path, _changes: (
                 WriteReloadResult(
@@ -1083,6 +1098,7 @@ class BidLockPermissionTests(unittest.TestCase):
             selected_project_uid=None,
         )
         controller.project_data = SimpleNamespace()
+        controller._deferred_persistence = _FakeDeferredPersistence()
         controller._project_write_service = SimpleNamespace(
             create_project_result=lambda _path, _name: WriteReloadResult(
                 "project-new", write_success=True, reload_success=False

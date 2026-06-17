@@ -103,6 +103,29 @@ class ProjectDataService:
     def get_bid_conditions(self) -> Dict[str, Condition]:
         return self.model.bid_conditions
 
+    def update_layer_visibility(
+        self, layer_uid: str, show: bool, *, image_layer: bool = False
+    ) -> List[str]:
+        changed_pages: List[str] = []
+        layer_key = str(layer_uid)
+        for condition in self.model.bid_conditions.values():
+            if str(condition.layer_uid or "") == layer_key:
+                condition.layer_visible = bool(show)
+        if image_layer:
+            for page in self.model.get_all_pages():
+                page.layer_visible = bool(show)
+                changed_pages.append(page.uid)
+        return changed_pages
+
+    def update_all_layer_visibility(self, show: bool) -> List[str]:
+        for condition in self.model.bid_conditions.values():
+            condition.layer_visible = bool(show)
+        changed_pages: List[str] = []
+        for page in self.model.get_all_pages():
+            page.layer_visible = bool(show)
+            changed_pages.append(page.uid)
+        return changed_pages
+
     def get_page_takeoffs(self, page_uid: str) -> List[Takeoff]:
         return self.model.get_page_takeoffs(page_uid)
 

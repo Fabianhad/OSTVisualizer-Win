@@ -30,6 +30,11 @@ class _FakeProjectData:
         return SimpleNamespace(name="25-051 Marriott Element, Capel Hill, NC")
 
 
+class _FakeDeferredPersistence:
+    def flush(self):
+        return True
+
+
 def _capture_pdf_default_filename(page_names):
     captured = {}
     original_get_save = export_handler_module.QtWidgets.QFileDialog.getSaveFileName
@@ -51,6 +56,7 @@ def _capture_pdf_default_filename(page_names):
             ost_exporter=SimpleNamespace(),
             osp_exporter=SimpleNamespace(),
             mdb_file_parser=SimpleNamespace(),
+            deferred_persistence_manager=_FakeDeferredPersistence(),
         )
         handler.export_as_pdf(
             [f"page-{index}" for index in range(1, len(page_names) + 1)]

@@ -41,6 +41,7 @@
 - PDF export now follows enabled page image layers, exporting overlay-only pages directly from the overlay source and main+overlay pages as a flattened red/blue comparison background with annotations on top.
 - Improved native PDF export for line, arrow, shape, ink, and text annotations to better match Bluebeam/Revu markups, render line-based appearances correctly on first open, and keep exported text boxes wrapped inside their textbox bounds.
 - Linear takeoff line patterns now rotate with the takeoff direction so horizontal, vertical, and diagonal hatches follow the line instead of the page axes.
+- Deferred visual/session state persistence for page zoom/pan, selected page, layer visibility, page image flags, and overlay placement so rapid view changes update immediately while still flushing before exports, refreshes, unloads, and structural edits.
 
 ### Fixed
 - Fixed several stale UI state and failed-write rollback paths, including 2D placement staying active in 3D, failed bid switches clearing the current workspace/undo owner, stale condition and area selections after rebuilds, detached page windows showing deleted or failed-load content, page/layer/overlay controls drifting after save failures, and batched condition/curve updates refreshing once instead of reentering mid-command.

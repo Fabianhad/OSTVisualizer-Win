@@ -31,6 +31,7 @@ class ExportHandler:
         ost_exporter,
         osp_exporter,
         mdb_file_parser,
+        deferred_persistence_manager,
     ):
         self.window = window
         self.config_model = config_model
@@ -40,10 +41,16 @@ class ExportHandler:
         self.ost_exporter = ost_exporter
         self.osp_exporter = osp_exporter
         self._mdb_file_parser = mdb_file_parser
+        self._deferred_persistence = deferred_persistence_manager
+
+    def _flush_deferred_persistence(self) -> bool:
+        return bool(self._deferred_persistence.flush())
 
     def export_format(
         self, format_key: str, page_uids: Optional[List[str]] = None
     ) -> None:
+        if not self._flush_deferred_persistence():
+            return
         if not page_uids:
             return
         dialog_info = self.export_service.get_export_dialog_info(page_uids, format_key)
@@ -59,6 +66,8 @@ class ExportHandler:
         self._execute_export(request)
 
     def export_as_pdf(self, page_uids: Optional[List[str]] = None) -> None:
+        if not self._flush_deferred_persistence():
+            return
         if not page_uids:
             return
         pages_data: List[PageExportData] = []
@@ -156,6 +165,9 @@ class ExportHandler:
             )
 
     def export_as_ost(self) -> None:
+        if not self._flush_deferred_persistence():
+            return
+
         def make_export(raw_data, filename, _bid_name, reporter):
             return lambda: self.ost_exporter.export(
                 raw_data, filename, on_progress=_progress_callback(reporter)
@@ -169,6 +181,9 @@ class ExportHandler:
         )
 
     def export_as_osp(self) -> None:
+        if not self._flush_deferred_persistence():
+            return
+
         def make_export(raw_data, filename, bid_name, reporter):
             return lambda: self.osp_exporter.export(
                 raw_data,

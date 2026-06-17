@@ -34,6 +34,7 @@ from .handlers.file_operation_handler import FileOperationHandler
 from .handlers.import_handler import ImportHandler
 from .handlers.project_write_handler import ProjectWriteHandler
 from .managers.app_config_presentation_manager import AppConfigPresentationManager
+from .managers.deferred_persistence_manager import DeferredPersistenceManager
 from .managers.shortcut_manager import ShortcutManager
 from .managers.ui_access_manager import Feature, UIAccessManager
 from .managers.ui_state_manager import UIStateManager
@@ -129,6 +130,11 @@ class MainWindow(QtWidgets.QMainWindow):
             project_data=self._project_data_service,
             ui_state_manager=self.ui_state_manager,
         )
+        self._deferred_persistence_manager = DeferredPersistenceManager(
+            self._project_write_service,
+            parent=self,
+            warning_parent=self,
+        )
         self.icon_provider = QtWindowIconProvider()
         self.window_configurator = WindowConfigurator(
             DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT
@@ -152,6 +158,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ui_state_manager=self.ui_state_manager,
             ui_event_handler=self.handlers.ui_event,
             ui_access_manager=self.ui_access_manager,
+            deferred_persistence_manager=self._deferred_persistence_manager,
         )
         self.tab_widget = components.tab_widget
         self.takeoff_tab = components.takeoff_tab
@@ -341,6 +348,7 @@ class MainWindow(QtWidgets.QMainWindow):
             event_bus=self.event_bus,
             file_loading_service=self._file_loading_service,
             create_new_database_fn=self.app_controller.create_new_database,
+            deferred_persistence_manager=self._deferred_persistence_manager,
             shared_actions={
                 "new_project": components.new_project_action,
                 "new_folder": components.new_folder_action,
@@ -456,6 +464,7 @@ class MainWindow(QtWidgets.QMainWindow):
             working_directory_service=self._working_directory_service,
             unload_file_fn=self.app_controller.unload_file,
             ui_state_manager=self.ui_state_manager,
+            deferred_persistence_manager=self._deferred_persistence_manager,
         )
         handlers.export = ExportHandler(
             window=self,
@@ -466,18 +475,21 @@ class MainWindow(QtWidgets.QMainWindow):
             ost_exporter=self._ost_exporter,
             osp_exporter=self._osp_exporter,
             mdb_file_parser=self._mdb_file_parser,
+            deferred_persistence_manager=self._deferred_persistence_manager,
         )
         handlers.import_ = ImportHandler(
             window=self,
             project_data_service=self._project_data_service,
             import_service=self._import_service,
             ui_state_manager=self.ui_state_manager,
+            deferred_persistence_manager=self._deferred_persistence_manager,
         )
         handlers.delete = ProjectWriteHandler(
             window=self,
             project_data_service=self._project_data_service,
             project_write_service=self._project_write_service,
             ui_state_manager=self.ui_state_manager,
+            deferred_persistence_manager=self._deferred_persistence_manager,
         )
         handlers.cover_sheet = CoverSheetHandler(
             window=self,
@@ -489,6 +501,7 @@ class MainWindow(QtWidgets.QMainWindow):
             event_bus=self.event_bus,
             ui_state_manager=self.ui_state_manager,
             ui_access_manager=self.ui_access_manager,
+            deferred_persistence_manager=self._deferred_persistence_manager,
         )
         handlers.ui_event = UIEventCoordinator(
             main_window=self,
@@ -502,6 +515,7 @@ class MainWindow(QtWidgets.QMainWindow):
             icon_provider=self._container_icon_provider,
             project_write_service=self._project_write_service,
             project_read_service=self._project_read_service,
+            deferred_persistence_manager=self._deferred_persistence_manager,
         )
         return handlers
 
@@ -1495,11 +1509,14 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        self.handlers.ui_event.flush_current_page_state()
+        if not self.handlers.ui_event.flush_current_page_state():
+            event.ignore()
+            return
         self._workspace_state_coordinator.flush()
         self._workspace_state_coordinator.cleanup()
         self.event_coordinator.cleanup()
         self.handlers.ui_event.cleanup()
+        self._deferred_persistence_manager.cleanup()
         self.license_coordinator.cleanup()
         self.ui_access_manager.cleanup()
         self._mcp_context_bridge.cleanup()

@@ -673,13 +673,19 @@ class ProjectWriteService(BaseWriteService):
             return False
         return all_success
 
-    def save_page_show_mode(self, db_path: str, page_uid: str, show_mode: int) -> bool:
+    def save_page_show_mode(
+        self,
+        db_path: str,
+        page_uid: str,
+        show_mode: int,
+        reload_database: bool = True,
+    ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "save_page_show_mode", db_path
         ):
             return False
         success = self._save_page_show_mode.execute(db_path, page_uid, show_mode)
-        return self._reload_after_success(db_path, success)
+        return self._reload_after_success(db_path, success, reload_database)
 
     def save_page_overlay_image(
         self, db_path: str, page_uid: str, overlay_image_path: str
@@ -698,6 +704,7 @@ class ProjectWriteService(BaseWriteService):
         db_path: str,
         page_uid: str,
         overlay_rect: Tuple[float, float, float, float],
+        reload_database: bool = True,
     ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "save_page_overlay_rect", db_path
@@ -706,10 +713,13 @@ class ProjectWriteService(BaseWriteService):
         success = self._save_page_overlay_rect.execute(db_path, page_uid, overlay_rect)
         if not success:
             return WriteReloadResult(None, write_success=False, reload_success=False)
+        reload_success = True
+        if reload_database:
+            reload_success = self.reload_and_notify(db_path)
         return WriteReloadResult(
             None,
             write_success=True,
-            reload_success=self.reload_and_notify(db_path),
+            reload_success=reload_success,
         )
 
     def save_page_invert(self, db_path: str, page_uid: str, invert: bool) -> bool:
@@ -766,13 +776,19 @@ class ProjectWriteService(BaseWriteService):
         success = self._save_page_area.execute(db_path, page_uid, area_uid)
         return self._reload_after_success(db_path, success)
 
-    def update_layer_show(self, db_path: str, layer_uid: str, show: bool) -> bool:
+    def update_layer_show(
+        self,
+        db_path: str,
+        layer_uid: str,
+        show: bool,
+        reload_database: bool = True,
+    ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "update_layer_show", db_path
         ):
             return False
         success = self._update_layer_show.execute(db_path, layer_uid, show)
-        return self._reload_after_success(db_path, success)
+        return self._reload_after_success(db_path, success, reload_database)
 
     def insert_layer(
         self, db_path: str, bid_uid: str, name: str, after_sequence: int

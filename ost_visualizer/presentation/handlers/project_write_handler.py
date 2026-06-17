@@ -26,18 +26,29 @@ class _PasteBidsResult:
 
 class ProjectWriteHandler:
     def __init__(
-        self, window, project_data_service, project_write_service, ui_state_manager
+        self,
+        window,
+        project_data_service,
+        project_write_service,
+        ui_state_manager,
+        deferred_persistence_manager,
     ) -> None:
         self.window = window
         self.ui_state_manager = ui_state_manager
         self.project_data = project_data_service
         self._write_service = project_write_service
+        self._deferred_persistence = deferred_persistence_manager
         self._duplicate_action = None
         self._duplicate_action_was_enabled = False
         self._duplicate_in_progress = False
 
     def set_duplicate_action(self, action) -> None:
         self._duplicate_action = action
+
+    def _flush_deferred_for_file(self, file_path: Optional[str]) -> bool:
+        if not file_path:
+            return True
+        return bool(self._deferred_persistence.flush_for_file(file_path))
 
     def duplicate_selected(self) -> None:
         if self._duplicate_in_progress:
@@ -46,6 +57,8 @@ class ProjectWriteHandler:
         if not bid_ref:
             return
         bid_name = self._duplicate_bid_name(bid_ref)
+        if not self._flush_deferred_for_file(bid_ref.file_path):
+            return
         reporter = ProgressReporter()
         self._set_duplicate_busy(True)
         try:
@@ -141,6 +154,8 @@ class ProjectWriteHandler:
         resolved_path = file_path or self.project_data.get_current_file_path()
         if not resolved_path or not new_name.strip():
             return False
+        if not self._flush_deferred_for_file(resolved_path):
+            return False
         if not self._write_service.rename_project(
             resolved_path, project_uid, new_name.strip()
         ):
@@ -154,6 +169,8 @@ class ProjectWriteHandler:
 
     def update_bid_job_status(self, bid_ref: BidRef, job_status_uid: str) -> None:
         if not bid_ref or not bid_ref.file_path or not bid_ref.bid_uid:
+            return
+        if not self._flush_deferred_for_file(bid_ref.file_path):
             return
         if not self._write_service.update_bid_job_status(
             bid_ref.file_path, bid_ref.bid_uid, job_status_uid
@@ -170,6 +187,8 @@ class ProjectWriteHandler:
         if not bid_refs:
             return True
         for file_path, uids in self._group_bids_by_file(bid_refs).items():
+            if not self._flush_deferred_for_file(file_path):
+                return False
             if not self._write_service.move_bids(file_path, uids, target_project_uid):
                 show_critical(
                     self.window,
@@ -198,6 +217,8 @@ class ProjectWriteHandler:
             }
         )
         file_path = bid_refs[0].file_path
+        if not self._flush_deferred_for_file(file_path):
+            return False
         label = self._paste_bid_label(bid_refs)
         reporter = ProgressReporter()
         rc, result, worker_error = self._run_progress_dialog(
@@ -352,6 +373,8 @@ class ProjectWriteHandler:
             orig = self._get_bid_orig_project_uid(ref)
             groups[(ref.file_path, orig)].append(ref.bid_uid)
         for (file_path, orig_project_uid), uids in groups.items():
+            if not self._flush_deferred_for_file(file_path):
+                return
             if not self._write_service.move_bids(file_path, uids, orig_project_uid):
                 show_critical(
                     self.window,
@@ -394,6 +417,8 @@ class ProjectWriteHandler:
             if not confirm(self.window, "Delete Bids", msg):
                 return
             for file_path, uids in self._group_bids_by_file(in_trash).items():
+                if not self._flush_deferred_for_file(file_path):
+                    return
                 if not self._write_service.delete_bids(file_path, uids):
                     show_critical(
                         self.window,
@@ -412,6 +437,8 @@ class ProjectWriteHandler:
                 return
             for orig_project_uid, refs in active_orig.items():
                 for file_path, uids in self._group_bids_by_file(refs).items():
+                    if not self._flush_deferred_for_file(file_path):
+                        return
                     if not self._write_service.move_bids(
                         file_path,
                         uids,
@@ -455,6 +482,8 @@ class ProjectWriteHandler:
             else f"Permanently delete {n} empty projects?\nThis cannot be undone."
         )
         if not confirm(self.window, "Delete Projects", msg):
+            return
+        if not self._flush_deferred_for_file(file_path):
             return
         if not self._write_service.delete_projects(file_path, deletable):
             show_critical(
