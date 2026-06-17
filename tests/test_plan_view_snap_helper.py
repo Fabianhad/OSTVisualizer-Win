@@ -864,18 +864,9 @@ class SnapSegmentCacheTests(unittest.TestCase):
         endpoint = harness._area_final_endpoint_for_placement(
             20.0, 10.0, 10.5, 16.0, placement_mode.NONE
         )
-        expected = harness._snap_angle(
-            20.0,
-            10.0,
-            endpoint.right_angle_candidate_x,
-            endpoint.right_angle_candidate_y,
-        )
+        expected = harness._snap_angle(20.0, 10.0, 10.0, 16.0)
         self.assertTrue(endpoint.right_angle_candidate_active)
         self.assertFalse(endpoint.right_angle_indicator_active)
-        self.assertEqual(
-            (endpoint.right_angle_candidate_x, endpoint.right_angle_candidate_y),
-            (10.0, 16.0),
-        )
         self.assertAlmostEqual(endpoint.final_x, expected[0], places=5)
         self.assertAlmostEqual(endpoint.final_y, expected[1], places=5)
         self.assertNotEqual(
@@ -908,10 +899,6 @@ class SnapSegmentCacheTests(unittest.TestCase):
             placement_mode.QGuiApplication = original
         self.assertTrue(endpoint.right_angle_candidate_active)
         self.assertTrue(endpoint.right_angle_indicator_active)
-        self.assertEqual(
-            (endpoint.right_angle_candidate_x, endpoint.right_angle_candidate_y),
-            (10.0, 16.0),
-        )
         self.assertEqual((endpoint.final_x, endpoint.final_y), (10.0, 16.0))
 
     def test_odd_length_takeoff_position_is_ignored_safely(self):

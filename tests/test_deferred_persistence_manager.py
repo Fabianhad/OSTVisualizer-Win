@@ -11,6 +11,9 @@ from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
+from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
+    SidebarCoordinator,
+)
 from ost_visualizer.presentation.dialogs.cover_sheet.context import CoverSheetContext
 from ost_visualizer.presentation.managers.deferred_persistence_manager import (
     DeferredPersistenceManager,
@@ -291,6 +294,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.ui_state_manager = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
             active_page_uid=active_page_uid,
+            state=SimpleNamespace(grayscale_enabled=False),
         )
         pages = {
             "p1": Page(uid="p1", name="P1"),
@@ -299,6 +303,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         conditions = {
             "c1": Condition(uid="c1", name="C1", layer_uid="l1"),
         }
+        coordinator.quantity_update_calls = []
+        quantity_calls = coordinator.quantity_update_calls
         coordinator.project_data = SimpleNamespace(
             update_layer_visibility=lambda _layer_uid, show, image_layer=False: (
                 [
@@ -326,7 +332,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                 set_layer_visible=lambda *_args: None,
                 set_all_layers_visible=lambda *_args: None,
             ),
-            update_conditions_quantities=lambda: None,
+            update_conditions_quantities=lambda: quantity_calls.append("quantity"),
         )
         coordinator.conditions_sidebar = None
         coordinator._viewer = SimpleNamespace(update_viewers=lambda page_uids: None)
@@ -345,11 +351,14 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.ui_state_manager = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
             active_page_uid="p1",
+            state=SimpleNamespace(grayscale_enabled=False),
         )
         coordinator.project_data = SimpleNamespace(
             update_all_layer_visibility=lambda _show: ["p1"],
             get_selected_page_uids=lambda: ["p1"],
             get_bid=lambda _bid_ref: None,
+            get_page=lambda _page_uid: None,
+            get_bid_conditions=lambda: {},
         )
         coordinator._project_read_service = SimpleNamespace(
             get_merged_bid_layers=lambda _db_path, _bid_uid: [
@@ -357,13 +366,17 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                 SimpleNamespace(uid="l2"),
             ]
         )
+        quantity_calls = []
         coordinator._sidebar = SimpleNamespace(
             bid_layers_sidebar=None,
-            update_conditions_quantities=lambda: None,
+            update_conditions_quantities=lambda: quantity_calls.append("quantity"),
         )
         coordinator.conditions_sidebar = None
         coordinator.plan_view = None
-        coordinator._viewer = SimpleNamespace(update_viewers=lambda _page_uids: None)
+        mesh_calls = []
+        coordinator._viewer = SimpleNamespace(
+            update_viewers=lambda page_uids: mesh_calls.append(list(page_uids))
+        )
         coordinator._update_plan_view = lambda _page_uid: None
         coordinator._update_export_menu_state = lambda: None
         coordinator.ensure_select_mode = lambda: None
@@ -377,6 +390,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                 ("a.mdb", "l2", False),
             ],
         )
+        self.assertEqual(mesh_calls, [["p1"]])
+        self.assertEqual(quantity_calls, [])
 
     def test_image_layer_disable_queues_write_and_does_not_reload_pages(self):
         coordinator = self._make_visibility_coordinator(layer_name="Image")
@@ -392,6 +407,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator._update_plan_view_calls, [])
         self.assertEqual(coordinator.plan_view.image_visibility_pages, ["p1"])
         self.assertEqual(mesh_calls, [])
+        self.assertEqual(coordinator.quantity_update_calls, [])
 
     def test_condition_layer_visibility_uses_loaded_item_path(self):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
@@ -403,6 +419,33 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator._update_plan_view_calls, [])
         self.assertEqual(len(coordinator.plan_view.layer_visibility_calls), 1)
         self.assertEqual(mesh_calls, [["p1"]])
+        self.assertEqual(coordinator.quantity_update_calls, [])
+
+    def test_layer_visibility_updates_conditions_sidebar_without_full_reload(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        calls = []
+        coordinator.conditions_sidebar = SimpleNamespace(
+            apply_layer_visibility_state=lambda conditions, grayscale: calls.append(
+                ("apply", list(conditions), grayscale)
+            ),
+            load_conditions=lambda *_args: self.fail(
+                "visibility-only toggle should not reload condition tree"
+            ),
+        )
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        self.assertEqual(calls, [("apply", ["c1"], False)])
+
+    def test_repeated_layer_toggles_refresh_view_immediately(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        mesh_calls = []
+        coordinator._viewer = SimpleNamespace(
+            update_viewers=lambda page_uids: mesh_calls.append(list(page_uids))
+        )
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", True))
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        self.assertEqual(coordinator.quantity_update_calls, [])
+        self.assertEqual(mesh_calls, [["p1"], ["p1"], ["p1"]])
 
     def test_repeated_layer_toggles_coalesce_to_last_write(self):
         service = FakeProjectWriteService()
@@ -434,6 +477,33 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._finish_refresh = lambda: calls.append("finish")
         coordinator._on_database_refreshed(file_path="a.mdb")
         self.assertEqual(calls, [("flush", "a.mdb"), "start", "refresh", "finish"])
+
+    def test_sidebar_quantities_include_hidden_layer_conditions(self):
+        quantity_payloads = []
+        visible = Condition(uid="c1", name="Visible", layer_uid="l1")
+        hidden = Condition(uid="c2", name="Hidden", layer_uid="l2")
+        hidden.layer_visible = False
+        project_data = SimpleNamespace(
+            get_selected_page_uids=lambda: ["p1"],
+            get_bid_conditions=lambda: {"c1": visible, "c2": hidden},
+            compute_quantities_for_pages=lambda page_uids: {
+                "c1": (1.0, 0.0, 0.0),
+                "c2": (2.0, 0.0, 0.0),
+            },
+        )
+        sidebar = SidebarCoordinator(
+            project_read_service=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(active_page_uid="p1"),
+            project_data=project_data,
+        )
+        sidebar.conditions_sidebar = SimpleNamespace(
+            update_quantities=lambda quantities: quantity_payloads.append(quantities)
+        )
+        sidebar.update_conditions_quantities()
+        self.assertEqual(
+            quantity_payloads,
+            [{"c1": (1.0, 0.0, 0.0), "c2": (2.0, 0.0, 0.0)}],
+        )
 
     def test_page_area_change_updates_model_immediately_and_defers_write(self):
         area_selections = {"p1": None}

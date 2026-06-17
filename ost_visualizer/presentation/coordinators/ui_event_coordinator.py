@@ -176,7 +176,6 @@ class UIEventCoordinator:
         self._pending_takeoff_selected_area_uid: str = ""
         self._pending_takeoff_place_condition_uid: Optional[str] = None
         self._pending_takeoff_place_condition_uids: List[str] = []
-        self._takeoff_highlight_condition_uids: set = set()
         self._last_takeoff_selection_context_by_source: Dict[
             str, Tuple[Tuple[str, ...], Tuple[str, ...]]
         ] = {}
@@ -790,7 +789,6 @@ class UIEventCoordinator:
                 != selection_context
             )
             self._last_takeoff_selection_context_by_source[source] = selection_context
-            self._takeoff_highlight_condition_uids = set(cond_uids)
             if selection_changed:
                 self.highlight_sidebar(cond_uids)
             if source != self._SOURCE_2D and self.plan_view:
@@ -812,7 +810,6 @@ class UIEventCoordinator:
                     self._placement.enter(new_uid, list(cond_uids))
         else:
             self._last_takeoff_selection_context_by_source[source] = ((), ())
-            self._takeoff_highlight_condition_uids = set()
             if source != self._SOURCE_2D and self.plan_view:
                 self.plan_view.clear_selection(emit=False)
             if source != self._SOURCE_3D and self.opengl_viewer:
@@ -1758,7 +1755,6 @@ class UIEventCoordinator:
 
     def _on_condition_selected(self, condition_uid: str) -> None:
         if not condition_uid:
-            self._takeoff_highlight_condition_uids = set()
             self.ui_state_manager.set_highlighted_conditions(set())
             selected_takeoff_condition_uid = (
                 self.plan_view.selected_takeoff_condition_uid()
@@ -1774,7 +1770,6 @@ class UIEventCoordinator:
             selected = self.conditions_sidebar.get_selected_condition_uids()
         else:
             selected = [condition_uid]
-        self._takeoff_highlight_condition_uids = set()
         self.ui_state_manager.set_highlighted_conditions(set(selected))
         if not self._is_takeoff_2d_view_active() or not self._is_condition_placeable(
             condition_uid
@@ -2241,7 +2236,6 @@ class UIEventCoordinator:
     def toggle_page_invert(self, invert: bool) -> None:
         self._toggle_page_image_flag(
             "invert",
-            lambda page: page.invert,
             self._set_page_invert,
             bool(invert),
         )
@@ -2249,7 +2243,6 @@ class UIEventCoordinator:
     def toggle_page_bitonal(self, bitonal: bool) -> None:
         self._toggle_page_image_flag(
             "bitonal",
-            lambda page: page.bitonal,
             self._set_page_bitonal,
             bool(bitonal),
         )
@@ -2262,9 +2255,7 @@ class UIEventCoordinator:
     def _set_page_bitonal(page, value: bool) -> None:
         page.bitonal = value
 
-    def _toggle_page_image_flag(
-        self, flag_name: str, read_fn, write_fn, value: bool
-    ) -> None:
+    def _toggle_page_image_flag(self, flag_name: str, write_fn, value: bool) -> None:
         page_uid = self.ui_state_manager.active_page_uid
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not page_uid or not bid_ref:
@@ -2312,7 +2303,7 @@ class UIEventCoordinator:
         )
         if self._sidebar.bid_layers_sidebar:
             self._sidebar.bid_layers_sidebar.set_layer_visible(layer_uid, show)
-        self._reload_conditions_sidebar_from_memory()
+        self._refresh_conditions_sidebar_layer_visibility_from_memory()
         self._deferred_persistence.schedule_layer_show(
             bid_ref.file_path, layer_uid, show
         )
@@ -2323,7 +2314,6 @@ class UIEventCoordinator:
         )
         if not image_layer:
             self._viewer.update_viewers(self.project_data.get_selected_page_uids())
-        self._sidebar.update_conditions_quantities()
         self._update_export_menu_state()
         self.ensure_select_mode()
         return True
@@ -2410,7 +2400,7 @@ class UIEventCoordinator:
             layers = self._project_read_service.get_merged_bid_layers(
                 bid_ref.file_path, bid_ref.bid_uid
             )
-        self._reload_conditions_sidebar_from_memory()
+        self._refresh_conditions_sidebar_layer_visibility_from_memory()
         for layer in layers:
             self._deferred_persistence.schedule_layer_show(
                 bid_ref.file_path, layer.uid, show
@@ -2429,21 +2419,15 @@ class UIEventCoordinator:
                 ):
                     self._update_plan_view(active_page_uid)
         self._viewer.update_viewers(self.project_data.get_selected_page_uids())
-        self._sidebar.update_conditions_quantities()
         self._update_export_menu_state()
         self.ensure_select_mode()
         return True
 
-    def _reload_conditions_sidebar_from_memory(self) -> None:
+    def _refresh_conditions_sidebar_layer_visibility_from_memory(self) -> None:
         if not self.conditions_sidebar:
             return
-        bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        bid = self.project_data.get_bid(bid_ref) if bid_ref else None
-        project_name = bid.name if bid else ""
-        self.conditions_sidebar.load_conditions(
+        self.conditions_sidebar.apply_layer_visibility_state(
             self.project_data.get_bid_conditions(),
-            self.project_data.get_bid_condition_folders(),
-            project_name,
             self.ui_state_manager.state.grayscale_enabled,
         )
 

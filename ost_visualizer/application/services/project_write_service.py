@@ -363,12 +363,6 @@ class ProjectWriteService(BaseWriteService):
         success = self._delete_conditions.execute(db_path, bid_uid, condition_uids)
         return self._reload_after_success(db_path, success)
 
-    def create_condition(
-        self, db_path: str, bid_uid: str, spec: CreateConditionSpec
-    ) -> Optional[str]:
-        result = self.create_condition_result(db_path, bid_uid, spec)
-        return str(result.value) if result.success and result.value else None
-
     def create_condition_result(
         self, db_path: str, bid_uid: str, spec: CreateConditionSpec
     ) -> WriteReloadResult:
@@ -384,16 +378,6 @@ class ProjectWriteService(BaseWriteService):
             write_success=True,
             reload_success=self.reload_and_notify(db_path),
         )
-
-    def create_condition_folder(
-        self,
-        db_path: str,
-        bid_uid: str,
-        name: str,
-        parent_uid: Optional[str] = None,
-    ) -> Optional[str]:
-        result = self.create_condition_folder_result(db_path, bid_uid, name, parent_uid)
-        return str(result.value) if result.success and result.value else None
 
     def create_condition_folder_result(
         self,

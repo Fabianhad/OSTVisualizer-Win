@@ -914,9 +914,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def apply_config_preferences(self) -> None:
         AppConfigPresentationManager().apply(self, self._config_model)
 
-    def apply_toolbar_text_preference(self) -> None:
-        AppConfigPresentationManager().apply_toolbar_text(self, self._config_model)
-
     def _on_workspace_toolbar_visibility_changed(self, key: str, visible: bool) -> None:
         if self._syncing_toolbar_visibility:
             return

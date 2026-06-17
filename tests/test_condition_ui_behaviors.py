@@ -154,6 +154,18 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         self.assertEqual(sidebar.get_selected_condition_uids(), [])
 
+    def test_condition_sidebar_layer_visibility_update_preserves_quantities(self):
+        sidebar = ConditionsSidebar(None)
+        condition = Condition(uid="c1", name="Condition 1", ref_no=1)
+        sidebar.load_conditions({"c1": condition}, {}, "Project")
+        sidebar.update_quantities({"c1": (12.0, 0.0, 0.0)})
+        item = sidebar._condition_items["c1"]
+        before = [item.text(col) for col in range(2, 5)]
+        condition.layer_visible = False
+        sidebar.apply_layer_visibility_state({"c1": condition})
+        self.assertEqual([item.text(col) for col in range(2, 5)], before)
+        self.assertFalse(sidebar.is_condition_placeable("c1"))
+
     def test_condition_cut_paste_to_root_and_folder_uses_edit_permission(self):
         sidebar = ConditionsSidebar(None)
         pasted = []

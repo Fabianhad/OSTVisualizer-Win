@@ -124,14 +124,13 @@ def _create_font_annotation_style_menu(
     menu.setProperty("annotationDefaultStyleMenu", True)
     menu.setProperty("fontAnnotationDefaultStyleMenu", True)
     menu.setProperty(menu_property, True)
-    menu_refs: list[object] = []
     font_action = QtWidgets.QWidgetAction(menu)
     font_combo = QtWidgets.QFontComboBox(menu)
     font_combo.setToolTip("Font family")
     font_action.setDefaultWidget(font_combo)
     menu.addAction(font_action)
-    size_menu = menu.addMenu("Font Size")
-    menu_refs.extend((font_combo, size_menu))
+    size_menu = QtWidgets.QMenu("Font Size", menu)
+    menu.addMenu(size_menu)
     size_group = QtGui.QActionGroup(size_menu)
     size_group.setExclusive(True)
     size_actions: dict[int, QtGui.QAction] = {}
@@ -167,8 +166,8 @@ def _create_font_annotation_style_menu(
     menu.addAction(underline_action)
     align_actions: dict[int, QtGui.QAction] = {}
     if include_alignment:
-        align_menu = menu.addMenu("Alignment")
-        menu_refs.append(align_menu)
+        align_menu = QtWidgets.QMenu("Alignment", menu)
+        menu.addMenu(align_menu)
         align_group = QtGui.QActionGroup(align_menu)
         align_group.setExclusive(True)
 
@@ -193,8 +192,6 @@ def _create_font_annotation_style_menu(
                 )
             )
             align_actions[value] = action
-        menu_refs.append(align_group)
-    menu._text_menu_refs = tuple(menu_refs)
 
     def _refresh_text_menu_state() -> None:
         style = get_style()

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from ost_visualizer.mcp_server.registry import DatabaseRegistry
 from ost_visualizer.mcp_server.server import build_mcp_server
 
@@ -179,6 +180,12 @@ class McpInternalServerProtocolTests(unittest.TestCase):
         )
 
     def test_saved_context_redacts_file_paths(self):
+        class BridgeUnavailable:
+            last_status = "bridge_unavailable"
+
+            def get_context(self):
+                return None
+
         root = Path(self.tmp.name)
         db_path = root / "private" / "demo.mdb"
         db_path.parent.mkdir()
@@ -202,11 +209,15 @@ class McpInternalServerProtocolTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        self.server = build_mcp_server(DatabaseRegistry(app_data_dir=root))
-        response = self.request(
-            "tools/call",
-            {"name": "get_current_context", "arguments": {}},
-        )["result"]["structuredContent"]
+        with patch(
+            "ost_visualizer.mcp_server.server.McpBridgeClient",
+            return_value=BridgeUnavailable(),
+        ):
+            self.server = build_mcp_server(DatabaseRegistry(app_data_dir=root))
+            response = self.request(
+                "tools/call",
+                {"name": "get_current_context", "arguments": {}},
+            )["result"]["structuredContent"]
         encoded = json.dumps(response)
         self.assertNotIn(str(db_path), encoded)
         self.assertNotIn("file_path", encoded)

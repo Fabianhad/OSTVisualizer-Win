@@ -54,6 +54,9 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 from ost_visualizer.presentation.dialogs.options import components as options_components
 from ost_visualizer.presentation.dialogs.options.dialog import OptionsDialog
 from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.presentation.managers.app_config_presentation_manager import (
+    AppConfigPresentationManager,
+)
 from ost_visualizer.presentation.managers.icon_manager import (
     ICON_SPECS,
     IconId,
@@ -99,6 +102,14 @@ def _app():
     if app is None:
         app = QtWidgets.QApplication([])
     return app
+
+
+def _submenu_by_title(menu, title):
+    return next(
+        action.menu()
+        for action in menu.actions()
+        if action.menu() and action.menu().title() == title
+    )
 
 
 class FakeConfigRepository:
@@ -1327,11 +1338,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                     for widget in font_widgets
                 )
             )
-            size_menu = next(
-                ref
-                for ref in menu._text_menu_refs
-                if isinstance(ref, QtWidgets.QMenu) and ref.title() == "Font Size"
-            )
+            size_menu = _submenu_by_title(menu, "Font Size")
             size_action = next(
                 action for action in size_menu.actions() if action.data() == 24
             )
@@ -1348,11 +1355,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             )
             for action in (bold_action, italic_action, underline_action):
                 self.assertFalse(action.icon().isNull())
-            alignment_menu = next(
-                ref
-                for ref in menu._text_menu_refs
-                if isinstance(ref, QtWidgets.QMenu) and ref.title() == "Alignment"
-            )
+            alignment_menu = _submenu_by_title(menu, "Alignment")
             for action in alignment_menu.actions():
                 self.assertFalse(action.icon().isNull())
             bold_action.trigger()
@@ -1413,11 +1416,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 action for action in menu.actions() if isinstance(action.data(), int)
             ]
             self.assertEqual(width_actions, [])
-            size_menu = next(
-                ref
-                for ref in menu._text_menu_refs
-                if isinstance(ref, QtWidgets.QMenu) and ref.title() == "Font Size"
-            )
+            size_menu = _submenu_by_title(menu, "Font Size")
             size_action = next(
                 action for action in size_menu.actions() if action.data() == 18
             )
@@ -3561,7 +3560,6 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._rendering_service = rendering_service
         view._device_pixel_ratio = lambda: 1.0
         view._overlay_move_suppresses_normal_tiles = lambda: False
-        view._clear_tile_grid = lambda: calls.append("clear_grid")
         view._cancel_optional_base_correction = lambda: calls.append("cancel_base")
         view._overlay_pdf_tile_transform = lambda: QtGui.QTransform()
         view.mapToScene = lambda _rect: QtGui.QPolygonF(QtCore.QRectF(0, 0, 50, 50))
@@ -3632,7 +3630,6 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._rendering_service = rendering_service
         view._device_pixel_ratio = lambda: 1.0
         view._overlay_move_suppresses_normal_tiles = lambda: False
-        view._clear_tile_grid = lambda: calls.append("clear_grid")
         view._cancel_optional_base_correction = lambda: calls.append("cancel_base")
         view.mapToScene = lambda _rect: QtGui.QPolygonF(QtCore.QRectF(0, 0, 50, 50))
         view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
@@ -4073,13 +4070,14 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(pages["p1"].page_index, 0)
 
     def test_toolbar_text_preference_updates_cover_sheet_button_only(self):
-        window = MainWindow.__new__(MainWindow)
-        window._config_model = SimpleNamespace(show_toolbar_text=True)
+        manager = AppConfigPresentationManager()
+        window = SimpleNamespace()
+        config = SimpleNamespace(show_toolbar_text=True)
         toolbars = [QtWidgets.QToolBar(), QtWidgets.QToolBar()]
         cover_sheet_button = QtWidgets.QToolButton()
         window.get_workspace_toolbars = lambda: toolbars
         window.get_toolbar_text_buttons = lambda: [cover_sheet_button]
-        MainWindow.apply_toolbar_text_preference(window)
+        manager.apply_toolbar_text(window, config)
         self.assertTrue(
             all(
                 toolbar.toolButtonStyle()
@@ -4091,8 +4089,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             cover_sheet_button.toolButtonStyle(),
             QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon,
         )
-        window._config_model = SimpleNamespace(show_toolbar_text=False)
-        MainWindow.apply_toolbar_text_preference(window)
+        config.show_toolbar_text = False
+        manager.apply_toolbar_text(window, config)
         self.assertTrue(
             all(
                 toolbar.toolButtonStyle()

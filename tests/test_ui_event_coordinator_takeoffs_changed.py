@@ -461,7 +461,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._placement = FakePlacement()
         coordinator._toolbar = FakeToolbar()
         coordinator._toolbar.takeoff_2d_active = False
-        coordinator._takeoff_highlight_condition_uids = set()
         coordinator._on_condition_selected("c1")
         self.assertEqual(coordinator._placement.enter_calls, [])
         self.assertEqual(coordinator.plan_view.modes, ["select"])
@@ -499,7 +498,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._toolbar = FakeToolbar()
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
-        coordinator._takeoff_highlight_condition_uids = set()
         coordinator._last_takeoff_selection_context_by_source = {}
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator._sync_selection(coordinator._SOURCE_2D, [])
@@ -539,7 +537,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._toolbar = FakeToolbar()
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
-        coordinator._takeoff_highlight_condition_uids = set()
         coordinator._last_takeoff_selection_context_by_source = {}
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator.highlight_sidebar({"c2"})
@@ -583,7 +580,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._toolbar = FakeToolbar()
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
-        coordinator._takeoff_highlight_condition_uids = set()
         coordinator._last_takeoff_selection_context_by_source = {}
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator.highlight_sidebar({"c2"})
@@ -627,7 +623,6 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._toolbar = FakeToolbar()
         coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._nav = type("Nav", (), {"is_refreshing": False})()
-        coordinator._takeoff_highlight_condition_uids = set()
         coordinator._last_takeoff_selection_context_by_source = {}
         coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
         coordinator._sync_selection(coordinator._SOURCE_2D, [])

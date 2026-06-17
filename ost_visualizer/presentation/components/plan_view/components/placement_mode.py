@@ -57,8 +57,6 @@ _TEXT_SELECTION_OUTLINE_COLOR = QColor(128, 128, 128)
 class AreaPlacementEndpoint(NamedTuple):
     final_x: float
     final_y: float
-    right_angle_candidate_x: float
-    right_angle_candidate_y: float
     right_angle_candidate_active: bool
     right_angle_indicator_active: bool
 
@@ -142,8 +140,6 @@ class PlacementModeMixin:
         return AreaPlacementEndpoint(
             final_x=final_x,
             final_y=final_y,
-            right_angle_candidate_x=right_x,
-            right_angle_candidate_y=right_y,
             right_angle_candidate_active=right_angle_candidate_active,
             right_angle_indicator_active=right_angle_indicator_active,
         )

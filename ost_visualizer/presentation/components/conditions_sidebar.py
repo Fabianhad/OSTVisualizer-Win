@@ -336,6 +336,36 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._grayscale = grayscale
         self._rebuild_tree()
 
+    def apply_layer_visibility_state(
+        self,
+        conditions: Dict[str, Condition],
+        grayscale: bool = False,
+    ) -> None:
+        self._conditions = conditions
+        self._grayscale = grayscale
+        self.tree.setUpdatesEnabled(False)
+        self._block_item_changed = True
+        try:
+            for condition_uid, item in self._condition_items.items():
+                condition = conditions.get(condition_uid)
+                if not condition:
+                    continue
+                item.setIcon(
+                    _COL_NO,
+                    make_condition_color_icon(
+                        condition.color_fill,
+                        condition.pattern,
+                        grayscale or not condition.layer_visible,
+                    ),
+                )
+                self._apply_condition_item_placeable_state(
+                    item, condition.layer_visible
+                )
+        finally:
+            self.tree.setUpdatesEnabled(True)
+            self._block_item_changed = False
+        self._sync_button_states()
+
     def _rebuild_tree(self) -> None:
         saved = self._save_scroll()
         self.tree.setSortingEnabled(False)

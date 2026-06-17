@@ -500,9 +500,6 @@ class PageLoaderMixin:
         self._clear_visible_frame()
         self._sync_page_image_layer_visibility()
 
-    def _clear_tile_grid(self) -> None:
-        self._clear_visible_frame()
-
     def _set_low_res_base_item_visible(self, visible: bool) -> None:
         background_item = getattr(self, "_background_item", None)
         if background_item is not None and isValid(background_item):
