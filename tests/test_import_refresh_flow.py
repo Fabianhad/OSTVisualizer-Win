@@ -59,8 +59,13 @@ class FakeUiState:
 
 
 class FakeDeferredPersistence:
-    def flush_for_file(self, _file_path):
-        return True
+    def __init__(self, result=True):
+        self.result = result
+        self.flush_calls = []
+
+    def flush_for_file(self, file_path):
+        self.flush_calls.append(file_path)
+        return self.result
 
 
 class FakeProgressDialog:
@@ -164,6 +169,30 @@ class ImportRefreshFlowTests(unittest.TestCase):
             [("source.ost", "target.mdb", None, False)],
         )
         self.assertEqual(service.reloads, ["target.mdb"])
+
+    def test_import_handler_stops_when_deferred_flush_fails(self):
+        service = FakeImportService()
+        deferred = FakeDeferredPersistence(result=False)
+        handler = ImportHandler(
+            window=None,
+            project_data_service=FakeProjectData(),
+            import_service=service,
+            ui_state_manager=FakeUiState(),
+            deferred_persistence_manager=deferred,
+        )
+        original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
+        try:
+            import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
+                lambda *_args, **_kwargs: ("source.ost", "")
+            )
+            handler.import_ost()
+        finally:
+            import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
+                original_get_open
+            )
+        self.assertEqual(deferred.flush_calls, ["target.mdb"])
+        self.assertEqual(service.import_calls, [])
+        self.assertEqual(service.reloads, [])
 
     def test_import_handler_does_not_refresh_after_rejected_import(self):
         service = FakeImportService()

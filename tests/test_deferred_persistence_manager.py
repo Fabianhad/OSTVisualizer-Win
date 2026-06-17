@@ -14,7 +14,10 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
     SidebarCoordinator,
 )
+from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.dialogs.cover_sheet.context import CoverSheetContext
+from ost_visualizer.presentation.handlers.file_operation_handler import FileOperationHandler
+from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.deferred_persistence_manager import (
     DeferredPersistenceManager,
 )
@@ -192,7 +195,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
 
     def test_cleanup_flushes_pending_writes(self):
         self.manager.schedule_page_overlay_rect("a.mdb", "p1", (1, 2.5, 3, 4.25))
-        self.manager.cleanup()
+        self.assertTrue(self.manager.cleanup())
         self.assertEqual(
             self.service.calls,
             [
@@ -207,8 +210,49 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         )
         self.assertEqual(self.manager.pending_count, 0)
 
+    def test_cleanup_flushes_all_pending_deferred_operation_kinds(self):
+        self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        self.manager.schedule_bid_selected_page("a.mdb", "b1", "p1")
+        self.manager.schedule_layer_show("a.mdb", "l1", False)
+        self.manager.schedule_page_show_mode("a.mdb", "p1", 2)
+        self.manager.schedule_page_area_selection("a.mdb", "p1", "area-1")
+        self.manager.schedule_page_invert("a.mdb", "p1", True)
+        self.manager.schedule_page_bitonal("a.mdb", "p1", True)
+        self.manager.schedule_page_overlay_rect("a.mdb", "p1", (1, 2, 3, 4))
+        self.assertTrue(self.manager.cleanup())
+        self.assertEqual(
+            self.service.calls,
+            [
+                ("page_view_state", "a.mdb", "p1", 2.0, 10.0, 20.0),
+                ("bid_selected_page", "a.mdb", "b1", "p1"),
+                ("layer_show", "a.mdb", "l1", False, False),
+                ("page_show_mode", "a.mdb", "p1", 2, False),
+                ("page_area", "a.mdb", "p1", "area-1", False),
+                ("page_invert", "a.mdb", "p1", True),
+                ("page_bitonal", "a.mdb", "p1", True),
+                ("page_overlay_rect", "a.mdb", "p1", (1.0, 2.0, 3.0, 4.0), False),
+            ],
+        )
+        self.assertEqual(self.manager.pending_count, 0)
+
+    def test_cleanup_failure_keeps_pending_write_retryable(self):
+        self.service.fail_methods.add("update_layer_show")
+        self.manager.schedule_layer_show("a.mdb", "l1", False)
+        self.assertFalse(self.manager.cleanup())
+        self.assertEqual(self.manager.pending_count, 1)
+        self.service.fail_methods.clear()
+        self.assertTrue(self.manager.cleanup())
+        self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(
+            self.service.calls,
+            [
+                ("layer_show", "a.mdb", "l1", False, False),
+                ("layer_show", "a.mdb", "l1", False, False),
+            ],
+        )
+
     def test_cleanup_ignores_later_schedules(self):
-        self.manager.cleanup()
+        self.assertTrue(self.manager.cleanup())
         self.manager.schedule_page_invert("a.mdb", "p1", True)
         self.assertEqual(self.manager.pending_count, 0)
         self.assertEqual(self.service.calls, [])
@@ -249,6 +293,8 @@ class RecordingDeferredPersistence:
         self.layer_calls = []
         self.page_area_calls = []
         self.flush_calls = []
+        self.cancel_calls = []
+        self.flush_result = True
 
     def schedule_layer_show(self, db_path, layer_uid, show):
         self.layer_calls.append((db_path, layer_uid, show))
@@ -258,7 +304,111 @@ class RecordingDeferredPersistence:
 
     def flush_for_file(self, db_path):
         self.flush_calls.append(db_path)
-        return True
+        return self.flush_result
+
+    def cancel_for_file(self, db_path):
+        self.cancel_calls.append(db_path)
+
+
+class FakeCloseEvent:
+    def __init__(self):
+        self.ignored = False
+
+    def ignore(self):
+        self.ignored = True
+
+
+class DeferredPersistenceShutdownTests(unittest.TestCase):
+    def test_app_close_flushes_current_page_state_and_cleans_deferred_manager(self):
+        calls = []
+        window = MainWindow.__new__(MainWindow)
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(
+                flush_current_page_state=lambda: calls.append("flush_state") or True
+            )
+        )
+        window._deferred_persistence_manager = SimpleNamespace(
+            cleanup=lambda: calls.append("cleanup") or True
+        )
+        self.assertTrue(MainWindow._flush_deferred_persistence_before_close(window))
+        self.assertEqual(calls, ["flush_state", "cleanup"])
+
+    def test_app_close_does_not_cleanup_when_current_page_flush_fails(self):
+        calls = []
+        window = MainWindow.__new__(MainWindow)
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(
+                flush_current_page_state=lambda: calls.append("flush_state") or False
+            )
+        )
+        window._deferred_persistence_manager = SimpleNamespace(
+            cleanup=lambda: calls.append("cleanup") or True
+        )
+        self.assertFalse(MainWindow._flush_deferred_persistence_before_close(window))
+        self.assertEqual(calls, ["flush_state"])
+
+    def test_app_close_rejects_close_when_deferred_cleanup_fails(self):
+        window = MainWindow.__new__(MainWindow)
+        window._flush_deferred_persistence_before_close = lambda: False
+        event = FakeCloseEvent()
+        MainWindow.closeEvent(window, event)
+        self.assertTrue(event.ignored)
+
+    def test_file_exit_uses_window_close_path(self):
+        close_calls = []
+        controller = MenuController.__new__(MenuController)
+        controller.window = SimpleNamespace(close=lambda: close_calls.append("close"))
+        MenuController._on_quit(controller)
+        self.assertEqual(close_calls, ["close"])
+
+    def test_project_unload_flushes_pending_writes_before_unload(self):
+        deferred = RecordingDeferredPersistence()
+        unload_calls = []
+        updates = []
+        entries = [SimpleNamespace(normalized_path="a.mdb", is_checked=True)]
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=None,
+            file_state_model=SimpleNamespace(
+                file_entries=entries,
+                update_entries=lambda next_entries: updates.append(next_entries),
+            ),
+            cleanup_deleted_files_use_case=None,
+            file_loading_service=None,
+            working_directory_service=None,
+            unload_file_fn=lambda file_path: unload_calls.append(file_path) or True,
+            deferred_persistence_manager=deferred,
+            ui_state_manager=SimpleNamespace(selected_file_path="a.mdb"),
+        )
+        handler.unload_file()
+        self.assertEqual(deferred.flush_calls, ["a.mdb"])
+        self.assertEqual(unload_calls, ["a.mdb"])
+        self.assertEqual(deferred.cancel_calls, ["a.mdb"])
+        self.assertEqual(len(updates), 1)
+
+    def test_project_unload_stops_when_deferred_flush_fails(self):
+        deferred = RecordingDeferredPersistence()
+        deferred.flush_result = False
+        unload_calls = []
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=None,
+            file_state_model=SimpleNamespace(
+                file_entries=[],
+                update_entries=lambda _: None,
+            ),
+            cleanup_deleted_files_use_case=None,
+            file_loading_service=None,
+            working_directory_service=None,
+            unload_file_fn=lambda file_path: unload_calls.append(file_path) or True,
+            deferred_persistence_manager=deferred,
+            ui_state_manager=SimpleNamespace(selected_file_path="a.mdb"),
+        )
+        handler.unload_file()
+        self.assertEqual(deferred.flush_calls, ["a.mdb"])
+        self.assertEqual(unload_calls, [])
 
 
 class RecordingPlanView:
@@ -477,6 +627,21 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._finish_refresh = lambda: calls.append("finish")
         coordinator._on_database_refreshed(file_path="a.mdb")
         self.assertEqual(calls, [("flush", "a.mdb"), "start", "refresh", "finish"])
+
+    def test_database_refresh_stops_when_deferred_flush_fails(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda file_path: calls.append(("flush", file_path))
+            or False
+        )
+        coordinator._nav = SimpleNamespace(
+            start_refresh=lambda *_args, **_kwargs: calls.append("start") or True
+        )
+        coordinator._do_file_refresh = lambda: calls.append("refresh")
+        coordinator._finish_refresh = lambda: calls.append("finish")
+        coordinator._on_database_refreshed(file_path="a.mdb")
+        self.assertEqual(calls, [("flush", "a.mdb")])
 
     def test_sidebar_quantities_include_hidden_layer_conditions(self):
         quantity_payloads = []

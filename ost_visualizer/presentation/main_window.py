@@ -1506,14 +1506,13 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        if not self.handlers.ui_event.flush_current_page_state():
+        if not self._flush_deferred_persistence_before_close():
             event.ignore()
             return
         self._workspace_state_coordinator.flush()
         self._workspace_state_coordinator.cleanup()
         self.event_coordinator.cleanup()
         self.handlers.ui_event.cleanup()
-        self._deferred_persistence_manager.cleanup()
         self.license_coordinator.cleanup()
         self.ui_access_manager.cleanup()
         self._mcp_context_bridge.cleanup()
@@ -1522,3 +1521,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         lifecycle_orchestrator.shutdown()
         super().closeEvent(event)
+
+    def _flush_deferred_persistence_before_close(self) -> bool:
+        if not self.handlers.ui_event.flush_current_page_state():
+            return False
+        return bool(self._deferred_persistence_manager.cleanup())

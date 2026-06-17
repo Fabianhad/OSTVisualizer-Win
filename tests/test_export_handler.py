@@ -31,8 +31,13 @@ class _FakeProjectData:
 
 
 class _FakeDeferredPersistence:
+    def __init__(self, result=True):
+        self.result = result
+        self.flush_calls = 0
+
     def flush(self):
-        return True
+        self.flush_calls += 1
+        return self.result
 
 
 def _capture_pdf_default_filename(page_names):
@@ -67,6 +72,26 @@ def _capture_pdf_default_filename(page_names):
 
 
 class ExportHandlerPdfFilenameTests(unittest.TestCase):
+    def test_pdf_export_stops_when_deferred_persistence_flush_fails(self):
+        deferred = _FakeDeferredPersistence(result=False)
+        handler = ExportHandler(
+            window=None,
+            config_model=SimpleNamespace(),
+            export_service=SimpleNamespace(),
+            project_data_service=SimpleNamespace(
+                get_bid_conditions=lambda: self.fail(
+                    "export should not read project data after failed flush"
+                )
+            ),
+            pdf_exporter=SimpleNamespace(),
+            ost_exporter=SimpleNamespace(),
+            osp_exporter=SimpleNamespace(),
+            mdb_file_parser=SimpleNamespace(),
+            deferred_persistence_manager=deferred,
+        )
+        handler.export_as_pdf(["page-1"])
+        self.assertEqual(deferred.flush_calls, 1)
+
     def test_single_page_pdf_default_filename_keeps_existing_pdf_extension(self):
         filename = _capture_pdf_default_filename(["S-100.pdf"])
         self.assertEqual(

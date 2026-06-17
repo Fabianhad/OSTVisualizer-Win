@@ -242,15 +242,16 @@ class DeferredPersistenceManager(QtCore.QObject):
         if not self._pending:
             self._timer.stop()
 
-    def cleanup(self) -> None:
+    def cleanup(self) -> bool:
         if self._cleaned_up:
-            return
-        self.flush()
+            return True
+        if not self.flush():
+            return False
         self._timer.stop()
-        self._pending.clear()
         self._write_service = None
         self._warning_parent = None
         self._cleaned_up = True
+        return True
 
     def _notify_failure(self, failed_count: int) -> None:
         parent = self._warning_parent
