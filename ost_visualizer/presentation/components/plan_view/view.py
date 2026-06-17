@@ -353,6 +353,7 @@ class TakeoffPlanView(
         self._current_page_area_selections: Optional[Dict[str, Optional[str]]] = None
         self._current_annotations: Dict[str, BidAnnotation] = {}
         self._uid_to_items: Dict[str, List] = {}
+        self._hidden_layer_uids: Set[str] = set()
         self._select_band_origin: Optional[QtCore.QPointF] = None
         self._select_band_active: bool = False
         self._select_band_dragged: bool = False
@@ -1977,6 +1978,88 @@ class TakeoffPlanView(
     def set_overlay_display_mode(self, mode: int) -> None:
         if self._current_page is not None:
             self._current_page.image_show_mode = int(mode)
+
+    def apply_page_image_layer_visibility(self, page: Page) -> bool:
+        if self._current_bid_page_uid != page.uid or self._current_page is None:
+            return False
+        self._current_page.layer_visible = bool(page.layer_visible)
+        self._sync_page_image_layer_visibility()
+        self._update_scene_rect()
+        self.viewport().update()
+        return True
+
+    def apply_layer_visibility(
+        self,
+        layer_uid: str,
+        show: bool,
+        conditions: Optional[Dict[str, Condition]] = None,
+    ) -> bool:
+        if self._current_bid_page_uid is None:
+            return False
+        layer_key = str(layer_uid)
+        if conditions is not None:
+            self._current_conditions = conditions
+        if show:
+            self._hidden_layer_uids.discard(layer_key)
+        else:
+            self._hidden_layer_uids.add(layer_key)
+        for uid, takeoff in self._current_takeoffs.items():
+            condition = self._current_conditions.get(takeoff.condition_uid)
+            if condition is None or str(condition.layer_uid or "") != layer_key:
+                continue
+            visible = bool(condition.layer_visible)
+            for item in self._uid_to_items.get(uid, []):
+                item.setVisible(visible)
+        for uid, annotation in self._current_annotations.items():
+            if str(annotation.layer_uid or "") != layer_key:
+                continue
+            visible = self._annotation_layer_visible(annotation)
+            for item in self._uid_to_items.get(uid, []):
+                item.setVisible(visible)
+        self.update_selection_visuals()
+        self._update_scene_rect()
+        self.viewport().update()
+        return True
+
+    def apply_all_layer_visibility(
+        self,
+        show: bool,
+        conditions: Optional[Dict[str, Condition]] = None,
+    ) -> bool:
+        if self._current_bid_page_uid is None:
+            return False
+        if conditions is not None:
+            self._current_conditions = conditions
+        if show:
+            self._hidden_layer_uids.clear()
+        else:
+            layer_uids = {
+                str(condition.layer_uid)
+                for condition in self._current_conditions.values()
+                if condition.layer_uid
+            }
+            layer_uids.update(
+                str(annotation.layer_uid)
+                for annotation in self._current_annotations.values()
+                if annotation.layer_uid
+            )
+            self._hidden_layer_uids.update(layer_uids)
+        for uid in list(self._current_takeoffs):
+            takeoff = self._current_takeoffs.get(uid)
+            condition = (
+                self._current_conditions.get(takeoff.condition_uid) if takeoff else None
+            )
+            visible = bool(condition and condition.layer_visible)
+            for item in self._uid_to_items.get(uid, []):
+                item.setVisible(visible)
+        for uid, annotation in self._current_annotations.items():
+            visible = self._annotation_layer_visible(annotation)
+            for item in self._uid_to_items.get(uid, []):
+                item.setVisible(visible)
+        self.update_selection_visuals()
+        self._update_scene_rect()
+        self.viewport().update()
+        return True
 
     def _build_render_identity(
         self, page: Page, bid_ref: Optional[BidRef]
@@ -4611,6 +4694,7 @@ class TakeoffPlanView(
         self._current_page_area_selections = None
         self._current_annotations = {}
         self._ann_db_uid_map = {}
+        self._hidden_layer_uids.clear()
         self.takeoff_selection_changed.emit([])
         self._select_band_origin = None
         self._select_band_active = False

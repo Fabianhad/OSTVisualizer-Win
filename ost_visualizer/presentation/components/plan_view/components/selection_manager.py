@@ -1,6 +1,6 @@
 import logging
 import math
-from typing import List, Optional, Set
+from typing import Collection, List, Optional, Set
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen, QPolygonF
@@ -33,6 +33,7 @@ class SelectionManagerMixin:
     _CORNER_HALF = 4.0
     _MID_HALF = 2.0
     _TEXT_ANNOTATION_HIT_TOLERANCE_PX = 4.0
+    _hidden_layer_uids: Collection[str] = ()
 
     def _on_selection_changed(self) -> None:
         pass
@@ -67,12 +68,23 @@ class SelectionManagerMixin:
     def _is_selectable(self, uid: str) -> bool:
         if self._annotation_only_selection:
             ann = self._current_annotations.get(uid)
-            return bool(ann and ann.visible and ann.is_interactive)
+            if ann is None or not ann.is_interactive:
+                return False
+            return bool(self._annotation_layer_visible(ann))
         takeoff = self._current_takeoffs.get(uid)
         if takeoff is not None:
             return takeoff.is_visible(self._current_conditions)
         ann = self._current_annotations.get(uid)
-        return bool(ann and ann.visible and ann.is_interactive)
+        if ann is None or not ann.is_interactive:
+            return False
+        return bool(self._annotation_layer_visible(ann))
+
+    def _annotation_layer_visible(self, annotation) -> bool:
+        layer_uid = str(annotation.layer_uid or "")
+        return bool(
+            annotation.visible
+            and (not layer_uid or layer_uid not in self._hidden_layer_uids)
+        )
 
     def find_takeoffs_at(self, scene_pos) -> List[str]:
         seen: Set[str] = set()
@@ -90,7 +102,7 @@ class SelectionManagerMixin:
         for uid, ann in self._current_annotations.items():
             if (
                 uid not in seen
-                and ann.visible
+                and self._is_selectable(uid)
                 and ann.is_text
                 and ann.is_interactive
                 and self._text_annotation_contains_scene_point(uid, scene_pos)

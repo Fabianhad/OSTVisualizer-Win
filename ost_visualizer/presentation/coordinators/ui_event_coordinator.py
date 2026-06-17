@@ -1230,6 +1230,9 @@ class UIEventCoordinator:
         self._update_export_menu_state()
 
     def _on_database_refreshed(self, **kwargs) -> None:
+        file_path = kwargs.get("file_path")
+        if file_path and not self._flush_deferred_for_file(file_path):
+            return
         if not self._nav.start_refresh(
             self.ui_state_manager,
             self._placement,
@@ -2205,24 +2208,15 @@ class UIEventCoordinator:
     def _on_page_area_changed(
         self, file_path: str, page_uid: str, area_uid: str
     ) -> None:
-        previous_area_uid = (
-            self.project_data.get_page_area_selections().get(page_uid) or ""
+        page_area_selections = self.project_data.get_page_area_selections()
+        page_area_selections[page_uid] = area_uid if area_uid else None
+        self.ui_state_manager.selected_area_uid = area_uid or ""
+        self._deferred_persistence.schedule_page_area_selection(
+            file_path, page_uid, area_uid or ""
         )
-        if not self._flush_deferred_for_file(file_path):
-            self.ui_state_manager.selected_area_uid = previous_area_uid
-            self._update_page_settings_bar(page_uid)
-            return
-        write_svc = self._project_write_service
-        success = False
-        try:
-            success = bool(write_svc.save_page_area(file_path, page_uid, area_uid))
-        except Exception:
-            logger.warning("Failed to save page area", exc_info=True)
-        if success:
-            self.ui_state_manager.selected_area_uid = area_uid
-            return
-        self.ui_state_manager.selected_area_uid = previous_area_uid
-        self._update_page_settings_bar(page_uid)
+        if page_uid == self.ui_state_manager.active_page_uid:
+            self._viewer.update_plan_view(page_uid)
+            self._apply_pending_hotlink_named_view_focus(require_stable=True)
 
     def _on_overlay_display_mode_requested(self, show_mode: int) -> None:
         if show_mode not in (SHOW_ORIGINAL, SHOW_OVERLAY, SHOW_BOTH):
@@ -2313,7 +2307,7 @@ class UIEventCoordinator:
             else None
         )
         image_layer = bool(layer and layer.name.strip().lower() == "image")
-        changed_pages = self.project_data.update_layer_visibility(
+        self.project_data.update_layer_visibility(
             layer_uid, show, image_layer=image_layer
         )
         if self._sidebar.bid_layers_sidebar:
@@ -2322,15 +2316,40 @@ class UIEventCoordinator:
         self._deferred_persistence.schedule_layer_show(
             bid_ref.file_path, layer_uid, show
         )
-        pages_to_update = changed_pages or [self.ui_state_manager.active_page_uid]
-        for page_uid in pages_to_update:
-            if page_uid:
-                self._update_plan_view(page_uid)
-        self._viewer.update_viewers(self.project_data.get_selected_page_uids())
+        self._apply_layer_visibility_to_current_plan_view(
+            layer_uid,
+            show,
+            image_layer=image_layer,
+        )
+        if not image_layer:
+            self._viewer.update_viewers(self.project_data.get_selected_page_uids())
         self._sidebar.update_conditions_quantities()
         self._update_export_menu_state()
         self.ensure_select_mode()
         return True
+
+    def _apply_layer_visibility_to_current_plan_view(
+        self, layer_uid: str, show: bool, *, image_layer: bool = False
+    ) -> None:
+        active_page_uid = self.ui_state_manager.active_page_uid
+        if not active_page_uid or not self.plan_view:
+            return
+        if self.plan_view.current_page_uid != active_page_uid:
+            self._update_plan_view(active_page_uid)
+            return
+        if image_layer:
+            page = self.project_data.get_page(active_page_uid)
+            if page and self.plan_view.apply_page_image_layer_visibility(page):
+                return
+            self._update_plan_view(active_page_uid)
+            return
+        if self.plan_view.apply_layer_visibility(
+            layer_uid,
+            show,
+            self.project_data.get_bid_conditions(),
+        ):
+            return
+        self._update_plan_view(active_page_uid)
 
     def _on_layer_added(self, name: str, after_sequence: int) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -2383,7 +2402,7 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return False
-        changed_pages = self.project_data.update_all_layer_visibility(show)
+        self.project_data.update_all_layer_visibility(show)
         if self._sidebar.bid_layers_sidebar:
             layers = self._sidebar.bid_layers_sidebar.get_layers()
             self._sidebar.bid_layers_sidebar.set_all_layers_visible(show)
@@ -2396,10 +2415,19 @@ class UIEventCoordinator:
             self._deferred_persistence.schedule_layer_show(
                 bid_ref.file_path, layer.uid, show
             )
-        pages_to_update = changed_pages or [self.ui_state_manager.active_page_uid]
-        for page_uid in pages_to_update:
-            if page_uid:
-                self._update_plan_view(page_uid)
+        active_page_uid = self.ui_state_manager.active_page_uid
+        if active_page_uid and self.plan_view:
+            if self.plan_view.current_page_uid != active_page_uid:
+                self._update_plan_view(active_page_uid)
+            else:
+                page = self.project_data.get_page(active_page_uid)
+                if page:
+                    self.plan_view.apply_page_image_layer_visibility(page)
+                if not self.plan_view.apply_all_layer_visibility(
+                    show,
+                    self.project_data.get_bid_conditions(),
+                ):
+                    self._update_plan_view(active_page_uid)
         self._viewer.update_viewers(self.project_data.get_selected_page_uids())
         self._sidebar.update_conditions_quantities()
         self._update_export_menu_state()

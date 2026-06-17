@@ -800,13 +800,21 @@ class ProjectWriteService(BaseWriteService):
                 seen_page_uids.add(uid)
         return valid_page_uids
 
-    def save_page_area(self, db_path: str, page_uid: str, area_uid: str) -> bool:
+    def save_page_area(
+        self,
+        db_path: str,
+        page_uid: str,
+        area_uid: str,
+        publish_database_refreshed_after_write: bool = True,
+    ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "save_page_area", db_path
         ):
             return False
         success = self._save_page_area.execute(db_path, page_uid, area_uid)
-        return self._reload_after_success(db_path, success)
+        return self._reload_after_success(
+            db_path, success, publish_database_refreshed_after_write
+        )
 
     def update_layer_show(
         self,

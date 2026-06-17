@@ -4553,6 +4553,34 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         finally:
             view.cleanup()
 
+    def test_layer_visibility_hides_loaded_items_and_clears_selection(self):
+        view = self._make_plan_view()
+        page = Page(uid="page-1", name="Page 1")
+        condition = Condition(
+            uid="c1",
+            name="Condition",
+            layer_uid="l1",
+            layer_visible=True,
+        )
+        takeoff = Takeoff(uid="t1", condition_uid="c1", page_uid=page.uid)
+        item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        item.setData(0, "t1")
+        view._scene.addItem(item)
+        view._current_bid_page_uid = page.uid
+        view._current_page = page
+        view._current_takeoffs = {"t1": takeoff}
+        view._current_conditions = {"c1": condition}
+        view._uid_to_items = {"t1": [item]}
+        view._selected_uids = {"t1"}
+        condition.layer_visible = False
+        try:
+            self.assertTrue(view.apply_layer_visibility("l1", False, {"c1": condition}))
+            self.assertFalse(item.isVisible())
+            self.assertFalse(view._is_selectable("t1"))
+            self.assertEqual(view._selected_uids, set())
+        finally:
+            view.cleanup()
+
     def test_overlay_refresh_preserves_dirty_takeoff_position_without_flushing(self):
         view = self._make_plan_view()
         page = Page(uid="page-1", name="Page 1")

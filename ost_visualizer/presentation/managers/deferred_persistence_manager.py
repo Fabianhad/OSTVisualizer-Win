@@ -107,6 +107,21 @@ class DeferredPersistenceManager(QtCore.QObject):
             ),
         )
 
+    def schedule_page_area_selection(
+        self, db_path: str, page_uid: str, area_uid: str
+    ) -> None:
+        self.schedule(
+            "page_area_selection",
+            ("page_area_selection", db_path, page_uid),
+            f"selected area for page {page_uid}",
+            lambda: self._write_service.save_page_area(
+                db_path,
+                page_uid,
+                area_uid,
+                publish_database_refreshed_after_write=False,
+            ),
+        )
+
     def schedule_page_invert(self, db_path: str, page_uid: str, invert: bool) -> None:
         self.schedule(
             "page_invert",
