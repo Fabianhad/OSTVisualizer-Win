@@ -44,6 +44,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._render_suspended = True
         self._color_service = color_service
         self.setAttribute(QtCore.Qt.WA_PaintOnScreen)
+        self.setAttribute(QtCore.Qt.WA_DontCreateNativeAncestors)
         self.setAttribute(QtCore.Qt.WA_NativeWindow)
         self.setAttribute(QtCore.Qt.WA_NoSystemBackground)
         self._set_palette_background()

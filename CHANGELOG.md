@@ -78,6 +78,7 @@
 - Kept text annotation textbox resizing centered when font or style changes resize the box, while inline text edits preserve the existing textbox bounds, wrapping, and editor selection state.
 - Updated the shared text-format toolbar with formatting icons and a live text-color swatch.
 - Fixed text annotation style and autosized textbox updates so overlay refreshes keep the new formatting and centered box.
+- Fixed the native OpenGL viewer so it no longer promotes splitter ancestors into `QSplitterClassWindow` native windows.
 - Fixed condition Display Name/Dimension label formatting so supported font style fields persist through overlay rebuilds instead of resetting after takeoff refreshes.
 - Fixed condition Display Name/Dimension label formatting so label boxes recompute immediately after toolbar style changes.
 - Stored generated condition label formatting on `BidTakeoffs`, using `Font*` for Display Dimension labels and `NameFont*` for Display Name labels.
