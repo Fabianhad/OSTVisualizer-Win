@@ -2,10 +2,13 @@ import os
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtGui import QPainterPath
-from PySide6.QtWidgets import QApplication, QGraphicsPathItem, QGraphicsScene, QGraphicsTextItem
-
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsPathItem,
+    QGraphicsScene,
+    QGraphicsTextItem,
+)
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
@@ -67,9 +70,7 @@ class RecordingTakeoffRenderer:
 
 
 class EmptyAnnotationRenderer:
-    def create_all_annotation_items(
-        self, annotations, page_info, current_bid_page_uid
-    ):
+    def create_all_annotation_items(self, annotations, page_info, current_bid_page_uid):
         _ = (annotations, page_info, current_bid_page_uid)
         return [], {}
 
@@ -99,10 +100,8 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
                 Takeoff(uid="2", condition_uid="c1"),
             ]
         )
-
         older_body = uid_to_items["2"][0]
         newer_body = uid_to_items["10"][0]
-
         self.assertGreater(newer_body.zValue(), older_body.zValue())
 
     def test_numeric_uid_draw_order_is_not_lexicographic(self):
@@ -113,7 +112,6 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
                 Takeoff(uid="1", condition_uid="c1"),
             ]
         )
-
         self.assertEqual(renderer.rendered_uid_order, ["1", "2", "10"])
         self.assertLess(uid_to_items["1"][0].zValue(), uid_to_items["2"][0].zValue())
         self.assertLess(uid_to_items["2"][0].zValue(), uid_to_items["10"][0].zValue())
@@ -125,10 +123,8 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
                 Takeoff(uid="8", condition_uid="c1"),
             ]
         )
-
         older_body, older_label = uid_to_items["7"]
         newer_body, newer_label = uid_to_items["8"]
-
         self.assertGreater(newer_body.zValue(), older_body.zValue())
         self.assertLess(newer_body.zValue(), 1.0)
         self.assertGreater(newer_label.zValue(), older_label.zValue())

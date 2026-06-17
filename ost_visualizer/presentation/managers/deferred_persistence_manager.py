@@ -88,7 +88,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             ("layer_show", db_path, layer_uid),
             f"layer visibility for layer {layer_uid}",
             lambda: self._write_service.update_layer_show(
-                db_path, layer_uid, show, reload_database=False
+                db_path, layer_uid, show, publish_database_refreshed_after_write=False
             ),
         )
 
@@ -100,7 +100,10 @@ class DeferredPersistenceManager(QtCore.QObject):
             ("page_show_mode", db_path, page_uid),
             f"page display mode for page {page_uid}",
             lambda: self._write_service.save_page_show_mode(
-                db_path, page_uid, show_mode, reload_database=False
+                db_path,
+                page_uid,
+                show_mode,
+                publish_database_refreshed_after_write=False,
             ),
         )
 
@@ -133,7 +136,10 @@ class DeferredPersistenceManager(QtCore.QObject):
             f"overlay rectangle for page {page_uid}",
             lambda: bool(
                 self._write_service.save_page_overlay_rect_result(
-                    db_path, page_uid, rect, reload_database=False
+                    db_path,
+                    page_uid,
+                    rect,
+                    publish_database_refreshed_after_write=False,
                 ).write_success
             ),
         )

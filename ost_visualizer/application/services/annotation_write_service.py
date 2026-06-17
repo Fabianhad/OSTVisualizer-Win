@@ -43,14 +43,14 @@ class AnnotationWriteService(BaseWriteService):
         self,
         db_path: str,
         positions: List[Tuple[str, str, List[float]]],
-        reload_database: bool = True,
+        publish_database_refreshed_after_write: bool = True,
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "save_annotation_positions", db_path
         ):
             return False
         success = self._save_annotation_positions.execute(db_path, positions)
-        if success and reload_database:
+        if success and publish_database_refreshed_after_write:
             self.reload_and_notify(db_path)
         return success
 
@@ -58,14 +58,14 @@ class AnnotationWriteService(BaseWriteService):
         self,
         db_path: str,
         updates: List[Tuple[str, str, dict]],
-        reload_database: bool = True,
+        publish_database_refreshed_after_write: bool = True,
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "save_annotation_text_properties", db_path
         ):
             return False
         success = self._save_annotation_text_properties.execute(db_path, updates)
-        if success and reload_database:
+        if success and publish_database_refreshed_after_write:
             self.reload_and_notify(db_path)
         return success
 
@@ -73,14 +73,14 @@ class AnnotationWriteService(BaseWriteService):
         self,
         db_path: str,
         updates: List[Tuple[str, str, dict]],
-        reload_database: bool = True,
+        publish_database_refreshed_after_write: bool = True,
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "save_annotation_styles", db_path
         ):
             return False
         success = self._save_annotation_styles.execute(db_path, updates)
-        if success and reload_database:
+        if success and publish_database_refreshed_after_write:
             self.reload_and_notify(db_path)
         return success
 
@@ -89,7 +89,7 @@ class AnnotationWriteService(BaseWriteService):
         db_path: str,
         updates: List[Tuple[str, str, dict]],
         positions: List[Tuple[str, str, List[float]]],
-        reload_database: bool = True,
+        publish_database_refreshed_after_write: bool = True,
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "save_annotation_text_properties_and_positions", db_path
@@ -100,7 +100,7 @@ class AnnotationWriteService(BaseWriteService):
             success = self._save_annotation_text_properties.execute(db_path, updates)
         if success and positions:
             success = self._save_annotation_positions.execute(db_path, positions)
-        if success and reload_database:
+        if success and publish_database_refreshed_after_write:
             self.reload_and_notify(db_path)
         return success
 
@@ -110,7 +110,7 @@ class AnnotationWriteService(BaseWriteService):
         bid_uid: str,
         specs: List[InsertAnnotationSpec],
         ref_remap: Optional[PasteRefRemap] = None,
-        reload_database: bool = True,
+        publish_database_refreshed_after_write: bool = True,
     ) -> List[str]:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "insert_annotations", db_path, bid_uid
@@ -119,7 +119,7 @@ class AnnotationWriteService(BaseWriteService):
         new_uids = self._insert_annotations.execute(
             db_path, bid_uid, specs, ref_remap=ref_remap
         )
-        if new_uids and reload_database:
+        if new_uids and publish_database_refreshed_after_write:
             self.reload_and_notify(db_path)
         return new_uids
 
@@ -127,13 +127,13 @@ class AnnotationWriteService(BaseWriteService):
         self,
         db_path: str,
         annotations: List[Tuple[str, str]],
-        reload_database: bool = True,
+        publish_database_refreshed_after_write: bool = True,
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "delete_annotations", db_path
         ):
             return False
         success = self._delete_annotations.execute(db_path, annotations)
-        if success and reload_database:
+        if success and publish_database_refreshed_after_write:
             self.reload_and_notify(db_path)
         return success

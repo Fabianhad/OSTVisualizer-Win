@@ -4,9 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
 from PySide6.QtCore import QCoreApplication
-
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
@@ -32,13 +30,39 @@ class FakeProjectWriteService:
         self.calls.append(("bid_selected_page", db_path, bid_uid, page_uid))
         return "save_bid_selected_page" not in self.fail_methods
 
-    def update_layer_show(self, db_path, layer_uid, show, reload_database=True):
-        self.calls.append(("layer_show", db_path, layer_uid, show, reload_database))
+    def update_layer_show(
+        self,
+        db_path,
+        layer_uid,
+        show,
+        publish_database_refreshed_after_write=True,
+    ):
+        self.calls.append(
+            (
+                "layer_show",
+                db_path,
+                layer_uid,
+                show,
+                publish_database_refreshed_after_write,
+            )
+        )
         return "update_layer_show" not in self.fail_methods
 
-    def save_page_show_mode(self, db_path, page_uid, show_mode, reload_database=True):
+    def save_page_show_mode(
+        self,
+        db_path,
+        page_uid,
+        show_mode,
+        publish_database_refreshed_after_write=True,
+    ):
         self.calls.append(
-            ("page_show_mode", db_path, page_uid, show_mode, reload_database)
+            (
+                "page_show_mode",
+                db_path,
+                page_uid,
+                show_mode,
+                publish_database_refreshed_after_write,
+            )
         )
         return "save_page_show_mode" not in self.fail_methods
 
@@ -51,10 +75,20 @@ class FakeProjectWriteService:
         return "save_page_bitonal" not in self.fail_methods
 
     def save_page_overlay_rect_result(
-        self, db_path, page_uid, overlay_rect, reload_database=True
+        self,
+        db_path,
+        page_uid,
+        overlay_rect,
+        publish_database_refreshed_after_write=True,
     ):
         self.calls.append(
-            ("page_overlay_rect", db_path, page_uid, overlay_rect, reload_database)
+            (
+                "page_overlay_rect",
+                db_path,
+                page_uid,
+                overlay_rect,
+                publish_database_refreshed_after_write,
+            )
         )
         success = "save_page_overlay_rect_result" not in self.fail_methods
         return SimpleNamespace(write_success=success)
@@ -77,16 +111,13 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
 
     def test_queues_without_immediate_write(self):
         self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
-
         self.assertEqual(self.service.calls, [])
         self.assertEqual(self.manager.pending_count, 1)
 
     def test_coalesces_repeated_writes_by_key_and_last_write_wins(self):
         self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
         self.manager.schedule_page_view_state("a.mdb", "p1", 4.0, 30.0, 40.0)
-
         self.assertTrue(self.manager.flush())
-
         self.assertEqual(
             self.service.calls,
             [("page_view_state", "a.mdb", "p1", 4.0, 30.0, 40.0)],
@@ -96,9 +127,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_flush_executes_all_successful_writes_and_clears_queue(self):
         self.manager.schedule_bid_selected_page("a.mdb", "b1", "p2")
         self.manager.schedule_page_invert("a.mdb", "p2", True)
-
         self.assertTrue(self.manager.flush())
-
         self.assertEqual(
             self.service.calls,
             [
@@ -111,10 +140,8 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_failed_write_remains_pending_for_retry(self):
         self.service.fail_methods.add("save_page_bitonal")
         self.manager.schedule_page_bitonal("a.mdb", "p1", True)
-
         self.assertFalse(self.manager.flush())
         self.assertEqual(self.manager.pending_count, 1)
-
         self.service.fail_methods.clear()
         self.assertTrue(self.manager.flush())
         self.assertEqual(self.manager.pending_count, 0)
@@ -129,23 +156,17 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_cancel_for_file_removes_only_matching_file_writes(self):
         self.manager.schedule_layer_show("a.mdb", "l1", False)
         self.manager.schedule_page_show_mode("b.mdb", "p1", 2)
-
         self.manager.cancel_for_file("a.mdb")
         self.assertEqual(self.manager.pending_count, 1)
         self.assertTrue(self.manager.flush())
-
         self.assertEqual(
             self.service.calls,
             [("page_show_mode", "b.mdb", "p1", 2, False)],
         )
 
     def test_cleanup_flushes_pending_writes(self):
-        self.manager.schedule_page_overlay_rect(
-            "a.mdb", "p1", (1, 2.5, 3, 4.25)
-        )
-
+        self.manager.schedule_page_overlay_rect("a.mdb", "p1", (1, 2.5, 3, 4.25))
         self.manager.cleanup()
-
         self.assertEqual(
             self.service.calls,
             [
@@ -162,9 +183,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
 
     def test_cleanup_ignores_later_schedules(self):
         self.manager.cleanup()
-
         self.manager.schedule_page_invert("a.mdb", "p1", True)
-
         self.assertEqual(self.manager.pending_count, 0)
         self.assertEqual(self.service.calls, [])
 
@@ -172,9 +191,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         self.manager.schedule_layer_show("a.mdb", "l1", True)
         self.manager.schedule_page_show_mode("a.mdb", "p1", 1)
         self.manager.schedule_page_overlay_rect("a.mdb", "p1", (0, 0, 10, 10))
-
         self.assertTrue(self.manager.flush())
-
         self.assertEqual(
             self.service.calls,
             [
@@ -228,9 +245,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.ensure_select_mode = lambda: None
         deferred = RecordingDeferredPersistence()
         coordinator._deferred_persistence = deferred
-
         self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
-
         self.assertEqual(
             deferred.layer_calls,
             [
@@ -252,7 +267,6 @@ class DeferredPersistenceBoundaryTests(unittest.TestCase):
             bid_ref=BidRef("a.mdb", "bid-1"),
             deferred_persistence_manager=deferred,
         )
-
         self.assertFalse(context.save_cover_sheet({"job_name": "A"}))
         self.assertEqual(write_calls, [])
 

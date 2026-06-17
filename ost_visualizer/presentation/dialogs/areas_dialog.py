@@ -16,10 +16,12 @@ from ..utils.dialog import (
     save_result_refresh_failed,
     save_result_succeeded,
 )
-from ..utils.messagebox import confirm_multi_delete
+from ..utils.messagebox import confirm_multi_delete, show_warning
 
 
 class BidAreasDialog(BaseListDialog):
+    _VALID_NAME_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
+
     def __init__(
         self,
         icon_provider,
@@ -145,9 +147,87 @@ class BidAreasDialog(BaseListDialog):
     def _make_item(self, uid: str, name: str) -> QtWidgets.QTreeWidgetItem:
         item = QtWidgets.QTreeWidgetItem([name])
         item.setData(0, self._UID_ROLE, uid)
+        item.setData(0, self._VALID_NAME_ROLE, name)
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
         item.setSizeHint(0, QtCore.QSize(0, 26))
         return item
+
+    def _set_item_name(self, item: QtWidgets.QTreeWidgetItem, name: str) -> None:
+        self.tree.blockSignals(True)
+        try:
+            item.setText(0, name)
+        finally:
+            self.tree.blockSignals(False)
+
+    def _restore_item_name(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        previous = item.data(0, self._VALID_NAME_ROLE)
+        self._set_item_name(item, str(previous or ""))
+
+    def _area_name_exists(self, name: str, exclude_uid: str) -> bool:
+        target = name.strip().lower()
+        if not target:
+            return False
+
+        def _matches(item: QtWidgets.QTreeWidgetItem) -> bool:
+            uid = str(item.data(0, self._UID_ROLE) or "")
+            if uid == exclude_uid:
+                return False
+            return item.text(0).strip().lower() == target
+
+        def _traverse(parent: QtWidgets.QTreeWidgetItem) -> bool:
+            for index in range(parent.childCount()):
+                child = parent.child(index)
+                if _matches(child) or _traverse(child):
+                    return True
+            return False
+
+        return _traverse(self.tree.invisibleRootItem())
+
+    def _show_duplicate_area_warning(self, name: str) -> None:
+        show_warning(self, "Duplicate Area", f"Area {name} already exists.")
+
+    def _validate_item_name(self, item: QtWidgets.QTreeWidgetItem) -> bool:
+        uid = str(item.data(0, self._UID_ROLE) or "")
+        new_name = item.text(0).strip()
+        if not new_name:
+            self._restore_item_name(item)
+            return False
+        if self._area_name_exists(new_name, uid):
+            self._show_duplicate_area_warning(new_name)
+            self._restore_item_name(item)
+            return False
+        return True
+
+    def _item_name_changed(self, item: QtWidgets.QTreeWidgetItem) -> bool:
+        previous = str(item.data(0, self._VALID_NAME_ROLE) or "").strip()
+        current = item.text(0).strip()
+        return current != previous
+
+    def _validate_changed_area_names_for_save(self) -> bool:
+        def _traverse(parent: QtWidgets.QTreeWidgetItem) -> bool:
+            for index in range(parent.childCount()):
+                child = parent.child(index)
+                uid = str(child.data(0, self._UID_ROLE) or "")
+                if uid in self._new_uids and not child.text(0).strip():
+                    continue
+                if (uid in self._new_uids or self._item_name_changed(child)) and (
+                    not self._validate_item_name(child)
+                ):
+                    return False
+                if not _traverse(child):
+                    return False
+            return True
+
+        return _traverse(self.tree.invisibleRootItem())
+
+    def _mark_saved_names(self) -> None:
+        def _traverse(parent: QtWidgets.QTreeWidgetItem) -> None:
+            for index in range(parent.childCount()):
+                child = parent.child(index)
+                child.setData(0, self._VALID_NAME_ROLE, child.text(0).strip())
+                _traverse(child)
+
+        _traverse(self.tree.invisibleRootItem())
 
     def _single_selected(self) -> Optional[QtWidgets.QTreeWidgetItem]:
         items = self.tree.selectedItems()
@@ -235,7 +315,7 @@ class BidAreasDialog(BaseListDialog):
     def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, _column: int) -> None:
         if not self._has_license:
             return
-        if item.text(0).strip():
+        if self._validate_item_name(item) and self._item_name_changed(item):
             self._live_save()
 
     def _on_ok(self) -> None:
@@ -327,6 +407,8 @@ class BidAreasDialog(BaseListDialog):
     def _live_save(self) -> bool:
         if not self._save_fn:
             return True
+        if not self._validate_changed_area_names_for_save():
+            return False
         new_areas: List[BidArea] = []
         updated_areas: List[BidArea] = []
 
@@ -378,6 +460,7 @@ class BidAreasDialog(BaseListDialog):
                     self.tree.blockSignals(False)
             if self._on_saved_fn and not save_result_refresh_failed(result):
                 self._on_saved_fn()
+            self._mark_saved_names()
         return True
 
     def _apply_uid_map(

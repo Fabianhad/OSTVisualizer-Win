@@ -306,6 +306,175 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_bid_areas_dialog_rejects_duplicate_new_area_name(self):
+        save_calls = []
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[self._area()],
+            save_fn=lambda changes: save_calls.append(changes) or {"new_0": "area-2"},
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(0, " main ")
+            dialog.tree.blockSignals(False)
+            with patch(
+                "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
+            ) as warning:
+                dialog._on_item_changed(item, 0)
+            warning.assert_called_once_with(
+                dialog, "Duplicate Area", "Area main already exists."
+            )
+            self.assertEqual(item.text(0), "")
+            self.assertEqual(save_calls, [])
+            self.assertIn("new_0", dialog._new_uids)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_bid_areas_dialog_rejects_duplicate_existing_area_rename(self):
+        save_calls = []
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[
+                self._area(),
+                BidArea(
+                    uid="area-2",
+                    bid_uid="bid-1",
+                    parent_uid="",
+                    name="Secondary",
+                    sequence=2,
+                ),
+            ],
+            save_fn=lambda changes: save_calls.append(changes) or {},
+        )
+        try:
+            item = dialog.tree.topLevelItem(1)
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Main")
+            dialog.tree.blockSignals(False)
+            with patch(
+                "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
+            ) as warning:
+                dialog._on_item_changed(item, 0)
+            warning.assert_called_once_with(
+                dialog, "Duplicate Area", "Area Main already exists."
+            )
+            self.assertEqual(item.text(0), "Secondary")
+            self.assertEqual(save_calls, [])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_bid_areas_dialog_current_name_is_noop(self):
+        save_calls = []
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[self._area()],
+            save_fn=lambda changes: save_calls.append(changes) or {},
+        )
+        try:
+            item = dialog.tree.topLevelItem(0)
+            with patch(
+                "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
+            ) as warning:
+                dialog._on_item_changed(item, 0)
+            warning.assert_not_called()
+            self.assertEqual(save_calls, [])
+            self.assertEqual(item.text(0), "Main")
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_bid_areas_dialog_duplicate_check_excludes_current_uid(self):
+        save_calls = []
+
+        def save_fn(changes):
+            save_calls.append(changes)
+            return {}
+
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[self._area()],
+            save_fn=save_fn,
+        )
+        try:
+            item = dialog.tree.topLevelItem(0)
+            dialog.tree.blockSignals(True)
+            item.setText(0, "main")
+            dialog.tree.blockSignals(False)
+            with patch(
+                "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
+            ) as warning:
+                dialog._on_item_changed(item, 0)
+            warning.assert_not_called()
+            self.assertEqual(len(save_calls), 1)
+            self.assertEqual(save_calls[0].updated[0].uid, "area-1")
+            self.assertEqual(save_calls[0].updated[0].name, "main")
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_bid_areas_dialog_rejects_empty_existing_area_name(self):
+        save_calls = []
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[self._area()],
+            save_fn=lambda changes: save_calls.append(changes) or {},
+        )
+        try:
+            item = dialog.tree.topLevelItem(0)
+            dialog.tree.blockSignals(True)
+            item.setText(0, "   ")
+            dialog.tree.blockSignals(False)
+            with patch(
+                "ost_visualizer.presentation.dialogs.areas_dialog.show_warning"
+            ) as warning:
+                dialog._on_item_changed(item, 0)
+            warning.assert_not_called()
+            self.assertEqual(item.text(0), "Main")
+            self.assertEqual(save_calls, [])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_bid_areas_dialog_valid_unique_rename_saves_and_updates_valid_name(self):
+        save_calls = []
+
+        def save_fn(changes):
+            save_calls.append(changes)
+            return {}
+
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[self._area()],
+            save_fn=save_fn,
+        )
+        try:
+            item = dialog.tree.topLevelItem(0)
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Level 1")
+            dialog.tree.blockSignals(False)
+            self.assertTrue(dialog._live_save())
+            self.assertEqual(len(save_calls), 1)
+            self.assertEqual(save_calls[0].updated[0].name, "Level 1")
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Main")
+            dialog.tree.blockSignals(False)
+            self.assertTrue(dialog._live_save())
+            self.assertEqual(len(save_calls), 2)
+            self.assertEqual(save_calls[1].updated[0].name, "Main")
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_base_picker_does_not_accept_when_save_returns_false(self):
         dialog = self._payroll_class_dialog_with_save(lambda _changes: False)
         try:
@@ -445,7 +614,8 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.tree.setCurrentItem(item)
             with (
                 patch(
-                    "ost_visualizer.presentation.dialogs.condition_types_dialog.confirm_multi_delete",
+                    "ost_visualizer.presentation.dialogs."
+                    "condition_types_dialog.confirm_multi_delete",
                     return_value=[("Concrete", "type-1")],
                 ),
                 patch(

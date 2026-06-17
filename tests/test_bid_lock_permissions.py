@@ -499,7 +499,7 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(len(write_service.condition_updates), 2)
         self.assertEqual(
             [
-                call.get("reload_database")
+                call.get("publish_database_refreshed_after_write")
                 for call in write_service.condition_update_kwargs
             ],
             [False, False],

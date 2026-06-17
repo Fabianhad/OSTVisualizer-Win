@@ -265,16 +265,25 @@ class FakeAnnotationWriteService:
         self.next_uids = ["ann-1"]
 
     def insert_annotations(
-        self, db_path, bid_uid, specs, ref_remap=None, reload_database=True
+        self,
+        db_path,
+        bid_uid,
+        specs,
+        ref_remap=None,
+        publish_database_refreshed_after_write=True,
     ):
         self.insert_calls.append((db_path, bid_uid, specs, ref_remap))
         return list(self.next_uids[: len(specs)])
 
-    def save_annotation_styles(self, db_path, updates, reload_database=True):
+    def save_annotation_styles(
+        self, db_path, updates, publish_database_refreshed_after_write=True
+    ):
         self.style_calls.append((db_path, updates))
         return True
 
-    def delete_annotations(self, db_path, annotation_keys, reload_database=True):
+    def delete_annotations(
+        self, db_path, annotation_keys, publish_database_refreshed_after_write=True
+    ):
         self.delete_calls.append((db_path, list(annotation_keys)))
         return True
 

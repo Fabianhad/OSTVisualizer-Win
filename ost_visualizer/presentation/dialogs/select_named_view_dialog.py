@@ -51,8 +51,16 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
         header = QtWidgets.QLabel("Connect Hotlink")
         header.setStyleSheet("font-weight: bold;")
         layout.addWidget(header)
-        layout.addWidget(self._existing_radio)
-        layout.addWidget(self._named_view_combo)
+        existing_row = QtWidgets.QHBoxLayout()
+        existing_row.setContentsMargins(0, 0, 0, 0)
+        existing_row.setSpacing(COMPACT_SPACING)
+        self._named_view_combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        existing_row.addWidget(self._existing_radio)
+        existing_row.addWidget(self._named_view_combo, 1)
+        layout.addLayout(existing_row)
         layout.addWidget(self._new_radio)
         for nv_uid, _page_uid, page_name, view_name in self._named_views:
             label = view_name or nv_uid

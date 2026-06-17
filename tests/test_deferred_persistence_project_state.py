@@ -1,6 +1,5 @@
 import unittest
 from types import SimpleNamespace
-
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 
 
@@ -26,9 +25,7 @@ class DeferredPersistenceProjectStateTests(unittest.TestCase):
     def test_layer_visibility_updates_condition_memory_immediately(self):
         model = FakeProjectModel()
         service = ProjectDataService(model)
-
         changed_pages = service.update_layer_visibility("l1", False)
-
         self.assertEqual(changed_pages, [])
         self.assertFalse(model.bid_conditions["c1"].layer_visible)
         self.assertTrue(model.bid_conditions["c2"].layer_visible)
@@ -37,9 +34,9 @@ class DeferredPersistenceProjectStateTests(unittest.TestCase):
     def test_image_layer_visibility_updates_page_memory_immediately(self):
         model = FakeProjectModel()
         service = ProjectDataService(model)
-
-        changed_pages = service.update_layer_visibility("image", False, image_layer=True)
-
+        changed_pages = service.update_layer_visibility(
+            "image", False, image_layer=True
+        )
         self.assertEqual(changed_pages, ["p1", "p2"])
         self.assertFalse(model.pages[0].layer_visible)
         self.assertFalse(model.pages[1].layer_visible)
@@ -49,9 +46,7 @@ class DeferredPersistenceProjectStateTests(unittest.TestCase):
         model.bid_conditions["c1"].layer_visible = False
         model.pages[0].layer_visible = False
         service = ProjectDataService(model)
-
         changed_pages = service.update_all_layer_visibility(True)
-
         self.assertEqual(changed_pages, ["p1", "p2"])
         self.assertTrue(model.bid_conditions["c1"].layer_visible)
         self.assertTrue(model.bid_conditions["c2"].layer_visible)

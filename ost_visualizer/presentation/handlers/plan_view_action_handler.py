@@ -183,7 +183,7 @@ class PlanViewActionHandler:
             for takeoff_uid, _label_kind, _old_props, new_props in changes
         ]
         if not self._write_svc.save_takeoff_text_properties(
-            bid_ref.file_path, new_updates, reload_database=False
+            bid_ref.file_path, new_updates, publish_database_refreshed_after_write=False
         ):
             self._plan_view.restore_condition_text_properties(changes)
             return
@@ -215,7 +215,7 @@ class PlanViewActionHandler:
         if not positions:
             return True
         if not self._write_svc.save_takeoff_positions(
-            db_path, positions, reload_database=False
+            db_path, positions, publish_database_refreshed_after_write=False
         ):
             return False
         page_uids = self._data_svc.update_takeoff_positions(positions)
@@ -230,7 +230,7 @@ class PlanViewActionHandler:
         if not rotations:
             return True
         if not self._write_svc.save_takeoff_rotations(
-            db_path, rotations, reload_database=False
+            db_path, rotations, publish_database_refreshed_after_write=False
         ):
             return False
         page_uids = self._data_svc.update_takeoff_rotations(rotations)
@@ -258,11 +258,11 @@ class PlanViewActionHandler:
         rotations: List[tuple],
     ) -> bool:
         if positions and not self._write_svc.save_takeoff_positions(
-            db_path, positions, reload_database=False
+            db_path, positions, publish_database_refreshed_after_write=False
         ):
             return False
         if rotations and not self._write_svc.save_takeoff_rotations(
-            db_path, rotations, reload_database=False
+            db_path, rotations, publish_database_refreshed_after_write=False
         ):
             return False
         self._publish_saved_takeoff_position_rotation_changes(positions, rotations)
@@ -274,7 +274,7 @@ class PlanViewActionHandler:
         if not positions:
             return True
         if not self._ann_write_svc.save_annotation_positions(
-            db_path, positions, reload_database=False
+            db_path, positions, publish_database_refreshed_after_write=False
         ):
             return False
         page_uids = self._data_svc.update_annotation_positions(positions)
@@ -291,7 +291,7 @@ class PlanViewActionHandler:
         if not updates:
             return True
         if not self._ann_write_svc.save_annotation_text_properties(
-            db_path, updates, reload_database=False
+            db_path, updates, publish_database_refreshed_after_write=False
         ):
             return False
         page_uids = self._data_svc.update_annotation_text_properties(updates)
@@ -306,7 +306,7 @@ class PlanViewActionHandler:
         if not updates:
             return True
         if not self._ann_write_svc.save_annotation_styles(
-            db_path, updates, reload_database=False
+            db_path, updates, publish_database_refreshed_after_write=False
         ):
             return False
         page_uids = self._data_svc.update_annotation_styles(updates)
@@ -323,7 +323,7 @@ class PlanViewActionHandler:
         if not updates and not positions:
             return True
         if not self._ann_write_svc.save_annotation_text_properties_and_positions(
-            db_path, updates, positions, reload_database=False
+            db_path, updates, positions, publish_database_refreshed_after_write=False
         ):
             return False
         page_uids = []
@@ -374,7 +374,7 @@ class PlanViewActionHandler:
         if not takeoff_uids:
             return True
         if not self._write_svc.delete_takeoffs(
-            db_path, takeoff_uids, reload_database=False
+            db_path, takeoff_uids, publish_database_refreshed_after_write=False
         ):
             return False
         page_uids = self._data_svc.remove_takeoffs(takeoff_uids)
@@ -388,7 +388,7 @@ class PlanViewActionHandler:
             bid_ref.file_path,
             bid_ref.bid_uid,
             specs,
-            reload_database=False,
+            publish_database_refreshed_after_write=False,
         )
         if not new_uids:
             return []
@@ -467,7 +467,7 @@ class PlanViewActionHandler:
                         uid,
                         pos,
                         Takeoff.CURVE_ENABLED,
-                        reload_database=False,
+                        publish_database_refreshed_after_write=False,
                     )
                     or changed
                 )
@@ -479,7 +479,7 @@ class PlanViewActionHandler:
                         uid,
                         pos,
                         Takeoff.CURVE_DISABLED,
-                        reload_database=False,
+                        publish_database_refreshed_after_write=False,
                     )
                     or changed
                 )
@@ -738,14 +738,14 @@ class PlanViewActionHandler:
             positions_saved = False
             if t_new:
                 if not self._write_svc.save_takeoff_positions(
-                    db_path, t_new, reload_database=False
+                    db_path, t_new, publish_database_refreshed_after_write=False
                 ):
                     self._plan_view.restore_flushed_positions(takeoff_changes, [])
                     self._plan_view.restore_flushed_rotations(rotation_changes)
                     return
                 positions_saved = True
             if r_new and not self._write_svc.save_takeoff_rotations(
-                db_path, r_new, reload_database=False
+                db_path, r_new, publish_database_refreshed_after_write=False
             ):
                 if positions_saved:
                     self._publish_saved_takeoff_position_rotation_changes(t_new, [])
@@ -996,7 +996,7 @@ class PlanViewActionHandler:
             bid_ref.bid_uid,
             specs,
             ref_remap=ref_remap,
-            reload_database=False,
+            publish_database_refreshed_after_write=False,
         )
         if not new_uids:
             return []
@@ -1017,7 +1017,7 @@ class PlanViewActionHandler:
             (uid, specs[i].annotation_type) for i, uid in enumerate(uids)
         ]
         if not self._ann_write_svc.delete_annotations(
-            db_path, annotation_keys, reload_database=False
+            db_path, annotation_keys, publish_database_refreshed_after_write=False
         ):
             return False
         page_uids = self._data_svc.remove_annotations_by_keys(annotation_keys)
@@ -1036,7 +1036,7 @@ class PlanViewActionHandler:
             for annotation in saved_annotations
         ]
         if not self._ann_write_svc.delete_annotations(
-            db_path, annotation_keys, reload_database=False
+            db_path, annotation_keys, publish_database_refreshed_after_write=False
         ):
             return False
         annotation_uids = [annotation.uid for annotation in saved_annotations]
@@ -1234,7 +1234,7 @@ class PlanViewActionHandler:
             bid_ref.file_path,
             bid_ref.bid_uid,
             specs,
-            reload_database=not use_fast_refresh,
+            publish_database_refreshed_after_write=not use_fast_refresh,
         )
         if not new_uids:
             return False
@@ -1545,7 +1545,7 @@ class PlanViewActionHandler:
             source_bid_uid,
             bid_ref.bid_uid,
             source_condition_uids,
-            reload_database=False,
+            publish_database_refreshed_after_write=False,
         )
         if len(uid_map) != len(source_condition_uids):
             logger.warning(
@@ -1635,7 +1635,7 @@ class PlanViewActionHandler:
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 regular_specs,
-                reload_database=not use_fast_takeoff_paste,
+                publish_database_refreshed_after_write=not use_fast_takeoff_paste,
             )
             if regular_specs
             else []
@@ -1666,7 +1666,7 @@ class PlanViewActionHandler:
                 bid_ref.file_path,
                 bid_ref.bid_uid,
                 hole_specs,
-                reload_database=not use_fast_takeoff_paste,
+                publish_database_refreshed_after_write=not use_fast_takeoff_paste,
             )
             if hole_specs
             else []

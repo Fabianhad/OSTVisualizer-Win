@@ -336,8 +336,12 @@ class FakeWriteService:
         self.uid_batches = []
         self._next_uid_index = 0
 
-    def insert_takeoffs(self, db_path, bid_uid, specs, reload_database=True):
-        self.calls.append((db_path, bid_uid, specs, reload_database))
+    def insert_takeoffs(
+        self, db_path, bid_uid, specs, publish_database_refreshed_after_write=True
+    ):
+        self.calls.append(
+            (db_path, bid_uid, specs, publish_database_refreshed_after_write)
+        )
         if self.uid_batches:
             return list(self.uid_batches.pop(0))
         start = self._next_uid_index
@@ -348,31 +352,58 @@ class FakeWriteService:
         self._next_uid_index += len(specs)
         return result
 
-    def save_takeoff_positions(self, db_path, positions, reload_database=True):
-        self.position_calls.append((db_path, positions, reload_database))
+    def save_takeoff_positions(
+        self, db_path, positions, publish_database_refreshed_after_write=True
+    ):
+        self.position_calls.append(
+            (db_path, positions, publish_database_refreshed_after_write)
+        )
         return True
 
-    def save_takeoff_rotations(self, db_path, rotations, reload_database=True):
-        self.rotation_calls.append((db_path, rotations, reload_database))
+    def save_takeoff_rotations(
+        self, db_path, rotations, publish_database_refreshed_after_write=True
+    ):
+        self.rotation_calls.append(
+            (db_path, rotations, publish_database_refreshed_after_write)
+        )
         return True
 
-    def save_takeoff_text_properties(self, db_path, updates, reload_database=True):
-        self.text_property_calls.append((db_path, updates, reload_database))
+    def save_takeoff_text_properties(
+        self, db_path, updates, publish_database_refreshed_after_write=True
+    ):
+        self.text_property_calls.append(
+            (db_path, updates, publish_database_refreshed_after_write)
+        )
         return True
 
     def save_takeoffs_condition(self, db_path, uids, condition_uid):
         self.condition_calls.append((db_path, list(uids), condition_uid))
         return True
 
-    def delete_takeoffs(self, db_path, uids, reload_database=True):
-        self.delete_calls.append((db_path, list(uids), reload_database))
+    def delete_takeoffs(
+        self, db_path, uids, publish_database_refreshed_after_write=True
+    ):
+        self.delete_calls.append(
+            (db_path, list(uids), publish_database_refreshed_after_write)
+        )
         return True
 
     def set_takeoff_curve(
-        self, db_path, takeoff_uid, position, curve, reload_database=True
+        self,
+        db_path,
+        takeoff_uid,
+        position,
+        curve,
+        publish_database_refreshed_after_write=True,
     ):
         self.curve_calls.append(
-            (db_path, takeoff_uid, list(position), curve, reload_database)
+            (
+                db_path,
+                takeoff_uid,
+                list(position),
+                curve,
+                publish_database_refreshed_after_write,
+            )
         )
         return True
 
@@ -386,7 +417,7 @@ class FakeWriteService:
         source_bid_uid,
         target_bid_uid,
         source_condition_uids,
-        reload_database=True,
+        publish_database_refreshed_after_write=True,
     ):
         self.condition_duplicate_calls.append(
             (
@@ -394,7 +425,7 @@ class FakeWriteService:
                 source_bid_uid,
                 target_bid_uid,
                 list(source_condition_uids),
-                reload_database,
+                publish_database_refreshed_after_write,
             )
         )
         return {str(uid): f"new-{uid}" for uid in source_condition_uids}
@@ -406,7 +437,7 @@ class FakeWriteService:
         condition_uid,
         updates,
         all_conditions=None,
-        reload_database=True,
+        publish_database_refreshed_after_write=True,
     ):
         self.update_condition_calls.append(
             (
@@ -415,7 +446,7 @@ class FakeWriteService:
                 condition_uid,
                 updates.get_changes(),
                 all_conditions,
-                reload_database,
+                publish_database_refreshed_after_write,
             )
         )
         return SimpleNamespace(success=True)
@@ -439,34 +470,63 @@ class FakeAnnotationWriteService:
         self.delete_calls = []
         self.next_uids = ["ann-1"]
 
-    def save_annotation_positions(self, db_path, positions, reload_database=True):
-        self.position_calls.append((db_path, positions, reload_database))
-        return True
-
-    def save_annotation_text_properties(self, db_path, updates, reload_database=True):
-        self.text_property_calls.append((db_path, updates, reload_database))
-        return True
-
-    def save_annotation_text_properties_and_positions(
-        self, db_path, updates, positions, reload_database=True
+    def save_annotation_positions(
+        self, db_path, positions, publish_database_refreshed_after_write=True
     ):
-        self.text_and_position_calls.append(
-            (db_path, updates, positions, reload_database)
+        self.position_calls.append(
+            (db_path, positions, publish_database_refreshed_after_write)
         )
         return True
 
-    def save_annotation_styles(self, db_path, updates, reload_database=True):
-        self.style_calls.append((db_path, updates, reload_database))
+    def save_annotation_text_properties(
+        self, db_path, updates, publish_database_refreshed_after_write=True
+    ):
+        self.text_property_calls.append(
+            (db_path, updates, publish_database_refreshed_after_write)
+        )
+        return True
+
+    def save_annotation_text_properties_and_positions(
+        self, db_path, updates, positions, publish_database_refreshed_after_write=True
+    ):
+        self.text_and_position_calls.append(
+            (db_path, updates, positions, publish_database_refreshed_after_write)
+        )
+        return True
+
+    def save_annotation_styles(
+        self, db_path, updates, publish_database_refreshed_after_write=True
+    ):
+        self.style_calls.append(
+            (db_path, updates, publish_database_refreshed_after_write)
+        )
         return True
 
     def insert_annotations(
-        self, db_path, bid_uid, specs, ref_remap=None, reload_database=True
+        self,
+        db_path,
+        bid_uid,
+        specs,
+        ref_remap=None,
+        publish_database_refreshed_after_write=True,
     ):
-        self.insert_calls.append((db_path, bid_uid, specs, ref_remap, reload_database))
+        self.insert_calls.append(
+            (
+                db_path,
+                bid_uid,
+                specs,
+                ref_remap,
+                publish_database_refreshed_after_write,
+            )
+        )
         return list(self.next_uids[: len(specs)])
 
-    def delete_annotations(self, db_path, annotation_keys, reload_database=True):
-        self.delete_calls.append((db_path, annotation_keys, reload_database))
+    def delete_annotations(
+        self, db_path, annotation_keys, publish_database_refreshed_after_write=True
+    ):
+        self.delete_calls.append(
+            (db_path, annotation_keys, publish_database_refreshed_after_write)
+        )
         return True
 
 
@@ -607,11 +667,15 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     else [1.0, 2.0, 13.0, 2.0]
                 )
                 handler.on_annotation_created(annotation_type, position, "p1")
-                _db_path, _bid_uid, specs, _ref_remap, reload_database = (
-                    ann_write.insert_calls[0]
-                )
+                (
+                    _db_path,
+                    _bid_uid,
+                    specs,
+                    _ref_remap,
+                    publish_database_refreshed_after_write,
+                ) = ann_write.insert_calls[0]
                 self.assertEqual(specs[0].color, "#336699")
-                self.assertFalse(reload_database)
+                self.assertFalse(publish_database_refreshed_after_write)
                 expected_width = 0.0 if annotation_type == "highlight" else 9.0
                 self.assertEqual(specs[0].width, expected_width)
 
@@ -699,9 +763,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ui_access_manager=FakeAccess({Feature.EDIT_PAGE_SETTINGS}),
             deferred_persistence_manager=deferred,
         )
-
         result = handler.save_current_page_overlay_rect((1, 2.5, 3, 4.25))
-
         self.assertTrue(result.write_success)
         self.assertEqual(data.get_page("p1").overlay_rect, (1.0, 2.5, 3.0, 4.25))
         self.assertEqual(
@@ -855,12 +917,16 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 )
                 handler.on_annotation_created(annotation_type, position, "p1")
                 self.assertEqual(len(ann_write.insert_calls), 1)
-                _db_path, _bid_uid, specs, _ref_remap, reload_database = (
-                    ann_write.insert_calls[0]
-                )
+                (
+                    _db_path,
+                    _bid_uid,
+                    specs,
+                    _ref_remap,
+                    publish_database_refreshed_after_write,
+                ) = ann_write.insert_calls[0]
                 self.assertEqual(specs[0].annotation_type, annotation_type)
                 self.assertEqual(specs[0].position, position)
-                self.assertFalse(reload_database)
+                self.assertFalse(publish_database_refreshed_after_write)
                 if annotation_type == "dimension":
                     self.assertEqual(specs[0].properties["FontName"], "Arial")
                     self.assertEqual(specs[0].properties["FontColor"], "#ff0000")
@@ -896,14 +962,18 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         }
         handler.on_text_annotation_created([7.0, 8.0, 12.0, 12.0], "p1", properties)
         self.assertEqual(len(ann_write.insert_calls), 1)
-        _db_path, _bid_uid, specs, _ref_remap, reload_database = ann_write.insert_calls[
-            0
-        ]
+        (
+            _db_path,
+            _bid_uid,
+            specs,
+            _ref_remap,
+            publish_database_refreshed_after_write,
+        ) = ann_write.insert_calls[0]
         self.assertEqual(specs[0].annotation_type, "text")
         self.assertEqual(specs[0].position, [7.0, 8.0, 12.0, 12.0])
         self.assertEqual(specs[0].properties, properties)
         self.assertEqual(specs[0].color, "#996633")
-        self.assertFalse(reload_database)
+        self.assertFalse(publish_database_refreshed_after_write)
         self.assertEqual(plan_view.selected, {"ann-1"})
         self.assertEqual(undo.count, 1)
 
@@ -1131,14 +1201,18 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             {"Text": " Lobby View ", "Color": "#008000"},
         )
         self.assertEqual(len(ann_write.insert_calls), 1)
-        _db_path, _bid_uid, specs, _ref_remap, reload_database = ann_write.insert_calls[
-            0
-        ]
+        (
+            _db_path,
+            _bid_uid,
+            specs,
+            _ref_remap,
+            publish_database_refreshed_after_write,
+        ) = ann_write.insert_calls[0]
         self.assertEqual(specs[0].annotation_type, "namedview")
         self.assertEqual(specs[0].position, position)
         self.assertEqual(specs[0].properties, {"Text": "Lobby View"})
         self.assertEqual(specs[0].color, "#008000")
-        self.assertFalse(reload_database)
+        self.assertFalse(publish_database_refreshed_after_write)
         self.assertEqual(plan_view.selected, {"ann-1_namedview"})
         self.assertEqual(undo.count, 1)
         self.assertEqual(
@@ -1231,13 +1305,17 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [("nv1", "p2", "A101", "Lobby")],
         )
         self.assertEqual(len(ann_write.insert_calls), 1)
-        _db_path, _bid_uid, specs, _ref_remap, reload_database = ann_write.insert_calls[
-            0
-        ]
+        (
+            _db_path,
+            _bid_uid,
+            specs,
+            _ref_remap,
+            publish_database_refreshed_after_write,
+        ) = ann_write.insert_calls[0]
         self.assertEqual(specs[0].annotation_type, "hotlink")
         self.assertEqual(specs[0].position, [9.0, 11.0])
         self.assertEqual(specs[0].properties, {"BidPageViewUID": "nv1"})
-        self.assertFalse(reload_database)
+        self.assertFalse(publish_database_refreshed_after_write)
         self.assertEqual(
             event_bus.events,
             [
@@ -2347,8 +2425,12 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
     def test_failed_simple_takeoff_delete_reselects_original_uids(self):
         class FailingDeleteWriteService(FakeWriteService):
-            def delete_takeoffs(self, db_path, uids, reload_database=True):
-                super().delete_takeoffs(db_path, uids, reload_database)
+            def delete_takeoffs(
+                self, db_path, uids, publish_database_refreshed_after_write=True
+            ):
+                super().delete_takeoffs(
+                    db_path, uids, publish_database_refreshed_after_write
+                )
                 return False
 
         data = FakeProjectData()

@@ -302,7 +302,10 @@ class ProjectWriteHandler:
             reporter.report("bid data")
             bid_uids = [ref.bid_uid for ref in bid_refs]
             if not self._write_service.move_bids(
-                file_path, bid_uids, target_project_uid, reload_database=False
+                file_path,
+                bid_uids,
+                target_project_uid,
+                publish_database_refreshed_after_write=False,
             ):
                 return _PasteBidsResult(False, False)
             changed = True
@@ -325,7 +328,7 @@ class ProjectWriteHandler:
                     file_path,
                     moved_uids,
                     target_project_uid,
-                    reload_database=False,
+                    publish_database_refreshed_after_write=False,
                 ):
                     return self._paste_failure(changed, file_path, reporter)
         reporter.report("project data")
@@ -431,7 +434,10 @@ class ProjectWriteHandler:
             msg = (
                 "Move this bid to 'Deleted Bids'?\nYou can permanently delete it from there."
                 if n == 1
-                else f"Move {n} bids to 'Deleted Bids'?\nYou can permanently delete them from there."
+                else (
+                    f"Move {n} bids to 'Deleted Bids'?\n"
+                    "You can permanently delete them from there."
+                )
             )
             if not confirm(self.window, "Move to Deleted Bids", msg):
                 return

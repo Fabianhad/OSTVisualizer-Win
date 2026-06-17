@@ -347,7 +347,7 @@ class ConditionActionHandler:
                 bid_ref.bid_uid,
                 condition_uid,
                 dto,
-                reload_database=False,
+                publish_database_refreshed_after_write=False,
             )
             if not result.success:
                 logger.warning(
@@ -379,7 +379,7 @@ class ConditionActionHandler:
                 condition_uid,
                 dto,
                 all_conditions=self._project_data.get_bid_conditions(),
-                reload_database=False,
+                publish_database_refreshed_after_write=False,
             )
             if result.success:
                 moved_uids.append(condition_uid)
@@ -639,7 +639,7 @@ class ConditionActionHandler:
                 condition_uid,
                 dto,
                 all_conditions=self._project_data.get_bid_conditions(),
-                reload_database=False,
+                publish_database_refreshed_after_write=False,
             )
             if result.success:
                 changed_uids.append(condition_uid)
