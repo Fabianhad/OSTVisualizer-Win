@@ -11,7 +11,7 @@ from ...domain.entities.project_factory import build_bid
 from ...domain.entities.takeoff import Takeoff
 from ..entities.annotation import BidAnnotation
 from ..entities.condition_folder import BidConditionFolder
-from ..entities.layer import BidLayer
+from ..entities.layer import ANNOTATION_LAYER_NAME, BidLayer, normalize_layer_name
 from .condition_quantity_service import compute_page_quantities
 from .takeoff_domain_service import is_takeoff_visible
 
@@ -105,9 +105,19 @@ class ProjectDataService:
         return self.model.bid_conditions
 
     def set_bid_layer_visibility(self, layers: Iterable[BidLayer]) -> None:
-        self.model.bid_layer_visibility = {
-            str(layer.uid): bool(layer.show) for layer in layers if layer.uid
-        }
+        self.model.bid_layer_visibility = {}
+        self.model.bid_layer_names_by_uid = {}
+        self.model.bid_layer_visibility_by_name = {}
+        for layer in layers:
+            if not layer.uid:
+                continue
+            layer_uid = str(layer.uid)
+            layer_name = normalize_layer_name(layer.name)
+            visible = bool(layer.show)
+            self.model.bid_layer_visibility[layer_uid] = visible
+            if layer_name:
+                self.model.bid_layer_names_by_uid[layer_uid] = layer_name
+                self.model.bid_layer_visibility_by_name[layer_name] = visible
 
     def get_hidden_layer_uids(self) -> set[str]:
         return {
@@ -116,29 +126,41 @@ class ProjectDataService:
             if not visible
         }
 
+    def _set_named_layer_visibility(self, layer_uid: str, visible: bool) -> None:
+        layer_name = self.model.bid_layer_names_by_uid.get(layer_uid)
+        if layer_name:
+            self.model.bid_layer_visibility_by_name[layer_name] = visible
+
+    def is_annotation_layer_visible(self) -> bool:
+        return self.model.bid_layer_visibility_by_name.get(ANNOTATION_LAYER_NAME, True)
+
     def update_layer_visibility(
         self, layer_uid: str, show: bool, *, image_layer: bool = False
     ) -> List[str]:
         changed_pages: List[str] = []
         layer_key = str(layer_uid)
-        self.model.bid_layer_visibility[layer_key] = bool(show)
+        visible = bool(show)
+        self.model.bid_layer_visibility[layer_key] = visible
+        self._set_named_layer_visibility(layer_key, visible)
         for condition in self.model.bid_conditions.values():
             if str(condition.layer_uid or "") == layer_key:
-                condition.layer_visible = bool(show)
+                condition.layer_visible = visible
         if image_layer:
             for page in self.model.get_all_pages():
-                page.layer_visible = bool(show)
+                page.layer_visible = visible
                 changed_pages.append(page.uid)
         return changed_pages
 
     def update_all_layer_visibility(self, show: bool) -> List[str]:
+        visible = bool(show)
         for layer_uid in list(self.model.bid_layer_visibility):
-            self.model.bid_layer_visibility[layer_uid] = bool(show)
+            self.model.bid_layer_visibility[layer_uid] = visible
+            self._set_named_layer_visibility(layer_uid, visible)
         for condition in self.model.bid_conditions.values():
-            condition.layer_visible = bool(show)
+            condition.layer_visible = visible
         changed_pages: List[str] = []
         for page in self.model.get_all_pages():
-            page.layer_visible = bool(show)
+            page.layer_visible = visible
             changed_pages.append(page.uid)
         return changed_pages
 

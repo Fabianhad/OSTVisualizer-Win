@@ -13,9 +13,10 @@ from ..managers.ui_access_manager import Feature
 from ..utils.image_show_mode import mode_to_flags
 from ..utils.messagebox import DB_LOCKED_HINT, show_critical, show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
-from ..utils.plan_tool_registry import PLAN_TOOL_ACTION_KEYS
+from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
 from ..utils.windows import remove_minimize_maximize
 
+_ANNOTATION_TOOL_ACTION_KEYS = {spec.action_key for spec in PLAN_ANNOTATION_TOOL_SPECS}
 _TAKEOFF_SCOPED_VARIABLE_KEYS = {
     "color_mode",
     "grayscale",
@@ -409,14 +410,14 @@ class MenuController:
         self.update_menu_states()
         action = self._actions.get(command_key)
         if action:
-            return action.isEnabled()
+            return self._is_menu_action_enabled(command_key, action)
         return command_key in self._get_menu_callbacks()
 
     def trigger_menu_action(self, action_key: str) -> None:
         self.update_menu_states()
         action = self._actions.get(action_key)
         if action:
-            if action.isEnabled():
+            if self._is_menu_action_enabled(action_key, action):
                 action.trigger()
             return
         callback = self._get_menu_callbacks().get(action_key)
@@ -429,7 +430,7 @@ class MenuController:
         if action:
             return {
                 "text": action.text(),
-                "enabled": action.isEnabled(),
+                "enabled": self._is_menu_action_enabled(action_key, action),
                 "checkable": action.isCheckable(),
                 "checked": action.isChecked(),
             }
@@ -449,6 +450,13 @@ class MenuController:
 
     def get_export_formats(self) -> List[str]:
         return list(self._export_formats)
+
+    def _is_menu_action_enabled(self, action_key: str, action) -> bool:
+        if action_key in _ANNOTATION_TOOL_ACTION_KEYS:
+            return action.isEnabled() and self.ui_access_manager.is_allowed(
+                Feature.PLACE_ANNOTATIONS
+            )
+        return action.isEnabled()
 
     def _sync_tool_action_states(self, takeoff_active: bool) -> None:
         for action_key in PLAN_TOOL_ACTION_KEYS:

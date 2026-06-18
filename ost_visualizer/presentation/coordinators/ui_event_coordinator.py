@@ -7,6 +7,7 @@ from ...application.events.app_events import AppEvents
 from ...domain.entities.bid import Bid
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
+from ...domain.entities.layer import is_image_layer_name
 from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.project_factory import build_loaded_files
@@ -2314,7 +2315,7 @@ class UIEventCoordinator:
             if self._sidebar.bid_layers_sidebar
             else None
         )
-        image_layer = bool(layer and layer.name.strip().lower() == "image")
+        image_layer = bool(layer and is_image_layer_name(layer.name))
         self.project_data.update_layer_visibility(
             layer_uid, show, image_layer=image_layer
         )

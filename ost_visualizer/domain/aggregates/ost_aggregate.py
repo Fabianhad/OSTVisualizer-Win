@@ -33,6 +33,8 @@ class OstAggregate:
         self.bid_condition_folders: Dict[str, BidConditionFolder] = {}
         self.page_area_selections: Dict[str, Optional[str]] = {}
         self.bid_layer_visibility: Dict[str, bool] = {}
+        self.bid_layer_names_by_uid: Dict[str, str] = {}
+        self.bid_layer_visibility_by_name: Dict[str, bool] = {}
         self.current_bid_ref: Optional[BidRef] = None
         self.current_bid: Optional[Bid] = None
         self.current_bid_locked: bool = False
@@ -123,6 +125,8 @@ class OstAggregate:
         self.bid_condition_folders = {}
         self.page_area_selections = {}
         self.bid_layer_visibility = {}
+        self.bid_layer_names_by_uid = {}
+        self.bid_layer_visibility_by_name = {}
         self.current_bid_ref = None
         self.current_bid = None
         self.current_bid_locked = False

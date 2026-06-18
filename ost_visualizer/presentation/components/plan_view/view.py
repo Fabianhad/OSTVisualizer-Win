@@ -459,6 +459,7 @@ class TakeoffPlanView(
         self._finishing_named_view_rename: bool = False
         self._text_annotation_inline_edit_enabled: bool = True
         self._text_annotation_inline_edit_allowed_fn = None
+        self._annotation_placement_allowed_fn = None
         self._condition_text_toolbar = self._build_condition_text_toolbar()
         self._condition_text_toolbar.hide()
         self._scene.focusItemChanged.connect(self._on_scene_focus_item_changed)
@@ -1531,6 +1532,9 @@ class TakeoffPlanView(
     def set_text_annotation_inline_edit_allowed_fn(self, allowed_fn) -> None:
         self._text_annotation_inline_edit_allowed_fn = allowed_fn
 
+    def set_annotation_placement_allowed_fn(self, allowed_fn) -> None:
+        self._annotation_placement_allowed_fn = allowed_fn
+
     def set_named_view_name_validator(self, validator) -> None:
         self._named_view_name_validator = validator
 
@@ -1540,6 +1544,13 @@ class TakeoffPlanView(
         if self._text_annotation_inline_edit_allowed_fn is None:
             return True
         return bool(self._text_annotation_inline_edit_allowed_fn())
+
+    def _can_begin_annotation_placement(self) -> bool:
+        if not self._selection_enabled:
+            return False
+        if self._annotation_placement_allowed_fn is None:
+            return True
+        return bool(self._annotation_placement_allowed_fn())
 
     def handle_inline_text_shortcut(self, action_key: str) -> bool:
         item = self._active_inline_text_item()
@@ -4878,6 +4889,8 @@ class TakeoffPlanView(
         return True
 
     def activate_annotation_placement(self, annotation_type: str) -> bool:
+        if not self._can_begin_annotation_placement():
+            return False
         self.cancel_overlay_move_mode(restore_preview=True)
         self._remove_rotate_handle()
         self.finish_intelligent_paste_placement()
@@ -5073,6 +5086,7 @@ class TakeoffPlanView(
         self._clear_inline_text_document()
         self._editing_text_original = ""
         self._text_annotation_inline_edit_allowed_fn = None
+        self._annotation_placement_allowed_fn = None
         self._rendering_service = None
         self._load_coordinator = None
         self._color_service = None

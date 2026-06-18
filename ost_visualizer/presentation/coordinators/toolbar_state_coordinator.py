@@ -314,7 +314,7 @@ class ToolbarStateCoordinator:
                 self.set_select_checked()
         can_place_annotation = (
             on_takeoff_tab
-            and self._access.is_allowed(Feature.PLACE_PLAN_ITEMS)
+            and self._access.is_allowed(Feature.PLACE_ANNOTATIONS)
             and bool(self.plan_view)
             and bool(self.plan_view.current_page_uid)
             and bool(self._view_stack and self._view_stack.currentIndex() == 1)

@@ -19,3 +19,4 @@ class PageViewDto:
     named_view: Optional[NamedView] = None
     page_area_selections: Optional[Dict[str, Optional[str]]] = None
     hidden_layer_uids: Set[str] = field(default_factory=set)
+    annotation_layer_visible: bool = True

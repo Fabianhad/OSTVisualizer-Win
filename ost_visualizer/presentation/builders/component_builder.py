@@ -274,6 +274,9 @@ class ComponentBuilder:
             plan_view.set_text_annotation_inline_edit_allowed_fn(
                 lambda: ui_access_manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT)
             )
+            plan_view.set_annotation_placement_allowed_fn(
+                lambda: ui_access_manager.is_allowed(Feature.PLACE_ANNOTATIONS)
+            )
         plan_view.setContentsMargins(*NO_MARGINS)
         viewer_layout_2d.addWidget(plan_view)
         hotlink_adapter = HotlinkEventAdapter(event_bus)

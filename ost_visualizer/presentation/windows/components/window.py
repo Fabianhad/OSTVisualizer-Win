@@ -329,7 +329,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             button.setIconSize(btn_size)
             button.setCheckable(True)
             button.setToolTip(spec.tooltip)
-            button.setEnabled(self._selection_enabled())
+            button.setEnabled(self._annotation_placement_enabled())
             self._cursor_group.addButton(button)
             self._annotation_tool_buttons[spec.action_key] = button
             split_button, _ = create_annotation_tool_split_button(
@@ -404,6 +404,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         )
         self.plan_view.set_text_annotation_inline_edit_enabled(
             self._selection_enabled()
+        )
+        self.plan_view.set_annotation_placement_allowed_fn(
+            self._annotation_placement_enabled
         )
         self.plan_view.set_named_view_name_validator(self._validate_named_view_name)
         self.plan_view.set_roping_selection_method(self._roping_selection_method)
@@ -505,8 +508,20 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _selection_enabled(self) -> bool:
         return self._config.allow_annotation_editing and not self._read_only
 
+    def _annotation_placement_enabled(self) -> bool:
+        return self._selection_enabled() and bool(
+            self.page_data and self.page_data.annotation_layer_visible
+        )
+
+    def _refresh_annotation_tool_access(self) -> None:
+        enabled = self._annotation_placement_enabled()
+        for button in self._annotation_tool_buttons.values():
+            button.setEnabled(enabled)
+        if not enabled and self.plan_view and self.plan_view.annotation_place_type:
+            self._set_default_cursor_mode()
+
     def _activate_annotation_tool(self, annotation_type: str) -> bool:
-        if not self._selection_enabled() or self.plan_view is None:
+        if not self._annotation_placement_enabled() or self.plan_view is None:
             return False
         return bool(self.plan_view.activate_annotation_placement(annotation_type))
 
@@ -663,6 +678,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.view = view
         if page_data is not None:
             self.page_data = page_data
+        self._refresh_annotation_tool_access()
         if self._should_use_named_view_blank_canvas():
             self._start_named_view_blank_canvas()
         else:
@@ -677,6 +693,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self._is_closing:
             return
         self.page_data = page_data
+        self._refresh_annotation_tool_access()
         self._navigation_source = "refresh"
         self._sync_current_page_takeoff_indicator()
         self._page_combo.set_pages_with_takeoffs(self._pages_with_takeoffs)
@@ -888,8 +905,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._read_only = read_only
         if self._scale_combo is not None:
             self._scale_combo.setEnabled(not read_only)
-        for button in self._annotation_tool_buttons.values():
-            button.setEnabled(self._selection_enabled())
+        self._refresh_annotation_tool_access()
         if self.plan_view:
             self.plan_view.set_selection_enabled(self._selection_enabled())
             self.plan_view.set_text_annotation_inline_edit_enabled(
@@ -1127,7 +1143,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _on_annotation_created(
         self, annotation_type: str, position: list, page_uid: str
     ) -> None:
-        if not self._config.allow_annotation_editing or self._read_only:
+        if not self._annotation_placement_enabled():
             return
         if (
             self._is_closing
@@ -1168,7 +1184,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _on_text_annotation_created(
         self, position: list, page_uid: str, properties: dict
     ) -> None:
-        if not self._config.allow_annotation_editing or self._read_only:
+        if not self._annotation_placement_enabled():
             return
         if (
             self._is_closing
@@ -1213,7 +1229,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _on_named_view_created(
         self, position: list, page_uid: str, properties: dict
     ) -> None:
-        if not self._config.allow_annotation_editing or self._read_only:
+        if not self._annotation_placement_enabled():
             return
         if (
             self._is_closing
@@ -1267,7 +1283,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._undo_svc.push(cmd.undo, cmd.redo)
 
     def _on_hotlink_placement_requested(self, position: list, page_uid: str) -> None:
-        if not self._config.allow_annotation_editing or self._read_only:
+        if not self._annotation_placement_enabled():
             return
         if (
             self._is_closing

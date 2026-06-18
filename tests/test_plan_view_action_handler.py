@@ -664,7 +664,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     undo_svc=FakeUndoService(),
                     event_bus=FakeEventBus(),
                     deferred_persistence_manager=FakeDeferredPersistence(),
-                    ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+                    ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
                 )
                 position = (
                     [1.0, 2.0, 13.0, 2.0, 8.0, 9.0]
@@ -913,7 +913,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     undo_svc=undo,
                     event_bus=FakeEventBus(),
                     deferred_persistence_manager=FakeDeferredPersistence(),
-                    ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+                    ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
                 )
                 position = (
                     [1.0, 2.0, 13.0, 2.0, 8.0, 9.0]
@@ -953,7 +953,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
         )
         properties = {
             "Text": "Hello",
@@ -998,7 +998,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
         )
         handler.on_annotation_created("rect", [1.0, 2.0, 5.0, 6.0], "p1")
         self.assertEqual(
@@ -1143,7 +1143,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
         )
         handler.on_annotation_created("rect", [1.0, 2.0, 5.0, 6.0], "p1")
         ann_write.next_uids = ["ann-2"]
@@ -1172,7 +1172,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
         )
         handler.on_text_annotation_created(
             [7.0, 8.0, 12.0, 12.0],
@@ -1197,7 +1197,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
         )
         position = [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]
         handler.on_named_view_created(
@@ -1254,7 +1254,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
         )
         handler.on_named_view_created(
             [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
@@ -1288,7 +1288,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
         )
 
         class FakeDialog:
@@ -1348,7 +1348,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.PLACE_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
         )
 
         class FakeDialog:
@@ -1366,7 +1366,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(ann_write.insert_calls, [])
         self.assertEqual(plan_view.activated_annotations, ["namedview"])
 
-    def test_denied_place_plan_items_access_blocks_text_commit_write(self):
+    def test_denied_place_annotations_access_blocks_text_commit_write(self):
         ann_write = FakeAnnotationWriteService()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(),
@@ -1387,7 +1387,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         self.assertEqual(ann_write.insert_calls, [])
 
-    def test_denied_place_plan_items_access_blocks_annotation_placement_write(self):
+    def test_denied_place_annotations_access_blocks_annotation_placement_write(self):
         for annotation_type in (
             "dimension",
             "highlight",

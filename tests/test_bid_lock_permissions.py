@@ -65,12 +65,16 @@ class _ProjectData:
         self.locked = False
         self.bid_ref = BidRef(file_path="C:/jobs/test.mdb", bid_uid="7")
         self.project_uid = "project-1"
+        self.annotation_layer_visible = True
 
     def is_current_bid_locked(self):
         return self.locked
 
     def get_current_bid_ref(self):
         return self.bid_ref
+
+    def is_annotation_layer_visible(self):
+        return self.annotation_layer_visible
 
     def find_project_uid_for_bid(self, bid_ref):
         if bid_ref == self.bid_ref:
@@ -110,6 +114,9 @@ class _FakeAction:
 
     def isChecked(self):
         return self.checked
+
+    def isEnabled(self):
+        return bool(self.enabled)
 
 
 class _FakeLayersSidebar:
@@ -389,6 +396,24 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(manager.is_allowed(Feature.DELETE_BID))
         self.assertTrue(manager.is_allowed(Feature.DUPLICATE_BID))
 
+    def test_annotation_layer_visibility_blocks_only_annotation_placement(self):
+        project_data = _ProjectData()
+        manager = self._access_manager(project_data)
+        self.assertTrue(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
+        self.assertTrue(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
+        project_data.annotation_layer_visible = False
+        self.assertTrue(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
+        self.assertFalse(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
+        self.assertTrue(manager.is_allowed(Feature.EDIT_ANNOTATION_TEXT))
+        project_data.annotation_layer_visible = True
+        self.assertTrue(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
+        project_data.locked = True
+        self.assertFalse(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
+        project_data.locked = False
+        manager.set_text_annotation_edit_active(True)
+        self.assertFalse(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
+
     def test_split_structure_permissions_keep_existing_blockers(self):
         project_data = _ProjectData()
         manager = self._access_manager(project_data)
@@ -595,7 +620,7 @@ class BidLockPermissionTests(unittest.TestCase):
         coordinator.refresh()
         self.assertFalse(delete_action.enabled)
 
-    def test_dimension_toolbar_uses_place_plan_items_permission(self):
+    def test_annotation_toolbar_uses_place_annotations_permission(self):
         project_data = _ProjectData()
         ui_state = _ToolbarUiState(project_data.bid_ref)
         manager = self._access_manager(project_data, ui_state)
@@ -610,6 +635,18 @@ class BidLockPermissionTests(unittest.TestCase):
         coordinator.set_plan_view(plan_view)
         coordinator.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
         coordinator.set_view_stack(_FakeTabWidget(1))
+        coordinator.refresh()
+        self.assertTrue(dimension_action.enabled)
+        self.assertTrue(line_action.enabled)
+        self.assertTrue(cloud_action.enabled)
+        project_data.annotation_layer_visible = False
+        coordinator.refresh()
+        self.assertFalse(dimension_action.enabled)
+        self.assertFalse(line_action.enabled)
+        self.assertFalse(cloud_action.enabled)
+        self.assertTrue(manager.is_allowed(Feature.PLACE_PLAN_ITEMS))
+        self.assertFalse(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
+        project_data.annotation_layer_visible = True
         coordinator.refresh()
         self.assertTrue(dimension_action.enabled)
         self.assertTrue(line_action.enabled)
@@ -636,6 +673,28 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertTrue(dimension_action.enabled)
         self.assertTrue(line_action.enabled)
         self.assertTrue(cloud_action.enabled)
+
+    def test_shared_menu_annotation_tools_use_place_annotations_permission(self):
+        project_data = _ProjectData()
+        manager = self._access_manager(project_data)
+        dimension_action = _FakeAction()
+        dimension_action.enabled = True
+        place_action = _FakeAction()
+        place_action.enabled = True
+        controller = MenuController.__new__(MenuController)
+        controller._actions = {
+            "dimension_tool": dimension_action,
+            "place_tool": place_action,
+        }
+        controller.update_menu_states = lambda: None
+        controller.ui_access_manager = manager
+        project_data.annotation_layer_visible = False
+        self.assertFalse(controller.is_context_command_enabled("dimension_tool"))
+        self.assertTrue(controller.is_context_command_enabled("place_tool"))
+        self.assertTrue(dimension_action.enabled)
+        project_data.annotation_layer_visible = True
+        self.assertTrue(controller.is_context_command_enabled("dimension_tool"))
+        self.assertTrue(controller.is_context_command_enabled("place_tool"))
 
     def test_takeoff_shortcuts_do_not_run_when_selection_access_denied(self):
         project_data = _ProjectData()

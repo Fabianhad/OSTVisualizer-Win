@@ -821,6 +821,11 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertIsNone(window._btn_select)
 
 
+class FakeDetachedPageData:
+    def __init__(self, *, annotation_layer_visible: bool = True):
+        self.annotation_layer_visible = annotation_layer_visible
+
+
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
     def test_annotation_window_uses_shared_annotation_tool_specs_only(self):
         self.assertEqual(
@@ -1110,6 +1115,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = SimpleNamespace(
             save_annotation_positions=lambda *_args: False
@@ -1129,6 +1135,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = SimpleNamespace(
             save_annotation_text_properties=lambda *_args: False
@@ -1150,6 +1157,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = SimpleNamespace(
             save_annotation_text_properties_and_positions=lambda *_args: False
@@ -1174,6 +1182,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = SimpleNamespace(delete_annotations=lambda *_args: False)
         window._file_path = "bid.mdb"
@@ -1206,6 +1215,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
                 window._config = SimpleNamespace(allow_annotation_editing=True)
                 window._read_only = False
+                window.page_data = FakeDetachedPageData()
                 window._is_closing = False
                 window._ann_write_svc = write_service
                 window._undo_svc = undo_service
@@ -1233,6 +1243,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
         window._undo_svc = undo_service
@@ -1268,6 +1279,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
         window._undo_svc = None
@@ -1286,6 +1298,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
         window._undo_svc = None
@@ -1316,6 +1329,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
         window._undo_svc = undo_service
@@ -1350,6 +1364,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
         window._undo_svc = undo_service
@@ -1382,6 +1397,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
         window._undo_svc = None
@@ -1423,6 +1439,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
                 window._config = SimpleNamespace(allow_annotation_editing=True)
                 window._read_only = False
+                window.page_data = FakeDetachedPageData()
                 window._is_closing = False
                 window._ann_write_svc = write_service
                 window._undo_svc = FakeUndoService()
@@ -1465,6 +1482,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
         window._undo_svc = undo_service
@@ -1495,6 +1513,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
         window._undo_svc = undo_service
@@ -1521,6 +1540,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = True
+        window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
         window._undo_svc = None
@@ -1529,11 +1549,52 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._on_annotation_created("dimension", [1.0, 2.0, 3.0, 4.0], "p1")
         self.assertEqual(write_service.insert_calls, [])
 
+    def test_detached_annotation_creation_blocks_when_annotation_layer_hidden(self):
+        from ost_visualizer.presentation.windows.components.window import (
+            DetachedPageViewWindow,
+        )
+
+        write_service = FakeAnnotationWriteService()
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window.page_data = FakeDetachedPageData(annotation_layer_visible=False)
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        window._undo_svc = None
+        window.plan_view = FakeDetachedPlanView()
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._on_annotation_created("dimension", [1.0, 2.0, 3.0, 4.0], "p1")
+        self.assertEqual(write_service.insert_calls, [])
+
+    def test_detached_annotation_tool_activation_blocks_when_layer_hidden(self):
+        from ost_visualizer.presentation.windows.components.window import (
+            DetachedPageViewWindow,
+        )
+
+        calls = []
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window.page_data = FakeDetachedPageData(annotation_layer_visible=False)
+        window.plan_view = SimpleNamespace(
+            activate_annotation_placement=lambda annotation_type: calls.append(
+                annotation_type
+            )
+            or True
+        )
+        self.assertFalse(window._activate_annotation_tool("dimension"))
+        self.assertEqual(calls, [])
+        window.page_data.annotation_layer_visible = True
+        self.assertTrue(window._activate_annotation_tool("dimension"))
+        self.assertEqual(calls, ["dimension"])
+
     def test_detached_annotation_tool_activation_enters_annotation_placement(self):
         calls = []
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
+        window.page_data = FakeDetachedPageData()
         window.plan_view = SimpleNamespace(
             activate_annotation_placement=lambda annotation_type: calls.append(
                 annotation_type

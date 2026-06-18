@@ -831,7 +831,7 @@ class PlanViewActionHandler:
     def on_annotation_created(
         self, annotation_type: str, position: list, page_uid: str
     ) -> None:
-        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
+        if not self._is_allowed(Feature.PLACE_ANNOTATIONS):
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not annotation_type or not page_uid:
@@ -844,7 +844,7 @@ class PlanViewActionHandler:
     def on_text_annotation_created(
         self, position: list, page_uid: str, properties: dict
     ) -> None:
-        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
+        if not self._is_allowed(Feature.PLACE_ANNOTATIONS):
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not page_uid or not str(properties.get("Text", "")).strip():
@@ -861,7 +861,7 @@ class PlanViewActionHandler:
     def on_named_view_created(
         self, position: list, page_uid: str, properties: dict
     ) -> None:
-        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
+        if not self._is_allowed(Feature.PLACE_ANNOTATIONS):
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
         name = str(properties.get("Text", "") or "").strip()
@@ -887,7 +887,7 @@ class PlanViewActionHandler:
             self._plan_view.activate_annotation_placement("namedview")
 
     def on_hotlink_placement_requested(self, position: list, page_uid: str) -> None:
-        if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
+        if not self._is_allowed(Feature.PLACE_ANNOTATIONS):
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not page_uid or len(position) < 2:
@@ -1589,6 +1589,10 @@ class PlanViewActionHandler:
             return
         regulars = [t for t in all_items if not t.is_hole]
         holes = [t for t in all_items if t.is_hole]
+        if clipboard_anns and not self._is_allowed(Feature.PLACE_ANNOTATIONS):
+            if not all_items:
+                return
+            clipboard_anns = []
         if holes and not regulars:
             if not self._is_allowed(Feature.PLACE_PLAN_ITEMS):
                 return

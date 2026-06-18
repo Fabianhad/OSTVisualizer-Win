@@ -90,6 +90,9 @@ class FakeProjectData:
     def get_hidden_layer_uids(self):
         return {"annotation-layer"}
 
+    def is_annotation_layer_visible(self):
+        return True
+
     def get_bid(self, _bid_ref):
         return self.bid
 
@@ -1437,6 +1440,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view.show_overlay_move_handle())
         view._overlay_move_original_rect = (0.0, 0.0, 816.0, 1056.0)
         view._overlay_move_preview_rect = page.overlay_rect
+        view.set_selection_enabled(True)
         self.assertTrue(view.activate_annotation_placement("dimension"))
         self.assertEqual(page.overlay_rect, (0.0, 0.0, 816.0, 1056.0))
         self.assertEqual(view._cursor_mode, "annotation_place")
@@ -1444,6 +1448,20 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIsNone(view._overlay_move_handle_item)
         self.assertIsNone(view._overlay_move_original_rect)
         self.assertIsNone(view._overlay_move_preview_rect)
+        view.cleanup()
+
+    def test_annotation_placement_allowed_callback_blocks_direct_activation(self):
+        view = self._make_plan_view()
+        page = Page(uid="p1", name="P1", width_pts=612.0, height_pts=792.0)
+        self._install_page_canvas(view, page)
+        view.set_selection_enabled(True)
+        view.set_annotation_placement_allowed_fn(lambda: False)
+        self.assertFalse(view.activate_annotation_placement("dimension"))
+        self.assertNotEqual(view._cursor_mode, "annotation_place")
+        self.assertIsNone(view._annotation_place_type)
+        view.set_annotation_placement_allowed_fn(lambda: True)
+        self.assertTrue(view.activate_annotation_placement("dimension"))
+        self.assertEqual(view._cursor_mode, "annotation_place")
         view.cleanup()
 
     def test_paste_backout_cancels_move_overlay_state(self):

@@ -17,6 +17,7 @@ class Feature(Enum):
     VIEW_2D = auto()
     EXPORT_BID_FILE = auto()
     PLACE_PLAN_ITEMS = auto()
+    PLACE_ANNOTATIONS = auto()
     DUPLICATE_CONDITION = auto()
     DELETE_CONDITION = auto()
     EDIT_CONDITION = auto()
@@ -38,6 +39,7 @@ _OST_BLOCKED: FrozenSet[Feature] = frozenset(
         Feature.EDIT_PAGE_SETTINGS,
         Feature.SELECT_PLAN_ITEMS,
         Feature.PLACE_PLAN_ITEMS,
+        Feature.PLACE_ANNOTATIONS,
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
@@ -51,6 +53,7 @@ _LOCK_BLOCKED: FrozenSet[Feature] = frozenset(
         Feature.EDIT_PAGE_SETTINGS,
         Feature.SELECT_PLAN_ITEMS,
         Feature.PLACE_PLAN_ITEMS,
+        Feature.PLACE_ANNOTATIONS,
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
@@ -69,6 +72,7 @@ _LICENSE_REQUIRED: FrozenSet[Feature] = frozenset(
         Feature.EDIT_PROJECT_TREE_STRUCTURE,
         Feature.EDIT_CONDITION_STRUCTURE,
         Feature.PLACE_PLAN_ITEMS,
+        Feature.PLACE_ANNOTATIONS,
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
@@ -87,6 +91,7 @@ _REQUIRES_BID: FrozenSet[Feature] = frozenset(
         Feature.EDIT_PAGE_SETTINGS,
         Feature.SELECT_PLAN_ITEMS,
         Feature.PLACE_PLAN_ITEMS,
+        Feature.PLACE_ANNOTATIONS,
         Feature.EXPORT_BID_FILE,
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
@@ -117,6 +122,7 @@ _PLACEMENT_BLOCKED: FrozenSet[Feature] = frozenset(
         Feature.COVER_SHEET,
         Feature.EDIT_PAGE_SETTINGS,
         Feature.SELECT_PLAN_ITEMS,
+        Feature.PLACE_ANNOTATIONS,
         Feature.EXPORT,
         Feature.EXPORT_BID_FILE,
         Feature.DUPLICATE_CONDITION,
@@ -142,6 +148,7 @@ _TEXT_EDIT_BLOCKED: FrozenSet[Feature] = frozenset(
         Feature.EXPORT,
         Feature.EXPORT_BID_FILE,
         Feature.PLACE_PLAN_ITEMS,
+        Feature.PLACE_ANNOTATIONS,
         Feature.DUPLICATE_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
@@ -248,6 +255,12 @@ class UIAccessManager:
         if self._bid_locked and feature in _LOCK_BLOCKED:
             return True
         if not self.has_license() and feature in _LICENSE_REQUIRED:
+            return True
+        if (
+            feature == Feature.PLACE_ANNOTATIONS
+            and self._project_data
+            and not self._project_data.is_annotation_layer_visible()
+        ):
             return True
         if require_current_selection:
             if not self._bid_selected and feature in _REQUIRES_BID:
