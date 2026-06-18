@@ -183,6 +183,7 @@ class TakeoffPlanView(
     set_negative_requested = Signal(list, bool)
     set_curved_requested = Signal(list, bool)
     overlay_display_mode_requested = Signal(int)
+    page_view_state_changed = Signal(str, float, float, float)
     positions_flushed = Signal(list, list)
     annotation_text_properties_flushed = Signal(list)
     annotation_text_and_positions_flushed = Signal(list, list)
@@ -277,6 +278,7 @@ class TakeoffPlanView(
         self._current_flip_y: bool = False
         self._panning = False
         self._last_pan_point = None
+        self._pan_view_changed = False
         self._cursor_mode: str = "select"
         self._right_pan_active: bool = False
         self._right_pan_press_pos: Optional[QtCore.QPoint] = None
@@ -2179,6 +2181,23 @@ class TakeoffPlanView(
         page.zoom_fac = zoom_fac
         page.current_x = cx
         page.current_y = cy
+
+    def _publish_current_page_view_state(
+        self, *, allow_pending_load: bool = False
+    ) -> None:
+        page = self._current_page
+        self._capture_view_state_to_page(page, allow_pending_load=allow_pending_load)
+        if page is None or self._current_bid_page_uid != page.uid:
+            return
+        if (
+            not self._load_view_applied and not allow_pending_load
+        ) or not self._scene.sceneRect().isValid():
+            return
+        if page.zoom_fac <= 0:
+            return
+        self.page_view_state_changed.emit(
+            page.uid, page.zoom_fac, page.current_x, page.current_y
+        )
 
     def _capture_scroll_state(self) -> None:
         h_scroll = self.horizontalScrollBar()

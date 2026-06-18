@@ -225,12 +225,15 @@ class InputHandlerMixin:
         if not self._panning or not self._last_pan_point:
             return False
         delta = cur_vp - self._last_pan_point
+        if delta.isNull():
+            return False
         self._last_pan_point = cur_vp
         self._mark_user_view_changed_during_load()
         self.horizontalScrollBar().setValue(
             self.horizontalScrollBar().value() - delta.x()
         )
         self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+        self._pan_view_changed = True
         return True
 
     def _apply_wheel_zoom(self, event: QWheelEvent, delta_y: float) -> None:
@@ -246,6 +249,7 @@ class InputHandlerMixin:
         self.verticalScrollBar().setValue(
             self.verticalScrollBar().value() + new_vp.y() - cursor_vp.y()
         )
+        self._publish_current_page_view_state()
 
     def wheelEvent(self, event: QWheelEvent):
         advanced_mouse_controls = self._advanced_mouse_controls_active()
@@ -427,12 +431,14 @@ class InputHandlerMixin:
             if self._cursor_mode == "zoom" or self._ctrl_held:
                 self._mark_user_view_changed_during_load()
                 self._apply_zoom(1.0 / self.ZOOM_FACTOR)
+                self._publish_current_page_view_state()
             self._right_pan_active = True
             self._right_pan_press_pos = vp_pos
             self._right_pan_press_timer.restart()
             self._right_pan_dragged = False
             self._pre_pan_persistent_mode = self._persistent_cursor_mode
             self._panning = True
+            self._pan_view_changed = False
             self._last_pan_point = vp_pos
             if not self._ctrl_held:
                 self.cursor_mode_change_requested.emit("pan")
@@ -756,6 +762,7 @@ class InputHandlerMixin:
                 event.accept()
             elif self._cursor_mode == "pan":
                 self._panning = True
+                self._pan_view_changed = False
                 self._last_pan_point = vp_pos
                 self._update_cursor()
                 event.accept()
@@ -1005,8 +1012,10 @@ class InputHandlerMixin:
             held_ms = self._right_pan_press_timer.elapsed()
             if self._right_pan_dragged or held_ms > RIGHT_CLICK_CONTEXT_MENU_MAX_MS:
                 self._suppress_next_context_menu = True
+            pan_view_changed = self._pan_view_changed
             self._right_pan_active = False
             self._panning = False
+            self._pan_view_changed = False
             self._last_pan_point = None
             self._right_pan_press_pos = None
             self._right_pan_dragged = False
@@ -1014,6 +1023,8 @@ class InputHandlerMixin:
             self._pre_pan_persistent_mode = None
             self.cursor_mode_change_requested.emit(self._persistent_cursor_mode)
             self._update_cursor()
+            if pan_view_changed:
+                self._publish_current_page_view_state()
             event.accept()
             return
         if self._cursor_mode == "place" and event.button() == Qt.MouseButton.LeftButton:
@@ -1364,14 +1375,20 @@ class InputHandlerMixin:
                     new_scale = self.transform().m11()
                     self._zoom_debouncer.handle_scale_changed(new_scale)
                     self.zoom_changed.emit(new_scale * self._scene_scale * 0.333)
+                    self._publish_current_page_view_state()
             elif self._cursor_mode == "zoom":
                 self._mark_user_view_changed_during_load()
                 self._apply_zoom(self.ZOOM_FACTOR)
+                self._publish_current_page_view_state()
             event.accept()
         elif self._panning and event.button() == Qt.MouseButton.LeftButton:
+            pan_view_changed = self._pan_view_changed
             self._panning = False
+            self._pan_view_changed = False
             self._last_pan_point = None
             self._update_cursor()
+            if pan_view_changed:
+                self._publish_current_page_view_state()
             event.accept()
         else:
             super().mouseReleaseEvent(event)

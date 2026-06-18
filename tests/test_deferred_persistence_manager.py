@@ -16,7 +16,9 @@ from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
 )
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.dialogs.cover_sheet.context import CoverSheetContext
-from ost_visualizer.presentation.handlers.file_operation_handler import FileOperationHandler
+from ost_visualizer.presentation.handlers.file_operation_handler import (
+    FileOperationHandler,
+)
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.deferred_persistence_manager import (
     DeferredPersistenceManager,
@@ -291,16 +293,31 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
 class RecordingDeferredPersistence:
     def __init__(self):
         self.layer_calls = []
+        self.page_view_calls = []
+        self.selected_page_calls = []
         self.page_area_calls = []
         self.flush_calls = []
         self.cancel_calls = []
+        self.flush_all_calls = 0
         self.flush_result = True
 
     def schedule_layer_show(self, db_path, layer_uid, show):
         self.layer_calls.append((db_path, layer_uid, show))
 
+    def schedule_page_view_state(
+        self, db_path, page_uid, zoom_fac, current_x, current_y
+    ):
+        self.page_view_calls.append((db_path, page_uid, zoom_fac, current_x, current_y))
+
+    def schedule_bid_selected_page(self, db_path, bid_uid, page_uid):
+        self.selected_page_calls.append((db_path, bid_uid, page_uid))
+
     def schedule_page_area_selection(self, db_path, page_uid, area_uid):
         self.page_area_calls.append((db_path, page_uid, area_uid))
+
+    def flush(self):
+        self.flush_all_calls += 1
+        return self.flush_result
 
     def flush_for_file(self, db_path):
         self.flush_calls.append(db_path)
@@ -432,6 +449,103 @@ class RecordingPlanView:
 
 
 class DeferredPersistenceCoordinatorTests(unittest.TestCase):
+    def _make_view_state_coordinator(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
+            active_page_uid="p1",
+        )
+        pages = {
+            "p1": Page(uid="p1", name="P1"),
+            "p2": Page(uid="p2", name="P2"),
+        }
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda page_uid: pages.get(page_uid),
+        )
+        coordinator.plan_view = SimpleNamespace(
+            current_page_uid="p1",
+            is_view_state_stable=True,
+            get_view_state=lambda: (2.5, 10.0, 20.0),
+        )
+        coordinator._deferred_persistence = RecordingDeferredPersistence()
+        coordinator._nav = SimpleNamespace(is_refreshing=False)
+        return coordinator, pages
+
+    def test_plan_view_state_change_updates_model_and_defers_write(self):
+        coordinator, pages = self._make_view_state_coordinator()
+        direct_writes = []
+        coordinator._project_write_service = SimpleNamespace(
+            save_page_view_state=lambda *_args: direct_writes.append(_args)
+        )
+        coordinator._on_plan_view_state_changed("p1", 3.0, 30.0, 40.0)
+        self.assertEqual(pages["p1"].zoom_fac, 3.0)
+        self.assertEqual(pages["p1"].current_x, 30.0)
+        self.assertEqual(pages["p1"].current_y, 40.0)
+        self.assertEqual(
+            coordinator._deferred_persistence.page_view_calls,
+            [("a.mdb", "p1", 3.0, 30.0, 40.0)],
+        )
+        self.assertEqual(direct_writes, [])
+
+    def test_reset_or_current_state_capture_defers_page_view_persistence(self):
+        coordinator, pages = self._make_view_state_coordinator()
+        coordinator._save_current_page_view_state()
+        self.assertEqual(pages["p1"].zoom_fac, 2.5)
+        self.assertEqual(
+            coordinator._deferred_persistence.page_view_calls,
+            [("a.mdb", "p1", 2.5, 10.0, 20.0)],
+        )
+
+    def test_active_page_switch_defers_selected_page_and_outgoing_view_state(self):
+        coordinator, _pages = self._make_view_state_coordinator()
+        coordinator._update_page_settings_bar = lambda _page_uid: None
+        coordinator._sync_overlay_display_mode = lambda _page_uid: None
+        coordinator._update_plan_view = lambda _page_uid: None
+        coordinator._sidebar = SimpleNamespace(
+            update_conditions_quantities=lambda: None
+        )
+        coordinator._placement = SimpleNamespace(is_active=False)
+        coordinator._update_page_info_status = lambda: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator.handle_active_page_changed("p2")
+        self.assertEqual(
+            coordinator._deferred_persistence.page_view_calls,
+            [("a.mdb", "p1", 2.5, 10.0, 20.0)],
+        )
+        self.assertEqual(
+            coordinator._deferred_persistence.selected_page_calls,
+            [("a.mdb", "bid-1", "p2")],
+        )
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p2")
+
+    def test_close_flushes_latest_page_view_and_selected_page_writes(self):
+        coordinator, _pages = self._make_view_state_coordinator()
+        self.assertTrue(coordinator.flush_current_page_state())
+        self.assertEqual(
+            coordinator._deferred_persistence.page_view_calls,
+            [("a.mdb", "p1", 2.5, 10.0, 20.0)],
+        )
+        self.assertEqual(
+            coordinator._deferred_persistence.selected_page_calls,
+            [("a.mdb", "bid-1", "p1")],
+        )
+        self.assertEqual(coordinator._deferred_persistence.flush_all_calls, 1)
+
+    def test_failed_close_time_flush_keeps_pending_writes_available(self):
+        service = FakeProjectWriteService()
+        service.fail_methods.add("save_page_view_state")
+        manager = DeferredPersistenceManager(
+            service, logger_=logging.getLogger(__name__)
+        )
+        self.addCleanup(manager.cleanup)
+        self.addCleanup(lambda: service.fail_methods.clear())
+        manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        self.assertFalse(manager.flush())
+        self.assertEqual(manager.pending_count, 1)
+
     def _make_visibility_coordinator(
         self,
         *,
@@ -632,8 +746,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         calls = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._deferred_persistence = SimpleNamespace(
-            flush_for_file=lambda file_path: calls.append(("flush", file_path))
-            or False
+            flush_for_file=lambda file_path: calls.append(("flush", file_path)) or False
         )
         coordinator._nav = SimpleNamespace(
             start_refresh=lambda *_args, **_kwargs: calls.append("start") or True

@@ -499,6 +499,7 @@ class UIEventCoordinator:
             self._on_text_annotation_edit_mode_changed
         )
         view.page_fully_loaded.connect(self._on_plan_view_page_fully_loaded)
+        view.page_view_state_changed.connect(self._on_plan_view_state_changed)
         view.overlay_display_mode_requested.connect(
             self._on_overlay_display_mode_requested
         )
@@ -727,6 +728,21 @@ class UIEventCoordinator:
 
     def _on_plan_view_page_fully_loaded(self) -> None:
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
+
+    def _on_plan_view_state_changed(
+        self, page_uid: str, zoom_fac: float, current_x: float, current_y: float
+    ) -> None:
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if not bid_ref or not page_uid or zoom_fac <= 0:
+            return
+        page = self.project_data.get_page(page_uid)
+        if page:
+            page.zoom_fac = zoom_fac
+            page.current_x = current_x
+            page.current_y = current_y
+        self._deferred_persistence.schedule_page_view_state(
+            bid_ref.file_path, page_uid, zoom_fac, current_x, current_y
+        )
 
     def _apply_pending_hotlink_named_view_focus(self, require_stable: bool) -> bool:
         named_view = self._pending_hotlink_named_view
@@ -1395,7 +1411,6 @@ class UIEventCoordinator:
             self.ui_access_manager.refresh()
             self._update_export_menu_state()
             return
-        self._save_current_page_view_state()
         self._placement.force_exit()
         self.ui_state_manager.reset_selections()
         self.ui_state_manager.set_database_selected(False)

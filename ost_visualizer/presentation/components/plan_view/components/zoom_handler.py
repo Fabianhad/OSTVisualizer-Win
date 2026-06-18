@@ -40,7 +40,7 @@ class ZoomHandlerMixin:
     def reset_view(self) -> None:
         self._mark_user_view_changed_during_load()
         self.fit_to_page()
-        self._capture_view_state_to_page(self._current_page, allow_pending_load=True)
+        self._publish_current_page_view_state(allow_pending_load=True)
 
     def _fit_in_view_with_stable_scrollbars(self, target_rect: QRectF) -> None:
         h_scroll = self.horizontalScrollBar()
@@ -87,14 +87,17 @@ class ZoomHandlerMixin:
         if current == 0:
             return
         self._apply_zoom_centered(target_m11 / current)
+        self._publish_current_page_view_state()
 
     def zoom_in(self) -> None:
         self._mark_user_view_changed_during_load()
         self._apply_zoom_centered(self.ZOOM_FACTOR)
+        self._publish_current_page_view_state()
 
     def zoom_out(self) -> None:
         self._mark_user_view_changed_during_load()
         self._apply_zoom_centered(1.0 / self.ZOOM_FACTOR)
+        self._publish_current_page_view_state()
 
     def _current_page_scene_context(self):
         page = self._current_page
