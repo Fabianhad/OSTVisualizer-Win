@@ -257,6 +257,35 @@ class FakeDetachedPlanView:
         return True
 
 
+class FakeDetachedLoadPlanView:
+    def __init__(
+        self,
+        *,
+        current_page_uid="p1",
+        stable=True,
+        view_state=(2.5, 40.0, 60.0),
+    ):
+        self.current_page_uid = current_page_uid
+        self._stable = stable
+        self._view_state = view_state
+        self.load_calls = []
+        self.clear_calls = 0
+
+    @property
+    def is_view_state_stable(self):
+        return self._stable
+
+    def get_view_state(self):
+        return self._view_state
+
+    def load_page(self, **kwargs):
+        self.load_calls.append(kwargs)
+        return True
+
+    def clear(self):
+        self.clear_calls += 1
+
+
 class FakeAnnotationWriteService:
     def __init__(self):
         self.insert_calls = []
@@ -1572,6 +1601,67 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertTrue(window._btn_prev.enabled)
         self.assertFalse(window._btn_next.enabled)
+
+    def test_detached_refresh_preserves_live_view_state_before_page_reload(self):
+        page = Page(
+            uid="p1",
+            name="Page 1",
+            zoom_fac=1.0,
+            current_x=10.0,
+            current_y=20.0,
+        )
+        plan_view = FakeDetachedLoadPlanView(view_state=(3.25, 120.0, 240.0))
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window.page_data = SimpleNamespace(
+            page=page,
+            takeoffs=[],
+            conditions={},
+            color_map={},
+            bid_ref=BidRef("bid.mdb", "bid-1"),
+            annotations=[],
+            page_area_selections={},
+        )
+        window.plan_view = plan_view
+        window._navigation_source = "refresh"
+        window._scale_combo = None
+        window._apply_named_view_focus_if_possible = lambda require_stable_view: False
+        window.logger = SimpleNamespace(exception=lambda *args, **kwargs: None)
+        self.assertTrue(DetachedPageViewWindow._load_page_content(window))
+        self.assertEqual(
+            (page.zoom_fac, page.current_x, page.current_y),
+            (3.25, 120.0, 240.0),
+        )
+        self.assertEqual(plan_view.load_calls[0]["page"], page)
+
+    def test_detached_hotlink_load_does_not_reuse_previous_window_camera(self):
+        page = Page(
+            uid="p1",
+            name="Page 1",
+            zoom_fac=1.0,
+            current_x=10.0,
+            current_y=20.0,
+        )
+        plan_view = FakeDetachedLoadPlanView(view_state=(3.25, 120.0, 240.0))
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window.page_data = SimpleNamespace(
+            page=page,
+            takeoffs=[],
+            conditions={},
+            color_map={},
+            bid_ref=BidRef("bid.mdb", "bid-1"),
+            annotations=[],
+            page_area_selections={},
+        )
+        window.plan_view = plan_view
+        window._navigation_source = "hotlink"
+        window._scale_combo = None
+        window._apply_named_view_focus_if_possible = lambda require_stable_view: False
+        window.logger = SimpleNamespace(exception=lambda *args, **kwargs: None)
+        self.assertTrue(DetachedPageViewWindow._load_page_content(window))
+        self.assertEqual(
+            (page.zoom_fac, page.current_x, page.current_y),
+            (1.0, 10.0, 20.0),
+        )
 
 
 class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):

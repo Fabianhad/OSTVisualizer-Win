@@ -718,6 +718,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self.plan_view.clear()
             return False
         self._update_scale_combo(page.scale_factor1, page.scale_factor2)
+        self._capture_refresh_view_state(page)
         try:
             self.plan_view.load_page(
                 page=page,
@@ -734,6 +735,21 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self.logger.exception("Error loading page into plan_view")
             self.plan_view.clear()
             return False
+
+    def _capture_refresh_view_state(self, page) -> None:
+        if self._navigation_source != "refresh" or self.plan_view is None:
+            return
+        if (
+            self.plan_view.current_page_uid != page.uid
+            or not self.plan_view.is_view_state_stable
+        ):
+            return
+        zoom_fac, current_x, current_y = self.plan_view.get_view_state()
+        if zoom_fac <= 0:
+            return
+        page.zoom_fac = zoom_fac
+        page.current_x = current_x
+        page.current_y = current_y
 
     def _focus_on_named_view(self) -> None:
         if self._is_closing:
