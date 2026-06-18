@@ -509,9 +509,12 @@ class OpenGLViewer(QtWidgets.QWidget):
                 menu.addSeparator()
         overlay_action, original_action = self._add_common_context_submenus(menu)
         if has_selected_takeoffs:
-            reassign_condition_menu = add_reassign_condition_submenu(
-                menu, dict(self._context_menu_conditions_fn() or {})
-            )
+            if selected_state.reassign_geometry_type is not None:
+                reassign_condition_menu = add_reassign_condition_submenu(
+                    menu,
+                    dict(self._context_menu_conditions_fn() or {}),
+                    selected_state.reassign_geometry_type,
+                )
         menu.addSeparator()
         if has_selected_takeoffs:
             self._add_context_clipboard_actions(menu)

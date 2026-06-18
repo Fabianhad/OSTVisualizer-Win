@@ -13,6 +13,10 @@ from .annotation_style_controls import apply_annotation_tool_icon_color
 from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_CONTEXT_ACTIONS
 from .condition_icon import make_condition_color_icon
 from .overlay_context_menu import add_overlay_submenu_with_select
+from .takeoff_condition_compatibility import (
+    common_reassign_geometry_type,
+    condition_matches_reassign_geometry,
+)
 
 CONTEXT_TOOLS_ACTIONS = (
     *PLAN_TOOL_CONTEXT_ACTIONS,
@@ -51,6 +55,7 @@ class SelectedTakeoffContextState:
     show_curved: bool
     all_negative: bool
     all_curved: bool
+    reassign_geometry_type: int | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +136,10 @@ def build_selected_takeoff_context_state(
         all_negative=bool(regular_takeoffs)
         and all(takeoff.is_negative for _uid, takeoff in regular_takeoffs),
         all_curved=all_curved,
+        reassign_geometry_type=common_reassign_geometry_type(
+            (takeoff for _uid, takeoff in selected_takeoffs),
+            conditions,
+        ),
     )
 
 
@@ -292,12 +301,16 @@ def _condition_menu_label(condition: Condition) -> str:
 def add_reassign_condition_submenu(
     menu: QtWidgets.QMenu,
     conditions: dict[str, Condition],
+    reassign_geometry_type: int,
 ) -> ReassignConditionSubmenu:
     submenu = QtWidgets.QMenu("Reassign Condition", menu)
-    menu.addMenu(submenu)
     actions: dict[QtGui.QAction, str] = {}
     ordered = sorted(
-        conditions.values(),
+        (
+            condition
+            for condition in conditions.values()
+            if condition_matches_reassign_geometry(condition, reassign_geometry_type)
+        ),
         key=lambda condition: (
             condition.ref_no,
             condition.name.lower(),
@@ -305,8 +318,8 @@ def add_reassign_condition_submenu(
         ),
     )
     if not ordered:
-        submenu.setEnabled(False)
         return ReassignConditionSubmenu(submenu, actions)
+    menu.addMenu(submenu)
     for condition in ordered:
         action = submenu.addAction(_condition_menu_label(condition))
         action.setIcon(

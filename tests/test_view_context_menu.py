@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.managers.icon_manager import IconManager, IconId
 from ost_visualizer.presentation.utils.annotation_defaults import (
     get_annotation_style_for_tool,
@@ -14,6 +15,7 @@ from ost_visualizer.presentation.utils.view_context_menu import (
     add_common_context_submenus,
     add_reassign_condition_submenu,
     add_selected_annotation_style_actions,
+    build_selected_takeoff_context_state,
     build_selected_annotation_style_context_state,
 )
 
@@ -53,9 +55,20 @@ class ViewContextMenuTests(unittest.TestCase):
             reassign_menu = add_reassign_condition_submenu(
                 menu,
                 {
-                    "20": Condition(uid="20", name="Second", ref_no=2),
-                    "10": Condition(uid="10", name="First", ref_no=1),
+                    "20": Condition(
+                        uid="20",
+                        name="Second",
+                        ref_no=2,
+                        condition_type=Condition.TYPE_LINEAR,
+                    ),
+                    "10": Condition(
+                        uid="10",
+                        name="First",
+                        ref_no=1,
+                        condition_type=Condition.TYPE_LINEAR,
+                    ),
                 },
+                Condition.TYPE_LINEAR,
             )
             self.assertEqual(menu.actions()[0].text(), "Reassign Condition")
             self.assertEqual(
@@ -80,6 +93,97 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
+    def test_reassign_condition_submenu_filters_to_selected_geometry_type(self):
+        conditions = {
+            "linear": Condition(
+                uid="linear",
+                name="Linear",
+                ref_no=1,
+                condition_type=Condition.TYPE_LINEAR,
+            ),
+            "area": Condition(
+                uid="area",
+                name="Area",
+                ref_no=2,
+                condition_type=Condition.TYPE_AREA,
+            ),
+            "count": Condition(
+                uid="count",
+                name="Count",
+                ref_no=3,
+                condition_type=Condition.TYPE_COUNT,
+            ),
+            "attachment": Condition(
+                uid="attachment",
+                name="Attachment",
+                ref_no=4,
+                condition_type=Condition.TYPE_ATTACHMENT,
+            ),
+        }
+        cases = (
+            (Condition.TYPE_LINEAR, ["linear"]),
+            (Condition.TYPE_AREA, ["area"]),
+            (Condition.TYPE_COUNT, ["count", "attachment"]),
+        )
+        for geometry_type, expected_uids in cases:
+            with self.subTest(geometry_type=geometry_type):
+                menu = QtWidgets.QMenu()
+                try:
+                    reassign_menu = add_reassign_condition_submenu(
+                        menu,
+                        conditions,
+                        geometry_type,
+                    )
+                    self.assertEqual(
+                        [
+                            reassign_menu.actions[action]
+                            for action in reassign_menu.submenu.actions()
+                        ],
+                        expected_uids,
+                    )
+                finally:
+                    menu.deleteLater()
+
+    def test_reassign_condition_submenu_is_not_added_when_no_targets_match(self):
+        menu = QtWidgets.QMenu()
+        try:
+            reassign_menu = add_reassign_condition_submenu(
+                menu,
+                {
+                    "count": Condition(
+                        uid="count",
+                        name="Count",
+                        condition_type=Condition.TYPE_COUNT,
+                    )
+                },
+                Condition.TYPE_LINEAR,
+            )
+            self.assertEqual(menu.actions(), [])
+            self.assertEqual(reassign_menu.actions, {})
+        finally:
+            menu.deleteLater()
+
+    def test_selected_takeoff_context_state_tracks_common_reassign_geometry(self):
+        conditions = {
+            "linear": Condition(
+                uid="linear", condition_type=Condition.TYPE_LINEAR
+            ),
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+        }
+        takeoffs = {
+            "l1": Takeoff(uid="l1", condition_uid="linear"),
+            "l2": Takeoff(uid="l2", condition_uid="linear"),
+            "a1": Takeoff(uid="a1", condition_uid="area"),
+        }
+        linear_state = build_selected_takeoff_context_state(
+            ["l1", "l2"], takeoffs.get, conditions
+        )
+        self.assertEqual(linear_state.reassign_geometry_type, Condition.TYPE_LINEAR)
+        mixed_state = build_selected_takeoff_context_state(
+            ["l1", "a1"], takeoffs.get, conditions
+        )
+        self.assertIsNone(mixed_state.reassign_geometry_type)
 
     def test_plan_tools_context_submenu_uses_shared_tool_registry(self):
         menu, tools_menu = _build_tools_context_menu()

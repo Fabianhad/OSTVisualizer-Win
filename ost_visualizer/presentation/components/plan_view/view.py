@@ -4278,6 +4278,10 @@ class TakeoffPlanView(
             self._uid_to_items.update(ann_uid_to_items)
             self._current_annotations = annotation_dict
             self._ann_db_uid_map = db_uid_map
+            for uid, annotation in annotation_dict.items():
+                visible = self._annotation_layer_visible(annotation)
+                for item in ann_uid_to_items.get(uid, []):
+                    item.setVisible(visible)
         else:
             self._current_annotations = {}
             self._ann_db_uid_map = {}

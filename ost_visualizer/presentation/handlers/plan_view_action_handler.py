@@ -35,6 +35,7 @@ from ..utils.named_view_validation import (
     named_view_name_exists,
     show_duplicate_named_view_name,
 )
+from ..utils.takeoff_condition_compatibility import takeoffs_can_reassign_to_condition
 
 logger = logging.getLogger(__name__)
 _SAME_BID_FAST_TAKEOFF_EXTRA_COLUMNS = frozenset(
@@ -420,11 +421,21 @@ class PlanViewActionHandler:
         if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
-        takeoff_uids = self._takeoff_uids_only(uids)
+        takeoff_uids = []
+        takeoffs = []
+        for uid in uids:
+            takeoff = self._resolver.resolve_takeoff(uid)
+            if takeoff is None:
+                continue
+            takeoff_uids.append(uid)
+            takeoffs.append(takeoff)
+        conditions = self._data_svc.get_bid_conditions()
         if (
             not db_path
             or not takeoff_uids
-            or condition_uid not in self._data_svc.get_bid_conditions()
+            or not takeoffs_can_reassign_to_condition(
+                takeoffs, conditions, str(condition_uid)
+            )
         ):
             return
         self._write_svc.save_takeoffs_condition(

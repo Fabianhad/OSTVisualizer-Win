@@ -348,15 +348,19 @@ NB_MODULE(ost_cab, m)
     m.doc() = "CAB file compression/decompression (Windows FCI/FDI)";
     m.def("create_cab", &ost_cab::CabCompressor::create_cab,
           "Create a CAB archive from a list of file paths (MSZIP compression)",
-          nb::arg("input_files"), nb::arg("output_file"));
+          nb::arg("input_files"), nb::arg("output_file"),
+          nb::call_guard<nb::gil_scoped_release>());
     m.def("create_cab_with_names", &ost_cab::CabCompressor::create_cab_with_names,
           "Create a CAB archive from source files with custom archive names. "
           "The archive_names can include subdirectories like 'folder/file.txt'.",
-          nb::arg("source_files"), nb::arg("archive_names"), nb::arg("output_file"));
+          nb::arg("source_files"), nb::arg("archive_names"), nb::arg("output_file"),
+          nb::call_guard<nb::gil_scoped_release>());
     m.def("extract_cab", &ost_cab::CabCompressor::extract_cab,
           "Extract a CAB archive to a directory",
-          nb::arg("cab_file"), nb::arg("output_dir"));
+          nb::arg("cab_file"), nb::arg("output_dir"),
+          nb::call_guard<nb::gil_scoped_release>());
     m.def("list_cab", &ost_cab::CabCompressor::list_cab,
           "List filenames contained in a CAB archive",
-          nb::arg("cab_file"));
+          nb::arg("cab_file"),
+          nb::call_guard<nb::gil_scoped_release>());
 }

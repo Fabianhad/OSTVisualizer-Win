@@ -10,6 +10,7 @@ from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.page_selection_service import PageSelectionService
@@ -139,8 +140,12 @@ class FakeProjectData:
         self.page_names = {"p1": "Page 1"}
         self.pages = {"p1": SimpleNamespace(uid="p1", overlay_rect=None)}
         self.conditions = {
-            "42": SimpleNamespace(layer_visible=True, condition_type="linear"),
-            "c1": SimpleNamespace(layer_visible=True, condition_type="area"),
+            "42": Condition(
+                uid="42", layer_visible=True, condition_type=Condition.TYPE_AREA
+            ),
+            "c1": Condition(
+                uid="c1", layer_visible=True, condition_type=Condition.TYPE_AREA
+            ),
         }
 
     def add_takeoffs(self, takeoffs):
@@ -1785,7 +1790,10 @@ class PlanViewActionHandlerTests(unittest.TestCase):
     def test_reassign_condition_writes_selected_takeoffs(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
-            uid="t1", condition_uid="c1", page_uid="p1", position=[0.0, 0.0]
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 10.0],
         )
         write = FakeWriteService()
         handler = PlanViewActionHandler(
@@ -1802,6 +1810,70 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_reassign_condition(["t1", "missing"], "42")
         handler.on_reassign_condition(["t1"], "missing-condition")
         self.assertEqual(write.condition_calls, [("bid.mdb", ["t1"], "42")])
+
+    def test_reassign_condition_rejects_incompatible_target_type(self):
+        data = FakeProjectData()
+        data.conditions["linear"] = Condition(
+            uid="linear",
+            layer_visible=True,
+            condition_type=Condition.TYPE_LINEAR,
+        )
+        position = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0]
+        data.takeoffs["area"] = Takeoff(
+            uid="area",
+            condition_uid="c1",
+            page_uid="p1",
+            position=list(position),
+        )
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_reassign_condition(["area"], "linear")
+        self.assertEqual(write.condition_calls, [])
+        self.assertEqual(data.takeoffs["area"].position, position)
+
+    def test_reassign_condition_rejects_mixed_geometry_selection(self):
+        data = FakeProjectData()
+        data.conditions["count"] = Condition(
+            uid="count",
+            layer_visible=True,
+            condition_type=Condition.TYPE_COUNT,
+        )
+        data.takeoffs["area"] = Takeoff(
+            uid="area",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 10.0],
+        )
+        data.takeoffs["count"] = Takeoff(
+            uid="count",
+            condition_uid="count",
+            page_uid="p1",
+            position=[5.0, 5.0],
+        )
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_reassign_condition(["area", "count"], "42")
+        self.assertEqual(write.condition_calls, [])
 
     def test_set_curved_batches_reload_after_all_curve_writes(self):
         data = FakeProjectData()

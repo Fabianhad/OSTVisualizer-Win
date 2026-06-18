@@ -51,8 +51,8 @@ class ProgressDialog(QtWidgets.QDialog):
         self._result: Any = None
         self._error: Optional[Exception] = None
         self._cleaned_up = False
+        self._started = False
         self._setup_ui(filename)
-        self._start()
 
     def _setup_ui(self, filename: str) -> None:
         self.setWindowTitle("Working...")
@@ -74,7 +74,16 @@ class ProgressDialog(QtWidgets.QDialog):
         self._progress.setFixedHeight(16)
         layout.addWidget(self._progress)
 
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        if self._started or self._cleaned_up:
+            return
+        self._started = True
+        QtCore.QTimer.singleShot(0, self._start)
+
     def _start(self) -> None:
+        if self._cleaned_up:
+            return
         self._worker = _Worker(self._task_fn)
         self._thread = QThread()
         self._worker.moveToThread(self._thread)

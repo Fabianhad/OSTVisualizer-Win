@@ -1,12 +1,16 @@
 import os
+import threading
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 from ost_visualizer.application.dtos.license_view_model_dto import LicenseViewModelDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.presentation import main_window as main_window_module
-from ost_visualizer.presentation.components.progress_dialog import ProgressDialog
+from ost_visualizer.presentation.components.progress_dialog import (
+    ProgressDialog,
+    ProgressReporter,
+)
 from ost_visualizer.presentation.coordinators.event_coordinator import EventCoordinator
 from ost_visualizer.presentation.dialogs.license_dialog import LicenseDialog
 from ost_visualizer.presentation.main_window import MainWindow
@@ -149,6 +153,56 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertIsNone(dialog._reporter)
         self.assertIsNone(dialog._label)
         self.assertIsNone(dialog._progress)
+
+    def test_progress_dialog_does_not_start_worker_before_show(self):
+        _app()
+        calls = []
+        dialog = ProgressDialog("export.ost", lambda: calls.append("run") or True)
+        try:
+            self.assertEqual(calls, [])
+            self.assertFalse(dialog._started)
+        finally:
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_progress_dialog_runs_task_on_worker_thread_after_show(self):
+        _app()
+        ui_thread = threading.get_ident()
+        task_threads = []
+
+        def task():
+            task_threads.append(threading.get_ident())
+            return True
+
+        dialog = ProgressDialog("export.ost", task)
+        QtCore.QTimer.singleShot(5000, dialog.reject)
+        try:
+            rc = dialog.exec()
+            self.assertEqual(rc, QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.result, True)
+            self.assertEqual(len(task_threads), 1)
+            self.assertNotEqual(task_threads[0], ui_thread)
+        finally:
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_progress_dialog_delivers_worker_progress_to_label(self):
+        _app()
+        reporter = ProgressReporter()
+
+        def task():
+            reporter.report("page 1")
+            return True
+
+        dialog = ProgressDialog("export.pdf", task, reporter=reporter)
+        QtCore.QTimer.singleShot(5000, dialog.reject)
+        try:
+            rc = dialog.exec()
+            self.assertEqual(rc, QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertIn("page 1", dialog._label.text())
+        finally:
+            dialog.cleanup()
+            dialog.deleteLater()
 
     def test_create_database_uses_progress_dialog_worker_task(self):
         class FakeAppController:

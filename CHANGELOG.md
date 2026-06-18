@@ -60,6 +60,7 @@
 - Fixed PDF export so hidden takeoff/annotation layers stay hidden and OST numeric text alignment exports as left, center, or right.
 - Fixed plan-view Ctrl+A so hidden-layer takeoffs and hidden annotations are not selected internally.
 - Fixed PDF export default filenames so page names that already end in `.pdf` do not produce `.pdf.pdf`.
+- Let progress dialogs paint before starting background work, and kept OSP export responsive while image files are collected and packaged.
 - Cleared stale detached page-window, PDF renderer, export background, and MCP bridge references during cleanup, and bounded PDF metadata caches across page/file switches.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.
 - Fixed Named View placement to reject duplicate names without closing the inline editor, match draft label sizing to the committed label, and keep Hotlink/Named View placement tools active after successful placement.

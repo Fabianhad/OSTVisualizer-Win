@@ -4,7 +4,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
-from typing import List, Set
+from typing import Callable, List, Set
 from ....application.dtos.export_dto import ExportErrorCode, ExportResultDto
 from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
@@ -63,7 +63,7 @@ class OspExporter:
                 source_files.append(str(bid_trans_path))
                 archive_names.append("BidTrans.xml")
                 _report(3, 4, "Collecting images")
-                self._collect_images(raw_data, source_files, archive_names)
+                self._collect_images(raw_data, source_files, archive_names, _report)
                 _report(4, 4, "Packaging archive")
                 if not ost_cab.create_cab_with_names(
                     source_files, archive_names, output_file
@@ -89,9 +89,19 @@ class OspExporter:
         raw_data: RawBidData,
         source_files: List[str],
         archive_names: List[str],
+        report: Callable[[int, int, str], None],
     ) -> None:
         seen_paths: set = set()
+        image_rows = [
+            page_row
+            for page_row in raw_data.bid_tables.get("BidPages", [])
+            if page_row.get("ImagePath", "") or page_row.get("OverlayImagePath", "")
+        ]
+        image_row_count = max(len(image_rows), 1)
+        checked_rows = 0
         for page_row in raw_data.bid_tables.get("BidPages", []):
+            if page_row.get("ImagePath", "") or page_row.get("OverlayImagePath", ""):
+                checked_rows += 1
             for attr in ("ImagePath", "OverlayImagePath"):
                 image_path = page_row.get(attr, "") or ""
                 if not image_path:
@@ -105,6 +115,7 @@ class OspExporter:
                 if abs_path in seen_paths:
                     continue
                 seen_paths.add(abs_path)
+                report(checked_rows, image_row_count, f"Collecting {p.name}")
                 source_files.append(str(p))
                 archive_names.append(f"TempImages!.tmp\\{p.name}")
 

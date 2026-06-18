@@ -2376,9 +2376,12 @@ class InputHandlerMixin:
         current_mode, overlay_action, original_action = (
             self._add_common_context_submenus(menu)
         )
-        reassign_condition_menu = add_reassign_condition_submenu(
-            menu, self._current_conditions
-        )
+        if selected_state.reassign_geometry_type is not None:
+            reassign_condition_menu = add_reassign_condition_submenu(
+                menu,
+                self._current_conditions,
+                selected_state.reassign_geometry_type,
+            )
         menu.addSeparator()
         self._add_context_clipboard_actions(menu)
         menu.addSeparator()

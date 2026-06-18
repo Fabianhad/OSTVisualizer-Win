@@ -4158,6 +4158,71 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         view.cleanup()
 
+    def test_hidden_annotation_layer_stays_hidden_after_overlay_refresh(self):
+        view = self._make_plan_view()
+        page = Page(uid="page-1", name="Page 1", width_pts=612.0, height_pts=792.0)
+        annotation = BidAnnotation(
+            uid="ann-1",
+            annotation_type="text",
+            page_uid=page.uid,
+            position=[20.0, 20.0, 80.0, 24.0],
+            properties={"Text": "Note", "FontName": "Arial", "FontSize": 12},
+            layer_uid="annotation-layer",
+            visible=True,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}, annotations=[annotation]))
+        self.assertTrue(view._uid_to_items["ann-1"][0].isVisible())
+
+        self.assertTrue(view.apply_layer_visibility("annotation-layer", False, {}))
+        self.assertFalse(view._uid_to_items["ann-1"][0].isVisible())
+
+        self.assertTrue(
+            view.refresh_current_page_overlays(
+                page=page,
+                takeoffs=[],
+                conditions={},
+                color_map={},
+                annotations=[annotation],
+            )
+        )
+        self.assertFalse(view._uid_to_items["ann-1"][0].isVisible())
+
+        self.assertTrue(view.apply_layer_visibility("annotation-layer", True, {}))
+        self.assertTrue(view._uid_to_items["ann-1"][0].isVisible())
+        view.cleanup()
+
+    def test_hidden_annotation_layer_is_not_selectable_until_reenabled(self):
+        view = self._make_plan_view()
+        annotation = BidAnnotation(
+            uid="ann-1",
+            annotation_type="text",
+            position=[20.0, 20.0, 80.0, 24.0],
+            properties={"Text": "Note"},
+            layer_uid="annotation-layer",
+            visible=True,
+        )
+        item = QGraphicsTextItem("Note")
+        item.setData(0, "ann-1")
+        view._scene.addItem(item)
+        view._uid_to_items = {"ann-1": [item]}
+        view._current_annotations = {"ann-1": annotation}
+        view._current_takeoffs = {}
+        view._current_conditions = {}
+        view._current_bid_page_uid = "page-1"
+        view._selection_enabled = True
+        view._cursor_mode = "select"
+
+        self.assertTrue(view.apply_layer_visibility("annotation-layer", False, {}))
+        view.set_selected_uids({"ann-1"})
+        self.assertEqual(view._selected_uids, set())
+        view.select_all()
+        self.assertEqual(view._selected_uids, set())
+
+        self.assertTrue(view.apply_layer_visibility("annotation-layer", True, {}))
+        view.set_selected_uids({"ann-1"})
+        self.assertEqual(view._selected_uids, {"ann-1"})
+        view.cleanup()
+
     def test_select_objects_in_current_area_uses_visible_takeoff_rules(self):
         view = self._make_plan_view()
         view._current_bid_page_uid = "page-1"
