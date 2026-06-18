@@ -1,5 +1,5 @@
 import unittest
-from PySide6 import QtCore
+from PySide6 import QtWidgets
 from ost_visualizer.presentation.services.mcp_context_bridge import McpContextBridge
 
 
@@ -31,7 +31,7 @@ class _FakeWindow:
 class McpContextBridgeSelectionTests(unittest.TestCase):
     @staticmethod
     def _app():
-        return QtCore.QCoreApplication.instance() or QtCore.QCoreApplication([])
+        return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
     def _bridge(self, plan_uids, viewer_uids, mesh_uids=None):
         bridge = McpContextBridge.__new__(McpContextBridge)

@@ -787,8 +787,15 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         area_selections = {"p1": None}
         direct_writes = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        selected_page_reads = []
+
+        def selected_page_uids():
+            selected_page_reads.append(area_selections["p1"])
+            return ["p1"]
+
         coordinator.project_data = SimpleNamespace(
-            get_page_area_selections=lambda: area_selections
+            get_page_area_selections=lambda: area_selections,
+            get_selected_page_uids=selected_page_uids,
         )
         coordinator.ui_state_manager = SimpleNamespace(active_page_uid="p1")
         coordinator._deferred_persistence = RecordingDeferredPersistence()
@@ -796,8 +803,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             save_page_area=lambda *_args, **_kwargs: direct_writes.append(_args)
         )
         plan_updates = []
+        mesh_updates = []
         coordinator._viewer = SimpleNamespace(
-            update_plan_view=lambda page_uid: plan_updates.append(page_uid)
+            update_plan_view=lambda page_uid: plan_updates.append(page_uid),
+            update_viewers=lambda page_uids: mesh_updates.append(list(page_uids)),
         )
         hotlink_updates = []
         coordinator._apply_pending_hotlink_named_view_focus = (
@@ -814,6 +823,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [("a.mdb", "p1", "2")],
         )
         self.assertEqual(plan_updates, ["p1"])
+        self.assertEqual(mesh_updates, [["p1"]])
+        self.assertEqual(selected_page_reads, ["2"])
         self.assertEqual(hotlink_updates, [True])
         self.assertEqual(direct_writes, [])
 
@@ -821,11 +832,16 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         area_selections = {"p1": "2"}
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.project_data = SimpleNamespace(
-            get_page_area_selections=lambda: area_selections
+            get_page_area_selections=lambda: area_selections,
+            get_selected_page_uids=lambda: ["p1"],
         )
         coordinator.ui_state_manager = SimpleNamespace(active_page_uid="p1")
         coordinator._deferred_persistence = RecordingDeferredPersistence()
-        coordinator._viewer = SimpleNamespace(update_plan_view=lambda _page_uid: None)
+        mesh_updates = []
+        coordinator._viewer = SimpleNamespace(
+            update_plan_view=lambda _page_uid: None,
+            update_viewers=lambda page_uids: mesh_updates.append(list(page_uids)),
+        )
         coordinator._apply_pending_hotlink_named_view_focus = (
             lambda require_stable: None
         )
@@ -837,6 +853,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             coordinator._deferred_persistence.page_area_calls,
             [("a.mdb", "p1", "")],
         )
+        self.assertEqual(mesh_updates, [["p1"]])
 
 
 class DeferredPersistenceBoundaryTests(unittest.TestCase):

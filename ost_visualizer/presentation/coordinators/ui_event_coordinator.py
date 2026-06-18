@@ -2226,6 +2226,7 @@ class UIEventCoordinator:
         )
         if page_uid == self.ui_state_manager.active_page_uid:
             self._viewer.update_plan_view(page_uid)
+            self._viewer.update_viewers(self.project_data.get_selected_page_uids())
             self._apply_pending_hotlink_named_view_focus(require_stable=True)
 
     def _on_overlay_display_mode_requested(self, show_mode: int) -> None:

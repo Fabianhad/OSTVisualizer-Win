@@ -742,8 +742,38 @@ class TakeoffPlanView(
         )
         self._condition_text_color_btn.setToolTip(f"Text color ({color.name()})")
 
-    def _apply_condition_text_format(self) -> None:
+    def _active_text_toolbar_item(self) -> Optional[QGraphicsTextItem]:
         item = self._selected_text_item
+        if item is None:
+            return None
+        uid = self._selected_text_annotation_uid
+        if uid is None:
+            if item.data(2) != "condition_label":
+                self._clear_text_toolbar_target()
+                return None
+            return item
+        if item.scene() is not self._scene:
+            self._clear_text_toolbar_target()
+            return None
+        ann = self._current_annotations.get(uid)
+        if ann is None:
+            self._clear_text_toolbar_target()
+            return None
+        if ann.is_text:
+            if self._text_annotation_item(uid) is not item:
+                self._clear_text_toolbar_target()
+                return None
+            return item
+        if ann.is_dimension:
+            if not self._is_dimension_text_label_item(item):
+                self._clear_text_toolbar_target()
+                return None
+            return item
+        self._clear_text_toolbar_target()
+        return None
+
+    def _apply_condition_text_format(self) -> None:
+        item = self._active_text_toolbar_item()
         if item is None:
             return
         uid = self._selected_text_annotation_uid
@@ -769,7 +799,7 @@ class TakeoffPlanView(
         self._apply_condition_text_format()
 
     def _pick_condition_text_color(self) -> None:
-        item = self._selected_text_item
+        item = self._active_text_toolbar_item()
         if item is None:
             return
         color = QColorDialog.getColor(item.defaultTextColor(), self)
@@ -784,7 +814,7 @@ class TakeoffPlanView(
                 self._refresh_dimension_text_label_layout(uid, item)
 
     def _set_condition_text_alignment(self, alignment: Qt.AlignmentFlag) -> None:
-        item = self._selected_text_item
+        item = self._active_text_toolbar_item()
         if item is None or not self._selected_text_target_allows_alignment():
             return
         option = QTextOption(item.document().defaultTextOption())
@@ -1376,6 +1406,8 @@ class TakeoffPlanView(
             self._clear_inline_text_document()
             self._editing_text_annotation_uid = None
             self._editing_text_original = ""
+            if self._selected_text_annotation_uid == uid:
+                self._clear_text_toolbar_target()
             self._update_cursor()
             self.text_annotation_edit_mode_changed.emit(False)
         finally:

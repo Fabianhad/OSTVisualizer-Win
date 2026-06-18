@@ -317,17 +317,19 @@ class SelectionManagerMixin:
         )
         selected_uids = set()
         for uid, takeoff in self._current_takeoffs.items():
-            condition = self._current_conditions.get(takeoff.condition_uid)
             if (
-                uid in self._uid_to_items
-                and condition
-                and condition.layer_visible
-                and self._is_selectable(uid)
-                and not self._color_service.should_gray_out_takeoff(
-                    takeoff, page_area_selections
-                )
+                self._current_bid_page_uid
+                and takeoff.page_uid
+                and takeoff.page_uid != self._current_bid_page_uid
             ):
-                selected_uids.add(uid)
+                continue
+            if uid not in self._uid_to_items or not self._is_selectable(uid):
+                continue
+            if self._color_service.should_gray_out_takeoff(
+                takeoff, page_area_selections
+            ):
+                continue
+            selected_uids.add(uid)
         self.set_selected_uids(selected_uids)
 
     def _pt_to_scene(self, x: float, y: float) -> QtCore.QPointF:

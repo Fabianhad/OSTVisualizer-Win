@@ -95,6 +95,12 @@ class FakeColorService:
     def get_color_mapping(self, *_args):
         return {}, {}
 
+    def should_gray_out_takeoff(self, takeoff, page_area_selections):
+        if not page_area_selections:
+            return False
+        selected_area_uid = page_area_selections.get(str(takeoff.page_uid))
+        return selected_area_uid is not None and takeoff.area_uid != selected_area_uid
+
 
 class FakeVisualizationService:
     def __init__(self):
@@ -2812,6 +2818,45 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             QtCore.Qt.TextInteractionFlag.NoTextInteraction,
         )
         self.assertFalse(item.hasFocus())
+        self.assertIsNone(view._selected_text_item)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
+    def test_text_annotation_toolbar_hides_when_inline_edit_commits(self):
+        view = self._make_plan_view()
+        _annotation, _item = self._add_text_annotation(view, text="Before")
+        view._selected_uids = {"a1"}
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        self.assertFalse(view._condition_text_toolbar.isHidden())
+        view._finish_text_annotation_edit(commit=True)
+        self.assertIsNone(view._selected_text_item)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
+        view.cleanup()
+
+    def test_text_annotation_toolbar_action_ignores_stale_target_after_edit(self):
+        view = self._make_plan_view()
+        annotation, _item = self._add_text_annotation(
+            view,
+            text="Before",
+        )
+        emitted = []
+        view.annotation_text_properties_flushed.connect(emitted.extend)
+        view._selected_uids = {"a1"}
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        view._finish_text_annotation_edit(commit=True)
+        emitted.clear()
+        size_index = view._condition_text_size_combo.findData(24)
+        self.assertGreaterEqual(size_index, 0)
+        view._condition_text_size_combo.setCurrentIndex(size_index)
+        view._condition_text_bold_btn.setChecked(True)
+        view._set_condition_text_alignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        self.assertEqual(annotation.properties["FontSize"], 12)
+        self.assertFalse(annotation.properties["FontBold"])
+        self.assertEqual(annotation.properties["TextAlign"], 0)
+        self.assertEqual(emitted, [])
+        self.assertTrue(view._condition_text_toolbar.isHidden())
         view.cleanup()
 
     def test_click_outside_inline_text_edit_clears_text_cursor_selection(self):
@@ -2830,6 +2875,18 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(item.textCursor().selectedText(), "")
         self.assertEqual(annotation.properties["Text"], "After")
         self.assertEqual(view._selected_uids, {"a1"})
+        view.cleanup()
+
+    def test_text_annotation_toolbar_hides_when_selection_clears(self):
+        view = self._make_plan_view()
+        _annotation, _item = self._add_text_annotation(view, text="Before")
+        view._selected_uids = {"a1"}
+        self.assertTrue(view._select_text_annotation_label("a1"))
+        self.assertFalse(view._condition_text_toolbar.isHidden())
+        view.clear_selection()
+        self.assertIsNone(view._selected_text_item)
+        self.assertIsNone(view._selected_text_annotation_uid)
+        self.assertTrue(view._condition_text_toolbar.isHidden())
         view.cleanup()
 
     def test_reenter_inline_text_annotation_edit_has_no_stale_text_selection(self):
@@ -4099,6 +4156,97 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(
             all(item.data(0) != "hidden-ann" for item in view._selection_items)
         )
+        view.cleanup()
+
+    def test_select_objects_in_current_area_uses_visible_takeoff_rules(self):
+        view = self._make_plan_view()
+        view._current_bid_page_uid = "page-1"
+        view._current_conditions = {
+            "visible-condition": Condition(
+                uid="visible-condition",
+                condition_type=Condition.TYPE_AREA,
+                layer_visible=True,
+            ),
+            "hidden-condition": Condition(
+                uid="hidden-condition",
+                condition_type=Condition.TYPE_AREA,
+                layer_visible=False,
+            ),
+        }
+        view._current_takeoffs = {
+            "visible-area": Takeoff(
+                uid="visible-area",
+                condition_uid="visible-condition",
+                page_uid="page-1",
+                area_uid="area-1",
+                position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0],
+            ),
+            "hidden-area": Takeoff(
+                uid="hidden-area",
+                condition_uid="hidden-condition",
+                page_uid="page-1",
+                area_uid="area-1",
+                position=[30.0, 0.0, 50.0, 0.0, 50.0, 20.0],
+            ),
+            "other-area": Takeoff(
+                uid="other-area",
+                condition_uid="visible-condition",
+                page_uid="page-1",
+                area_uid="area-2",
+                position=[0.0, 30.0, 20.0, 30.0, 20.0, 50.0],
+            ),
+            "other-page": Takeoff(
+                uid="other-page",
+                condition_uid="visible-condition",
+                page_uid="page-2",
+                area_uid="area-1",
+                position=[30.0, 30.0, 50.0, 30.0, 50.0, 50.0],
+            ),
+        }
+        view._current_annotations = {}
+        view._uid_to_items = {}
+        view._selection_enabled = True
+        view._cursor_mode = "select"
+        for uid in view._current_takeoffs:
+            item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+            item.setData(0, uid)
+            view._scene.addItem(item)
+            view._uid_to_items[uid] = [item]
+        view.select_takeoffs_in_area("area-1")
+        self.assertEqual(view._selected_uids, {"visible-area"})
+        self.assertTrue(view._selection_items)
+        view.cleanup()
+
+    def test_select_objects_in_current_area_allows_reenabled_layer(self):
+        view = self._make_plan_view()
+        view._current_bid_page_uid = "page-1"
+        condition = Condition(
+            uid="area-condition",
+            condition_type=Condition.TYPE_AREA,
+            layer_visible=False,
+        )
+        view._current_conditions = {condition.uid: condition}
+        view._current_takeoffs = {
+            "area-takeoff": Takeoff(
+                uid="area-takeoff",
+                condition_uid=condition.uid,
+                page_uid="page-1",
+                area_uid="area-1",
+                position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0],
+            )
+        }
+        view._current_annotations = {}
+        item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        item.setData(0, "area-takeoff")
+        view._scene.addItem(item)
+        view._uid_to_items = {"area-takeoff": [item]}
+        view._selection_enabled = True
+        view._cursor_mode = "select"
+        view.select_takeoffs_in_area("area-1")
+        self.assertEqual(view._selected_uids, set())
+        condition.layer_visible = True
+        view.select_takeoffs_in_area("area-1")
+        self.assertEqual(view._selected_uids, {"area-takeoff"})
         view.cleanup()
 
     def test_hidden_layer_prunes_existing_takeoff_selection(self):
