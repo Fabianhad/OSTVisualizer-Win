@@ -296,6 +296,7 @@ class RecordingDeferredPersistence:
         self.page_view_calls = []
         self.selected_page_calls = []
         self.page_area_calls = []
+        self.page_show_mode_calls = []
         self.flush_calls = []
         self.cancel_calls = []
         self.flush_all_calls = 0
@@ -314,6 +315,9 @@ class RecordingDeferredPersistence:
 
     def schedule_page_area_selection(self, db_path, page_uid, area_uid):
         self.page_area_calls.append((db_path, page_uid, area_uid))
+
+    def schedule_page_show_mode(self, db_path, page_uid, show_mode):
+        self.page_show_mode_calls.append((db_path, page_uid, show_mode))
 
     def flush(self):
         self.flush_all_calls += 1
@@ -520,6 +524,38 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [("a.mdb", "bid-1", "p2")],
         )
         self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p2")
+
+    def test_overlay_display_mode_captures_current_camera_before_reload(self):
+        coordinator, pages = self._make_view_state_coordinator()
+        calls = []
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        coordinator._sync_overlay_display_mode = lambda page_uid: calls.append(
+            ("sync", page_uid, pages[page_uid].zoom_fac)
+        )
+        coordinator._update_plan_view = lambda page_uid: calls.append(
+            ("update", page_uid, pages[page_uid].zoom_fac)
+        )
+        coordinator._update_export_menu_state = lambda: calls.append("export")
+        coordinator._on_overlay_display_mode_requested(2)
+        self.assertEqual(pages["p1"].image_show_mode, 2)
+        self.assertEqual(pages["p1"].zoom_fac, 2.5)
+        self.assertEqual(pages["p1"].current_x, 10.0)
+        self.assertEqual(pages["p1"].current_y, 20.0)
+        self.assertEqual(
+            coordinator._deferred_persistence.page_view_calls,
+            [("a.mdb", "p1", 2.5, 10.0, 20.0)],
+        )
+        self.assertEqual(
+            coordinator._deferred_persistence.selected_page_calls,
+            [("a.mdb", "bid-1", "p1")],
+        )
+        self.assertEqual(
+            coordinator._deferred_persistence.page_show_mode_calls,
+            [("a.mdb", "p1", 2)],
+        )
+        self.assertEqual(calls, [("sync", "p1", 2.5), ("update", "p1", 2.5), "export"])
 
     def test_close_flushes_latest_page_view_and_selected_page_writes(self):
         coordinator, _pages = self._make_view_state_coordinator()

@@ -505,6 +505,28 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             show_mode=2,
         )
         self.assertGreater(item.zValue(), 0.35)
+        self.assertLess(item.zValue(), 0.5)
+        view.cleanup()
+
+    def test_overlay_only_item_stays_below_takeoff_body_band(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+            image_show_mode=1,
+        )
+        pixmap = QPixmap(100, 100)
+        item = view._create_overlay_graphics_item(
+            pixmap,
+            page,
+            view_scale=2.0,
+            show_mode=1,
+        )
+        self.assertLess(item.zValue(), 0.5)
         view.cleanup()
 
     def test_show_both_loads_composite_instead_of_separate_layers(self):
@@ -4172,10 +4194,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         self.assertTrue(view.load_page(page, [], {}, {}, annotations=[annotation]))
         self.assertTrue(view._uid_to_items["ann-1"][0].isVisible())
-
         self.assertTrue(view.apply_layer_visibility("annotation-layer", False, {}))
         self.assertFalse(view._uid_to_items["ann-1"][0].isVisible())
-
         self.assertTrue(
             view.refresh_current_page_overlays(
                 page=page,
@@ -4186,7 +4206,6 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             )
         )
         self.assertFalse(view._uid_to_items["ann-1"][0].isVisible())
-
         self.assertTrue(view.apply_layer_visibility("annotation-layer", True, {}))
         self.assertTrue(view._uid_to_items["ann-1"][0].isVisible())
         view.cleanup()
@@ -4211,13 +4230,11 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._current_bid_page_uid = "page-1"
         view._selection_enabled = True
         view._cursor_mode = "select"
-
         self.assertTrue(view.apply_layer_visibility("annotation-layer", False, {}))
         view.set_selected_uids({"ann-1"})
         self.assertEqual(view._selected_uids, set())
         view.select_all()
         self.assertEqual(view._selected_uids, set())
-
         self.assertTrue(view.apply_layer_visibility("annotation-layer", True, {}))
         view.set_selected_uids({"ann-1"})
         self.assertEqual(view._selected_uids, {"ann-1"})

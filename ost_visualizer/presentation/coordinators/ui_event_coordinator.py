@@ -2239,6 +2239,7 @@ class UIEventCoordinator:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             return
         page = self.project_data.get_page(page_uid)
+        self._save_current_page_view_state(selected_page_override=page_uid)
         if page:
             page.image_show_mode = show_mode
         self._deferred_persistence.schedule_page_show_mode(

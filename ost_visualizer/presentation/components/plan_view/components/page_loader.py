@@ -16,7 +16,7 @@ _RENDER_PRIORITY_VISIBLE_FRAME = 1
 _RENDER_PRIORITY_OPTIONAL_BASE = 3
 _SHOW_MODE_OVERLAY_ONLY = 1
 _PDF_FRAME_CURRENT_Z = 0.35
-_OVERLAY_FRAME_CURRENT_Z = 0.65
+_OVERLAY_FRAME_CURRENT_Z = 0.45
 _FRAME_SCALE_LOG_STEP = 0.125
 _VISIBLE_FRAME_OVERSCAN_RATIO = 0.25
 _BASE_RASTER_SCALE_STEP = 0.25
@@ -445,7 +445,7 @@ class PageLoaderMixin:
     ):
         item = QGraphicsPixmapItem(overlay_pixmap)
         item.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
-        z_value = 0.5 if show_mode in (_SHOW_MODE_OVERLAY_ONLY, 2) else 0
+        z_value = 0.45 if show_mode in (_SHOW_MODE_OVERLAY_ONLY, 2) else 0
         item.setZValue(z_value)
         overlay_width = overlay_pixmap.width()
         overlay_height = overlay_pixmap.height()

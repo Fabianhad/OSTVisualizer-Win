@@ -483,17 +483,32 @@ def _visible_frame_lifecycle_view(kind="base"):
     view = TakeoffPlanView.__new__(TakeoffPlanView)
     view._scene = QtWidgets.QGraphicsScene()
     view._scene_scale = 2.0
+    if kind == "composite":
+        image_show_mode = 2
+        image_path = "base.pdf"
+        loaded_visual_kind = "composite"
+        can_zoom_rerender = True
+    elif kind == "overlay":
+        image_show_mode = 1
+        image_path = ""
+        loaded_visual_kind = "overlay"
+        can_zoom_rerender = False
+    else:
+        image_show_mode = 0
+        image_path = "base.pdf"
+        loaded_visual_kind = "page"
+        can_zoom_rerender = True
     view._current_page = Page(
         uid="page-1",
         name="Page 1",
-        image_path="base.pdf",
+        image_path=image_path,
         overlay_image_path="overlay.pdf",
-        image_show_mode=2 if kind == "composite" else 0,
+        image_show_mode=image_show_mode,
         width_pts=100.0,
         height_pts=100.0,
     )
-    view._loaded_visual_kind = "composite" if kind == "composite" else "page"
-    view._can_zoom_rerender = True
+    view._loaded_visual_kind = loaded_visual_kind
+    view._can_zoom_rerender = can_zoom_rerender
     view._disable_high_resolution_images = False
     view._pending_page_data = None
     view._base_raster_scale = 2.0
@@ -525,6 +540,8 @@ def _visible_frame_lifecycle_view(kind="base"):
     view._device_pixel_ratio = lambda: 1.0
     view._overlay_move_suppresses_normal_tiles = lambda: False
     view._cancel_optional_base_correction = lambda: None
+    view._update_optional_overlay_base_coverage = lambda _view_m11, _generation_id: None
+    view._overlay_pdf_tile_transform = lambda: QtGui.QTransform()
     view._viewport_scene_rect = QtCore.QRectF(0.0, 0.0, 50.0, 50.0)
     view.mapToScene = lambda _rect: QtGui.QPolygonF(view._viewport_scene_rect)
     view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
@@ -3387,6 +3404,21 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertLess(
             view._background_item.zValue(), view._visible_frame_item.zValue()
         )
+
+    def test_overlay_only_visible_frame_stays_below_takeoff_body_band(self):
+        view = _visible_frame_lifecycle_view(kind="overlay")
+        view._update_tile_coverage(4.0)
+        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
+        frame_kwargs["callback"](
+            RenderResult(
+                request_id,
+                True,
+                _visible_frame_result_image(frame_kwargs),
+                None,
+            )
+        )
+        self.assertIsNotNone(view._visible_frame_item)
+        self.assertLess(view._visible_frame_item.zValue(), 0.5)
 
     def test_visible_frame_reuses_current_buffered_coverage_on_small_scroll(self):
         view = _visible_frame_lifecycle_view()

@@ -166,9 +166,7 @@ class ViewContextMenuTests(unittest.TestCase):
 
     def test_selected_takeoff_context_state_tracks_common_reassign_geometry(self):
         conditions = {
-            "linear": Condition(
-                uid="linear", condition_type=Condition.TYPE_LINEAR
-            ),
+            "linear": Condition(uid="linear", condition_type=Condition.TYPE_LINEAR),
             "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
         }
         takeoffs = {

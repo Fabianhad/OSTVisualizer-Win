@@ -147,7 +147,6 @@ class OspExporterProgressTests(unittest.TestCase):
             source_files = []
             archive_names = []
             progress = []
-
             exporter._collect_images(
                 raw_data,
                 source_files,
@@ -156,7 +155,6 @@ class OspExporterProgressTests(unittest.TestCase):
                     (current, total, description)
                 ),
             )
-
         self.assertEqual(source_files, [str(first), str(second)])
         self.assertEqual(
             archive_names,
@@ -208,7 +206,6 @@ class OspExporterProgressTests(unittest.TestCase):
             finally:
                 osp_exporter.OstExporter = original_ost_exporter
                 osp_exporter.ost_cab.create_cab_with_names = original_create_cab
-
         self.assertTrue(result.success)
         self.assertEqual(
             [description for _current, _total, description in progress],
