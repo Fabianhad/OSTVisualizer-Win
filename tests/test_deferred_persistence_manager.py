@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QCoreApplication
+from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
@@ -615,6 +616,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                 else []
             ),
             update_all_layer_visibility=lambda _show: ["p1", "p2"],
+            set_bid_layer_visibility=lambda _layers: None,
+            get_hidden_layer_uids=lambda: set(),
             get_selected_page_uids=lambda: list(selected_page_uids),
             get_bid=lambda _bid_ref: None,
             get_page=lambda page_uid: pages.get(page_uid),
@@ -635,6 +638,12 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             update_conditions_quantities=lambda: quantity_calls.append("quantity"),
         )
         coordinator.conditions_sidebar = None
+        coordinator.layer_events = []
+        coordinator.event_bus = SimpleNamespace(
+            publish=lambda event, **kwargs: coordinator.layer_events.append(
+                (event, kwargs)
+            )
+        )
         coordinator._viewer = SimpleNamespace(update_viewers=lambda page_uids: None)
         coordinator._update_plan_view_calls = []
         coordinator._update_plan_view = (
@@ -655,6 +664,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         coordinator.project_data = SimpleNamespace(
             update_all_layer_visibility=lambda _show: ["p1"],
+            set_bid_layer_visibility=lambda _layers: None,
+            get_hidden_layer_uids=lambda: set(),
             get_selected_page_uids=lambda: ["p1"],
             get_bid=lambda _bid_ref: None,
             get_page=lambda _page_uid: None,
@@ -672,6 +683,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             update_conditions_quantities=lambda: quantity_calls.append("quantity"),
         )
         coordinator.conditions_sidebar = None
+        coordinator.event_bus = SimpleNamespace(publish=lambda *_args, **_kwargs: None)
         coordinator.plan_view = None
         mesh_calls = []
         coordinator._viewer = SimpleNamespace(

@@ -13,6 +13,7 @@ class FakeProjectModel:
             SimpleNamespace(uid="p1", layer_visible=True),
             SimpleNamespace(uid="p2", layer_visible=True),
         ]
+        self.bid_layer_visibility = {}
 
     def get_bid_conditions(self):
         return dict(self.bid_conditions)
@@ -22,6 +23,17 @@ class FakeProjectModel:
 
 
 class DeferredPersistenceProjectStateTests(unittest.TestCase):
+    def test_loaded_layer_visibility_tracks_hidden_layer_uids(self):
+        model = FakeProjectModel()
+        service = ProjectDataService(model)
+        service.set_bid_layer_visibility(
+            [
+                SimpleNamespace(uid="l1", show=False),
+                SimpleNamespace(uid="l2", show=True),
+            ]
+        )
+        self.assertEqual(service.get_hidden_layer_uids(), {"l1"})
+
     def test_layer_visibility_updates_condition_memory_immediately(self):
         model = FakeProjectModel()
         service = ProjectDataService(model)
@@ -30,6 +42,7 @@ class DeferredPersistenceProjectStateTests(unittest.TestCase):
         self.assertFalse(model.bid_conditions["c1"].layer_visible)
         self.assertTrue(model.bid_conditions["c2"].layer_visible)
         self.assertTrue(model.pages[0].layer_visible)
+        self.assertEqual(service.get_hidden_layer_uids(), {"l1"})
 
     def test_image_layer_visibility_updates_page_memory_immediately(self):
         model = FakeProjectModel()
@@ -40,11 +53,13 @@ class DeferredPersistenceProjectStateTests(unittest.TestCase):
         self.assertEqual(changed_pages, ["p1", "p2"])
         self.assertFalse(model.pages[0].layer_visible)
         self.assertFalse(model.pages[1].layer_visible)
+        self.assertEqual(service.get_hidden_layer_uids(), {"image"})
 
     def test_show_all_layer_visibility_updates_conditions_and_pages_immediately(self):
         model = FakeProjectModel()
         model.bid_conditions["c1"].layer_visible = False
         model.pages[0].layer_visible = False
+        model.bid_layer_visibility = {"l1": False, "l2": True}
         service = ProjectDataService(model)
         changed_pages = service.update_all_layer_visibility(True)
         self.assertEqual(changed_pages, ["p1", "p2"])
@@ -52,6 +67,7 @@ class DeferredPersistenceProjectStateTests(unittest.TestCase):
         self.assertTrue(model.bid_conditions["c2"].layer_visible)
         self.assertTrue(model.pages[0].layer_visible)
         self.assertTrue(model.pages[1].layer_visible)
+        self.assertEqual(service.get_hidden_layer_uids(), set())
 
 
 if __name__ == "__main__":

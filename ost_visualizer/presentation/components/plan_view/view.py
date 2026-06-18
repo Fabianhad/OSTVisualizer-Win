@@ -4295,6 +4295,7 @@ class TakeoffPlanView(
         bid_ref: Optional[BidRef] = None,
         annotations: Optional[List[BidAnnotation]] = None,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        hidden_layer_uids: Optional[Set[str]] = None,
     ) -> bool:
         return self._load_page_impl(
             page,
@@ -4304,6 +4305,7 @@ class TakeoffPlanView(
             bid_ref,
             annotations,
             page_area_selections,
+            hidden_layer_uids,
         )
 
     def _load_page_impl(
@@ -4315,6 +4317,7 @@ class TakeoffPlanView(
         bid_ref: Optional[BidRef] = None,
         annotations: Optional[List[BidAnnotation]] = None,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        hidden_layer_uids: Optional[Set[str]] = None,
         force_visual_reload: bool = False,
     ) -> bool:
         if self._overlay_move_suppresses_normal_tiles():
@@ -4350,6 +4353,8 @@ class TakeoffPlanView(
                 (same_page_refresh or force_visual_reload) and self._load_view_applied
             ),
         )
+        if hidden_layer_uids is not None:
+            self._hidden_layer_uids = {str(uid) for uid in hidden_layer_uids}
         if same_page_refresh:
             self._refresh_overlays(
                 page,
@@ -4375,6 +4380,8 @@ class TakeoffPlanView(
         preserve_place = not project_changed and self._place_session_uid is not None
         active_load_token = self._current_load_token
         self.clear(preserve_place_session=preserve_place)
+        if hidden_layer_uids is not None:
+            self._hidden_layer_uids = {str(uid) for uid in hidden_layer_uids}
         self._current_load_token = active_load_token
         self._current_bid_ref = resolved_bid_ref
         self.resetTransform()
@@ -4680,6 +4687,7 @@ class TakeoffPlanView(
         bid_ref: Optional[BidRef] = None,
         annotations: Optional[List[BidAnnotation]] = None,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        hidden_layer_uids: Optional[Set[str]] = None,
     ) -> bool:
         if self._current_bid_page_uid != page.uid:
             return False
@@ -4690,6 +4698,8 @@ class TakeoffPlanView(
             strategy = self._load_coordinator.determine_load_strategy(page)
             if strategy.needs_async_loading:
                 return False
+        if hidden_layer_uids is not None:
+            self._hidden_layer_uids = {str(uid) for uid in hidden_layer_uids}
         self._refresh_overlays(
             page,
             takeoffs,

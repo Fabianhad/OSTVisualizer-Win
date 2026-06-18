@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from ...domain.entities.annotation import BidAnnotation
 from ...domain.entities.condition import Condition
 from ...domain.entities.identity_refs import BidRef
@@ -18,3 +18,4 @@ class PageViewDto:
     annotations: List[BidAnnotation] = field(default_factory=list)
     named_view: Optional[NamedView] = None
     page_area_selections: Optional[Dict[str, Optional[str]]] = None
+    hidden_layer_uids: Set[str] = field(default_factory=set)

@@ -63,6 +63,7 @@ class ViewerSyncCoordinator:
         )
         bid_ref = self._ui_state.get_selected_bid_ref()
         page_area_selections = self._project_data.get_page_area_selections()
+        hidden_layer_uids = self._project_data.get_hidden_layer_uids()
         if (
             self.plan_view.current_page_uid == page_uid
             and self.plan_view.refresh_current_page_overlays(
@@ -73,6 +74,7 @@ class ViewerSyncCoordinator:
                 bid_ref=bid_ref,
                 annotations=visible_annotations,
                 page_area_selections=page_area_selections,
+                hidden_layer_uids=hidden_layer_uids,
             )
         ):
             if bid_ref:
@@ -91,6 +93,7 @@ class ViewerSyncCoordinator:
             bid_ref=bid_ref,
             annotations=visible_annotations,
             page_area_selections=page_area_selections,
+            hidden_layer_uids=hidden_layer_uids,
         )
         if bid_ref:
             bid = self._project_data.get_bid(bid_ref)

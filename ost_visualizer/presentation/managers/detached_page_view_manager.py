@@ -98,6 +98,9 @@ class DetachedPageViewManager(IShutdownAware):
             AppEvents.NATIVE_SCENE_UPDATED, self._on_native_scene_updated
         )
         self.event_bus.subscribe(
+            AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed
+        )
+        self.event_bus.subscribe(
             AppEvents.NAMED_VIEW_RENAMED, self._on_named_view_renamed
         )
         self.event_bus.subscribe(
@@ -114,6 +117,9 @@ class DetachedPageViewManager(IShutdownAware):
         if self.event_bus is not None:
             self.event_bus.unsubscribe(
                 AppEvents.NATIVE_SCENE_UPDATED, self._on_native_scene_updated
+            )
+            self.event_bus.unsubscribe(
+                AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed
             )
             self.event_bus.unsubscribe(
                 AppEvents.NAMED_VIEW_RENAMED, self._on_named_view_renamed
@@ -156,6 +162,19 @@ class DetachedPageViewManager(IShutdownAware):
 
     def _on_native_scene_updated(self, **_kwargs) -> None:
         if not self.is_view_open():
+            return
+        self._refresh_signaler.request_refresh()
+
+    def _on_layer_visibility_changed(
+        self, file_path: str = "", bid_uid: str = "", **_kwargs
+    ) -> None:
+        if not self.is_view_open():
+            return
+        view = self.repository.get_active_view()
+        if not view:
+            return
+        bid_ref = view.bid_ref
+        if bid_ref and (bid_ref.file_path != file_path or bid_ref.bid_uid != bid_uid):
             return
         self._refresh_signaler.request_refresh()
 
@@ -479,4 +498,5 @@ class DetachedPageViewManager(IShutdownAware):
             annotations=page_annotations,
             named_view=named_view,
             page_area_selections=self.project_data.get_page_area_selections(),
+            hidden_layer_uids=self.project_data.get_hidden_layer_uids(),
         )

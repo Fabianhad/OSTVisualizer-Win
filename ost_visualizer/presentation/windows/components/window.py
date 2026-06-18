@@ -728,6 +728,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 bid_ref=self.page_data.bid_ref,
                 annotations=self.page_data.annotations,
                 page_area_selections=self.page_data.page_area_selections,
+                hidden_layer_uids=self.page_data.hidden_layer_uids,
             )
             self._apply_named_view_focus_if_possible(require_stable_view=False)
             return True

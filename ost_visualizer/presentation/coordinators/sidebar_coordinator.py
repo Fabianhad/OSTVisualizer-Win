@@ -48,6 +48,7 @@ class SidebarCoordinator:
         layers = self._project_read_service.get_merged_bid_layers(
             bid_ref.file_path, bid_ref.bid_uid
         )
+        self._project_data.set_bid_layer_visibility(layers)
         condition_types = self._project_read_service.get_cdn_types(
             bid_ref.file_path
         ).values()
@@ -67,6 +68,7 @@ class SidebarCoordinator:
         merged = self._project_read_service.get_merged_bid_layers(
             bid_ref.file_path, bid_ref.bid_uid
         )
+        self._project_data.set_bid_layer_visibility(merged)
         if not merged:
             self.bid_layers_sidebar.clear()
             return

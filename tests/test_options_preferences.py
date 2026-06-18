@@ -1,3 +1,4 @@
+import ast
 import math
 import os
 import unittest
@@ -1737,9 +1738,22 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_app_config_updated_is_published_only_by_config_service(self):
         publishers = []
         for path in (REPO_ROOT / "ost_visualizer").rglob("*.py"):
-            text = path.read_text(encoding="utf-8")
-            if "AppEvents.APP_CONFIG_UPDATED" in text and ".publish(" in text:
-                publishers.append(path.relative_to(REPO_ROOT).as_posix())
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not node.args:
+                    continue
+                func = node.func
+                event_arg = node.args[0]
+                if (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "publish"
+                    and isinstance(event_arg, ast.Attribute)
+                    and event_arg.attr == "APP_CONFIG_UPDATED"
+                    and isinstance(event_arg.value, ast.Name)
+                    and event_arg.value.id == "AppEvents"
+                ):
+                    publishers.append(path.relative_to(REPO_ROOT).as_posix())
+                    break
         self.assertEqual(
             publishers,
             ["ost_visualizer/application/services/config_service.py"],

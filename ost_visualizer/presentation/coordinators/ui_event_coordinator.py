@@ -2318,6 +2318,15 @@ class UIEventCoordinator:
         self.project_data.update_layer_visibility(
             layer_uid, show, image_layer=image_layer
         )
+        self.event_bus.publish(
+            AppEvents.LAYER_VISIBILITY_CHANGED,
+            file_path=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            layer_uid=layer_uid,
+            show=show,
+            image_layer=image_layer,
+            all_layers=False,
+        )
         if self._sidebar.bid_layers_sidebar:
             self._sidebar.bid_layers_sidebar.set_layer_visible(layer_uid, show)
         self._refresh_conditions_sidebar_layer_visibility_from_memory()
@@ -2409,7 +2418,6 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return False
-        self.project_data.update_all_layer_visibility(show)
         if self._sidebar.bid_layers_sidebar:
             layers = self._sidebar.bid_layers_sidebar.get_layers()
             self._sidebar.bid_layers_sidebar.set_all_layers_visible(show)
@@ -2417,6 +2425,15 @@ class UIEventCoordinator:
             layers = self._project_read_service.get_merged_bid_layers(
                 bid_ref.file_path, bid_ref.bid_uid
             )
+        self.project_data.set_bid_layer_visibility(layers)
+        self.project_data.update_all_layer_visibility(show)
+        self.event_bus.publish(
+            AppEvents.LAYER_VISIBILITY_CHANGED,
+            file_path=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            show=show,
+            all_layers=True,
+        )
         self._refresh_conditions_sidebar_layer_visibility_from_memory()
         for layer in layers:
             self._deferred_persistence.schedule_layer_show(

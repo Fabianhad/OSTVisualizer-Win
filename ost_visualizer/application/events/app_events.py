@@ -52,6 +52,16 @@ class NativeSceneUpdatedEvent:
 
 
 @dataclass
+class LayerVisibilityChangedEvent:
+    file_path: str = ""
+    bid_uid: str = ""
+    layer_uid: str = ""
+    show: bool = True
+    image_layer: bool = False
+    all_layers: bool = False
+
+
+@dataclass
 class LicenseStatusChangedEvent:
     has_license: bool
 
@@ -102,6 +112,7 @@ class AppEvents:
     FILE_SELECTED = FileSelectedEvent
     APP_CONFIG_UPDATED = AppConfigUpdatedEvent
     NATIVE_SCENE_UPDATED = NativeSceneUpdatedEvent
+    LAYER_VISIBILITY_CHANGED = LayerVisibilityChangedEvent
     LICENSE_STATUS_CHANGED = LicenseStatusChangedEvent
     LICENSE_EXPIRED = LicenseExpiredEvent
     HOTLINK_CLICKED = HotlinkClickedEvent

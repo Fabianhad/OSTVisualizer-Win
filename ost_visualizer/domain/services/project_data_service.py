@@ -11,6 +11,7 @@ from ...domain.entities.project_factory import build_bid
 from ...domain.entities.takeoff import Takeoff
 from ..entities.annotation import BidAnnotation
 from ..entities.condition_folder import BidConditionFolder
+from ..entities.layer import BidLayer
 from .condition_quantity_service import compute_page_quantities
 from .takeoff_domain_service import is_takeoff_visible
 
@@ -103,11 +104,24 @@ class ProjectDataService:
     def get_bid_conditions(self) -> Dict[str, Condition]:
         return self.model.bid_conditions
 
+    def set_bid_layer_visibility(self, layers: Iterable[BidLayer]) -> None:
+        self.model.bid_layer_visibility = {
+            str(layer.uid): bool(layer.show) for layer in layers if layer.uid
+        }
+
+    def get_hidden_layer_uids(self) -> set[str]:
+        return {
+            layer_uid
+            for layer_uid, visible in self.model.bid_layer_visibility.items()
+            if not visible
+        }
+
     def update_layer_visibility(
         self, layer_uid: str, show: bool, *, image_layer: bool = False
     ) -> List[str]:
         changed_pages: List[str] = []
         layer_key = str(layer_uid)
+        self.model.bid_layer_visibility[layer_key] = bool(show)
         for condition in self.model.bid_conditions.values():
             if str(condition.layer_uid or "") == layer_key:
                 condition.layer_visible = bool(show)
@@ -118,6 +132,8 @@ class ProjectDataService:
         return changed_pages
 
     def update_all_layer_visibility(self, show: bool) -> List[str]:
+        for layer_uid in list(self.model.bid_layer_visibility):
+            self.model.bid_layer_visibility[layer_uid] = bool(show)
         for condition in self.model.bid_conditions.values():
             condition.layer_visible = bool(show)
         changed_pages: List[str] = []

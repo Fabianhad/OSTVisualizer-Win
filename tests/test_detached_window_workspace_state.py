@@ -980,6 +980,19 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             [("navigation", "view-1"), ("read_only", False), ("page", "p1")],
         )
 
+    def test_layer_visibility_event_refreshes_matching_detached_view(self):
+        calls = []
+        view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "bid-1"))
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = object()
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._refresh_signaler = SimpleNamespace(
+            request_refresh=lambda: calls.append("refresh")
+        )
+        manager._on_layer_visibility_changed(file_path="bid.mdb", bid_uid="bid-1")
+        manager._on_layer_visibility_changed(file_path="other.mdb", bid_uid="bid-1")
+        self.assertEqual(calls, ["refresh"])
+
     def test_annotation_change_refresh_uses_target_page_uid(self):
         calls = []
         view = SimpleNamespace(target_page_uid="p1")
@@ -1620,6 +1633,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             bid_ref=BidRef("bid.mdb", "bid-1"),
             annotations=[],
             page_area_selections={},
+            hidden_layer_uids={"annotation-layer"},
         )
         window.plan_view = plan_view
         window._navigation_source = "refresh"
@@ -1632,6 +1646,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             (3.25, 120.0, 240.0),
         )
         self.assertEqual(plan_view.load_calls[0]["page"], page)
+        self.assertEqual(
+            plan_view.load_calls[0]["hidden_layer_uids"], {"annotation-layer"}
+        )
 
     def test_detached_hotlink_load_does_not_reuse_previous_window_camera(self):
         page = Page(
@@ -1651,6 +1668,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             bid_ref=BidRef("bid.mdb", "bid-1"),
             annotations=[],
             page_area_selections={},
+            hidden_layer_uids=set(),
         )
         window.plan_view = plan_view
         window._navigation_source = "hotlink"
