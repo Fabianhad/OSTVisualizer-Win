@@ -2306,6 +2306,13 @@ class UIEventCoordinator:
             return
         self.update_layer_visibility_deferred(layer_uid, show)
 
+    def _layer_has_condition_rows(self, layer_uid: str) -> bool:
+        layer_key = str(layer_uid)
+        return any(
+            str(condition.layer_uid or "") == layer_key
+            for condition in self.project_data.get_bid_conditions().values()
+        )
+
     def update_layer_visibility_deferred(self, layer_uid: str, show: bool) -> bool:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
@@ -2316,6 +2323,7 @@ class UIEventCoordinator:
             else None
         )
         image_layer = bool(layer and is_image_layer_name(layer.name))
+        condition_layer = self._layer_has_condition_rows(layer_uid)
         self.project_data.update_layer_visibility(
             layer_uid, show, image_layer=image_layer
         )
@@ -2330,7 +2338,8 @@ class UIEventCoordinator:
         )
         if self._sidebar.bid_layers_sidebar:
             self._sidebar.bid_layers_sidebar.set_layer_visible(layer_uid, show)
-        self._refresh_conditions_sidebar_layer_visibility_from_memory()
+        if condition_layer:
+            self._refresh_conditions_sidebar_layer_visibility_from_memory()
         self._deferred_persistence.schedule_layer_show(
             bid_ref.file_path, layer_uid, show
         )

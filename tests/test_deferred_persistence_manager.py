@@ -589,6 +589,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         layer_name="Layer 1",
         selected_page_uids=None,
         active_page_uid="p1",
+        condition_layer_uid="l1",
     ):
         selected_page_uids = selected_page_uids or [active_page_uid]
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -602,7 +603,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             "p2": Page(uid="p2", name="P2"),
         }
         conditions = {
-            "c1": Condition(uid="c1", name="C1", layer_uid="l1"),
+            "c1": Condition(uid="c1", name="C1", layer_uid=condition_layer_uid),
         }
         coordinator.quantity_update_calls = []
         quantity_calls = coordinator.quantity_update_calls
@@ -655,6 +656,18 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.plan_view = RecordingPlanView()
         coordinator._deferred_persistence = RecordingDeferredPersistence()
         return coordinator
+
+    def _install_conditions_sidebar_recorder(self, coordinator):
+        calls = []
+        coordinator.conditions_sidebar = SimpleNamespace(
+            apply_layer_visibility_state=lambda conditions, grayscale: calls.append(
+                ("apply", list(conditions), grayscale)
+            ),
+            load_conditions=lambda *_args: self.fail(
+                "visibility-only toggle should not reload condition tree"
+            ),
+        )
+        return calls
 
     def test_show_all_without_sidebar_queues_all_layers_from_read_service(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -737,17 +750,42 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
     def test_layer_visibility_updates_conditions_sidebar_without_full_reload(self):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
-        calls = []
-        coordinator.conditions_sidebar = SimpleNamespace(
-            apply_layer_visibility_state=lambda conditions, grayscale: calls.append(
-                ("apply", list(conditions), grayscale)
-            ),
-            load_conditions=lambda *_args: self.fail(
-                "visibility-only toggle should not reload condition tree"
-            ),
-        )
+        calls = self._install_conditions_sidebar_recorder(coordinator)
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
         self.assertEqual(calls, [("apply", ["c1"], False)])
+
+    def test_layers_without_condition_rows_skip_conditions_sidebar_refresh(self):
+        for layer_name in ("Annotation", "Image", "Future Visual", "Custom Empty"):
+            with self.subTest(layer_name=layer_name):
+                coordinator = self._make_visibility_coordinator(
+                    layer_name=layer_name,
+                    condition_layer_uid="other-layer",
+                )
+                calls = self._install_conditions_sidebar_recorder(coordinator)
+                self.assertTrue(
+                    coordinator.update_layer_visibility_deferred("l1", False)
+                )
+                self.assertEqual(calls, [])
+                self.assertEqual(coordinator.quantity_update_calls, [])
+
+    def test_condition_layer_without_condition_rows_skips_conditions_sidebar_refresh(
+        self,
+    ):
+        coordinator = self._make_visibility_coordinator(
+            layer_name="Layer 1",
+            condition_layer_uid="other-layer",
+        )
+        calls = self._install_conditions_sidebar_recorder(coordinator)
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        self.assertEqual(calls, [])
+        self.assertEqual(coordinator.quantity_update_calls, [])
+
+    def test_default_named_layer_with_condition_rows_refreshes_conditions_sidebar(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Annotation")
+        calls = self._install_conditions_sidebar_recorder(coordinator)
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        self.assertEqual(calls, [("apply", ["c1"], False)])
+        self.assertEqual(coordinator.quantity_update_calls, [])
 
     def test_repeated_layer_toggles_refresh_view_immediately(self):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
