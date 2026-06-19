@@ -33,7 +33,8 @@ mapping boundaries.
 
 - Keep existing `.mdb` files readable and writable throughout the migration.
 - Avoid big-bang rewrites. Move one narrow concept at a time.
-- Add compatibility aliases before removing or renaming existing interfaces.
+- Prefer real narrow interfaces over compatibility aliases in unpushed
+  migration work.
 - Add or confirm golden tests before moving behavior that repairs old schemas.
 - Keep persistence-neutral application ports beside existing MDB-named ports
   until all call sites migrate.
@@ -217,8 +218,8 @@ existing import paths during the transition.
 
 - MDB schema vocabulary has an infrastructure home.
 - Domain no longer owns raw table constants.
-- MDB schema import compatibility aliases were removed after all production
-  call sites moved to the infrastructure contract.
+- MDB schema import shims were removed after all production call sites moved to
+  the infrastructure contract.
 
 **Rollback/compatibility notes**
 
@@ -230,8 +231,8 @@ existing import paths during the transition.
 - Added `ost_visualizer/infrastructure/mdb/schema_contract.py` as the canonical
   MDB raw schema contract for OST table sections, raw table lists, and
   `singular(...)`.
-- Updated `ost_visualizer/infrastructure/mdb/ost_schema.py` to re-export the new
-  infrastructure contract for existing infrastructure imports.
+- Removed the temporary infrastructure schema shim after updating production
+  imports to the canonical contract.
 - Updated clean infrastructure call sites to import the contract directly:
   `bid_data_reader.py`, `bid_operations.py`, `import_operations.py`, and
   `importers/ost_importer.py`.
@@ -259,7 +260,7 @@ existing import paths during the transition.
 
 **Validation results**
 
-- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\infrastructure\mdb\schema_contract.py ost_visualizer\infrastructure\mdb\ost_schema.py ost_visualizer\domain\ost_schema.py ost_visualizer\infrastructure\mdb\components\bid_data_reader.py ost_visualizer\infrastructure\mdb\components\bid_operations.py ost_visualizer\infrastructure\mdb\components\import_operations.py ost_visualizer\infrastructure\mdb\importers\ost_importer.py tests\test_mdb_schema_compatibility.py`
+- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\infrastructure\mdb\schema_contract.py ost_visualizer\infrastructure\mdb\components\bid_data_reader.py ost_visualizer\infrastructure\mdb\components\bid_operations.py ost_visualizer\infrastructure\mdb\components\import_operations.py ost_visualizer\infrastructure\mdb\importers\ost_importer.py tests\test_mdb_schema_compatibility.py`
   passed.
 - `.\venv\Scripts\python.exe -m unittest tests.test_mdb_schema_compatibility tests.test_file_project_repository tests.test_infrastructure_lifecycle tests.test_import_refresh_flow -v`
   passed: 19 tests.
@@ -282,7 +283,7 @@ existing import paths during the transition.
 
 **Status**
 
-Complete for the initial neutral alias seam.
+Complete for the initial neutral write-port seam.
 
 **Goal**
 
@@ -299,11 +300,9 @@ use cases can depend on project persistence rather than MDB identity.
 
 **Exact type of changes**
 
-- Add neutral ports such as `ProjectReadPort`, `ProjectWritePort`, and
-  `ProjectStorageConnectionPort`.
-- Make existing MDB implementations satisfy the neutral ports.
-- Keep `IMdbReader`, `IMdbWriter`, and `IMdbConnectionManager` as aliases or
-  thin derived protocols during migration.
+- Add a narrow neutral port for each use case as that use case migrates.
+- Make existing MDB implementations structurally satisfy the neutral port.
+- Do not add compatibility aliases for unused read/write/storage surfaces.
 - Migrate one use case at a time to neutral port names.
 - Avoid changing method signatures until mapper boundaries exist.
 
@@ -326,47 +325,45 @@ use cases can depend on project persistence rather than MDB identity.
 - Application code has a neutral persistence vocabulary.
 - MDB remains the active adapter, but use cases no longer need MDB-specific
   names.
-- Old interface names continue to work until removed in a later cleanup.
+- Existing MDB-named interfaces remain only for call sites that still use them;
+  migrated code depends on a real neutral interface.
 
 **Rollback/compatibility notes**
 
-- Because old ports remain as aliases, individual use case migrations can be
-  reverted without changing MDB implementations.
+- Because neutral ports are structural protocols, individual use case
+  migrations can be reverted without changing MDB implementations.
 
 **Completed work**
 
-- Added neutral application port aliases:
-  `ProjectReadPort`, `ProjectWritePort`, and
-  `ProjectStorageConnectionPort`.
+- Added a real narrow `IProjectWritePort` protocol for layer visibility writes.
+- Removed unused neutral read/storage alias modules.
 - Kept the existing `IMdbReader`, `IMdbWriter`, and `IMdbConnectionManager`
-  protocols unchanged.
-- Migrated `UpdateLayerShowUseCase` to depend on `ProjectWritePort` as the
+  protocols unchanged for call sites that have not migrated yet.
+- Migrated `UpdateLayerShowUseCase` to depend on `IProjectWritePort` as the
   first low-risk use-case annotation.
-- Added tests proving the neutral names alias the existing MDB protocols.
+- Removed the alias test because neutral ports are no longer compatibility
+  aliases.
 
 **Decisions made**
 
-- Use runtime aliases instead of new `Protocol` subclasses for the first seam.
-  The architecture checker requires protocol class names to start with `I`, and
-  aliases avoid duplicating the large MDB method surfaces.
+- Use narrow `I*` protocol names for migrated neutral ports so the architecture
+  checker accepts the interface and the port does not duplicate the whole MDB
+  writer surface.
 - Keep method signatures and DI registration unchanged in this phase.
 - Migrate additional use cases gradually as nearby behavior changes are made.
 
 **Files changed**
 
-- `ost_visualizer/application/interfaces/project_read_port.py`
-- `ost_visualizer/application/interfaces/project_write_port.py`
-- `ost_visualizer/application/interfaces/project_storage_connection_port.py`
+- `ost_visualizer/application/interfaces/i_project_write_port.py`
 - `ost_visualizer/application/use_cases/project/update_layer_show_use_case.py`
-- `tests/test_project_persistence_ports.py`
 - `docs/architecture/mdb_domain_migration_plan.md`
 
 **Validation results**
 
-- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\application\interfaces\project_read_port.py ost_visualizer\application\interfaces\project_write_port.py ost_visualizer\application\interfaces\project_storage_connection_port.py ost_visualizer\application\use_cases\project\update_layer_show_use_case.py tests\test_project_persistence_ports.py`
+- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\application\interfaces\i_project_write_port.py ost_visualizer\application\use_cases\project\update_layer_show_use_case.py`
   passed.
-- `.\venv\Scripts\python.exe -m unittest tests.test_project_persistence_ports tests.test_deferred_persistence_manager tests.test_bid_lock_permissions -v`
-  passed: 78 tests.
+- `.\venv\Scripts\python.exe -m unittest tests.test_deferred_persistence_manager tests.test_bid_lock_permissions -v`
+  passed.
 - `.\venv\Scripts\python.exe tools\check_architecture.py --changed-only`
   passed.
 - `git diff --check` passed with only pre-existing CRLF normalization warnings
@@ -385,9 +382,8 @@ use cases can depend on project persistence rather than MDB identity.
 **Remaining tasks**
 
 - Migrate additional use cases from `IMdbWriter`/`IMdbReader` annotations to
-  neutral ports as their behavior is touched.
-- Replace aliases with narrower neutral protocols only after mapper/export
-  boundaries reduce the raw MDB-shaped method surfaces.
+  narrow neutral ports as their behavior is touched.
+- Do not add neutral aliases for broad MDB-shaped method surfaces.
 
 ## Phase 3: MDB Mappers and Repair/Defaulting Boundary
 
@@ -942,8 +938,8 @@ so presentation no longer owns raw table ordering or schema details.
 
 - `.\venv\Scripts\python.exe -m py_compile ost_visualizer\application\interfaces\i_ost_exporter.py ost_visualizer\application\interfaces\i_osp_exporter.py ost_visualizer\infrastructure\providers.py ost_visualizer\infrastructure\mdb\exporters\__init__.py ost_visualizer\infrastructure\mdb\exporters\ost_exporter.py ost_visualizer\presentation\visualization\exporters\osp_exporter.py tests\test_export_handler.py`
   passed.
-- `.\venv\Scripts\python.exe -m unittest tests.test_export_handler tests.test_mdb_schema_compatibility tests.test_infrastructure_lifecycle tests.test_project_persistence_ports -v`
-  passed: 22 tests.
+- `.\venv\Scripts\python.exe -m unittest tests.test_export_handler tests.test_mdb_schema_compatibility tests.test_infrastructure_lifecycle -v`
+  passed.
 - `.\venv\Scripts\python.exe tools\check_architecture.py --changed-only`
   passed.
 - `git diff --check` passed with only CRLF normalization warnings for modified
@@ -984,18 +980,16 @@ so presentation no longer owns raw table ordering or schema details.
      needs missing coverage.
    - Run `git diff --check`.
 
-2. **Move schema constants with compatibility aliases**
+2. **Move schema constants to the contract**
    - Add the infrastructure MDB schema contract.
-   - Use temporary compatibility aliases only while production imports are
-     being migrated; remove them once callers use the infrastructure contract.
+   - Migrate production imports to the infrastructure contract directly.
    - Update infrastructure imports first.
    - Run py-compile, architecture check, MDB/schema tests, and `git diff --check`.
 
-3. **Add neutral port aliases**
-   - Add `ProjectReadPort`, `ProjectWritePort`, and
-     `ProjectStorageConnectionPort`.
-   - Keep `IMdbReader`, `IMdbWriter`, and `IMdbConnectionManager` as aliases or
-     derived protocols.
+3. **Add neutral ports**
+   - Add narrow `I*` project ports only when a use case migrates to them.
+   - Do not keep `IMdbReader`, `IMdbWriter`, or `IMdbConnectionManager` as
+     compatibility aliases for migrated surfaces.
    - Update one low-risk use case.
 
 4. **Add the first mapper/factory around one narrow concept**
