@@ -1,5 +1,6 @@
 import math
 from typing import Iterator, List, Optional, Tuple
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsPathItem
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
@@ -42,6 +43,7 @@ def create_pattern_items(
     pen = QPen(color)
     pen.setWidthF(line_width)
     pen.setCosmetic(True)
+    pen.setCapStyle(Qt.PenCapStyle.FlatCap)
     if orientation_angle is not None:
         return _create_oriented_pattern_lines(
             contours,
@@ -184,6 +186,7 @@ def create_grid_items(
     pen = QPen(color)
     pen.setWidthF(line_width)
     pen.setCosmetic(True)
+    pen.setCapStyle(Qt.PenCapStyle.FlatCap)
     horizontal_spacing = _convert_spacing(spacing_y, coord_system)
     vertical_spacing = _convert_spacing(spacing_x, coord_system)
     items: List[QGraphicsPathItem] = []

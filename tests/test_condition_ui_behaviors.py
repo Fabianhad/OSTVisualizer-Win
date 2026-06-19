@@ -702,6 +702,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
                 pattern_items = self._line_path_items(items[1:])
                 self.assertGreater(len(pattern_items), 0)
                 for item in pattern_items:
+                    self.assertEqual(item.pen().capStyle(), Qt.PenCapStyle.FlatCap)
                     self._assert_line_avoids_rect(item, 8.0, 8.0, 12.0, 12.0)
 
     def test_area_linear_pattern_without_backout_still_renders_lines(self):
