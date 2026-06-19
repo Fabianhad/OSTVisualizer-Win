@@ -743,6 +743,10 @@ paths.
 
 ## Phase 6: ProjectDataService Reduction
 
+**Status**
+
+Complete for the first delegated behavior.
+
 **Goal**
 
 Gradually reduce `ProjectDataService` from an in-memory database facade into a
@@ -795,6 +799,53 @@ facade over richer domain helpers and aggregates.
   independently.
 - Do not remove service state until all consumers have moved to aggregate-backed
   flows.
+
+**Completed work**
+
+- Delegated Annotation-layer UID lookup and primary visibility resolution from
+  `ProjectDataService` to the domain `LayerSet` helper.
+- Kept `ProjectDataService.is_annotation_layer_visible()` and
+  `ProjectDataService.get_annotation_layer_uid()` as the public facade methods
+  used by presentation and application callers.
+- Preserved the existing name-based visibility fallback for legacy in-memory
+  states that have not populated layer UID/name maps.
+- Added a regression test proving that when a layer UID exists, UID-keyed layer
+  visibility is the source of truth over a stale name-keyed visibility entry.
+
+**Decisions made**
+
+- Use `LayerSet` for identity/visibility lookup only; leave layer mutation,
+  condition-row updates, and page image visibility orchestration in
+  `ProjectDataService` until they have a narrower aggregate/helper target.
+- Prefer UID-keyed visibility when the Annotation layer UID is known because it
+  matches the general layer-backed graphics model and avoids stale duplicate
+  name visibility state.
+- Keep the compatibility fallback for older tests or transient model states
+  that only carry `bid_layer_visibility_by_name`.
+
+**Files changed**
+
+- `ost_visualizer/domain/services/project_data_service.py`
+- `tests/test_deferred_persistence_project_state.py`
+- `docs/architecture/mdb_domain_migration_plan.md`
+
+**Validation results**
+
+- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\domain\services\project_data_service.py tests\test_deferred_persistence_project_state.py`
+  passed.
+- `.\venv\Scripts\python.exe -m unittest tests.test_deferred_persistence_project_state tests.test_domain_layers tests.test_annotation_creation_factory -v`
+  passed: 15 tests.
+- `.\venv\Scripts\python.exe tools\check_architecture.py --changed-only`
+  passed.
+- `git diff --check` passed with only CRLF normalization warnings for modified
+  files.
+
+**Remaining tasks**
+
+- Delegate additional `ProjectDataService` behavior only when each behavior has
+  focused tests and a clear domain helper target.
+- Candidate future slices: condition layer ownership updates, page image-layer
+  visibility updates, and annotation style mutation.
 
 ## Phase 7: Raw Export Boundary
 

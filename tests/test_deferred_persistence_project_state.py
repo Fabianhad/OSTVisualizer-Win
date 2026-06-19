@@ -51,6 +51,16 @@ class DeferredPersistenceProjectStateTests(unittest.TestCase):
         service.update_all_layer_visibility(True)
         self.assertTrue(service.is_annotation_layer_visible())
 
+    def test_annotation_layer_visibility_prefers_layer_uid_state(self):
+        model = FakeProjectModel()
+        model.bid_layer_visibility = {"l1": False}
+        model.bid_layer_names_by_uid = {"l1": "Annotation"}
+        model.bid_layer_visibility_by_name = {"annotation": True}
+        service = ProjectDataService(model)
+
+        self.assertEqual(service.get_annotation_layer_uid(), "l1")
+        self.assertFalse(service.is_annotation_layer_visible())
+
     def test_layer_visibility_updates_condition_memory_immediately(self):
         model = FakeProjectModel()
         service = ProjectDataService(model)

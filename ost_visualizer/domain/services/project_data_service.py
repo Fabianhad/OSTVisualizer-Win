@@ -11,7 +11,13 @@ from ...domain.entities.project_factory import build_bid
 from ...domain.entities.takeoff import Takeoff
 from ..entities.annotation import BidAnnotation
 from ..entities.condition_folder import BidConditionFolder
-from ..entities.layer import ANNOTATION_LAYER_NAME, BidLayer, normalize_layer_name
+from ..entities.layer import (
+    ANNOTATION_LAYER_NAME,
+    BidLayer,
+    Layer,
+    LayerSet,
+    normalize_layer_name,
+)
 from .condition_quantity_service import compute_page_quantities
 from .takeoff_domain_service import is_takeoff_visible
 
@@ -131,14 +137,25 @@ class ProjectDataService:
         if layer_name:
             self.model.bid_layer_visibility_by_name[layer_name] = visible
 
+    def _bid_layer_set(self) -> LayerSet:
+        layers = {}
+        for layer_uid, layer_name in self.model.bid_layer_names_by_uid.items():
+            normalized_uid = str(layer_uid)
+            layers[normalized_uid] = Layer(
+                uid=normalized_uid,
+                name=layer_name,
+                visible=self.model.bid_layer_visibility.get(normalized_uid, True),
+            )
+        return LayerSet(layers)
+
     def is_annotation_layer_visible(self) -> bool:
+        layer_set = self._bid_layer_set()
+        if layer_set.annotation_layer_uid() is not None:
+            return layer_set.annotation_layer_visible()
         return self.model.bid_layer_visibility_by_name.get(ANNOTATION_LAYER_NAME, True)
 
     def get_annotation_layer_uid(self) -> Optional[str]:
-        for layer_uid, layer_name in self.model.bid_layer_names_by_uid.items():
-            if normalize_layer_name(layer_name) == ANNOTATION_LAYER_NAME:
-                return layer_uid
-        return None
+        return self._bid_layer_set().annotation_layer_uid()
 
     def update_layer_visibility(
         self, layer_uid: str, show: bool, *, image_layer: bool = False
