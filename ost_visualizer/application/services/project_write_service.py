@@ -568,7 +568,11 @@ class ProjectWriteService(BaseWriteService):
         )
 
     def save_takeoffs_area(
-        self, db_path: str, takeoff_uids: List[str], area_uid: str
+        self,
+        db_path: str,
+        takeoff_uids: List[str],
+        area_uid: str,
+        publish_database_refreshed_after_write: bool = True,
     ) -> bool:
         return self._save_takeoffs_assignment(
             "save_takeoffs_area",
@@ -576,10 +580,15 @@ class ProjectWriteService(BaseWriteService):
             db_path,
             takeoff_uids,
             area_uid,
+            publish_database_refreshed_after_write,
         )
 
     def save_takeoffs_condition(
-        self, db_path: str, takeoff_uids: List[str], condition_uid: str
+        self,
+        db_path: str,
+        takeoff_uids: List[str],
+        condition_uid: str,
+        publish_database_refreshed_after_write: bool = True,
     ) -> bool:
         return self._save_takeoffs_assignment(
             "save_takeoffs_condition",
@@ -587,6 +596,7 @@ class ProjectWriteService(BaseWriteService):
             db_path,
             takeoff_uids,
             condition_uid,
+            publish_database_refreshed_after_write,
         )
 
     def _save_takeoffs_assignment(
@@ -596,14 +606,21 @@ class ProjectWriteService(BaseWriteService):
         db_path: str,
         takeoff_uids: List[str],
         target_uid: str,
+        publish_database_refreshed_after_write: bool,
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(operation, db_path):
             return False
         success = use_case.execute(db_path, takeoff_uids, target_uid)
-        return self._reload_after_success(db_path, success)
+        return self._reload_after_success(
+            db_path, success, publish_database_refreshed_after_write
+        )
 
     def set_takeoffs_negative(
-        self, db_path: str, takeoff_uids: List[str], is_negative: bool
+        self,
+        db_path: str,
+        takeoff_uids: List[str],
+        is_negative: bool,
+        publish_database_refreshed_after_write: bool = True,
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "set_takeoffs_negative", db_path
@@ -612,7 +629,9 @@ class ProjectWriteService(BaseWriteService):
         success = self._set_takeoffs_negative.execute(
             db_path, takeoff_uids, is_negative
         )
-        return self._reload_after_success(db_path, success)
+        return self._reload_after_success(
+            db_path, success, publish_database_refreshed_after_write
+        )
 
     def insert_takeoffs(
         self,

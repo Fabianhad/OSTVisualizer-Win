@@ -516,6 +516,13 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(results["area"][0], 180.0)
         self.assertEqual(linear_takeoff.position, [0.0, 0.0, 13.0, 0.0])
 
+    def test_partial_quantity_request_returns_zero_for_condition_without_takeoffs(self):
+        condition = Condition(uid="c1", condition_type=Condition.TYPE_AREA)
+        results = compute_page_quantities(
+            {"c1": condition}, [], only_condition_uids={"c1"}
+        )
+        self.assertEqual(results, {"c1": (0.0, 0.0, 0.0)})
+
     def test_display_name_dimension_and_grid_render_as_scene_items(self):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
         condition = Condition(

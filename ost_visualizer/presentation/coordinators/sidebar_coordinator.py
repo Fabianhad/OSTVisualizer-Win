@@ -89,9 +89,15 @@ class SidebarCoordinator:
         self.load_conditions_sidebar()
         self.update_conditions_quantities()
 
-    def update_conditions_quantities(self) -> None:
+    def update_conditions_quantities(self, condition_uids=None) -> None:
         if not self.conditions_sidebar:
             return
+        is_partial = condition_uids is not None
+        affected_condition_uids = set()
+        if condition_uids is not None:
+            affected_condition_uids = {str(uid) for uid in condition_uids if uid}
+            if not affected_condition_uids:
+                return
         is_3d = self._view_stack and self._view_stack.currentIndex() == 0
         if is_3d:
             page_uids = self._project_data.get_selected_page_uids()
@@ -99,7 +105,13 @@ class SidebarCoordinator:
             active_2d = self._ui_state.active_page_uid
             page_uids = [active_2d] if active_2d else []
         if not page_uids:
-            self.conditions_sidebar.update_quantities({})
+            self.conditions_sidebar.update_quantities({}, partial=is_partial)
+            return
+        if is_partial:
+            quantities = self._project_data.compute_quantities_for_pages(
+                page_uids, only_condition_uids=affected_condition_uids
+            )
+            self.conditions_sidebar.update_quantities(quantities, partial=True)
             return
         quantities = self._project_data.compute_quantities_for_pages(page_uids)
         self.conditions_sidebar.update_quantities(quantities)

@@ -76,6 +76,24 @@ class DomainLifecycleTests(unittest.TestCase):
             {"view_page": [700, 500]},
         )
 
+    def test_workspace_detached_window_missing_fullscreen_defaults_false(self):
+        state = WorkspaceState.from_dict(
+            {
+                "detached_windows": {
+                    "annotation_view": {
+                        "open": True,
+                        "geometry_b64": "saved-geometry",
+                        "is_maximized": False,
+                    }
+                }
+            }
+        )
+        annotation_state = state.detached_windows.annotation_view
+        self.assertTrue(annotation_state.open)
+        self.assertEqual(annotation_state.geometry_b64, "saved-geometry")
+        self.assertFalse(annotation_state.is_maximized)
+        self.assertFalse(annotation_state.is_fullscreen)
+
 
 if __name__ == "__main__":
     unittest.main()

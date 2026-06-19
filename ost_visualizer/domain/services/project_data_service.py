@@ -374,6 +374,67 @@ class ProjectDataService:
                 seen.add(takeoff.page_uid)
         return page_uids
 
+    def get_condition_uids_for_takeoffs(self, takeoff_uids: Iterable[str]) -> List[str]:
+        wanted = {str(uid) for uid in takeoff_uids if uid}
+        if not wanted:
+            return []
+        condition_uids = []
+        seen = set()
+        for takeoff in self.model.get_all_takeoffs():
+            if takeoff.uid in wanted and takeoff.condition_uid not in seen:
+                condition_uids.append(takeoff.condition_uid)
+                seen.add(takeoff.condition_uid)
+        return condition_uids
+
+    def update_takeoffs_area(
+        self, takeoff_uids: Iterable[str], area_uid: str
+    ) -> List[str]:
+        wanted = {str(uid) for uid in takeoff_uids if uid}
+        page_uids = self.get_page_uids_for_takeoffs(wanted)
+        if not wanted:
+            return page_uids
+        target_area_uid = str(area_uid or "0")
+        for takeoff in self.model.get_all_takeoffs():
+            if takeoff.uid in wanted:
+                takeoff.area_uid = target_area_uid
+        return page_uids
+
+    def update_takeoffs_condition(
+        self, takeoff_uids: Iterable[str], condition_uid: str
+    ) -> List[str]:
+        wanted = {str(uid) for uid in takeoff_uids if uid}
+        page_uids = self.get_page_uids_for_takeoffs(wanted)
+        if not wanted:
+            return page_uids
+        target_condition_uid = str(condition_uid)
+        for takeoff in self.model.get_all_takeoffs():
+            if takeoff.uid in wanted:
+                takeoff.condition_uid = target_condition_uid
+        return page_uids
+
+    def update_takeoffs_negative(
+        self, takeoff_uids: Iterable[str], is_negative: bool
+    ) -> List[str]:
+        wanted = {str(uid) for uid in takeoff_uids if uid}
+        page_uids = self.get_page_uids_for_takeoffs(wanted)
+        if not wanted:
+            return page_uids
+        for takeoff in self.model.get_all_takeoffs():
+            if takeoff.uid in wanted:
+                takeoff.is_negative = bool(is_negative)
+        return page_uids
+
+    def update_takeoff_curve(
+        self, takeoff_uid: str, position: List[float], curve: int
+    ) -> List[str]:
+        page_uids = self.get_page_uids_for_takeoffs([takeoff_uid])
+        for takeoff in self.model.get_all_takeoffs():
+            if takeoff.uid == str(takeoff_uid):
+                takeoff.position = list(position)
+                takeoff.curve = int(curve)
+                break
+        return page_uids
+
     def update_takeoff_positions(
         self, positions: Iterable[Tuple[str, List[float]]]
     ) -> List[str]:
@@ -490,13 +551,13 @@ class ProjectDataService:
         return None
 
     def compute_quantities_for_pages(
-        self, page_uids: List[str]
+        self, page_uids: List[str], only_condition_uids: Optional[set] = None
     ) -> Dict[str, Tuple[float, float, float]]:
         conditions = self.model.bid_conditions
         all_takeoffs: List[Takeoff] = []
         for uid in page_uids:
             all_takeoffs.extend(self.model.get_page_takeoffs(uid))
-        return compute_page_quantities(conditions, all_takeoffs)
+        return compute_page_quantities(conditions, all_takeoffs, only_condition_uids)
 
     def project_has_bids(self, project_uid: str) -> bool:
         hierarchy = self.model.get_hierarchy_data()

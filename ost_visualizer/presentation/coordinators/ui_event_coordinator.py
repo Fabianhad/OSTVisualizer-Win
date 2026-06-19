@@ -1340,12 +1340,13 @@ class UIEventCoordinator:
 
     def _on_takeoffs_changed(self, **kwargs) -> None:
         page_uid = kwargs.get("page_uid") or self.ui_state_manager.active_page_uid
+        condition_uids = kwargs.get("condition_uids")
         if page_uid:
             self._refresh_takeoff_dependent_page_controls(page_uid)
         if page_uid:
-            self._update_plan_view(page_uid)
+            self._update_plan_view(page_uid, condition_uids=condition_uids)
         else:
-            self._update_plan_view_for_active()
+            self._update_plan_view_for_active(condition_uids=condition_uids)
         self._viewer.update_viewers(self.project_data.get_selected_page_uids())
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
@@ -1839,15 +1840,21 @@ class UIEventCoordinator:
     def _load_takeoff_sidebar(self, bid_ref: BidRef) -> None:
         self._sidebar.load_takeoff_sidebar(bid_ref, self._bid_data_cache)
 
-    def _update_plan_view_for_active(self) -> None:
+    def _update_plan_view_for_active(self, condition_uids=None) -> None:
         self._viewer.update_plan_view_for_active()
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
-        self._sidebar.update_conditions_quantities()
+        if condition_uids is None:
+            self._sidebar.update_conditions_quantities()
+        else:
+            self._sidebar.update_conditions_quantities(condition_uids=condition_uids)
 
-    def _update_plan_view(self, page_uid: Optional[str]) -> None:
+    def _update_plan_view(self, page_uid: Optional[str], condition_uids=None) -> None:
         self._viewer.update_plan_view(page_uid)
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
-        self._sidebar.update_conditions_quantities()
+        if condition_uids is None:
+            self._sidebar.update_conditions_quantities()
+        else:
+            self._sidebar.update_conditions_quantities(condition_uids=condition_uids)
 
     def _on_condition_selected(self, condition_uid: str) -> None:
         if not condition_uid:

@@ -986,6 +986,32 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [{"c1": (1.0, 0.0, 0.0), "c2": (2.0, 0.0, 0.0)}],
         )
 
+    def test_sidebar_quantity_update_accepts_partial_condition_uids(self):
+        quantity_calls = []
+        sidebar_calls = []
+
+        def compute_quantities(page_uids, only_condition_uids=None):
+            quantity_calls.append((list(page_uids), set(only_condition_uids or [])))
+            return {uid: (3.0, 0.0, 0.0) for uid in only_condition_uids or []}
+
+        project_data = SimpleNamespace(
+            get_selected_page_uids=lambda: ["p1"],
+            compute_quantities_for_pages=compute_quantities,
+        )
+        sidebar = SidebarCoordinator(
+            project_read_service=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(active_page_uid="p1"),
+            project_data=project_data,
+        )
+        sidebar.conditions_sidebar = SimpleNamespace(
+            update_quantities=lambda quantities, partial=False: sidebar_calls.append(
+                (dict(quantities), partial)
+            )
+        )
+        sidebar.update_conditions_quantities(condition_uids=["c2"])
+        self.assertEqual(quantity_calls, [(["p1"], {"c2"})])
+        self.assertEqual(sidebar_calls, [({"c2": (3.0, 0.0, 0.0)}, True)])
+
     def test_page_area_change_updates_model_immediately_and_defers_write(self):
         area_selections = {"p1": None}
         direct_writes = []

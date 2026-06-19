@@ -251,7 +251,7 @@ class DetachedWindowState:
             open=_coerce_bool(data.get("open"), False),
             geometry_b64=_coerce_optional_str(data.get("geometry_b64")),
             is_maximized=_coerce_bool(data.get("is_maximized"), False),
-            is_fullscreen=_coerce_bool(data["is_fullscreen"], False),
+            is_fullscreen=_coerce_bool(data.get("is_fullscreen"), False),
         )
 
 

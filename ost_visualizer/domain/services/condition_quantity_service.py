@@ -21,6 +21,10 @@ def compute_page_quantities(
             if not only_condition_uids or t.condition_uid in only_condition_uids:
                 holes_by_parent[t.parent_uid].append(t)
     result: Dict[str, Tuple[float, float, float]] = {}
+    if only_condition_uids:
+        for cond_uid in only_condition_uids:
+            if cond_uid in conditions:
+                result[cond_uid] = (0.0, 0.0, 0.0)
     for cond_uid, cond_takeoffs in by_condition.items():
         condition = conditions.get(cond_uid)
         if not condition:

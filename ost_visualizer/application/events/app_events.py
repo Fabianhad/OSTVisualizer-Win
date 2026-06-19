@@ -17,6 +17,7 @@ class DatabaseRefreshedEvent:
 class TakeoffsChangedEvent:
     page_uid: str = ""
     takeoff_uids: list = field(default_factory=list)
+    condition_uids: list = field(default_factory=list)
 
 
 @dataclass

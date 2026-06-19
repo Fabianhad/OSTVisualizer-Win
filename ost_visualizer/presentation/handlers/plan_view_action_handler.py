@@ -198,8 +198,16 @@ class PlanViewActionHandler:
         return [u for u in uids if self._resolver.resolve_takeoff(u)]
 
     def _publish_takeoffs_changed_for_pages(
-        self, page_uids: List[str], takeoff_uids: List[str]
+        self,
+        page_uids: List[str],
+        takeoff_uids: List[str],
+        condition_uids: Optional[List[str]] = None,
     ) -> None:
+        affected_condition_uids = condition_uids
+        if affected_condition_uids is None:
+            affected_condition_uids = self._data_svc.get_condition_uids_for_takeoffs(
+                takeoff_uids
+            )
         seen = set()
         for page_uid in page_uids:
             if not page_uid or page_uid in seen:
@@ -209,6 +217,7 @@ class PlanViewActionHandler:
                 AppEvents.TAKEOFFS_CHANGED,
                 page_uid=page_uid,
                 takeoff_uids=takeoff_uids,
+                condition_uids=list(affected_condition_uids),
             )
 
     def _save_takeoff_positions_fast(
@@ -375,12 +384,15 @@ class PlanViewActionHandler:
     def _delete_takeoffs_fast(self, db_path: str, takeoff_uids: List[str]) -> bool:
         if not takeoff_uids:
             return True
+        condition_uids = self._data_svc.get_condition_uids_for_takeoffs(takeoff_uids)
         if not self._write_svc.delete_takeoffs(
             db_path, takeoff_uids, publish_database_refreshed_after_write=False
         ):
             return False
         page_uids = self._data_svc.remove_takeoffs(takeoff_uids)
-        self._publish_takeoffs_changed_for_pages(page_uids, list(takeoff_uids))
+        self._publish_takeoffs_changed_for_pages(
+            page_uids, list(takeoff_uids), condition_uids=condition_uids
+        )
         return True
 
     def _insert_takeoffs_fast(
@@ -408,6 +420,20 @@ class PlanViewActionHandler:
     def _takeoff_specs_allow_fast_refresh(self, specs: List[InsertTakeoffSpec]) -> bool:
         return all(not spec.raw_extras for spec in specs)
 
+    def _takeoffs_allow_fast_delete(
+        self, takeoffs: List[Takeoff], saved_takeoff_extras: dict
+    ) -> bool:
+        deleting_uids = {str(takeoff.uid) for takeoff in takeoffs}
+        for takeoff in takeoffs:
+            parent_uid = str(takeoff.parent_uid or "0")
+            if parent_uid not in ("0", "") and parent_uid in deleting_uids:
+                return False
+            extras = self._data_svc.get_takeoff_extras(takeoff.uid)
+            saved_takeoff_extras[takeoff.uid] = dict(extras)
+            if not self._same_bid_takeoff_extras_allow_fast_refresh(extras):
+                return False
+        return True
+
     def on_assign_to_area(self, uids: list) -> None:
         if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
@@ -416,7 +442,17 @@ class PlanViewActionHandler:
         if not db_path or not takeoff_uids:
             return
         area_uid = self._page_settings_bar.get_current_area_uid()
-        self._write_svc.save_takeoffs_area(db_path, takeoff_uids, area_uid)
+        if not self._write_svc.save_takeoffs_area(
+            db_path,
+            takeoff_uids,
+            area_uid,
+            publish_database_refreshed_after_write=False,
+        ):
+            return
+        page_uids = self._data_svc.update_takeoffs_area(takeoff_uids, area_uid)
+        self._publish_takeoffs_changed_for_pages(
+            page_uids, takeoff_uids, condition_uids=[]
+        )
 
     def on_reassign_condition(self, uids: list, condition_uid: str) -> None:
         if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
@@ -439,8 +475,26 @@ class PlanViewActionHandler:
             )
         ):
             return
-        self._write_svc.save_takeoffs_condition(
-            db_path, takeoff_uids, str(condition_uid)
+        old_condition_uids = self._data_svc.get_condition_uids_for_takeoffs(
+            takeoff_uids
+        )
+        if not self._write_svc.save_takeoffs_condition(
+            db_path,
+            takeoff_uids,
+            str(condition_uid),
+            publish_database_refreshed_after_write=False,
+        ):
+            return
+        page_uids = self._data_svc.update_takeoffs_condition(
+            takeoff_uids, str(condition_uid)
+        )
+        affected_condition_uids = self._unique_ordered(
+            old_condition_uids + [str(condition_uid)]
+        )
+        self._publish_takeoffs_changed_for_pages(
+            page_uids,
+            takeoff_uids,
+            condition_uids=affected_condition_uids,
         )
 
     def on_set_negative(self, uids: list, is_negative: bool) -> None:
@@ -450,7 +504,18 @@ class PlanViewActionHandler:
         takeoff_uids = self._takeoff_uids_only(uids)
         if not db_path or not takeoff_uids:
             return
-        self._write_svc.set_takeoffs_negative(db_path, takeoff_uids, is_negative)
+        condition_uids = self._data_svc.get_condition_uids_for_takeoffs(takeoff_uids)
+        if not self._write_svc.set_takeoffs_negative(
+            db_path,
+            takeoff_uids,
+            is_negative,
+            publish_database_refreshed_after_write=False,
+        ):
+            return
+        page_uids = self._data_svc.update_takeoffs_negative(takeoff_uids, is_negative)
+        self._publish_takeoffs_changed_for_pages(
+            page_uids, takeoff_uids, condition_uids=condition_uids
+        )
 
     def on_set_curved(self, uids: list, make_curved: bool) -> None:
         if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
@@ -460,7 +525,9 @@ class PlanViewActionHandler:
         if not db_path or not takeoff_uids:
             return
         cs = self._plan_view.get_coordinate_system()
-        changed = False
+        changed_uids = []
+        page_uids = []
+        condition_uids = []
         for uid in takeoff_uids:
             takeoff = self._resolver.resolve_takeoff(uid)
             if not takeoff:
@@ -473,30 +540,26 @@ class PlanViewActionHandler:
                 cx = (x1 + x2) / 2.0
                 cy = (y1 + y2) / 2.0
                 pos = [x1, y1, x2, y2, cx, cy, 0.0]
-                changed = (
-                    self._write_svc.set_takeoff_curve(
-                        db_path,
-                        uid,
-                        pos,
-                        Takeoff.CURVE_ENABLED,
-                        publish_database_refreshed_after_write=False,
-                    )
-                    or changed
-                )
+                curve = Takeoff.CURVE_ENABLED
             else:
                 pos = list(pos[:4])
-                changed = (
-                    self._write_svc.set_takeoff_curve(
-                        db_path,
-                        uid,
-                        pos,
-                        Takeoff.CURVE_DISABLED,
-                        publish_database_refreshed_after_write=False,
-                    )
-                    or changed
-                )
-        if changed:
-            self._write_svc.reload_and_notify(db_path)
+                curve = Takeoff.CURVE_DISABLED
+            if not self._write_svc.set_takeoff_curve(
+                db_path,
+                uid,
+                pos,
+                curve,
+                publish_database_refreshed_after_write=False,
+            ):
+                continue
+            changed_uids.append(uid)
+            page_uids.extend(self._data_svc.update_takeoff_curve(uid, pos, curve))
+            if takeoff.condition_uid not in condition_uids:
+                condition_uids.append(takeoff.condition_uid)
+        if changed_uids:
+            self._publish_takeoffs_changed_for_pages(
+                page_uids, changed_uids, condition_uids=condition_uids
+            )
 
     def on_positions_flushed(self, takeoff_changes: list, ann_changes: list) -> None:
         if (takeoff_changes or ann_changes) and not self._is_allowed(
@@ -1241,7 +1304,11 @@ class PlanViewActionHandler:
             )
             for p in placements
         ]
-        self._insert_takeoffs_with_undo(bid_ref, specs)
+        same_bid_paste = (
+            source_bid_uid == bid_ref.bid_uid
+            and self._clipboard_svc.source_file_path == bid_ref.file_path
+        )
+        self._insert_takeoffs_with_undo(bid_ref, specs, fast_refresh=same_bid_paste)
 
     def _insert_takeoffs_with_undo(
         self, bid_ref, specs: List[InsertTakeoffSpec], fast_refresh: bool = False
@@ -1396,15 +1463,9 @@ class PlanViewActionHandler:
         simple_takeoff_delete = bool(saved_takeoffs) and not saved_annotations
         saved_takeoff_extras = {}
         if simple_takeoff_delete:
-            for takeoff in saved_takeoffs:
-                if takeoff.parent_uid not in ("0", "", None):
-                    simple_takeoff_delete = False
-                    break
-                extras = self._data_svc.get_takeoff_extras(takeoff.uid)
-                saved_takeoff_extras[takeoff.uid] = dict(extras)
-                if not self._same_bid_takeoff_extras_allow_fast_refresh(extras):
-                    simple_takeoff_delete = False
-                    break
+            simple_takeoff_delete = self._takeoffs_allow_fast_delete(
+                saved_takeoffs, saved_takeoff_extras
+            )
         if simple_takeoff_delete:
             specs = [
                 InsertTakeoffSpec(

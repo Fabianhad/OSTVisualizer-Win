@@ -172,6 +172,55 @@ class FakeProjectData:
     def get_bid_conditions(self):
         return dict(self.conditions)
 
+    def get_condition_uids_for_takeoffs(self, uids):
+        wanted = {str(uid) for uid in uids if uid}
+        result = []
+        for takeoff in self.takeoffs.values():
+            if takeoff.uid in wanted and takeoff.condition_uid not in result:
+                result.append(takeoff.condition_uid)
+        return result
+
+    def update_takeoffs_area(self, uids, area_uid):
+        page_uids = []
+        for uid in uids:
+            takeoff = self.takeoffs.get(uid)
+            if takeoff is None:
+                continue
+            takeoff.area_uid = str(area_uid or "0")
+            if takeoff.page_uid not in page_uids:
+                page_uids.append(takeoff.page_uid)
+        return page_uids
+
+    def update_takeoffs_condition(self, uids, condition_uid):
+        page_uids = []
+        for uid in uids:
+            takeoff = self.takeoffs.get(uid)
+            if takeoff is None:
+                continue
+            takeoff.condition_uid = str(condition_uid)
+            if takeoff.page_uid not in page_uids:
+                page_uids.append(takeoff.page_uid)
+        return page_uids
+
+    def update_takeoffs_negative(self, uids, is_negative):
+        page_uids = []
+        for uid in uids:
+            takeoff = self.takeoffs.get(uid)
+            if takeoff is None:
+                continue
+            takeoff.is_negative = bool(is_negative)
+            if takeoff.page_uid not in page_uids:
+                page_uids.append(takeoff.page_uid)
+        return page_uids
+
+    def update_takeoff_curve(self, uid, position, curve):
+        takeoff = self.takeoffs.get(uid)
+        if takeoff is None:
+            return []
+        takeoff.position = list(position)
+        takeoff.curve = int(curve)
+        return [takeoff.page_uid]
+
     def update_takeoff_positions(self, positions):
         page_uids = []
         for uid, position in positions:
@@ -338,6 +387,8 @@ class FakeWriteService:
         self.position_calls = []
         self.rotation_calls = []
         self.text_property_calls = []
+        self.area_calls = []
+        self.negative_calls = []
         self.delete_calls = []
         self.curve_calls = []
         self.reloads = []
@@ -385,8 +436,28 @@ class FakeWriteService:
         )
         return True
 
-    def save_takeoffs_condition(self, db_path, uids, condition_uid):
-        self.condition_calls.append((db_path, list(uids), condition_uid))
+    def save_takeoffs_area(
+        self, db_path, uids, area_uid, publish_database_refreshed_after_write=True
+    ):
+        self.area_calls.append(
+            (db_path, list(uids), area_uid, publish_database_refreshed_after_write)
+        )
+        return True
+
+    def save_takeoffs_condition(
+        self, db_path, uids, condition_uid, publish_database_refreshed_after_write=True
+    ):
+        self.condition_calls.append(
+            (db_path, list(uids), condition_uid, publish_database_refreshed_after_write)
+        )
+        return True
+
+    def set_takeoffs_negative(
+        self, db_path, uids, is_negative, publish_database_refreshed_after_write=True
+    ):
+        self.negative_calls.append(
+            (db_path, list(uids), is_negative, publish_database_refreshed_after_write)
+        )
         return True
 
     def delete_takeoffs(
@@ -827,7 +898,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             width=1.0,
         )
 
-    def test_set_curved_batches_reload_until_after_all_curve_updates(self):
+    def test_set_curved_uses_targeted_update_after_curve_writes(self):
         data = FakeProjectData()
         data.takeoffs = {
             "t1": Takeoff(
@@ -844,6 +915,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ),
         }
         write = FakeWriteService()
+        event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(data),
             ui_state_manager=FakeUiState(),
@@ -852,13 +924,26 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             annotation_write_svc=FakeAnnotationWriteService(),
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
-            event_bus=FakeEventBus(),
+            event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_set_curved(["t1", "t2"], True)
         self.assertEqual(len(write.curve_calls), 2)
         self.assertEqual([call[4] for call in write.curve_calls], [False, False])
-        self.assertEqual(write.reloads, ["bid.mdb"])
+        self.assertEqual(write.reloads, [])
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.TAKEOFFS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "takeoff_uids": ["t1", "t2"],
+                        "condition_uids": ["42"],
+                    },
+                )
+            ],
+        )
 
     def test_denied_plan_item_selection_access_blocks_plan_view_write_signals(self):
         data = FakeProjectData()
@@ -1677,6 +1762,82 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(event_bus.events[0][1]["takeoff_uids"], ["100"])
         self.assertEqual(plan_view.cancel_place_mode_calls, 0)
 
+    def test_backout_create_undo_redo_uses_targeted_path(self):
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.next_uids = ["hole", "redo-hole"]
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        plan_view = FakePlanView(data)
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_hole_created("c1", [2.0, 2.0, 4.0, 4.0], "p1", "parent")
+        self.assertEqual(write.calls[0][3], False)
+        self.assertEqual(data.takeoffs["hole"].parent_uid, "parent")
+        undo.undo()
+        undo.redo()
+        self.assertEqual([call[2] for call in write.delete_calls], [False])
+        self.assertEqual([call[3] for call in write.calls], [False, False])
+        self.assertEqual(data.takeoffs["redo-hole"].parent_uid, "parent")
+        self.assertEqual(
+            [event for event, _kwargs in event_bus.events],
+            [AppEvents.TAKEOFFS_CHANGED] * 3,
+        )
+
+    def test_same_bid_paste_backouts_placed_uses_targeted_path(self):
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.next_uids = ["pasted-hole", "redo-hole"]
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        plan_view = FakePlanView(data)
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler._clipboard_svc = FakeClipboard([])
+        handler.on_paste_backouts_placed(
+            [
+                {
+                    "condition_uid": "c1",
+                    "page_uid": "p1",
+                    "position": [2.0, 2.0, 4.0, 4.0],
+                    "parent_uid": "parent",
+                    "rotation": 0.0,
+                    "is_negative": True,
+                    "extras": {},
+                }
+            ],
+            "7",
+        )
+        self.assertEqual(write.calls[0][3], False)
+        self.assertEqual(data.takeoffs["pasted-hole"].parent_uid, "parent")
+        undo.undo()
+        undo.redo()
+        self.assertEqual([call[2] for call in write.delete_calls], [False])
+        self.assertEqual([call[3] for call in write.calls], [False, False])
+        self.assertEqual(data.takeoffs["redo-hole"].parent_uid, "parent")
+        self.assertEqual(
+            [event for event, _kwargs in event_bus.events],
+            [AppEvents.TAKEOFFS_CHANGED] * 3,
+        )
+
     def test_unchecked_3d_page_fast_place_keeps_new_takeoff_selected(self):
         class ActiveUncheckedPageUiState(FakeUiState):
             active_page_uid = "p2"
@@ -1813,9 +1974,94 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
         )
+        event_bus = handler._event_bus
         handler.on_reassign_condition(["t1", "missing"], "42")
         handler.on_reassign_condition(["t1"], "missing-condition")
-        self.assertEqual(write.condition_calls, [("bid.mdb", ["t1"], "42")])
+        self.assertEqual(write.condition_calls, [("bid.mdb", ["t1"], "42", False)])
+        self.assertEqual(data.takeoffs["t1"].condition_uid, "42")
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.TAKEOFFS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "takeoff_uids": ["t1"],
+                        "condition_uids": ["c1", "42"],
+                    },
+                )
+            ],
+        )
+
+    def test_assign_to_area_uses_targeted_update_without_quantity_refresh(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", area_uid="0"
+        )
+        write = FakeWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_assign_to_area(["t1"])
+        self.assertEqual(write.area_calls, [("bid.mdb", ["t1"], "0", False)])
+        self.assertEqual(data.takeoffs["t1"].area_uid, "0")
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.TAKEOFFS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "takeoff_uids": ["t1"],
+                        "condition_uids": [],
+                    },
+                )
+            ],
+        )
+
+    def test_set_negative_uses_targeted_update_for_affected_condition(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1", condition_uid="c1", page_uid="p1", is_negative=False
+        )
+        write = FakeWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_set_negative(["t1"], True)
+        self.assertEqual(write.negative_calls, [("bid.mdb", ["t1"], True, False)])
+        self.assertTrue(data.takeoffs["t1"].is_negative)
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.TAKEOFFS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "takeoff_uids": ["t1"],
+                        "condition_uids": ["c1"],
+                    },
+                )
+            ],
+        )
 
     def test_reassign_condition_rejects_incompatible_target_type(self):
         data = FakeProjectData()
@@ -1881,7 +2127,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_reassign_condition(["area", "count"], "42")
         self.assertEqual(write.condition_calls, [])
 
-    def test_set_curved_batches_reload_after_all_curve_writes(self):
+    def test_set_curved_batches_targeted_update_after_all_curve_writes(self):
         data = FakeProjectData()
         for index in range(3):
             uid = f"t{index + 1}"
@@ -1892,6 +2138,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 position=[0.0, 0.0, 10.0, 0.0],
             )
         write = FakeWriteService()
+        event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(data),
             ui_state_manager=FakeUiState(),
@@ -1900,13 +2147,26 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             annotation_write_svc=None,
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
-            event_bus=FakeEventBus(),
+            event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_set_curved(["t1", "t2", "t3"], True)
         self.assertEqual(len(write.curve_calls), 3)
         self.assertTrue(all(call[4] is False for call in write.curve_calls))
-        self.assertEqual(write.reloads, ["bid.mdb"])
+        self.assertEqual(write.reloads, [])
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.TAKEOFFS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "takeoff_uids": ["t1", "t2", "t3"],
+                        "condition_uids": ["42"],
+                    },
+                )
+            ],
+        )
 
     def test_pure_takeoff_position_edit_uses_takeoffs_changed(self):
         data = FakeProjectData()
@@ -1932,7 +2192,16 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.takeoffs["t1"].position, [5.0, 6.0])
         self.assertEqual(
             event_bus.events,
-            [(AppEvents.TAKEOFFS_CHANGED, {"page_uid": "p1", "takeoff_uids": ["t1"]})],
+            [
+                (
+                    AppEvents.TAKEOFFS_CHANGED,
+                    {
+                        "page_uid": "p1",
+                        "takeoff_uids": ["t1"],
+                        "condition_uids": ["c1"],
+                    },
+                )
+            ],
         )
 
     def test_takeoff_position_undo_redo_uses_targeted_path(self):
@@ -2476,6 +2745,95 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [event for event, _kwargs in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
+
+    def test_backout_takeoff_delete_undo_redo_uses_targeted_path(self):
+        data = FakeProjectData()
+        data.takeoffs["parent"] = Takeoff(
+            uid="parent",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 10.0],
+            parent_uid="0",
+        )
+        data.takeoffs["hole"] = Takeoff(
+            uid="hole",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[2.0, 2.0, 4.0, 2.0, 4.0, 4.0],
+            parent_uid="parent",
+            is_negative=True,
+        )
+        write = FakeWriteService()
+        write.next_uids = ["new-hole"]
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        plan_view = FakePlanView(data)
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_elements_deleted(["hole"])
+        self.assertEqual(write.delete_calls, [("bid.mdb", ["hole"], False)])
+        self.assertNotIn("hole", data.takeoffs)
+        self.assertIn("parent", data.takeoffs)
+        undo.undo()
+        self.assertEqual(write.calls[0][3], False)
+        self.assertEqual(data.takeoffs["new-hole"].parent_uid, "parent")
+        self.assertEqual(plan_view.selected, {"new-hole"})
+        undo.redo()
+        self.assertEqual([call[2] for call in write.delete_calls], [False, False])
+        self.assertNotIn("new-hole", data.takeoffs)
+        self.assertIn("parent", data.takeoffs)
+        self.assertEqual(
+            [event for event, _kwargs in event_bus.events],
+            [AppEvents.TAKEOFFS_CHANGED] * 3,
+        )
+
+    def test_parent_takeoff_with_backout_delete_keeps_full_reload_for_parent_remap(
+        self,
+    ):
+        data = FakeProjectData()
+        data.takeoffs["parent"] = Takeoff(
+            uid="parent",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 10.0],
+            parent_uid="0",
+        )
+        data.takeoffs["hole"] = Takeoff(
+            uid="hole",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[2.0, 2.0, 4.0, 2.0, 4.0, 4.0],
+            parent_uid="parent",
+            is_negative=True,
+        )
+        write = FakeWriteService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_elements_deleted(["parent"])
+        self.assertEqual(len(write.delete_calls), 1)
+        self.assertEqual(write.delete_calls[0][0], "bid.mdb")
+        self.assertEqual(set(write.delete_calls[0][1]), {"parent", "hole"})
+        self.assertTrue(write.delete_calls[0][2])
+        self.assertEqual(event_bus.events, [])
 
     def test_takeoff_delete_with_unknown_extras_keeps_full_reload(self):
         data = FakeProjectData()

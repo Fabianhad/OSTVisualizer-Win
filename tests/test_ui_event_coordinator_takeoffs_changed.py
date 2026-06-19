@@ -94,10 +94,18 @@ class FakeMeshAccess:
 class FakeSidebar:
     def __init__(self):
         self.quantity_updates = 0
+        self.condition_quantity_updates = []
+        self.condition_refreshes = 0
         self.clears = 0
 
-    def update_conditions_quantities(self):
+    def update_conditions_quantities(self, condition_uids=None):
         self.quantity_updates += 1
+        self.condition_quantity_updates.append(
+            None if condition_uids is None else list(condition_uids)
+        )
+
+    def refresh_conditions_ui(self):
+        self.condition_refreshes += 1
 
     def clear_sidebars(self):
         self.clears += 1
@@ -362,7 +370,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.main_window = FakeMainWindow()
         coordinator._pending_hotlink_page_uid = None
         coordinator._pending_hotlink_named_view = None
-        coordinator._on_takeoffs_changed(page_uid="page-1", takeoff_uids=["t-1"])
+        coordinator._on_takeoffs_changed(
+            page_uid="page-1", takeoff_uids=["t-1"], condition_uids=["c1"]
+        )
         self.assertEqual(coordinator.takeoff_sidebar.calls, [("page-1", True)])
         self.assertEqual(
             coordinator._page_settings_bar.calls,
@@ -371,6 +381,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator._viewer.plan_pages, ["page-1"])
         self.assertEqual(coordinator._viewer.viewer_pages, [["page-1"]])
         self.assertEqual(coordinator._sidebar.quantity_updates, 1)
+        self.assertEqual(coordinator._sidebar.condition_quantity_updates, [["c1"]])
+        self.assertEqual(coordinator._sidebar.condition_refreshes, 0)
         self.assertEqual(coordinator.main_window.menu_controller.updates, 1)
         self.assertEqual(coordinator._toolbar.refreshes, 1)
 
