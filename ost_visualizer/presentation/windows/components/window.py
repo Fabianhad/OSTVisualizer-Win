@@ -8,6 +8,9 @@ from ....application.events.app_events import AppEvents
 from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....application.interfaces.i_window_icon_provider import IWindowIconProvider
+from ....application.dtos.annotation_creation_factory import (
+    AnnotationCreationFactory,
+)
 from ....domain.entities.annotation_style import AnnotationStyle
 from ....domain.entities.annotation import int_color_to_hex
 from ....domain.entities.annotation_view import AnnotationView
@@ -1142,11 +1145,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             )
 
     def _apply_default_annotation_layer(self, spec) -> None:
-        if spec.layer_uid or self.page_data is None:
+        if self.page_data is None:
             return
-        annotation_layer_uid = self.page_data.annotation_layer_uid
-        if annotation_layer_uid:
-            spec.layer_uid = annotation_layer_uid
+        factory = AnnotationCreationFactory(self.page_data.annotation_layer_uid)
+        factory.assign_default_layer(spec)
 
     def _on_annotation_created(
         self, annotation_type: str, position: list, page_uid: str

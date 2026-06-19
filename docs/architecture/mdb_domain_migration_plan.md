@@ -615,8 +615,7 @@ runtime reader/writer path.
 
 **Status**
 
-Partially complete. The `LayerSet` domain helper is complete; annotation
-creation factory integration is blocked by pre-existing unrelated dirty files.
+Complete.
 
 **Goal**
 
@@ -685,22 +684,35 @@ paths.
   repair now delegates to a domain layer-identity helper instead of duplicating
   lookup logic in infrastructure.
 - Added domain tests for `LayerSet` and kept MDB annotation mapper tests passing.
+- Stabilized the pre-existing layer-visibility work in commit `7894515` so the
+  creation factory could be integrated on a clean tree.
+- Added `AnnotationCreationFactory` beside `InsertAnnotationSpec` to centralize
+  annotation-layer UID assignment for new annotation specs.
+- Updated main plan-view annotation insert/paste paths and detached window
+  annotation/text/named-view/hotlink paths to use that factory instead of local
+  per-window assignment logic.
+- Added factory tests covering missing layer assignment, existing layer
+  preservation, no-annotation-layer no-op behavior, and batch assignment.
 
 **Decisions made**
 
-- Start Phase 5 with layer identity instead of annotation creation because the
-  creation paths currently live in pre-existing dirty files from prior
-  annotation/layer visibility work.
+- Keep `AnnotationCreationFactory` in the application DTO boundary because it
+  mutates `InsertAnnotationSpec`; placing it in domain would force domain to
+  import an application DTO.
 - Keep `LayerSet` small and identity-focused. It does not become a bid aggregate
   or own persistence/write behavior.
-- Do not touch annotation placement handlers, detached window insertion paths,
-  or `ProjectDataService` in this chunk because those files already contain
-  unrelated uncommitted changes.
+- Do not move style/default property generation out of presentation yet. That
+  still carries UI tool defaults and raw legacy property keys and should move
+  only with a broader annotation-property boundary.
 
 **Files changed**
 
 - `ost_visualizer/domain/entities/layer.py`
+- `ost_visualizer/application/dtos/annotation_creation_factory.py`
 - `ost_visualizer/infrastructure/mdb/mappers/annotation_mapper.py`
+- `ost_visualizer/presentation/handlers/plan_view_action_handler.py`
+- `ost_visualizer/presentation/windows/components/window.py`
+- `tests/test_annotation_creation_factory.py`
 - `tests/test_domain_layers.py`
 - `docs/architecture/mdb_domain_migration_plan.md`
 
@@ -710,11 +722,15 @@ paths.
   passed.
 - `.\venv\Scripts\python.exe -m unittest tests.test_domain_layers tests.test_mdb_annotation_mapper tests.test_deferred_persistence_project_state -v`
   passed: 13 tests.
+- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\application\dtos\annotation_creation_factory.py ost_visualizer\presentation\handlers\plan_view_action_handler.py ost_visualizer\presentation\windows\components\window.py tests\test_annotation_creation_factory.py`
+  passed.
+- `.\venv\Scripts\python.exe -m unittest tests.test_annotation_creation_factory tests.test_plan_view_action_handler tests.test_detached_window_workspace_state -v`
+  passed: 136 tests.
 - `.\venv\Scripts\python.exe tools\check_architecture.py --changed-only`
   passed.
 - `git diff --check` passed with only pre-existing CRLF normalization warnings
   for unrelated dirty tracked files.
-- `.\venv\Scripts\python.exe -m unittest discover -s tests -v` ran 980 tests
+- `.\venv\Scripts\python.exe -m unittest discover -s tests -v` ran 984 tests
   with the two known unrelated tuple-vs-list failures in
   `tests/test_viewer_sync_coordinator_overlay_refresh.py`:
   `test_named_view_rename_uses_inline_edit_without_text_toolbar` and
@@ -722,17 +738,8 @@ paths.
 
 **Remaining tasks**
 
-- Add annotation creation factories for placed annotations, text annotations,
-  named views, and hotlinks.
-- Migrate main and detached annotation insertion paths through those factories.
-- Required files are currently dirty from unrelated prior work:
-  `ost_visualizer/domain/services/project_data_service.py`,
-  `ost_visualizer/presentation/handlers/plan_view_action_handler.py`,
-  `ost_visualizer/presentation/managers/detached_page_view_manager.py`,
-  `ost_visualizer/presentation/windows/components/window.py`, and related
-  annotation/visibility tests.
-- Resume Phase 5 after those existing changes are committed, stashed, or the
-  user explicitly allows mixing with them.
+- Consider moving annotation default property generation out of presentation in
+  a future phase only after raw MDB property-key ownership is clarified.
 
 ## Phase 6: ProjectDataService Reduction
 

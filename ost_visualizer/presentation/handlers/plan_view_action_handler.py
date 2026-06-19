@@ -5,6 +5,7 @@ from PySide6 import QtWidgets
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
+from ...application.dtos.annotation_creation_factory import AnnotationCreationFactory
 from ...application.events.app_events import AppEvents
 from ...domain.entities.annotation import BidAnnotation, int_color_to_hex
 from ...domain.entities.named_view import (
@@ -999,12 +1000,8 @@ class PlanViewActionHandler:
     def _apply_default_annotation_layer(
         self, specs: List[InsertAnnotationSpec]
     ) -> None:
-        annotation_layer_uid = self._data_svc.get_annotation_layer_uid()
-        if not annotation_layer_uid:
-            return
-        for spec in specs:
-            if not spec.layer_uid:
-                spec.layer_uid = annotation_layer_uid
+        factory = AnnotationCreationFactory(self._data_svc.get_annotation_layer_uid())
+        factory.assign_default_layer_to_specs(specs)
 
     def _insert_annotations_fast(
         self,
