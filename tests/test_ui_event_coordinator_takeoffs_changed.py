@@ -2,7 +2,11 @@ import unittest
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
 from ost_visualizer.application.services.project_write_service import WriteReloadResult
 from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.hierarchy_data import HierarchyData
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyData,
+    HierarchyFileEntry,
+    HierarchyProjectInfo,
+)
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
@@ -202,15 +206,25 @@ class FakeUnloadUiState:
 
 
 class FakeUnloadProjectData:
-    def __init__(self, current_file_path="active.mdb"):
+    def __init__(self, current_file_path="active.mdb", project_uids=None):
         self.current_file_path = current_file_path
+        self.project_uids = list(project_uids or [])
         self.clear_page_selection_count = 0
 
     def get_current_file_path(self):
         return self.current_file_path
 
     def get_hierarchy(self):
-        return HierarchyData()
+        projects = {uid: HierarchyProjectInfo(name=uid) for uid in self.project_uids}
+        return HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path="active.mdb",
+                    display_name="active.mdb",
+                    bid_projects=projects,
+                )
+            ]
+        )
 
     def clear_page_selection(self):
         self.clear_page_selection_count += 1
@@ -284,6 +298,23 @@ class FakeNav:
     @property
     def is_refreshing(self):
         return False
+
+
+class FakeRefreshUiState:
+    def __init__(self):
+        self.reset_count = 0
+        self.database_selected = None
+        self.bid_ref = object()
+
+    def reset_selections(self):
+        self.reset_count += 1
+        self.bid_ref = None
+
+    def set_database_selected(self, selected, file_path=None):
+        self.database_selected = (selected, file_path)
+
+    def get_selected_bid_ref(self):
+        return self.bid_ref
 
 
 class FakeRefreshSnapshot:
@@ -1022,7 +1053,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
     def test_database_refresh_restores_project_selection_with_file_path(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
-        coordinator.project_data = FakeUnloadProjectData("active.mdb")
+        coordinator.project_data = FakeUnloadProjectData("active.mdb", ["project-1"])
         coordinator.ui_access_manager = FakeAccess()
         coordinator._toolbar = FakeToolbar()
         coordinator._tab_widget = FakeTabWidget(index=0)
@@ -1034,6 +1065,35 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(
             coordinator.main_window.project_view.restored_project,
             ("project-1", "active.mdb"),
+        )
+
+    def test_database_refresh_drops_deleted_project_selection_and_hides_takeoff(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = FakeUnloadMainWindow()
+        coordinator.project_data = FakeUnloadProjectData("active.mdb", [])
+        coordinator.ui_state_manager = FakeRefreshUiState()
+        coordinator.ui_access_manager = FakeAccess()
+        coordinator._toolbar = FakeToolbar()
+        coordinator._tab_widget = FakeTabWidget(index=1)
+        coordinator._sidebar = FakeSidebar()
+        coordinator._reset_takeoff_workspace_state = (
+            lambda: coordinator._sidebar.clear_sidebars()
+        )
+        coordinator._update_export_menu_state = lambda: None
+        snapshot = FakeRefreshSnapshot(project_uid="deleted-project")
+        coordinator._nav = FakeRefreshNav(snapshot)
+        coordinator._finish_refresh()
+        self.assertEqual(coordinator.ui_state_manager.reset_count, 1)
+        self.assertEqual(
+            coordinator.ui_state_manager.database_selected,
+            (True, "active.mdb"),
+        )
+        self.assertEqual(coordinator._sidebar.clears, 1)
+        self.assertEqual(coordinator._tab_widget.visibility, [(1, False)])
+        self.assertEqual(coordinator._tab_widget.currentIndex(), 0)
+        self.assertIsNone(coordinator.main_window.project_view.restored_project)
+        self.assertEqual(
+            coordinator.main_window.project_view.restored_file, "active.mdb"
         )
 
 

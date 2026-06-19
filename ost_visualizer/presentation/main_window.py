@@ -1160,7 +1160,8 @@ class MainWindow(QtWidgets.QMainWindow):
         cleaned = [max(0, int(size)) for size in sizes]
         if sum(cleaned) <= 0:
             return
-        self._last_takeoff_splitter_sizes = cleaned
+        if cleaned[0] > 0:
+            self._last_takeoff_splitter_sizes = cleaned
         self._takeoff_splitter.setSizes(cleaned)
 
     def get_left_splitter_sizes(self) -> list[int]:
@@ -1175,7 +1176,8 @@ class MainWindow(QtWidgets.QMainWindow):
         cleaned = [max(0, int(size)) for size in sizes]
         if sum(cleaned) <= 0:
             return
-        self._last_left_splitter_sizes = cleaned
+        if len(cleaned) >= 2 and cleaned[0] > 0 and cleaned[1] > 0:
+            self._last_left_splitter_sizes = cleaned
         self._left_splitter.setSizes(cleaned)
 
     def get_takeoff_dropdown_popup_sizes(self) -> dict[str, list[int]]:

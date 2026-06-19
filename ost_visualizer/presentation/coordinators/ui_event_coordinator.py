@@ -1451,10 +1451,29 @@ class UIEventCoordinator:
                 self._activate_takeoff_workspace()
         elif snap.project_uid:
             self._reset_takeoff_workspace_state()
-            self.main_window.project_view.restore_project_selection(
-                snap.project_uid,
-                snap.selected_file_path,
+            restored_project_file_path = (
+                self.project_data.get_hierarchy().find_file_path_for_project(
+                    snap.project_uid
+                )
             )
+            if restored_project_file_path:
+                self.main_window.project_view.restore_project_selection(
+                    snap.project_uid,
+                    snap.selected_file_path or restored_project_file_path,
+                )
+            else:
+                selected_file_path = (
+                    snap.selected_file_path or self.project_data.get_current_file_path()
+                )
+                self.ui_state_manager.reset_selections()
+                self.ui_state_manager.set_database_selected(
+                    bool(selected_file_path), selected_file_path
+                )
+                if selected_file_path:
+                    self.main_window.project_view.restore_file_selection(
+                        selected_file_path
+                    )
+            self._set_takeoff_tab_visible(False)
             self._nav.finish_refresh(
                 NavState.FILE_LOADED_NO_BID if has_file else NavState.NO_FILE
             )

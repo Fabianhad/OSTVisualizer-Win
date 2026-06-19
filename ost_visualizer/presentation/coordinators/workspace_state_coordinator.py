@@ -776,12 +776,13 @@ class WorkspaceStateCoordinator(QtCore.QObject):
     ) -> list[int]:
         sizes = [max(0, int(size)) for size in current_sizes]
         previous = [max(0, int(size)) for size in previous_sizes]
-        if len(previous) < 2:
+        if len(previous) < 2 or previous[0] <= 0 or previous[1] <= 0:
             return sizes
-        if not self._shell.is_conditions_sidebar_visible() and sizes[0] <= 0:
-            sizes[0] = previous[0]
-        if not self._shell.is_layers_sidebar_visible() and sizes[1] <= 0:
-            sizes[1] = previous[1]
+        if (
+            not self._shell.is_conditions_sidebar_visible()
+            or not self._shell.is_layers_sidebar_visible()
+        ):
+            return previous[:2]
         return sizes
 
     def _preserve_hidden_takeoff_splitter_sizes(

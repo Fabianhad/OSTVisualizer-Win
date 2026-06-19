@@ -23,6 +23,7 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 from ost_visualizer.presentation.coordinators.workspace_state_coordinator import (
     WorkspaceStateCoordinator,
 )
+from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.windows.components.window import DetachedPageViewWindow
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
@@ -534,7 +535,95 @@ class FakePageCombo:
         self.pages_with_takeoffs = set(page_uids or ())
 
 
+class FakeSplitterForSidebarSizes:
+    def __init__(self):
+        self.applied_sizes = []
+
+    def setSizes(self, sizes):
+        self.applied_sizes.append(list(sizes))
+
+
 class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
+    def test_hidden_left_splitter_size_does_not_replace_last_good_layout(self):
+        window = MainWindow.__new__(MainWindow)
+        window._left_splitter = FakeSplitterForSidebarSizes()
+        window._last_left_splitter_sizes = [220, 380]
+        MainWindow.set_left_splitter_sizes(window, [600, 0])
+        self.assertEqual(window._last_left_splitter_sizes, [220, 380])
+        self.assertEqual(window._left_splitter.applied_sizes, [[600, 0]])
+
+    def test_visible_left_splitter_size_replaces_last_good_layout(self):
+        window = MainWindow.__new__(MainWindow)
+        window._left_splitter = FakeSplitterForSidebarSizes()
+        window._last_left_splitter_sizes = [220, 380]
+        MainWindow.set_left_splitter_sizes(window, [260, 340])
+        self.assertEqual(window._last_left_splitter_sizes, [260, 340])
+        self.assertEqual(window._left_splitter.applied_sizes, [[260, 340]])
+
+    def test_hidden_layer_sidebar_capture_keeps_last_valid_splitter_layout(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+
+        class Shell:
+            def is_conditions_sidebar_visible(self):
+                return True
+
+            def is_layers_sidebar_visible(self):
+                return False
+
+        coordinator._shell = Shell()
+        self.assertEqual(
+            coordinator._preserve_hidden_splitter_sizes([600, 0], [220, 380]),
+            [220, 380],
+        )
+
+    def test_hidden_condition_sidebar_capture_keeps_last_valid_splitter_layout(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+
+        class Shell:
+            def is_conditions_sidebar_visible(self):
+                return False
+
+            def is_layers_sidebar_visible(self):
+                return True
+
+        coordinator._shell = Shell()
+        self.assertEqual(
+            coordinator._preserve_hidden_splitter_sizes([0, 600], [220, 380]),
+            [220, 380],
+        )
+
+    def test_hidden_sidebars_capture_keeps_last_valid_splitter_layout(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+
+        class Shell:
+            def is_conditions_sidebar_visible(self):
+                return False
+
+            def is_layers_sidebar_visible(self):
+                return False
+
+        coordinator._shell = Shell()
+        self.assertEqual(
+            coordinator._preserve_hidden_splitter_sizes([600, 0], [220, 380]),
+            [220, 380],
+        )
+
+    def test_visible_sidebars_capture_uses_current_splitter_layout(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+
+        class Shell:
+            def is_conditions_sidebar_visible(self):
+                return True
+
+            def is_layers_sidebar_visible(self):
+                return True
+
+        coordinator._shell = Shell()
+        self.assertEqual(
+            coordinator._preserve_hidden_splitter_sizes([260, 340], [220, 380]),
+            [260, 340],
+        )
+
     def test_initial_show_geometry_is_constrained_to_one_screen(self):
         window = FakeInitialGeometryWindow(
             frame=QtCore.QRect(-120, 20, 4200, 1100),
