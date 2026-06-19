@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 ANNOTATION_LAYER_NAME = "annotation"
 IMAGE_LAYER_NAME = "image"
@@ -25,6 +25,46 @@ class Layer:
 
 
 BidLayers = Dict[str, Layer]
+
+
+@dataclass(frozen=True)
+class LayerVisibility:
+    uid: Optional[str]
+    visible: bool
+
+    def as_tuple(self) -> Tuple[Optional[str], bool]:
+        return self.uid, self.visible
+
+
+class LayerSet:
+    def __init__(self, layers: BidLayers) -> None:
+        self._layers = layers
+
+    def uid_by_name(self, layer_name: str) -> Optional[str]:
+        return get_layer_uid_by_name(self._layers, layer_name)
+
+    def is_visible(self, layer_uid: Optional[str]) -> bool:
+        return is_layer_visible(self._layers, layer_uid)
+
+    def resolve_layer(self, layer_uid: Optional[str]) -> LayerVisibility:
+        if layer_uid is None:
+            return LayerVisibility(None, True)
+        normalized_uid = str(layer_uid)
+        return LayerVisibility(normalized_uid, self.is_visible(normalized_uid))
+
+    def resolve_layer_or_default(
+        self, layer_uid: Optional[str], default_layer_name: str
+    ) -> LayerVisibility:
+        if layer_uid is not None:
+            return self.resolve_layer(str(layer_uid))
+        default_uid = self.uid_by_name(default_layer_name)
+        return LayerVisibility(default_uid, self.is_visible(default_uid))
+
+    def annotation_layer_uid(self) -> Optional[str]:
+        return self.uid_by_name(ANNOTATION_LAYER_NAME)
+
+    def annotation_layer_visible(self) -> bool:
+        return self.is_visible(self.annotation_layer_uid())
 
 
 @dataclass
