@@ -2020,6 +2020,10 @@ class TakeoffPlanView(
     def current_page_uid(self) -> Optional[str]:
         return self._current_bid_page_uid
 
+    @property
+    def cursor_mode(self) -> str:
+        return self._cursor_mode
+
     def set_overlay_display_mode(self, mode: int) -> None:
         if self._current_page is not None:
             self._current_page.image_show_mode = int(mode)
@@ -4880,6 +4884,7 @@ class TakeoffPlanView(
                 self._exit_annotation_place_mode()
             self._clear_backout_state()
         self._apply_cursor_mode(mode)
+        self.cursor_mode_change_requested.emit(mode)
 
     def update_color_map(self, color_map: Dict[str, str]) -> None:
         self._current_color_map = color_map

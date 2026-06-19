@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QObject, Signal
@@ -54,6 +55,14 @@ MeshRenderBuffers = Tuple[
     List[str],
     List[str],
 ]
+
+
+@dataclass(frozen=True)
+class _SuspendedLayerTool:
+    layer_uid: str
+    mode: str
+    annotation_type: Optional[str] = None
+    condition_uid: Optional[str] = None
 
 
 def _mesh_geometries_to_render_buffers(
@@ -165,6 +174,7 @@ class UIEventCoordinator:
         self._page_settings_bar = None
         self._undo_service = None
         self._resolver = EntityResolver(None, self.project_data)
+        self._suspended_layer_tool: Optional[_SuspendedLayerTool] = None
         self._mesh_window: Optional[MeshViewWindow] = None
         self._mesh_window_action: Optional[QtGui.QAction] = None
         self._last_mesh_args: Optional[tuple] = None
@@ -780,6 +790,76 @@ class UIEventCoordinator:
             self.plan_view.reset_ctrl_held()
             self.plan_view.set_cursor_mode("select")
         self._toolbar.set_select_checked()
+
+    def _active_layer_tool_snapshot(
+        self, layer_uid: Optional[str]
+    ) -> Optional[_SuspendedLayerTool]:
+        if not self.plan_view:
+            return None
+        layer_key = str(layer_uid) if layer_uid is not None else None
+        if self.plan_view.cursor_mode == "annotation_place":
+            annotation_layer_uid = self.project_data.get_annotation_layer_uid()
+            if annotation_layer_uid:
+                annotation_layer_key = str(annotation_layer_uid)
+                if layer_key is None or layer_key == annotation_layer_key:
+                    annotation_type = self.plan_view.annotation_place_type
+                    if annotation_type:
+                        return _SuspendedLayerTool(
+                            annotation_layer_key,
+                            "annotation_place",
+                            annotation_type=annotation_type,
+                        )
+        condition_uid = (
+            self.plan_view.place_condition_uid
+            if self.plan_view.cursor_mode == "place"
+            else None
+        )
+        if condition_uid:
+            condition = self.project_data.get_bid_conditions().get(condition_uid)
+            if condition and condition.layer_uid:
+                condition_layer_key = str(condition.layer_uid)
+                if layer_key is None or layer_key == condition_layer_key:
+                    return _SuspendedLayerTool(
+                        condition_layer_key,
+                        "place",
+                        condition_uid=condition_uid,
+                    )
+        return None
+
+    def _suspend_active_layer_tool(self, layer_uid: Optional[str] = None) -> None:
+        suspended = self._active_layer_tool_snapshot(layer_uid)
+        if suspended is None:
+            return
+        self._suspended_layer_tool = suspended
+        self._set_plan_select_mode()
+
+    def _restore_suspended_layer_tool(self, layer_uid: Optional[str] = None) -> None:
+        suspended = self._suspended_layer_tool
+        if suspended is None or not self.plan_view:
+            return
+        layer_key = str(layer_uid) if layer_uid is not None else None
+        if layer_key is not None and suspended.layer_uid != layer_key:
+            return
+        if self.plan_view.cursor_mode != "select":
+            self._suspended_layer_tool = None
+            return
+        if suspended.mode == "annotation_place" and suspended.annotation_type:
+            if self.ui_access_manager.is_allowed(Feature.PLACE_ANNOTATIONS):
+                self.plan_view.activate_annotation_placement(suspended.annotation_type)
+        elif suspended.mode == "place" and suspended.condition_uid:
+            condition = self.project_data.get_bid_conditions().get(
+                suspended.condition_uid
+            )
+            if (
+                condition
+                and condition.layer_visible
+                and self._is_takeoff_2d_view_active()
+                and self.ui_access_manager.is_allowed(Feature.PLACE_PLAN_ITEMS)
+            ):
+                self._placement.enter(
+                    suspended.condition_uid, [suspended.condition_uid]
+                )
+        self._suspended_layer_tool = None
 
     def _takeoff_uids_to_condition_uids(self, uids: list) -> set:
         if not uids:
@@ -2324,6 +2404,8 @@ class UIEventCoordinator:
         )
         image_layer = bool(layer and is_image_layer_name(layer.name))
         condition_layer = self._layer_has_condition_rows(layer_uid)
+        if not show and not image_layer:
+            self._suspend_active_layer_tool(layer_uid)
         self.project_data.update_layer_visibility(
             layer_uid, show, image_layer=image_layer
         )
@@ -2351,7 +2433,9 @@ class UIEventCoordinator:
         if not image_layer:
             self._viewer.update_viewers(self.project_data.get_selected_page_uids())
         self._update_export_menu_state()
-        self.ensure_select_mode()
+        if show and not image_layer:
+            self._restore_suspended_layer_tool(layer_uid)
+        self._toolbar.refresh()
         return True
 
     def _apply_layer_visibility_to_current_plan_view(
@@ -2435,6 +2519,8 @@ class UIEventCoordinator:
             layers = self._project_read_service.get_merged_bid_layers(
                 bid_ref.file_path, bid_ref.bid_uid
             )
+        if not show:
+            self._suspend_active_layer_tool()
         self.project_data.set_bid_layer_visibility(layers)
         self.project_data.update_all_layer_visibility(show)
         self.event_bus.publish(
@@ -2464,7 +2550,9 @@ class UIEventCoordinator:
                     self._update_plan_view(active_page_uid)
         self._viewer.update_viewers(self.project_data.get_selected_page_uids())
         self._update_export_menu_state()
-        self.ensure_select_mode()
+        if show:
+            self._restore_suspended_layer_tool()
+        self._toolbar.refresh()
         return True
 
     def _refresh_conditions_sidebar_layer_visibility_from_memory(self) -> None:

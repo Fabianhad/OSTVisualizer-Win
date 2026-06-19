@@ -1387,8 +1387,11 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._rotate_handle_item = handle
         view._rotate_handle_uid = "t1"
         view._apply_cursor_mode("rotate")
+        cursor_modes = []
+        view.cursor_mode_change_requested.connect(cursor_modes.append)
         view.set_cursor_mode("pan")
         self.assertEqual(view._cursor_mode, "pan")
+        self.assertEqual(cursor_modes, ["pan"])
         self.assertIsNone(view._rotate_handle_item)
         self.assertIsNone(view._rotate_handle_uid)
         self.assertIsNone(handle.scene())

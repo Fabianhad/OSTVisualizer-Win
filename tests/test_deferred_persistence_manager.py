@@ -436,9 +436,15 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
 class RecordingPlanView:
     def __init__(self):
         self.current_page_uid = "p1"
+        self.cursor_mode = "select"
+        self.annotation_place_type = None
+        self.place_condition_uid = None
         self.image_visibility_pages = []
         self.layer_visibility_calls = []
         self.all_layer_visibility_calls = []
+        self.cursor_modes = []
+        self.annotation_placements = []
+        self.reset_ctrl_held_calls = 0
 
     def apply_page_image_layer_visibility(self, page):
         self.image_visibility_pages.append(page.uid)
@@ -450,6 +456,23 @@ class RecordingPlanView:
 
     def apply_all_layer_visibility(self, show, conditions):
         self.all_layer_visibility_calls.append((show, conditions))
+        return True
+
+    def reset_ctrl_held(self):
+        self.reset_ctrl_held_calls += 1
+
+    def set_cursor_mode(self, mode):
+        self.cursor_mode = mode
+        self.cursor_modes.append(mode)
+        if mode != "place":
+            self.place_condition_uid = None
+        if mode != "annotation_place":
+            self.annotation_place_type = None
+
+    def activate_annotation_placement(self, annotation_type):
+        self.cursor_mode = "annotation_place"
+        self.annotation_place_type = annotation_type
+        self.annotation_placements.append(annotation_type)
         return True
 
 
@@ -605,6 +628,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         conditions = {
             "c1": Condition(uid="c1", name="C1", layer_uid=condition_layer_uid),
         }
+        annotation_layer_uid = "annotation-layer"
         coordinator.quantity_update_calls = []
         quantity_calls = coordinator.quantity_update_calls
         coordinator.project_data = SimpleNamespace(
@@ -624,6 +648,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             get_bid=lambda _bid_ref: None,
             get_page=lambda page_uid: pages.get(page_uid),
             get_bid_conditions=lambda: conditions,
+            get_annotation_layer_uid=lambda: annotation_layer_uid,
         )
         coordinator._project_read_service = SimpleNamespace(
             get_merged_bid_layers=lambda _db_path, _bid_uid: [
@@ -652,7 +677,26 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             lambda page_uid: coordinator._update_plan_view_calls.append(page_uid)
         )
         coordinator._update_export_menu_state = lambda: None
-        coordinator.ensure_select_mode = lambda: None
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+
+        def enter_place(condition_uid, _selected):
+            coordinator.plan_view.cursor_mode = "place"
+            coordinator.plan_view.place_condition_uid = condition_uid
+            return True
+
+        coordinator._placement = SimpleNamespace(enter=enter_place)
+        coordinator.select_checked_calls = []
+        coordinator.toolbar_refresh_calls = []
+        coordinator._toolbar = SimpleNamespace(
+            refresh=lambda: coordinator.toolbar_refresh_calls.append("refresh"),
+            set_select_checked=lambda: coordinator.select_checked_calls.append(
+                "select"
+            ),
+            is_takeoff_2d_view_active=lambda: True,
+        )
+        coordinator._suspended_layer_tool = None
         coordinator.plan_view = RecordingPlanView()
         coordinator._deferred_persistence = RecordingDeferredPersistence()
         return coordinator
@@ -685,6 +729,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             get_bid=lambda _bid_ref: None,
             get_page=lambda _page_uid: None,
             get_bid_conditions=lambda: {},
+            get_annotation_layer_uid=lambda: "annotation-layer",
         )
         coordinator._project_read_service = SimpleNamespace(
             get_merged_bid_layers=lambda _db_path, _bid_uid: [
@@ -706,7 +751,20 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         coordinator._update_plan_view = lambda _page_uid: None
         coordinator._update_export_menu_state = lambda: None
-        coordinator.ensure_select_mode = lambda: None
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+
+        def enter_place(_condition_uid, _selected):
+            return False
+
+        coordinator._placement = SimpleNamespace(enter=enter_place)
+        coordinator._toolbar = SimpleNamespace(
+            refresh=lambda: None,
+            set_select_checked=lambda: None,
+            is_takeoff_2d_view_active=lambda: True,
+        )
+        coordinator._suspended_layer_tool = None
         deferred = RecordingDeferredPersistence()
         coordinator._deferred_persistence = deferred
         self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
@@ -798,6 +856,63 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
         self.assertEqual(coordinator.quantity_update_calls, [])
         self.assertEqual(mesh_calls, [["p1"], ["p1"], ["p1"]])
+
+    def test_hiding_annotation_layer_temporarily_selects_then_restores_tool(self):
+        coordinator = self._make_visibility_coordinator(
+            layer_name="Annotation",
+            condition_layer_uid="condition-layer",
+        )
+        coordinator.plan_view.cursor_mode = "annotation_place"
+        coordinator.plan_view.annotation_place_type = "rect"
+        self.assertTrue(
+            coordinator.update_layer_visibility_deferred("annotation-layer", False)
+        )
+        self.assertEqual(coordinator.plan_view.cursor_mode, "select")
+        self.assertEqual(coordinator.plan_view.cursor_modes, ["select"])
+        self.assertEqual(coordinator.select_checked_calls, ["select"])
+        self.assertTrue(
+            coordinator.update_layer_visibility_deferred("annotation-layer", True)
+        )
+        self.assertEqual(coordinator.plan_view.cursor_mode, "annotation_place")
+        self.assertEqual(coordinator.plan_view.annotation_placements, ["rect"])
+
+    def test_hiding_unrelated_layer_keeps_active_annotation_tool(self):
+        coordinator = self._make_visibility_coordinator(
+            layer_name="Layer 1",
+            condition_layer_uid="condition-layer",
+        )
+        coordinator.plan_view.cursor_mode = "annotation_place"
+        coordinator.plan_view.annotation_place_type = "rect"
+        self.assertTrue(coordinator.update_layer_visibility_deferred("other", False))
+        self.assertEqual(coordinator.plan_view.cursor_mode, "annotation_place")
+        self.assertEqual(coordinator.plan_view.annotation_place_type, "rect")
+        self.assertEqual(coordinator.plan_view.cursor_modes, [])
+        self.assertEqual(coordinator.select_checked_calls, [])
+
+    def test_hiding_condition_layer_temporarily_selects_then_restores_place_tool(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
+        coordinator.plan_view.cursor_mode = "place"
+        coordinator.plan_view.place_condition_uid = "c1"
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
+        self.assertEqual(coordinator.plan_view.cursor_mode, "select")
+        self.assertEqual(coordinator.plan_view.cursor_modes, ["select"])
+        self.assertEqual(coordinator.select_checked_calls, ["select"])
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", True))
+        self.assertEqual(coordinator.plan_view.cursor_mode, "place")
+        self.assertEqual(coordinator.plan_view.place_condition_uid, "c1")
+
+    def test_hide_all_temporarily_selects_then_show_all_restores_annotation_tool(self):
+        coordinator = self._make_visibility_coordinator(
+            layer_name="Annotation",
+            condition_layer_uid="condition-layer",
+        )
+        coordinator.plan_view.cursor_mode = "annotation_place"
+        coordinator.plan_view.annotation_place_type = "text"
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
+        self.assertEqual(coordinator.plan_view.cursor_mode, "select")
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(True))
+        self.assertEqual(coordinator.plan_view.cursor_mode, "annotation_place")
+        self.assertEqual(coordinator.plan_view.annotation_placements, ["text"])
 
     def test_repeated_layer_toggles_coalesce_to_last_write(self):
         service = FakeProjectWriteService()
