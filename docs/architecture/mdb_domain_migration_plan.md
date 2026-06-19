@@ -215,8 +215,9 @@ existing import paths during the transition.
 **Expected end state**
 
 - MDB schema vocabulary has an infrastructure home.
-- Existing code that imports `domain.ost_schema` still works through aliases.
-- Domain no longer needs to be the long-term owner of raw table constants.
+- Domain no longer owns raw table constants.
+- MDB schema import compatibility aliases were removed after all production
+  call sites moved to the infrastructure contract.
 
 **Rollback/compatibility notes**
 
@@ -233,32 +234,25 @@ existing import paths during the transition.
 - Updated clean infrastructure call sites to import the contract directly:
   `bid_data_reader.py`, `bid_operations.py`, `import_operations.py`, and
   `importers/ost_importer.py`.
-- Left `ost_visualizer/domain/ost_schema.py` as a temporary compatibility copy
-  instead of importing infrastructure, because domain-to-infrastructure imports
-  violate the architecture guardrail.
-- Added a parity test so the domain compatibility copy must match the
-  infrastructure contract while old imports still exist.
+- Added a parity test so the domain compatibility copy had to match the
+  infrastructure contract while old imports still existed.
+- Later cleanup removed the temporary domain and infrastructure compatibility
+  aliases after production imports no longer used them.
 
 **Decisions made**
 
-- The infrastructure contract is canonical, but `domain/ost_schema.py` remains a
-  duplicated compatibility module until presentation/export callers move behind
-  later neutral boundaries.
+- The infrastructure contract is canonical.
 - Do not make `domain/ost_schema.py` a literal re-export from infrastructure.
   That would satisfy the migration wording but break the enforced layer rules.
-- Do not touch pre-existing dirty `components/constants.py` in this commit. Its
-  existing `..ost_schema` import still resolves through the infrastructure
-  compatibility module.
+- `components/constants.py` now imports the canonical contract directly.
 
 **Files changed**
 
 - `ost_visualizer/infrastructure/mdb/schema_contract.py`
-- `ost_visualizer/infrastructure/mdb/ost_schema.py`
 - `ost_visualizer/infrastructure/mdb/components/bid_data_reader.py`
 - `ost_visualizer/infrastructure/mdb/components/bid_operations.py`
 - `ost_visualizer/infrastructure/mdb/components/import_operations.py`
 - `ost_visualizer/infrastructure/mdb/importers/ost_importer.py`
-- `ost_visualizer/domain/ost_schema.py`
 - `tests/test_mdb_schema_compatibility.py`
 - `docs/architecture/mdb_domain_migration_plan.md`
 
@@ -280,10 +274,8 @@ existing import paths during the transition.
 
 **Remaining tasks**
 
-- Remove the domain compatibility copy only after all non-domain callers migrate
-  to neutral application/export boundaries.
-- Update any currently dirty or future infrastructure call sites that still use
-  `infrastructure/mdb/ost_schema.py` when those files can be safely touched.
+- Keep future schema additions in `infrastructure/mdb/schema_contract.py`.
+- Avoid reintroducing domain or presentation imports of raw MDB schema modules.
 
 ## Phase 2: Neutral Application Ports
 
@@ -994,7 +986,8 @@ so presentation no longer owns raw table ordering or schema details.
 
 2. **Move schema constants with compatibility aliases**
    - Add the infrastructure MDB schema contract.
-   - Re-export existing names from `domain/ost_schema.py`.
+   - Use temporary compatibility aliases only while production imports are
+     being migrated; remove them once callers use the infrastructure contract.
    - Update infrastructure imports first.
    - Run py-compile, architecture check, MDB/schema tests, and `git diff --check`.
 

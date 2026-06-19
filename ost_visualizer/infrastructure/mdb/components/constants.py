@@ -1,5 +1,5 @@
 from typing import List, Set
-from ..ost_schema import BID_SECTIONS
+from ..schema_contract import BID_SECTIONS
 
 
 def encode_position(position: List[float]) -> bytes:

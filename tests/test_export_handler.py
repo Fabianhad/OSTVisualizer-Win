@@ -126,6 +126,9 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
 
 
 class OspExporterProgressTests(unittest.TestCase):
+    def _unused_ost_exporter_factory(self, _uom_service):
+        self.fail("OST exporter should not be constructed")
+
     def test_collect_images_reports_each_included_image(self):
         with tempfile.TemporaryDirectory() as tmp:
             first = Path(tmp) / "first.pdf"
@@ -143,7 +146,11 @@ class OspExporterProgressTests(unittest.TestCase):
                     ]
                 }
             )
-            exporter = OspExporter(SimpleNamespace(), "1.0")
+            exporter = OspExporter(
+                SimpleNamespace(),
+                "1.0",
+                self._unused_ost_exporter_factory,
+            )
             source_files = []
             archive_names = []
             progress = []
