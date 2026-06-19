@@ -1466,6 +1466,42 @@ class CtrlDragTests(unittest.TestCase):
         )
         return view, ann
 
+    def test_ink_annotation_drag_translates_even_path_points_once(self):
+        view = InputHandlerHarness()
+        view._snap_increments = 0
+        original = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+        moved = view._compute_ink_drag_position(original, 3.0, -4.0)
+        self.assertEqual(moved, [13.0, 16.0, 33.0, 36.0, 53.0, 56.0])
+        self.assertEqual(original, [10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
+
+    def test_ink_annotation_drag_preserves_rotation_prefix(self):
+        view = InputHandlerHarness()
+        view._snap_increments = 0
+        original = [0.25, 10.0, 20.0, 30.0, 40.0]
+        moved = view._compute_ink_drag_position(original, 3.0, -4.0)
+        self.assertEqual(moved, [0.25, 13.0, 16.0, 33.0, 36.0])
+
+    def test_multi_drag_ink_preview_delta_uses_first_path_point(self):
+        view = InputHandlerHarness()
+        view._snap_increments = 0
+        view._scene_builder = FakeSceneBuilder()
+        view._current_page_transform = lambda: None
+        annotation = BidAnnotation(
+            uid="ink1",
+            annotation_type="ink",
+            position=[0.25, 10.0, 20.0, 30.0, 40.0],
+        )
+        view._current_annotations = {"ink1": annotation}
+        moved = view._compute_snapped_multi_drag_position(
+            "ink1", annotation.position, 3.0, -4.0
+        )
+        self.assertEqual(moved, [0.25, 13.0, 16.0, 33.0, 36.0])
+        delta = view._snapped_multi_drag_scene_delta(
+            "ink1", annotation.position, moved, 100.0, 200.0
+        )
+        expected_dx, expected_dy = view.ost_to_scene_delta(3.0, -4.0)
+        self.assertEqual(delta, QtCore.QPointF(expected_dx, expected_dy))
+
     def test_named_view_handles_use_normalized_edit_corner_order(self):
         _view, ann = self._make_named_view_resize_view()
         self.assertEqual(

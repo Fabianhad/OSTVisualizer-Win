@@ -22,6 +22,7 @@ from ost_visualizer.presentation.components.area_combo import AreaComboBox
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
 )
+from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 from ost_visualizer.presentation.utils.view_context_menu import (
     build_selected_takeoff_context_state,
 )
@@ -220,6 +221,20 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(pasted[0][1]["kind"], "folder")
         self.assertEqual(pasted[0][1]["folder_uid"], "f1")
         self.assertTrue(pasted[0][1]["cut"])
+
+    def test_condition_folder_nodes_use_folder_icon(self):
+        sidebar = ConditionsSidebar(None)
+        sidebar.load_conditions(
+            {},
+            {"f1": BidConditionFolder(uid="f1", name="Folder")},
+            "Project",
+        )
+        folder = sidebar._folder_items["f1"]
+        self.assertFalse(folder.icon(0).isNull())
+        self.assertEqual(
+            folder.icon(0).cacheKey(),
+            IconManager.icon(IconId.FOLDER).cacheKey(),
+        )
 
     def test_area_combo_clears_deleted_selected_area_uid_on_reload(self):
         combo = AreaComboBox(None)

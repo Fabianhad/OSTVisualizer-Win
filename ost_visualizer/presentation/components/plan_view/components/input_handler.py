@@ -960,17 +960,20 @@ class InputHandlerMixin:
                     _shift = bool(
                         event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
                     )
-                    new_pos = self.compute_new_position(
-                        self._drag_orig_position,
-                        ost_dx,
-                        ost_dy,
-                        self._drag_handle_index,
-                        self._drag_handle_corner_count,
-                        move_only_first_pair=_text_move,
-                        free_mode=_shift,
-                    )
-                    if _drag_ann and _drag_ann.is_ink and len(new_pos) % 2 == 1:
-                        new_pos[0] = self._drag_orig_position[0]
+                    if _drag_ann and _drag_ann.is_ink:
+                        new_pos = self._compute_ink_drag_position(
+                            self._drag_orig_position, ost_dx, ost_dy
+                        )
+                    else:
+                        new_pos = self.compute_new_position(
+                            self._drag_orig_position,
+                            ost_dx,
+                            ost_dy,
+                            self._drag_handle_index,
+                            self._drag_handle_corner_count,
+                            move_only_first_pair=_text_move,
+                            free_mode=_shift,
+                        )
                 self.update_drag_handle_positions(
                     new_pos, self._drag_plan_item_uid, sdx, sdy
                 )
@@ -1177,15 +1180,9 @@ class InputHandlerMixin:
                                 and self._drag_handle_index == -1
                             )
                             if _drag_ann and _drag_ann.is_ink:
-                                new_pos = self.compute_new_position(
-                                    self._drag_orig_position,
-                                    ost_dy,
-                                    ost_dx,
-                                    -1,
-                                    0,
+                                new_pos = self._compute_ink_drag_position(
+                                    self._drag_orig_position, ost_dx, ost_dy
                                 )
-                                if len(new_pos) % 2 == 1:
-                                    new_pos[0] = self._drag_orig_position[0]
                             else:
                                 _shift_r = bool(
                                     event.modifiers()
@@ -1416,15 +1413,26 @@ class InputHandlerMixin:
         self._drag_orig_position = list(pos)
         self._flush_dirty_positions()
 
+    def _compute_ink_drag_position(
+        self, orig_pos: list, ost_dx: float, ost_dy: float
+    ) -> list:
+        pos = list(orig_pos)
+        start = 1 if len(pos) % 2 == 1 else 0
+        if len(pos) - start < 2:
+            return pos
+        snapped_dx = self.snap_ost(pos[start] + ost_dx) - pos[start]
+        snapped_dy = self.snap_ost(pos[start + 1] + ost_dy) - pos[start + 1]
+        for index in range(start, len(pos) - 1, 2):
+            pos[index] = pos[index] + snapped_dx
+            pos[index + 1] = pos[index + 1] + snapped_dy
+        return pos
+
     def _compute_snapped_multi_drag_position(
         self, uid: str, orig_pos: list, ost_dx: float, ost_dy: float
     ) -> list:
         ann = self._current_annotations.get(uid)
         if ann and ann.is_ink:
-            new_pos = self.compute_new_position(orig_pos, ost_dy, ost_dx, -1, 0)
-            if len(new_pos) % 2 == 1:
-                new_pos[0] = orig_pos[0]
-            return new_pos
+            return self._compute_ink_drag_position(orig_pos, ost_dx, ost_dy)
         text_move = ann is not None and ann.is_text
         return self.compute_new_position(
             orig_pos,
@@ -1437,16 +1445,19 @@ class InputHandlerMixin:
 
     def _snapped_multi_drag_scene_delta(
         self,
+        uid: str,
         orig_pos: list,
         new_pos: list,
         fallback_sdx: float,
         fallback_sdy: float,
     ) -> QtCore.QPointF:
-        if len(orig_pos) < 2 or len(new_pos) < 2:
+        ann = self._current_annotations.get(uid)
+        start = 1 if ann and ann.is_ink and len(orig_pos) % 2 == 1 else 0
+        if len(orig_pos) - start < 2 or len(new_pos) - start < 2:
             return QtCore.QPointF(fallback_sdx, fallback_sdy)
         item_sdx, item_sdy = self.ost_to_scene_delta(
-            new_pos[0] - orig_pos[0],
-            new_pos[1] - orig_pos[1],
+            new_pos[start] - orig_pos[start],
+            new_pos[start + 1] - orig_pos[start + 1],
         )
         return QtCore.QPointF(item_sdx, item_sdy)
 
@@ -1460,7 +1471,7 @@ class InputHandlerMixin:
                 uid, orig_pos, ost_dx, ost_dy
             )
             delta = self._snapped_multi_drag_scene_delta(
-                orig_pos, new_pos, scene_dx, scene_dy
+                uid, orig_pos, new_pos, scene_dx, scene_dy
             )
             preview_delta_by_uid[uid] = delta
             for item in self._uid_to_items.get(uid, []):
