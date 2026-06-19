@@ -624,8 +624,6 @@ class TakeoffRenderer:
             if condition_uid not in conditions:
                 continue
             condition = conditions[condition_uid]
-            if not condition.layer_visible:
-                continue
             if condition_uid not in color_map:
                 continue
             color_entry = color_map[condition_uid]

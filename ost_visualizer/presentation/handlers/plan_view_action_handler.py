@@ -996,12 +996,23 @@ class PlanViewActionHandler:
         self._undo_svc.push(_undo_insert, _redo_insert)
         return list(new_uids)
 
+    def _apply_default_annotation_layer(
+        self, specs: List[InsertAnnotationSpec]
+    ) -> None:
+        annotation_layer_uid = self._data_svc.get_annotation_layer_uid()
+        if not annotation_layer_uid:
+            return
+        for spec in specs:
+            if not spec.layer_uid:
+                spec.layer_uid = annotation_layer_uid
+
     def _insert_annotations_fast(
         self,
         bid_ref,
         specs: List[InsertAnnotationSpec],
         ref_remap: Optional[PasteRefRemap] = None,
     ) -> List[str]:
+        self._apply_default_annotation_layer(specs)
         new_uids = self._ann_write_svc.insert_annotations(
             bid_ref.file_path,
             bid_ref.bid_uid,
@@ -1732,6 +1743,7 @@ class PlanViewActionHandler:
             )
         new_ann_uids: list = []
         if ann_specs:
+            self._apply_default_annotation_layer(ann_specs)
             ref_remap = PasteRefRemap(takeoff_uids=dict(takeoff_uid_remap))
             use_fast_annotation_paste = not pasted_takeoffs or use_fast_takeoff_paste
             if use_fast_annotation_paste:

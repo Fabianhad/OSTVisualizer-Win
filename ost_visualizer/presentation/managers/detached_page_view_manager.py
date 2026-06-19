@@ -499,5 +499,5 @@ class DetachedPageViewManager(IShutdownAware):
             named_view=named_view,
             page_area_selections=self.project_data.get_page_area_selections(),
             hidden_layer_uids=self.project_data.get_hidden_layer_uids(),
-            annotation_layer_visible=self.project_data.is_annotation_layer_visible(),
+            annotation_layer_uid=self.project_data.get_annotation_layer_uid(),
         )

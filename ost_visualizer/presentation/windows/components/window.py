@@ -510,7 +510,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def _annotation_placement_enabled(self) -> bool:
         return self._selection_enabled() and bool(
-            self.page_data and self.page_data.annotation_layer_visible
+            self.page_data
+            and self.page_data.is_layer_visible(self.page_data.annotation_layer_uid)
         )
 
     def _refresh_annotation_tool_access(self) -> None:
@@ -1140,6 +1141,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 name=name,
             )
 
+    def _apply_default_annotation_layer(self, spec) -> None:
+        if spec.layer_uid or self.page_data is None:
+            return
+        annotation_layer_uid = self.page_data.annotation_layer_uid
+        if annotation_layer_uid:
+            spec.layer_uid = annotation_layer_uid
+
     def _on_annotation_created(
         self, annotation_type: str, position: list, page_uid: str
     ) -> None:
@@ -1159,6 +1167,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         spec = build_placed_annotation_spec(annotation_type, page_uid, list(position))
         if spec is None:
             return
+        self._apply_default_annotation_layer(spec)
         new_uids = self._ann_write_svc.insert_annotations(
             bid_ref.file_path,
             bid_ref.bid_uid,
@@ -1204,6 +1213,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         font_color = spec.properties.get("FontColor")
         if isinstance(font_color, int):
             spec.color = int_color_to_hex(font_color)
+        self._apply_default_annotation_layer(spec)
         new_uids = self._ann_write_svc.insert_annotations(
             bid_ref.file_path,
             bid_ref.bid_uid,
@@ -1253,6 +1263,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         color = properties.get("Color")
         if isinstance(color, str) and color:
             spec.color = color
+        self._apply_default_annotation_layer(spec)
         new_uids = self._ann_write_svc.insert_annotations(
             bid_ref.file_path,
             bid_ref.bid_uid,
@@ -1309,6 +1320,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if spec is None:
             return
         spec.properties = {"BidPageViewUID": result.named_view_uid}
+        self._apply_default_annotation_layer(spec)
         new_uids = self._ann_write_svc.insert_annotations(
             bid_ref.file_path,
             bid_ref.bid_uid,

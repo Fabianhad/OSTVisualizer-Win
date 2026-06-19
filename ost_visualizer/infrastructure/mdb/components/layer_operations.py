@@ -1,4 +1,5 @@
 from typing import Optional
+from .constants import LAYER_REFERENCE_TABLES
 
 
 class LayerOperationsMixin:
@@ -82,14 +83,7 @@ class LayerOperationsMixin:
             deleted_seq = row.Sequence
             bid_uid = row.BidUID
             layer_int = int(layer_uid)
-            for table in (
-                "BidConditions",
-                "BidZones",
-                "BidHighlights",
-                "BidTexts",
-                "BidCallOuts",
-                "BidHotLinks",
-            ):
+            for table in LAYER_REFERENCE_TABLES:
                 if schema.optional_table_missing(table) or not schema.column_exists(
                     table, "BidLayerUID"
                 ):

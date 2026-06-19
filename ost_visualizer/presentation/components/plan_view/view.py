@@ -1134,7 +1134,7 @@ class TakeoffPlanView(
         item = self._text_annotation_item_from_properties(ann)
         self._scene.addItem(item)
         self._current_annotations[uid] = ann
-        self._uid_to_items[uid] = [item]
+        self._register_uid_items(uid, [item])
         self._draft_text_annotation_uid = uid
         self._selected_uids = {uid}
         self._on_selection_changed()
@@ -1191,7 +1191,7 @@ class TakeoffPlanView(
         for item in items:
             self._scene.addItem(item)
         self._current_annotations[uid] = ann
-        self._uid_to_items[uid] = items
+        self._register_uid_items(uid, items)
         self._draft_named_view_uid = uid
         self._selected_uids = {uid}
         self._on_selection_changed()
@@ -2033,6 +2033,25 @@ class TakeoffPlanView(
         self.viewport().update()
         return True
 
+    def _uid_items_visible(self, uid: str) -> bool:
+        takeoff = self._current_takeoffs.get(uid)
+        if takeoff is not None:
+            return bool(takeoff.is_visible(self._current_conditions))
+        annotation = self._current_annotations.get(uid)
+        if annotation is not None:
+            return bool(self._annotation_layer_visible(annotation))
+        return True
+
+    def _apply_uid_items_visibility(self, uid: str) -> None:
+        visible = self._uid_items_visible(uid)
+        for item in self._uid_to_items.get(uid, []):
+            item.setVisible(visible)
+
+    def _register_uid_items(self, uid: str, items: List[QGraphicsItem]) -> None:
+        uid_key = str(uid)
+        self._uid_to_items[uid_key] = list(items)
+        self._apply_uid_items_visibility(uid_key)
+
     def apply_layer_visibility(
         self,
         layer_uid: str,
@@ -2052,15 +2071,11 @@ class TakeoffPlanView(
             condition = self._current_conditions.get(takeoff.condition_uid)
             if condition is None or str(condition.layer_uid or "") != layer_key:
                 continue
-            visible = bool(condition.layer_visible)
-            for item in self._uid_to_items.get(uid, []):
-                item.setVisible(visible)
+            self._apply_uid_items_visibility(uid)
         for uid, annotation in self._current_annotations.items():
             if str(annotation.layer_uid or "") != layer_key:
                 continue
-            visible = self._annotation_layer_visible(annotation)
-            for item in self._uid_to_items.get(uid, []):
-                item.setVisible(visible)
+            self._apply_uid_items_visibility(uid)
         self.update_selection_visuals()
         self._update_scene_rect()
         self.viewport().update()
@@ -2094,13 +2109,10 @@ class TakeoffPlanView(
             condition = (
                 self._current_conditions.get(takeoff.condition_uid) if takeoff else None
             )
-            visible = bool(condition and condition.layer_visible)
-            for item in self._uid_to_items.get(uid, []):
-                item.setVisible(visible)
+            if condition is not None:
+                self._apply_uid_items_visibility(uid)
         for uid, annotation in self._current_annotations.items():
-            visible = self._annotation_layer_visible(annotation)
-            for item in self._uid_to_items.get(uid, []):
-                item.setVisible(visible)
+            self._apply_uid_items_visibility(uid)
         self.update_selection_visuals()
         self._update_scene_rect()
         self.viewport().update()
@@ -4261,7 +4273,7 @@ class TakeoffPlanView(
         page_area_selections: Optional[Dict[str, Optional[str]]],
         annotations: Optional[List[BidAnnotation]],
     ) -> None:
-        self._takeoff_items, self._uid_to_items = (
+        self._takeoff_items, takeoff_uid_to_items = (
             self._scene_builder.add_takeoff_overlays(
                 self._scene,
                 takeoffs,
@@ -4271,6 +4283,9 @@ class TakeoffPlanView(
                 page_area_selections,
             )
         )
+        self._uid_to_items = {}
+        for uid, items in takeoff_uid_to_items.items():
+            self._register_uid_items(uid, items)
         if annotations:
             annotation_dict, db_uid_map = _build_annotation_dict(
                 annotations,
@@ -4286,13 +4301,10 @@ class TakeoffPlanView(
             )
             self._takeoff_items.extend(annotation_items)
             self._hotlink_items.extend(hotlinks)
-            self._uid_to_items.update(ann_uid_to_items)
             self._current_annotations = annotation_dict
             self._ann_db_uid_map = db_uid_map
-            for uid, annotation in annotation_dict.items():
-                visible = self._annotation_layer_visible(annotation)
-                for item in ann_uid_to_items.get(uid, []):
-                    item.setVisible(visible)
+            for uid in annotation_dict:
+                self._register_uid_items(uid, ann_uid_to_items.get(uid, []))
         else:
             self._current_annotations = {}
             self._ann_db_uid_map = {}

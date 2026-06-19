@@ -4313,6 +4313,49 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(view._selected_uids, {"ann-1"})
         view.cleanup()
 
+    def test_newly_registered_annotation_respects_hidden_layer_without_reload(self):
+        view = self._make_plan_view()
+        annotation = BidAnnotation(
+            uid="ann-1",
+            annotation_type="rect",
+            position=[1.0, 1.0, 10.0, 10.0],
+            layer_uid="custom-notes-layer",
+            visible=True,
+        )
+        item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        item.setData(0, "ann-1")
+        view._scene.addItem(item)
+        view._current_bid_page_uid = "page-1"
+        view._current_annotations = {"ann-1": annotation}
+        view._current_takeoffs = {}
+        view._hidden_layer_uids = {"custom-notes-layer"}
+        view._register_uid_items("ann-1", [item])
+        self.assertFalse(item.isVisible())
+        self.assertFalse(view._is_selectable("ann-1"))
+        view.cleanup()
+
+    def test_newly_registered_takeoff_respects_hidden_condition_layer(self):
+        view = self._make_plan_view()
+        condition = Condition(
+            uid="condition-1",
+            name="Condition",
+            layer_uid="custom-condition-layer",
+            layer_visible=False,
+        )
+        takeoff = Takeoff(uid="takeoff-1", condition_uid=condition.uid)
+        item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+        item.setData(0, "takeoff-1")
+        view._scene.addItem(item)
+        view._current_bid_page_uid = "page-1"
+        view._current_conditions = {condition.uid: condition}
+        view._current_takeoffs = {"takeoff-1": takeoff}
+        view._current_annotations = {}
+        view._hidden_layer_uids = {"custom-condition-layer"}
+        view._register_uid_items("takeoff-1", [item])
+        self.assertFalse(item.isVisible())
+        self.assertFalse(view._is_selectable("takeoff-1"))
+        view.cleanup()
+
     def test_select_objects_in_current_area_uses_visible_takeoff_rules(self):
         view = self._make_plan_view()
         view._current_bid_page_uid = "page-1"

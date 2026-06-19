@@ -137,6 +137,7 @@ class FakeProjectData:
         self.annotations = []
         self.added_annotations = []
         self.removed_annotation_uids = []
+        self.annotation_layer_uid = "annotation-layer"
         self.page_names = {"p1": "Page 1"}
         self.pages = {"p1": SimpleNamespace(uid="p1", overlay_rect=None)}
         self.conditions = {
@@ -320,6 +321,9 @@ class FakeProjectData:
 
     def get_all_annotations(self):
         return list(self.annotations)
+
+    def get_annotation_layer_uid(self):
+        return self.annotation_layer_uid
 
     def get_page_name(self, page_uid):
         return self.page_names.get(page_uid, "")
@@ -1017,6 +1021,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(len(data.added_annotations), 1)
         self.assertEqual(data.added_annotations[0].annotation_type, "rect")
         self.assertEqual(data.added_annotations[0].position, [1.0, 2.0, 5.0, 6.0])
+        self.assertEqual(data.added_annotations[0].layer_uid, "annotation-layer")
+        self.assertEqual(ann_write.insert_calls[0][2][0].layer_uid, "annotation-layer")
 
     def test_in_memory_annotation_add_replaces_existing_uid(self):
         service = PageSelectionService()

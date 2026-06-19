@@ -10,6 +10,7 @@ from ....domain.entities.cover_sheet import (
 from ....domain.entities.employee import Employee, PayClass
 from ...parsers.utils.parser import decode_value, parse_float
 from ..schema_compatibility import MdbSchemaInspector
+from .constants import LAYER_REFERENCE_TABLES
 
 
 class SettingsReaderMixin:
@@ -362,13 +363,31 @@ class SettingsReaderMixin:
     def get_layer_uids_in_use(self, file_path: str, bid_uid: str) -> set:
         try:
             with self._connection(file_path) as connection:
+                schema = MdbSchemaInspector(connection, self.logger)
+                used_uids = set()
                 with connection.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT DISTINCT [BidLayerUID] FROM [BidConditions] "
-                        "WHERE [BidUID] = ? AND [BidLayerUID] IS NOT NULL",
-                        int(bid_uid),
-                    )
-                    return {str(row.BidLayerUID) for row in cursor.fetchall()}
+                    for table in LAYER_REFERENCE_TABLES:
+                        if schema.optional_table_missing(
+                            table
+                        ) or not schema.column_exists(table, "BidLayerUID"):
+                            continue
+                        if schema.column_exists(table, "BidUID"):
+                            cursor.execute(
+                                f"SELECT DISTINCT [BidLayerUID] FROM [{table}] "
+                                "WHERE [BidUID] = ? AND [BidLayerUID] IS NOT NULL",
+                                int(bid_uid),
+                            )
+                        else:
+                            cursor.execute(
+                                f"SELECT DISTINCT [BidLayerUID] FROM [{table}] "
+                                "WHERE [BidLayerUID] IS NOT NULL"
+                            )
+                        used_uids.update(
+                            str(row.BidLayerUID)
+                            for row in cursor.fetchall()
+                            if row.BidLayerUID is not None
+                        )
+                return used_uids
         except Exception as e:
             self.logger.warning("Could not query layer UIDs in use: %s", e)
             return set()

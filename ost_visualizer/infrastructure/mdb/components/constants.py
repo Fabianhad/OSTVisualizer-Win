@@ -52,3 +52,17 @@ HANDLED_SEPARATELY: Set[str] = {
     "BidPageFolders",
     "BidNamedViews",
 }
+
+LAYER_REFERENCE_TABLES = (
+    "BidConditions",
+    "BidZones",
+    "BidComments",
+    "BidAnnotationClouds",
+    "BidAnnotationOvals",
+    "BidAnnotationPolygons",
+    "BidAnnotationRects",
+    "BidTexts",
+    "BidHighlights",
+    "BidHotLinks",
+    "BidCallOuts",
+)

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from PySide6 import QtCore
 from PySide6 import QtWidgets
+from ost_visualizer.application.dtos.page_view_dto import PageViewDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.use_cases.annotation_view.open_annotation_view_use_case import (
     OpenAnnotationViewUseCase,
@@ -821,9 +822,15 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertIsNone(window._btn_select)
 
 
-class FakeDetachedPageData:
-    def __init__(self, *, annotation_layer_visible: bool = True):
-        self.annotation_layer_visible = annotation_layer_visible
+def FakeDetachedPageData(*, annotation_layer_hidden: bool = False):
+    annotation_layer_uid = "detached-annotation-layer"
+    return PageViewDto(
+        page=None,
+        hidden_layer_uids=(
+            {annotation_layer_uid} if annotation_layer_hidden else set()
+        ),
+        annotation_layer_uid=annotation_layer_uid,
+    )
 
 
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
@@ -1232,6 +1239,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 self.assertEqual((db_path, bid_uid, ref_remap), ("bid.mdb", "7", None))
                 self.assertEqual(specs[0].annotation_type, annotation_type)
                 self.assertEqual(specs[0].position, position)
+                self.assertEqual(
+                    specs[0].layer_uid, "detached-annotation-layer"
+                )
                 self.assertEqual(plan_view.selected_uids, {f"ann-1_{annotation_type}"})
                 self.assertEqual(len(undo_service.pushes), 1)
 
@@ -1271,6 +1281,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(specs[0].position, [7.0, 8.0, 12.0, 12.0])
         self.assertEqual(specs[0].properties, properties)
         self.assertEqual(specs[0].color, "#996633")
+        self.assertEqual(specs[0].layer_uid, "detached-annotation-layer")
         self.assertEqual(plan_view.selected_uids, {"ann-1_text"})
         self.assertEqual(len(undo_service.pushes), 1)
 
@@ -1351,6 +1362,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(
             write_service.insert_calls[0][2][0].properties, {"Text": "Lobby"}
         )
+        self.assertEqual(
+            write_service.insert_calls[0][2][0].layer_uid,
+            "detached-annotation-layer",
+        )
         self.assertEqual(plan_view.activate_calls, ["namedview"])
         self.assertEqual(plan_view.selected_uids, {"ann-1_namedview"})
         self.assertEqual(len(undo_service.pushes), 1)
@@ -1386,6 +1401,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(
             write_service.insert_calls[0][2][0].properties,
             {"BidPageViewUID": "nv1"},
+        )
+        self.assertEqual(
+            write_service.insert_calls[0][2][0].layer_uid,
+            "detached-annotation-layer",
         )
         self.assertEqual(plan_view.activate_calls, ["hotlink"])
         self.assertEqual(plan_view.selected_uids, {"ann-1_hotlink"})
@@ -1558,7 +1577,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
-        window.page_data = FakeDetachedPageData(annotation_layer_visible=False)
+        window.page_data = FakeDetachedPageData(annotation_layer_hidden=True)
         window._is_closing = False
         window._ann_write_svc = write_service
         window._undo_svc = None
@@ -1576,7 +1595,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         window._config = SimpleNamespace(allow_annotation_editing=True)
         window._read_only = False
-        window.page_data = FakeDetachedPageData(annotation_layer_visible=False)
+        window.page_data = FakeDetachedPageData(annotation_layer_hidden=True)
         window.plan_view = SimpleNamespace(
             activate_annotation_placement=lambda annotation_type: calls.append(
                 annotation_type
@@ -1585,7 +1604,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertFalse(window._activate_annotation_tool("dimension"))
         self.assertEqual(calls, [])
-        window.page_data.annotation_layer_visible = True
+        window.page_data.hidden_layer_uids.clear()
         self.assertTrue(window._activate_annotation_tool("dimension"))
         self.assertEqual(calls, ["dimension"])
 

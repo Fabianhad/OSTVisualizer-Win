@@ -166,6 +166,26 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual([item.text(col) for col in range(2, 5)], before)
         self.assertFalse(sidebar.is_condition_placeable("c1"))
 
+    def test_takeoff_renderer_creates_items_for_hidden_condition_layers(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        condition = Condition(
+            uid="c1",
+            name="Hidden Layer Condition",
+            condition_type=Condition.TYPE_LINEAR,
+            layer_visible=False,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 10.0, 0.0],
+        )
+        rendered = renderer.create_all_path_items(
+            [takeoff],
+            {"c1": condition},
+            {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+        )
+        self.assertEqual([uid for uid, _item in rendered], ["t1"])
+
     def test_condition_cut_paste_to_root_and_folder_uses_edit_permission(self):
         sidebar = ConditionsSidebar(None)
         pasted = []

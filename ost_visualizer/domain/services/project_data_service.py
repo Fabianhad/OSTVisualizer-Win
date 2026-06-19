@@ -134,6 +134,12 @@ class ProjectDataService:
     def is_annotation_layer_visible(self) -> bool:
         return self.model.bid_layer_visibility_by_name.get(ANNOTATION_LAYER_NAME, True)
 
+    def get_annotation_layer_uid(self) -> Optional[str]:
+        for layer_uid, layer_name in self.model.bid_layer_names_by_uid.items():
+            if normalize_layer_name(layer_name) == ANNOTATION_LAYER_NAME:
+                return layer_uid
+        return None
+
     def update_layer_visibility(
         self, layer_uid: str, show: bool, *, image_layer: bool = False
     ) -> List[str]:

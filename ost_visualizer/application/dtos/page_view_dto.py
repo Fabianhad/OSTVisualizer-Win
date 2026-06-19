@@ -19,4 +19,10 @@ class PageViewDto:
     named_view: Optional[NamedView] = None
     page_area_selections: Optional[Dict[str, Optional[str]]] = None
     hidden_layer_uids: Set[str] = field(default_factory=set)
-    annotation_layer_visible: bool = True
+    annotation_layer_uid: Optional[str] = None
+
+    def is_layer_visible(self, layer_uid: Optional[str]) -> bool:
+        layer_key = str(layer_uid or "")
+        if not layer_key:
+            return True
+        return all(str(hidden_uid) != layer_key for hidden_uid in self.hidden_layer_uids)
