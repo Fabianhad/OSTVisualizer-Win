@@ -114,6 +114,16 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         diff = abs((actual - expected + math.pi / 2.0) % math.pi - math.pi / 2.0)
         self.assertLess(diff, 0.01)
 
+    def _assert_line_avoids_rect(self, item, left, top, right, bottom):
+        path = item.path()
+        first = path.elementAt(0)
+        second = path.elementAt(1)
+        for step in range(1, 10):
+            ratio = step / 10.0
+            x = first.x + (second.x - first.x) * ratio
+            y = first.y + (second.y - first.y) * ratio
+            self.assertFalse(left < x < right and top < y < bottom)
+
     def _render_takeoff_items(self, condition, takeoff):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
         rendered = renderer.create_all_path_items(
@@ -653,6 +663,94 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertAlmostEqual(
             self._line_spacing(pattern_items[0], pattern_items[1]), 2.0, delta=0.01
         )
+
+    def test_area_linear_patterns_exclude_backout_hole(self):
+        line_patterns = [
+            pattern_values.HORIZONTAL,
+            pattern_values.VERTICAL,
+            pattern_values.BACKWARD_DIAG,
+            pattern_values.FORWARD_DIAG,
+        ]
+        for pattern in line_patterns:
+            with self.subTest(pattern=pattern):
+                condition = Condition(
+                    uid="c1",
+                    condition_type=Condition.TYPE_AREA,
+                    color_fill=0,
+                    pattern=pattern,
+                    spacing=2.0,
+                )
+                parent = Takeoff(
+                    uid="parent",
+                    condition_uid="c1",
+                    position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0, 0.0, 20.0],
+                )
+                backout = Takeoff(
+                    uid="backout",
+                    condition_uid="c1",
+                    parent_uid="parent",
+                    position=[8.0, 8.0, 12.0, 8.0, 12.0, 12.0, 8.0, 12.0],
+                )
+                renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+                rendered = renderer.create_all_path_items(
+                    [parent, backout],
+                    {"c1": condition},
+                    {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+                )
+                items = rendered[0][1]
+                items = items if isinstance(items, list) else [items]
+                pattern_items = self._line_path_items(items[1:])
+                self.assertGreater(len(pattern_items), 0)
+                for item in pattern_items:
+                    self._assert_line_avoids_rect(item, 8.0, 8.0, 12.0, 12.0)
+
+    def test_area_linear_pattern_without_backout_still_renders_lines(self):
+        condition = Condition(
+            uid="c1",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0,
+            pattern=pattern_values.HORIZONTAL,
+            spacing=2.0,
+        )
+        takeoff = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0, 0.0, 20.0],
+        )
+        items = self._render_takeoff_items(condition, takeoff)
+        pattern_items = self._line_path_items(items[1:])
+        self.assertGreater(len(pattern_items), 0)
+
+    def test_area_solid_fill_excludes_backout_hole(self):
+        condition = Condition(
+            uid="c1",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0,
+            pattern=pattern_values.SOLID,
+        )
+        parent = Takeoff(
+            uid="parent",
+            condition_uid="c1",
+            position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0, 0.0, 20.0],
+        )
+        backout = Takeoff(
+            uid="backout",
+            condition_uid="c1",
+            parent_uid="parent",
+            position=[8.0, 8.0, 12.0, 8.0, 12.0, 12.0, 8.0, 12.0],
+        )
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        rendered = renderer.create_all_path_items(
+            [parent, backout],
+            {"c1": condition},
+            {"c1": SimpleNamespace(hex="#123456", opacity=1.0)},
+        )
+        items = rendered[0][1]
+        items = items if isinstance(items, list) else [items]
+        area_item = items[0]
+        self.assertIsInstance(area_item, QGraphicsPathItem)
+        self.assertFalse(area_item.path().contains(QtCore.QPointF(10.0, 10.0)))
+        self.assertNotEqual(area_item.brush().style(), Qt.BrushStyle.NoBrush)
 
     def test_area_display_name_uses_centroid_when_dimension_is_not_present(self):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())

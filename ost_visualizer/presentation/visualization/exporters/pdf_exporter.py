@@ -52,6 +52,8 @@ _DEFAULT_HIGHLIGHT_OPACITY = 1.0
 _GRAY_COLOR_HEX = "#808080"
 _INCHES_TO_FEET = 1.0 / 12.0
 _PDF_POINTS_PER_INCH = 72
+_OVERLAY_DIRECT_FULL_PAGE_TOLERANCE_POINTS = 3.0
+_OVERLAY_DIRECT_ROTATION_TOLERANCE_RADIANS = 1e-6
 
 
 class PDFExporter:
@@ -255,14 +257,19 @@ class PDFExporter:
 
     @staticmethod
     def _overlay_rect_matches_page(page: Page) -> bool:
+        total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
+        if abs(total_rotation) > _OVERLAY_DIRECT_ROTATION_TOLERANCE_RADIANS:
+            return False
         rect_x, rect_y, rect_w, rect_h = page.overlay_rect_page_points()
         if rect_w <= 0.0 or rect_h <= 0.0:
             return True
+        width_tolerance = _OVERLAY_DIRECT_FULL_PAGE_TOLERANCE_POINTS
+        height_tolerance = _OVERLAY_DIRECT_FULL_PAGE_TOLERANCE_POINTS
         return (
-            abs(rect_x) <= 0.001
-            and abs(rect_y) <= 0.001
-            and abs(rect_w - page.effective_width_pts) <= 0.001
-            and abs(rect_h - page.effective_height_pts) <= 0.001
+            abs(rect_x) <= width_tolerance
+            and abs(rect_y) <= height_tolerance
+            and abs(rect_w - page.effective_width_pts) <= width_tolerance
+            and abs(rect_h - page.effective_height_pts) <= height_tolerance
         )
 
     def _create_overlay_rect_background_pdf(

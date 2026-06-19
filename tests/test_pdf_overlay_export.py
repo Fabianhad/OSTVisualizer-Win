@@ -172,6 +172,31 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual(exported_page.page_index, 0)
         self.assertFalse(exported_page.is_blank)
 
+    def test_overlay_only_pdf_export_uses_overlay_source_for_nearly_full_page_rect(
+        self,
+    ):
+        writer = _FakeWriter()
+        exporter = _make_exporter(writer)
+        exporter._create_overlay_rect_background_pdf = (
+            lambda _page, _page_info, _temp_dir: self.fail(
+                "near full-page overlay-only export should not rasterize"
+            )
+        )
+        result = _export_single_page(
+            exporter,
+            _page(
+                overlay_image_path="overlay.pdf",
+                image_show_mode=SHOW_OVERLAY,
+                width_pts=42.0 * 72.0,
+                height_pts=30.0 * 72.0,
+                overlay_rect=(-1.587912, 0.0, 4028.531767, 2877.295846),
+            ),
+        )
+        self.assertTrue(result.success)
+        exported_page = writer.pages[0]
+        self.assertEqual(exported_page.source_pdf, "overlay.pdf")
+        self.assertEqual(exported_page.page_index, 0)
+
     def test_overlay_only_pdf_export_rasterizes_moved_overlay_rect(self):
         writer = _FakeWriter()
         exporter = _make_exporter(writer)
@@ -192,6 +217,28 @@ class PDFOverlayExportTests(unittest.TestCase):
         exported_page = writer.pages[0]
         self.assertEqual(calls, [(96.0, 0.0, 816.0, 1056.0)])
         self.assertTrue(exported_page.source_pdf.endswith("moved-overlay.pdf"))
+        self.assertEqual(exported_page.page_index, 0)
+
+    def test_overlay_only_pdf_export_rasterizes_rotated_overlay_rect(self):
+        writer = _FakeWriter()
+        exporter = _make_exporter(writer)
+        calls = []
+        exporter._create_overlay_rect_background_pdf = (
+            lambda page, _page_info, temp_dir: calls.append(page.overlay_rotation)
+            or os.path.join(temp_dir, "rotated-overlay.pdf")
+        )
+        result = _export_single_page(
+            exporter,
+            _page(
+                overlay_image_path="overlay.pdf",
+                image_show_mode=SHOW_OVERLAY,
+                overlay_rotation=0.01,
+            ),
+        )
+        self.assertTrue(result.success)
+        exported_page = writer.pages[0]
+        self.assertEqual(calls, [0.01])
+        self.assertTrue(exported_page.source_pdf.endswith("rotated-overlay.pdf"))
         self.assertEqual(exported_page.page_index, 0)
 
     def test_positioned_overlay_export_clips_to_page_size(self):

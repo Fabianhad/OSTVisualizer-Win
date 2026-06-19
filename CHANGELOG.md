@@ -38,9 +38,9 @@
 - Updated Cover Sheet image path cells to show filenames by default, edit full paths on double-click, and highlight missing image files.
 - Improved composite page rendering by preserving antialias coverage when tinting layered images.
 - Prioritized enabled overlay PDF layers for composite/overlay PDF snapping and embedded text selection, with overlay-only PDF rendering using dynamic base and tile refresh.
-- PDF export now follows enabled page image layers, exporting overlay-only pages directly from the overlay source and main+overlay pages as a flattened red/blue comparison background with annotations on top.
+- PDF export now follows enabled page image layers, exporting normal overlay-only pages directly from the overlay source without full-page rasterization and main+overlay pages as a flattened red/blue comparison background with annotations on top.
 - Improved native PDF export for line, arrow, shape, ink, and text annotations to better match Bluebeam/Revu markups, render line-based appearances correctly on first open, and keep exported text boxes wrapped inside their textbox bounds.
-- Linear takeoff line patterns now rotate with the takeoff direction so horizontal, vertical, and diagonal hatches follow the line instead of the page axes.
+- Linear takeoff line patterns now rotate with the takeoff direction and exclude area backout/cutout holes, so horizontal, vertical, and diagonal hatches follow the line without drawing through cutouts.
 - Deferred visual/session state persistence for page zoom/pan, selected page, active page area, layer visibility, page image flags, and overlay placement, with 2D zoom/pan/reset, active page area, and layer visibility changes updating in-memory view state immediately while still flushing before close, exports, refreshes, unloads, and structural edits.
 
 ### Fixed
