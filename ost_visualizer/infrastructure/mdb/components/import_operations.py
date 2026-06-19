@@ -2,7 +2,7 @@ import datetime
 from typing import Any, Callable, Dict, Optional, Set, Tuple
 import pyodbc
 from ....domain.dtos.raw_bid_data_dto import RawBidData
-from ..ost_schema import PAGE_SECTIONS, RAW_BID_TABLES
+from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES
 from .connection_wrapper import ConnWrapper
 from .constants import BID_TABLES_WRITE_ORDER, NUMERIC_TYPE_SUBSTRINGS
 

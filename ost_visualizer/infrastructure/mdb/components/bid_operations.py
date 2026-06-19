@@ -2,7 +2,7 @@ import datetime
 import uuid
 from typing import Dict, List, Optional
 import pyodbc
-from ..ost_schema import BID_SECTIONS, BID_TAIL_SECTIONS, PAGE_SECTIONS
+from ..schema_contract import BID_SECTIONS, BID_TAIL_SECTIONS, PAGE_SECTIONS
 from .constants import HANDLED_SEPARATELY
 from .sql_helpers import placeholders
 

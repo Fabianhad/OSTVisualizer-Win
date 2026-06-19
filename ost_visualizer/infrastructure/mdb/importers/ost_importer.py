@@ -2,8 +2,13 @@ import logging
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set
 from ....domain.dtos.raw_bid_data_dto import RawBidData
-from ..ost_schema import BID_SECTIONS, BID_TAIL_SECTIONS, GLOBAL_SECTIONS, PAGE_SECTIONS
-from ..ost_schema import singular as _singular
+from ..schema_contract import (
+    BID_SECTIONS,
+    BID_TAIL_SECTIONS,
+    GLOBAL_SECTIONS,
+    PAGE_SECTIONS,
+)
+from ..schema_contract import singular as _singular
 
 logger = logging.getLogger(__name__)
 _GLOBAL_ZERO_UID_FIELDS: Set[str] = {

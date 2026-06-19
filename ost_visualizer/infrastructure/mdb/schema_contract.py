@@ -1,10 +1,5 @@
 from typing import List
 
-# Compatibility copy of the MDB raw schema contract. The canonical persistence
-# contract now lives in infrastructure/mdb/schema_contract.py; this module stays
-# temporarily to avoid a broad import migration and to keep domain from importing
-# infrastructure.
-
 BID_SECTIONS: List[str] = [
     "BidPlanRooms",
     "BidAreas",

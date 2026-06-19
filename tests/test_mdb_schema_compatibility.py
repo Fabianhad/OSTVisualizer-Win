@@ -5,6 +5,8 @@ from ost_visualizer.infrastructure.mdb.schema_compatibility import (
     MdbSchemaInspector,
     UnsupportedMdbSchemaError,
 )
+from ost_visualizer.domain import ost_schema as domain_ost_schema
+from ost_visualizer.infrastructure.mdb import schema_contract
 
 
 class _FakeResult:
@@ -53,6 +55,31 @@ class _FakeConnection:
 
 
 class MdbSchemaCompatibilityTests(unittest.TestCase):
+    def test_domain_schema_compatibility_copy_matches_infrastructure_contract(self):
+        self.assertEqual(domain_ost_schema.BID_SECTIONS, schema_contract.BID_SECTIONS)
+        self.assertEqual(
+            domain_ost_schema.BID_TAIL_SECTIONS,
+            schema_contract.BID_TAIL_SECTIONS,
+        )
+        self.assertEqual(
+            domain_ost_schema.GLOBAL_SECTIONS,
+            schema_contract.GLOBAL_SECTIONS,
+        )
+        self.assertEqual(domain_ost_schema.PAGE_SECTIONS, schema_contract.PAGE_SECTIONS)
+        self.assertEqual(
+            domain_ost_schema.RAW_BID_TABLES,
+            schema_contract.RAW_BID_TABLES,
+        )
+        self.assertEqual(
+            domain_ost_schema.RAW_GLOBAL_TABLES,
+            schema_contract.RAW_GLOBAL_TABLES,
+        )
+        self.assertEqual(domain_ost_schema.singular("BidLayers"), "BidLayer")
+        self.assertEqual(
+            domain_ost_schema.singular("BidLayers"),
+            schema_contract.singular("BidLayers"),
+        )
+
     def test_optional_column_uses_existing_column(self):
         inspector = MdbSchemaInspector(
             _FakeConnection({"BidPages"}, {"BidPages": {"Name"}})

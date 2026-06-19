@@ -17,7 +17,7 @@ from ....domain.entities.takeoff import Takeoff
 from ...parsers.ost_serializer import serialize_row
 from ...parsers.position_parser import extract_z_value_from_name, parse_position
 from ...parsers.utils.parser import decode_value, parse_float, parse_overlay_rect
-from ..ost_schema import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES
+from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES
 from ..schema_compatibility import MdbSchemaInspector
 
 BidConditions = Dict[str, Condition]

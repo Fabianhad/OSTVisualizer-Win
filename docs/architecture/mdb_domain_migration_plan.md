@@ -169,6 +169,10 @@ make current behavior observable, especially for legacy and partial MDB schemas.
 
 ## Phase 1: MDB Schema Contract Boundary
 
+**Status**
+
+Complete for the canonical contract seam.
+
 **Goal**
 
 Move raw MDB schema ownership out of the domain layer while preserving all
@@ -218,6 +222,68 @@ existing import paths during the transition.
 
 - Reverting the import move should restore the old module directly.
 - Compatibility aliases must remain until all call sites are migrated.
+
+**Completed work**
+
+- Added `ost_visualizer/infrastructure/mdb/schema_contract.py` as the canonical
+  MDB raw schema contract for OST table sections, raw table lists, and
+  `singular(...)`.
+- Updated `ost_visualizer/infrastructure/mdb/ost_schema.py` to re-export the new
+  infrastructure contract for existing infrastructure imports.
+- Updated clean infrastructure call sites to import the contract directly:
+  `bid_data_reader.py`, `bid_operations.py`, `import_operations.py`, and
+  `importers/ost_importer.py`.
+- Left `ost_visualizer/domain/ost_schema.py` as a temporary compatibility copy
+  instead of importing infrastructure, because domain-to-infrastructure imports
+  violate the architecture guardrail.
+- Added a parity test so the domain compatibility copy must match the
+  infrastructure contract while old imports still exist.
+
+**Decisions made**
+
+- The infrastructure contract is canonical, but `domain/ost_schema.py` remains a
+  duplicated compatibility module until presentation/export callers move behind
+  later neutral boundaries.
+- Do not make `domain/ost_schema.py` a literal re-export from infrastructure.
+  That would satisfy the migration wording but break the enforced layer rules.
+- Do not touch pre-existing dirty `components/constants.py` in this commit. Its
+  existing `..ost_schema` import still resolves through the infrastructure
+  compatibility module.
+
+**Files changed**
+
+- `ost_visualizer/infrastructure/mdb/schema_contract.py`
+- `ost_visualizer/infrastructure/mdb/ost_schema.py`
+- `ost_visualizer/infrastructure/mdb/components/bid_data_reader.py`
+- `ost_visualizer/infrastructure/mdb/components/bid_operations.py`
+- `ost_visualizer/infrastructure/mdb/components/import_operations.py`
+- `ost_visualizer/infrastructure/mdb/importers/ost_importer.py`
+- `ost_visualizer/domain/ost_schema.py`
+- `tests/test_mdb_schema_compatibility.py`
+- `docs/architecture/mdb_domain_migration_plan.md`
+
+**Validation results**
+
+- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\infrastructure\mdb\schema_contract.py ost_visualizer\infrastructure\mdb\ost_schema.py ost_visualizer\domain\ost_schema.py ost_visualizer\infrastructure\mdb\components\bid_data_reader.py ost_visualizer\infrastructure\mdb\components\bid_operations.py ost_visualizer\infrastructure\mdb\components\import_operations.py ost_visualizer\infrastructure\mdb\importers\ost_importer.py tests\test_mdb_schema_compatibility.py`
+  passed.
+- `.\venv\Scripts\python.exe -m unittest tests.test_mdb_schema_compatibility tests.test_file_project_repository tests.test_infrastructure_lifecycle tests.test_import_refresh_flow -v`
+  passed: 19 tests.
+- `.\venv\Scripts\python.exe tools\check_architecture.py --changed-only`
+  passed.
+- `git diff --check` passed with only pre-existing CRLF normalization warnings
+  for unrelated dirty tracked files.
+- `.\venv\Scripts\python.exe -m unittest discover -s tests -v` ran 970 tests
+  with the two known unrelated tuple-vs-list failures in
+  `tests/test_viewer_sync_coordinator_overlay_refresh.py`:
+  `test_named_view_rename_uses_inline_edit_without_text_toolbar` and
+  `test_selected_annotation_style_change_updates_only_selected_annotation`.
+
+**Remaining tasks**
+
+- Remove the domain compatibility copy only after all non-domain callers migrate
+  to neutral application/export boundaries.
+- Update any currently dirty or future infrastructure call sites that still use
+  `infrastructure/mdb/ost_schema.py` when those files can be safely touched.
 
 ## Phase 2: Neutral Application Ports
 

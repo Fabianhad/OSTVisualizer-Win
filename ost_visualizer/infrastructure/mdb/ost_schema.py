@@ -1,4 +1,4 @@
-from ...domain.ost_schema import (
+from .schema_contract import (
     BID_SECTIONS,
     BID_TAIL_SECTIONS,
     GLOBAL_SECTIONS,
