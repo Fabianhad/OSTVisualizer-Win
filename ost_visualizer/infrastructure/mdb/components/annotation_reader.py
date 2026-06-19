@@ -1,7 +1,8 @@
 from typing import Any, List
 import pyodbc
 from ....domain.entities.annotation import BidAnnotation, int_color_to_hex
-from ....domain.entities.layer import BidLayers, get_layer_uid_by_name, is_layer_visible
+from ....domain.entities.layer import BidLayers
+from ..mappers.annotation_mapper import MdbAnnotationLayerMapper
 from ...parsers.position_parser import parse_position_bytes
 from ...parsers.utils.parser import decode_value
 from ..schema_compatibility import MdbSchemaInspector
@@ -24,15 +25,7 @@ class AnnotationReaderMixin:
         schema: MdbSchemaInspector,
     ) -> List[BidAnnotation]:
         bid_annotations: List[BidAnnotation] = []
-        annotation_layer_uid = get_layer_uid_by_name(bid_layers, "Annotation")
-        annotation_layer_visible = is_layer_visible(bid_layers, annotation_layer_uid)
-
-        def _layer(
-            row_layer_uid: Any = None,
-        ) -> tuple:
-            if row_layer_uid is not None:
-                return str(row_layer_uid), is_layer_visible(bid_layers, row_layer_uid)
-            return annotation_layer_uid, annotation_layer_visible
+        layer_mapper = MdbAnnotationLayerMapper(bid_layers)
 
         with connection.cursor() as cursor:
             try:
@@ -47,7 +40,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer(row.BidLayerUID)
+                        layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
                         bid_annotations.append(
                             BidAnnotation(
                                 uid=str(row.UID),
@@ -74,7 +67,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer(row.BidLayerUID)
+                        layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
                         bid_annotations.append(
                             BidAnnotation(
                                 uid=str(row.UID),
@@ -101,7 +94,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer(row.BidLayerUID)
+                        layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
                         bid_annotations.append(
                             BidAnnotation(
                                 uid=str(row.UID),
@@ -128,7 +121,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer(row.BidLayerUID)
+                        layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
                         bid_annotations.append(
                             BidAnnotation(
                                 uid=str(row.UID),
@@ -155,7 +148,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer()
+                        layer_uid, visible = layer_mapper.resolve_layer()
                         bid_annotations.append(
                             BidAnnotation(
                                 uid=str(row.UID),
@@ -183,7 +176,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer()
+                        layer_uid, visible = layer_mapper.resolve_layer()
                         props = {}
                         if row.BidTakeoffFromUID is not None:
                             props["BidTakeoffFromUID"] = str(row.BidTakeoffFromUID)
@@ -218,7 +211,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer()
+                        layer_uid, visible = layer_mapper.resolve_layer()
                         props = {
                             "FontName": (
                                 str(row.FontName) if row.FontName else "Arial"
@@ -261,7 +254,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer()
+                        layer_uid, visible = layer_mapper.resolve_layer()
                         props = {}
                         if row.BidTakeoffFromUID is not None:
                             props["BidTakeoffFromUID"] = str(row.BidTakeoffFromUID)
@@ -301,7 +294,7 @@ class AnnotationReaderMixin:
                         name_str = (
                             name_str.replace("\x00", "").replace("\r\n", "\n").strip()
                         )
-                        layer_uid, visible = _layer(row.BidLayerUID)
+                        layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
                         props = {
                             "Text": name_str,
                             "FontColor": row.FontColor,
@@ -340,7 +333,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer(row.BidLayerUID)
+                        layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
                         bid_annotations.append(
                             BidAnnotation(
                                 uid=str(row.UID),
@@ -368,7 +361,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer()
+                        layer_uid, visible = layer_mapper.resolve_layer()
                         name_str = decode_value(row.Name).strip()
                         bid_annotations.append(
                             BidAnnotation(
@@ -397,7 +390,7 @@ class AnnotationReaderMixin:
                 for row in cursor.fetchall():
                     position = parse_position_bytes(row.Position)
                     if position:
-                        layer_uid, visible = _layer(row.BidLayerUID)
+                        layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
                         bid_annotations.append(
                             BidAnnotation(
                                 uid=str(row.UID),
@@ -438,7 +431,7 @@ class AnnotationReaderMixin:
                         name_str = (
                             name_str.replace("\x00", "").replace("\r\n", "\n").strip()
                         )
-                        layer_uid, visible = _layer(row.BidLayerUID)
+                        layer_uid, visible = layer_mapper.resolve_layer(row.BidLayerUID)
                         props = {
                             "Text": name_str,
                             "FontColor": row.FontColor,

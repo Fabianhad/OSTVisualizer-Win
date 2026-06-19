@@ -398,6 +398,10 @@ use cases can depend on project persistence rather than MDB identity.
 
 ## Phase 3: MDB Mappers and Repair/Defaulting Boundary
 
+**Status**
+
+Complete for the first narrow mapper boundary.
+
 **Goal**
 
 Move legacy MDB repair and defaulting into explicit mapper/factory boundaries so
@@ -451,6 +455,57 @@ application and UI code receive valid domain objects.
 
 - Keep old reader helper functions until mapper behavior is proven equivalent.
 - Mapper extraction should be mechanical enough to revert concept-by-concept.
+
+**Completed work**
+
+- Added `MdbAnnotationLayerMapper` as the first MDB mapper boundary.
+- Moved annotation layer repair/defaulting out of the annotation reader closure:
+  explicit `BidLayerUID` rows resolve through their row layer, while annotation
+  rows without `BidLayerUID` resolve to the reserved Annotation layer.
+- Preserved existing fallback behavior when no Annotation layer exists:
+  no layer UID and visible by default.
+- Updated `annotation_reader.py` to delegate layer resolution to the mapper
+  while leaving SQL fetching and row-to-annotation construction unchanged.
+- Added direct mapper tests for hidden Annotation layer defaults, explicit row
+  layers, and missing Annotation layer fallback.
+
+**Decisions made**
+
+- Start with annotation layer mapping instead of a broad annotation row mapper
+  because it captures the reload-only repair rule without rewriting every
+  annotation table parser.
+- Keep raw annotation property dictionaries in the reader for now; those move
+  later when annotation factories and export boundaries are in place.
+
+**Files changed**
+
+- `ost_visualizer/infrastructure/mdb/mappers/annotation_mapper.py`
+- `ost_visualizer/infrastructure/mdb/components/annotation_reader.py`
+- `tests/test_mdb_annotation_mapper.py`
+- `docs/architecture/mdb_domain_migration_plan.md`
+
+**Validation results**
+
+- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\infrastructure\mdb\mappers\annotation_mapper.py ost_visualizer\infrastructure\mdb\components\annotation_reader.py tests\test_mdb_annotation_mapper.py`
+  passed.
+- `.\venv\Scripts\python.exe -m unittest tests.test_mdb_annotation_mapper tests.test_mdb_schema_compatibility tests.test_bid_dimension_annotations -v`
+  passed: 54 tests.
+- `.\venv\Scripts\python.exe tools\check_architecture.py --changed-only`
+  passed.
+- `git diff --check` passed with only pre-existing CRLF normalization warnings
+  for unrelated dirty tracked files.
+- `.\venv\Scripts\python.exe -m unittest discover -s tests -v` ran 974 tests
+  with the two known unrelated tuple-vs-list failures in
+  `tests/test_viewer_sync_coordinator_overlay_refresh.py`:
+  `test_named_view_rename_uses_inline_edit_without_text_toolbar` and
+  `test_selected_annotation_style_change_updates_only_selected_annotation`.
+
+**Remaining tasks**
+
+- Add broader row-to-domain mappers only when a specific table group is being
+  migrated and has direct compatibility tests.
+- Move raw property normalization out of the reader after domain annotation
+  factories exist.
 
 ## Phase 4: Schema Creator Alignment
 
