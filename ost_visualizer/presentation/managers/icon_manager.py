@@ -59,6 +59,10 @@ class IconId(Enum):
     FORMAT_ALIGN_LEFT = "format_align_left"
     FORMAT_ALIGN_CENTER = "format_align_center"
     FORMAT_ALIGN_RIGHT = "format_align_right"
+    PROJECT_TREE_DATABASE = "project_tree_database"
+    FOLDER = "folder"
+    PROJECT_TREE_BID = "project_tree_bid"
+    PAGE_TAKEOFF_INDICATOR = "page_takeoff_indicator"
 
 
 @dataclass(frozen=True)
@@ -183,6 +187,16 @@ ICON_SPECS: Dict[IconId, IconSpec] = {
     ),
     IconId.FORMAT_ALIGN_RIGHT: IconSpec(
         "format_align_right_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.PROJECT_TREE_DATABASE: IconSpec(
+        "database_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.FOLDER: IconSpec("folder_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
+    IconId.PROJECT_TREE_BID: IconSpec(
+        "request_page_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+    ),
+    IconId.PAGE_TAKEOFF_INDICATOR: IconSpec(
+        "draft_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
     ),
 }
 ACTION_ICONS: Dict[str, IconId] = {

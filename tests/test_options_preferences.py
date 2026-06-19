@@ -1197,6 +1197,16 @@ class OptionsPreferencesTests(unittest.TestCase):
             IconId.FORMAT_ALIGN_RIGHT: (
                 "format_align_right_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
             ),
+            IconId.PROJECT_TREE_DATABASE: (
+                "database_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+            ),
+            IconId.FOLDER: ("folder_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"),
+            IconId.PROJECT_TREE_BID: (
+                "request_page_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+            ),
+            IconId.PAGE_TAKEOFF_INDICATOR: (
+                "draft_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+            ),
         }
         for icon_id, svg_name in expected_icons.items():
             with self.subTest(icon_id=icon_id):

@@ -4,14 +4,13 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ...domain.entities.bid import Bid
 from ...domain.entities.folder import Folder
 from ...domain.entities.page import Page
-from ..utils.themed_icon import build_colored_icon
+from ..managers.icon_manager import IconId, IconManager
 from .tree_popup_combo import TreePopupComboBoxBase
 
 _ITEM_ROLE_KIND = QtCore.Qt.ItemDataRole.UserRole
 _ITEM_ROLE_UID = QtCore.Qt.ItemDataRole.UserRole + 1
 _ITEM_ROLE_PRECHECK_ICON = QtCore.Qt.ItemDataRole.UserRole + 2
 _ITEM_ROLE_PAGE = QtCore.Qt.ItemDataRole.UserRole + 3
-_TAKEOFF_INDICATOR_SVG = "draft_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
 _TAKEOFF_INDICATOR_DEFAULT_COLOR = "#808080"
 _TAKEOFF_INDICATOR_ACTIVE_COLOR = "#00BCD4"
 
@@ -108,12 +107,12 @@ class PageComboBox(TreePopupComboBoxBase):
         self.setSizeAdjustPolicy(
             QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
-        self._draft_icon_default = build_colored_icon(
-            _TAKEOFF_INDICATOR_SVG,
+        self._draft_icon_default = IconManager.colored_icon(
+            IconId.PAGE_TAKEOFF_INDICATOR,
             _TAKEOFF_INDICATOR_DEFAULT_COLOR,
         )
-        self._draft_icon_active = build_colored_icon(
-            _TAKEOFF_INDICATOR_SVG,
+        self._draft_icon_active = IconManager.colored_icon(
+            IconId.PAGE_TAKEOFF_INDICATOR,
             _TAKEOFF_INDICATOR_ACTIVE_COLOR,
         )
         self._page_items: Dict[str, QtGui.QStandardItem] = {}
@@ -401,12 +400,12 @@ class SinglePageComboBox(TreePopupComboBoxBase):
         super().__init__(parent)
         self._line_edit_mouse_press_event = self.lineEdit().mousePressEvent
         self.lineEdit().mousePressEvent = self._on_line_edit_mouse_press
-        self._draft_icon_default = build_colored_icon(
-            _TAKEOFF_INDICATOR_SVG,
+        self._draft_icon_default = IconManager.colored_icon(
+            IconId.PAGE_TAKEOFF_INDICATOR,
             _TAKEOFF_INDICATOR_DEFAULT_COLOR,
         )
-        self._draft_icon_active = build_colored_icon(
-            _TAKEOFF_INDICATOR_SVG,
+        self._draft_icon_active = IconManager.colored_icon(
+            IconId.PAGE_TAKEOFF_INDICATOR,
             _TAKEOFF_INDICATOR_ACTIVE_COLOR,
         )
         self._page_items: Dict[str, QtGui.QStandardItem] = {}

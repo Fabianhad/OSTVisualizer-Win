@@ -31,7 +31,6 @@ from ...utils.messagebox import (
 )
 from ...utils.overlay_context_menu import IMAGE_FILE_FILTER
 from ...utils.scales import ARCH_SCALES, SCALES_BY_STYLE
-from ...utils.themed_icon import build_colored_icon
 from ...utils.windows import remove_minimize, set_initial_window_size
 from ..areas_dialog import BidAreasDialog
 from ..employees_dialog import EmployeesDialog
@@ -137,9 +136,12 @@ class CoverSheetDialog(QtWidgets.QDialog):
             else self._pages_with_takeoffs
         )
         self._pdf_page_sizes_fn = pdf_page_sizes_fn
-        _draft_svg = "draft_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
-        self._draft_icon_default = build_colored_icon(_draft_svg, "#808080")
-        self._draft_icon_active = build_colored_icon(_draft_svg, "#00BCD4")
+        self._draft_icon_default = IconManager.colored_icon(
+            IconId.PAGE_TAKEOFF_INDICATOR, "#808080"
+        )
+        self._draft_icon_active = IconManager.colored_icon(
+            IconId.PAGE_TAKEOFF_INDICATOR, "#00BCD4"
+        )
         if context is not None:
             self._save_job_statuses_fn = context.save_job_statuses
             self._reload_job_statuses_fn = context.reload_job_statuses
@@ -807,6 +809,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
     def _add_folder_item(self, parent, folder) -> QtWidgets.QTreeWidgetItem:
         folder_item = QtWidgets.QTreeWidgetItem([folder.name] + [""] * 7)
+        self._apply_folder_icon(folder_item)
         folder_item.setData(0, self._ITEM_ROLE, ("folder", folder.uid))
         folder_item.setFlags(folder_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
         if parent is not None:
@@ -819,6 +822,10 @@ class CoverSheetDialog(QtWidgets.QDialog):
         for page in folder.pages:
             self._add_page_item(folder_item, page)
         return folder_item
+
+    @staticmethod
+    def _apply_folder_icon(item: QtWidgets.QTreeWidgetItem) -> None:
+        item.setIcon(0, IconManager.icon(IconId.FOLDER))
 
     def _add_page_item(self, parent, page) -> QtWidgets.QTreeWidgetItem:
         item = QtWidgets.QTreeWidgetItem(
@@ -1111,6 +1118,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         local_uid = f"new_folder_{self._new_folder_counter}"
         self._new_folder_counter += 1
         folder_item = QtWidgets.QTreeWidgetItem(["New Folder"] + [""] * 7)
+        self._apply_folder_icon(folder_item)
         folder_item.setData(
             0, self._ITEM_ROLE, ("new_folder", local_uid, parent_folder_uid)
         )

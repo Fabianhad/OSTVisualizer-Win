@@ -6,7 +6,11 @@ from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
-from ost_visualizer.domain.entities.cover_sheet import CoverSheetData, CoverSheetPage
+from ost_visualizer.domain.entities.cover_sheet import (
+    CoverSheetData,
+    CoverSheetFolder,
+    CoverSheetPage,
+)
 from ost_visualizer.domain.entities.employee import Employee
 from ost_visualizer.infrastructure.mdb.components.settings_operations import (
     SettingsOperationsMixin,
@@ -15,6 +19,7 @@ from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
 )
 from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDialog
+from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 
 
 def _app():
@@ -323,6 +328,40 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             self.assertIn("Image File was not found", image_editor.toolTip())
             self.assertIn("color:", overlay_editor.styleSheet())
             self.assertIn("Overlay Image was not found", overlay_editor.toolTip())
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_folder_nodes_use_folder_icon(self):
+        data = _cover_sheet_data()
+        data.folders["f1"] = CoverSheetFolder(uid="f1", name="Plans")
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            folder_item = dialog.plan_tree.topLevelItem(0)
+            self.assertEqual(folder_item.data(0, dialog._ITEM_ROLE), ("folder", "f1"))
+            self.assertFalse(folder_item.icon(0).isNull())
+            self.assertEqual(
+                folder_item.icon(0).cacheKey(),
+                IconManager.icon(IconId.FOLDER).cacheKey(),
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_new_folder_node_uses_folder_icon(self):
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, _cover_sheet_data())
+        try:
+            dialog._add_new_folder()
+            folder_item = dialog.plan_tree.topLevelItem(
+                dialog.plan_tree.topLevelItemCount() - 1
+            )
+            data = folder_item.data(0, dialog._ITEM_ROLE)
+            self.assertEqual(data[0], "new_folder")
+            self.assertFalse(folder_item.icon(0).isNull())
+            self.assertEqual(
+                folder_item.icon(0).cacheKey(),
+                IconManager.icon(IconId.FOLDER).cacheKey(),
+            )
         finally:
             dialog.close()
             dialog.deleteLater()

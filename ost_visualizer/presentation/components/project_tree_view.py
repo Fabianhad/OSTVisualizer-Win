@@ -11,6 +11,7 @@ from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.project import Project
 from ..config import NO_MARGINS, NO_SPACING
 from ..managers.context_menu_manager import ContextActionId, ContextMenuManager
+from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..managers.ui_access_manager import Feature
 
@@ -383,6 +384,7 @@ class ProjectView(QtWidgets.QWidget):
                 loaded_file.file_path,
                 loaded_file.file_path,
             )
+            self._apply_item_icon(file_root, IconId.PROJECT_TREE_DATABASE)
             self.top_tree.addTopLevelItem(file_root)
             self._build_file_content(file_root, loaded_file)
         self._restore_expanded_nodes()
@@ -429,6 +431,7 @@ class ProjectView(QtWidgets.QWidget):
                     f"{loaded_file.file_path}|{label}",
                     loaded_file.file_path,
                 )
+                self._apply_item_icon(item, IconId.FOLDER)
                 parent_item.addChild(item)
                 status_items[label] = item
             return item
@@ -489,6 +492,7 @@ class ProjectView(QtWidgets.QWidget):
             project.uid,
             loaded_file.file_path,
         )
+        self._apply_item_icon(project_item, IconId.FOLDER)
         return project_item
 
     def _add_bid_item(
@@ -502,6 +506,7 @@ class ProjectView(QtWidgets.QWidget):
         self._apply_bid_sort_values(bid_item, bid)
         self._apply_bid_alignments(bid_item)
         self._set_item_info(bid_item, "bid", bid.uid, file_path)
+        self._apply_item_icon(bid_item, IconId.PROJECT_TREE_BID)
         parent_item.addChild(bid_item)
 
     def _build_bid_columns(self, bid: Bid, is_orphan: bool) -> List[str]:
@@ -564,6 +569,10 @@ class ProjectView(QtWidgets.QWidget):
             item.setTextAlignment(
                 col, right if col in _RIGHT_ALIGNED_BID_COLS else left
             )
+
+    @staticmethod
+    def _apply_item_icon(item: QtWidgets.QTreeWidgetItem, icon_id: IconId) -> None:
+        item.setIcon(0, IconManager.icon(icon_id))
 
     def _start_pending_rename(self) -> None:
         uid = self._pending_rename_uid

@@ -55,6 +55,7 @@ from ....domain.entities.takeoff import Takeoff
 from ...configurators.window_configurator import resource_path
 from ...interfaces.i_annotation_item_renderer import IAnnotationItemRenderer
 from ...interfaces.i_takeoff_renderer import ITakeoffRenderer
+from ...managers.icon_manager import IconId, IconManager
 from ...scene.scene_builder import SceneBuilder
 from ...utils.color_swatch import rounded_color_swatch
 from ...utils.annotation_defaults import (
@@ -63,7 +64,7 @@ from ...utils.annotation_defaults import (
 )
 from ...utils.messagebox import show_warning
 from ...utils.theme import set_palette_background
-from ...utils.themed_icon import apply_themed_icon, current_text_hex, recolor_svg
+from ...utils.themed_icon import current_text_hex, recolor_svg
 from ...utils.zoom_debouncer import ZoomDebouncer
 from ...visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
@@ -99,20 +100,12 @@ _INTELLIGENT_PASTE_GUIDE_HEX = "#1f9d45"
 _TEXT_TOOL_ICON_SIZE = 20
 _TEXT_TOOL_BUTTON_SIZE = 26
 _TEXT_TOOL_COLOR_SWATCH_SIZE = 20
-_TEXT_TOOL_BOLD_ICON = "format_bold_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
-_TEXT_TOOL_ITALIC_ICON = "format_italic_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
-_TEXT_TOOL_UNDERLINE_ICON = (
-    "format_underlined_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
-)
-_TEXT_TOOL_ALIGN_LEFT_ICON = (
-    "format_align_left_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
-)
-_TEXT_TOOL_ALIGN_CENTER_ICON = (
-    "format_align_center_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
-)
-_TEXT_TOOL_ALIGN_RIGHT_ICON = (
-    "format_align_right_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
-)
+_TEXT_TOOL_BOLD_ICON = IconId.FORMAT_BOLD
+_TEXT_TOOL_ITALIC_ICON = IconId.FORMAT_ITALIC
+_TEXT_TOOL_UNDERLINE_ICON = IconId.FORMAT_UNDERLINE
+_TEXT_TOOL_ALIGN_LEFT_ICON = IconId.FORMAT_ALIGN_LEFT
+_TEXT_TOOL_ALIGN_CENTER_ICON = IconId.FORMAT_ALIGN_CENTER
+_TEXT_TOOL_ALIGN_RIGHT_ICON = IconId.FORMAT_ALIGN_RIGHT
 _MOVE_OVERLAY_ICON = "recenter_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
 
 
@@ -547,31 +540,31 @@ class TakeoffPlanView(
         return toolbar
 
     def _make_text_button(
-        self, parent: QFrame, icon_name: str, tooltip: str
+        self, parent: QFrame, icon_id: IconId, tooltip: str
     ) -> QPushButton:
         button = QPushButton(parent)
         button.setCheckable(True)
         button.setFixedSize(_TEXT_TOOL_BUTTON_SIZE, _TEXT_TOOL_BUTTON_SIZE)
         button.setIconSize(QtCore.QSize(_TEXT_TOOL_ICON_SIZE, _TEXT_TOOL_ICON_SIZE))
         button.setToolTip(tooltip)
-        apply_themed_icon(button, icon_name)
+        IconManager.apply(button, icon_id)
         return button
 
     def _make_text_toggle_button(
-        self, parent: QFrame, icon_name: str, tooltip: str
+        self, parent: QFrame, icon_id: IconId, tooltip: str
     ) -> QPushButton:
-        button = self._make_text_button(parent, icon_name, tooltip)
+        button = self._make_text_button(parent, icon_id, tooltip)
         button.toggled.connect(self._apply_condition_text_format_from_signal)
         return button
 
     def _make_text_align_button(
         self,
         parent: QFrame,
-        icon_name: str,
+        icon_id: IconId,
         tooltip: str,
         alignment: Qt.AlignmentFlag,
     ) -> QPushButton:
-        button = self._make_text_button(parent, icon_name, tooltip)
+        button = self._make_text_button(parent, icon_id, tooltip)
         button.clicked.connect(
             lambda _checked=False, align=alignment: self._set_condition_text_alignment(
                 align

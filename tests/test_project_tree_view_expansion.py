@@ -10,6 +10,7 @@ from ost_visualizer.presentation.components.project_tree_view import (
     _DELETED_PROJECT_UID,
     ProjectView,
 )
+from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 
 
 def _app():
@@ -183,6 +184,26 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         state = self.view.get_delete_replacement_selection_state()
         self.assertEqual(state["kind"], "bid")
         self.assertEqual(state["bid_uid"], "deleted-1")
+
+    def assert_item_icon(self, item, icon_id):
+        self.assertFalse(item.icon(0).isNull())
+        self.assertEqual(item.icon(0).cacheKey(), IconManager.icon(icon_id).cacheKey())
+
+    def test_project_tree_applies_node_icons(self):
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        database_item = self._find_item("C:/jobs/test.mdb")
+        project_item = self._find_item("project-1")
+        bid_item = self._find_item("bid-1")
+        self.assert_item_icon(database_item, IconId.PROJECT_TREE_DATABASE)
+        self.assert_item_icon(project_item, IconId.FOLDER)
+        self.assert_item_icon(bid_item, IconId.PROJECT_TREE_BID)
+
+    def test_project_tree_status_groups_use_folder_icon(self):
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        self.view.set_group_by_job_status(True, notify=False)
+        database_item = self._find_item("C:/jobs/test.mdb")
+        status_group = database_item.child(0)
+        self.assert_item_icon(status_group, IconId.FOLDER)
 
     def test_selection_restore_records_expanded_parent_nodes_for_rebuild(self):
         self.view.set_expanded_node_keys([])
