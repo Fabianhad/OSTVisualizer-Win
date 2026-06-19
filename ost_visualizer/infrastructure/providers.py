@@ -44,7 +44,6 @@ from ..domain.services.takeoff_service_impl import TakeoffDomainService
 from ..domain.services.uom_service_impl import UOMDomainService
 from ..presentation.visualization.core.geometry.linear_geometry import LinearGeometry
 from ..presentation.visualization.exporters.osp_exporter import OspExporter
-from ..presentation.visualization.exporters.ost_exporter import OstExporter
 from ..presentation.visualization.exporters.pdf_exporter import PDFExporter
 from ..presentation.visualization.factories.coordinate_transformer_factory import (
     CoordinateTransformerFactory,
@@ -64,6 +63,7 @@ from .external.license_api_client import LicenseApiClient
 from .hardware.hwid_generator import HWIDGenerator
 from .mdb.connection_manager import MdbConnectionManager
 from .mdb.database_creator import DatabaseCreator
+from .mdb.exporters.ost_exporter import OstExporter
 from .mdb.importers.osp_importer import OspImporter
 from .mdb.importers.ost_importer import OstImporter
 from .mdb.mdb_reader import MdbReader
@@ -256,7 +256,7 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
         return MdbWriter(conn_manager=conn_manager)
 
     def get_osp_exporter(self, uom_service: IUOMService, version: str) -> IOspExporter:
-        return OspExporter(uom_service, version)
+        return OspExporter(uom_service, version, self.get_ost_exporter)
 
     def get_database_creator(self) -> IDatabaseCreator:
         return DatabaseCreator()

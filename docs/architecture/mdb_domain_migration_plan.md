@@ -849,6 +849,10 @@ facade over richer domain helpers and aggregates.
 
 ## Phase 7: Raw Export Boundary
 
+**Status**
+
+Complete for the raw OST serializer boundary.
+
 **Goal**
 
 Move raw OST/MDB export behavior behind an application/infrastructure boundary
@@ -898,6 +902,71 @@ so presentation no longer owns raw table ordering or schema details.
   identical output.
 - If output differs, rollback the adapter move and add a golden test for the
   uncovered case.
+
+**Completed work**
+
+- Moved the raw `.ost` serializer from
+  `ost_visualizer/presentation/visualization/exporters/ost_exporter.py` to
+  `ost_visualizer/infrastructure/mdb/exporters/ost_exporter.py`.
+- Updated the serializer to import table-section ordering and `singular(...)`
+  from the infrastructure MDB `schema_contract` instead of the domain
+  compatibility schema copy.
+- Kept presentation export handling dependent on the existing application
+  exporter interfaces and provider wiring.
+- Changed `OspExporter` to receive an `IOstExporter` factory from the
+  infrastructure provider, so the OSP packager no longer imports or constructs
+  raw OST/MDB serialization code from presentation.
+- Corrected `IOstExporter` and `IOspExporter` protocol signatures to match the
+  existing `ExportResultDto` return type and progress callback support.
+- Updated export tests to use the injected OST exporter factory instead of
+  monkeypatching a presentation module-level `OstExporter`.
+
+**Decisions made**
+
+- Move only the raw OST serializer in this phase. The OSP packager remains in
+  presentation for now because it depends on the packaged `ost_cab` extension
+  currently located with presentation exporters, and moving that native module
+  destination would be a separate C++ packaging decision.
+- Do not keep a presentation compatibility module for `OstExporter`; that would
+  either preserve the raw schema behavior in presentation or introduce a
+  forbidden presentation-to-infrastructure import.
+- Preserve raw export output behavior by moving the implementation unchanged
+  except for import paths and provider injection.
+
+**Files changed**
+
+- `ost_visualizer/infrastructure/mdb/exporters/__init__.py`
+- `ost_visualizer/infrastructure/mdb/exporters/ost_exporter.py`
+- `ost_visualizer/presentation/visualization/exporters/ost_exporter.py`
+- `ost_visualizer/presentation/visualization/exporters/osp_exporter.py`
+- `ost_visualizer/infrastructure/providers.py`
+- `ost_visualizer/application/interfaces/i_ost_exporter.py`
+- `ost_visualizer/application/interfaces/i_osp_exporter.py`
+- `tests/test_export_handler.py`
+- `docs/architecture/mdb_domain_migration_plan.md`
+
+**Validation results**
+
+- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\application\interfaces\i_ost_exporter.py ost_visualizer\application\interfaces\i_osp_exporter.py ost_visualizer\infrastructure\providers.py ost_visualizer\infrastructure\mdb\exporters\__init__.py ost_visualizer\infrastructure\mdb\exporters\ost_exporter.py ost_visualizer\presentation\visualization\exporters\osp_exporter.py tests\test_export_handler.py`
+  passed.
+- `.\venv\Scripts\python.exe -m unittest tests.test_export_handler tests.test_mdb_schema_compatibility tests.test_infrastructure_lifecycle tests.test_project_persistence_ports -v`
+  passed: 22 tests.
+- `.\venv\Scripts\python.exe tools\check_architecture.py --changed-only`
+  passed.
+- `git diff --check` passed with only CRLF normalization warnings for modified
+  files.
+- `.\venv\Scripts\python.exe -m unittest discover -s tests -v` ran 985 tests
+  with the two known unrelated tuple-vs-list failures in
+  `tests/test_viewer_sync_coordinator_overlay_refresh.py`:
+  `test_named_view_rename_uses_inline_edit_without_text_toolbar` and
+  `test_selected_annotation_style_change_updates_only_selected_annotation`.
+
+**Remaining tasks**
+
+- Add golden byte/order export fixtures before changing serializer behavior or
+  relocating OSP packaging.
+- Consider moving OSP packaging only if the `ost_cab` native extension ownership
+  and architecture-checker destination are intentionally changed.
 
 ## What Not To Refactor Yet
 

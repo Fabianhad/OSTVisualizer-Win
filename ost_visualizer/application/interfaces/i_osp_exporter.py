@@ -9,4 +9,5 @@ class IOspExporter(Protocol):
         raw_data: RawBidData,
         output_file: str,
         bid_name: str = "Bid",
+        on_progress=None,
     ) -> ExportResultDto: ...

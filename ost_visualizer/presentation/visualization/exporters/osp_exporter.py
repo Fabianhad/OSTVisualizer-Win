@@ -4,21 +4,27 @@ import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Set
+from typing import Callable, List, Optional, Set
 from ....application.dtos.export_dto import ExportErrorCode, ExportResultDto
+from ....application.interfaces.i_ost_exporter import IOstExporter
 from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from . import ost_cab
-from .ost_exporter import OstExporter
 
 logger = logging.getLogger(__name__)
 _SUPPORTED_IMAGE_EXTENSIONS: Set[str] = {".pdf", ".tif", ".tiff"}
 
 
 class OspExporter:
-    def __init__(self, uom_service: IUOMService, version: str):
+    def __init__(
+        self,
+        uom_service: IUOMService,
+        version: str,
+        ost_exporter_factory: Optional[Callable[[IUOMService], IOstExporter]] = None,
+    ):
         self._uom_service = uom_service
         self._version = version
+        self._ost_exporter_factory = ost_exporter_factory
 
     def export(
         self,
@@ -45,7 +51,14 @@ class OspExporter:
                     + ".ost"
                 )
                 ost_path = tmp_path / ost_name
-                ost_exporter = OstExporter(self._uom_service)
+                if self._ost_exporter_factory is None:
+                    return ExportResultDto(
+                        success=False,
+                        format_name="OSP",
+                        error_message="OST exporter is not configured",
+                        error_code=ExportErrorCode.UNEXPECTED,
+                    )
+                ost_exporter = self._ost_exporter_factory(self._uom_service)
                 ost_result = ost_exporter.export(raw_data, str(ost_path))
                 if not ost_result.success:
                     return ExportResultDto(

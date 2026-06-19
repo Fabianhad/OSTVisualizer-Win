@@ -185,17 +185,20 @@ class OspExporterProgressTests(unittest.TestCase):
             )
             cab_calls = []
             progress = []
-            original_ost_exporter = osp_exporter.OstExporter
             original_create_cab = osp_exporter.ost_cab.create_cab_with_names
             try:
-                osp_exporter.OstExporter = FakeOstExporter
                 osp_exporter.ost_cab.create_cab_with_names = (
                     lambda source_files, archive_names, output_file: cab_calls.append(
                         (list(source_files), list(archive_names), output_file)
                     )
                     or True
                 )
-                result = OspExporter(SimpleNamespace(), "1.0").export(
+                exporter = OspExporter(
+                    SimpleNamespace(),
+                    "1.0",
+                    lambda uom_service: FakeOstExporter(uom_service),
+                )
+                result = exporter.export(
                     raw_data,
                     str(output),
                     "Bid",
@@ -204,7 +207,6 @@ class OspExporterProgressTests(unittest.TestCase):
                     ),
                 )
             finally:
-                osp_exporter.OstExporter = original_ost_exporter
                 osp_exporter.ost_cab.create_cab_with_names = original_create_cab
         self.assertTrue(result.success)
         self.assertEqual(
