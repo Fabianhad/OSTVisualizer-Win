@@ -46,8 +46,9 @@ mapping boundaries.
 
 ## Current Pain Points Being Addressed
 
-- `ost_visualizer/domain/ost_schema.py` contains raw MDB table names, so the
-  domain layer owns persistence schema vocabulary.
+- `ost_visualizer/domain/ost_schema.py` previously contained raw MDB table
+  names, so the domain layer owned persistence schema vocabulary before the
+  schema contract migration.
 - Application ports such as `IMdbReader`, `IMdbWriter`, and
   `IMdbConnectionManager` expose MDB as the application abstraction.
 - MDB repair and defaulting logic is scattered across readers, schema
@@ -180,7 +181,7 @@ existing import paths during the transition.
 
 **Files/areas affected**
 
-- `ost_visualizer/domain/ost_schema.py`
+- Removed temporary domain schema compatibility module.
 - New infrastructure contract module, for example
   `ost_visualizer/infrastructure/mdb/schema_contract.py`
 - MDB reader/writer/schema creator modules.
@@ -192,8 +193,8 @@ existing import paths during the transition.
 - Create an MDB persistence contract module under `infrastructure/mdb`.
 - Move table-section names, table names, column names, reserved/default layer
   definitions, and schema ordering constants into that module.
-- Leave `domain/ost_schema.py` as a temporary compatibility re-export with a
-  short deprecation comment.
+- Use temporary compatibility modules only while call sites are being migrated;
+  remove them once production imports use the infrastructure contract.
 - Update infrastructure imports first. Update non-infrastructure imports only
   when a neutral boundary exists.
 - Do not change constant values, table ordering, or generated SQL.
@@ -202,7 +203,7 @@ existing import paths during the transition.
 
 - Import churn can produce circular imports if the new module imports domain.
 - Moving constants without tests can accidentally change raw export ordering.
-- Presentation may still need temporary access until Phase 7 moves export.
+- Raw export ordering must remain covered when presentation/export imports move.
 
 **Validation/tests needed**
 
@@ -242,8 +243,8 @@ existing import paths during the transition.
 **Decisions made**
 
 - The infrastructure contract is canonical.
-- Do not make `domain/ost_schema.py` a literal re-export from infrastructure.
-  That would satisfy the migration wording but break the enforced layer rules.
+- Do not restore a domain-to-infrastructure schema re-export. That would satisfy
+  compatibility superficially but break the enforced layer rules.
 - `components/constants.py` now imports the canonical contract directly.
 
 **Files changed**
@@ -964,8 +965,7 @@ so presentation no longer owns raw table ordering or schema details.
 
 - Do not remove MDB support or optional-schema compatibility.
 - Do not rewrite all readers, writers, or schema creation logic in one PR.
-- Do not remove `domain/ost_schema.py` until aliases have existed through the
-  migration and all imports have moved.
+- Do not reintroduce raw MDB schema modules under `domain/`.
 - Do not eliminate `ProjectDataService` in one step.
 - Do not change UID generation semantics without dedicated MDB compatibility
   tests.
