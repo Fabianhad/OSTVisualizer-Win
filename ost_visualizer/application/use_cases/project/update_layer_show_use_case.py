@@ -1,11 +1,11 @@
 import logging
 from typing import Optional
-from ...interfaces.i_mdb_writer import IMdbWriter
+from ...interfaces.project_write_port import ProjectWritePort
 
 
 class UpdateLayerShowUseCase:
     def __init__(
-        self, mdb_writer: IMdbWriter, logger: Optional[logging.Logger] = None
+        self, mdb_writer: ProjectWritePort, logger: Optional[logging.Logger] = None
     ) -> None:
         self._writer = mdb_writer
         self.logger = logger or logging.getLogger(__name__)

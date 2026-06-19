@@ -287,6 +287,10 @@ existing import paths during the transition.
 
 ## Phase 2: Neutral Application Ports
 
+**Status**
+
+Complete for the initial neutral alias seam.
+
 **Goal**
 
 Introduce persistence-neutral application interfaces beside MDB-named ports so
@@ -335,6 +339,62 @@ use cases can depend on project persistence rather than MDB identity.
 
 - Because old ports remain as aliases, individual use case migrations can be
   reverted without changing MDB implementations.
+
+**Completed work**
+
+- Added neutral application port aliases:
+  `ProjectReadPort`, `ProjectWritePort`, and
+  `ProjectStorageConnectionPort`.
+- Kept the existing `IMdbReader`, `IMdbWriter`, and `IMdbConnectionManager`
+  protocols unchanged.
+- Migrated `UpdateLayerShowUseCase` to depend on `ProjectWritePort` as the
+  first low-risk use-case annotation.
+- Added tests proving the neutral names alias the existing MDB protocols.
+
+**Decisions made**
+
+- Use runtime aliases instead of new `Protocol` subclasses for the first seam.
+  The architecture checker requires protocol class names to start with `I`, and
+  aliases avoid duplicating the large MDB method surfaces.
+- Keep method signatures and DI registration unchanged in this phase.
+- Migrate additional use cases gradually as nearby behavior changes are made.
+
+**Files changed**
+
+- `ost_visualizer/application/interfaces/project_read_port.py`
+- `ost_visualizer/application/interfaces/project_write_port.py`
+- `ost_visualizer/application/interfaces/project_storage_connection_port.py`
+- `ost_visualizer/application/use_cases/project/update_layer_show_use_case.py`
+- `tests/test_project_persistence_ports.py`
+- `docs/architecture/mdb_domain_migration_plan.md`
+
+**Validation results**
+
+- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\application\interfaces\project_read_port.py ost_visualizer\application\interfaces\project_write_port.py ost_visualizer\application\interfaces\project_storage_connection_port.py ost_visualizer\application\use_cases\project\update_layer_show_use_case.py tests\test_project_persistence_ports.py`
+  passed.
+- `.\venv\Scripts\python.exe -m unittest tests.test_project_persistence_ports tests.test_deferred_persistence_manager tests.test_bid_lock_permissions -v`
+  passed: 78 tests.
+- `.\venv\Scripts\python.exe tools\check_architecture.py --changed-only`
+  passed.
+- `git diff --check` passed with only pre-existing CRLF normalization warnings
+  for unrelated dirty tracked files.
+- First full-suite attempt exited with Windows access violation
+  `-1073741819` during `test_dialog_lifecycle`; rerunning
+  `tests.test_dialog_lifecycle -v` passed, so the crash was treated as an
+  unrelated transient/native full-suite issue.
+- Full-suite retry with
+  `.\venv\Scripts\python.exe -m unittest discover -s tests -v` ran 971 tests
+  with the two known unrelated tuple-vs-list failures in
+  `tests/test_viewer_sync_coordinator_overlay_refresh.py`:
+  `test_named_view_rename_uses_inline_edit_without_text_toolbar` and
+  `test_selected_annotation_style_change_updates_only_selected_annotation`.
+
+**Remaining tasks**
+
+- Migrate additional use cases from `IMdbWriter`/`IMdbReader` annotations to
+  neutral ports as their behavior is touched.
+- Replace aliases with narrower neutral protocols only after mapper/export
+  boundaries reduce the raw MDB-shaped method surfaces.
 
 ## Phase 3: MDB Mappers and Repair/Defaulting Boundary
 
