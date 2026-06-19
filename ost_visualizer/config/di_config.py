@@ -56,6 +56,7 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         view_kind="annotation",
         write_service=None,
         annotation_write_service=None,
+        saved_window_state_provider=None,
     ):
         coord_factory = infrastructure_provider.get_coordinate_transformer_factory()
         color_service = infrastructure_provider.get_color_service()
@@ -78,6 +79,7 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
             infrastructure_provider=infrastructure_provider,
             write_service=write_service,
             annotation_write_service=annotation_write_service,
+            saved_window_state_provider=saved_window_state_provider,
             parent_window=parent_window,
             logger=logger,
         )

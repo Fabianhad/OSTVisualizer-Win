@@ -84,6 +84,7 @@ class AnnotationViewBuilder:
             parent_window = self.container.get("main_window")
         except KeyError:
             parent_window = None
+        saved_window_state_provider = self._saved_window_state_provider(view_kind)
         return self.view_manager_factory(
             event_bus=self.event_bus,
             icon_provider=icon_provider,
@@ -95,7 +96,19 @@ class AnnotationViewBuilder:
             view_kind=view_kind,
             write_service=write_service,
             annotation_write_service=annotation_write_service,
+            saved_window_state_provider=saved_window_state_provider,
         )
+
+    def _saved_window_state_provider(self, view_kind: str):
+        if view_kind not in {"annotation", "view"}:
+            return None
+        try:
+            workspace_state_model = self.container.get("workspace_state_model")
+        except KeyError:
+            return None
+        if view_kind == "annotation":
+            return lambda: workspace_state_model.state.detached_windows.annotation_view
+        return lambda: workspace_state_model.state.detached_windows.view_window
 
     def _build_use_cases(self) -> None:
         def create_open_view_use_case():

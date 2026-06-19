@@ -16,6 +16,7 @@ from ...application.interfaces.i_shutdown_aware import IShutdownAware
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.annotation_view import AnnotationView
 from ...domain.entities.named_view import build_named_view_from_annotation
+from ...domain.entities.workspace_state import DetachedWindowState
 from ...domain.repositories.i_annotation_view_repository import (
     IAnnotationViewRepository,
 )
@@ -74,6 +75,7 @@ class DetachedPageViewManager(IShutdownAware):
         window_factory: Callable[..., QtWidgets.QMainWindow],
         write_service=None,
         annotation_write_service=None,
+        saved_window_state_provider: Optional[Callable[[], DetachedWindowState]] = None,
         parent_window: Optional[QtWidgets.QWidget] = None,
         logger: Optional[logging.Logger] = None,
     ):
@@ -90,6 +92,7 @@ class DetachedPageViewManager(IShutdownAware):
         self._window_factory = window_factory
         self._write_service = write_service
         self._annotation_write_service = annotation_write_service
+        self._saved_window_state_provider = saved_window_state_provider
         self._ui_access_manager = None
         self._window: Optional[QtWidgets.QMainWindow] = None
         self._visibility_changed_callback = None
@@ -155,6 +158,7 @@ class DetachedPageViewManager(IShutdownAware):
         self._window_factory = None
         self._write_service = None
         self._annotation_write_service = None
+        self._saved_window_state_provider = None
 
     def _on_window_destroyed(self, _: QObject) -> None:
         self._window = None
@@ -257,7 +261,7 @@ class DetachedPageViewManager(IShutdownAware):
         target_page_uid: str,
         target_named_view_uid: Optional[str] = None,
         initial_geometry: Optional[QByteArray] = None,
-        initial_is_maximized: bool = True,
+        initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
     ) -> str:
         if self.is_view_open():
@@ -285,6 +289,13 @@ class DetachedPageViewManager(IShutdownAware):
             target_page_uid=target_page_uid,
             target_named_view_uid=target_named_view_uid,
         )
+        initial_geometry, initial_is_maximized, initial_is_fullscreen = (
+            self._resolve_initial_window_state(
+                initial_geometry,
+                initial_is_maximized,
+                initial_is_fullscreen,
+            )
+        )
         self._create_window(
             view,
             initial_geometry,
@@ -294,6 +305,36 @@ class DetachedPageViewManager(IShutdownAware):
         )
         self._notify_visibility_changed()
         return view.uid
+
+    def _resolve_initial_window_state(
+        self,
+        initial_geometry: Optional[QByteArray],
+        initial_is_maximized: bool,
+        initial_is_fullscreen: bool,
+    ) -> Tuple[Optional[QByteArray], bool, bool]:
+        if (
+            initial_geometry is not None
+            or initial_is_maximized
+            or initial_is_fullscreen
+            or self._saved_window_state_provider is None
+        ):
+            return initial_geometry, initial_is_maximized, initial_is_fullscreen
+        state = self._saved_window_state_provider()
+        return (
+            self._decode_window_geometry(state.geometry_b64),
+            state.is_maximized,
+            state.is_fullscreen,
+        )
+
+    @staticmethod
+    def _decode_window_geometry(value: Optional[str]) -> Optional[QByteArray]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return QByteArray()
+        if not value.isascii():
+            return QByteArray()
+        return QByteArray.fromBase64(value.encode("ascii"))
 
     def close_view(self) -> None:
         if self._window is not None:
@@ -395,7 +436,7 @@ class DetachedPageViewManager(IShutdownAware):
         self,
         view: AnnotationView,
         initial_geometry: Optional[QByteArray] = None,
-        initial_is_maximized: bool = True,
+        initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
         navigation_source: str = "unknown",
     ) -> None:

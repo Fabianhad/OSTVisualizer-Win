@@ -105,7 +105,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         file_path: Optional[str] = None,
         undo_service=None,
         initial_geometry: Optional[QtCore.QByteArray] = None,
-        initial_is_maximized: bool = True,
+        initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
         navigation_source: str = "unknown",
         show_page_index: bool = False,
@@ -165,7 +165,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._named_view_blank_canvas_active: bool = False
         self._hotlink_adapter: Optional[HotlinkEventAdapter] = None
         self._initial_geometry = QtCore.QByteArray()
-        self._initial_show_maximized = True
+        self._initial_show_maximized = False
         self._initial_show_fullscreen = False
         self._navigation_source = navigation_source
         self._show_page_index = bool(show_page_index)

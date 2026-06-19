@@ -1318,7 +1318,7 @@ class MainWindow(QtWidgets.QMainWindow):
         visible: bool,
         *,
         initial_geometry: QtCore.QByteArray | None = None,
-        initial_is_maximized: bool = True,
+        initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
     ) -> None:
         visible = bool(visible)
@@ -1374,7 +1374,7 @@ class MainWindow(QtWidgets.QMainWindow):
         visible: bool,
         *,
         initial_geometry: QtCore.QByteArray | None = None,
-        initial_is_maximized: bool = True,
+        initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
     ) -> None:
         visible = bool(visible)

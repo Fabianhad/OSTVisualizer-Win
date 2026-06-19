@@ -3,6 +3,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from PySide6 import QtCore
 from PySide6 import QtWidgets
+from ost_visualizer.application.builders.annotation_view_builder import (
+    AnnotationViewBuilder,
+)
 from ost_visualizer.application.dtos.page_view_dto import PageViewDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.use_cases.annotation_view.open_annotation_view_use_case import (
@@ -1124,6 +1127,115 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 "show_when_page_ready",
             ],
         )
+
+    def _manager_for_initial_state_tests(self, saved_state_provider=None):
+        calls = []
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = None
+        manager._saved_window_state_provider = saved_state_provider
+
+        def create_view(bid_ref, target_page_uid, target_named_view_uid=None):
+            return SimpleNamespace(
+                uid="view-1",
+                bid_ref=bid_ref,
+                target_page_uid=target_page_uid,
+                target_named_view_uid=target_named_view_uid,
+            )
+
+        def create_window(view, geometry, is_maximized, is_fullscreen, source):
+            calls.append((view, geometry, is_maximized, is_fullscreen, source))
+
+        manager.repository = SimpleNamespace(
+            create_view=create_view,
+            get_active_view=lambda: None,
+        )
+        manager._create_window = create_window
+        manager._notify_visibility_changed = lambda: calls.append("notify")
+        return manager, calls
+
+    def test_hotlink_open_uses_saved_normal_annotation_window_state(self):
+        state = WorkspaceState().detached_windows.annotation_view
+        state.geometry_b64 = _encoded_geometry(b"saved-normal")
+        state.is_maximized = False
+        state.is_fullscreen = False
+        manager, calls = self._manager_for_initial_state_tests(lambda: state)
+        result = manager.open_view(BidRef("job.ost", "bid-1"), "page-2", "view-1")
+        self.assertEqual(result, "view-1")
+        self.assertEqual(bytes(calls[0][1]), b"saved-normal")
+        self.assertFalse(calls[0][2])
+        self.assertFalse(calls[0][3])
+        self.assertEqual(calls[0][4], "hotlink")
+        self.assertEqual(calls[1], "notify")
+
+    def test_hotlink_open_restores_saved_maximized_only_when_saved(self):
+        state = WorkspaceState().detached_windows.annotation_view
+        state.geometry_b64 = _encoded_geometry(b"saved-maximized")
+        state.is_maximized = True
+        manager, calls = self._manager_for_initial_state_tests(lambda: state)
+        manager.open_view(BidRef("job.ost", "bid-1"), "page-2", "view-1")
+        self.assertEqual(bytes(calls[0][1]), b"saved-maximized")
+        self.assertTrue(calls[0][2])
+        self.assertFalse(calls[0][3])
+
+    def test_hotlink_open_restores_saved_fullscreen_only_when_saved(self):
+        state = WorkspaceState().detached_windows.annotation_view
+        state.geometry_b64 = _encoded_geometry(b"saved-fullscreen")
+        state.is_fullscreen = True
+        manager, calls = self._manager_for_initial_state_tests(lambda: state)
+        manager.open_view(BidRef("job.ost", "bid-1"), "page-2", "view-1")
+        self.assertEqual(bytes(calls[0][1]), b"saved-fullscreen")
+        self.assertFalse(calls[0][2])
+        self.assertTrue(calls[0][3])
+
+    def test_hotlink_open_without_saved_state_defaults_to_normal_window(self):
+        manager, calls = self._manager_for_initial_state_tests()
+        manager.open_view(BidRef("job.ost", "bid-1"), "page-2", "view-1")
+        self.assertIsNone(calls[0][1])
+        self.assertFalse(calls[0][2])
+        self.assertFalse(calls[0][3])
+
+    def test_explicit_auto_open_state_overrides_saved_hotlink_defaults(self):
+        state = WorkspaceState().detached_windows.annotation_view
+        state.geometry_b64 = _encoded_geometry(b"saved-hotlink")
+        state.is_maximized = True
+        state.is_fullscreen = True
+        manager, calls = self._manager_for_initial_state_tests(lambda: state)
+        explicit_geometry = QtCore.QByteArray(b"explicit-auto-open")
+        manager.open_view(
+            BidRef("job.ost", "bid-1"),
+            "page-2",
+            "view-1",
+            initial_geometry=explicit_geometry,
+            initial_is_maximized=False,
+            initial_is_fullscreen=False,
+        )
+        self.assertEqual(calls[0][1], explicit_geometry)
+        self.assertFalse(calls[0][2])
+        self.assertFalse(calls[0][3])
+
+    def test_builder_wires_separate_annotation_and_view_window_state_providers(self):
+        workspace_state = WorkspaceState()
+        workspace_state.detached_windows.annotation_view.geometry_b64 = (
+            _encoded_geometry(b"annotation-geometry")
+        )
+        workspace_state.detached_windows.view_window.geometry_b64 = _encoded_geometry(
+            b"view-geometry"
+        )
+
+        class Container:
+            def get(self, key):
+                if key == "workspace_state_model":
+                    return SimpleNamespace(state=workspace_state)
+                raise KeyError(key)
+
+        builder = AnnotationViewBuilder.__new__(AnnotationViewBuilder)
+        builder.container = Container()
+        annotation_provider = builder._saved_window_state_provider("annotation")
+        view_provider = builder._saved_window_state_provider("view")
+        self.assertIs(
+            annotation_provider(), workspace_state.detached_windows.annotation_view
+        )
+        self.assertIs(view_provider(), workspace_state.detached_windows.view_window)
 
     def test_bring_to_front_does_not_maximize_windowed_minimized_window(self):
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
