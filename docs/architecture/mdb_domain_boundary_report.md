@@ -23,8 +23,9 @@ the persistence format are coupled in both directions.
   and dictionaries.
 - `domain/services/project_data_service.py` acts as the main in-memory data
   access and mutation facade.
-- `domain/ost_schema.py` contains raw MDB table-section names, which is an MDB
-  persistence concern living in the domain layer.
+- Raw MDB table-section names previously lived in the domain layer. They now
+  belong in the infrastructure MDB schema contract and should stay out of
+  domain code.
 
 ### Application
 
@@ -53,8 +54,9 @@ the persistence format are coupled in both directions.
 
 - Most UI code consumes domain/application objects, but some export and
   annotation paths still know MDB details.
-- `presentation/visualization/exporters/ost_exporter.py` uses raw table names,
-  column names, and `RawBidData` directly.
+- The pre-migration raw OST exporter used raw table names, column names, and
+  `RawBidData` directly from presentation. Raw OST serialization should remain
+  behind the infrastructure/application export boundary.
 - `presentation/utils/annotation_defaults.py` and some hotlink paths use keys
   such as `BidPageViewUID`, `BidTakeoffFromUID`, and `BidTakeoffToUID`.
 
@@ -67,17 +69,16 @@ the persistence format are coupled in both directions.
 
 ## MDB Leakage Examples
 
-- `domain/ost_schema.py` defines `BidLayers`, `BidPages`, `BidTakeoffs`,
-  `BidNamedViews`, `BidHotLinks`, and other raw table names. This makes the
-  domain layer aware of the MDB storage layout.
+- The old domain-owned schema module defined `BidLayers`, `BidPages`,
+  `BidTakeoffs`, `BidNamedViews`, `BidHotLinks`, and other raw table names.
+  That made the domain layer aware of the MDB storage layout.
 - `domain/dtos/raw_bid_data_dto.py` models `RawBidData` as raw table maps. That
   may be useful for export, but it is not a domain concept.
 - `application/interfaces/i_mdb_writer.py` and `i_mdb_reader.py` expose MDB as
   the application port name. Use cases depend on `IMdbWriter`, not on a
   persistence-neutral project write port.
-- `presentation/visualization/exporters/ost_exporter.py` imports
-  `domain.ost_schema`, consumes `RawBidData`, and contains large MDB/OST column
-  order lists.
+- The old presentation raw OST exporter consumed `RawBidData` and contained
+  large MDB/OST column order lists.
 - `presentation/utils/annotation_defaults.py` emits property dictionaries with
   MDB column names such as `BidPageViewUID` and `BidTakeoffFromUID`.
 - `domain/entities/annotation.py` exposes `hotlink_target_view_uid` by reading
@@ -207,9 +208,9 @@ Recommended boundaries:
 ## Safe Migration Plan
 
 1. Document the current MDB persistence contract.
-   - Move raw table-section names out of `domain/ost_schema.py` into an
-     infrastructure MDB contract module.
-   - Provide temporary re-export aliases if needed to avoid a broad change.
+   - Keep raw table-section names in an infrastructure MDB contract module.
+   - Do not add alias-only modules or domain re-exports for migrated schema
+     surfaces.
 
 2. Introduce neutral application ports beside existing MDB ports.
    - Add interfaces such as `ProjectReadPort` and `ProjectWritePort`.
@@ -250,10 +251,10 @@ Recommended boundaries:
 
 ## First Low-Risk Refactor Candidates
 
-- Rename or wrap `IMdbWriter`/`IMdbReader` with neutral port aliases while
-  preserving existing implementations.
-- Move `domain/ost_schema.py` into `infrastructure/mdb/schema_contract.py` and
-  update imports in `ost_exporter.py` and MDB components.
+- Add narrow neutral ports directly when a use case migrates away from
+  `IMdbWriter`/`IMdbReader`; do not add broad alias-only wrappers.
+- Keep raw schema constants in `infrastructure/mdb/schema_contract.py` and keep
+  MDB components/export adapters importing that contract directly.
 - Move `RawBidData` from `domain/dtos` to an infrastructure/export boundary, or
   introduce a neutral `ExportSourceData` wrapper first.
 - Add a `LayerSet` value object/factory to centralize reserved layer UID lookup,

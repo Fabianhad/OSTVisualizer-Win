@@ -47,9 +47,9 @@ mapping boundaries.
 
 ## Current Pain Points Being Addressed
 
-- `ost_visualizer/domain/ost_schema.py` previously contained raw MDB table
-  names, so the domain layer owned persistence schema vocabulary before the
-  schema contract migration.
+- The old domain-owned schema module previously contained raw MDB table names,
+  so the domain layer owned persistence schema vocabulary before the schema
+  contract migration.
 - Application ports such as `IMdbReader`, `IMdbWriter`, and
   `IMdbConnectionManager` expose MDB as the application abstraction.
 - MDB repair and defaulting logic is scattered across readers, schema
@@ -194,8 +194,8 @@ existing import paths during the transition.
 - Create an MDB persistence contract module under `infrastructure/mdb`.
 - Move table-section names, table names, column names, reserved/default layer
   definitions, and schema ordering constants into that module.
-- Use temporary compatibility modules only while call sites are being migrated;
-  remove them once production imports use the infrastructure contract.
+- Migrate call sites directly to the infrastructure contract; do not add
+  alias-only modules or re-export shims for migrated schema surfaces.
 - Update infrastructure imports first. Update non-infrastructure imports only
   when a neutral boundary exists.
 - Do not change constant values, table ordering, or generated SQL.
@@ -223,8 +223,10 @@ existing import paths during the transition.
 
 **Rollback/compatibility notes**
 
-- Reverting the import move should restore the old module directly.
-- Compatibility aliases must remain until all call sites are migrated.
+- Reverting the import move should restore the previous concrete module
+  directly, not an alias-only shim.
+- Once production imports use the infrastructure contract, do not keep schema
+  compatibility aliases.
 
 **Completed work**
 
