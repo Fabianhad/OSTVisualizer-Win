@@ -6,6 +6,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
 from PySide6.QtGui import (
+    QAction,
     QColor,
     QFont,
     QImage,
@@ -1395,6 +1396,63 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIsNone(view._rotate_handle_item)
         self.assertIsNone(view._rotate_handle_uid)
         self.assertIsNone(handle.scene())
+        view.cleanup()
+
+    def test_takeoff_context_menu_without_reassign_targets_exits_cleanly(self):
+        class FakeContextMenuEvent:
+            def __init__(self):
+                self.accepted = False
+
+            def globalPos(self):
+                return QtCore.QPoint(0, 0)
+
+            def accept(self):
+                self.accepted = True
+
+        class FakeMenu:
+            def __init__(self, _parent=None):
+                self._actions = []
+
+            def addAction(self, text):
+                action = QAction(text)
+                self._actions.append(action)
+                return action
+
+            def addSeparator(self):
+                pass
+
+            def exec(self, _pos):
+                return None
+
+        def add_no_common_submenus(_menu):
+            return 0, None, None
+
+        def add_no_context_actions(_menu):
+            return None
+
+        view = self._make_plan_view()
+        self._install_page_canvas(
+            view, Page(uid="page-1", name="Page 1", width_pts=612.0, height_pts=792.0)
+        )
+        view._add_common_context_submenus = add_no_common_submenus
+        view._add_context_clipboard_actions = add_no_context_actions
+        view._add_context_page_actions = add_no_context_actions
+        view._current_conditions = {
+            "linear": Condition(uid="linear", condition_type=Condition.TYPE_LINEAR),
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+        }
+        view._current_takeoffs = {
+            "linear-takeoff": Takeoff(uid="linear-takeoff", condition_uid="linear"),
+            "area-takeoff": Takeoff(uid="area-takeoff", condition_uid="area"),
+        }
+        view._selected_uids = {"linear-takeoff", "area-takeoff"}
+        event = FakeContextMenuEvent()
+        with patch(
+            "ost_visualizer.presentation.components.plan_view.components.input_handler.QMenu",
+            FakeMenu,
+        ):
+            view.contextMenuEvent(event)
+        self.assertTrue(event.accepted)
         view.cleanup()
 
     def test_place_mode_cancels_move_overlay_state(self):

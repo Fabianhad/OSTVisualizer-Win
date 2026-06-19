@@ -2346,6 +2346,7 @@ class InputHandlerMixin:
         assign_action = None
         negative_action = None
         curved_action = None
+        reassign_condition_menu = None
         if selected_state.show_curved:
             curved_action = ContextMenuManager.add_action(
                 menu,
