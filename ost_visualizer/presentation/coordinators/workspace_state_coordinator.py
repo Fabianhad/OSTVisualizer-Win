@@ -641,7 +641,12 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         previous_takeoff_splitter_sizes = list(
             previous.takeoff_workspace.takeoff_splitter_sizes
         )
-        if sum(takeoff_splitter_sizes) <= 0 and previous_takeoff_splitter_sizes:
+        if (
+            previous_takeoff_splitter_sizes
+            and not self._shell.get_takeoff_splitter().isVisible()
+        ):
+            takeoff_splitter_sizes = previous_takeoff_splitter_sizes
+        elif sum(takeoff_splitter_sizes) <= 0 and previous_takeoff_splitter_sizes:
             takeoff_splitter_sizes = previous_takeoff_splitter_sizes
         takeoff_splitter_sizes = self._preserve_hidden_takeoff_splitter_sizes(
             takeoff_splitter_sizes,
@@ -649,7 +654,9 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         )
         splitter_sizes = self._shell.get_left_splitter_sizes()
         previous_splitter_sizes = list(previous.takeoff_workspace.left_splitter_sizes)
-        if sum(splitter_sizes) <= 0 and previous_splitter_sizes:
+        if previous_splitter_sizes and not self._shell.get_left_splitter().isVisible():
+            splitter_sizes = previous_splitter_sizes
+        elif sum(splitter_sizes) <= 0 and previous_splitter_sizes:
             splitter_sizes = previous_splitter_sizes
         splitter_sizes = self._preserve_hidden_splitter_sizes(
             splitter_sizes,

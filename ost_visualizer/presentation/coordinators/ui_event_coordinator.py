@@ -1405,6 +1405,7 @@ class UIEventCoordinator:
                 self.main_window.project_view.restore_file_selection(
                     snap.selected_file_path or snap.bid_ref.file_path
                 )
+                self._set_takeoff_tab_visible(False)
                 self._nav.finish_refresh(
                     NavState.FILE_LOADED_NO_BID if has_file else NavState.NO_FILE
                 )
@@ -1413,6 +1414,12 @@ class UIEventCoordinator:
                 self._update_export_menu_state()
                 return
             self.main_window.project_view.restore_bid_selection(snap.bid_ref)
+            if self.project_data.get_current_bid_ref() != snap.bid_ref:
+                self._nav.finish_refresh(
+                    NavState.FILE_LOADED_NO_BID if has_file else NavState.NO_FILE
+                )
+                self.handle_bid_selection(snap.bid_ref, force=True)
+                return
             self._resolve_bid_lock_state(snap.bid_ref)
             self._reset_takeoff_workspace_state()
             valid_highlighted = self._validate_condition_uids(
@@ -1482,11 +1489,13 @@ class UIEventCoordinator:
             self.main_window.project_view.restore_file_selection(
                 snap.selected_file_path
             )
+            self._set_takeoff_tab_visible(False)
             self._nav.finish_refresh(
                 NavState.FILE_LOADED_NO_BID if has_file else NavState.NO_FILE
             )
         else:
             self._reset_takeoff_workspace_state()
+            self._set_takeoff_tab_visible(False)
             self._nav.finish_refresh(
                 NavState.FILE_LOADED_NO_BID if has_file else NavState.NO_FILE
             )
@@ -1628,9 +1637,11 @@ class UIEventCoordinator:
         if selected_pages:
             self._plan_view_signaler.request_update()
 
-    def handle_bid_selection(self, bid_ref: Optional[BidRef]) -> None:
+    def handle_bid_selection(
+        self, bid_ref: Optional[BidRef], force: bool = False
+    ) -> None:
         prev_bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        if bid_ref and prev_bid_ref and bid_ref == prev_bid_ref:
+        if bid_ref and prev_bid_ref and bid_ref == prev_bid_ref and not force:
             return
         self._save_current_page_view_state()
         if not bid_ref:

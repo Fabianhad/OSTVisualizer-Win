@@ -3,6 +3,7 @@ from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
 from ost_visualizer.application.services.project_write_service import WriteReloadResult
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyBidInfo,
     HierarchyData,
     HierarchyFileEntry,
     HierarchyProjectInfo,
@@ -150,9 +151,12 @@ class FakeProjectView:
         self.resets = 0
         self.restored_project = None
         self.restored_file = None
+        self.loaded_files = []
+        self.restored_bid = None
 
-    def build_complete_structure(self, _loaded_files):
+    def build_complete_structure(self, loaded_files):
         self.builds += 1
+        self.loaded_files = list(loaded_files)
 
     def reset(self):
         self.resets += 1
@@ -162,6 +166,9 @@ class FakeProjectView:
 
     def restore_file_selection(self, file_path):
         self.restored_file = file_path
+
+    def restore_bid_selection(self, bid_ref):
+        self.restored_bid = bid_ref
 
 
 class FakeUnloadMainWindow:
@@ -313,6 +320,9 @@ class FakeRefreshUiState:
     def set_database_selected(self, selected, file_path=None):
         self.database_selected = (selected, file_path)
 
+    def set_bid_selection(self, bid_ref):
+        self.bid_ref = bid_ref
+
     def get_selected_bid_ref(self):
         return self.bid_ref
 
@@ -336,9 +346,15 @@ class FakeRefreshNav:
     def __init__(self, snapshot):
         self.refresh_snapshot = snapshot
         self.state = None
+        self.transitions = []
 
     def finish_refresh(self, state):
         self.state = state
+
+    def transition_to(self, state):
+        self.transitions.append(state)
+        self.state = state
+        return True
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
@@ -1033,13 +1049,13 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.main_window.project_view.resets, 1)
         self.assertEqual(coordinator.main_window.menu_controller.updates, 1)
 
-    def test_database_refresh_restores_database_root_selection(self):
+    def test_database_refresh_restores_database_root_selection_and_hides_takeoff(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.project_data = FakeUnloadProjectData("active.mdb")
         coordinator.ui_access_manager = FakeAccess()
         coordinator._toolbar = FakeToolbar()
-        coordinator._tab_widget = FakeTabWidget(index=0)
+        coordinator._tab_widget = FakeTabWidget(index=1)
         coordinator._reset_takeoff_workspace_state = lambda: None
         coordinator._update_export_menu_state = lambda: None
         snapshot = FakeRefreshSnapshot(database_selected=True)
@@ -1049,6 +1065,40 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             coordinator.main_window.project_view.restored_file,
             "active.mdb",
         )
+        self.assertEqual(coordinator._tab_widget.visibility, [(1, False)])
+        self.assertEqual(coordinator._tab_widget.currentIndex(), 0)
+
+    def test_file_refresh_rebuilds_tree_from_reloaded_hierarchy(self):
+        class ProjectData:
+            def get_hierarchy(self):
+                return HierarchyData(
+                    loaded_files=[
+                        HierarchyFileEntry(
+                            file_path="active.mdb",
+                            display_name="active.mdb",
+                            bid_projects={
+                                "1": HierarchyProjectInfo(
+                                    name="Deleted Bids",
+                                    bids=[HierarchyBidInfo(uid="bid-1", name="Moved")],
+                                ),
+                                "project-2": HierarchyProjectInfo(
+                                    name="Original",
+                                    bids=[],
+                                ),
+                            },
+                        )
+                    ]
+                )
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = FakeUnloadMainWindow()
+        coordinator.project_data = ProjectData()
+        coordinator._cache_bid_data = lambda _loaded_files: None
+        coordinator._do_file_refresh()
+        loaded_file = coordinator.main_window.project_view.loaded_files[0]
+        projects = {project.uid: project for project in loaded_file.projects}
+        self.assertEqual(projects["project-2"].bids, [])
+        self.assertEqual([bid.uid for bid in projects["1"].bids], ["bid-1"])
 
     def test_database_refresh_restores_project_selection_with_file_path(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -1095,6 +1145,142 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(
             coordinator.main_window.project_view.restored_file, "active.mdb"
         )
+
+    def test_database_refresh_drops_permanently_deleted_bid_and_hides_takeoff(self):
+        class ProjectData(FakeUnloadProjectData):
+            def __init__(self):
+                super().__init__("active.mdb", [])
+                self.deselect_count = 0
+
+            def get_bid(self, _bid_ref):
+                return None
+
+            def deselect_pages(self):
+                self.deselect_count += 1
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = FakeUnloadMainWindow()
+        coordinator.project_data = ProjectData()
+        coordinator.ui_state_manager = FakeRefreshUiState()
+        deleted_bid_ref = BidRef("active.mdb", "deleted-bid")
+        coordinator.ui_state_manager.bid_ref = deleted_bid_ref
+        coordinator.ui_access_manager = FakeAccess()
+        coordinator._toolbar = FakeToolbar()
+        coordinator._tab_widget = FakeTabWidget(index=1)
+        coordinator._sidebar = FakeSidebar()
+        coordinator._reset_takeoff_workspace_state = (
+            lambda: coordinator._sidebar.clear_sidebars()
+        )
+        undo_calls = []
+        coordinator._sync_undo_bid = lambda: undo_calls.append(
+            coordinator.ui_state_manager.get_selected_bid_ref()
+        )
+        coordinator._update_export_menu_state = lambda: None
+        snapshot = FakeRefreshSnapshot(bid_ref=deleted_bid_ref)
+        coordinator._nav = FakeRefreshNav(snapshot)
+        coordinator._finish_refresh()
+        self.assertEqual(coordinator._sidebar.clears, 1)
+        self.assertIsNone(coordinator.ui_state_manager.get_selected_bid_ref())
+        self.assertEqual(undo_calls, [None])
+        self.assertEqual(coordinator.project_data.deselect_count, 1)
+        self.assertEqual(coordinator._tab_widget.visibility, [(1, False)])
+        self.assertEqual(coordinator._tab_widget.currentIndex(), 0)
+        self.assertEqual(
+            coordinator.main_window.project_view.restored_file, "active.mdb"
+        )
+        self.assertEqual(coordinator._nav.state.name, "FILE_LOADED_NO_BID")
+
+    def test_database_refresh_loads_replacement_bid_selected_after_delete(self):
+        replacement_ref = BidRef("active.mdb", "bid-2")
+
+        class UiState:
+            selected_page_uids = []
+            active_page_uid = None
+            highlighted_condition_uids = set()
+            selected_project_uid = None
+            place_condition_uid = None
+            place_condition_uids = []
+            selected_area_uid = ""
+
+            def __init__(self):
+                self.bid_ref = replacement_ref
+                self.page_selection = None
+
+            @property
+            def selected_file_path(self):
+                return self.bid_ref.file_path if self.bid_ref else None
+
+            def get_selected_bid_ref(self):
+                return self.bid_ref
+
+            def set_bid_selection(self, bid_ref):
+                self.bid_ref = bid_ref
+
+            def set_page_selection(self, page_uids):
+                self.page_selection = list(page_uids)
+
+            def is_database_selected(self):
+                return False
+
+        class ProjectData:
+            def __init__(self):
+                self.current_bid_ref = None
+                self.current_file = "active.mdb"
+                self.deselect_count = 0
+
+            def get_current_file_path(self):
+                return self.current_file
+
+            def get_current_bid_ref(self):
+                return self.current_bid_ref
+
+            def get_bid(self, bid_ref):
+                return object() if bid_ref == replacement_ref else None
+
+            def set_current_file(self, file_path):
+                self.current_file = file_path
+
+            def deselect_pages(self):
+                self.deselect_count += 1
+
+        class ProjectOperations:
+            def __init__(self, project_data):
+                self.project_data = project_data
+                self.loaded = []
+
+            def load_bid(self, bid_ref):
+                self.loaded.append(bid_ref)
+                self.project_data.current_bid_ref = bid_ref
+                return True
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = FakeUnloadMainWindow()
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator.project_operations = ProjectOperations(coordinator.project_data)
+        coordinator.ui_access_manager = FakeAccess()
+        coordinator._toolbar = FakeToolbar()
+        coordinator._tab_widget = FakeTabWidget(index=0)
+        coordinator._placement = FakePlacement()
+        coordinator._viewer = FakeUnloadViewer()
+        coordinator.visualization_service = FakeVisualization()
+        coordinator._nav = FakeRefreshNav(FakeRefreshSnapshot(bid_ref=replacement_ref))
+        coordinator._save_current_page_view_state = lambda: None
+        coordinator._sync_undo_bid = lambda: None
+        coordinator.ensure_select_mode = lambda: None
+        coordinator._resolve_bid_lock_state = lambda _bid_ref: None
+        coordinator._reset_takeoff_workspace_state = lambda: None
+        coordinator._clear_mesh_views_for_scene_update = lambda **_kwargs: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._finish_refresh()
+        self.assertEqual(
+            coordinator.main_window.project_view.restored_bid, replacement_ref
+        )
+        self.assertEqual(coordinator.project_operations.loaded, [replacement_ref])
+        self.assertEqual(
+            coordinator.project_data.get_current_bid_ref(), replacement_ref
+        )
+        self.assertEqual(coordinator._tab_widget.visibility, [(1, True)])
 
 
 if __name__ == "__main__":

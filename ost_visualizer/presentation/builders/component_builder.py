@@ -846,23 +846,11 @@ class ComponentBuilder:
         layers_toggle_action.setChecked(not bid_layers_sidebar.isHidden())
         layers_toggle_action.setToolTip("Hide/Show Layers Sidebar")
         IconManager.apply(layers_toggle_action, IconId.LAYERS_SIDEBAR)
-
-        def _set_layers_visible(visible: bool) -> None:
-            bid_layers_sidebar.setVisible(visible)
-            _sync_left_sidebar_visibility()
-
-        layers_toggle_action.toggled.connect(_set_layers_visible)
         conditions_toggle_action = QtGui.QAction("Conditions Sidebar", viewer_container)
         conditions_toggle_action.setCheckable(True)
         conditions_toggle_action.setChecked(not conditions_sidebar.isHidden())
         conditions_toggle_action.setToolTip("Hide/Show Conditions Sidebar")
         IconManager.apply(conditions_toggle_action, IconId.CONDITIONS_SIDEBAR)
-
-        def _set_conditions_visible(visible: bool) -> None:
-            conditions_sidebar.setVisible(visible)
-            _sync_left_sidebar_visibility()
-
-        conditions_toggle_action.toggled.connect(_set_conditions_visible)
         workspace_view_toolbar.addAction(conditions_toggle_action)
         workspace_view_toolbar.addAction(layers_toggle_action)
         workspace_view_toolbar.addAction(ann_action)

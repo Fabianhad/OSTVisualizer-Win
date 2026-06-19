@@ -3,6 +3,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 from PySide6 import QtWidgets
+from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.messagebox import DB_LOCKED_HINT, confirm, show_critical, show_warning
@@ -129,11 +130,11 @@ class ProjectWriteHandler:
             else:
                 self._duplicate_action.setEnabled(self._duplicate_action_was_enabled)
 
-    def delete_selected(self) -> None:
+    def delete_selected(self, selection_after_delete: Optional[dict] = None) -> None:
         bid_refs = self.ui_state_manager.get_selected_bid_refs()
         project_uids = self.ui_state_manager.selected_project_uids
         if bid_refs:
-            self._delete_bids(bid_refs)
+            self._delete_bids(bid_refs, selection_after_delete)
             return
         if project_uids:
             file_path = self.ui_state_manager.selected_file_path
@@ -390,8 +391,10 @@ class ProjectWriteHandler:
         bid_info = self.project_data.get_hierarchy().find_bid_info(bid_ref)
         return bid_info.orig_bid_project_uid if bid_info else None
 
-    def delete_bids(self, bid_refs: List[BidRef]) -> None:
-        self._delete_bids(bid_refs)
+    def delete_bids(
+        self, bid_refs: List[BidRef], selection_after_delete: Optional[dict] = None
+    ) -> None:
+        self._delete_bids(bid_refs, selection_after_delete)
 
     def _group_bids_by_file(self, bid_refs: List[BidRef]) -> Dict[str, List[str]]:
         out: Dict[str, List[str]] = defaultdict(list)
@@ -399,7 +402,9 @@ class ProjectWriteHandler:
             out[ref.file_path].append(ref.bid_uid)
         return out
 
-    def _delete_bids(self, bid_refs: List[BidRef]) -> None:
+    def _delete_bids(
+        self, bid_refs: List[BidRef], selection_after_delete: Optional[dict] = None
+    ) -> None:
         in_trash: List[BidRef] = []
         active: List[BidRef] = []
         active_orig: Dict[str, List[BidRef]] = defaultdict(list)
@@ -422,13 +427,39 @@ class ProjectWriteHandler:
             for file_path, uids in self._group_bids_by_file(in_trash).items():
                 if not self._flush_deferred_for_file(file_path):
                     return
-                if not self._write_service.delete_bids(file_path, uids):
+                selected_bid = self.ui_state_manager.get_selected_bid_ref()
+                clears_active_bid = bool(
+                    selected_bid
+                    and selected_bid.file_path == file_path
+                    and selected_bid.bid_uid in uids
+                )
+                if not self._write_service.delete_bids(
+                    file_path,
+                    uids,
+                    publish_database_refreshed_after_write=False,
+                ):
                     show_critical(
                         self.window,
                         "Delete Error",
                         f"Failed to delete bids. {DB_LOCKED_HINT}",
                     )
                     return
+                if clears_active_bid:
+                    self.ui_state_manager.set_bid_selection(None)
+                    self.project_data.clear_bid()
+                if not self._write_service.reload_database(file_path):
+                    show_warning(
+                        self.window,
+                        "Refresh Error",
+                        "The bid was deleted, but the project tree could not be "
+                        "refreshed. Reopen the database to see the change.",
+                    )
+                    return
+                if clears_active_bid or selection_after_delete:
+                    self._apply_delete_selection_state(
+                        file_path, selection_after_delete
+                    )
+                self._write_service.notify_database_refreshed(file_path)
         if active:
             n = len(active)
             msg = (
@@ -445,11 +476,18 @@ class ProjectWriteHandler:
                 for file_path, uids in self._group_bids_by_file(refs).items():
                     if not self._flush_deferred_for_file(file_path):
                         return
+                    selected_bid = self.ui_state_manager.get_selected_bid_ref()
+                    clears_active_bid = bool(
+                        selected_bid
+                        and selected_bid.file_path == file_path
+                        and selected_bid.bid_uid in uids
+                    )
                     if not self._write_service.move_bids(
                         file_path,
                         uids,
                         _DELETED_BIDS_PROJECT_UID,
                         orig_project_uid or None,
+                        publish_database_refreshed_after_write=False,
                     ):
                         show_critical(
                             self.window,
@@ -457,6 +495,105 @@ class ProjectWriteHandler:
                             f"Failed to move bids to Deleted Bids. {DB_LOCKED_HINT}",
                         )
                         return
+                    if clears_active_bid:
+                        self.ui_state_manager.set_bid_selection(None)
+                        self.project_data.clear_bid()
+                    if not self._write_service.reload_database(file_path):
+                        show_warning(
+                            self.window,
+                            "Refresh Error",
+                            "The bid was moved to Deleted Bids, but the project tree "
+                            "could not be refreshed. Reopen the database to see the change.",
+                        )
+                        return
+                    if clears_active_bid or selection_after_delete:
+                        self._apply_delete_selection_state(
+                            file_path, selection_after_delete
+                        )
+                    self._write_service.notify_database_refreshed(file_path)
+
+    def _apply_delete_selection_state(
+        self, file_path: str, selection_state: Optional[dict]
+    ) -> None:
+        state = self._valid_delete_selection_state(file_path, selection_state)
+        if state and state["kind"] == "bid":
+            self.ui_state_manager.set_bid_selection(
+                BidRef(file_path=state["file_path"], bid_uid=state["bid_uid"])
+            )
+            return
+        self.ui_state_manager.set_bid_selection(None)
+        if state and state["kind"] == "project":
+            self.ui_state_manager.set_file_path(state["file_path"])
+            self.ui_state_manager.set_project_uid(state["project_uid"])
+            return
+        selected_file_path = state["file_path"] if state else file_path
+        self.ui_state_manager.set_project_uid(None)
+        self.ui_state_manager.set_database_selected(True, selected_file_path)
+
+    def _valid_delete_selection_state(
+        self, file_path: str, selection_state: Optional[dict]
+    ) -> Optional[dict]:
+        if not isinstance(selection_state, dict):
+            return self._database_selection_state(file_path)
+        kind = str(selection_state.get("kind") or "")
+        state_file_path = str(selection_state.get("file_path") or "")
+        if not self._same_file(file_path, state_file_path):
+            return self._database_selection_state(file_path)
+        if kind == "bid":
+            bid_uid = str(selection_state.get("bid_uid") or "")
+            ref = BidRef(file_path=state_file_path, bid_uid=bid_uid)
+            if bid_uid and self.project_data.get_hierarchy().find_bid_info(ref):
+                return {
+                    "kind": "bid",
+                    "file_path": state_file_path,
+                    "bid_uid": bid_uid,
+                    "project_uid": None,
+                }
+        if kind == "project":
+            project_uid = str(selection_state.get("project_uid") or "")
+            project_file_path = (
+                self.project_data.get_hierarchy().find_file_path_for_project(
+                    project_uid
+                )
+                if project_uid
+                else None
+            )
+            if project_file_path and self._same_file(file_path, project_file_path):
+                return {
+                    "kind": "project",
+                    "file_path": project_file_path,
+                    "bid_uid": None,
+                    "project_uid": project_uid,
+                }
+        if kind == "database" and self._database_file_exists(state_file_path):
+            return {
+                "kind": "database",
+                "file_path": state_file_path,
+                "bid_uid": None,
+                "project_uid": None,
+            }
+        return self._database_selection_state(file_path)
+
+    def _database_selection_state(self, file_path: str) -> Optional[dict]:
+        if not self._database_file_exists(file_path):
+            return None
+        return {
+            "kind": "database",
+            "file_path": file_path,
+            "bid_uid": None,
+            "project_uid": None,
+        }
+
+    def _database_file_exists(self, file_path: str) -> bool:
+        target = normalize_path(file_path)
+        return any(
+            normalize_path(entry.file_path) == target
+            for entry in self.project_data.get_hierarchy().loaded_files
+        )
+
+    @staticmethod
+    def _same_file(left: str, right: str) -> bool:
+        return bool(left and right and normalize_path(left) == normalize_path(right))
 
     def _delete_projects(
         self, project_uids: List[str], file_path: Optional[str]

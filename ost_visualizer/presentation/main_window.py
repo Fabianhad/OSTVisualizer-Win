@@ -186,11 +186,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._conditions_sidebar = components.conditions_sidebar
         self._bid_layers_sidebar = components.bid_layers_sidebar
         self._page_settings_bar = components.page_settings_bar
-        self._layers_toggle_action.toggled.connect(
-            lambda visible: (self._ensure_sidebar_pane_visible(1) if visible else None)
-        )
+        self._layers_toggle_action.toggled.connect(self.set_layers_sidebar_visible)
         self._conditions_toggle_action.toggled.connect(
-            lambda visible: (self._ensure_sidebar_pane_visible(0) if visible else None)
+            self.set_conditions_sidebar_visible
         )
         self._workspace_toolbar_visibility = {
             self._MAIN_TOOLBAR_KEY: True,
@@ -632,7 +630,10 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             if not self.ui_access_manager.is_allowed(Feature.DELETE_BID):
                 return
-            self.handlers.delete.delete_selected()
+            selection_after_delete = (
+                self.project_view.get_delete_replacement_selection_state()
+            )
+            self.handlers.delete.delete_selected(selection_after_delete)
 
     def _duplicate_selected(self) -> None:
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
@@ -1258,17 +1259,28 @@ class MainWindow(QtWidgets.QMainWindow):
         if sizes[index] > 0:
             return
         total = max(sum(sizes), self._left_splitter.height(), 2)
-        saved_size = (
-            self._last_left_splitter_sizes[index]
-            if index < len(self._last_left_splitter_sizes)
-            else 0
-        )
-        restored = max(1, saved_size, total // 2)
-        restored = min(restored, max(1, total - 1))
+        if self._has_valid_left_splitter_sizes(self._last_left_splitter_sizes):
+            self._left_splitter.setSizes(
+                self._scale_left_splitter_sizes(self._last_left_splitter_sizes, total)
+            )
+            return
+        restored = min(max(1, total // 2), max(1, total - 1))
         sizes[index] = restored
         other_index = 1 - index
         sizes[other_index] = max(1, total - restored)
         self._left_splitter.setSizes(sizes)
+
+    @staticmethod
+    def _has_valid_left_splitter_sizes(sizes: list[int]) -> bool:
+        return len(sizes) >= 2 and sizes[0] > 0 and sizes[1] > 0
+
+    @staticmethod
+    def _scale_left_splitter_sizes(sizes: list[int], total: int) -> list[int]:
+        total = max(2, int(total))
+        saved_total = max(1, sizes[0] + sizes[1])
+        first = round(total * sizes[0] / saved_total)
+        first = min(max(1, first), total - 1)
+        return [first, total - first]
 
     def _ensure_sidebar_column_visible(self) -> None:
         sizes = self.get_takeoff_splitter_sizes()

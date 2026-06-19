@@ -762,6 +762,50 @@ class ProjectView(QtWidgets.QWidget):
         item = self._current_selected_item()
         return self._selection_state_for_item(item) if item else None
 
+    def get_delete_replacement_selection_state(self) -> Optional[dict]:
+        selected_bid_items = []
+        selected_bid_keys = set()
+        for item in self.top_tree.selectedItems():
+            kind, uid, file_path = self._get_item_info(item)
+            if kind == "bid" and uid and file_path:
+                selected_bid_items.append(item)
+                selected_bid_keys.add((normalize_path(file_path), uid))
+        if not selected_bid_items:
+            return self.get_selected_node_state()
+        current_item = self._current_selected_item()
+        if current_item not in selected_bid_items:
+            current_item = selected_bid_items[0]
+        parent = current_item.parent()
+        if parent is None:
+            return self._nearest_selectable_parent_state(current_item)
+        sibling_bid_items: List[QtWidgets.QTreeWidgetItem] = []
+        selected_sibling_indexes: List[int] = []
+        for index in range(parent.childCount()):
+            sibling = parent.child(index)
+            kind, uid, file_path = self._get_item_info(sibling)
+            if kind != "bid" or not uid or not file_path:
+                continue
+            sibling_index = len(sibling_bid_items)
+            sibling_bid_items.append(sibling)
+            if (normalize_path(file_path), uid) in selected_bid_keys:
+                selected_sibling_indexes.append(sibling_index)
+        if not selected_sibling_indexes:
+            return self._nearest_selectable_parent_state(parent)
+        selected_sibling_indexes.sort()
+        for index in range(selected_sibling_indexes[-1] + 1, len(sibling_bid_items)):
+            candidate = sibling_bid_items[index]
+            kind, uid, file_path = self._get_item_info(candidate)
+            if kind == "bid" and uid and file_path:
+                if (normalize_path(file_path), uid) not in selected_bid_keys:
+                    return self._selection_state_for_item(candidate)
+        for index in range(selected_sibling_indexes[0] - 1, -1, -1):
+            candidate = sibling_bid_items[index]
+            kind, uid, file_path = self._get_item_info(candidate)
+            if kind == "bid" and uid and file_path:
+                if (normalize_path(file_path), uid) not in selected_bid_keys:
+                    return self._selection_state_for_item(candidate)
+        return self._nearest_selectable_parent_state(parent)
+
     def set_selected_node_state(self, state: Optional[dict]) -> None:
         self._selected_node_state = self._normalize_selected_node_state(state)
         self._restore_selected_node_state()
@@ -895,6 +939,17 @@ class ProjectView(QtWidgets.QWidget):
                 "bid_uid": uid,
                 "project_uid": None,
             }
+        return None
+
+    def _nearest_selectable_parent_state(
+        self, item: Optional[QtWidgets.QTreeWidgetItem]
+    ) -> Optional[dict]:
+        parent = item
+        while parent is not None:
+            state = self._selection_state_for_item(parent)
+            if state is not None:
+                return state
+            parent = parent.parent()
         return None
 
     def _normalize_selected_node_state(self, state: Optional[dict]) -> Optional[dict]:

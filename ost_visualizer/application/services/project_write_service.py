@@ -256,11 +256,18 @@ class ProjectWriteService(BaseWriteService):
             return True
         return self.reload_and_notify(db_path)
 
-    def delete_bids(self, db_path: str, bid_uids: List[str]) -> bool:
+    def delete_bids(
+        self,
+        db_path: str,
+        bid_uids: List[str],
+        publish_database_refreshed_after_write: bool = True,
+    ) -> bool:
         if not bid_uids:
             return True
         success = self._delete_bids.execute(db_path, bid_uids)
-        return self._reload_after_success(db_path, success)
+        return self._reload_after_success(
+            db_path, success, publish_database_refreshed_after_write
+        )
 
     def delete_projects(self, db_path: str, project_uids: List[str]) -> bool:
         if not project_uids:

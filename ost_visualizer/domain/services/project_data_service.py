@@ -90,6 +90,9 @@ class ProjectDataService:
     def clear_page_selection(self) -> None:
         self.model.clear_page_selection()
 
+    def clear_bid(self) -> None:
+        self.model.clear_bid()
+
     def deselect_pages(self) -> None:
         self.model.deselect_pages()
 

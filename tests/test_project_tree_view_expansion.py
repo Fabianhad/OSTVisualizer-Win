@@ -36,16 +36,25 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
     def setUp(self):
         self.view = ProjectView(None, _EventBus())
 
-    def _loaded_file(self, source_bid_uids, deleted_bid_uids=()):
+    def _loaded_file(
+        self,
+        source_bid_uids,
+        deleted_bid_uids=(),
+        orphan_bid_uids=(),
+        file_path="C:/jobs/test.mdb",
+    ):
         return [
             LoadedFile(
-                file_path="C:/jobs/test.mdb",
+                file_path=file_path,
                 display_name="test.mdb",
                 projects=[
                     Project(
                         uid="project-1",
                         name="Source",
-                        bids=[Bid(uid=uid, name=uid) for uid in source_bid_uids],
+                        bids=[
+                            Bid(uid=uid, name=uid, bid_no=index + 1)
+                            for index, uid in enumerate(source_bid_uids)
+                        ],
                     ),
                     Project(
                         uid="project-2",
@@ -55,8 +64,15 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
                     Project(
                         uid=_DELETED_PROJECT_UID,
                         name="Deleted Bids",
-                        bids=[Bid(uid=uid, name=uid) for uid in deleted_bid_uids],
+                        bids=[
+                            Bid(uid=uid, name=uid, bid_no=index + 1)
+                            for index, uid in enumerate(deleted_bid_uids)
+                        ],
                     ),
+                ],
+                orphan_bids=[
+                    Bid(uid=uid, name=uid, bid_no=index + 1)
+                    for index, uid in enumerate(orphan_bid_uids)
                 ],
             )
         ]
@@ -76,6 +92,97 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         for index in range(self.view.top_tree.topLevelItemCount()):
             walk(self.view.top_tree.topLevelItem(index))
         return found
+
+    def _select_bid_items(self, *uids):
+        self.view.top_tree.clearSelection()
+        selected = []
+        for uid in uids:
+            item = self._find_item(uid)
+            selected.append(item)
+        if selected:
+            self.view.top_tree.setCurrentItem(selected[0])
+            for item in selected:
+                item.setSelected(True)
+        self.app.processEvents()
+        return selected
+
+    def test_delete_replacement_selects_next_bid_in_same_folder(self):
+        self.view.build_complete_structure(self._loaded_file(["bid-1", "bid-2"]))
+        self._select_bid_items("bid-1")
+        state = self.view.get_delete_replacement_selection_state()
+        self.assertEqual(state["kind"], "bid")
+        self.assertEqual(state["bid_uid"], "bid-2")
+
+    def test_delete_replacement_selects_next_bid_for_middle_selection(self):
+        self.view.build_complete_structure(
+            self._loaded_file(["bid-1", "bid-2", "bid-3"])
+        )
+        self._select_bid_items("bid-2")
+        state = self.view.get_delete_replacement_selection_state()
+        self.assertEqual(state["kind"], "bid")
+        self.assertEqual(state["bid_uid"], "bid-3")
+
+    def test_delete_replacement_selects_previous_bid_for_last_selection(self):
+        self.view.build_complete_structure(
+            self._loaded_file(["bid-1", "bid-2", "bid-3"])
+        )
+        self._select_bid_items("bid-3")
+        state = self.view.get_delete_replacement_selection_state()
+        self.assertEqual(state["kind"], "bid")
+        self.assertEqual(state["bid_uid"], "bid-2")
+
+    def test_delete_replacement_falls_back_to_parent_when_only_bid_selected(self):
+        self.view.build_complete_structure(self._loaded_file(["bid-1"]))
+        self._select_bid_items("bid-1")
+        state = self.view.get_delete_replacement_selection_state()
+        self.assertEqual(state["kind"], "project")
+        self.assertEqual(state["project_uid"], "project-1")
+
+    def test_delete_replacement_selects_orphan_sibling_in_same_database(self):
+        self.view.build_complete_structure(
+            self._loaded_file([], orphan_bid_uids=["orphan-1", "orphan-2"])
+        )
+        self._select_bid_items("orphan-1")
+        state = self.view.get_delete_replacement_selection_state()
+        self.assertEqual(state["kind"], "bid")
+        self.assertEqual(state["file_path"], "C:/jobs/test.mdb")
+        self.assertEqual(state["bid_uid"], "orphan-2")
+
+    def test_delete_replacement_does_not_cross_database_for_only_bid(self):
+        loaded_files = self._loaded_file(["bid-1"], file_path="C:/jobs/one.mdb")
+        loaded_files.extend(self._loaded_file(["bid-2"], file_path="C:/jobs/two.mdb"))
+        self.view.build_complete_structure(loaded_files)
+        self._select_bid_items("bid-1")
+        state = self.view.get_delete_replacement_selection_state()
+        self.assertEqual(state["kind"], "project")
+        self.assertEqual(state["file_path"], "C:/jobs/one.mdb")
+
+    def test_delete_replacement_selects_after_multi_bid_range(self):
+        self.view.build_complete_structure(
+            self._loaded_file(["bid-1", "bid-2", "bid-3", "bid-4"])
+        )
+        self._select_bid_items("bid-1", "bid-2")
+        state = self.view.get_delete_replacement_selection_state()
+        self.assertEqual(state["kind"], "bid")
+        self.assertEqual(state["bid_uid"], "bid-3")
+
+    def test_delete_replacement_selects_next_deleted_bid_for_permanent_delete(self):
+        self.view.build_complete_structure(
+            self._loaded_file([], deleted_bid_uids=["deleted-1", "deleted-2"])
+        )
+        self._select_bid_items("deleted-1")
+        state = self.view.get_delete_replacement_selection_state()
+        self.assertEqual(state["kind"], "bid")
+        self.assertEqual(state["bid_uid"], "deleted-2")
+
+    def test_delete_replacement_selects_previous_deleted_bid_for_permanent_delete(self):
+        self.view.build_complete_structure(
+            self._loaded_file([], deleted_bid_uids=["deleted-1", "deleted-2"])
+        )
+        self._select_bid_items("deleted-2")
+        state = self.view.get_delete_replacement_selection_state()
+        self.assertEqual(state["kind"], "bid")
+        self.assertEqual(state["bid_uid"], "deleted-1")
 
     def test_selection_restore_records_expanded_parent_nodes_for_rebuild(self):
         self.view.set_expanded_node_keys([])

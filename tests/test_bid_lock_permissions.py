@@ -11,6 +11,12 @@ from ost_visualizer.application.services.project_write_service import (
     WriteReloadResult,
 )
 from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyBidInfo,
+    HierarchyData,
+    HierarchyFileEntry,
+    HierarchyProjectInfo,
+)
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
@@ -284,6 +290,78 @@ class _PartialPasteWriteService:
 
     def notify_database_refreshed(self, file_path):
         self.notifications.append(file_path)
+
+
+class _MoveToDeletedWriteService:
+    def __init__(self, ui_state):
+        self.ui_state = ui_state
+        self.move_calls = []
+        self.delete_calls = []
+        self.reloads = []
+        self.notifications = []
+        self.selected_bid_during_reload = []
+        self.selected_bid_during_notify = []
+
+    def move_bids(
+        self,
+        file_path,
+        uids,
+        target_project_uid,
+        orig_project_uid=None,
+        publish_database_refreshed_after_write=True,
+    ):
+        self.move_calls.append(
+            (
+                file_path,
+                list(uids),
+                target_project_uid,
+                orig_project_uid,
+                publish_database_refreshed_after_write,
+            )
+        )
+        return True
+
+    def delete_bids(self, file_path, uids, publish_database_refreshed_after_write=True):
+        self.delete_calls.append(
+            (file_path, list(uids), publish_database_refreshed_after_write)
+        )
+        return True
+
+    def reload_database(self, file_path):
+        self.selected_bid_during_reload.append(self.ui_state.get_selected_bid_ref())
+        self.reloads.append(file_path)
+        return True
+
+    def notify_database_refreshed(self, file_path):
+        self.selected_bid_during_notify.append(self.ui_state.get_selected_bid_ref())
+        self.notifications.append(file_path)
+
+
+class _DeleteBidUiState:
+    def __init__(self, bid_ref):
+        self._bid_ref = bid_ref
+        self.selected_file_path = bid_ref.file_path
+        self.selected_project_uid = None
+        self.selected_project_uids = []
+
+    def get_selected_bid_ref(self):
+        return self._bid_ref
+
+    def get_selected_bid_refs(self):
+        return [self._bid_ref] if self._bid_ref else []
+
+    def set_bid_selection(self, bid_ref):
+        self._bid_ref = bid_ref
+
+    def set_file_path(self, file_path):
+        self.selected_file_path = file_path
+
+    def set_project_uid(self, project_uid):
+        self.selected_project_uid = project_uid
+        self.selected_project_uids = [project_uid] if project_uid else []
+
+    def set_database_selected(self, selected, file_path=None):
+        self.selected_file_path = file_path if selected else None
 
 
 class _FakeDeferredPersistence:
@@ -928,6 +1006,199 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         )
         self.assertEqual(1, len(update_bid_job_status.calls))
+
+    def _delete_project_data(
+        self, selected_project_uid="project-2", remaining_uids=None
+    ):
+        remaining_uids = list(remaining_uids or [])
+        projects = {
+            selected_project_uid: HierarchyProjectInfo(
+                name="Deleted Bids" if selected_project_uid == "1" else "Project",
+                bids=[HierarchyBidInfo(uid=uid, name=uid) for uid in remaining_uids],
+            )
+        }
+        if selected_project_uid != "1":
+            projects["1"] = HierarchyProjectInfo(name="Deleted Bids")
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path="C:/jobs/test.mdb",
+                    display_name="test.mdb",
+                    bid_projects=projects,
+                )
+            ]
+        )
+        project_data = SimpleNamespace(
+            clear_bid_calls=[],
+            find_project_uid_for_bid=lambda _ref: selected_project_uid,
+            get_hierarchy=lambda: hierarchy,
+        )
+        project_data.clear_bid = lambda: project_data.clear_bid_calls.append(True)
+        return project_data
+
+    def test_moving_active_bid_to_deleted_clears_selection_before_refresh(self):
+        bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")
+        ui_state = _DeleteBidUiState(bid_ref)
+        project_data = self._delete_project_data(remaining_uids=[])
+        write_service = _MoveToDeletedWriteService(ui_state)
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        from ost_visualizer.presentation.handlers import project_write_handler
+
+        def confirm_yes(_window, _title, _message):
+            return True
+
+        old_confirm = project_write_handler.confirm
+        project_write_handler.confirm = confirm_yes
+        try:
+            handler.delete_selected()
+        finally:
+            project_write_handler.confirm = old_confirm
+        self.assertEqual(
+            write_service.move_calls,
+            [
+                (
+                    "C:/jobs/test.mdb",
+                    ["bid-1"],
+                    "1",
+                    "project-2",
+                    False,
+                )
+            ],
+        )
+        self.assertEqual(project_data.clear_bid_calls, [True])
+        self.assertEqual(write_service.selected_bid_during_reload, [None])
+        self.assertEqual(write_service.reloads, ["C:/jobs/test.mdb"])
+        self.assertEqual(write_service.selected_bid_during_notify, [None])
+        self.assertIsNone(ui_state.get_selected_bid_ref())
+        self.assertEqual(write_service.notifications, ["C:/jobs/test.mdb"])
+
+    def test_moving_active_bid_to_deleted_selects_replacement_before_refresh(self):
+        bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")
+        ui_state = _DeleteBidUiState(bid_ref)
+        project_data = self._delete_project_data(remaining_uids=["bid-2"])
+        write_service = _MoveToDeletedWriteService(ui_state)
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        from ost_visualizer.presentation.handlers import project_write_handler
+
+        old_confirm = project_write_handler.confirm
+        project_write_handler.confirm = lambda _window, _title, _message: True
+        try:
+            handler.delete_selected(
+                {
+                    "kind": "bid",
+                    "file_path": "C:/jobs/test.mdb",
+                    "bid_uid": "bid-2",
+                    "project_uid": None,
+                }
+            )
+        finally:
+            project_write_handler.confirm = old_confirm
+        replacement = ui_state.get_selected_bid_ref()
+        self.assertIsNotNone(replacement)
+        self.assertEqual(replacement.bid_uid, "bid-2")
+        self.assertEqual(
+            [
+                ref.bid_uid if ref else None
+                for ref in write_service.selected_bid_during_notify
+            ],
+            ["bid-2"],
+        )
+
+    def test_permanently_deleting_active_deleted_bid_selects_replacement_before_refresh(
+        self,
+    ):
+        bid_ref = BidRef("C:/jobs/test.mdb", "deleted-1")
+        ui_state = _DeleteBidUiState(bid_ref)
+        project_data = self._delete_project_data(
+            selected_project_uid="1", remaining_uids=["deleted-2"]
+        )
+        write_service = _MoveToDeletedWriteService(ui_state)
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        from ost_visualizer.presentation.handlers import project_write_handler
+
+        old_confirm = project_write_handler.confirm
+        project_write_handler.confirm = lambda _window, _title, _message: True
+        try:
+            handler.delete_selected(
+                {
+                    "kind": "bid",
+                    "file_path": "C:/jobs/test.mdb",
+                    "bid_uid": "deleted-2",
+                    "project_uid": None,
+                }
+            )
+        finally:
+            project_write_handler.confirm = old_confirm
+        self.assertEqual(
+            write_service.delete_calls,
+            [("C:/jobs/test.mdb", ["deleted-1"], False)],
+        )
+        replacement = ui_state.get_selected_bid_ref()
+        self.assertIsNotNone(replacement)
+        self.assertEqual(replacement.bid_uid, "deleted-2")
+        self.assertEqual(
+            [
+                ref.bid_uid if ref else None
+                for ref in write_service.selected_bid_during_notify
+            ],
+            ["deleted-2"],
+        )
+
+    def test_permanently_deleting_only_deleted_bid_falls_back_before_refresh(self):
+        bid_ref = BidRef("C:/jobs/test.mdb", "deleted-1")
+        ui_state = _DeleteBidUiState(bid_ref)
+        project_data = self._delete_project_data(
+            selected_project_uid="1", remaining_uids=[]
+        )
+        write_service = _MoveToDeletedWriteService(ui_state)
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+        from ost_visualizer.presentation.handlers import project_write_handler
+
+        old_confirm = project_write_handler.confirm
+        project_write_handler.confirm = lambda _window, _title, _message: True
+        try:
+            handler.delete_selected(
+                {
+                    "kind": "project",
+                    "file_path": "C:/jobs/test.mdb",
+                    "bid_uid": None,
+                    "project_uid": "1",
+                }
+            )
+        finally:
+            project_write_handler.confirm = old_confirm
+        self.assertEqual(
+            write_service.delete_calls,
+            [("C:/jobs/test.mdb", ["deleted-1"], False)],
+        )
+        self.assertIsNone(ui_state.get_selected_bid_ref())
+        self.assertEqual(ui_state.selected_project_uid, "1")
+        self.assertEqual(ui_state.selected_file_path, "C:/jobs/test.mdb")
+        self.assertEqual(write_service.selected_bid_during_notify, [None])
 
     def test_locked_bid_allows_bid_delete_and_duplicate(self):
         project_data = _ProjectData()

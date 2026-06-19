@@ -536,10 +536,23 @@ class FakePageCombo:
 
 
 class FakeSplitterForSidebarSizes:
-    def __init__(self):
+    def __init__(self, sizes=None, height=898, visible=True):
+        self._sizes = list(sizes or [0, 0])
+        self._height = height
+        self._visible = visible
         self.applied_sizes = []
 
+    def sizes(self):
+        return list(self._sizes)
+
+    def height(self):
+        return self._height
+
+    def isVisible(self):
+        return self._visible
+
     def setSizes(self, sizes):
+        self._sizes = list(sizes)
         self.applied_sizes.append(list(sizes))
 
 
@@ -559,6 +572,108 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         MainWindow.set_left_splitter_sizes(window, [260, 340])
         self.assertEqual(window._last_left_splitter_sizes, [260, 340])
         self.assertEqual(window._left_splitter.applied_sizes, [[260, 340]])
+
+    def test_showing_hidden_layer_restores_saved_splitter_ratio(self):
+        window = MainWindow.__new__(MainWindow)
+        window._left_splitter = FakeSplitterForSidebarSizes([898, 0], height=898)
+        window._last_left_splitter_sizes = [651, 242]
+        MainWindow._ensure_left_splitter_pane_visible(window, 1)
+        self.assertEqual(window._left_splitter.applied_sizes, [[655, 243]])
+
+    def test_capture_ignores_not_visible_takeoff_splitter_placeholder_sizes(self):
+        class CaptureShell:
+            def get_takeoff_splitter_sizes(self):
+                return [47, 47]
+
+            def get_left_splitter_sizes(self):
+                return [12, 12]
+
+            def get_takeoff_splitter(self):
+                return FakeSplitterForSidebarSizes(visible=False)
+
+            def get_left_splitter(self):
+                return FakeSplitterForSidebarSizes(visible=False)
+
+            def is_conditions_sidebar_visible(self):
+                return True
+
+            def is_layers_sidebar_visible(self):
+                return True
+
+            def saveGeometry(self):
+                return QtCore.QByteArray(b"main-geometry")
+
+            def saveState(self, _version):
+                return QtCore.QByteArray(b"main-state")
+
+            def isMaximized(self):
+                return False
+
+            def is_status_bar_visible(self):
+                return True
+
+            def save_project_header_state(self):
+                return QtCore.QByteArray(b"project-header")
+
+            def get_project_expanded_node_keys(self):
+                return []
+
+            def is_project_group_by_job_status(self):
+                return False
+
+            def get_project_selected_node(self):
+                return None
+
+            def get_active_takeoff_view(self):
+                return "2d"
+
+            def is_takeoff_2d_tab_visible(self):
+                return True
+
+            def is_takeoff_3d_tab_visible(self):
+                return True
+
+            def get_workspace_toolbar_visibility_state(self):
+                return {}
+
+            def get_takeoff_dropdown_popup_sizes(self):
+                return {}
+
+            def get_annotation_styles_by_tool(self):
+                return {}
+
+            def save_conditions_header_state(self):
+                return QtCore.QByteArray(b"conditions-header")
+
+            def is_conditions_group_by_type_enabled(self):
+                return True
+
+            def save_layers_header_state(self):
+                return QtCore.QByteArray(b"layers-header")
+
+            def get_mesh_window(self):
+                return None
+
+            def get_annotation_window(self):
+                return None
+
+            def get_view_window(self):
+                return None
+
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._shell = CaptureShell()
+        coordinator._state = WorkspaceState()
+        coordinator._state.takeoff_workspace.left_splitter_sizes = [651, 242]
+        coordinator._state.takeoff_workspace.takeoff_splitter_sizes = [360, 1516]
+        coordinator._pending_mesh_restore = False
+        coordinator._pending_annotation_restore = False
+        coordinator._pending_view_restore = False
+        captured = coordinator._capture_current_state()
+        self.assertEqual(captured.takeoff_workspace.left_splitter_sizes, [651, 242])
+        self.assertEqual(
+            captured.takeoff_workspace.takeoff_splitter_sizes,
+            [360, 1516],
+        )
 
     def test_hidden_layer_sidebar_capture_keeps_last_valid_splitter_layout(self):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
