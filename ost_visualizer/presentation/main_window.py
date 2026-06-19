@@ -1319,6 +1319,7 @@ class MainWindow(QtWidgets.QMainWindow):
         *,
         initial_geometry: QtCore.QByteArray | None = None,
         initial_is_maximized: bool = True,
+        initial_is_fullscreen: bool = False,
     ) -> None:
         visible = bool(visible)
         if visible and not self.can_restore_annotation_window():
@@ -1327,13 +1328,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self._annotation_window_action.blockSignals(False)
             return
         if visible:
+            detached_state = (
+                self._workspace_state_model.state.detached_windows.annotation_view
+            )
             initial_geometry, initial_is_maximized = (
                 self._resolve_detached_initial_state(
-                    self._workspace_state_model.state.detached_windows.annotation_view,
+                    detached_state,
                     initial_geometry,
                     initial_is_maximized,
                 )
             )
+            initial_is_fullscreen = detached_state.is_fullscreen
         action = self._annotation_window_action
         if action.isChecked() != visible:
             action.blockSignals(True)
@@ -1351,6 +1356,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 None,
                 initial_geometry=initial_geometry,
                 initial_is_maximized=initial_is_maximized,
+                initial_is_fullscreen=initial_is_fullscreen,
             )
             return
         if self.is_view_window_open():
@@ -1369,6 +1375,7 @@ class MainWindow(QtWidgets.QMainWindow):
         *,
         initial_geometry: QtCore.QByteArray | None = None,
         initial_is_maximized: bool = True,
+        initial_is_fullscreen: bool = False,
     ) -> None:
         visible = bool(visible)
         if visible and not self.can_restore_view_window():
@@ -1377,13 +1384,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self._view_window_action.blockSignals(False)
             return
         if visible:
+            detached_state = (
+                self._workspace_state_model.state.detached_windows.view_window
+            )
             initial_geometry, initial_is_maximized = (
                 self._resolve_detached_initial_state(
-                    self._workspace_state_model.state.detached_windows.view_window,
+                    detached_state,
                     initial_geometry,
                     initial_is_maximized,
                 )
             )
+            initial_is_fullscreen = detached_state.is_fullscreen
         action = self._view_window_action
         if action.isChecked() != visible:
             action.blockSignals(True)
@@ -1413,6 +1424,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 named_view_uid,
                 initial_geometry=initial_geometry,
                 initial_is_maximized=initial_is_maximized,
+                initial_is_fullscreen=initial_is_fullscreen,
             )
             return
         self._view_window_manager.close_view()

@@ -231,22 +231,27 @@ class DetachedWindowState:
     open: bool = False
     geometry_b64: Optional[str] = None
     is_maximized: bool = False
+    is_fullscreen: bool = False
 
     def to_dict(self) -> dict:
         return {
             "open": self.open,
             "geometry_b64": self.geometry_b64,
             "is_maximized": self.is_maximized,
+            "is_fullscreen": self.is_fullscreen,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> DetachedWindowState:
         if not isinstance(data, dict):
             return cls()
+        if not data:
+            return cls()
         return cls(
             open=_coerce_bool(data.get("open"), False),
             geometry_b64=_coerce_optional_str(data.get("geometry_b64")),
             is_maximized=_coerce_bool(data.get("is_maximized"), False),
+            is_fullscreen=_coerce_bool(data["is_fullscreen"], False),
         )
 
 

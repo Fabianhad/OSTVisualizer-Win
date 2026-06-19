@@ -124,10 +124,12 @@ class FakeDetachedWindow:
         visible: bool = True,
         maximized: bool = False,
         minimized: bool = False,
+        fullscreen: bool = False,
     ):
         self.visible = visible
         self.maximized = maximized
         self.minimized = minimized
+        self.fullscreen = fullscreen
         self.initial_states = []
         self.restored_geometries = []
         self.show_maximized_calls = 0
@@ -151,6 +153,9 @@ class FakeDetachedWindow:
     def isMaximized(self):
         return self.maximized
 
+    def isFullScreen(self):
+        return self.fullscreen
+
     def isMinimized(self):
         return self.minimized
 
@@ -158,11 +163,13 @@ class FakeDetachedWindow:
         self.show_maximized_calls += 1
         self.maximized = True
         self.minimized = False
+        self.fullscreen = False
 
     def showNormal(self):
         self.show_normal_calls += 1
         self.maximized = False
         self.minimized = False
+        self.fullscreen = False
 
     def set_dropdown_popup_sizes(self, sizes):
         self.dropdown_sizes = dict(sizes)
@@ -190,6 +197,10 @@ class FakeDetachedWindow:
 
 
 class FakeInitialGeometryWindow:
+    _constrained_geometry_for_available_screen = staticmethod(
+        DetachedPageViewWindow._constrained_geometry_for_available_screen
+    )
+
     def __init__(self, frame: QtCore.QRect, available: QtCore.QRect):
         self._frame = QtCore.QRect(frame)
         self._available = QtCore.QRect(available)
@@ -209,6 +220,47 @@ class FakeInitialGeometryWindow:
 
     def setGeometry(self, geometry):
         self.applied_geometry = QtCore.QRect(geometry)
+        self._frame = QtCore.QRect(geometry)
+
+
+class FakeInitialRestoreWindow(FakeInitialGeometryWindow):
+    _restore_initial_geometry = DetachedPageViewWindow._restore_initial_geometry
+    _constrain_initial_geometry_to_single_screen = (
+        DetachedPageViewWindow._constrain_initial_geometry_to_single_screen
+    )
+
+    def __init__(
+        self,
+        *,
+        restored_frame: QtCore.QRect,
+        available: QtCore.QRect,
+    ):
+        super().__init__(restored_frame, available)
+        self._restored_frame = QtCore.QRect(restored_frame)
+        self.visible = False
+        self.restored_geometries = []
+        self.show_calls = 0
+        self.show_fullscreen_calls = 0
+        self.show_maximized_calls = 0
+
+    def restoreGeometry(self, geometry):
+        self.restored_geometries.append(bytes(geometry))
+        self._frame = QtCore.QRect(self._restored_frame)
+
+    def isVisible(self):
+        return self.visible
+
+    def show(self):
+        self.show_calls += 1
+        self.visible = True
+
+    def showFullScreen(self):
+        self.show_fullscreen_calls += 1
+        self.visible = True
+
+    def showMaximized(self):
+        self.show_maximized_calls += 1
+        self.visible = True
 
 
 class FakeDetachedPlanView:
@@ -489,6 +541,50 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertIsNotNone(window.applied_geometry)
         self.assertTrue(window._available.contains(window.applied_geometry))
 
+    def test_explicit_fullscreen_initial_geometry_is_bounded_before_showing(self):
+        window = FakeInitialRestoreWindow(
+            restored_frame=QtCore.QRect(-1920, 0, 3840, 1080),
+            available=QtCore.QRect(0, 0, 1920, 1040),
+        )
+        geometry = QtCore.QByteArray(b"fullscreen-geometry")
+        DetachedPageViewWindow.set_initial_window_state(window, geometry, False, True)
+        self.assertTrue(window._initial_show_fullscreen)
+        self.assertIsNone(window.applied_geometry)
+        DetachedPageViewWindow._show_initial_window(window)
+        self.assertIsNotNone(window.applied_geometry)
+        self.assertTrue(window._available.contains(window.applied_geometry))
+        self.assertEqual(window.show_fullscreen_calls, 1)
+        self.assertEqual(window.show_maximized_calls, 0)
+        self.assertEqual(window.restored_geometries, [bytes(geometry)])
+
+    def test_initial_restore_oversized_normal_geometry_is_clamped_before_show(self):
+        window = FakeInitialRestoreWindow(
+            restored_frame=QtCore.QRect(-100, 40, 3200, 1200),
+            available=QtCore.QRect(0, 0, 1600, 900),
+        )
+        geometry = QtCore.QByteArray(b"normal-geometry")
+        DetachedPageViewWindow.set_initial_window_state(window, geometry, False)
+        self.assertIsNone(window.applied_geometry)
+        DetachedPageViewWindow._show_initial_window(window)
+        self.assertEqual(window.show_calls, 1)
+        self.assertEqual(window.show_fullscreen_calls, 0)
+        self.assertEqual(window.restored_geometries, [bytes(geometry)])
+        self.assertTrue(window._available.contains(window.applied_geometry))
+
+    def test_normal_initial_geometry_inside_one_screen_restores_unchanged(self):
+        frame = QtCore.QRect(120, 80, 1000, 700)
+        window = FakeInitialRestoreWindow(
+            restored_frame=frame,
+            available=QtCore.QRect(0, 0, 1920, 1040),
+        )
+        DetachedPageViewWindow.set_initial_window_state(
+            window, QtCore.QByteArray(b"normal-geometry"), False
+        )
+        self.assertIsNone(window.applied_geometry)
+        DetachedPageViewWindow._show_initial_window(window)
+        self.assertIsNone(window.applied_geometry)
+        self.assertEqual(window.frameGeometry(), frame)
+
     def _coordinator_for_window(
         self,
         window,
@@ -507,6 +603,103 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             "annotation_page": [320, 360]
         }
         return coordinator
+
+    def test_auto_restore_annotation_window_passes_fullscreen_state(self):
+        calls = []
+
+        class Shell:
+            def can_restore_annotation_window(self):
+                return True
+
+            def is_annotation_window_open(self):
+                return True
+
+            def set_annotation_window_visible(
+                self,
+                visible,
+                *,
+                initial_geometry=None,
+                initial_is_maximized=True,
+                initial_is_fullscreen=False,
+            ):
+                calls.append(
+                    (
+                        visible,
+                        initial_geometry,
+                        initial_is_maximized,
+                        initial_is_fullscreen,
+                    )
+                )
+
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._pending_annotation_restore = True
+        coordinator._takeoff_workspace_ready = True
+        coordinator._state = WorkspaceState()
+        state = coordinator._state.detached_windows.annotation_view
+        state.geometry_b64 = _encoded_geometry()
+        state.is_maximized = False
+        state.is_fullscreen = True
+        coordinator._decode_byte_array = WorkspaceStateCoordinator._decode_byte_array
+        coordinator._schedule_track_detached_window = lambda _key: None
+        coordinator._shell = Shell()
+        coordinator._try_restore_annotation_window()
+        self.assertFalse(coordinator._pending_annotation_restore)
+        self.assertEqual(calls[0], (True, QtCore.QByteArray(b"geometry"), False, True))
+
+    def test_auto_restore_view_window_passes_fullscreen_state(self):
+        calls = []
+
+        class Shell:
+            def can_restore_view_window(self):
+                return True
+
+            def is_view_window_open(self):
+                return True
+
+            def set_view_window_visible(
+                self,
+                visible,
+                *,
+                initial_geometry=None,
+                initial_is_maximized=True,
+                initial_is_fullscreen=False,
+            ):
+                calls.append(
+                    (
+                        visible,
+                        initial_geometry,
+                        initial_is_maximized,
+                        initial_is_fullscreen,
+                    )
+                )
+
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._pending_view_restore = True
+        coordinator._takeoff_workspace_ready = True
+        coordinator._state = WorkspaceState()
+        state = coordinator._state.detached_windows.view_window
+        state.geometry_b64 = _encoded_geometry()
+        state.is_maximized = False
+        state.is_fullscreen = True
+        coordinator._decode_byte_array = WorkspaceStateCoordinator._decode_byte_array
+        coordinator._schedule_track_detached_window = lambda _key: None
+        coordinator._shell = Shell()
+        coordinator._try_restore_view_window()
+        self.assertFalse(coordinator._pending_view_restore)
+        self.assertEqual(calls[0], (True, QtCore.QByteArray(b"geometry"), False, True))
+
+    def test_detached_window_state_persists_fullscreen_flag(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        window = FakeDetachedWindow(fullscreen=True)
+        window.saveGeometry = lambda: QtCore.QByteArray(b"fullscreen")
+        state = coordinator._capture_detached_window_state(
+            WorkspaceState().detached_windows.annotation_view,
+            window,
+            is_open=True,
+        )
+        self.assertTrue(state.open)
+        self.assertTrue(state.is_fullscreen)
+        self.assertFalse(state.is_maximized)
 
     def test_saved_mesh_windowed_state_restores_geometry_without_maximizing(self):
         window = FakeDetachedWindow(visible=True, maximized=True)

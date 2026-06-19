@@ -75,7 +75,6 @@ class ServiceBuilder:
             lambda: FileLoadingService(
                 project_operations_service,
                 project_data_service,
-                mdb_parser,
             ),
         )
         self.container.register_singleton(

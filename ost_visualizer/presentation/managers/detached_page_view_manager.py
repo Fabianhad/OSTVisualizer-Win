@@ -258,6 +258,7 @@ class DetachedPageViewManager(IShutdownAware):
         target_named_view_uid: Optional[str] = None,
         initial_geometry: Optional[QByteArray] = None,
         initial_is_maximized: bool = True,
+        initial_is_fullscreen: bool = False,
     ) -> str:
         if self.is_view_open():
             existing_view = self.repository.get_active_view()
@@ -285,7 +286,11 @@ class DetachedPageViewManager(IShutdownAware):
             target_named_view_uid=target_named_view_uid,
         )
         self._create_window(
-            view, initial_geometry, initial_is_maximized, navigation_source
+            view,
+            initial_geometry,
+            initial_is_maximized,
+            initial_is_fullscreen,
+            navigation_source,
         )
         self._notify_visibility_changed()
         return view.uid
@@ -391,6 +396,7 @@ class DetachedPageViewManager(IShutdownAware):
         view: AnnotationView,
         initial_geometry: Optional[QByteArray] = None,
         initial_is_maximized: bool = True,
+        initial_is_fullscreen: bool = False,
         navigation_source: str = "unknown",
     ) -> None:
         page_data = self._get_page_data(view)
@@ -430,6 +436,7 @@ class DetachedPageViewManager(IShutdownAware):
             undo_service=undo_svc,
             initial_geometry=initial_geometry,
             initial_is_maximized=initial_is_maximized,
+            initial_is_fullscreen=initial_is_fullscreen,
             navigation_source=navigation_source,
             show_page_index=self.config_model.display_page_index_with_sheet_name,
             show_sheet_number=self.config_model.display_sheet_number_with_sheet_name,

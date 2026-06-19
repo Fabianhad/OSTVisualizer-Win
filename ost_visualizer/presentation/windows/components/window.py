@@ -106,6 +106,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         undo_service=None,
         initial_geometry: Optional[QtCore.QByteArray] = None,
         initial_is_maximized: bool = True,
+        initial_is_fullscreen: bool = False,
         navigation_source: str = "unknown",
         show_page_index: bool = False,
         show_sheet_number: bool = False,
@@ -165,6 +166,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._hotlink_adapter: Optional[HotlinkEventAdapter] = None
         self._initial_geometry = QtCore.QByteArray()
         self._initial_show_maximized = True
+        self._initial_show_fullscreen = False
         self._navigation_source = navigation_source
         self._show_page_index = bool(show_page_index)
         self._show_sheet_number = bool(show_sheet_number)
@@ -213,7 +215,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self._named_views:
             self._populate_named_view_combo()
         self.set_initial_window_state(
-            initial_geometry or QtCore.QByteArray(), initial_is_maximized
+            initial_geometry or QtCore.QByteArray(),
+            initial_is_maximized,
+            initial_is_fullscreen,
         )
         self._show_timer = QtCore.QTimer(self)
         self._show_timer.setSingleShot(True)
@@ -226,12 +230,35 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.load_view(view, navigation_source=navigation_source)
 
     def set_initial_window_state(
-        self, geometry: QtCore.QByteArray, is_maximized: bool
+        self,
+        geometry: QtCore.QByteArray,
+        is_maximized: bool,
+        is_fullscreen: bool = False,
     ) -> None:
         self._initial_geometry = QtCore.QByteArray(geometry)
         self._initial_show_maximized = bool(is_maximized)
-        if self._initial_geometry and not self._initial_geometry.isEmpty():
-            self.restoreGeometry(self._initial_geometry)
+        self._initial_show_fullscreen = bool(is_fullscreen)
+
+    @staticmethod
+    def _constrained_geometry_for_available_screen(
+        frame: QtCore.QRect,
+        available: QtCore.QRect,
+        minimum_width: int,
+        minimum_height: int,
+    ) -> QtCore.QRect:
+        width = min(max(frame.width(), minimum_width, 1), available.width())
+        height = min(max(frame.height(), minimum_height, 1), available.height())
+        max_x = available.right() - width + 1
+        max_y = available.bottom() - height + 1
+        x = min(max(frame.x(), available.x()), max_x)
+        y = min(max(frame.y(), available.y()), max_y)
+        return QtCore.QRect(x, y, width, height)
+
+    def _restore_initial_geometry(self) -> None:
+        if not self._initial_geometry or self._initial_geometry.isEmpty():
+            return
+        self.restoreGeometry(self._initial_geometry)
+        self._constrain_initial_geometry_to_single_screen()
 
     def _available_geometry_for_initial_show(self) -> Optional[QtCore.QRect]:
         center = self.frameGeometry().center()
@@ -251,13 +278,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         frame = self.frameGeometry()
         if available.contains(frame):
             return
-        width = min(max(frame.width(), self.minimumWidth(), 1), available.width())
-        height = min(max(frame.height(), self.minimumHeight(), 1), available.height())
-        max_x = available.right() - width + 1
-        max_y = available.bottom() - height + 1
-        x = min(max(frame.x(), available.x()), max_x)
-        y = min(max(frame.y(), available.y()), max_y)
-        self.setGeometry(QtCore.QRect(x, y, width, height))
+        self.setGeometry(
+            self._constrained_geometry_for_available_screen(
+                frame, available, self.minimumWidth(), self.minimumHeight()
+            )
+        )
 
     def show_when_page_ready(self) -> None:
         if self._is_closing or self.isVisible():
@@ -896,14 +921,14 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
         geometry = self._initial_geometry
         if geometry and not geometry.isEmpty():
-            self.restoreGeometry(geometry)
-        self._constrain_initial_geometry_to_single_screen()
+            self._restore_initial_geometry()
+        if self._initial_show_fullscreen:
+            self.showFullScreen()
+            return
         if self._initial_show_maximized:
             self.showMaximized()
             return
         self.show()
-        if geometry and not geometry.isEmpty():
-            self.restoreGeometry(geometry)
 
     def set_read_only(self, read_only: bool) -> None:
         self._read_only = read_only

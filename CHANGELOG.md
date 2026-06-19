@@ -72,7 +72,7 @@
 - Fixed Apply in the Edit Condition dialog visually switching the Conditions sidebar back to a selected takeoff's condition.
 - Loaded existing named views from older OST databases whose `BidNamedViews` table does not include the newer `Color` column, restoring named-view lists and hotlink navigation.
 - Kept newly placed annotations visible while the Annotation/View window is open by refreshing detached windows against their target page UID.
-- Constrained detached Annotation/View window startup geometry to one screen before maximizing, avoiding multi-monitor spanning restores.
+- Constrained detached Annotation/View window startup geometry and fullscreen restores to one screen, avoiding multi-monitor spanning restores.
 - Persisted resized Annotation/View and View window page/named-view dropdown popups across window close and restart.
 - Matched Edit Condition dimension input heights across Windows styles.
 - Fixed text annotation selected/edit outlines to use the real textbox resize bounds and clipped overflowing text to the textbox.

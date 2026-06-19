@@ -435,6 +435,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             True,
             initial_geometry=geometry,
             initial_is_maximized=state.is_maximized,
+            initial_is_fullscreen=state.is_fullscreen,
         )
         if self._shell.is_annotation_window_open():
             self._pending_annotation_restore = False
@@ -463,6 +464,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             True,
             initial_geometry=geometry,
             initial_is_maximized=state.is_maximized,
+            initial_is_fullscreen=state.is_fullscreen,
         )
         if self._shell.is_view_window_open():
             self._pending_view_restore = False
@@ -808,11 +810,13 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                 open=is_open,
                 geometry_b64=previous_state.geometry_b64,
                 is_maximized=previous_state.is_maximized,
+                is_fullscreen=previous_state.is_fullscreen,
             )
         return DetachedWindowState(
             open=is_open,
             geometry_b64=self._encode_byte_array(window.saveGeometry()),
             is_maximized=window.isMaximized(),
+            is_fullscreen=window.isFullScreen(),
         )
 
     def _get_detached_window(self, key: str) -> Optional[QtWidgets.QWidget]:
