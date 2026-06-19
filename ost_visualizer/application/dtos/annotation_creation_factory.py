@@ -1,5 +1,4 @@
 from typing import Iterable, Optional
-
 from .insert_annotation_spec_dto import InsertAnnotationSpec
 
 

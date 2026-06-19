@@ -1239,9 +1239,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 self.assertEqual((db_path, bid_uid, ref_remap), ("bid.mdb", "7", None))
                 self.assertEqual(specs[0].annotation_type, annotation_type)
                 self.assertEqual(specs[0].position, position)
-                self.assertEqual(
-                    specs[0].layer_uid, "detached-annotation-layer"
-                )
+                self.assertEqual(specs[0].layer_uid, "detached-annotation-layer")
                 self.assertEqual(plan_view.selected_uids, {f"ann-1_{annotation_type}"})
                 self.assertEqual(len(undo_service.pushes), 1)
 

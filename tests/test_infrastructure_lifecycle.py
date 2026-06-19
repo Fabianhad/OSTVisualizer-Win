@@ -182,7 +182,6 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             creator._insert_seed_data("test.mdb", "Created")
         finally:
             database_creator.pyodbc.connect = original_connect
-
         layer_params = [
             params
             for sql, params in fake_connection.cursor_instance.calls

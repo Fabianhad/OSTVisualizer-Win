@@ -25,4 +25,6 @@ class PageViewDto:
         layer_key = str(layer_uid or "")
         if not layer_key:
             return True
-        return all(str(hidden_uid) != layer_key for hidden_uid in self.hidden_layer_uids)
+        return all(
+            str(hidden_uid) != layer_key for hidden_uid in self.hidden_layer_uids
+        )

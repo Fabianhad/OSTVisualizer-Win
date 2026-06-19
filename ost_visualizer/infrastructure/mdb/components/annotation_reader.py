@@ -26,7 +26,6 @@ class AnnotationReaderMixin:
     ) -> List[BidAnnotation]:
         bid_annotations: List[BidAnnotation] = []
         layer_mapper = MdbAnnotationLayerMapper(bid_layers)
-
         with connection.cursor() as cursor:
             try:
                 cursor.execute(

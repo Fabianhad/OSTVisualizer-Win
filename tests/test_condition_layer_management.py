@@ -1,7 +1,6 @@
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
-
 from ost_visualizer.infrastructure.mdb.components.settings_reader import (
     SettingsReaderMixin,
 )
@@ -92,7 +91,6 @@ class LayerUsageReaderTests(unittest.TestCase):
             },
         )
         reader = _LayerUsageReader(connection)
-
         self.assertEqual(
             reader.get_layer_uids_in_use("bid.mdb", "7"),
             {"101", "201", "301"},

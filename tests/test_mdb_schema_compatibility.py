@@ -1,6 +1,5 @@
 import unittest
 from types import SimpleNamespace
-
 from ost_visualizer.infrastructure.mdb.schema_compatibility import (
     MdbSchemaInspector,
     UnsupportedMdbSchemaError,
@@ -65,9 +64,7 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
         inspector = MdbSchemaInspector(
             _FakeConnection({"BidPages"}, {"BidPages": {"Name"}})
         )
-
         sql = inspector.optional_column("BidPages", "Name", "''")
-
         self.assertEqual(sql, "[Name]")
         self.assertEqual(inspector.report.missing_optional_columns, set())
 
@@ -75,9 +72,7 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
         inspector = MdbSchemaInspector(
             _FakeConnection({"BidPages"}, {"BidPages": {"UID"}})
         )
-
         sql = inspector.optional_column("BidPages", "Name", "''", alias="PageName")
-
         self.assertEqual(sql, "'' AS [PageName]")
         self.assertEqual(
             inspector.report.missing_optional_columns,
@@ -86,9 +81,7 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
 
     def test_optional_table_missing_records_schema_note(self):
         inspector = MdbSchemaInspector(_FakeConnection({"Bids"}, {"Bids": {"UID"}}))
-
         self.assertTrue(inspector.optional_table_missing("BidHotLinks"))
-
         self.assertEqual(
             inspector.report.detected_schema_notes,
             {"missing optional table BidHotLinks"},
@@ -98,10 +91,8 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
         inspector = MdbSchemaInspector(
             _FakeConnection({"BidLayers"}, {"BidLayers": {"UID"}})
         )
-
         with self.assertRaises(UnsupportedMdbSchemaError):
             inspector.require_column("BidLayers", "Name")
-
         self.assertEqual(
             inspector.report.missing_required_columns,
             {"BidLayers.Name"},
@@ -111,9 +102,10 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
         inspector = MdbSchemaInspector(
             _FakeConnection({"BidPages"}, {"BidPages": {"PageNumber"}})
         )
-
         self.assertEqual(
-            inspector.order_by_existing("BidPages", ("FolderUID", "PageNumber"), "[UID]"),
+            inspector.order_by_existing(
+                "BidPages", ("FolderUID", "PageNumber"), "[UID]"
+            ),
             "[PageNumber]",
         )
         self.assertEqual(

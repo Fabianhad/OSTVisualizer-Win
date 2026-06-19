@@ -1,5 +1,4 @@
 import unittest
-
 from ost_visualizer.domain.entities.layer import Layer
 from ost_visualizer.infrastructure.mdb.mappers.annotation_mapper import (
     MdbAnnotationLayerMapper,
@@ -14,7 +13,6 @@ class MdbAnnotationLayerMapperTests(unittest.TestCase):
                 "20": Layer(uid="20", name="Annotation", visible=False),
             }
         )
-
         self.assertEqual(mapper.resolve_layer(), ("20", False))
 
     def test_row_layer_uid_uses_row_layer_visibility(self):
@@ -24,14 +22,12 @@ class MdbAnnotationLayerMapperTests(unittest.TestCase):
                 "30": Layer(uid="30", name="Custom", visible=False),
             }
         )
-
         self.assertEqual(mapper.resolve_layer(30), ("30", False))
 
     def test_missing_annotation_layer_matches_existing_reader_default(self):
         mapper = MdbAnnotationLayerMapper(
             {"30": Layer(uid="30", name="Custom", visible=False)}
         )
-
         self.assertEqual(mapper.resolve_layer(), (None, True))
 
 
