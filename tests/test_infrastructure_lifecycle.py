@@ -6,6 +6,7 @@ from pathlib import Path
 from types import MappingProxyType
 from ost_visualizer.infrastructure import providers
 from ost_visualizer.infrastructure.mdb import database_creator
+from ost_visualizer.infrastructure.mdb.schema_contract import DEFAULT_LAYER_ROWS
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
     AnnotationOperationsMixin,
 )
@@ -143,6 +144,59 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 "finalizing",
             ],
         )
+
+    def test_database_creator_seeds_default_layers_from_schema_contract(self):
+        class FakeCursor:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, sql, *params):
+                self.calls.append((sql, params))
+
+            def close(self):
+                pass
+
+        class FakeConnection:
+            def __init__(self):
+                self.cursor_instance = FakeCursor()
+                self.committed = False
+                self.closed = False
+
+            def cursor(self):
+                return self.cursor_instance
+
+            def commit(self):
+                self.committed = True
+
+            def rollback(self):
+                raise AssertionError("seed data should not roll back")
+
+            def close(self):
+                self.closed = True
+
+        fake_connection = FakeConnection()
+        original_connect = database_creator.pyodbc.connect
+        database_creator.pyodbc.connect = lambda *_args, **_kwargs: fake_connection
+        try:
+            creator = database_creator.DatabaseCreator()
+            creator._insert_seed_data("test.mdb", "Created")
+        finally:
+            database_creator.pyodbc.connect = original_connect
+
+        layer_params = [
+            params
+            for sql, params in fake_connection.cursor_instance.calls
+            if "INSERT INTO [BidLayers]" in sql
+        ]
+        self.assertEqual(
+            layer_params,
+            [
+                (name, -1 if show else 0, -1 if locked else 0, sequence)
+                for name, show, locked, sequence in DEFAULT_LAYER_ROWS
+            ],
+        )
+        self.assertTrue(fake_connection.committed)
+        self.assertTrue(fake_connection.closed)
 
     def test_static_mdb_lookup_tables_are_immutable(self):
         self.assertIsInstance(

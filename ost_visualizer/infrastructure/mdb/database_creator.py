@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 import pyodbc
+from .schema_contract import DEFAULT_LAYER_ROWS
 
 _TABLE_DDL = [
     """CREATE TABLE [AccessLevels] (
@@ -832,12 +833,7 @@ _SCHEMA_VERSIONS = [
     112,
     113,
 ]
-_DEFAULT_LAYERS = [
-    ("Default", True, True, 2),
-    ("Annotation", True, True, 1),
-    ("Image", True, True, 0),
-    ("Comments", True, True, 3),
-]
+_DEFAULT_LAYERS = DEFAULT_LAYER_ROWS
 _FK_INDEXES = [
     ("AffectDPCTypGroupViews", "BidUID"),
     ("BidALines", "BidPageUID"),

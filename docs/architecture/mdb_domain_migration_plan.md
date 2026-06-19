@@ -509,6 +509,10 @@ application and UI code receive valid domain objects.
 
 ## Phase 4: Schema Creator Alignment
 
+**Status**
+
+Complete for the first creator/contract alignment slice.
+
 **Goal**
 
 Make `database_creator.py` consume the same MDB persistence contract as the
@@ -558,6 +562,54 @@ runtime reader/writer path.
 - Keep changes in small groups: default layers first, then tables/columns, then
   indexes/relationships.
 - Revert individual groups if generated MDB compatibility changes.
+
+**Completed work**
+
+- Moved the default reserved layer seed rows into
+  `ost_visualizer/infrastructure/mdb/schema_contract.py` as
+  `DEFAULT_LAYER_ROWS`.
+- Updated `database_creator.py` to seed `BidLayers` from the shared contract.
+- Added a database-creator test that monkeypatches the connection and verifies
+  seeded layer names, visibility flags, lock flags, and sequence values match
+  `DEFAULT_LAYER_ROWS`.
+- Left table DDL, index lists, relationships, and SQL generation unchanged.
+
+**Decisions made**
+
+- Align default layers first because they are a cross-cutting compatibility
+  concept used by layer visibility, annotation mapping, and created databases.
+- Keep the creator's local `_DEFAULT_LAYERS` name as an alias to avoid a broad
+  rewrite of the creator module.
+
+**Files changed**
+
+- `ost_visualizer/infrastructure/mdb/schema_contract.py`
+- `ost_visualizer/infrastructure/mdb/database_creator.py`
+- `tests/test_infrastructure_lifecycle.py`
+- `docs/architecture/mdb_domain_migration_plan.md`
+
+**Validation results**
+
+- `.\venv\Scripts\python.exe -m py_compile ost_visualizer\infrastructure\mdb\schema_contract.py ost_visualizer\infrastructure\mdb\database_creator.py tests\test_infrastructure_lifecycle.py`
+  passed.
+- `.\venv\Scripts\python.exe -m unittest tests.test_infrastructure_lifecycle tests.test_mdb_schema_compatibility -v`
+  passed: 14 tests.
+- `.\venv\Scripts\python.exe tools\check_architecture.py --changed-only`
+  passed.
+- `git diff --check` passed with only pre-existing CRLF normalization warnings
+  for unrelated dirty tracked files.
+- `.\venv\Scripts\python.exe -m unittest discover -s tests -v` ran 975 tests
+  with the two known unrelated tuple-vs-list failures in
+  `tests/test_viewer_sync_coordinator_overlay_refresh.py`:
+  `test_named_view_rename_uses_inline_edit_without_text_toolbar` and
+  `test_selected_annotation_style_change_updates_only_selected_annotation`.
+
+**Remaining tasks**
+
+- Align table names, column specs, index specs, and relationship specs only when
+  each group has focused read-back/schema tests.
+- Add real newly-created MDB read-back coverage if Access-driver availability
+  can be made reliable in the test environment.
 
 ## Phase 5: Layer and Annotation Domain Factories
 

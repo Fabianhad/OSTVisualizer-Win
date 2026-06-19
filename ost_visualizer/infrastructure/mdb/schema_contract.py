@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 
 BID_SECTIONS: List[str] = [
     "BidPlanRooms",
@@ -39,6 +39,12 @@ BID_TAIL_SECTIONS: List[str] = ["BidNamedViews", "BidHotLinks"]
 GLOBAL_SECTIONS: List[str] = ["Employees", "AccessLevels", "CdnTypes", "JobStatuses"]
 RAW_BID_TABLES: List[str] = BID_SECTIONS + ["BidPages"] + BID_TAIL_SECTIONS
 RAW_GLOBAL_TABLES: List[str] = ["Employees", "AccessLevels", "CdnTypes", "JobStatuses"]
+DEFAULT_LAYER_ROWS: Tuple[Tuple[str, bool, bool, int], ...] = (
+    ("Default", True, True, 2),
+    ("Annotation", True, True, 1),
+    ("Image", True, True, 0),
+    ("Comments", True, True, 3),
+)
 
 
 def singular(table_name: str) -> str:
