@@ -1,4 +1,5 @@
 from PySide6 import QtGui, QtWidgets
+from ..actions.action_ids import ACTION_SELECT_OVERLAY_IMAGE
 from ..managers.context_menu_manager import ContextActionId, ContextMenuManager
 from .image_show_mode import mode_to_flags, resolve_toggled_mode
 
@@ -51,7 +52,7 @@ def add_overlay_submenu_with_select(
                 "Select Overlay Image",
                 callback=select_callback,
                 enabled=select_enabled,
-                action_key="select_overlay_image",
+                action_key=ACTION_SELECT_OVERLAY_IMAGE,
             ),
             ContextMenuManager.separator(),
             ContextMenuManager.action_spec(

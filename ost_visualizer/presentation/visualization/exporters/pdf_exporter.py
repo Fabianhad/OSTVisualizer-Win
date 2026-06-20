@@ -20,8 +20,21 @@ from ....application.interfaces.i_takeoff_domain_service import ITakeoffDomainSe
 from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.page_render_info_dto import PageRenderInfo
 from ....domain.entities import shape as shapes
-from ....domain.entities.annotation import BidAnnotation
+from ....domain.entities.annotation import (
+    ANNOTATION_TYPE_ARROW,
+    ANNOTATION_TYPE_CLOUD,
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_INK,
+    ANNOTATION_TYPE_LINE,
+    ANNOTATION_TYPE_OVAL,
+    ANNOTATION_TYPE_POLYGON,
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
 from ....domain.entities.condition import Condition
+from ....domain.entities.file_extensions import is_pdf_suffix
 from ....domain.entities.page import Page
 from ....domain.entities.takeoff import Takeoff
 from ...utils.image_show_mode import mode_to_flags
@@ -399,7 +412,7 @@ class PDFExporter:
 
     @staticmethod
     def _is_pdf_path(path: str) -> bool:
-        return path.lower().endswith(".pdf")
+        return is_pdf_suffix(path)
 
     @staticmethod
     def _use_source_pdf(export_data: Any, source_pdf: str, page_index: int) -> None:
@@ -450,7 +463,7 @@ class PDFExporter:
         offset_y = 0.0
         is_rotated = False
         image_path = page.image_path or ""
-        if image_path.lower().endswith(".pdf"):
+        if is_pdf_suffix(image_path):
             try:
                 sizes = self._writer.get_page_sizes(image_path)
                 page_idx = page.page_index or 0
@@ -710,7 +723,9 @@ class PDFExporter:
     ) -> List[Any]:
         arrows = []
         for annotation in bid_annotations:
-            if not self._is_annotation_exportable(annotation, page_uid, "arrow"):
+            if not self._is_annotation_exportable(
+                annotation, page_uid, ANNOTATION_TYPE_ARROW
+            ):
                 continue
             line_coords = annotation.get_line_coords()
             if not line_coords:
@@ -741,7 +756,9 @@ class PDFExporter:
     ) -> List[Any]:
         rects = []
         for annotation in bid_annotations:
-            if not self._is_annotation_exportable(annotation, page_uid, "rect"):
+            if not self._is_annotation_exportable(
+                annotation, page_uid, ANNOTATION_TYPE_RECT
+            ):
                 continue
             position = annotation.position
             if len(position) < 4:
@@ -783,7 +800,9 @@ class PDFExporter:
     ) -> List[Any]:
         lines = []
         for annotation in bid_annotations:
-            if not self._is_annotation_exportable(annotation, page_uid, "line"):
+            if not self._is_annotation_exportable(
+                annotation, page_uid, ANNOTATION_TYPE_LINE
+            ):
                 continue
             line_coords = annotation.get_line_coords()
             if not line_coords:
@@ -816,7 +835,9 @@ class PDFExporter:
         scale_factor1 = float(page_info.get("scale_factor1", 0.0) or 0.0)
         scale_factor2 = float(page_info.get("scale_factor2", 0.0) or 0.0)
         for annotation in bid_annotations:
-            if not self._is_annotation_exportable(annotation, page_uid, "dimension"):
+            if not self._is_annotation_exportable(
+                annotation, page_uid, ANNOTATION_TYPE_DIMENSION
+            ):
                 continue
             line_coords = annotation.get_line_coords()
             if not line_coords:
@@ -858,7 +879,9 @@ class PDFExporter:
     ) -> List[Any]:
         ovals = []
         for annotation in bid_annotations:
-            if not self._is_annotation_exportable(annotation, page_uid, "oval"):
+            if not self._is_annotation_exportable(
+                annotation, page_uid, ANNOTATION_TYPE_OVAL
+            ):
                 continue
             position = annotation.position
             if len(position) < 4:
@@ -901,7 +924,9 @@ class PDFExporter:
         polygons = []
         for annotation in bid_annotations:
             if not self._is_annotation_exportable(
-                annotation, page_uid, ("polygon", "cloud")
+                annotation,
+                page_uid,
+                (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD),
             ):
                 continue
             position = annotation.position
@@ -926,7 +951,9 @@ class PDFExporter:
     ) -> List[Any]:
         inks = []
         for annotation in bid_annotations:
-            if not self._is_annotation_exportable(annotation, page_uid, "ink"):
+            if not self._is_annotation_exportable(
+                annotation, page_uid, ANNOTATION_TYPE_INK
+            ):
                 continue
             position = annotation.position
             if len(position) < 4:
@@ -956,7 +983,9 @@ class PDFExporter:
     ) -> List[Any]:
         highlights = []
         for annotation in bid_annotations:
-            if not self._is_annotation_exportable(annotation, page_uid, "highlight"):
+            if not self._is_annotation_exportable(
+                annotation, page_uid, ANNOTATION_TYPE_HIGHLIGHT
+            ):
                 continue
             position = annotation.position
             n_coords = len(position) - 1 if len(position) % 2 == 1 else len(position)
@@ -1048,7 +1077,9 @@ class PDFExporter:
     ) -> List[Any]:
         texts = []
         for annotation in bid_annotations:
-            if not self._is_annotation_exportable(annotation, page_uid, "text"):
+            if not self._is_annotation_exportable(
+                annotation, page_uid, ANNOTATION_TYPE_TEXT
+            ):
                 continue
             position = annotation.position
             if len(position) < 4:

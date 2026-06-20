@@ -142,27 +142,31 @@ class OptionsDialog(QtWidgets.QDialog):
     def _load_config(self) -> None:
         self._toolbar_text_check.setChecked(self._applied_config.show_toolbar_text)
         self._color_transparent_radio.setChecked(
-            self._applied_config.color_mode == "Transparent"
+            self._applied_config.color_mode == Config.COLOR_MODE_TRANSPARENT
         )
-        self._color_solid_radio.setChecked(self._applied_config.color_mode == "Solid")
+        self._color_solid_radio.setChecked(
+            self._applied_config.color_mode == Config.COLOR_MODE_SOLID
+        )
         self._color_original_radio.setChecked(
-            self._applied_config.color_mode == "Original"
+            self._applied_config.color_mode == Config.COLOR_MODE_ORIGINAL
         )
         self._grayscale_check.setChecked(self._applied_config.grayscale_enabled)
         self._roping_inclusive_radio.setChecked(
-            self._applied_config.roping_selection_method == "inclusive"
+            self._applied_config.roping_selection_method
+            == Config.ROPING_SELECTION_INCLUSIVE
         )
         self._roping_touching_radio.setChecked(
-            self._applied_config.roping_selection_method == "touching"
+            self._applied_config.roping_selection_method
+            == Config.ROPING_SELECTION_TOUCHING
         )
         self._hotlink_view_radio.setChecked(
-            self._applied_config.hotlink_target == "view"
+            self._applied_config.hotlink_target == Config.HOTLINK_TARGET_VIEW
         )
         self._hotlink_annotation_radio.setChecked(
-            self._applied_config.hotlink_target == "annotation"
+            self._applied_config.hotlink_target == Config.HOTLINK_TARGET_ANNOTATION
         )
         self._hotlink_main_radio.setChecked(
-            self._applied_config.hotlink_target == "main"
+            self._applied_config.hotlink_target == Config.HOTLINK_TARGET_MAIN
         )
         self._page_index_check.setChecked(
             self._applied_config.display_page_index_with_sheet_name
@@ -272,18 +276,20 @@ class OptionsDialog(QtWidgets.QDialog):
         self._auto_zoom_spin.valueChanged.connect(self._update_apply_enabled)
 
     def _collect_widget_config(self) -> Config:
-        color_mode = "Solid"
+        color_mode = Config.COLOR_MODE_SOLID
         if self._color_transparent_radio.isChecked():
-            color_mode = "Transparent"
+            color_mode = Config.COLOR_MODE_TRANSPARENT
         elif self._color_original_radio.isChecked():
-            color_mode = "Original"
+            color_mode = Config.COLOR_MODE_ORIGINAL
         return replace(
             self._applied_config,
             color_mode=color_mode,
             grayscale_enabled=self._grayscale_check.isChecked(),
             show_toolbar_text=self._toolbar_text_check.isChecked(),
             roping_selection_method=(
-                "inclusive" if self._roping_inclusive_radio.isChecked() else "touching"
+                Config.ROPING_SELECTION_INCLUSIVE
+                if self._roping_inclusive_radio.isChecked()
+                else Config.ROPING_SELECTION_TOUCHING
             ),
             hotlink_target=self._selected_hotlink_target(),
             display_page_index_with_sheet_name=self._page_index_check.isChecked(),
@@ -322,10 +328,10 @@ class OptionsDialog(QtWidgets.QDialog):
 
     def _selected_hotlink_target(self) -> str:
         if self._hotlink_view_radio.isChecked():
-            return "view"
+            return Config.HOTLINK_TARGET_VIEW
         if self._hotlink_main_radio.isChecked():
-            return "main"
-        return "annotation"
+            return Config.HOTLINK_TARGET_MAIN
+        return Config.HOTLINK_TARGET_ANNOTATION
 
     def _set_combo_by_data(self, combo: QtWidgets.QComboBox, data: int) -> None:
         index = combo.findData(data)

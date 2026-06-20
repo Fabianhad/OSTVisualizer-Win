@@ -1,6 +1,20 @@
 import math
 from typing import Any, Dict, List, Optional, Tuple
-from .....domain.entities.annotation import BidAnnotation
+from .....domain.entities.annotation import (
+    ANNOTATION_TYPE_ARROW,
+    ANNOTATION_TYPE_CLOUD,
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_INK,
+    ANNOTATION_TYPE_LINE,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_OVAL,
+    ANNOTATION_TYPE_POLYGON,
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
 from .....domain.entities.hotlink import build_hotlink_from_annotation
 from .....domain.services.dimension_format_service import inches_to_display
 
@@ -160,8 +174,12 @@ def calculate_annotation_geometry(
         "width": annotation.width,
         "transformed_position": tx_position,
     }
-    if anno_type in ("cloud", "polygon", "ink"):
-        if anno_type == "ink":
+    if anno_type in (
+        ANNOTATION_TYPE_CLOUD,
+        ANNOTATION_TYPE_POLYGON,
+        ANNOTATION_TYPE_INK,
+    ):
+        if anno_type == ANNOTATION_TYPE_INK:
             start = 1 if len(position) % 2 == 1 else 0
             coords = position[start:]
             tx_ink = transform_func(coords)
@@ -172,7 +190,11 @@ def calculate_annotation_geometry(
                 for i in range(0, len(tx_position), 2)
             ]
         result["points"] = points
-    elif anno_type in ("oval", "rect", "highlight"):
+    elif anno_type in (
+        ANNOTATION_TYPE_OVAL,
+        ANNOTATION_TYPE_RECT,
+        ANNOTATION_TYPE_HIGHLIGHT,
+    ):
         if len(position) >= 4:
             has_rotation = len(position) % 2 == 1
             n_coords = len(position) - 1 if has_rotation else len(position)
@@ -181,7 +203,7 @@ def calculate_annotation_geometry(
                 (tx_coords[i], tx_coords[i + 1])
                 for i in range(0, len(tx_coords) - 1, 2)
             ]
-            if anno_type == "oval":
+            if anno_type == ANNOTATION_TYPE_OVAL:
                 if len(points) >= 2:
                     cx = (points[0][0] + points[1][0]) / 2
                     cy = (points[0][1] + points[1][1]) / 2
@@ -215,7 +237,7 @@ def calculate_annotation_geometry(
                     "min_y": min(p[1] for p in points),
                     "max_y": max(p[1] for p in points),
                 }
-    elif anno_type in ("line", "arrow"):
+    elif anno_type in (ANNOTATION_TYPE_LINE, ANNOTATION_TYPE_ARROW):
         if len(tx_position) >= 4:
             result["line"] = {
                 "x1": tx_position[0],
@@ -223,11 +245,11 @@ def calculate_annotation_geometry(
                 "x2": tx_position[2],
                 "y2": tx_position[3],
             }
-    elif anno_type == "dimension":
+    elif anno_type == ANNOTATION_TYPE_DIMENSION:
         dimension = calculate_dimension_geometry(annotation, position, transform_func)
         if dimension:
             result["dimension"] = dimension
-    elif anno_type == "text":
+    elif anno_type == ANNOTATION_TYPE_TEXT:
         if len(position) >= 4:
             result["text"] = {
                 "content": annotation.properties.get("Text", ""),
@@ -243,7 +265,7 @@ def calculate_annotation_geometry(
                 "font_underline": annotation.properties.get("FontUnderline", False),
                 "text_align": annotation.properties.get("TextAlign", 0),
             }
-    elif anno_type == "namedview":
+    elif anno_type == ANNOTATION_TYPE_NAMED_VIEW:
         if len(tx_position) >= 8:
             points = [(tx_position[i], tx_position[i + 1]) for i in range(0, 8, 2)]
             min_x = min(p[0] for p in points)
@@ -259,7 +281,7 @@ def calculate_annotation_geometry(
                 "width": max_x - min_x,
                 "height": max_y - min_y,
             }
-    elif anno_type == "hotlink":
+    elif anno_type == ANNOTATION_TYPE_HOTLINK:
         if len(tx_position) >= 2:
             hotlink = build_hotlink_from_annotation(annotation)
             if hotlink:

@@ -1,8 +1,33 @@
 import math
 from dataclasses import dataclass
 from PySide6 import QtGui, QtWidgets
-from ...domain.entities.annotation import BidAnnotation
+from ...domain.entities.annotation import (
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
 from ...domain.entities.condition import Condition
+from ..actions.action_ids import (
+    ACTION_BACKOUT_MODE,
+    ACTION_COPY,
+    ACTION_CUT,
+    ACTION_DELETE,
+    ACTION_DELETE_PAGE,
+    ACTION_FLIP_IMAGE_HORIZONTAL,
+    ACTION_FLIP_IMAGE_VERTICAL,
+    ACTION_PASTE,
+    ACTION_RESET_VIEW,
+    ACTION_ROTATE_IMAGE_LEFT,
+    ACTION_ROTATE_IMAGE_RIGHT,
+    ACTION_SELECT_OVERLAY_IMAGE,
+    ACTION_SHOW_ORIGINAL_IMAGE,
+    ACTION_SHOW_OVERLAY_IMAGE,
+    ACTION_ZOOM_IN,
+    ACTION_ZOOM_OUT,
+)
 from ..config import (
     ACTION_RESET_VIEW_LABEL,
     ACTION_ZOOM_IN_LABEL,
@@ -21,12 +46,12 @@ from .takeoff_condition_compatibility import (
 CONTEXT_TOOLS_ACTIONS = (
     *PLAN_TOOL_CONTEXT_ACTIONS,
     None,
-    ("Backout", "backout_mode"),
+    ("Backout", ACTION_BACKOUT_MODE),
 )
 CONTEXT_ZOOM_ACTIONS = (
-    (ACTION_ZOOM_IN_LABEL, "zoom_in"),
-    (ACTION_ZOOM_OUT_LABEL, "zoom_out"),
-    (ACTION_RESET_VIEW_LABEL, "reset_view"),
+    (ACTION_ZOOM_IN_LABEL, ACTION_ZOOM_IN),
+    (ACTION_ZOOM_OUT_LABEL, ACTION_ZOOM_OUT),
+    (ACTION_RESET_VIEW_LABEL, ACTION_RESET_VIEW),
 )
 CONTEXT_ROTATE_FLIP_ACTIONS = (
     ("Rotate Takeoff Left", "rotate_takeoff_left"),
@@ -34,16 +59,16 @@ CONTEXT_ROTATE_FLIP_ACTIONS = (
     ("Flip Takeoff Horizontal", "flip_takeoff_horizontal"),
     ("Flip Takeoff Vertical", "flip_takeoff_vertical"),
     None,
-    ("Rotate Image Left", "rotate_image_left"),
-    ("Rotate Image Right", "rotate_image_right"),
-    ("Flip Image Horizontal", "flip_image_horizontal"),
-    ("Flip Image Vertical", "flip_image_vertical"),
+    ("Rotate Image Left", ACTION_ROTATE_IMAGE_LEFT),
+    ("Rotate Image Right", ACTION_ROTATE_IMAGE_RIGHT),
+    ("Flip Image Horizontal", ACTION_FLIP_IMAGE_HORIZONTAL),
+    ("Flip Image Vertical", ACTION_FLIP_IMAGE_VERTICAL),
 )
 CONTEXT_CLIPBOARD_ACTIONS = (
-    ("Cut", "cut"),
-    ("Copy", "copy"),
-    ("Paste", "paste"),
-    ("Delete", "delete"),
+    ("Cut", ACTION_CUT),
+    ("Copy", ACTION_COPY),
+    ("Paste", ACTION_PASTE),
+    ("Delete", ACTION_DELETE),
 )
 
 
@@ -85,10 +110,16 @@ class ContextCommandSubmenu:
 
 
 _ANNOTATION_CONTEXT_GENERIC_STYLE_EXCLUDED_TYPES = frozenset(
-    {"hotlink", "namedview", "text"}
+    {ANNOTATION_TYPE_HOTLINK, ANNOTATION_TYPE_NAMED_VIEW, ANNOTATION_TYPE_TEXT}
 )
 _ANNOTATION_CONTEXT_WIDTH_EXCLUDED_TYPES = frozenset(
-    {"dimension", "highlight", "hotlink", "namedview", "text"}
+    {
+        ANNOTATION_TYPE_DIMENSION,
+        ANNOTATION_TYPE_HIGHLIGHT,
+        ANNOTATION_TYPE_HOTLINK,
+        ANNOTATION_TYPE_NAMED_VIEW,
+        ANNOTATION_TYPE_TEXT,
+    }
 )
 _ANNOTATION_CONTEXT_COLOR_TYPES = frozenset(
     spec.annotation_type
@@ -355,13 +386,13 @@ def add_common_context_submenus(
         action_state_fn,
     )
     select_state = context_command_state(
-        action_state_fn, "select_overlay_image", "Select Overlay Image"
+        action_state_fn, ACTION_SELECT_OVERLAY_IMAGE, "Select Overlay Image"
     )
     original_state = context_command_state(
-        action_state_fn, "show_original_image", "Show Original Image"
+        action_state_fn, ACTION_SHOW_ORIGINAL_IMAGE, "Show Original Image"
     )
     overlay_state = context_command_state(
-        action_state_fn, "show_overlay_image", "Show Overlay Image"
+        action_state_fn, ACTION_SHOW_OVERLAY_IMAGE, "Show Overlay Image"
     )
     if has_overlay_image is None:
         has_overlay_image = overlay_state["enabled"] or overlay_state["checked"]
@@ -369,7 +400,7 @@ def add_common_context_submenus(
         add_overlay_submenu_with_select(
             menu,
             current_mode,
-            lambda: trigger_context_command(trigger_fn, "select_overlay_image"),
+            lambda: trigger_context_command(trigger_fn, ACTION_SELECT_OVERLAY_IMAGE),
             select_state["enabled"],
             has_overlay_image,
             original_state["enabled"],
@@ -397,4 +428,6 @@ def add_context_page_actions(
     )
     if separate_delete:
         menu.addSeparator()
-    add_context_command(menu, "Delete Page", "delete_page", trigger_fn, action_state_fn)
+    add_context_command(
+        menu, "Delete Page", ACTION_DELETE_PAGE, trigger_fn, action_state_fn
+    )

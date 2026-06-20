@@ -4,15 +4,15 @@ import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Set
+from typing import Callable, List
 from ....application.dtos.export_dto import ExportErrorCode, ExportResultDto
 from ....application.interfaces.i_ost_exporter import IOstExporter
 from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
+from ....domain.entities.file_extensions import OSP_IMAGE_EXTENSIONS
 from . import ost_cab
 
 logger = logging.getLogger(__name__)
-_SUPPORTED_IMAGE_EXTENSIONS: Set[str] = {".pdf", ".tif", ".tiff"}
 
 
 class OspExporter:
@@ -113,7 +113,7 @@ class OspExporter:
                 if not image_path:
                     continue
                 p = Path(image_path)
-                if p.suffix.lower() not in _SUPPORTED_IMAGE_EXTENSIONS:
+                if p.suffix.lower() not in OSP_IMAGE_EXTENSIONS:
                     continue
                 if not p.exists():
                     continue

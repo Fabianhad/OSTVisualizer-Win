@@ -2,16 +2,23 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional, Sequence, Union
 from PySide6 import QtGui, QtWidgets
+from ..actions.action_ids import (
+    ACTION_COPY,
+    ACTION_PASTE,
+    ACTION_SELECT_OVERLAY_IMAGE,
+    ACTION_SHOW_ORIGINAL_IMAGE,
+    ACTION_SHOW_OVERLAY_IMAGE,
+)
 from .icon_manager import IconManager
 from .shortcut_manager import ShortcutManager
 
 
 class ContextActionId(Enum):
-    COPY = "copy"
-    PASTE = "paste"
-    SELECT_OVERLAY_IMAGE = "select_overlay_image"
-    SHOW_OVERLAY_IMAGE = "show_overlay_image"
-    SHOW_ORIGINAL_IMAGE = "show_original_image"
+    COPY = ACTION_COPY
+    PASTE = ACTION_PASTE
+    SELECT_OVERLAY_IMAGE = ACTION_SELECT_OVERLAY_IMAGE
+    SHOW_OVERLAY_IMAGE = ACTION_SHOW_OVERLAY_IMAGE
+    SHOW_ORIGINAL_IMAGE = ACTION_SHOW_ORIGINAL_IMAGE
 
 
 @dataclass(frozen=True)

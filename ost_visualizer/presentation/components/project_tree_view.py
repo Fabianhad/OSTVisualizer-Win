@@ -9,6 +9,16 @@ from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.project import Project
+from ..actions.action_ids import (
+    ACTION_COPY,
+    ACTION_DELETE,
+    ACTION_DUPLICATE,
+    ACTION_NEW_DATABASE,
+    ACTION_NEW_FOLDER,
+    ACTION_NEW_PROJECT,
+    ACTION_OPEN_FILES,
+    ACTION_PASTE,
+)
 from ..config import NO_MARGINS, NO_SPACING
 from ..managers.context_menu_manager import ContextActionId, ContextMenuManager
 from ..managers.icon_manager import IconId, IconManager
@@ -343,14 +353,14 @@ class ProjectView(QtWidgets.QWidget):
         self.top_tree.customContextMenuRequested.connect(self._on_context_menu)
         ShortcutManager.register_shortcut(
             self.top_tree,
-            "copy",
+            ACTION_COPY,
             self._copy_selected_bids,
             context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
             ignore_when_text_input=True,
         )
         ShortcutManager.register_shortcut(
             self.top_tree,
-            "paste",
+            ACTION_PASTE,
             self._paste_to_current_target,
             context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
             ignore_when_text_input=True,
@@ -1101,7 +1111,7 @@ class ProjectView(QtWidgets.QWidget):
         self, menu: QtWidgets.QMenu, context: ProjectTreeContext
     ) -> None:
         self._add_new_submenu(menu)
-        self._add_command_action(menu, "Open...", "open_files")
+        self._add_command_action(menu, "Open...", ACTION_OPEN_FILES)
         self._add_command_action(
             menu,
             "Close",
@@ -1115,11 +1125,11 @@ class ProjectView(QtWidgets.QWidget):
         self._add_command_action(
             menu,
             "Duplicate",
-            "duplicate",
-            enabled=context.kind == "bid" and self._command_enabled("duplicate"),
+            ACTION_DUPLICATE,
+            enabled=context.kind == "bid" and self._command_enabled(ACTION_DUPLICATE),
         )
         delete_enabled = self._can_delete_context(context)
-        self._add_command_action(menu, "Delete", "delete", enabled=delete_enabled)
+        self._add_command_action(menu, "Delete", ACTION_DELETE, enabled=delete_enabled)
         rename_action = menu.addAction("Rename")
         rename_action.setEnabled(self._can_rename_context(context))
         rename_action.triggered.connect(
@@ -1152,10 +1162,10 @@ class ProjectView(QtWidgets.QWidget):
 
     def _add_new_submenu(self, menu: QtWidgets.QMenu) -> None:
         new_menu = menu.addMenu("New")
-        self._add_command_action(new_menu, "Project", "new_project")
+        self._add_command_action(new_menu, "Project", ACTION_NEW_PROJECT)
         new_menu.addSeparator()
-        self._add_command_action(new_menu, "Folder", "new_folder")
-        self._add_command_action(new_menu, "Database", "new_database")
+        self._add_command_action(new_menu, "Folder", ACTION_NEW_FOLDER)
+        self._add_command_action(new_menu, "Database", ACTION_NEW_DATABASE)
 
     def _add_import_submenu(self, menu: QtWidgets.QMenu) -> None:
         import_menu = menu.addMenu("Import")
@@ -1301,7 +1311,7 @@ class ProjectView(QtWidgets.QWidget):
 
     def _can_delete_context(self, context: ProjectTreeContext) -> bool:
         if context.kind in ("bid", "project"):
-            return self._command_enabled("delete")
+            return self._command_enabled(ACTION_DELETE)
         return False
 
     def _can_rename_context(self, context: ProjectTreeContext) -> bool:

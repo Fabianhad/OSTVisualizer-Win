@@ -10,6 +10,7 @@ from .....application.dtos.scene_data_dto import SceneData
 from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
+from .....domain.entities.config import Config
 from .....domain.entities.condition import Condition
 from .....domain.entities.takeoff import Takeoff
 from .adapters.threejs_mesh_adapter import ThreejsMeshAdapter
@@ -26,7 +27,7 @@ def visualize_with_threejs(
     output_path: Optional[str] = None,
     auto_open: bool = True,
     bid_name: Optional[str] = None,
-    color_mode: str = "Solid",
+    color_mode: str = Config.COLOR_MODE_SOLID,
     grayscale_enabled: bool = True,
     page_area_selections: Optional[Dict] = None,
     pdf_path: Optional[str] = None,

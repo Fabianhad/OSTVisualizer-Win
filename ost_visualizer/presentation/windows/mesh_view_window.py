@@ -2,6 +2,11 @@ from typing import Optional, Sequence
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.identity_refs import BidRef
+from ..modes.cursor import (
+    CURSOR_MODE_DEFAULT,
+    CURSOR_MODE_PAN,
+    CURSOR_MODE_ZOOM,
+)
 from ..components.mesh_view import OpenGLViewer
 from ..components.popup_tracking_combo import PopupTrackingComboBox
 from ..components.viewer_cursors import make_zoom_cursor
@@ -198,14 +203,18 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             self.overlay_display_mode_requested
         )
         default_action.toggled.connect(
-            lambda checked: self.viewer.set_cursor_mode("default") if checked else None
+            lambda checked: (
+                self.viewer.set_cursor_mode(CURSOR_MODE_DEFAULT) if checked else None
+            )
         )
         pan_action.toggled.connect(
-            lambda checked: self.viewer.set_cursor_mode("pan" if checked else "default")
+            lambda checked: self.viewer.set_cursor_mode(
+                CURSOR_MODE_PAN if checked else CURSOR_MODE_DEFAULT
+            )
         )
         zoom_mode_action.toggled.connect(
             lambda checked: self.viewer.set_cursor_mode(
-                "zoom" if checked else "default"
+                CURSOR_MODE_ZOOM if checked else CURSOR_MODE_DEFAULT
             )
         )
         fit_action.triggered.connect(self._on_reset_view)

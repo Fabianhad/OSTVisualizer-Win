@@ -1,5 +1,14 @@
 from collections.abc import Mapping
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
+from ...domain.entities.annotation import (
+    ANNOTATION_TYPE_ARROW,
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_LINE,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_TEXT,
+)
 from ...domain.entities.annotation_style import (
     AnnotationStyle,
     normalize_annotation_color,
@@ -22,9 +31,9 @@ _STYLE_KEYS = tuple(sorted(PLACEABLE_ANNOTATION_TYPES))
 
 
 def _default_style_for_tool(annotation_type: str) -> AnnotationStyle:
-    if annotation_type == "namedview":
+    if annotation_type == ANNOTATION_TYPE_NAMED_VIEW:
         return AnnotationStyle(color=NAMED_VIEW_DEFAULT_COLOR)
-    if annotation_type == "hotlink":
+    if annotation_type == ANNOTATION_TYPE_HOTLINK:
         return AnnotationStyle(color=HOTLINK_DEFAULT_COLOR)
     return AnnotationStyle()
 
@@ -77,7 +86,14 @@ def set_annotation_style_for_tool(
         line_width=(
             normalize_annotation_line_width(line_width, current.line_width)
             if line_width is not None
-            and key not in ("dimension", "text", "highlight", "hotlink", "namedview")
+            and key
+            not in (
+                ANNOTATION_TYPE_DIMENSION,
+                ANNOTATION_TYPE_TEXT,
+                ANNOTATION_TYPE_HIGHLIGHT,
+                ANNOTATION_TYPE_HOTLINK,
+                ANNOTATION_TYPE_NAMED_VIEW,
+            )
             else current.line_width
         ),
         font_name=(
@@ -125,7 +141,7 @@ def set_annotation_styles_by_tool(
 
 
 def dimension_annotation_properties() -> dict:
-    style = _style_for("dimension")
+    style = _style_for(ANNOTATION_TYPE_DIMENSION)
     font_color = normalize_annotation_color(style.color)
     return {
         "BidTakeoffFromUID": "",
@@ -148,7 +164,7 @@ def _annotation_color_int(color: str) -> int:
 
 
 def text_annotation_properties() -> dict:
-    style = _style_for("text")
+    style = _style_for(ANNOTATION_TYPE_TEXT)
     return {
         "Text": "",
         "FontName": style.font_name,
@@ -164,29 +180,29 @@ def text_annotation_properties() -> dict:
 def annotation_default_style(annotation_type: str) -> tuple[str, float]:
     key = _normalize_annotation_type(annotation_type)
     style = _style_for(key)
-    if key == "dimension":
+    if key == ANNOTATION_TYPE_DIMENSION:
         return style.color, DIMENSION_ANNOTATION_WIDTH
-    if key in ("text", "highlight"):
+    if key in (ANNOTATION_TYPE_TEXT, ANNOTATION_TYPE_HIGHLIGHT):
         return style.color, 0.0
-    if key in ("hotlink", "namedview"):
+    if key in (ANNOTATION_TYPE_HOTLINK, ANNOTATION_TYPE_NAMED_VIEW):
         return style.color, 2.0
     return style.color, style.line_width
 
 
 def annotation_default_properties(annotation_type: str) -> dict:
     key = _normalize_annotation_type(annotation_type)
-    if key == "dimension":
+    if key == ANNOTATION_TYPE_DIMENSION:
         return dimension_annotation_properties()
-    if key in ("line", "arrow"):
+    if key in (ANNOTATION_TYPE_LINE, ANNOTATION_TYPE_ARROW):
         return {
             "BidTakeoffFromUID": "",
             "BidTakeoffToUID": "",
         }
-    if key == "text":
+    if key == ANNOTATION_TYPE_TEXT:
         return text_annotation_properties()
-    if key == "namedview":
+    if key == ANNOTATION_TYPE_NAMED_VIEW:
         return {"Text": ""}
-    if key == "hotlink":
+    if key == ANNOTATION_TYPE_HOTLINK:
         return {"BidPageViewUID": ""}
     return {}
 

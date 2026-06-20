@@ -7,6 +7,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QDate
 from ....domain.entities.cover_sheet import CoverSheetData
 from ....domain.entities.employee import Employee
+from ....domain.entities.file_extensions import is_pdf_suffix
 from ....domain.entities.identity_refs import BidRef
 from ...components.progress_dialog import ProgressDialog, ProgressReporter
 from ...config import (
@@ -885,7 +886,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
     ) -> Optional[Tuple[float, float]]:
         if not self._is_existing_file_path(path):
             return None
-        if Path(path).suffix.lower() == ".pdf":
+        if is_pdf_suffix(path):
             sizes = self._read_pdf_page_sizes(path)
             if page_index < len(sizes):
                 return (sizes[page_index][0], sizes[page_index][1])
@@ -939,7 +940,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         combos = self._page_combos.get(uid, {})
         item = combos.get("item")
         if path_key == "image_path" and self._is_existing_file_path(path) and item:
-            is_pdf = Path(path).suffix.lower() == ".pdf"
+            is_pdf = is_pdf_suffix(path)
             page_sizes = self._read_pdf_page_sizes(path) if is_pdf else []
             if not page_sizes:
                 dims = self._read_file_dimensions(path)
@@ -1272,9 +1273,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             results = []
             for fp in normalized:
                 reporter.report(Path(fp).name)
-                sizes = (
-                    self._read_pdf_page_sizes(fp) if fp.lower().endswith(".pdf") else []
-                )
+                sizes = self._read_pdf_page_sizes(fp) if is_pdf_suffix(fp) else []
                 if not sizes:
                     sizes = [(42.0, 30.0, "")]
                 results.append((fp, sizes))

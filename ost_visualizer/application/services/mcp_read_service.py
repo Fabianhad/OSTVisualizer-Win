@@ -4,8 +4,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 from ...domain.entities.area import BidArea
-from ...domain.entities.annotation import BidAnnotation
+from ...domain.entities.annotation import (
+    ANNOTATION_TYPE_CALLOUT,
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
 from ...domain.entities.condition import Condition
+from ...domain.entities.file_extensions import is_pdf_suffix
 from ...domain.entities.file_results import BidLoadResult, FileLoadResult
 from ...domain.entities.hierarchy_data import (
     HierarchyBidInfo,
@@ -22,6 +30,24 @@ from ...domain.services.condition_quantity_service import compute_page_quantitie
 from ...domain.services.takeoff_domain_service import is_takeoff_visible
 from ...domain.services.uom_service import get_uom_label
 from ..dtos.mcp_context_dtos import (
+    MCP_OVERLAY_KIND_PDF,
+    MCP_OVERLAY_KIND_RASTER,
+    MCP_PAGE_SOURCE_BLANK,
+    MCP_PAGE_SOURCE_COMPOSITE,
+    MCP_PAGE_SOURCE_MAIN,
+    MCP_PAGE_SOURCE_OVERLAY,
+    MCP_PDF_SOURCE_AUTO,
+    MCP_PDF_SOURCE_MAIN,
+    MCP_PDF_SOURCE_OVERLAY,
+    MCP_PDF_SOURCES,
+    MCP_STATUS_CONFIGURED,
+    MCP_STATUS_DEFERRED,
+    MCP_STATUS_EMPTY,
+    MCP_STATUS_NOT_CONFIGURED,
+    MCP_STATUS_NOT_PDF,
+    MCP_STATUS_OK,
+    MCP_STATUS_TRUNCATED,
+    MCP_STATUS_UNAVAILABLE,
     McpAreaDto,
     McpAreaSummaryDto,
     McpBidDto,
@@ -76,10 +102,10 @@ class McpDatabaseRef:
 
 def _summary_status_for_meta(meta: McpResultMetaDto) -> str:
     if meta.truncated:
-        return "truncated"
+        return MCP_STATUS_TRUNCATED
     if meta.total_count == 0:
-        return "empty"
-    return "ok"
+        return MCP_STATUS_EMPTY
+    return MCP_STATUS_OK
 
 
 class McpLimitedList(list):
@@ -230,7 +256,7 @@ class McpReadService:
         database_id: str,
         bid_uid: str,
         page_uid: str,
-        source: str = "auto",
+        source: str = MCP_PDF_SOURCE_AUTO,
         include_text: bool = False,
         limit: int = 10,
     ) -> McpPdfTextSummaryDto:
@@ -244,7 +270,7 @@ class McpReadService:
             default=self.PDF_TEXT_DEFAULT_LIMIT,
             max_limit=self.PDF_TEXT_MAX_LIMIT,
         )
-        if source_ref[2] != "configured":
+        if source_ref[2] != MCP_STATUS_CONFIGURED:
             meta = McpResultMetaDto(limit=clean_limit)
             return McpPdfTextSummaryDto(
                 status=source_ref[2],
@@ -285,7 +311,7 @@ class McpReadService:
         database_id: str,
         bid_uid: str,
         page_uid: str,
-        source: str = "auto",
+        source: str = MCP_PDF_SOURCE_AUTO,
         limit: int = 20,
     ) -> McpPdfVectorsSummaryDto:
         bid_data = self._load_bid(database_id, bid_uid)
@@ -298,7 +324,7 @@ class McpReadService:
             default=self.PDF_VECTOR_DEFAULT_LIMIT,
             max_limit=self.PDF_VECTOR_MAX_LIMIT,
         )
-        if source_ref[2] != "configured":
+        if source_ref[2] != MCP_STATUS_CONFIGURED:
             meta = McpResultMetaDto(limit=clean_limit)
             return McpPdfVectorsSummaryDto(
                 status=source_ref[2],
@@ -365,11 +391,11 @@ class McpReadService:
             meta=meta,
             total_markup_count=len(markups),
             visible_markup_count=sum(1 for annotation in markups if annotation.visible),
-            dimension_count=counts_by_type.get("dimension", 0),
-            text_annotation_count=counts_by_type.get("text", 0),
-            callout_count=counts_by_type.get("callout", 0),
-            hotlink_count=counts_by_type.get("hotlink", 0),
-            named_view_count=counts_by_type.get("namedview", 0),
+            dimension_count=counts_by_type.get(ANNOTATION_TYPE_DIMENSION, 0),
+            text_annotation_count=counts_by_type.get(ANNOTATION_TYPE_TEXT, 0),
+            callout_count=counts_by_type.get(ANNOTATION_TYPE_CALLOUT, 0),
+            hotlink_count=counts_by_type.get(ANNOTATION_TYPE_HOTLINK, 0),
+            named_view_count=counts_by_type.get(ANNOTATION_TYPE_NAMED_VIEW, 0),
             counts_by_type=dict(sorted(counts_by_type.items())),
             samples=[self._markup_sample_dto(annotation) for annotation in limited],
         )
@@ -388,7 +414,7 @@ class McpReadService:
         overlay_path = page.overlay_image_path or ""
         show_original, show_overlay = self._image_show_flags(page.image_show_mode)
         return McpPageOverlaySummaryDto(
-            status="ok" if overlay_path else "not_configured",
+            status=MCP_STATUS_OK if overlay_path else MCP_STATUS_NOT_CONFIGURED,
             database_id=database_id,
             bid_uid=bid_uid,
             page_uid=page_uid,
@@ -396,13 +422,17 @@ class McpReadService:
             sheet_no=page.sheet_no,
             source_kind=self._page_source_kind(page),
             image_basename=self._safe_basename(image_path) if image_path else None,
-            image_path_status="configured" if image_path else "not_configured",
-            is_pdf=bool(image_path and image_path.lower().endswith(".pdf")),
+            image_path_status=(
+                MCP_STATUS_CONFIGURED if image_path else MCP_STATUS_NOT_CONFIGURED
+            ),
+            is_pdf=bool(image_path and is_pdf_suffix(image_path)),
             has_overlay=bool(overlay_path),
             overlay_basename=(
                 self._safe_basename(overlay_path) if overlay_path else None
             ),
-            overlay_path_status="configured" if overlay_path else "not_configured",
+            overlay_path_status=(
+                MCP_STATUS_CONFIGURED if overlay_path else MCP_STATUS_NOT_CONFIGURED
+            ),
             overlay_kind=self._overlay_kind(page),
             show_mode=page.image_show_mode,
             show_original=show_original,
@@ -416,7 +446,7 @@ class McpReadService:
         bid_uid: str,
         page_uid: str,
         query: str,
-        source: str = "auto",
+        source: str = MCP_PDF_SOURCE_AUTO,
         limit: int = 10,
     ) -> McpPdfTextSearchSummaryDto:
         bid_data = self._load_bid(database_id, bid_uid)
@@ -430,7 +460,7 @@ class McpReadService:
             default=self.PDF_TEXT_DEFAULT_LIMIT,
             max_limit=self.PDF_TEXT_MAX_LIMIT,
         )
-        if source_ref[2] != "configured":
+        if source_ref[2] != MCP_STATUS_CONFIGURED:
             meta = McpResultMetaDto(limit=clean_limit)
             return McpPdfTextSearchSummaryDto(
                 status=source_ref[2],
@@ -445,7 +475,7 @@ class McpReadService:
         if not clean_query:
             meta = McpResultMetaDto(limit=clean_limit)
             return McpPdfTextSearchSummaryDto(
-                status="empty",
+                status=MCP_STATUS_EMPTY,
                 database_id=database_id,
                 bid_uid=bid_uid,
                 page_uid=page_uid,
@@ -672,7 +702,7 @@ class McpReadService:
             )
         quantities = compute_page_quantities(bid_data.bid_conditions, selected)
         return McpSelectedTakeoffsSummaryDto(
-            status="ok",
+            status=MCP_STATUS_OK,
             database_id=database_id,
             bid_uid=bid_uid,
             selected_takeoff_count=len(selected),
@@ -719,7 +749,7 @@ class McpReadService:
                 missing_page_uids=missing,
             )
         return McpSelectedPagesSummaryDto(
-            status="ok",
+            status=MCP_STATUS_OK,
             database_id=database_id,
             bid_uid=bid_uid,
             active_view=active_view,
@@ -934,7 +964,7 @@ class McpReadService:
         image_path = page.image_path or ""
         page_dto = self._page_dto(page)
         return McpPageContextDto(
-            status="ok",
+            status=MCP_STATUS_OK,
             database_id=database_id,
             bid_uid=bid_uid,
             page=page_dto,
@@ -943,7 +973,7 @@ class McpReadService:
             source_file_name=self._safe_basename(image_path) if image_path else "",
             has_pdf_source=page_dto.is_pdf,
             has_overlay=bool(page.overlay_image_path),
-            page_text_status="deferred",
+            page_text_status=MCP_STATUS_DEFERRED,
         )
 
     def list_layers(
@@ -1240,8 +1270,10 @@ class McpReadService:
             sequence=page.sequence,
             folder_uid=page.folder_uid,
             image_basename=self._safe_basename(image_path) if image_path else None,
-            image_path_status="configured" if image_path else "not_configured",
-            is_pdf=bool(image_path and image_path.lower().endswith(".pdf")),
+            image_path_status=(
+                MCP_STATUS_CONFIGURED if image_path else MCP_STATUS_NOT_CONFIGURED
+            ),
+            is_pdf=bool(image_path and is_pdf_suffix(image_path)),
             page_index=page.page_index,
             width_pts=page.width_pts,
             height_pts=page.height_pts,
@@ -1252,7 +1284,9 @@ class McpReadService:
             overlay_basename=(
                 self._safe_basename(overlay_path) if overlay_path else None
             ),
-            overlay_path_status="configured" if overlay_path else "not_configured",
+            overlay_path_status=(
+                MCP_STATUS_CONFIGURED if overlay_path else MCP_STATUS_NOT_CONFIGURED
+            ),
             has_overlay=bool(overlay_path),
             source_kind=self._page_source_kind(page),
             page_width=page.width_pts,
@@ -1270,19 +1304,23 @@ class McpReadService:
         has_main = bool(page.image_path)
         has_overlay = bool(page.overlay_image_path)
         if has_main and has_overlay:
-            return "composite"
+            return MCP_PAGE_SOURCE_COMPOSITE
         if has_main:
-            return "main"
+            return MCP_PAGE_SOURCE_MAIN
         if has_overlay:
-            return "overlay"
-        return "blank"
+            return MCP_PAGE_SOURCE_OVERLAY
+        return MCP_PAGE_SOURCE_BLANK
 
     @staticmethod
     def _overlay_kind(page: Page) -> str:
         overlay_path = page.overlay_image_path or ""
         if not overlay_path:
-            return "not_configured"
-        return "pdf" if overlay_path.lower().endswith(".pdf") else "raster"
+            return MCP_STATUS_NOT_CONFIGURED
+        return (
+            MCP_OVERLAY_KIND_PDF
+            if is_pdf_suffix(overlay_path)
+            else MCP_OVERLAY_KIND_RASTER
+        )
 
     @staticmethod
     def _overlay_transform_summary(page: Page) -> Optional[McpPdfOverlayTransformDto]:
@@ -1312,14 +1350,14 @@ class McpReadService:
         return show_original, show_overlay
 
     def _enrich_page_pdf_metadata(self, dto: McpPageDto, page: Page) -> None:
-        source_ref = self._resolve_pdf_source(page, "auto")
-        if source_ref[2] != "configured":
+        source_ref = self._resolve_pdf_source(page, MCP_PDF_SOURCE_AUTO)
+        if source_ref[2] != MCP_STATUS_CONFIGURED:
             dto.pdf_metadata_status = source_ref[2]
             return
         page_info = self._read_pdf_page_info(source_ref[1], source_ref[3])
         dto.pdf_metadata_status = page_info.status
         dto.pdf_page_count = page_info.page_count
-        if page_info.status == "ok":
+        if page_info.status == MCP_STATUS_OK:
             dto.page_width = page_info.effective_width_pts
             dto.page_height = page_info.effective_height_pts
             dto.media_width_pts = page_info.media_width_pts
@@ -1336,36 +1374,42 @@ class McpReadService:
         dto.snap_point_count = self._pdf_snap_point_count(vector_segments)
 
     def _resolve_pdf_source(self, page: Page, source: str) -> Tuple[str, str, str, int]:
-        clean_source = str(source or "auto").strip().lower()
-        if clean_source not in {"auto", "main", "overlay"}:
+        clean_source = str(source or MCP_PDF_SOURCE_AUTO).strip().lower()
+        if clean_source not in MCP_PDF_SOURCES:
             raise McpReadError(f"Unknown PDF source: {source}")
-        if clean_source == "main":
+        if clean_source == MCP_PDF_SOURCE_MAIN:
             return self._pdf_source_tuple(
-                "main", page.image_path or "", page.page_index
+                MCP_PDF_SOURCE_MAIN, page.image_path or "", page.page_index
             )
-        if clean_source == "overlay":
-            return self._pdf_source_tuple("overlay", page.overlay_image_path or "", 0)
-        main = self._pdf_source_tuple("main", page.image_path or "", page.page_index)
-        if main[2] == "configured":
+        if clean_source == MCP_PDF_SOURCE_OVERLAY:
+            return self._pdf_source_tuple(
+                MCP_PDF_SOURCE_OVERLAY, page.overlay_image_path or "", 0
+            )
+        main = self._pdf_source_tuple(
+            MCP_PDF_SOURCE_MAIN, page.image_path or "", page.page_index
+        )
+        if main[2] == MCP_STATUS_CONFIGURED:
             return main
-        overlay = self._pdf_source_tuple("overlay", page.overlay_image_path or "", 0)
-        if overlay[2] == "configured":
+        overlay = self._pdf_source_tuple(
+            MCP_PDF_SOURCE_OVERLAY, page.overlay_image_path or "", 0
+        )
+        if overlay[2] == MCP_STATUS_CONFIGURED:
             return overlay
-        return main if main[2] != "not_configured" else overlay
+        return main if main[2] != MCP_STATUS_NOT_CONFIGURED else overlay
 
     @staticmethod
     def _pdf_source_tuple(
         source: str, file_path: str, page_index: int
     ) -> Tuple[str, str, str, int]:
         if not file_path:
-            return (source, "", "not_configured", int(page_index or 0))
-        if not file_path.lower().endswith(".pdf"):
-            return (source, file_path, "not_pdf", int(page_index or 0))
-        return (source, file_path, "configured", int(page_index or 0))
+            return (source, "", MCP_STATUS_NOT_CONFIGURED, int(page_index or 0))
+        if not is_pdf_suffix(file_path):
+            return (source, file_path, MCP_STATUS_NOT_PDF, int(page_index or 0))
+        return (source, file_path, MCP_STATUS_CONFIGURED, int(page_index or 0))
 
     def _read_pdf_page_info(self, file_path: str, page_index: int):
         if self._pdf_metadata_provider is None:
-            return PdfPageInfoDto(status="unavailable")
+            return PdfPageInfoDto(status=MCP_STATUS_UNAVAILABLE)
         return self._pdf_metadata_provider.get_page_info(file_path, page_index)
 
     def _read_pdf_text_runs(
@@ -1495,7 +1539,11 @@ class McpReadService:
             x1, y1, x2, y2 = line
             length = math.hypot(x2 - x1, y2 - y1)
         text = ""
-        if annotation.annotation_type in {"text", "callout", "namedview"}:
+        if annotation.annotation_type in {
+            ANNOTATION_TYPE_TEXT,
+            ANNOTATION_TYPE_CALLOUT,
+            ANNOTATION_TYPE_NAMED_VIEW,
+        }:
             text = str(annotation.get_text_content() or "")
         linked_takeoff_count = 0
         if annotation.properties.get("BidTakeoffFromUID"):

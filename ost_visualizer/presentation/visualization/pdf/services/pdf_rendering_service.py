@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Dict, List, Optional, Tuple
 from PySide6.QtCore import QObject, Signal
 from .....application.dtos.render_result_dto import RenderResult
+from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
 from ...utils.image_effects import apply_page_image_effects, tint_image
@@ -217,7 +218,7 @@ class PDFRenderingService:
     ) -> str:
         scale = render_scale
         if scale is None:
-            scale = 2.0 if page.overlay_image_path.lower().endswith(".pdf") else 1.0
+            scale = 2.0 if is_pdf_suffix(page.overlay_image_path) else 1.0
         request = RenderRequest(
             request_id=str(uuid.uuid4()),
             request_type="overlay",

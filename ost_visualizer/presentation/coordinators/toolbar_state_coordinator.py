@@ -1,6 +1,7 @@
 from typing import Optional
 from PySide6 import QtGui, QtWidgets
 from ..config import TAB_INDEX_TAKEOFF
+from ..modes.cursor import CURSOR_MODE_SELECT
 from ..managers.ui_access_manager import Feature
 from ..services.bid_clipboard_service import BidClipboardService
 
@@ -310,7 +311,7 @@ class ToolbarStateCoordinator:
             ):
                 if self.plan_view:
                     self.plan_view.reset_ctrl_held()
-                    self.plan_view.set_cursor_mode("select")
+                    self.plan_view.set_cursor_mode(CURSOR_MODE_SELECT)
                 self.set_select_checked()
         can_place_annotation = (
             on_takeoff_tab

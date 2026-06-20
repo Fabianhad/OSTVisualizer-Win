@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional, Protocol
+from ...domain.entities.config import Config
 from ...domain.entities.condition import Condition
 from ...domain.entities.takeoff import Takeoff
 
@@ -11,7 +12,7 @@ class IHtmlRenderer(Protocol):
         output_path: str,
         title: str = "3D Visualization",
         bid_name: str = "Bid",
-        color_mode: str = "Solid",
+        color_mode: str = Config.COLOR_MODE_SOLID,
         grayscale_enabled: bool = True,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         auto_open: bool = False,

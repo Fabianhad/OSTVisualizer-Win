@@ -5,9 +5,17 @@ from typing import ClassVar
 
 @dataclass
 class Config:
-    DEFAULT_COLOR_MODE: ClassVar[str] = "Original"
-    DEFAULT_ROPING_SELECTION_METHOD: ClassVar[str] = "touching"
-    DEFAULT_HOTLINK_TARGET: ClassVar[str] = "annotation"
+    COLOR_MODE_SOLID: ClassVar[str] = "Solid"
+    COLOR_MODE_ORIGINAL: ClassVar[str] = "Original"
+    COLOR_MODE_TRANSPARENT: ClassVar[str] = "Transparent"
+    ROPING_SELECTION_TOUCHING: ClassVar[str] = "touching"
+    ROPING_SELECTION_INCLUSIVE: ClassVar[str] = "inclusive"
+    HOTLINK_TARGET_ANNOTATION: ClassVar[str] = "annotation"
+    HOTLINK_TARGET_VIEW: ClassVar[str] = "view"
+    HOTLINK_TARGET_MAIN: ClassVar[str] = "main"
+    DEFAULT_COLOR_MODE: ClassVar[str] = COLOR_MODE_ORIGINAL
+    DEFAULT_ROPING_SELECTION_METHOD: ClassVar[str] = ROPING_SELECTION_TOUCHING
+    DEFAULT_HOTLINK_TARGET: ClassVar[str] = HOTLINK_TARGET_ANNOTATION
     DEFAULT_AUTO_ZOOM_LEVEL: ClassVar[int] = 0
     DEFAULT_CROSSHAIR_COLOR: ClassVar[str] = "#00ff00"
     DEFAULT_CROSSHAIR_LINE_THICKNESS: ClassVar[int] = 1

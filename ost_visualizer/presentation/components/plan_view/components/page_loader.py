@@ -7,6 +7,7 @@ from PySide6.QtGui import QPixmap, QTransform
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem
 from shiboken6 import isValid
 from .....application.dtos.render_result_dto import RenderResult
+from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.page import Page
 from .graphics_items import ImageBackgroundItem, TileGraphicsItem
 
@@ -24,6 +25,10 @@ _BASE_RASTER_MIN_SCALE = 1.0
 _BASE_RASTER_MAX_SCALE = 3.0
 _BASE_RASTER_MAX_PIXELS = 20_000_000
 _PLAN_VIEW_RASTER_ROTATION = 0
+VISUAL_KIND_BASE = "base"
+VISUAL_KIND_COMPOSITE = "composite"
+VISUAL_KIND_OVERLAY = "overlay"
+VISUAL_KIND_PAGE = "page"
 
 
 class PageLoaderMixin:
@@ -42,11 +47,11 @@ class PageLoaderMixin:
             self._sync_page_image_layer_visibility()
             return
         render_type, data, result = deferred
-        if render_type == "composite":
+        if render_type == VISUAL_KIND_COMPOSITE:
             self._apply_composite_result(data, result)
-        elif render_type == "page":
+        elif render_type == VISUAL_KIND_PAGE:
             self._apply_page_result(data, result)
-        elif render_type == "overlay":
+        elif render_type == VISUAL_KIND_OVERLAY:
             self._apply_overlay_result(data, result)
         self._set_page_overlay_items_visible(True)
         self._sync_page_image_layer_visibility()
@@ -230,9 +235,7 @@ class PageLoaderMixin:
 
     def _uses_pdf_base_raster(self, data: dict) -> bool:
         page = data.get("page", self._current_page)
-        return bool(
-            page and page.image_path and page.image_path.lower().endswith(".pdf")
-        )
+        return bool(page and page.image_path and is_pdf_suffix(page.image_path))
 
     def _rendered_pdf_page_dimensions(
         self,
@@ -255,20 +258,20 @@ class PageLoaderMixin:
         page = self._current_page
         return bool(
             page
-            and self._loaded_visual_kind == "overlay"
+            and self._loaded_visual_kind == VISUAL_KIND_OVERLAY
             and page.image_show_mode == _SHOW_MODE_OVERLAY_ONLY
             and page.overlay_image_path
-            and page.overlay_image_path.lower().endswith(".pdf")
+            and is_pdf_suffix(page.overlay_image_path)
         )
 
     def _uses_both_overlay_pdf_tiles(self) -> bool:
         page = self._current_page
         return bool(
             page
-            and self._loaded_visual_kind == "overlay"
+            and self._loaded_visual_kind == VISUAL_KIND_OVERLAY
             and page.image_show_mode == 2
             and page.overlay_image_path
-            and page.overlay_image_path.lower().endswith(".pdf")
+            and is_pdf_suffix(page.overlay_image_path)
         )
 
     def _uses_dynamic_tile_coverage(self) -> bool:
@@ -339,7 +342,7 @@ class PageLoaderMixin:
         data = self._resolve_pending_render(result, "Composite")
         if data is None:
             return
-        if self._defer_page_visual_result("composite", data, result):
+        if self._defer_page_visual_result(VISUAL_KIND_COMPOSITE, data, result):
             return
         self._apply_composite_result(data, result)
 
@@ -353,7 +356,7 @@ class PageLoaderMixin:
             scene_height,
         )
         self._replace_background_item(background_item)
-        self._loaded_visual_kind = "composite"
+        self._loaded_visual_kind = VISUAL_KIND_COMPOSITE
         self._base_raster_scale = data["base_raster_scale"]
         self._apply_page_transform_to_items()
         self._sync_page_image_layer_visibility()
@@ -364,7 +367,7 @@ class PageLoaderMixin:
         data = self._resolve_pending_render(result, "Page")
         if data is None:
             return
-        if self._defer_page_visual_result("page", data, result):
+        if self._defer_page_visual_result(VISUAL_KIND_PAGE, data, result):
             return
         self._apply_page_result(data, result)
 
@@ -378,7 +381,7 @@ class PageLoaderMixin:
             scene_height,
         )
         self._replace_background_item(background_item)
-        self._loaded_visual_kind = "page"
+        self._loaded_visual_kind = VISUAL_KIND_PAGE
         self._base_raster_scale = data["base_raster_scale"]
         self._apply_page_transform_to_items()
         self._sync_page_image_layer_visibility()
@@ -401,7 +404,7 @@ class PageLoaderMixin:
         data = self._resolve_pending_render(result, "Overlay")
         if data is None:
             return
-        if self._defer_page_visual_result("overlay", data, result):
+        if self._defer_page_visual_result(VISUAL_KIND_OVERLAY, data, result):
             return
         self._apply_overlay_result(data, result)
 
@@ -412,7 +415,7 @@ class PageLoaderMixin:
         render_scale = data.get("overlay_render_scale", view_scale)
         if (
             page.overlay_image_path
-            and page.overlay_image_path.lower().endswith(".pdf")
+            and is_pdf_suffix(page.overlay_image_path)
             and render_scale > 0
         ):
             self._overlay_pdf_width_pts = float(result.image.width()) / render_scale
@@ -425,7 +428,7 @@ class PageLoaderMixin:
             self._clear_overlay_items()
             self._scene.addItem(item)
             self._overlay_items.append(item)
-            self._loaded_visual_kind = "overlay"
+            self._loaded_visual_kind = VISUAL_KIND_OVERLAY
             self._base_raster_scale = render_scale
             self._sync_page_image_layer_visibility()
             self._mark_load_geometry_ready()
@@ -449,7 +452,7 @@ class PageLoaderMixin:
         item.setZValue(z_value)
         overlay_width = overlay_pixmap.width()
         overlay_height = overlay_pixmap.height()
-        is_pdf = page.overlay_image_path.lower().endswith(".pdf")
+        is_pdf = is_pdf_suffix(page.overlay_image_path)
         if is_pdf:
             item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         transform = self._overlay_graphics_transform(
@@ -559,7 +562,7 @@ class PageLoaderMixin:
         self._visible_frame_scale = 0.0
 
     def _visible_frame_overlay_state_key(self, page: Page, kind: str):
-        if kind not in ("composite", "overlay"):
+        if kind not in (VISUAL_KIND_COMPOSITE, VISUAL_KIND_OVERLAY):
             return None
         overlay_rect = self._overlay_rect_tuple(page)
         if overlay_rect is None:
@@ -642,7 +645,7 @@ class PageLoaderMixin:
         self._visible_frame_scale = self._visible_frame_metadata.get("scale", 0.0)
 
     def _visible_frame_item_transform(self, context: dict) -> QTransform:
-        if context["kind"] == "overlay":
+        if context["kind"] == VISUAL_KIND_OVERLAY:
             return self._overlay_pdf_tile_transform()
         return self._get_page_transform(
             context["source_w_pts"] * self._scene_scale,
@@ -685,7 +688,7 @@ class PageLoaderMixin:
         ):
             return None
         if self._is_composite_mode:
-            kind = "composite"
+            kind = VISUAL_KIND_COMPOSITE
             file_path = page.image_path
             page_index = page.page_index
             rotation = _PLAN_VIEW_RASTER_ROTATION
@@ -697,14 +700,14 @@ class PageLoaderMixin:
         elif (
             self._primary_tiles_use_overlay_pdf() or self._uses_both_overlay_pdf_tiles()
         ):
-            kind = "overlay"
+            kind = VISUAL_KIND_OVERLAY
             file_path = page.overlay_image_path
             page_index = 0
             rotation = self._active_page_raster_rotation()
             source_w_pts, source_h_pts = self._overlay_tile_raster_dimensions()
             transform = self._overlay_pdf_tile_transform()
         elif self._can_zoom_rerender:
-            kind = "base"
+            kind = VISUAL_KIND_BASE
             file_path = page.image_path
             page_index = page.page_index
             rotation = _PLAN_VIEW_RASTER_ROTATION
@@ -858,7 +861,7 @@ class PageLoaderMixin:
                     generation_id,
                 )
 
-        if context["kind"] == "composite":
+        if context["kind"] == VISUAL_KIND_COMPOSITE:
             request_id = self._rendering_service.render_composite_frame_async(
                 page=page,
                 bid_ref=self._current_bid_ref,
@@ -874,12 +877,12 @@ class PageLoaderMixin:
         else:
             tint_rgb = None
             if (
-                context["kind"] == "base"
+                context["kind"] == VISUAL_KIND_BASE
                 and page.image_show_mode == 2
                 and page.has_overlay
             ):
                 tint_rgb = (255, 80, 80)
-            elif context["kind"] == "overlay" and page.image_show_mode == 2:
+            elif context["kind"] == VISUAL_KIND_OVERLAY and page.image_show_mode == 2:
                 tint_rgb = (80, 80, 255)
             request_id = self._rendering_service.render_frame_async(
                 file_path=context["file_path"],
@@ -932,7 +935,7 @@ class PageLoaderMixin:
             local_rect,
             QRectF(0.0, 0.0, float(image.width()), float(image.height())),
         )
-        if context["kind"] == "overlay":
+        if context["kind"] == VISUAL_KIND_OVERLAY:
             item.setZValue(_OVERLAY_FRAME_CURRENT_Z)
         else:
             item.setZValue(_PDF_FRAME_CURRENT_Z)

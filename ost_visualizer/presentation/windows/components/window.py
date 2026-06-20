@@ -12,12 +12,23 @@ from ....application.dtos.annotation_creation_factory import (
     AnnotationCreationFactory,
 )
 from ....domain.entities.annotation_style import AnnotationStyle
-from ....domain.entities.annotation import int_color_to_hex
+from ....domain.entities.annotation import (
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_TEXT,
+    int_color_to_hex,
+)
 from ....domain.entities.annotation_view import AnnotationView
 from ....domain.entities.bid import Bid
 from ....domain.entities.config import Config
 from ...adapters.hotlink_event_adapter import HotlinkEventAdapter
 from ...components.page_combo import SinglePageComboBox
+from ...modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_PAN,
+    CURSOR_MODE_SELECT,
+    CURSOR_MODE_ZOOM,
+)
 from ...components.plan_view.view import TakeoffPlanView
 from ...components.resizable_combo import ResizableComboBox
 from ...components.viewer_cursors import make_zoom_cursor
@@ -110,7 +121,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         navigation_source: str = "unknown",
         show_page_index: bool = False,
         show_sheet_number: bool = False,
-        roping_selection_method: str = "touching",
+        roping_selection_method: str = Config.DEFAULT_ROPING_SELECTION_METHOD,
         disable_high_resolution_images: bool = False,
         intelligent_paste_enabled: bool = True,
         advanced_mouse_controls_enabled: bool = True,
@@ -490,17 +501,23 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self._btn_select is not None:
             self._btn_select.toggled.connect(
                 lambda checked: (
-                    self.plan_view.set_cursor_mode("select") if checked else None
+                    self.plan_view.set_cursor_mode(CURSOR_MODE_SELECT)
+                    if checked
+                    else None
                 )
             )
         self._btn_pan.toggled.connect(
-            lambda checked: self.plan_view.set_cursor_mode("pan") if checked else None
+            lambda checked: (
+                self.plan_view.set_cursor_mode(CURSOR_MODE_PAN) if checked else None
+            )
         )
         self._btn_fit.clicked.connect(self.plan_view.reset_view)
         self._btn_zoom_in.clicked.connect(self.plan_view.zoom_in)
         self._btn_zoom_out.clicked.connect(self.plan_view.zoom_out)
         self._btn_zoom_mode.toggled.connect(
-            lambda checked: self.plan_view.set_cursor_mode("zoom") if checked else None
+            lambda checked: (
+                self.plan_view.set_cursor_mode(CURSOR_MODE_ZOOM) if checked else None
+            )
         )
         self.plan_view.cursor_mode_change_requested.connect(
             self._on_cursor_mode_change_requested
@@ -510,15 +527,15 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def _set_default_cursor_mode(self) -> None:
         button_map = {
-            "select": self._btn_select,
-            "pan": self._btn_pan,
-            "zoom": self._btn_zoom_mode,
+            CURSOR_MODE_SELECT: self._btn_select,
+            CURSOR_MODE_PAN: self._btn_pan,
+            CURSOR_MODE_ZOOM: self._btn_zoom_mode,
         }
         button = button_map.get(self._config.default_cursor_mode) or self._btn_pan
         button.setChecked(True)
 
     def _on_cursor_mode_change_requested(self, mode: str) -> None:
-        if mode != "annotation_place":
+        if mode != CURSOR_MODE_ANNOTATION_PLACE:
             return
         annotation_type = self.plan_view.annotation_place_type
         for spec in self._config.annotation_tool_specs:
@@ -1160,7 +1177,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def _publish_named_view_renames(self, updates: list) -> None:
         for uid, ann_type, properties in updates:
-            if ann_type != "namedview" or "Text" not in properties:
+            if ann_type != ANNOTATION_TYPE_NAMED_VIEW or "Text" not in properties:
                 continue
             name = str(properties["Text"] or "")
             self.event_bus.publish(
@@ -1233,7 +1250,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         bid_ref = self.view.bid_ref if self.view else None
         if bid_ref is None:
             return
-        spec = build_placed_annotation_spec("text", page_uid, list(position))
+        spec = build_placed_annotation_spec(
+            ANNOTATION_TYPE_TEXT,
+            page_uid,
+            list(position),
+        )
         if spec is None:
             return
         spec.properties = dict(properties)
@@ -1283,7 +1304,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         bid_ref = self.view.bid_ref if self.view else None
         if bid_ref is None:
             return
-        spec = build_placed_annotation_spec("namedview", page_uid, list(position))
+        spec = build_placed_annotation_spec(
+            ANNOTATION_TYPE_NAMED_VIEW, page_uid, list(position)
+        )
         if spec is None:
             return
         spec.properties = {"Text": name}
@@ -1308,7 +1331,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             page_uid=page_uid,
             name=name,
         )
-        self.plan_view.activate_annotation_placement("namedview")
+        self.plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
         if self._undo_svc is None:
             return
         cmd = InsertAnnotationsCommand(
@@ -1339,11 +1362,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
         result = dialog.result_data()
         if result.create_new:
-            self.plan_view.activate_annotation_placement("namedview")
+            self.plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
             return
         if not result.named_view_uid:
             return
-        spec = build_placed_annotation_spec("hotlink", page_uid, list(position[:2]))
+        spec = build_placed_annotation_spec(
+            ANNOTATION_TYPE_HOTLINK, page_uid, list(position[:2])
+        )
         if spec is None:
             return
         spec.properties = {"BidPageViewUID": result.named_view_uid}
@@ -1359,7 +1384,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         keys = self.plan_view.find_annotation_keys_by_uid_type(uid_type_set)
         if keys:
             self.plan_view.set_selected_uids(keys)
-        self.plan_view.activate_annotation_placement("hotlink")
+        self.plan_view.activate_annotation_placement(ANNOTATION_TYPE_HOTLINK)
         if self._undo_svc is None:
             return
         cmd = InsertAnnotationsCommand(

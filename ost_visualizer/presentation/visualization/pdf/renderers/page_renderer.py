@@ -4,6 +4,10 @@ from pathlib import Path
 from typing import Dict, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QImageReader
+from .....domain.entities.file_extensions import (
+    TIFF_EXTENSIONS,
+    is_pdf_suffix,
+)
 from .. import ost_pdf
 from ..pdfium_lock import pdfium_lock
 
@@ -11,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class PageRenderer:
-    IMAGE_EXTENSIONS = {".tif", ".tiff"}
+    IMAGE_EXTENSIONS = TIFF_EXTENSIONS
     _pdfium_lock = pdfium_lock
 
     def __init__(self):
@@ -77,7 +81,7 @@ class PageRenderer:
             logger.warning(f"File not found: {file_path}")
             return None
         ext = path.suffix.lower()
-        if ext == ".pdf":
+        if is_pdf_suffix(ext):
             return self._render_pdf(file_path, page_index, scale, rotation)
         elif ext in self.IMAGE_EXTENSIONS:
             return self._render_image(file_path, scale)
@@ -145,7 +149,7 @@ class PageRenderer:
         if not file_path:
             return None
         path = Path(file_path)
-        if not path.exists() or path.suffix.lower() != ".pdf":
+        if not path.exists() or not is_pdf_suffix(path.suffix):
             return None
         with self._pdfium_lock:
             renderer = self._ensure_pdf_open_locked(file_path)
@@ -174,7 +178,7 @@ class PageRenderer:
 
     def get_page_count(self, file_path: str) -> int:
         path = Path(file_path)
-        if not path.exists() or path.suffix.lower() != ".pdf":
+        if not path.exists() or not is_pdf_suffix(path.suffix):
             return 1
         with self._pdfium_lock:
             renderer = self._ensure_pdf_open_locked(file_path)
@@ -187,7 +191,7 @@ class PageRenderer:
         if not path.exists():
             logger.warning(f"get_page_size: File not found: {file_path}")
             return (0.0, 0.0)
-        if path.suffix.lower() == ".pdf":
+        if is_pdf_suffix(path.suffix):
             with self._pdfium_lock:
                 renderer = self._ensure_pdf_open_locked(file_path)
                 if not renderer:
@@ -213,7 +217,7 @@ class PageRenderer:
         path = Path(file_path)
         if not path.exists():
             return info
-        if path.suffix.lower() == ".pdf":
+        if is_pdf_suffix(path.suffix):
             with self._pdfium_lock:
                 renderer = self._ensure_pdf_open_locked(file_path)
                 if not renderer:
@@ -236,7 +240,7 @@ class PageRenderer:
 
     def extract_text_runs(self, file_path: str, page_index: int = 0) -> list:
         path = Path(file_path)
-        if not path.exists() or path.suffix.lower() != ".pdf":
+        if not path.exists() or not is_pdf_suffix(path.suffix):
             return []
         with self._pdfium_lock:
             renderer = self._ensure_pdf_open_locked(file_path)

@@ -13,6 +13,7 @@ from ..entities.annotation import BidAnnotation
 from ..entities.condition_folder import BidConditionFolder
 from ..entities.layer import (
     ANNOTATION_LAYER_NAME,
+    IMAGE_LAYER_NAME,
     BidLayer,
     Layer,
     LayerSet,
@@ -160,9 +161,11 @@ class ProjectDataService:
     def get_annotation_layer_uid(self) -> Optional[str]:
         return self._bid_layer_set().annotation_layer_uid()
 
-    def update_layer_visibility(
-        self, layer_uid: str, show: bool, *, image_layer: bool = False
-    ) -> List[str]:
+    def is_image_layer_uid(self, layer_uid: str) -> bool:
+        layer_name = self.model.bid_layer_names_by_uid.get(str(layer_uid))
+        return normalize_layer_name(layer_name or "") == IMAGE_LAYER_NAME
+
+    def update_layer_visibility(self, layer_uid: str, show: bool) -> List[str]:
         changed_pages: List[str] = []
         layer_key = str(layer_uid)
         visible = bool(show)
@@ -171,7 +174,7 @@ class ProjectDataService:
         for condition in self.model.bid_conditions.values():
             if str(condition.layer_uid or "") == layer_key:
                 condition.layer_visible = visible
-        if image_layer:
+        if self.is_image_layer_uid(layer_key):
             for page in self.model.get_all_pages():
                 page.layer_visible = visible
                 changed_pages.append(page.uid)

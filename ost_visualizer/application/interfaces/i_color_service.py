@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union
+from ...domain.entities.config import Config
 from ...domain.entities.condition import Condition
 from ...domain.entities.takeoff import Takeoff
 from ..dtos.color_dtos import ColorMappingResult, ColorWithOpacity
@@ -23,7 +24,7 @@ class IColorService(Protocol):
         self,
         bid_conditions,
         bid_takeoffs,
-        color_mode: str = "Solid",
+        color_mode: str = Config.COLOR_MODE_SOLID,
         grayscale_enabled: bool = True,
         extra_condition_uids: Optional[Set[str]] = None,
     ) -> ColorMappingResult: ...

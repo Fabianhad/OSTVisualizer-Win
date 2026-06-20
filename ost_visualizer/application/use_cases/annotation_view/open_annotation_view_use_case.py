@@ -1,5 +1,6 @@
 import logging
 from typing import Optional
+from ....domain.entities.config import Config
 from ....domain.entities.named_view import build_named_view_from_annotation
 from ....domain.services.project_data_service import ProjectDataService
 from ...events.app_events import AppEvents
@@ -43,13 +44,13 @@ class OpenAnnotationViewUseCase:
     def _hotlink_view_manager(self) -> IAnnotationViewManager:
         if (
             self.config_model is not None
-            and self.config_model.hotlink_target == "main"
+            and self.config_model.hotlink_target == Config.HOTLINK_TARGET_MAIN
             and self.main_view_manager is not None
         ):
             return self.main_view_manager
         if (
             self.config_model is not None
-            and self.config_model.hotlink_target == "view"
+            and self.config_model.hotlink_target == Config.HOTLINK_TARGET_VIEW
             and self.view_window_manager is not None
         ):
             return self.view_window_manager

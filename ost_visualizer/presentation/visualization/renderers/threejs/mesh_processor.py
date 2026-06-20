@@ -3,6 +3,7 @@ from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from .....domain.dtos.mesh_metadata_dto import MeshMetadata
+from .....domain.entities.config import Config
 from .....domain.entities.condition import Condition
 from .....domain.entities.takeoff import Takeoff
 from ...core.boolean_operations import apply_boolean_operations
@@ -19,7 +20,7 @@ def process_meshes_for_threejs(
     coord_system: ICoordinateTransformer,
     color_service: IColorService,
     takeoff_service: ITakeoffDomainService,
-    color_mode: str = "Solid",
+    color_mode: str = Config.COLOR_MODE_SOLID,
     grayscale_enabled: bool = True,
     page_area_selections: Optional[Dict] = None,
 ) -> Tuple[List[Tuple[MeshData, MeshMetadata]], Bounds]:

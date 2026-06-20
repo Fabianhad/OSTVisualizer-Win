@@ -8,6 +8,7 @@ from ...application.dtos.export_dto import (
     ExportResultDto,
 )
 from ...application.dtos.page_export_data_dto import PageExportData
+from ...domain.entities.file_extensions import PDF_EXTENSION, is_pdf_suffix
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.messagebox import show_critical, show_info, show_warning
 
@@ -96,8 +97,8 @@ class ExportHandler:
         bid_name = bid.name if bid else "Bid"
         if len(pages_data) == 1:
             default_filename = f"{bid_name} - {first_page_name}"
-            if not default_filename.lower().endswith(".pdf"):
-                default_filename = f"{default_filename}.pdf"
+            if not is_pdf_suffix(default_filename):
+                default_filename = f"{default_filename}{PDF_EXTENSION}"
             dialog_title = "Export Page as PDF"
         else:
             default_filename = f"{bid_name} - {len(pages_data)} Pages.pdf"

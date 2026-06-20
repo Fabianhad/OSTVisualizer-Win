@@ -10,7 +10,21 @@ from PySide6.QtWidgets import (
 )
 from .....application.dtos.hotlink_dto import HotlinkDto
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
-from .....domain.entities.annotation import BidAnnotation
+from .....domain.entities.annotation import (
+    ANNOTATION_TYPE_ARROW,
+    ANNOTATION_TYPE_CLOUD,
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_INK,
+    ANNOTATION_TYPE_LINE,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_OVAL,
+    ANNOTATION_TYPE_POLYGON,
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
 from ....components.plan_view.components.graphics_items import (
     DIMENSION_LABEL_ITEM_KIND,
     NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,
@@ -164,25 +178,38 @@ class AnnotationItemRenderer:
         anno_type = geom["type"]
         color = geom["color"]
         width = geom["width"]
-        if anno_type == "text" and "text" in geom:
+        if anno_type == ANNOTATION_TYPE_TEXT and "text" in geom:
             return self._render_text(geom["text"], color)
-        elif anno_type in ("cloud", "polygon", "ink") and "points" in geom:
+        elif (
+            anno_type
+            in (ANNOTATION_TYPE_CLOUD, ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_INK)
+            and "points" in geom
+        ):
             return self._render_path(anno_type, geom["points"], color, width)
-        elif anno_type == "oval" and "oval" in geom:
+        elif anno_type == ANNOTATION_TYPE_OVAL and "oval" in geom:
             return self._render_oval(geom["oval"], color, width)
-        elif anno_type in ("rect", "highlight") and "shape" in geom:
+        elif (
+            anno_type in (ANNOTATION_TYPE_RECT, ANNOTATION_TYPE_HIGHLIGHT)
+            and "shape" in geom
+        ):
             return self._render_rotated_shape(anno_type, geom["shape"], color, width)
-        elif anno_type in ("oval", "rect") and "bounds" in geom:
+        elif (
+            anno_type in (ANNOTATION_TYPE_OVAL, ANNOTATION_TYPE_RECT)
+            and "bounds" in geom
+        ):
             return self._render_shape(anno_type, geom["bounds"], color, width)
-        elif anno_type in ("line", "arrow") and "line" in geom:
+        elif (
+            anno_type in (ANNOTATION_TYPE_LINE, ANNOTATION_TYPE_ARROW)
+            and "line" in geom
+        ):
             return self._render_line(anno_type, geom["line"], color, width)
-        elif anno_type == "dimension" and "dimension" in geom:
+        elif anno_type == ANNOTATION_TYPE_DIMENSION and "dimension" in geom:
             return self._render_dimension(geom["dimension"], color, width)
-        elif anno_type == "highlight" and "bounds" in geom:
+        elif anno_type == ANNOTATION_TYPE_HIGHLIGHT and "bounds" in geom:
             return self._render_highlight(geom["bounds"], color)
-        elif anno_type == "namedview" and "namedview" in geom:
+        elif anno_type == ANNOTATION_TYPE_NAMED_VIEW and "namedview" in geom:
             return self._render_namedview(geom["namedview"])
-        elif anno_type == "hotlink" and "hotlink" in geom:
+        elif anno_type == ANNOTATION_TYPE_HOTLINK and "hotlink" in geom:
             return self._render_hotlink(geom["hotlink"], color, width, bid_page_uid)
         return []
 
@@ -244,7 +271,7 @@ class AnnotationItemRenderer:
         if len(points) < 2:
             return []
         path = QPainterPath()
-        if anno_type == "cloud":
+        if anno_type == ANNOTATION_TYPE_CLOUD:
             segments = create_cloud_path_points(points)
             for idx, (start, cp1, cp2, end) in enumerate(segments):
                 if idx == 0:
@@ -255,7 +282,7 @@ class AnnotationItemRenderer:
             path.moveTo(points[0][0], points[0][1])
             for x, y in points[1:]:
                 path.lineTo(x, y)
-            if anno_type == "polygon":
+            if anno_type == ANNOTATION_TYPE_POLYGON:
                 path.closeSubpath()
         item = self._create_path_item(path, color, width)
         if item is None:
@@ -294,7 +321,7 @@ class AnnotationItemRenderer:
         item = self._create_path_item(path, color, width)
         if item is None:
             return []
-        if anno_type == "highlight":
+        if anno_type == ANNOTATION_TYPE_HIGHLIGHT:
             qcolor = QColor(color)
             qcolor.setAlphaF(0.3)
             item.setBrush(qcolor)
@@ -310,7 +337,7 @@ class AnnotationItemRenderer:
         max_y = bounds["max_y"]
         rect = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
         path = QPainterPath()
-        if anno_type == "oval":
+        if anno_type == ANNOTATION_TYPE_OVAL:
             path.addEllipse(rect)
         else:
             path.addRect(rect)
@@ -327,7 +354,7 @@ class AnnotationItemRenderer:
         path = QPainterPath()
         path.moveTo(x1, y1)
         path.lineTo(x2, y2)
-        if anno_type == "arrow":
+        if anno_type == ANNOTATION_TYPE_ARROW:
             arrow_size = max(width * 20, 24.0)
             angle = math.atan2(y2 - y1, x2 - x1)
             arrow_angle = math.radians(30)

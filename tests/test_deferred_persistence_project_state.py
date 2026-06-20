@@ -73,13 +73,74 @@ class DeferredPersistenceProjectStateTests(unittest.TestCase):
     def test_image_layer_visibility_updates_page_memory_immediately(self):
         model = FakeProjectModel()
         service = ProjectDataService(model)
-        changed_pages = service.update_layer_visibility(
-            "image", False, image_layer=True
+        service.set_bid_layer_visibility(
+            [
+                SimpleNamespace(uid="image", name="Image", show=True),
+                SimpleNamespace(uid="l1", name="Takeoff", show=True),
+            ]
         )
+        changed_pages = service.update_layer_visibility("image", False)
         self.assertEqual(changed_pages, ["p1", "p2"])
         self.assertFalse(model.pages[0].layer_visible)
         self.assertFalse(model.pages[1].layer_visible)
         self.assertEqual(service.get_hidden_layer_uids(), {"image"})
+
+    def test_layer_visibility_state_sources_remain_synchronized_by_layer_kind(self):
+        model = FakeProjectModel()
+        service = ProjectDataService(model)
+        service.set_bid_layer_visibility(
+            [
+                SimpleNamespace(uid="image", name="Image", show=True),
+                SimpleNamespace(uid="annotation", name="Annotation", show=True),
+                SimpleNamespace(uid="l1", name="Takeoff", show=True),
+                SimpleNamespace(uid="custom", name="Future Visual", show=True),
+            ]
+        )
+        with self.subTest(layer="annotation"):
+            changed_pages = service.update_layer_visibility("annotation", False)
+            self.assertEqual(changed_pages, [])
+            self.assertFalse(model.bid_layer_visibility["annotation"])
+            self.assertFalse(model.bid_layer_visibility_by_name["annotation"])
+            self.assertTrue(model.bid_conditions["c1"].layer_visible)
+            self.assertTrue(model.pages[0].layer_visible)
+        with self.subTest(layer="condition"):
+            changed_pages = service.update_layer_visibility("l1", False)
+            self.assertEqual(changed_pages, [])
+            self.assertFalse(model.bid_layer_visibility["l1"])
+            self.assertFalse(model.bid_layer_visibility_by_name["takeoff"])
+            self.assertFalse(model.bid_conditions["c1"].layer_visible)
+            self.assertTrue(model.bid_conditions["c2"].layer_visible)
+            self.assertTrue(model.pages[0].layer_visible)
+        with self.subTest(layer="custom"):
+            changed_pages = service.update_layer_visibility("custom", False)
+            self.assertEqual(changed_pages, [])
+            self.assertFalse(model.bid_layer_visibility["custom"])
+            self.assertFalse(model.bid_layer_visibility_by_name["future visual"])
+            self.assertTrue(model.pages[0].layer_visible)
+        with self.subTest(layer="image"):
+            changed_pages = service.update_layer_visibility("image", False)
+            self.assertEqual(changed_pages, ["p1", "p2"])
+            self.assertFalse(model.bid_layer_visibility["image"])
+            self.assertFalse(model.bid_layer_visibility_by_name["image"])
+            self.assertFalse(model.pages[0].layer_visible)
+            self.assertFalse(model.pages[1].layer_visible)
+
+    def test_non_image_layer_visibility_does_not_update_page_memory_by_name_guess(
+        self,
+    ):
+        model = FakeProjectModel()
+        service = ProjectDataService(model)
+        service.set_bid_layer_visibility(
+            [
+                SimpleNamespace(uid="l1", name="Future Visual", show=True),
+                SimpleNamespace(uid="image", name="Image", show=True),
+            ]
+        )
+        changed_pages = service.update_layer_visibility("l1", False)
+        self.assertEqual(changed_pages, [])
+        self.assertTrue(model.pages[0].layer_visible)
+        self.assertTrue(model.pages[1].layer_visible)
+        self.assertFalse(model.bid_conditions["c1"].layer_visible)
 
     def test_show_all_layer_visibility_updates_conditions_and_pages_immediately(self):
         model = FakeProjectModel()

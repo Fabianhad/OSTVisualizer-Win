@@ -2,23 +2,39 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
+from ..actions.action_ids import (
+    ACTION_ADJUST_IMAGES,
+    ACTION_ANNOTATION_WINDOW,
+    ACTION_COPY,
+    ACTION_CUT,
+    ACTION_DELETE,
+    ACTION_DUPLICATE,
+    ACTION_LAYERS_SIDEBAR,
+    ACTION_NEXT_PAGE,
+    ACTION_OPEN_FILES,
+    ACTION_PASTE,
+    ACTION_PREVIOUS_PAGE,
+    ACTION_REDO,
+    ACTION_SELECT_ALL,
+    ACTION_UNDO,
+)
 
 
 class ShortcutId(Enum):
-    OPEN_FILES = "open_files"
-    SELECT_ALL = "select_all"
-    COPY = "copy"
-    CUT = "cut"
-    PASTE = "paste"
-    DUPLICATE = "duplicate"
-    DELETE = "delete"
-    UNDO = "undo"
-    REDO = "redo"
-    NEXT_PAGE = "next_page"
-    PREVIOUS_PAGE = "previous_page"
-    LAYERS_SIDEBAR = "layers_sidebar"
-    ANNOTATION_WINDOW = "annotation_window"
-    ADJUST_IMAGES = "adjust_images"
+    OPEN_FILES = ACTION_OPEN_FILES
+    SELECT_ALL = ACTION_SELECT_ALL
+    COPY = ACTION_COPY
+    CUT = ACTION_CUT
+    PASTE = ACTION_PASTE
+    DUPLICATE = ACTION_DUPLICATE
+    DELETE = ACTION_DELETE
+    UNDO = ACTION_UNDO
+    REDO = ACTION_REDO
+    NEXT_PAGE = ACTION_NEXT_PAGE
+    PREVIOUS_PAGE = ACTION_PREVIOUS_PAGE
+    LAYERS_SIDEBAR = ACTION_LAYERS_SIDEBAR
+    ANNOTATION_WINDOW = ACTION_ANNOTATION_WINDOW
+    ADJUST_IMAGES = ACTION_ADJUST_IMAGES
 
 
 @dataclass(frozen=True)

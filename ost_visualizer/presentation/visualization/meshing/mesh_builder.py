@@ -4,6 +4,7 @@ from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from ....domain.dtos.mesh_metadata_dto import MeshMetadata
+from ....domain.entities.config import Config
 from ....domain.entities.condition import Condition
 from ....domain.entities.takeoff import Takeoff
 from ..core.boolean_operations import apply_boolean_operations
@@ -77,7 +78,7 @@ def process_takeoffs_to_meshes(
     if not bid_takeoffs:
         return [], {}, calculate_mesh_bounds([])
     mesh_factory = MeshFactory(coord_system)
-    color_mode = config_options.get("color_mode", "Solid")
+    color_mode = config_options.get("color_mode", Config.COLOR_MODE_SOLID)
     grayscale_enabled = config_options.get("grayscale_enabled", True)
     hierarchy_map, color_map = color_service.get_color_mapping(
         bid_conditions, bid_takeoffs, color_mode, grayscale_enabled

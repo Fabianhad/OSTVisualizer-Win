@@ -2,6 +2,7 @@ from typing import Any, Callable, Dict, List, Optional
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
+from ...domain.entities.annotation import ANNOTATION_TYPE_NAMED_VIEW
 from ...domain.entities.identity_refs import BidRef
 
 TakeoffInsertFn = Callable[[BidRef, List[InsertTakeoffSpec]], List[str]]
@@ -314,7 +315,9 @@ class DeleteAnnotationsCommand:
 
     def undo(self) -> None:
         nv_indices = [
-            i for i, a in enumerate(self._saved) if a.annotation_type == "namedview"
+            i
+            for i, a in enumerate(self._saved)
+            if a.annotation_type == ANNOTATION_TYPE_NAMED_VIEW
         ]
         new_uids: List[Optional[str]] = [None] * len(self._saved)
         ref_remap = PasteRefRemap()

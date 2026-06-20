@@ -6,6 +6,30 @@ from PySide6.QtCore import Signal
 from ..application.events.app_events import AppEvents
 from ..domain.entities.annotation_style import AnnotationStyle
 from ..domain.entities.file_state import normalize_path
+from .actions.action_ids import (
+    ACTION_ANNOTATION_WINDOW,
+    ACTION_BACKOUT_MODE,
+    ACTION_CONDITIONS_SIDEBAR,
+    ACTION_COPY,
+    ACTION_CUT,
+    ACTION_DELETE,
+    ACTION_DUPLICATE,
+    ACTION_LAYERS_SIDEBAR,
+    ACTION_NEW_DATABASE,
+    ACTION_NEW_FOLDER,
+    ACTION_NEW_PROJECT,
+    ACTION_NEXT_PAGE,
+    ACTION_OPEN_FILES,
+    ACTION_PASTE,
+    ACTION_PREVIOUS_PAGE,
+    ACTION_REDO,
+    ACTION_RESET_VIEW,
+    ACTION_SELECT_ALL,
+    ACTION_STATUS_BAR,
+    ACTION_UNDO,
+    ACTION_ZOOM_IN,
+    ACTION_ZOOM_OUT,
+)
 from .builders.component_builder import ComponentBuilder
 from .components.progress_dialog import ProgressDialog, ProgressReporter
 from .config import (
@@ -348,32 +372,32 @@ class MainWindow(QtWidgets.QMainWindow):
             create_new_database_fn=self.app_controller.create_new_database,
             deferred_persistence_manager=self._deferred_persistence_manager,
             shared_actions={
-                "new_project": components.new_project_action,
-                "new_folder": components.new_folder_action,
-                "new_database": components.new_database_action,
-                "open_files": components.open_files_action,
-                "undo": components.undo_action,
-                "redo": components.redo_action,
-                "cut": components.cut_action,
-                "copy": components.copy_action,
-                "paste": components.paste_action,
-                "duplicate": components.duplicate_action,
-                "delete": components.delete_action,
-                "select_all": self._select_all_action,
-                "zoom_in": components.zoom_in_action,
-                "zoom_out": components.zoom_out_action,
-                "reset_view": components.reset_view_action,
-                "next_page": components.next_page_action,
-                "previous_page": components.previous_page_action,
+                ACTION_NEW_PROJECT: components.new_project_action,
+                ACTION_NEW_FOLDER: components.new_folder_action,
+                ACTION_NEW_DATABASE: components.new_database_action,
+                ACTION_OPEN_FILES: components.open_files_action,
+                ACTION_UNDO: components.undo_action,
+                ACTION_REDO: components.redo_action,
+                ACTION_CUT: components.cut_action,
+                ACTION_COPY: components.copy_action,
+                ACTION_PASTE: components.paste_action,
+                ACTION_DUPLICATE: components.duplicate_action,
+                ACTION_DELETE: components.delete_action,
+                ACTION_SELECT_ALL: self._select_all_action,
+                ACTION_ZOOM_IN: components.zoom_in_action,
+                ACTION_ZOOM_OUT: components.zoom_out_action,
+                ACTION_RESET_VIEW: components.reset_view_action,
+                ACTION_NEXT_PAGE: components.next_page_action,
+                ACTION_PREVIOUS_PAGE: components.previous_page_action,
                 **{
                     key: components.plan_tool_actions[key]
                     for key in PLAN_TOOL_ACTION_KEYS
                 },
-                "backout_mode": components.backout_action,
-                "layers_sidebar": components.layers_toggle_action,
-                "conditions_sidebar": components.conditions_toggle_action,
-                "status_bar": self._status_bar_action,
-                "annotation_window": components.annotation_window_action,
+                ACTION_BACKOUT_MODE: components.backout_action,
+                ACTION_LAYERS_SIDEBAR: components.layers_toggle_action,
+                ACTION_CONDITIONS_SIDEBAR: components.conditions_toggle_action,
+                ACTION_STATUS_BAR: self._status_bar_action,
+                ACTION_ANNOTATION_WINDOW: components.annotation_window_action,
             },
         )
 
@@ -384,10 +408,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
             )
 
-        connect_menu_command(components.new_project_action, "new_project")
-        connect_menu_command(components.new_folder_action, "new_folder")
-        connect_menu_command(components.new_database_action, "new_database")
-        connect_menu_command(components.open_files_action, "open_files")
+        connect_menu_command(components.new_project_action, ACTION_NEW_PROJECT)
+        connect_menu_command(components.new_folder_action, ACTION_NEW_FOLDER)
+        connect_menu_command(components.new_database_action, ACTION_NEW_DATABASE)
+        connect_menu_command(components.open_files_action, ACTION_OPEN_FILES)
         self.plan_view.set_context_menu_command_handlers(
             self.menu_controller.trigger_menu_action,
             self.menu_controller.get_menu_action_state,

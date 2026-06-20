@@ -4,12 +4,12 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, Set
+from ....domain.entities.file_extensions import OSP_IMAGE_EXTENSIONS
 from ....presentation.visualization.exporters import ost_cab
 from ...app_paths import get_default_working_dir
 from .ost_importer import OstImporter
 
 logger = logging.getLogger(__name__)
-_SUPPORTED_IMAGE_EXTENSIONS: Set[str] = {".pdf", ".tif", ".tiff"}
 
 
 class OspImporter:
@@ -58,7 +58,7 @@ class OspImporter:
             f
             for f in tmp_path.rglob("*")
             if f.is_file()
-            and f.suffix.lower() in _SUPPORTED_IMAGE_EXTENSIONS
+            and f.suffix.lower() in OSP_IMAGE_EXTENSIONS
             and f.name in all_names
         ]
         if not image_files:

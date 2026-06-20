@@ -12,10 +12,25 @@ from PySide6.QtWidgets import (
     QGraphicsTextItem,
 )
 from .....application.dtos.hotlink_dto import HotlinkDto
+from .....domain.entities.annotation import (
+    ANNOTATION_TYPE_ARROW,
+    ANNOTATION_TYPE_CLOUD,
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_INK,
+    ANNOTATION_TYPE_LINE,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_OVAL,
+    ANNOTATION_TYPE_POLYGON,
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+)
 from .....domain.entities.named_view import named_view_edit_position
 from ....visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_segments,
 )
+from ....modes.cursor import CURSOR_MODE_SELECT
 from .geometry_utils import (
     HandleInfo,
     cursor_for_direction,
@@ -308,7 +323,7 @@ class SelectionManagerMixin:
         self.update_selection_visuals(emit=emit)
 
     def select_takeoffs_in_area(self, area_uid: Optional[str]) -> None:
-        if not self._selection_enabled or self._cursor_mode != "select":
+        if not self._selection_enabled or self._cursor_mode != CURSOR_MODE_SELECT:
             return
         page_area_selections = (
             {self._current_bid_page_uid: area_uid}
@@ -459,9 +474,13 @@ class SelectionManagerMixin:
     def _create_annotation_handles(self, ann, uid, cs) -> List:
         atype = ann.annotation_type
         pos = ann.position
-        if atype in ("line", "arrow", "dimension"):
+        if atype in (
+            ANNOTATION_TYPE_LINE,
+            ANNOTATION_TYPE_ARROW,
+            ANNOTATION_TYPE_DIMENSION,
+        ):
             return self._make_endpoint_handles(cs.transform_vertices_to_2d(pos))
-        if atype == "hotlink":
+        if atype == ANNOTATION_TYPE_HOTLINK:
             tx = cs.transform_vertices_to_2d(pos[:2])
             sp = self._pt_to_scene(tx[0], tx[1])
             return [
@@ -469,7 +488,7 @@ class SelectionManagerMixin:
                     sp.x(), sp.y(), self._CORNER_HALF, Qt.CursorShape.SizeAllCursor
                 )
             ]
-        if atype == "ink":
+        if atype == ANNOTATION_TYPE_INK:
             items = self._uid_to_items.get(uid, [])
             for item in items:
                 if isinstance(item, QGraphicsPathItem):
@@ -494,14 +513,19 @@ class SelectionManagerMixin:
                             ),
                         ]
             return []
-        if atype == "text":
+        if atype == ANNOTATION_TYPE_TEXT:
             return self._make_text_annotation_selection_items(ann, uid, cs)
         corners_ost = self._get_ann_corners_ost(ann)
-        if corners_ost and atype in ("rect", "oval", "highlight", "namedview"):
+        if corners_ost and atype in (
+            ANNOTATION_TYPE_RECT,
+            ANNOTATION_TYPE_OVAL,
+            ANNOTATION_TYPE_HIGHLIGHT,
+            ANNOTATION_TYPE_NAMED_VIEW,
+        ):
             tx = cs.transform_vertices_to_2d(corners_ost)
             pts = [self._pt_to_scene(tx[i], tx[i + 1]) for i in range(0, len(tx), 2)]
             return self._make_bbox_handles(pts)
-        if atype in ("polygon", "cloud") and len(pos) >= 4:
+        if atype in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD) and len(pos) >= 4:
             tx = cs.transform_vertices_to_2d(pos)
             raw_pts = [(tx[i], tx[i + 1]) for i in range(0, len(tx) - 1, 2)]
             pts = [self._pt_to_scene(x, y) for x, y in raw_pts]
@@ -590,11 +614,11 @@ class SelectionManagerMixin:
     def _get_ann_corners_ost(ann) -> list:
         pos = ann.position
         atype = ann.annotation_type
-        if atype == "namedview":
+        if atype == ANNOTATION_TYPE_NAMED_VIEW:
             return named_view_edit_position(pos)
-        if atype in ("rect", "highlight") and len(pos) >= 8:
+        if atype in (ANNOTATION_TYPE_RECT, ANNOTATION_TYPE_HIGHLIGHT) and len(pos) >= 8:
             return [pos[0], pos[1], pos[6], pos[7], pos[2], pos[3], pos[4], pos[5]]
-        if atype == "oval" and len(pos) >= 4:
+        if atype == ANNOTATION_TYPE_OVAL and len(pos) >= 4:
             cx = (pos[0] + pos[2]) / 2
             cy = (pos[1] + pos[3]) / 2
             rot_rad = ann.stored_rotation_rad

@@ -49,6 +49,11 @@ from ost_visualizer.presentation.components.plan_view.components.graphics_items 
     ImageBackgroundItem,
     TileGraphicsItem,
 )
+from ost_visualizer.presentation.components.plan_view.components.page_loader import (
+    VISUAL_KIND_COMPOSITE,
+    VISUAL_KIND_OVERLAY,
+    VISUAL_KIND_PAGE,
+)
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
     ViewerSyncCoordinator,
@@ -721,7 +726,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._current_page = page
         view._current_bid_page_uid = "p1"
         view._scene_scale = 2.0
-        view._loaded_visual_kind = "overlay"
+        view._loaded_visual_kind = VISUAL_KIND_OVERLAY
         view._overlay_pdf_width_pts = 612.0
         view._overlay_pdf_height_pts = 792.0
         low_res = view._create_overlay_graphics_item(
@@ -763,7 +768,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._current_page = page
         view._current_bid_page_uid = "p1"
         view._scene_scale = 2.0
-        view._loaded_visual_kind = "overlay"
+        view._loaded_visual_kind = VISUAL_KIND_OVERLAY
         view._overlay_pdf_width_pts = 612.0
         view._overlay_pdf_height_pts = 792.0
         local_rect = QtCore.QRectF(128.0, 128.0, 128.0, 128.0)
@@ -846,7 +851,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         view._scene.addItem(composite)
         view._background_item = composite
-        view._loaded_visual_kind = "composite"
+        view._loaded_visual_kind = VISUAL_KIND_COMPOSITE
         view._is_composite_mode = True
         view._base_raster_scale = 2.0
         self.assertTrue(view.show_overlay_move_handle())
@@ -975,7 +980,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         view._scene.addItem(composite)
         view._background_item = composite
-        view._loaded_visual_kind = "composite"
+        view._loaded_visual_kind = VISUAL_KIND_COMPOSITE
         view._is_composite_mode = True
         view._base_raster_scale = 2.0
         self.assertTrue(view.show_overlay_move_handle())
@@ -4921,7 +4926,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._current_page = page
         view._current_bid_ref = bid_ref
         view._current_render_identity = view._build_render_identity(page, bid_ref)
-        view._loaded_visual_kind = "page"
+        view._loaded_visual_kind = VISUAL_KIND_PAGE
         view._pdf_width_pts = page.width_pts
         view._pdf_height_pts = page.height_pts
         view._scene_scale = 2.0

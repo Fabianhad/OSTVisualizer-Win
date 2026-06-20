@@ -3,6 +3,34 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Dict, List, Optional
 from .annotation_style import AnnotationStyle
 
+WORKSPACE_ACTIVE_VIEW_2D = "2d"
+WORKSPACE_ACTIVE_VIEW_3D = "3d"
+WORKSPACE_VALID_ACTIVE_VIEWS = frozenset(
+    {WORKSPACE_ACTIVE_VIEW_2D, WORKSPACE_ACTIVE_VIEW_3D}
+)
+WORKSPACE_KEY_SCHEMA_VERSION = "schema_version"
+WORKSPACE_KEY_MAIN_WINDOW = "main_window"
+WORKSPACE_KEY_TAKEOFF_WORKSPACE = "takeoff_workspace"
+WORKSPACE_KEY_PROJECT_WORKSPACE = "project_workspace"
+WORKSPACE_KEY_TOOLBAR_VISIBILITY = "toolbar_visibility"
+WORKSPACE_KEY_DETACHED_WINDOWS = "detached_windows"
+WORKSPACE_KEY_ACTIVE_VIEW = "active_view"
+WORKSPACE_KEY_SELECTED_NODE = "selected_node"
+WORKSPACE_KEY_KIND = "kind"
+WORKSPACE_KEY_FILE_PATH = "file_path"
+WORKSPACE_KEY_PROJECT_UID = "project_uid"
+WORKSPACE_KEY_BID_UID = "bid_uid"
+WORKSPACE_NODE_KIND_DATABASE = "database"
+WORKSPACE_NODE_KIND_PROJECT = "project"
+WORKSPACE_NODE_KIND_BID = "bid"
+WORKSPACE_SELECTED_NODE_KINDS = frozenset(
+    {
+        WORKSPACE_NODE_KIND_DATABASE,
+        WORKSPACE_NODE_KIND_PROJECT,
+        WORKSPACE_NODE_KIND_BID,
+    }
+)
+
 
 def _coerce_optional_str(value) -> Optional[str]:
     if value in (None, ""):
@@ -74,8 +102,8 @@ class MainWindowWorkspaceState:
 
 @dataclass
 class TakeoffWorkspaceState:
-    VALID_ACTIVE_VIEWS: ClassVar[frozenset[str]] = frozenset({"2d", "3d"})
-    active_view: str = "3d"
+    VALID_ACTIVE_VIEWS: ClassVar[frozenset[str]] = WORKSPACE_VALID_ACTIVE_VIEWS
+    active_view: str = WORKSPACE_ACTIVE_VIEW_3D
     view_2d_tab_visible: bool = True
     view_3d_tab_visible: bool = True
     conditions_sidebar_visible: bool = True
@@ -90,7 +118,7 @@ class TakeoffWorkspaceState:
 
     def to_dict(self) -> dict:
         return {
-            "active_view": self.active_view,
+            WORKSPACE_KEY_ACTIVE_VIEW: self.active_view,
             "view_2d_tab_visible": self.view_2d_tab_visible,
             "view_3d_tab_visible": self.view_3d_tab_visible,
             "conditions_sidebar_visible": self.conditions_sidebar_visible,
@@ -114,9 +142,11 @@ class TakeoffWorkspaceState:
     def from_dict(cls, data: dict) -> TakeoffWorkspaceState:
         if not isinstance(data, dict):
             return cls()
-        active_view = str(data.get("active_view", "3d")).lower()
+        active_view = str(
+            data.get(WORKSPACE_KEY_ACTIVE_VIEW, WORKSPACE_ACTIVE_VIEW_3D)
+        ).lower()
         if active_view not in cls.VALID_ACTIVE_VIEWS:
-            active_view = "3d"
+            active_view = WORKSPACE_ACTIVE_VIEW_3D
         return cls(
             active_view=active_view,
             view_2d_tab_visible=_coerce_bool(data.get("view_2d_tab_visible"), True),
@@ -159,31 +189,31 @@ class ProjectTreeSelectionState:
 
     def to_dict(self) -> dict:
         return {
-            "kind": self.kind,
-            "file_path": self.file_path,
-            "bid_uid": self.bid_uid,
-            "project_uid": self.project_uid,
+            WORKSPACE_KEY_KIND: self.kind,
+            WORKSPACE_KEY_FILE_PATH: self.file_path,
+            WORKSPACE_KEY_BID_UID: self.bid_uid,
+            WORKSPACE_KEY_PROJECT_UID: self.project_uid,
         }
 
     @classmethod
     def from_dict(cls, data) -> Optional[ProjectTreeSelectionState]:
         if not isinstance(data, dict):
             return None
-        kind = _coerce_optional_str(data.get("kind"))
-        file_path = _coerce_optional_str(data.get("file_path"))
-        if kind not in {"database", "project", "bid"} or not file_path:
+        kind = _coerce_optional_str(data.get(WORKSPACE_KEY_KIND))
+        file_path = _coerce_optional_str(data.get(WORKSPACE_KEY_FILE_PATH))
+        if kind not in WORKSPACE_SELECTED_NODE_KINDS or not file_path:
             return None
-        bid_uid = _coerce_optional_str(data.get("bid_uid"))
-        project_uid = _coerce_optional_str(data.get("project_uid"))
-        if kind == "bid" and not bid_uid:
+        bid_uid = _coerce_optional_str(data.get(WORKSPACE_KEY_BID_UID))
+        project_uid = _coerce_optional_str(data.get(WORKSPACE_KEY_PROJECT_UID))
+        if kind == WORKSPACE_NODE_KIND_BID and not bid_uid:
             return None
-        if kind == "project" and not project_uid:
+        if kind == WORKSPACE_NODE_KIND_PROJECT and not project_uid:
             return None
         return cls(
             kind=kind,
             file_path=file_path,
-            bid_uid=bid_uid if kind == "bid" else None,
-            project_uid=project_uid if kind == "project" else None,
+            bid_uid=bid_uid if kind == WORKSPACE_NODE_KIND_BID else None,
+            project_uid=(project_uid if kind == WORKSPACE_NODE_KIND_PROJECT else None),
         )
 
 
@@ -203,7 +233,7 @@ class ProjectWorkspaceState:
                 else None
             ),
             "group_by_job_status": self.group_by_job_status,
-            "selected_node": (
+            WORKSPACE_KEY_SELECTED_NODE: (
                 self.selected_node.to_dict() if self.selected_node else None
             ),
         }
@@ -221,7 +251,7 @@ class ProjectWorkspaceState:
             ),
             group_by_job_status=_coerce_bool(data.get("group_by_job_status"), False),
             selected_node=ProjectTreeSelectionState.from_dict(
-                data.get("selected_node")
+                data.get(WORKSPACE_KEY_SELECTED_NODE)
             ),
         )
 
@@ -334,36 +364,38 @@ class WorkspaceState:
 
     def to_dict(self) -> dict:
         return {
-            "schema_version": self.CURRENT_SCHEMA_VERSION,
-            "main_window": self.main_window.to_dict(),
-            "takeoff_workspace": self.takeoff_workspace.to_dict(),
-            "project_workspace": self.project_workspace.to_dict(),
-            "toolbar_visibility": self.toolbar_visibility.to_dict(),
-            "detached_windows": self.detached_windows.to_dict(),
+            WORKSPACE_KEY_SCHEMA_VERSION: self.CURRENT_SCHEMA_VERSION,
+            WORKSPACE_KEY_MAIN_WINDOW: self.main_window.to_dict(),
+            WORKSPACE_KEY_TAKEOFF_WORKSPACE: self.takeoff_workspace.to_dict(),
+            WORKSPACE_KEY_PROJECT_WORKSPACE: self.project_workspace.to_dict(),
+            WORKSPACE_KEY_TOOLBAR_VISIBILITY: self.toolbar_visibility.to_dict(),
+            WORKSPACE_KEY_DETACHED_WINDOWS: self.detached_windows.to_dict(),
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> WorkspaceState:
         if not isinstance(data, dict):
             return cls()
-        raw_schema = data.get("schema_version", cls.CURRENT_SCHEMA_VERSION)
+        raw_schema = data.get(WORKSPACE_KEY_SCHEMA_VERSION, cls.CURRENT_SCHEMA_VERSION)
         try:
             schema_version = max(1, int(raw_schema))
         except (TypeError, ValueError):
             schema_version = cls.CURRENT_SCHEMA_VERSION
         return cls(
             schema_version=schema_version,
-            main_window=MainWindowWorkspaceState.from_dict(data.get("main_window", {})),
+            main_window=MainWindowWorkspaceState.from_dict(
+                data.get(WORKSPACE_KEY_MAIN_WINDOW, {})
+            ),
             takeoff_workspace=TakeoffWorkspaceState.from_dict(
-                data.get("takeoff_workspace", {})
+                data.get(WORKSPACE_KEY_TAKEOFF_WORKSPACE, {})
             ),
             project_workspace=ProjectWorkspaceState.from_dict(
-                data.get("project_workspace", {})
+                data.get(WORKSPACE_KEY_PROJECT_WORKSPACE, {})
             ),
             toolbar_visibility=ToolbarVisibilityState.from_dict(
-                data.get("toolbar_visibility", {})
+                data.get(WORKSPACE_KEY_TOOLBAR_VISIBILITY, {})
             ),
             detached_windows=DetachedWindowsState.from_dict(
-                data.get("detached_windows", {})
+                data.get(WORKSPACE_KEY_DETACHED_WINDOWS, {})
             ),
         )

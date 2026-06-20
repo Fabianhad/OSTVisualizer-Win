@@ -2,6 +2,7 @@ import unittest
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.workspace_state import (
     TakeoffWorkspaceState,
+    WORKSPACE_VALID_ACTIVE_VIEWS,
     WorkspaceState,
 )
 
@@ -15,6 +16,9 @@ class DomainLifecycleTests(unittest.TestCase):
 
     def test_workspace_active_view_constants_are_immutable_shared_state(self):
         self.assertIsInstance(TakeoffWorkspaceState.VALID_ACTIVE_VIEWS, frozenset)
+        self.assertEqual(
+            TakeoffWorkspaceState.VALID_ACTIVE_VIEWS, WORKSPACE_VALID_ACTIVE_VIEWS
+        )
 
     def test_workspace_annotation_styles_round_trip_and_clamp_values(self):
         state = WorkspaceState.from_dict(

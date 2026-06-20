@@ -13,8 +13,23 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
 )
 from .....domain.entities import shape as shapes
-from .....domain.entities.annotation import BidAnnotation
+from .....domain.entities.annotation import (
+    ANNOTATION_TYPE_ARROW,
+    ANNOTATION_TYPE_CLOUD,
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_INK,
+    ANNOTATION_TYPE_LINE,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_OVAL,
+    ANNOTATION_TYPE_POLYGON,
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    BidAnnotation,
+)
 from .....domain.entities.condition import Condition
+from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.named_view import named_view_position_from_bounds
 from ....visualization.core.geometry.takeoff_geometry import (
     compute_count_vertices,
@@ -39,12 +54,15 @@ from ....visualization.pdf.pdfium_lock import pdfium_lock
 from .geometry_utils import polygon_is_valid, polyline_self_intersects
 from .handle_style import apply_takeoff_handle_style
 from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
+from ....modes.cursor import CURSOR_MODE_ANNOTATION_PLACE, CURSOR_MODE_SELECT
 
 logger = logging.getLogger(__name__)
+PDF_INTELLIGENCE_SOURCE_MAIN = "main"
+PDF_INTELLIGENCE_SOURCE_OVERLAY = "overlay"
 _RIGHT_ANGLE_ALIGNMENT_TOLERANCE = 1e-6
-_AREA_ANNOTATION_TYPES = frozenset({"polygon", "cloud"})
-_INK_ANNOTATION_TYPES = frozenset({"ink"})
-_POINT_ANNOTATION_TYPES = frozenset({"hotlink"})
+_AREA_ANNOTATION_TYPES = frozenset({ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD})
+_INK_ANNOTATION_TYPES = frozenset({ANNOTATION_TYPE_INK})
+_POINT_ANNOTATION_TYPES = frozenset({ANNOTATION_TYPE_HOTLINK})
 _DRAG_ANNOTATION_TYPES = (
     PLACEABLE_ANNOTATION_TYPES
     - _AREA_ANNOTATION_TYPES
@@ -210,12 +228,16 @@ class PlacementModeMixin:
         overlay_enabled = (
             page.image_show_mode in (1, 2)
             and bool(page.overlay_image_path)
-            and page.overlay_image_path.lower().endswith(".pdf")
+            and is_pdf_suffix(page.overlay_image_path)
         )
         if overlay_enabled:
-            return ("overlay", page.overlay_image_path, 0)
-        if page.image_path and page.image_path.lower().endswith(".pdf"):
-            return ("main", page.image_path, int(page.page_index or 0))
+            return (PDF_INTELLIGENCE_SOURCE_OVERLAY, page.overlay_image_path, 0)
+        if page.image_path and is_pdf_suffix(page.image_path):
+            return (
+                PDF_INTELLIGENCE_SOURCE_MAIN,
+                page.image_path,
+                int(page.page_index or 0),
+            )
         return None
 
     def _pdf_snap_cache_key(self):
@@ -268,7 +290,7 @@ class PlacementModeMixin:
         source_width_pts: float,
         source_height_pts: float,
     ) -> tuple[float, float]:
-        if source_layer != "overlay":
+        if source_layer != PDF_INTELLIGENCE_SOURCE_OVERLAY:
             return x, y
         page = self._current_page
         if page is None:
@@ -416,7 +438,7 @@ class PlacementModeMixin:
             if page_info is not None:
                 page_width_pts = float(page_info.effective_width_pts)
                 page_height_pts = float(page_info.effective_height_pts)
-            if source_layer != "overlay":
+            if source_layer != PDF_INTELLIGENCE_SOURCE_OVERLAY:
                 if page_width_pts <= 0.0:
                     page_width_pts = float(self._pdf_width_pts or page.width_pts or 0.0)
                 if page_height_pts <= 0.0:
@@ -513,7 +535,7 @@ class PlacementModeMixin:
 
     def refresh_place_preview_after_view_change(self) -> None:
         if self._last_mouse_vp_pos is not None and self._place_preview_items:
-            if self._cursor_mode == "annotation_place":
+            if self._cursor_mode == CURSOR_MODE_ANNOTATION_PLACE:
                 self.update_annotation_place_preview(
                     self.mapToScene(self._last_mouse_vp_pos)
                 )
@@ -715,7 +737,11 @@ class PlacementModeMixin:
             cursor_scene
         )
         x1, y1 = self._annotation_place_points[0]
-        if self._annotation_place_type in ("dimension", "line", "arrow"):
+        if self._annotation_place_type in (
+            ANNOTATION_TYPE_DIMENSION,
+            ANNOTATION_TYPE_LINE,
+            ANNOTATION_TYPE_ARROW,
+        ):
             x2, y2 = self._snap_angle_for_placement(x1, y1, ost_x, ost_y, snap_kind)
         else:
             x2, y2 = ost_x, ost_y
@@ -750,7 +776,7 @@ class PlacementModeMixin:
         path = QPainterPath()
         path.moveTo(x1, y1)
         path.lineTo(x2, y2)
-        if annotation_type == "arrow":
+        if annotation_type == ANNOTATION_TYPE_ARROW:
             arrow_size = max(width * 20.0, 24.0)
             angle = math.atan2(y2 - y1, x2 - x1)
             arrow_angle = math.radians(30.0)
@@ -783,11 +809,11 @@ class PlacementModeMixin:
             abs(y2 - y1),
         )
         path = QPainterPath()
-        if annotation_type == "oval":
+        if annotation_type == ANNOTATION_TYPE_OVAL:
             path.addEllipse(rect)
         else:
             path.addRect(rect)
-        if annotation_type == "text":
+        if annotation_type == ANNOTATION_TYPE_TEXT:
             self._add_dashed_path_preview(
                 path,
                 _TEXT_SELECTION_OUTLINE_COLOR,
@@ -796,7 +822,7 @@ class PlacementModeMixin:
                 pen_width=2.0,
             )
             return
-        if annotation_type == "namedview":
+        if annotation_type == ANNOTATION_TYPE_NAMED_VIEW:
             self._add_annotation_path_preview(
                 path,
                 color,
@@ -804,7 +830,7 @@ class PlacementModeMixin:
                 page_transform,
             )
             return
-        if annotation_type == "highlight":
+        if annotation_type == ANNOTATION_TYPE_HIGHLIGHT:
             item = QGraphicsPathItem()
             item.setPath(path)
             highlight_color = QColor(color)
@@ -835,7 +861,7 @@ class PlacementModeMixin:
         if len(scene_points) < 2:
             return
         path = QPainterPath()
-        if annotation_type == "cloud" and len(scene_points) >= 3:
+        if annotation_type == ANNOTATION_TYPE_CLOUD and len(scene_points) >= 3:
             segments = create_cloud_path_points(scene_points)
             for idx, (_start, cp1, cp2, end) in enumerate(segments):
                 if idx == 0:
@@ -906,11 +932,11 @@ class PlacementModeMixin:
             )
             if math.hypot(position[2] - position[0], position[3] - position[1]) <= 1e-9:
                 return
-            if annotation_type == "dimension":
-                color_hex, width = annotation_default_style("dimension")
+            if annotation_type == ANNOTATION_TYPE_DIMENSION:
+                color_hex, width = annotation_default_style(ANNOTATION_TYPE_DIMENSION)
                 annotation = BidAnnotation(
                     uid="__dimension_preview__",
-                    annotation_type="dimension",
+                    annotation_type=ANNOTATION_TYPE_DIMENSION,
                     page_uid=self._current_bid_page_uid or "",
                     position=position,
                     color=color_hex,
@@ -936,7 +962,7 @@ class PlacementModeMixin:
                 if text_item is not None:
                     text_item.setZValue(16)
                     self._add_preview_item(text_item, page_transform)
-            elif annotation_type in ("line", "arrow"):
+            elif annotation_type in (ANNOTATION_TYPE_LINE, ANNOTATION_TYPE_ARROW):
                 color, width = self._annotation_preview_style()
                 self._add_linear_annotation_preview(
                     annotation_type, position, color, width, page_transform
@@ -1147,19 +1173,19 @@ class PlacementModeMixin:
             if distance < min_len:
                 return False
             if annotation_type in (
-                "rect",
-                "oval",
-                "text",
-                "highlight",
-                "namedview",
+                ANNOTATION_TYPE_RECT,
+                ANNOTATION_TYPE_OVAL,
+                ANNOTATION_TYPE_TEXT,
+                ANNOTATION_TYPE_HIGHLIGHT,
+                ANNOTATION_TYPE_NAMED_VIEW,
             ) and (
                 abs(position[2] - position[0]) < min_len
                 or abs(position[3] - position[1]) < min_len
             ):
                 return False
-            if annotation_type == "text":
+            if annotation_type == ANNOTATION_TYPE_TEXT:
                 position = self._text_position_from_drag_corners(position)
-            elif annotation_type == "namedview":
+            elif annotation_type == ANNOTATION_TYPE_NAMED_VIEW:
                 position = named_view_position_from_bounds(*position[:4])
         elif annotation_type in _INK_ANNOTATION_TYPES:
             points = self._points_from_position(position)
@@ -1184,9 +1210,9 @@ class PlacementModeMixin:
         self._annotation_place_points = []
         self._annotation_place_dragging = False
         self._annotation_area_rect_dragging = False
-        if annotation_type == "text":
+        if annotation_type == ANNOTATION_TYPE_TEXT:
             return bool(self.begin_text_annotation_draft(position, page_uid))
-        if annotation_type == "namedview":
+        if annotation_type == ANNOTATION_TYPE_NAMED_VIEW:
             return bool(self.begin_named_view_draft(position, page_uid))
         self.annotation_created.emit(annotation_type, position, page_uid)
         return True
@@ -1785,7 +1811,7 @@ class PlacementModeMixin:
         self._place_all_condition_uids = []
         self._place_session_uid = None
         if was_active:
-            self._apply_cursor_mode("select")
+            self._apply_cursor_mode(CURSOR_MODE_SELECT)
             self.place_exited.emit()
 
     @staticmethod

@@ -9,6 +9,16 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsTextItem,
 )
+from .....domain.entities.annotation import (
+    ANNOTATION_TYPE_ARROW,
+    ANNOTATION_TYPE_CLOUD,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_OVAL,
+    ANNOTATION_TYPE_POLYGON,
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+)
 from ....visualization.core.geometry.takeoff_geometry import compute_line_angle
 from ....visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
@@ -48,7 +58,7 @@ class DragHandlerMixin:
         path = QPainterPath()
         if not area_pts:
             return path
-        if annotation_type == "cloud" and len(area_pts) >= 3:
+        if annotation_type == ANNOTATION_TYPE_CLOUD and len(area_pts) >= 3:
             segments = create_cloud_path_points(area_pts)
             for idx, (_start, cp1, cp2, end) in enumerate(segments):
                 if idx == 0:
@@ -471,7 +481,7 @@ class DragHandlerMixin:
                         new_path = QPainterPath()
                         new_path.moveTo(x1, y1)
                         new_path.lineTo(x2, y2)
-                        if ann.annotation_type == "arrow":
+                        if ann.annotation_type == ANNOTATION_TYPE_ARROW:
                             arrow_size = max(ann.width * 20, 24.0)
                             angle = math.atan2(y2 - y1, x2 - x1)
                             arrow_angle = math.radians(30)
@@ -576,8 +586,14 @@ class DragHandlerMixin:
         atype = ann.annotation_type
         n_h = len(self._handle_infos)
         is_body = self._drag_handle_index == -1
-        if atype in ("text", "rect", "oval", "highlight", "namedview"):
-            if atype == "text" and len(new_pos) >= 4:
+        if atype in (
+            ANNOTATION_TYPE_TEXT,
+            ANNOTATION_TYPE_RECT,
+            ANNOTATION_TYPE_OVAL,
+            ANNOTATION_TYPE_HIGHLIGHT,
+            ANNOTATION_TYPE_NAMED_VIEW,
+        ):
+            if atype == ANNOTATION_TYPE_TEXT and len(new_pos) >= 4:
                 cx, cy, w, h = new_pos[0], new_pos[1], new_pos[2], new_pos[3]
                 bx1, by1, bx2, by2 = cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
             elif len(new_pos) >= 4:
@@ -595,7 +611,10 @@ class DragHandlerMixin:
             if not is_body:
                 tx = cs.transform_vertices_to_2d([bx1, by1, bx2, by2])
                 self._rebuild_ann_shape_path(atype, uid, tx[0], tx[1], tx[2], tx[3])
-        elif atype in ("polygon", "cloud") and len(new_pos) >= 4:
+        elif (
+            atype in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD)
+            and len(new_pos) >= 4
+        ):
             tx = cs.transform_vertices_to_2d(new_pos)
             area_pts = [(tx[i], tx[i + 1]) for i in range(0, len(tx) - 1, 2)]
             is_vertex_drag = self._drag_handle_index >= 0 and len(area_pts) >= 3
@@ -681,7 +700,7 @@ class DragHandlerMixin:
         rect = QRectF(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
         if isinstance(main, QGraphicsPathItem):
             new_path = QPainterPath()
-            if atype == "oval":
+            if atype == ANNOTATION_TYPE_OVAL:
                 new_path.addEllipse(rect)
             else:
                 new_path.addRect(rect)

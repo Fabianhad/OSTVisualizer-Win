@@ -3,6 +3,17 @@ import logging
 import tempfile
 import unittest
 from pathlib import Path
+from ost_visualizer.domain.entities.workspace_state import (
+    WORKSPACE_ACTIVE_VIEW_2D,
+    WORKSPACE_KEY_ACTIVE_VIEW,
+    WORKSPACE_KEY_BID_UID,
+    WORKSPACE_KEY_FILE_PATH,
+    WORKSPACE_KEY_KIND,
+    WORKSPACE_KEY_PROJECT_WORKSPACE,
+    WORKSPACE_KEY_SELECTED_NODE,
+    WORKSPACE_KEY_TAKEOFF_WORKSPACE,
+    WORKSPACE_NODE_KIND_BID,
+)
 from ost_visualizer.mcp_server.registry import DatabaseRegistry
 
 
@@ -66,12 +77,14 @@ class DatabaseRegistryTests(unittest.TestCase):
             (root / "workspace_state.json").write_text(
                 json.dumps(
                     {
-                        "takeoff_workspace": {"active_view": "2d"},
-                        "project_workspace": {
-                            "selected_node": {
-                                "kind": "bid",
-                                "file_path": str(db_path),
-                                "bid_uid": "bid-1",
+                        WORKSPACE_KEY_TAKEOFF_WORKSPACE: {
+                            WORKSPACE_KEY_ACTIVE_VIEW: WORKSPACE_ACTIVE_VIEW_2D
+                        },
+                        WORKSPACE_KEY_PROJECT_WORKSPACE: {
+                            WORKSPACE_KEY_SELECTED_NODE: {
+                                WORKSPACE_KEY_KIND: WORKSPACE_NODE_KIND_BID,
+                                WORKSPACE_KEY_FILE_PATH: str(db_path),
+                                WORKSPACE_KEY_BID_UID: "bid-1",
                             }
                         },
                     }
@@ -80,9 +93,9 @@ class DatabaseRegistryTests(unittest.TestCase):
             )
             registry = DatabaseRegistry(app_data_dir=root, logger=self._quiet_logger())
             selection = registry.workspace_selection
-            self.assertEqual(selection.selected_node_kind, "bid")
+            self.assertEqual(selection.selected_node_kind, WORKSPACE_NODE_KIND_BID)
             self.assertEqual(selection.bid_uid, "bid-1")
-            self.assertEqual(selection.active_view, "2d")
+            self.assertEqual(selection.active_view, WORKSPACE_ACTIVE_VIEW_2D)
             self.assertEqual(selection.database_id, registry.databases[0].database_id)
 
 

@@ -3,6 +3,7 @@ from collections import OrderedDict
 from typing import Optional
 from PySide6.QtCore import QRectF
 from PySide6.QtGui import QColor, QImage, QPainter, QTransform
+from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
 from ...utils.image_effects import tint_image
@@ -54,7 +55,7 @@ class CompositeRenderer:
             return None
         if cancelled_check and cancelled_check():
             return None
-        is_overlay_pdf = page.overlay_image_path.lower().endswith(".pdf")
+        is_overlay_pdf = is_pdf_suffix(page.overlay_image_path)
         overlay_scale = 2.0 if is_overlay_pdf else 1.0
         blue_tinted = self._page_cache.get_tinted_page(
             page.overlay_image_path,
@@ -228,7 +229,7 @@ class CompositeRenderer:
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         painter.drawImage(0, 0, red_tinted)
         if page.overlay_image_path:
-            if page.overlay_image_path.lower().endswith(".pdf"):
+            if is_pdf_suffix(page.overlay_image_path):
                 self._draw_overlay_pdf_frame(
                     painter,
                     page,

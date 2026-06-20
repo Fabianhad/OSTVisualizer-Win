@@ -2,6 +2,27 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 MCP_BRIDGE_SERVER_NAME = "OSTVisualizerMcpBridge.v1"
+MCP_STATUS_OK = "ok"
+MCP_STATUS_EMPTY = "empty"
+MCP_STATUS_TRUNCATED = "truncated"
+MCP_STATUS_NOT_CONFIGURED = "not_configured"
+MCP_STATUS_CONFIGURED = "configured"
+MCP_STATUS_NOT_PDF = "not_pdf"
+MCP_STATUS_NOT_REQUESTED = "not_requested"
+MCP_STATUS_UNAVAILABLE = "unavailable"
+MCP_STATUS_DEFERRED = "deferred"
+MCP_PDF_SOURCE_AUTO = "auto"
+MCP_PDF_SOURCE_MAIN = "main"
+MCP_PDF_SOURCE_OVERLAY = "overlay"
+MCP_PDF_SOURCES = frozenset(
+    {MCP_PDF_SOURCE_AUTO, MCP_PDF_SOURCE_MAIN, MCP_PDF_SOURCE_OVERLAY}
+)
+MCP_PAGE_SOURCE_BLANK = "blank"
+MCP_PAGE_SOURCE_MAIN = MCP_PDF_SOURCE_MAIN
+MCP_PAGE_SOURCE_OVERLAY = MCP_PDF_SOURCE_OVERLAY
+MCP_PAGE_SOURCE_COMPOSITE = "composite"
+MCP_OVERLAY_KIND_PDF = "pdf"
+MCP_OVERLAY_KIND_RASTER = "raster"
 
 
 @dataclass
@@ -44,7 +65,7 @@ class McpPageDto:
     sequence: int = 0
     folder_uid: Optional[str] = None
     image_basename: Optional[str] = None
-    image_path_status: str = "not_configured"
+    image_path_status: str = MCP_STATUS_NOT_CONFIGURED
     is_pdf: bool = False
     page_index: int = 0
     width_pts: float = 0.0
@@ -54,12 +75,12 @@ class McpPageDto:
     rotation: int = 0
     layer_visible: bool = True
     overlay_basename: Optional[str] = None
-    overlay_path_status: str = "not_configured"
+    overlay_path_status: str = MCP_STATUS_NOT_CONFIGURED
     has_overlay: bool = False
-    source_kind: str = "blank"
+    source_kind: str = MCP_PAGE_SOURCE_BLANK
     page_width: float = 0.0
     page_height: float = 0.0
-    pdf_metadata_status: str = "not_requested"
+    pdf_metadata_status: str = MCP_STATUS_NOT_REQUESTED
     pdf_page_count: int = 0
     media_width_pts: float = 0.0
     media_height_pts: float = 0.0
@@ -71,7 +92,7 @@ class McpPageDto:
     character_count: int = 0
     snap_line_count: int = 0
     snap_point_count: int = 0
-    overlay_kind: str = "not_configured"
+    overlay_kind: str = MCP_STATUS_NOT_CONFIGURED
     overlay_transform_summary: Optional["McpPdfOverlayTransformDto"] = None
     takeoff_count: int = 0
 
@@ -274,7 +295,7 @@ class McpPageContextDto:
     source_file_name: str = ""
     has_pdf_source: bool = False
     has_overlay: bool = False
-    page_text_status: str = "deferred"
+    page_text_status: str = MCP_STATUS_DEFERRED
 
 
 @dataclass
@@ -374,14 +395,14 @@ class McpPageOverlaySummaryDto:
     page_uid: str
     page_name: str
     sheet_no: str
-    source_kind: str = "blank"
+    source_kind: str = MCP_PAGE_SOURCE_BLANK
     image_basename: Optional[str] = None
-    image_path_status: str = "not_configured"
+    image_path_status: str = MCP_STATUS_NOT_CONFIGURED
     is_pdf: bool = False
     has_overlay: bool = False
     overlay_basename: Optional[str] = None
-    overlay_path_status: str = "not_configured"
-    overlay_kind: str = "not_configured"
+    overlay_path_status: str = MCP_STATUS_NOT_CONFIGURED
+    overlay_kind: str = MCP_STATUS_NOT_CONFIGURED
     show_mode: int = 0
     show_original: bool = True
     show_overlay: bool = False

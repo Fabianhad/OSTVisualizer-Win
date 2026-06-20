@@ -8,6 +8,7 @@ from ....domain.entities.condition_folder import BidConditionFolder
 from ....domain.entities.layer import (
     BidLayer,
     BidLayers,
+    IMAGE_LAYER_NAME,
     Layer,
     get_layer_uid_by_name,
     is_layer_visible,
@@ -481,7 +482,7 @@ class BidDataReaderMixin:
         schema: MdbSchemaInspector,
     ) -> BidPages:
         bid_pages: BidPages = {}
-        image_layer_uid = get_layer_uid_by_name(bid_layers, "Image")
+        image_layer_uid = get_layer_uid_by_name(bid_layers, IMAGE_LAYER_NAME)
         image_layer_visible = is_layer_visible(bid_layers, image_layer_uid)
         page_select = ", ".join(
             [

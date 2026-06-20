@@ -71,6 +71,7 @@
 - Fixed the plan-view snap cursor marker staying visible after entering rotation mode with Ctrl+R.
 - Fixed takeoff-driven condition selection being cleared after switching pages.
 - Fixed Apply in the Edit Condition dialog visually switching the Conditions sidebar back to a selected takeoff's condition.
+- Fixed layer visibility toggles to use loaded layer identity/state instead of sidebar display names, keeping custom layer, Image layer, Conditions sidebar, and dialog checkbox updates on the same deferred visibility path.
 - Loaded existing named views from older OST databases whose `BidNamedViews` table does not include the newer `Color` column, restoring named-view lists and hotlink navigation.
 - Kept newly placed annotations visible while the Annotation/View window is open by refreshing detached windows against their target page UID.
 - Constrained detached Annotation/View window startup geometry and fullscreen restores to one screen, avoiding multi-monitor spanning restores.

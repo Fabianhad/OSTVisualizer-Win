@@ -5,6 +5,18 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
+from ..domain.entities.workspace_state import (
+    WORKSPACE_ACTIVE_VIEW_3D,
+    WORKSPACE_KEY_ACTIVE_VIEW,
+    WORKSPACE_KEY_BID_UID,
+    WORKSPACE_KEY_FILE_PATH,
+    WORKSPACE_KEY_KIND,
+    WORKSPACE_KEY_PROJECT_UID,
+    WORKSPACE_KEY_PROJECT_WORKSPACE,
+    WORKSPACE_KEY_SELECTED_NODE,
+    WORKSPACE_KEY_TAKEOFF_WORKSPACE,
+    WORKSPACE_VALID_ACTIVE_VIEWS,
+)
 from ..application.services.mcp_read_service import McpDatabaseRef
 from ..infrastructure.app_paths import get_app_data_dir
 
@@ -16,7 +28,7 @@ class McpWorkspaceSelection:
     database_id: Optional[str] = None
     project_uid: Optional[str] = None
     bid_uid: Optional[str] = None
-    active_view: str = "3d"
+    active_view: str = WORKSPACE_ACTIVE_VIEW_3D
 
 
 class DatabaseRegistry:
@@ -78,24 +90,30 @@ class DatabaseRegistry:
         payload = self._read_json(self._app_data_dir / "workspace_state.json")
         if not isinstance(payload, dict):
             return McpWorkspaceSelection()
-        takeoff = payload.get("takeoff_workspace", {})
-        project = payload.get("project_workspace", {})
-        selected = project.get("selected_node", {}) if isinstance(project, dict) else {}
+        takeoff = payload.get(WORKSPACE_KEY_TAKEOFF_WORKSPACE, {})
+        project = payload.get(WORKSPACE_KEY_PROJECT_WORKSPACE, {})
+        selected = (
+            project.get(WORKSPACE_KEY_SELECTED_NODE, {})
+            if isinstance(project, dict)
+            else {}
+        )
         if not isinstance(selected, dict):
             selected = {}
-        file_path = selected.get("file_path")
+        file_path = selected.get(WORKSPACE_KEY_FILE_PATH)
         database_id = (
             self.get_database_id_for_path(str(file_path)) if file_path else None
         )
-        active_view = str(takeoff.get("active_view", "3d")).lower()
-        if active_view not in {"2d", "3d"}:
-            active_view = "3d"
+        active_view = str(
+            takeoff.get(WORKSPACE_KEY_ACTIVE_VIEW, WORKSPACE_ACTIVE_VIEW_3D)
+        ).lower()
+        if active_view not in WORKSPACE_VALID_ACTIVE_VIEWS:
+            active_view = WORKSPACE_ACTIVE_VIEW_3D
         return McpWorkspaceSelection(
-            selected_node_kind=selected.get("kind"),
+            selected_node_kind=selected.get(WORKSPACE_KEY_KIND),
             file_path=str(file_path) if file_path else None,
             database_id=database_id,
-            project_uid=selected.get("project_uid") or None,
-            bid_uid=selected.get("bid_uid") or None,
+            project_uid=selected.get(WORKSPACE_KEY_PROJECT_UID) or None,
+            bid_uid=selected.get(WORKSPACE_KEY_BID_UID) or None,
             active_view=active_view,
         )
 

@@ -4,6 +4,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QGraphicsView
 from shiboken6 import isValid
+from ....modes.cursor import CURSOR_MODE_ANNOTATION_PLACE, CURSOR_MODE_PLACE
 
 _DISPLAY_ZOOM_RATIO = 0.333
 
@@ -17,7 +18,7 @@ class ZoomHandlerMixin:
             self.viewport().update()
         if (
             (dx or dy)
-            and self._cursor_mode in ("place", "annotation_place")
+            and self._cursor_mode in (CURSOR_MODE_PLACE, CURSOR_MODE_ANNOTATION_PLACE)
             and self._place_preview_items
         ):
             self.refresh_place_preview_after_view_change()

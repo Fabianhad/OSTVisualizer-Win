@@ -49,6 +49,7 @@ from ....application.interfaces.i_page_rendering_service import IPageRenderingSe
 from ....domain.entities.annotation import BidAnnotation, int_color_to_hex
 from ....domain.entities.condition import Condition
 from ....domain.entities.config import Config
+from ....domain.entities.file_extensions import is_pdf_suffix
 from ....domain.entities.identity_refs import BidRef
 from ....domain.entities.page import Page
 from ....domain.entities.takeoff import Takeoff
@@ -87,11 +88,32 @@ from .components.graphics_items import (
     TileGraphicsItem,
 )
 from .components.input_handler import InputHandlerMixin
-from .components.page_loader import PageLoaderMixin
+from .components.page_loader import (
+    VISUAL_KIND_COMPOSITE,
+    VISUAL_KIND_OVERLAY,
+    VISUAL_KIND_PAGE,
+    PageLoaderMixin,
+)
 from .components.pdf_text import PdfTextChar, PdfTextRect, PdfTextRun, PdfTextSelection
-from .components.placement_mode import PlacementModeMixin
+from .components.placement_mode import (
+    PDF_INTELLIGENCE_SOURCE_MAIN,
+    PDF_INTELLIGENCE_SOURCE_OVERLAY,
+    PlacementModeMixin,
+)
 from .components.selection_manager import SelectionManagerMixin
 from .components.zoom_handler import ZoomHandlerMixin
+from ...modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_MOVE_OVERLAY,
+    CURSOR_MODE_MOVE_OVERLAY_HANDLE,
+    CURSOR_MODE_PASTE_BACKOUT,
+    CURSOR_MODE_PLACE,
+    CURSOR_MODE_ROTATE,
+    CURSOR_MODE_SELECT,
+    CURSOR_MODE_SLOPE_ROTATE,
+    CURSOR_MODE_ZOOM,
+    PASSIVE_MOUSE_TRACKING_CURSOR_MODES,
+)
 
 SLOPE_ROTATE_HANDLE_HEX = "#2f9e44"
 SLOPE_ROTATE_HANDLE_RGB = (47, 158, 68)
@@ -145,17 +167,6 @@ def _rects_nearly_equal(
 
 
 _SCENE_RECT_MARGIN = 50.0
-_PASSIVE_MOUSE_TRACKING_CURSOR_MODES = frozenset(
-    {
-        "place",
-        "annotation_place",
-        "paste_backout",
-        "rotate",
-        "slope_rotate",
-        "move_overlay_handle",
-        "move_overlay",
-    }
-)
 
 
 class TakeoffPlanView(
@@ -272,7 +283,7 @@ class TakeoffPlanView(
         self._panning = False
         self._last_pan_point = None
         self._pan_view_changed = False
-        self._cursor_mode: str = "select"
+        self._cursor_mode: str = CURSOR_MODE_SELECT
         self._right_pan_active: bool = False
         self._right_pan_press_pos: Optional[QtCore.QPoint] = None
         self._right_pan_press_timer = QtCore.QElapsedTimer()
@@ -280,7 +291,7 @@ class TakeoffPlanView(
         self._suppress_next_context_menu: bool = False
         self._point_annotation_release_pending: bool = False
         self._ctrl_held: bool = False
-        self._persistent_cursor_mode: str = "select"
+        self._persistent_cursor_mode: str = CURSOR_MODE_SELECT
         self._pre_zoom_persistent_mode: Optional[str] = None
         self._pre_pan_persistent_mode: Optional[str] = None
         self._zoom_cursor: QCursor = QCursor(Qt.CursorShape.CrossCursor)
@@ -352,7 +363,7 @@ class TakeoffPlanView(
         self._select_band_origin: Optional[QtCore.QPointF] = None
         self._select_band_active: bool = False
         self._select_band_dragged: bool = False
-        self._roping_selection_method: str = "touching"
+        self._roping_selection_method: str = Config.DEFAULT_ROPING_SELECTION_METHOD
         self._disable_high_resolution_images: bool = False
         self._intelligent_paste_enabled: bool = True
         self._use_full_window_crosshairs: bool = False
@@ -2374,7 +2385,7 @@ class TakeoffPlanView(
     @property
     def is_rotate_mode_active(self) -> bool:
         return (
-            self._cursor_mode in ("rotate", "slope_rotate")
+            self._cursor_mode in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE)
             or self._rotation_drag_active
         )
 
@@ -2475,12 +2486,12 @@ class TakeoffPlanView(
         page = self._current_page
         if page is None:
             return []
-        source_layer = "main"
+        source_layer = PDF_INTELLIGENCE_SOURCE_MAIN
         if source is not None:
             source_layer = source[0]
         page_width_pts = float(self._pdf_width_pts or page.width_pts or 0.0)
         page_height_pts = float(self._pdf_height_pts or page.height_pts or 0.0)
-        if source_layer == "overlay":
+        if source_layer == PDF_INTELLIGENCE_SOURCE_OVERLAY:
             page_width_pts = 0.0
             page_height_pts = 0.0
             if page_info["pdf_width"] and page_info["pdf_height"]:
@@ -2567,7 +2578,7 @@ class TakeoffPlanView(
         raw_height_pts: float,
         intrinsic_rotation: int,
         view_scale: float,
-        source_layer: str = "main",
+        source_layer: str = PDF_INTELLIGENCE_SOURCE_MAIN,
         source_width_pts: float = 0.0,
         source_height_pts: float = 0.0,
     ) -> Optional[Tuple[float, float, float, float]]:
@@ -2587,7 +2598,7 @@ class TakeoffPlanView(
                 right, top, raw_width_pts, raw_height_pts, intrinsic_rotation
             ),
         )
-        if source_layer == "overlay":
+        if source_layer == PDF_INTELLIGENCE_SOURCE_OVERLAY:
             corners = tuple(
                 self._pdf_intelligence_point_to_page_point(
                     source_layer,
@@ -2613,7 +2624,7 @@ class TakeoffPlanView(
         if (
             not self._selection_enabled
             or not self._pdf_text_runs
-            or self._cursor_mode != "select"
+            or self._cursor_mode != CURSOR_MODE_SELECT
         ):
             return None
         local = self._pdf_text_page_local_point(scene_pos)
@@ -2626,7 +2637,7 @@ class TakeoffPlanView(
         if (
             not self._selection_enabled
             or not self._pdf_text_runs
-            or self._cursor_mode != "select"
+            or self._cursor_mode != CURSOR_MODE_SELECT
         ):
             return None
         local = self._pdf_text_page_local_point(scene_pos)
@@ -3271,8 +3282,8 @@ class TakeoffPlanView(
         self._update_viewport_mouse_tracking()
 
     def _cursor_mode_needs_passive_mouse_tracking(self) -> bool:
-        return self._cursor_mode in _PASSIVE_MOUSE_TRACKING_CURSOR_MODES or (
-            self._cursor_mode == "select" and bool(self._pdf_text_runs)
+        return self._cursor_mode in PASSIVE_MOUSE_TRACKING_CURSOR_MODES or (
+            self._cursor_mode == CURSOR_MODE_SELECT and bool(self._pdf_text_runs)
         )
 
     def _update_viewport_mouse_tracking(self) -> None:
@@ -3314,7 +3325,7 @@ class TakeoffPlanView(
         super().drawForeground(painter, rect)
         if (
             not self._use_full_window_crosshairs
-            or self._cursor_mode != "place"
+            or self._cursor_mode != CURSOR_MODE_PLACE
             or self._last_mouse_vp_pos is None
         ):
             return
@@ -3380,7 +3391,7 @@ class TakeoffPlanView(
         self.paste_requested.emit()
 
     def select_all(self) -> None:
-        if not self._selection_enabled or self._cursor_mode != "select":
+        if not self._selection_enabled or self._cursor_mode != CURSOR_MODE_SELECT:
             return
         all_uids = {
             uid
@@ -3535,8 +3546,8 @@ class TakeoffPlanView(
         )
         if not self._set_overlay_move_handle_pos(center):
             return False
-        self._apply_cursor_mode("move_overlay_handle")
-        self.cursor_mode_change_requested.emit("move_overlay_handle")
+        self._apply_cursor_mode(CURSOR_MODE_MOVE_OVERLAY_HANDLE)
+        self.cursor_mode_change_requested.emit(CURSOR_MODE_MOVE_OVERLAY_HANDLE)
         self._update_cursor()
         return True
 
@@ -3557,9 +3568,12 @@ class TakeoffPlanView(
         self._overlay_move_dragging = False
         self._remove_overlay_move_handle()
         self._clear_overlay_move_preview_visuals(restore_normal=True)
-        if self._cursor_mode in ("move_overlay", "move_overlay_handle"):
-            self._apply_cursor_mode("select")
-            self.cursor_mode_change_requested.emit("select")
+        if self._cursor_mode in (
+            CURSOR_MODE_MOVE_OVERLAY,
+            CURSOR_MODE_MOVE_OVERLAY_HANDLE,
+        ):
+            self._apply_cursor_mode(CURSOR_MODE_SELECT)
+            self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
         self._update_cursor()
 
     def _overlay_rect_tuple(
@@ -3782,7 +3796,7 @@ class TakeoffPlanView(
         page = self._current_page
         if page is None or not page.overlay_image_path:
             return self._scene_scale
-        if not page.overlay_image_path.lower().endswith(".pdf"):
+        if not is_pdf_suffix(page.overlay_image_path):
             return 1.0
         return self._scene_scale
 
@@ -3843,7 +3857,7 @@ class TakeoffPlanView(
         )
         if page is None:
             return
-        if page.overlay_image_path and page.overlay_image_path.lower().endswith(".pdf"):
+        if page.overlay_image_path and is_pdf_suffix(page.overlay_image_path):
             if render_scale > 0:
                 self._overlay_pdf_width_pts = float(result.image.width()) / render_scale
                 self._overlay_pdf_height_pts = (
@@ -3990,8 +4004,8 @@ class TakeoffPlanView(
         self._overlay_move_drag_start_rect = rect
         self._overlay_move_dragging = True
         self._activate_overlay_move_preview_visuals()
-        self._apply_cursor_mode("move_overlay")
-        self.cursor_mode_change_requested.emit("move_overlay")
+        self._apply_cursor_mode(CURSOR_MODE_MOVE_OVERLAY)
+        self.cursor_mode_change_requested.emit(CURSOR_MODE_MOVE_OVERLAY)
         self._update_cursor(vp_pos)
         return True
 
@@ -4031,8 +4045,8 @@ class TakeoffPlanView(
         self._overlay_move_drag_start_rect = None
         self._overlay_move_dragging = False
         self._set_overlay_move_handle_pos(scene_pos)
-        self._apply_cursor_mode("move_overlay_handle")
-        self.cursor_mode_change_requested.emit("move_overlay_handle")
+        self._apply_cursor_mode(CURSOR_MODE_MOVE_OVERLAY_HANDLE)
+        self.cursor_mode_change_requested.emit(CURSOR_MODE_MOVE_OVERLAY_HANDLE)
         self._update_cursor(self.mapFromScene(scene_pos))
 
     def _commit_overlay_move(self) -> None:
@@ -4070,8 +4084,8 @@ class TakeoffPlanView(
             rollback_failed_save()
             return
         self._accept_overlay_move_preview_rect(preview_rect)
-        self._apply_cursor_mode("select")
-        self.cursor_mode_change_requested.emit("select")
+        self._apply_cursor_mode(CURSOR_MODE_SELECT)
+        self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
         self._update_cursor()
         if result.reload_success:
             self._force_reload_current_page_visuals()
@@ -4349,11 +4363,11 @@ class TakeoffPlanView(
         if not page.layer_visible:
             expected_visual_kind = None
         elif strategy.load_composite:
-            expected_visual_kind = "composite"
+            expected_visual_kind = VISUAL_KIND_COMPOSITE
         elif strategy.load_main:
-            expected_visual_kind = "page"
+            expected_visual_kind = VISUAL_KIND_PAGE
         elif strategy.load_overlay:
-            expected_visual_kind = "overlay"
+            expected_visual_kind = VISUAL_KIND_OVERLAY
         else:
             expected_visual_kind = None
         has_loaded_visual_layer = (
@@ -4406,7 +4420,7 @@ class TakeoffPlanView(
         self._current_bid_ref = resolved_bid_ref
         self.resetTransform()
         self._scene.setSceneRect(QtCore.QRectF())
-        if not preserve_place and saved_cursor != "place":
+        if not preserve_place and saved_cursor != CURSOR_MODE_PLACE:
             self._apply_cursor_mode(saved_cursor)
             self.cursor_mode_change_requested.emit(saved_cursor)
         self._current_takeoffs = {t.uid: t for t in takeoffs}
@@ -4423,7 +4437,7 @@ class TakeoffPlanView(
         self._current_flip_x = page.flip_x
         self._current_flip_y = page.flip_y
         has_image_file = bool(page.has_image and page.image_path)
-        is_pdf_image = has_image_file and page.image_path.lower().endswith(".pdf")
+        is_pdf_image = has_image_file and is_pdf_suffix(page.image_path)
         self._scene_scale = strategy.view_scale
         rotation = page.rotation
         self._can_zoom_rerender = (
@@ -4686,16 +4700,16 @@ class TakeoffPlanView(
         self._restore_selected_condition_text_label_toolbar(
             saved_condition_label_target
         )
-        if self._cursor_mode == "rotate":
+        if self._cursor_mode == CURSOR_MODE_ROTATE:
             if not (
                 self._selected_uids and self._create_rotate_handle(self._selected_uids)
             ):
-                self._apply_cursor_mode("select")
-                self.cursor_mode_change_requested.emit("select")
-        elif self._cursor_mode == "slope_rotate":
+                self._apply_cursor_mode(CURSOR_MODE_SELECT)
+                self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
+        elif self._cursor_mode == CURSOR_MODE_SLOPE_ROTATE:
             if not self._create_slope_rotate_handle():
-                self._apply_cursor_mode("select")
-                self.cursor_mode_change_requested.emit("select")
+                self._apply_cursor_mode(CURSOR_MODE_SELECT)
+                self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
         self._update_cursor()
 
     def refresh_current_page_overlays(
@@ -4816,8 +4830,8 @@ class TakeoffPlanView(
         self._dirty_rotations.clear()
         self._rotation_before_edit.clear()
         if not preserve_place_session:
-            self._apply_cursor_mode("select")
-            self.cursor_mode_change_requested.emit("select")
+            self._apply_cursor_mode(CURSOR_MODE_SELECT)
+            self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
         if self._paste_backout_active:
             self._paste_backout_active = False
             self._paste_backout_sources = []
@@ -4861,19 +4875,19 @@ class TakeoffPlanView(
         self._deferred_page_visual_result = None
 
     def set_cursor_mode(self, mode: str) -> None:
-        if mode not in ("move_overlay", "move_overlay_handle"):
+        if mode not in (CURSOR_MODE_MOVE_OVERLAY, CURSOR_MODE_MOVE_OVERLAY_HANDLE):
             self.cancel_overlay_move_mode(restore_preview=True)
-        if mode not in ("rotate", "slope_rotate"):
+        if mode not in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE):
             self._remove_rotate_handle()
-        if mode != "select":
+        if mode != CURSOR_MODE_SELECT:
             self.finish_intelligent_paste_placement()
-        if mode == "place":
+        if mode == CURSOR_MODE_PLACE:
             self._exit_annotation_place_mode()
             if not self.enter_place_mode():
                 return
         else:
             self._exit_place_mode()
-            if mode != "annotation_place":
+            if mode != CURSOR_MODE_ANNOTATION_PLACE:
                 self._exit_annotation_place_mode()
             self._clear_backout_state()
         self._apply_cursor_mode(mode)
@@ -4894,8 +4908,8 @@ class TakeoffPlanView(
         self._place_all_condition_uids = self._filter_place_conditions(
             condition_uid, all_condition_uids or []
         )
-        self._apply_cursor_mode("place")
-        self.cursor_mode_change_requested.emit("place")
+        self._apply_cursor_mode(CURSOR_MODE_PLACE)
+        self.cursor_mode_change_requested.emit(CURSOR_MODE_PLACE)
         return True
 
     def activate_annotation_placement(self, annotation_type: str) -> bool:
@@ -4911,8 +4925,8 @@ class TakeoffPlanView(
         activated = self._enter_annotation_place_mode(annotation_type)
         if not activated:
             return False
-        self._apply_cursor_mode("annotation_place")
-        self.cursor_mode_change_requested.emit("annotation_place")
+        self._apply_cursor_mode(CURSOR_MODE_ANNOTATION_PLACE)
+        self.cursor_mode_change_requested.emit(CURSOR_MODE_ANNOTATION_PLACE)
         return True
 
     @property
@@ -4968,7 +4982,7 @@ class TakeoffPlanView(
         self._exit_place_mode()
         self._exit_annotation_place_mode()
         self._clear_backout_state()
-        self.cursor_mode_change_requested.emit("select")
+        self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
 
     def cancel_backout_mode(self) -> None:
         self._clear_backout_state()
@@ -5022,8 +5036,8 @@ class TakeoffPlanView(
         self._paste_backout_sources = sources
         self._paste_backout_source_bid_uid = source_bid_uid
         self._paste_backout_group_centroid = (group_cx, group_cy)
-        self._apply_cursor_mode("paste_backout")
-        self.cursor_mode_change_requested.emit("paste_backout")
+        self._apply_cursor_mode(CURSOR_MODE_PASTE_BACKOUT)
+        self.cursor_mode_change_requested.emit(CURSOR_MODE_PASTE_BACKOUT)
         if self._last_mouse_vp_pos is not None:
             self.update_paste_backout_preview(self.mapToScene(self._last_mouse_vp_pos))
         return True
@@ -5036,8 +5050,8 @@ class TakeoffPlanView(
         self._paste_backout_source_bid_uid = None
         self._paste_backout_group_centroid = (0.0, 0.0)
         self.clear_paste_backout_preview()
-        self._apply_cursor_mode("select")
-        self.cursor_mode_change_requested.emit("select")
+        self._apply_cursor_mode(CURSOR_MODE_SELECT)
+        self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
 
     def _set_backout_state(self, parent_uid: str, condition_uid: str) -> None:
         changed = (
@@ -5066,7 +5080,7 @@ class TakeoffPlanView(
     def _apply_cursor_mode(self, mode: str) -> None:
         self._cursor_mode = mode
         self._persistent_cursor_mode = mode
-        if mode != "zoom" and not self._right_pan_active:
+        if mode != CURSOR_MODE_ZOOM and not self._right_pan_active:
             self._pre_zoom_persistent_mode = None
         self._update_viewport_mouse_tracking()
         self._update_cursor()

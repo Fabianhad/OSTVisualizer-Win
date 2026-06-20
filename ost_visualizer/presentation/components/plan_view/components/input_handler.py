@@ -18,6 +18,25 @@ from PySide6.QtWidgets import (
     QMenu,
     QRubberBand,
 )
+from .....domain.entities.annotation import (
+    ANNOTATION_TYPE_ARROW,
+    ANNOTATION_TYPE_CALLOUT,
+    ANNOTATION_TYPE_CLOUD,
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_LINE,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_OVAL,
+    ANNOTATION_TYPE_POLYGON,
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+)
+from .....domain.entities.config import Config
+from ....actions.action_ids import (
+    ACTION_SHOW_ORIGINAL_IMAGE,
+    ACTION_SHOW_OVERLAY_IMAGE,
+)
 from ....config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ....managers.context_menu_manager import ContextMenuManager
 from ....utils.overlay_context_menu import resolve_overlay_menu_action
@@ -38,6 +57,18 @@ from .geometry_utils import (
     polygon_centroid,
     rotate_points_around,
     rotate_position_coords,
+)
+from ....modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_MOVE_OVERLAY,
+    CURSOR_MODE_MOVE_OVERLAY_HANDLE,
+    CURSOR_MODE_PAN,
+    CURSOR_MODE_PASTE_BACKOUT,
+    CURSOR_MODE_PLACE,
+    CURSOR_MODE_ROTATE,
+    CURSOR_MODE_SELECT,
+    CURSOR_MODE_SLOPE_ROTATE,
+    CURSOR_MODE_ZOOM,
 )
 
 
@@ -67,7 +98,9 @@ def _update_ann_trailing_rotation(pos: List[float], snapped_deg: float) -> None:
 def _rotate_annotation(
     ann, orig_pos: List[float], snapped_deg: float, cx: float, cy: float
 ) -> List[float]:
-    if (ann.is_text or ann.annotation_type == "callout") and len(orig_pos) >= 4:
+    if (ann.is_text or ann.annotation_type == ANNOTATION_TYPE_CALLOUT) and len(
+        orig_pos
+    ) >= 4:
         new_pos = list(orig_pos)
         new_pos[0], new_pos[1] = rotate_points_around(
             orig_pos[:2], snapped_deg, cx, cy
@@ -81,7 +114,11 @@ def _rotate_annotation(
         rotated = rotate_points_around(coords, snapped_deg, cx, cy)
         return _ink_add_prefix(rotated, orig_pos, snapped_deg)
     new_pos = rotate_points_around(orig_pos, snapped_deg, cx, cy)
-    if ann.annotation_type not in ("cloud", "polygon", "hotlink"):
+    if ann.annotation_type not in (
+        ANNOTATION_TYPE_CLOUD,
+        ANNOTATION_TYPE_POLYGON,
+        ANNOTATION_TYPE_HOTLINK,
+    ):
         _update_ann_trailing_rotation(new_pos, snapped_deg)
     return new_pos
 
@@ -118,7 +155,7 @@ class InputHandlerMixin:
         pass
 
     def _roping_item_selection_mode(self):
-        if self._roping_selection_method == "inclusive":
+        if self._roping_selection_method == Config.ROPING_SELECTION_INCLUSIVE:
             return Qt.ItemSelectionMode.ContainsItemShape
         return Qt.ItemSelectionMode.IntersectsItemShape
 
@@ -259,7 +296,7 @@ class InputHandlerMixin:
             delta_y = pixel_delta.y()
         else:
             delta_y = event.angleDelta().y() / 120.0 * 80
-        if self._cursor_mode == "zoom":
+        if self._cursor_mode == CURSOR_MODE_ZOOM:
             if not (mods & Qt.KeyboardModifier.ControlModifier):
                 self._apply_wheel_zoom(event, delta_y)
             self._sync_rubber_band_to_viewport()
@@ -301,14 +338,18 @@ class InputHandlerMixin:
             self._update_cursor()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
-        if self._cursor_mode in ("place", "move_overlay", "move_overlay_handle"):
+        if self._cursor_mode in (
+            CURSOR_MODE_PLACE,
+            CURSOR_MODE_MOVE_OVERLAY,
+            CURSOR_MODE_MOVE_OVERLAY_HANDLE,
+        ):
             event.accept()
             return
         vp_pos = event.position().toPoint()
         self._last_mouse_vp_pos = vp_pos
         if (
             event.button() == Qt.MouseButton.LeftButton
-            and self._cursor_mode != "zoom"
+            and self._cursor_mode != CURSOR_MODE_ZOOM
             and self._selection_enabled
         ):
             scene_pos = self.mapToScene(vp_pos)
@@ -339,10 +380,10 @@ class InputHandlerMixin:
         advanced_mouse_controls = self._advanced_mouse_controls_active()
         vp_pos = event.position().toPoint()
         self._last_mouse_vp_pos = vp_pos
-        if self._cursor_mode == "move_overlay":
+        if self._cursor_mode == CURSOR_MODE_MOVE_OVERLAY:
             event.accept()
             return
-        if self._cursor_mode == "move_overlay_handle":
+        if self._cursor_mode == CURSOR_MODE_MOVE_OVERLAY_HANDLE:
             if (
                 event.button() == Qt.MouseButton.LeftButton
                 and self._is_over_overlay_move_handle(vp_pos)
@@ -369,12 +410,12 @@ class InputHandlerMixin:
             return
         rotate_handle_press = (
             event.button() == Qt.MouseButton.LeftButton
-            and self._cursor_mode in ("rotate", "slope_rotate")
+            and self._cursor_mode in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE)
             and self._is_over_rotate_handle(vp_pos)
         )
         if (
             event.button() == Qt.MouseButton.LeftButton
-            and self._cursor_mode != "place"
+            and self._cursor_mode != CURSOR_MODE_PLACE
             and not rotate_handle_press
         ):
             dimension_label = self._dimension_text_label_at(vp_pos)
@@ -403,11 +444,11 @@ class InputHandlerMixin:
             if not advanced_mouse_controls:
                 super().mousePressEvent(event)
                 return
-            if self._ctrl_held or self._cursor_mode == "place":
+            if self._ctrl_held or self._cursor_mode == CURSOR_MODE_PLACE:
                 event.accept()
                 return
             if (
-                self._persistent_cursor_mode == "zoom"
+                self._persistent_cursor_mode == CURSOR_MODE_ZOOM
                 and self._pre_zoom_persistent_mode
             ):
                 self._persistent_cursor_mode = self._pre_zoom_persistent_mode
@@ -416,8 +457,8 @@ class InputHandlerMixin:
                 return
             if not self._pre_zoom_persistent_mode:
                 self._pre_zoom_persistent_mode = self._persistent_cursor_mode
-            self._persistent_cursor_mode = "zoom"
-            self.cursor_mode_change_requested.emit("zoom")
+            self._persistent_cursor_mode = CURSOR_MODE_ZOOM
+            self.cursor_mode_change_requested.emit(CURSOR_MODE_ZOOM)
             event.accept()
             return
         if event.button() == Qt.MouseButton.RightButton:
@@ -425,10 +466,10 @@ class InputHandlerMixin:
             if not advanced_mouse_controls:
                 super().mousePressEvent(event)
                 return
-            if self._cursor_mode == "place":
+            if self._cursor_mode == CURSOR_MODE_PLACE:
                 event.accept()
                 return
-            if self._cursor_mode == "zoom" or self._ctrl_held:
+            if self._cursor_mode == CURSOR_MODE_ZOOM or self._ctrl_held:
                 self._mark_user_view_changed_during_load()
                 self._apply_zoom(1.0 / self.ZOOM_FACTOR)
                 self._publish_current_page_view_state()
@@ -441,11 +482,11 @@ class InputHandlerMixin:
             self._pan_view_changed = False
             self._last_pan_point = vp_pos
             if not self._ctrl_held:
-                self.cursor_mode_change_requested.emit("pan")
+                self.cursor_mode_change_requested.emit(CURSOR_MODE_PAN)
             self._update_cursor()
             event.accept()
             return
-        if self._cursor_mode == "zoom":
+        if self._cursor_mode == CURSOR_MODE_ZOOM:
             if event.button() == Qt.MouseButton.LeftButton:
                 self._rubber_band_origin = self.mapToScene(vp_pos)
                 if self._rubber_band is None:
@@ -456,22 +497,23 @@ class InputHandlerMixin:
             else:
                 super().mousePressEvent(event)
         elif (
-            self._cursor_mode == "place" and event.button() == Qt.MouseButton.LeftButton
+            self._cursor_mode == CURSOR_MODE_PLACE
+            and event.button() == Qt.MouseButton.LeftButton
         ):
             self.handle_place_press(event)
         elif (
-            self._cursor_mode == "annotation_place"
+            self._cursor_mode == CURSOR_MODE_ANNOTATION_PLACE
             and event.button() == Qt.MouseButton.LeftButton
         ):
             if self.handle_annotation_place_press(event):
                 return
         elif (
-            self._cursor_mode == "paste_backout"
+            self._cursor_mode == CURSOR_MODE_PASTE_BACKOUT
             and event.button() == Qt.MouseButton.LeftButton
         ):
             self.handle_paste_backout_press(event)
         elif (
-            self._cursor_mode in ("rotate", "slope_rotate")
+            self._cursor_mode in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE)
             and event.button() == Qt.MouseButton.LeftButton
         ):
             if self._is_over_rotate_handle(vp_pos):
@@ -486,7 +528,7 @@ class InputHandlerMixin:
                 self._rotation_drag_orig_positions = {}
                 self._rotation_drag_orig_rotations = {}
                 self._rotation_drag_preview_items = []
-                if self._cursor_mode == "slope_rotate":
+                if self._cursor_mode == CURSOR_MODE_SLOPE_ROTATE:
                     uid = self._rotate_handle_uid
                     takeoff = self._current_takeoffs.get(uid)
                     if takeoff is not None:
@@ -554,16 +596,17 @@ class InputHandlerMixin:
             hit_uid = self.find_takeoff_at(scene_pos)
             if not (hit_uid and hit_uid in self._selected_uids):
                 self._remove_rotate_handle()
-                self._apply_cursor_mode("select")
-                self.cursor_mode_change_requested.emit("select")
+                self._apply_cursor_mode(CURSOR_MODE_SELECT)
+                self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
             else:
                 self._remove_rotate_handle()
         if event.button() == Qt.MouseButton.LeftButton and self._cursor_mode not in (
-            "zoom",
-            "place",
+            CURSOR_MODE_ZOOM,
+            CURSOR_MODE_PLACE,
         ):
             if (
-                self._cursor_mode in ("select", "rotate", "slope_rotate")
+                self._cursor_mode
+                in (CURSOR_MODE_SELECT, CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE)
                 and self._selection_enabled
             ):
                 ctrl_zoom_requested = advanced_mouse_controls and (
@@ -571,7 +614,7 @@ class InputHandlerMixin:
                     or self._ctrl_held
                 )
                 self._zoom_press_ctrl = (
-                    ctrl_zoom_requested and self._cursor_mode == "select"
+                    ctrl_zoom_requested and self._cursor_mode == CURSOR_MODE_SELECT
                 )
                 self._select_band_origin = self.mapToScene(vp_pos)
                 self._select_band_active = False
@@ -687,19 +730,25 @@ class InputHandlerMixin:
                                     )
                             elif ann and ann.can_resize:
                                 atype = ann.annotation_type
-                                if atype in ("polygon", "cloud"):
+                                if atype in (
+                                    ANNOTATION_TYPE_POLYGON,
+                                    ANNOTATION_TYPE_CLOUD,
+                                ):
                                     self._drag_handle_corner_count = (
                                         len(ann.position) // 2
                                     )
                                     self._drag_last_valid_new_pos = list(ann.position)
                                 elif atype in (
-                                    "rect",
-                                    "oval",
-                                    "highlight",
-                                    "namedview",
-                                    "text",
+                                    ANNOTATION_TYPE_RECT,
+                                    ANNOTATION_TYPE_OVAL,
+                                    ANNOTATION_TYPE_HIGHLIGHT,
+                                    ANNOTATION_TYPE_NAMED_VIEW,
+                                    ANNOTATION_TYPE_TEXT,
                                 ):
-                                    if atype != "text" or len(ann.position) >= 4:
+                                    if (
+                                        atype != ANNOTATION_TYPE_TEXT
+                                        or len(ann.position) >= 4
+                                    ):
                                         self._drag_handle_corner_count = 4
                                         if self._drag_handle_index >= 0:
                                             self._unrotate_annotation_for_resize(
@@ -751,7 +800,7 @@ class InputHandlerMixin:
                         return
                 event.accept()
             elif (
-                self._cursor_mode == "pan"
+                self._cursor_mode == CURSOR_MODE_PAN
                 and self._ctrl_held
                 and advanced_mouse_controls
             ):
@@ -760,7 +809,7 @@ class InputHandlerMixin:
                 self._select_band_active = False
                 self._select_band_dragged = False
                 event.accept()
-            elif self._cursor_mode == "pan":
+            elif self._cursor_mode == CURSOR_MODE_PAN:
                 self._panning = True
                 self._pan_view_changed = False
                 self._last_pan_point = vp_pos
@@ -782,7 +831,7 @@ class InputHandlerMixin:
         self._last_mouse_vp_pos = cur_vp
         self._request_crosshair_repaint()
         self._clear_stale_drag_tracking_if_mouse_released(event)
-        if self._cursor_mode == "place":
+        if self._cursor_mode == CURSOR_MODE_PLACE:
             if self._apply_pan_update(cur_vp):
                 event.accept()
                 return
@@ -796,21 +845,21 @@ class InputHandlerMixin:
                     self.update_place_preview(scene_pos)
             event.accept()
             return
-        if self._cursor_mode == "annotation_place":
+        if self._cursor_mode == CURSOR_MODE_ANNOTATION_PLACE:
             if self._apply_pan_update(cur_vp):
                 event.accept()
                 return
             self.update_annotation_place_preview(self.mapToScene(cur_vp))
             event.accept()
             return
-        if self._cursor_mode == "paste_backout":
+        if self._cursor_mode == CURSOR_MODE_PASTE_BACKOUT:
             if self._apply_pan_update(cur_vp):
                 event.accept()
                 return
             self.update_paste_backout_preview(self.mapToScene(cur_vp))
             event.accept()
             return
-        if self._cursor_mode == "move_overlay":
+        if self._cursor_mode == CURSOR_MODE_MOVE_OVERLAY:
             self._preview_overlay_move(self.mapToScene(cur_vp))
             event.accept()
             return
@@ -832,7 +881,7 @@ class InputHandlerMixin:
                 snapped_deg = round(self._rotation_drag_accumulated_deg / 15.0) * 15.0
             if snapped_deg != self._rotation_drag_snapped_deg:
                 single = len(self._selected_uids) == 1
-                if self._cursor_mode == "slope_rotate":
+                if self._cursor_mode == CURSOR_MODE_SLOPE_ROTATE:
                     self._rotation_drag_snapped_deg = snapped_deg
                     self._update_rotation_handle_preview(snapped_deg)
                     event.accept()
@@ -1030,7 +1079,10 @@ class InputHandlerMixin:
                 self._publish_current_page_view_state()
             event.accept()
             return
-        if self._cursor_mode == "place" and event.button() == Qt.MouseButton.LeftButton:
+        if (
+            self._cursor_mode == CURSOR_MODE_PLACE
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
             if self.handle_place_release_area(event):
                 return
             if self.handle_place_release_linear(event):
@@ -1039,19 +1091,19 @@ class InputHandlerMixin:
             if self.handle_annotation_place_release(event):
                 return
         if (
-            self._cursor_mode == "move_overlay"
+            self._cursor_mode == CURSOR_MODE_MOVE_OVERLAY
             and event.button() == Qt.MouseButton.LeftButton
         ):
             self._finish_overlay_move_drag(self.mapToScene(vp_pos))
             event.accept()
             return
-        if self._cursor_mode == "move_overlay_handle":
+        if self._cursor_mode == CURSOR_MODE_MOVE_OVERLAY_HANDLE:
             event.accept()
             return
         if self._rotation_drag_active and event.button() == Qt.MouseButton.LeftButton:
             snapped_deg = self._rotation_drag_snapped_deg
             single = len(self._selected_uids) == 1
-            slope_mode = self._cursor_mode == "slope_rotate"
+            slope_mode = self._cursor_mode == CURSOR_MODE_SLOPE_ROTATE
             rotation_drag_uid = self._rotation_drag_uid
             self._rotation_drag_active = False
             self._rotation_drag_uid = None
@@ -1211,7 +1263,11 @@ class InputHandlerMixin:
                             new_pos = self._drag_last_valid_new_pos
                         if (
                             _drag_ann
-                            and _drag_ann.annotation_type in ("polygon", "cloud")
+                            and _drag_ann.annotation_type
+                            in (
+                                ANNOTATION_TYPE_POLYGON,
+                                ANNOTATION_TYPE_CLOUD,
+                            )
                             and self._drag_handle_index >= 0
                             and self._drag_last_valid_new_pos
                         ):
@@ -1347,10 +1403,13 @@ class InputHandlerMixin:
                         self.update_selection_visuals()
                         if not selected_pdf_text:
                             self._clear_pdf_text_selection()
-                if self._cursor_mode == "rotate" and len(self._selected_uids) == 1:
+                if (
+                    self._cursor_mode == CURSOR_MODE_ROTATE
+                    and len(self._selected_uids) == 1
+                ):
                     if not self._create_rotate_handle(next(iter(self._selected_uids))):
-                        self._apply_cursor_mode("select")
-                        self.cursor_mode_change_requested.emit("select")
+                        self._apply_cursor_mode(CURSOR_MODE_SELECT)
+                        self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
                 self._update_cursor()
                 event.accept()
                 return
@@ -1373,7 +1432,7 @@ class InputHandlerMixin:
                     self._zoom_debouncer.handle_scale_changed(new_scale)
                     self.zoom_changed.emit(new_scale * self._scene_scale * 0.333)
                     self._publish_current_page_view_state()
-            elif self._cursor_mode == "zoom":
+            elif self._cursor_mode == CURSOR_MODE_ZOOM:
                 self._mark_user_view_changed_during_load()
                 self._apply_zoom(self.ZOOM_FACTOR)
                 self._publish_current_page_view_state()
@@ -1397,9 +1456,14 @@ class InputHandlerMixin:
             return
         stored_deg = math.degrees(stored_rad)
         atype = ann.annotation_type
-        if atype == "text" and len(pos) >= 5:
+        if atype == ANNOTATION_TYPE_TEXT and len(pos) >= 5:
             pos[4] = 0.0
-        elif atype in ("rect", "highlight", "namedview", "oval"):
+        elif atype in (
+            ANNOTATION_TYPE_RECT,
+            ANNOTATION_TYPE_HIGHLIGHT,
+            ANNOTATION_TYPE_NAMED_VIEW,
+            ANNOTATION_TYPE_OVAL,
+        ):
             n_coords = len(pos) - 1 if len(pos) % 2 == 1 else len(pos)
             coord_pos = pos[:n_coords]
             cx = sum(coord_pos[i] for i in range(0, n_coords, 2)) / (n_coords // 2)
@@ -1488,7 +1552,7 @@ class InputHandlerMixin:
         self, ann, orig_pos, ost_dx, ost_dy, handle_idx, corner_count
     ):
         atype = ann.annotation_type
-        if atype in ("polygon", "cloud"):
+        if atype in (ANNOTATION_TYPE_POLYGON, ANNOTATION_TYPE_CLOUD):
             return self.compute_new_position(
                 orig_pos,
                 ost_dx,
@@ -1496,7 +1560,11 @@ class InputHandlerMixin:
                 handle_idx,
                 corner_count,
             )
-        if atype in ("line", "arrow", "dimension"):
+        if atype in (
+            ANNOTATION_TYPE_LINE,
+            ANNOTATION_TYPE_ARROW,
+            ANNOTATION_TYPE_DIMENSION,
+        ):
             return self.compute_new_position(
                 orig_pos,
                 ost_dx,
@@ -1521,7 +1589,7 @@ class InputHandlerMixin:
             dy,
         )
         pos = list(orig_pos)
-        if atype == "text" and len(pos) >= 4:
+        if atype == ANNOTATION_TYPE_TEXT and len(pos) >= 4:
             pos[2] = abs(nx2 - nx1)
             pos[3] = abs(ny2 - ny1)
             pos[0] = (nx1 + nx2) / 2
@@ -1855,20 +1923,20 @@ class InputHandlerMixin:
             self._flush_rotation_group()
 
     def _restore_rotation_handles_if_needed(self) -> None:
-        if self._cursor_mode == "slope_rotate":
+        if self._cursor_mode == CURSOR_MODE_SLOPE_ROTATE:
             if not self._create_slope_rotate_handle():
-                self._apply_cursor_mode("select")
-                self.cursor_mode_change_requested.emit("select")
+                self._apply_cursor_mode(CURSOR_MODE_SELECT)
+                self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
             return
-        if self._cursor_mode != "rotate":
+        if self._cursor_mode != CURSOR_MODE_ROTATE:
             return
         if not self._selected_uids:
             self._remove_rotate_handle()
             return
         self.update_selection_visuals(emit=False)
         if not self._create_rotate_handle(self._selected_uids):
-            self._apply_cursor_mode("select")
-            self.cursor_mode_change_requested.emit("select")
+            self._apply_cursor_mode(CURSOR_MODE_SELECT)
+            self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
 
     def keyPressEvent(self, event) -> None:
         if (
@@ -1914,35 +1982,37 @@ class InputHandlerMixin:
                 and self._selected_uids
             ):
                 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                    if self._cursor_mode == "slope_rotate":
+                    if self._cursor_mode == CURSOR_MODE_SLOPE_ROTATE:
                         self._remove_rotate_handle()
-                        self._apply_cursor_mode("select")
-                        self.cursor_mode_change_requested.emit("select")
+                        self._apply_cursor_mode(CURSOR_MODE_SELECT)
+                        self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
                     else:
                         self.clear_place_preview()
                         if self._create_slope_rotate_handle():
-                            self._apply_cursor_mode("slope_rotate")
-                            self.cursor_mode_change_requested.emit("slope_rotate")
+                            self._apply_cursor_mode(CURSOR_MODE_SLOPE_ROTATE)
+                            self.cursor_mode_change_requested.emit(
+                                CURSOR_MODE_SLOPE_ROTATE
+                            )
                     event.accept()
                     return
                 if self._rotate_handle_uid is not None:
                     self._remove_rotate_handle()
-                    self._apply_cursor_mode("select")
-                    self.cursor_mode_change_requested.emit("select")
+                    self._apply_cursor_mode(CURSOR_MODE_SELECT)
+                    self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
                 else:
                     self.clear_place_preview()
                     if self._create_rotate_handle(self._selected_uids):
-                        self._apply_cursor_mode("rotate")
-                        self.cursor_mode_change_requested.emit("rotate")
+                        self._apply_cursor_mode(CURSOR_MODE_ROTATE)
+                        self.cursor_mode_change_requested.emit(CURSOR_MODE_ROTATE)
                 event.accept()
                 return
         if (
-            self._cursor_mode in ("rotate", "slope_rotate")
+            self._cursor_mode in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE)
             and event.key() == Qt.Key.Key_Escape
         ):
             self._remove_rotate_handle()
-            self._apply_cursor_mode("select")
-            self.cursor_mode_change_requested.emit("select")
+            self._apply_cursor_mode(CURSOR_MODE_SELECT)
+            self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
             event.accept()
             return
         if self._intelligent_paste_active and event.key() == Qt.Key.Key_Escape:
@@ -1951,18 +2021,22 @@ class InputHandlerMixin:
             self._update_cursor()
             event.accept()
             return
-        if self._cursor_mode == "paste_backout" and event.key() == Qt.Key.Key_Escape:
+        if (
+            self._cursor_mode == CURSOR_MODE_PASTE_BACKOUT
+            and event.key() == Qt.Key.Key_Escape
+        ):
             self.cancel_paste_backout()
             event.accept()
             return
         if (
-            self._cursor_mode in ("move_overlay", "move_overlay_handle")
+            self._cursor_mode
+            in (CURSOR_MODE_MOVE_OVERLAY, CURSOR_MODE_MOVE_OVERLAY_HANDLE)
             and event.key() == Qt.Key.Key_Escape
         ):
             self.cancel_overlay_move_mode(restore_preview=True)
             event.accept()
             return
-        if self._cursor_mode == "place" and event.key() == Qt.Key.Key_Escape:
+        if self._cursor_mode == CURSOR_MODE_PLACE and event.key() == Qt.Key.Key_Escape:
             self.finish_intelligent_paste_placement()
             if self._place_points:
                 self._place_points.pop()
@@ -1983,11 +2057,14 @@ class InputHandlerMixin:
                 self._set_area_placement_in_progress(False)
             event.accept()
             return
-        if self._cursor_mode == "annotation_place" and event.key() == Qt.Key.Key_Escape:
+        if (
+            self._cursor_mode == CURSOR_MODE_ANNOTATION_PLACE
+            and event.key() == Qt.Key.Key_Escape
+        ):
             self.finish_intelligent_paste_placement()
             self._exit_annotation_place_mode()
-            self._apply_cursor_mode("select")
-            self.cursor_mode_change_requested.emit("select")
+            self._apply_cursor_mode(CURSOR_MODE_SELECT)
+            self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
             event.accept()
             return
         if (
@@ -2006,7 +2083,7 @@ class InputHandlerMixin:
             return
         if (
             self._selection_enabled
-            and self._cursor_mode == "select"
+            and self._cursor_mode == CURSOR_MODE_SELECT
             and event.key() == Qt.Key.Key_A
             and event.modifiers() & Qt.KeyboardModifier.ControlModifier
         ):
@@ -2021,7 +2098,8 @@ class InputHandlerMixin:
         }
         if (
             self._selection_enabled
-            and self._cursor_mode in ("select", "place", "rotate")
+            and self._cursor_mode
+            in (CURSOR_MODE_SELECT, CURSOR_MODE_PLACE, CURSOR_MODE_ROTATE)
             and self._selected_uids
             and event.key() in _arrow_keys
         ):
@@ -2098,13 +2176,17 @@ class InputHandlerMixin:
             return Qt.CursorShape.ClosedHandCursor
         if self._rotation_drag_active:
             return self._rotate_cursor
-        if self._cursor_mode == "move_overlay":
+        if self._cursor_mode == CURSOR_MODE_MOVE_OVERLAY:
             return self._move_overlay_cursor
-        if self._cursor_mode == "move_overlay_handle":
+        if self._cursor_mode == CURSOR_MODE_MOVE_OVERLAY_HANDLE:
             if self._is_over_overlay_move_handle(vp_pos):
                 return self._move_overlay_cursor
             return Qt.CursorShape.ArrowCursor
-        if self._cursor_mode in ("place", "annotation_place", "paste_backout"):
+        if self._cursor_mode in (
+            CURSOR_MODE_PLACE,
+            CURSOR_MODE_ANNOTATION_PLACE,
+            CURSOR_MODE_PASTE_BACKOUT,
+        ):
             return Qt.CursorShape.CrossCursor
         if self._zoom_press_ctrl:
             return self._zoom_cursor
@@ -2117,13 +2199,13 @@ class InputHandlerMixin:
         if (
             self._advanced_mouse_controls_active()
             and self._ctrl_held
-            and self._cursor_mode not in ("rotate", "slope_rotate")
+            and self._cursor_mode not in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE)
             and not active_press
         ):
             return self._zoom_cursor
-        if self._cursor_mode == "zoom":
+        if self._cursor_mode == CURSOR_MODE_ZOOM:
             return self._zoom_cursor
-        if self._cursor_mode == "pan":
+        if self._cursor_mode == CURSOR_MODE_PAN:
             return Qt.CursorShape.OpenHandCursor
         if (
             self._editing_text_annotation_uid is not None
@@ -2133,13 +2215,13 @@ class InputHandlerMixin:
             )
         ):
             return Qt.CursorShape.IBeamCursor
-        if self._cursor_mode in ("rotate", "slope_rotate"):
+        if self._cursor_mode in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE):
             if self._is_over_rotate_handle(vp_pos):
                 return self._rotate_cursor
             if vp_pos is not None:
                 return self._resolve_select_cursor(vp_pos)
             return Qt.CursorShape.ArrowCursor
-        if self._cursor_mode == "select" and vp_pos is not None:
+        if self._cursor_mode == CURSOR_MODE_SELECT and vp_pos is not None:
             return self._resolve_select_cursor(vp_pos)
         return Qt.CursorShape.ArrowCursor
 
@@ -2214,9 +2296,9 @@ class InputHandlerMixin:
         if overlay_mode != current_mode:
             self._trigger_context_command(
                 (
-                    "show_overlay_image"
+                    ACTION_SHOW_OVERLAY_IMAGE
                     if action == overlay_action
-                    else "show_original_image"
+                    else ACTION_SHOW_ORIGINAL_IMAGE
                 )
             )
         return True
@@ -2450,7 +2532,7 @@ class InputHandlerMixin:
     def leaveEvent(self, event) -> None:
         if not (QApplication.mouseButtons() & Qt.MouseButton.LeftButton):
             self._cancel_active_drag_interaction(restore_preview=True)
-        if self._selection_enabled and self._cursor_mode == "select":
+        if self._selection_enabled and self._cursor_mode == CURSOR_MODE_SELECT:
             self.setCursor(Qt.CursorShape.ArrowCursor)
         self._last_mouse_vp_pos = None
         self.viewport().update()

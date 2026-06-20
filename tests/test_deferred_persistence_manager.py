@@ -6,6 +6,10 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QCoreApplication
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+)
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
@@ -613,8 +617,12 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         selected_page_uids=None,
         active_page_uid="p1",
         condition_layer_uid="l1",
+        page_layer_uid=None,
     ):
         selected_page_uids = selected_page_uids or [active_page_uid]
+        page_layer_uid = (
+            "l1" if page_layer_uid is None and layer_name == "Image" else page_layer_uid
+        )
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
@@ -631,13 +639,18 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         annotation_layer_uid = "annotation-layer"
         coordinator.quantity_update_calls = []
         quantity_calls = coordinator.quantity_update_calls
+
+        def is_page_layer_uid(layer_uid):
+            return page_layer_uid is not None and str(layer_uid) == str(page_layer_uid)
+
         coordinator.project_data = SimpleNamespace(
-            update_layer_visibility=lambda _layer_uid, show, image_layer=False: (
+            is_image_layer_uid=is_page_layer_uid,
+            update_layer_visibility=lambda layer_uid, _show: (
                 [
                     "p1",
                     "p2",
                 ]
-                if image_layer
+                if is_page_layer_uid(layer_uid)
                 else []
             ),
             update_all_layer_visibility=lambda _show: ["p1", "p2"],
@@ -779,7 +792,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(quantity_calls, [])
 
     def test_image_layer_disable_queues_write_and_does_not_reload_pages(self):
-        coordinator = self._make_visibility_coordinator(layer_name="Image")
+        coordinator = self._make_visibility_coordinator(
+            layer_name="Image",
+            condition_layer_uid="other-layer",
+        )
         mesh_calls = []
         coordinator._viewer = SimpleNamespace(
             update_viewers=lambda page_uids: mesh_calls.append(page_uids)
@@ -820,11 +836,52 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                     condition_layer_uid="other-layer",
                 )
                 calls = self._install_conditions_sidebar_recorder(coordinator)
+                mesh_calls = []
+                coordinator._viewer = SimpleNamespace(
+                    update_viewers=lambda page_uids: mesh_calls.append(list(page_uids))
+                )
                 self.assertTrue(
                     coordinator.update_layer_visibility_deferred("l1", False)
                 )
                 self.assertEqual(calls, [])
+                self.assertEqual(mesh_calls, [])
                 self.assertEqual(coordinator.quantity_update_calls, [])
+
+    def test_layer_visibility_uses_same_deferred_path_for_all_layer_names(self):
+        cases = (
+            ("Annotation", False),
+            ("Image", True),
+            ("Future Visual", False),
+            ("Custom Empty", False),
+        )
+        for layer_name, page_layer_changed in cases:
+            with self.subTest(layer_name=layer_name):
+                coordinator = self._make_visibility_coordinator(
+                    layer_name=layer_name,
+                    condition_layer_uid="other-layer",
+                )
+                self.assertTrue(
+                    coordinator.update_layer_visibility_deferred("l1", False)
+                )
+                self.assertEqual(
+                    coordinator._deferred_persistence.layer_calls,
+                    [("a.mdb", "l1", False)],
+                )
+                self.assertEqual(
+                    coordinator.layer_events[0][1]["layer_uid"],
+                    "l1",
+                )
+                if page_layer_changed:
+                    self.assertEqual(
+                        coordinator.plan_view.image_visibility_pages, ["p1"]
+                    )
+                    self.assertEqual(coordinator.plan_view.layer_visibility_calls, [])
+                else:
+                    self.assertEqual(coordinator.plan_view.image_visibility_pages, [])
+                    self.assertEqual(
+                        len(coordinator.plan_view.layer_visibility_calls),
+                        1,
+                    )
 
     def test_condition_layer_without_condition_rows_skips_conditions_sidebar_refresh(
         self,
@@ -863,7 +920,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             condition_layer_uid="condition-layer",
         )
         coordinator.plan_view.cursor_mode = "annotation_place"
-        coordinator.plan_view.annotation_place_type = "rect"
+        coordinator.plan_view.annotation_place_type = ANNOTATION_TYPE_RECT
         self.assertTrue(
             coordinator.update_layer_visibility_deferred("annotation-layer", False)
         )
@@ -874,7 +931,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             coordinator.update_layer_visibility_deferred("annotation-layer", True)
         )
         self.assertEqual(coordinator.plan_view.cursor_mode, "annotation_place")
-        self.assertEqual(coordinator.plan_view.annotation_placements, ["rect"])
+        self.assertEqual(
+            coordinator.plan_view.annotation_placements, [ANNOTATION_TYPE_RECT]
+        )
 
     def test_hiding_unrelated_layer_keeps_active_annotation_tool(self):
         coordinator = self._make_visibility_coordinator(
@@ -882,10 +941,12 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             condition_layer_uid="condition-layer",
         )
         coordinator.plan_view.cursor_mode = "annotation_place"
-        coordinator.plan_view.annotation_place_type = "rect"
+        coordinator.plan_view.annotation_place_type = ANNOTATION_TYPE_RECT
         self.assertTrue(coordinator.update_layer_visibility_deferred("other", False))
         self.assertEqual(coordinator.plan_view.cursor_mode, "annotation_place")
-        self.assertEqual(coordinator.plan_view.annotation_place_type, "rect")
+        self.assertEqual(
+            coordinator.plan_view.annotation_place_type, ANNOTATION_TYPE_RECT
+        )
         self.assertEqual(coordinator.plan_view.cursor_modes, [])
         self.assertEqual(coordinator.select_checked_calls, [])
 
@@ -907,12 +968,25 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             condition_layer_uid="condition-layer",
         )
         coordinator.plan_view.cursor_mode = "annotation_place"
-        coordinator.plan_view.annotation_place_type = "text"
+        coordinator.plan_view.annotation_place_type = ANNOTATION_TYPE_TEXT
         self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
         self.assertEqual(coordinator.plan_view.cursor_mode, "select")
         self.assertTrue(coordinator.update_all_layers_visibility_deferred(True))
         self.assertEqual(coordinator.plan_view.cursor_mode, "annotation_place")
-        self.assertEqual(coordinator.plan_view.annotation_placements, ["text"])
+        self.assertEqual(
+            coordinator.plan_view.annotation_placements, [ANNOTATION_TYPE_TEXT]
+        )
+
+    def test_show_all_uses_shared_page_and_layer_visibility_refresh(self):
+        coordinator = self._make_visibility_coordinator(layer_name="Image")
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
+        self.assertEqual(coordinator._update_plan_view_calls, [])
+        self.assertEqual(coordinator.plan_view.image_visibility_pages, ["p1"])
+        self.assertEqual(
+            coordinator.plan_view.all_layer_visibility_calls,
+            [(False, coordinator.project_data.get_bid_conditions())],
+        )
+        self.assertEqual(coordinator.plan_view.layer_visibility_calls, [])
 
     def test_repeated_layer_toggles_coalesce_to_last_write(self):
         service = FakeProjectWriteService()

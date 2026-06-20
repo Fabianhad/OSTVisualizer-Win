@@ -1,4 +1,5 @@
 from typing import List
+from ...domain.entities.file_extensions import is_pdf_suffix
 from ...domain.services.project_data_service import ProjectDataService
 from ..dtos.export_dialog_dto import ExportDialogDto
 from ..dtos.export_dto import ExportErrorCode, ExportRequestDto, ExportResultDto
@@ -104,8 +105,7 @@ class ExportService:
                         kwargs["page_width_inches"] = (page.width_pts / 72.0) * ratio
                         kwargs["page_height_inches"] = (page.height_pts / 72.0) * ratio
                         if page.image_path:
-                            image_lower = page.image_path.lower()
-                            if image_lower.endswith(".pdf"):
+                            if is_pdf_suffix(page.image_path):
                                 kwargs["pdf_path"] = page.image_path
                                 kwargs["pdf_page_index"] = max(
                                     (page.page_index or 1) - 1, 0

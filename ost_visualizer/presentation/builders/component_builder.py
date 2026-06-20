@@ -1,11 +1,29 @@
 from dataclasses import dataclass
 from PySide6 import QtCore, QtGui, QtWidgets
 from ..adapters.hotlink_event_adapter import HotlinkEventAdapter
+from ..actions.action_ids import (
+    ACTION_COPY,
+    ACTION_CUT,
+    ACTION_DELETE,
+    ACTION_DUPLICATE,
+    ACTION_OPEN_FILES,
+    ACTION_PASTE,
+    ACTION_REDO,
+    ACTION_UNDO,
+)
 from ..components.conditions_sidebar import ConditionsSidebar
 from ..components.layers_sidebar import BidLayersSidebar
 from ..components.mesh_view import OpenGLViewer
 from ..components.page_combo import PageComboBox
 from ..components.page_settings_bar import PageSettingsBar
+from ..modes.cursor import (
+    CURSOR_MODE_DEFAULT,
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_PAN,
+    CURSOR_MODE_PLACE,
+    CURSOR_MODE_SELECT,
+    CURSOR_MODE_ZOOM,
+)
 from ..components.plan_view.view import TakeoffPlanView
 from ..components.popup_tracking_combo import PopupTrackingComboBox
 from ..components.project_tree_view import ProjectView
@@ -516,7 +534,9 @@ class ComponentBuilder:
         zoom_combo.activated.connect(_on_zoom_combo_activated)
         zoom_combo.lineEdit().returnPressed.connect(_on_zoom_text_entered)
         select_action.toggled.connect(
-            lambda checked: plan_view.set_cursor_mode("select") if checked else None
+            lambda checked: (
+                plan_view.set_cursor_mode(CURSOR_MODE_SELECT) if checked else None
+            )
         )
 
         def _on_place_toggled(checked: bool) -> None:
@@ -549,8 +569,10 @@ class ComponentBuilder:
         place_action.toggled.connect(_on_place_toggled)
         pan_action.toggled.connect(
             lambda checked: (
-                plan_view.set_cursor_mode("pan") if checked else None,
-                canvas.set_cursor_mode("pan" if checked else "default"),
+                plan_view.set_cursor_mode(CURSOR_MODE_PAN) if checked else None,
+                canvas.set_cursor_mode(
+                    CURSOR_MODE_PAN if checked else CURSOR_MODE_DEFAULT
+                ),
             )
         )
 
@@ -570,20 +592,22 @@ class ComponentBuilder:
             )
         zoom_mode_action.toggled.connect(
             lambda checked: (
-                plan_view.set_cursor_mode("zoom") if checked else None,
-                canvas.set_cursor_mode("zoom" if checked else "default"),
+                plan_view.set_cursor_mode(CURSOR_MODE_ZOOM) if checked else None,
+                canvas.set_cursor_mode(
+                    CURSOR_MODE_ZOOM if checked else CURSOR_MODE_DEFAULT
+                ),
             )
         )
 
         def _on_cursor_mode_change_requested(mode: str) -> None:
             action_map = {
-                "select": select_action,
-                "place": place_action,
-                "pan": pan_action,
-                "zoom": zoom_mode_action,
+                CURSOR_MODE_SELECT: select_action,
+                CURSOR_MODE_PLACE: place_action,
+                CURSOR_MODE_PAN: pan_action,
+                CURSOR_MODE_ZOOM: zoom_mode_action,
             }
             action = action_map.get(mode)
-            if mode == "annotation_place":
+            if mode == CURSOR_MODE_ANNOTATION_PLACE:
                 annotation_type = plan_view.annotation_place_type
                 action = next(
                     (
@@ -745,41 +769,41 @@ class ComponentBuilder:
         )
         open_files_action = QtGui.QAction("Open...", self.window)
         IconManager.apply(open_files_action, IconId.OPEN_FILES)
-        ShortcutManager.apply_to_action(open_files_action, "open_files")
+        ShortcutManager.apply_to_action(open_files_action, ACTION_OPEN_FILES)
         open_files_action.setToolTip("Open")
         copy_action = QtGui.QAction("Copy", self.window)
         IconManager.apply(copy_action, IconId.COPY)
-        ShortcutManager.apply_to_action(copy_action, "copy")
+        ShortcutManager.apply_to_action(copy_action, ACTION_COPY)
         copy_action.setToolTip("Copy")
         copy_action.setEnabled(False)
         cut_action = QtGui.QAction("Cut", self.window)
         IconManager.apply(cut_action, IconId.CUT)
-        ShortcutManager.apply_to_action(cut_action, "cut")
+        ShortcutManager.apply_to_action(cut_action, ACTION_CUT)
         cut_action.setToolTip("Cut")
         cut_action.setEnabled(False)
         paste_action = QtGui.QAction("Paste", self.window)
         IconManager.apply(paste_action, IconId.PASTE)
-        ShortcutManager.apply_to_action(paste_action, "paste")
+        ShortcutManager.apply_to_action(paste_action, ACTION_PASTE)
         paste_action.setToolTip("Paste")
         paste_action.setEnabled(False)
         duplicate_action = QtGui.QAction("Duplicate", self.window)
         IconManager.apply(duplicate_action, IconId.DUPLICATE)
-        ShortcutManager.apply_to_action(duplicate_action, "duplicate")
+        ShortcutManager.apply_to_action(duplicate_action, ACTION_DUPLICATE)
         duplicate_action.setToolTip("Duplicate")
         duplicate_action.setEnabled(False)
         delete_action = QtGui.QAction("Delete", self.window)
         IconManager.apply(delete_action, IconId.DELETE)
-        ShortcutManager.apply_to_action(delete_action, "delete")
+        ShortcutManager.apply_to_action(delete_action, ACTION_DELETE)
         delete_action.setToolTip("Delete")
         delete_action.setEnabled(False)
         undo_action = QtGui.QAction("Undo", self.window)
         IconManager.apply(undo_action, IconId.UNDO)
-        ShortcutManager.apply_to_action(undo_action, "undo")
+        ShortcutManager.apply_to_action(undo_action, ACTION_UNDO)
         undo_action.setToolTip("Undo")
         undo_action.setEnabled(False)
         redo_action = QtGui.QAction("Redo", self.window)
         IconManager.apply(redo_action, IconId.REDO)
-        ShortcutManager.apply_to_action(redo_action, "redo")
+        ShortcutManager.apply_to_action(redo_action, ACTION_REDO)
         redo_action.setToolTip("Redo")
         redo_action.setEnabled(False)
         workspace_main_toolbar.addWidget(new_button)

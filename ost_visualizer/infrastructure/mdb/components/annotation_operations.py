@@ -2,6 +2,21 @@ from types import MappingProxyType
 from typing import Dict, List, Optional, Tuple
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.paste_ref_remap_dto import PasteRefRemap
+from ....domain.entities.annotation import (
+    ANNOTATION_TYPE_ARROW,
+    ANNOTATION_TYPE_CALLOUT,
+    ANNOTATION_TYPE_CLOUD,
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_INK,
+    ANNOTATION_TYPE_LINE,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_OVAL,
+    ANNOTATION_TYPE_POLYGON,
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+)
 from ....domain.entities.named_view import normalize_named_view_position
 from .constants import encode_position, hex_to_color_int
 
@@ -29,19 +44,19 @@ class AnnotationOperationsMixin:
     )
     _ANNOTATION_TABLE = MappingProxyType(
         {
-            "line": "BidALines",
-            "arrow": "BidArrows",
-            "dimension": "BidDimensions",
-            "cloud": "BidAnnotationClouds",
-            "polygon": "BidAnnotationPolygons",
-            "rect": "BidAnnotationRects",
-            "oval": "BidAnnotationOvals",
-            "ink": "BidAnnoInk",
-            "text": "BidTexts",
-            "highlight": "BidHighlights",
-            "namedview": "BidNamedViews",
-            "hotlink": "BidHotLinks",
-            "callout": "BidCallOuts",
+            ANNOTATION_TYPE_LINE: "BidALines",
+            ANNOTATION_TYPE_ARROW: "BidArrows",
+            ANNOTATION_TYPE_DIMENSION: "BidDimensions",
+            ANNOTATION_TYPE_CLOUD: "BidAnnotationClouds",
+            ANNOTATION_TYPE_POLYGON: "BidAnnotationPolygons",
+            ANNOTATION_TYPE_RECT: "BidAnnotationRects",
+            ANNOTATION_TYPE_OVAL: "BidAnnotationOvals",
+            ANNOTATION_TYPE_INK: "BidAnnoInk",
+            ANNOTATION_TYPE_TEXT: "BidTexts",
+            ANNOTATION_TYPE_HIGHLIGHT: "BidHighlights",
+            ANNOTATION_TYPE_NAMED_VIEW: "BidNamedViews",
+            ANNOTATION_TYPE_HOTLINK: "BidHotLinks",
+            ANNOTATION_TYPE_CALLOUT: "BidCallOuts",
         }
     )
 
@@ -61,13 +76,17 @@ class AnnotationOperationsMixin:
                     self._require_write_columns(schema, table, ("UID", "Position"))
                     position_to_save = (
                         normalize_named_view_position(position)
-                        if annotation_type == "namedview"
+                        if annotation_type == ANNOTATION_TYPE_NAMED_VIEW
                         else position
                     )
                     position_bytes = encode_position(position_to_save)
                     position_val = (
                         position_bytes.decode("latin-1")
-                        if annotation_type in ("text", "callout")
+                        if annotation_type
+                        in (
+                            ANNOTATION_TYPE_TEXT,
+                            ANNOTATION_TYPE_CALLOUT,
+                        )
                         else position_bytes
                     )
                     cursor.execute(
@@ -92,7 +111,7 @@ class AnnotationOperationsMixin:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
                 for uid, annotation_type, properties in updates:
-                    if annotation_type == "namedview":
+                    if annotation_type == ANNOTATION_TYPE_NAMED_VIEW:
                         table = self._ANNOTATION_TABLE[annotation_type]
                         if schema.optional_table_missing(table):
                             continue
@@ -103,7 +122,7 @@ class AnnotationOperationsMixin:
                             int(uid),
                         )
                         continue
-                    if annotation_type == "dimension":
+                    if annotation_type == ANNOTATION_TYPE_DIMENSION:
                         table = self._ANNOTATION_TABLE[annotation_type]
                         if schema.optional_table_missing(table):
                             continue
@@ -127,7 +146,10 @@ class AnnotationOperationsMixin:
                             *values,
                         )
                         continue
-                    if annotation_type not in ("text", "callout"):
+                    if annotation_type not in (
+                        ANNOTATION_TYPE_TEXT,
+                        ANNOTATION_TYPE_CALLOUT,
+                    ):
                         continue
                     table = self._ANNOTATION_TABLE[annotation_type]
                     if schema.optional_table_missing(table):
@@ -202,7 +224,7 @@ class AnnotationOperationsMixin:
         values: List[object] = []
         if "Color" in properties:
             color_int = self._style_color_int(properties["Color"])
-            if annotation_type in ("dimension", "text"):
+            if annotation_type in (ANNOTATION_TYPE_DIMENSION, ANNOTATION_TYPE_TEXT):
                 self._require_write_columns(schema, table, ("UID", "FontColor"))
                 assignments.append("[FontColor]=?")
             else:
@@ -210,11 +232,11 @@ class AnnotationOperationsMixin:
                 assignments.append("[Color]=?")
             values.append(color_int)
         if "Width" in properties and annotation_type not in (
-            "dimension",
-            "text",
-            "highlight",
-            "hotlink",
-            "namedview",
+            ANNOTATION_TYPE_DIMENSION,
+            ANNOTATION_TYPE_TEXT,
+            ANNOTATION_TYPE_HIGHLIGHT,
+            ANNOTATION_TYPE_HOTLINK,
+            ANNOTATION_TYPE_NAMED_VIEW,
         ):
             self._require_write_columns(schema, table, ("UID", "Width"))
             assignments.append("[Width]=?")
@@ -291,7 +313,7 @@ class AnnotationOperationsMixin:
                     annotation_type = spec.annotation_type
                     position = (
                         normalize_named_view_position(spec.position)
-                        if annotation_type == "namedview"
+                        if annotation_type == ANNOTATION_TYPE_NAMED_VIEW
                         else spec.position
                     )
                     color = spec.color
@@ -305,7 +327,11 @@ class AnnotationOperationsMixin:
                     position_bytes = encode_position(position)
                     position_val = (
                         position_bytes.decode("latin-1")
-                        if annotation_type in ("text", "callout")
+                        if annotation_type
+                        in (
+                            ANNOTATION_TYPE_TEXT,
+                            ANNOTATION_TYPE_CALLOUT,
+                        )
                         else position_bytes
                     )
                     color_int = hex_to_color_int(color)
@@ -361,7 +387,7 @@ class AnnotationOperationsMixin:
     ):
         takeoff_remap = ref_remap.takeoff_uids if ref_remap else {}
         namedview_remap = ref_remap.namedview_uids if ref_remap else {}
-        if annotation_type in ("line", "arrow"):
+        if annotation_type in (ANNOTATION_TYPE_LINE, ANNOTATION_TYPE_ARROW):
             from_uid_raw = properties.get("BidTakeoffFromUID")
             to_uid_raw = properties.get("BidTakeoffToUID")
             from_val = self._resolve_takeoff_fk(from_uid_raw, takeoff_remap)
@@ -383,7 +409,7 @@ class AnnotationOperationsMixin:
                 ("UID", "BidUID", "BidPageUID", "Position"),
                 f"insert_{annotation_type}_annotation",
             )
-        elif annotation_type == "dimension":
+        elif annotation_type == ANNOTATION_TYPE_DIMENSION:
             from_uid_raw = properties.get("BidTakeoffFromUID")
             to_uid_raw = properties.get("BidTakeoffToUID")
             from_val = self._resolve_takeoff_fk(from_uid_raw, takeoff_remap)
@@ -412,7 +438,7 @@ class AnnotationOperationsMixin:
                 ("UID", "BidUID", "BidPageUID", "Position"),
                 "insert_dimension_annotation",
             )
-        elif annotation_type == "text":
+        elif annotation_type == ANNOTATION_TYPE_TEXT:
             text_content = properties.get("Text", "")
             if isinstance(text_content, str):
                 text_content = text_content.encode("latin-1", errors="replace")
@@ -438,7 +464,7 @@ class AnnotationOperationsMixin:
                 ("UID", "BidUID", "BidPageUID", "Position"),
                 "insert_text_annotation",
             )
-        elif annotation_type == "callout":
+        elif annotation_type == ANNOTATION_TYPE_CALLOUT:
             text_content = properties.get("Text", "")
             if isinstance(text_content, str):
                 text_content = text_content.encode("latin-1", errors="replace")
@@ -466,7 +492,7 @@ class AnnotationOperationsMixin:
                 ("UID", "BidUID", "BidPageUID", "Position"),
                 "insert_callout_annotation",
             )
-        elif annotation_type == "highlight":
+        elif annotation_type == ANNOTATION_TYPE_HIGHLIGHT:
             self._execute_insert_values(
                 cursor,
                 schema,
@@ -482,7 +508,7 @@ class AnnotationOperationsMixin:
                 ("UID", "BidUID", "BidPageUID", "Position"),
                 "insert_highlight_annotation",
             )
-        elif annotation_type == "hotlink":
+        elif annotation_type == ANNOTATION_TYPE_HOTLINK:
             page_view_uid = properties.get("BidPageViewUID")
             if page_view_uid not in (None, "", "0"):
                 remapped = namedview_remap.get(str(page_view_uid))
@@ -505,7 +531,7 @@ class AnnotationOperationsMixin:
                 ("UID", "BidUID", "BidPageUID", "BidPageViewUID", "Position"),
                 "insert_hotlink_annotation",
             )
-        elif annotation_type == "namedview":
+        elif annotation_type == ANNOTATION_TYPE_NAMED_VIEW:
             self._execute_insert_values(
                 cursor,
                 schema,
@@ -521,7 +547,7 @@ class AnnotationOperationsMixin:
                 ("UID", "BidUID", "BidPageUID", "Name", "Position"),
                 "insert_namedview_annotation",
             )
-        elif annotation_type == "ink":
+        elif annotation_type == ANNOTATION_TYPE_INK:
             self._execute_insert_values(
                 cursor,
                 schema,

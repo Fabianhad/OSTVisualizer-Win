@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
+from ...domain.entities.config import Config
 from ...domain.entities.condition import Condition
 from ...domain.entities.takeoff import Takeoff
 
@@ -26,7 +27,7 @@ class IMeshGenerator(Protocol):
         bid_conditions: Dict[str, Condition],
         bid_takeoffs: List[Takeoff],
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
-        color_mode: str = "Solid",
+        color_mode: str = Config.COLOR_MODE_SOLID,
         grayscale_enabled: bool = True,
     ) -> Tuple[
         List[MeshData],

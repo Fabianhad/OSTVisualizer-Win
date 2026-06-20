@@ -8,11 +8,15 @@ from ...application.events.app_events import AppEvents
 from ...domain.entities.bid import Bid
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
-from ...domain.entities.layer import is_image_layer_name
 from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.project_factory import build_loaded_files
 from ..config import TAB_INDEX_PROJECTS, TAB_INDEX_TAKEOFF
+from ..modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_PLACE,
+    CURSOR_MODE_SELECT,
+)
 from ..dialogs.adjust_images_dialog import AdjustImagesDialog, ImageAdjustmentSettings
 from ..dialogs.areas_dialog import BidAreasDialog
 from ..dialogs.condition_types_dialog import ConditionTypesDialog
@@ -788,7 +792,7 @@ class UIEventCoordinator:
     def _set_plan_select_mode(self) -> None:
         if self.plan_view:
             self.plan_view.reset_ctrl_held()
-            self.plan_view.set_cursor_mode("select")
+            self.plan_view.set_cursor_mode(CURSOR_MODE_SELECT)
         self._toolbar.set_select_checked()
 
     def _active_layer_tool_snapshot(
@@ -797,7 +801,7 @@ class UIEventCoordinator:
         if not self.plan_view:
             return None
         layer_key = str(layer_uid) if layer_uid is not None else None
-        if self.plan_view.cursor_mode == "annotation_place":
+        if self.plan_view.cursor_mode == CURSOR_MODE_ANNOTATION_PLACE:
             annotation_layer_uid = self.project_data.get_annotation_layer_uid()
             if annotation_layer_uid:
                 annotation_layer_key = str(annotation_layer_uid)
@@ -806,12 +810,12 @@ class UIEventCoordinator:
                     if annotation_type:
                         return _SuspendedLayerTool(
                             annotation_layer_key,
-                            "annotation_place",
+                            CURSOR_MODE_ANNOTATION_PLACE,
                             annotation_type=annotation_type,
                         )
         condition_uid = (
             self.plan_view.place_condition_uid
-            if self.plan_view.cursor_mode == "place"
+            if self.plan_view.cursor_mode == CURSOR_MODE_PLACE
             else None
         )
         if condition_uid:
@@ -821,7 +825,7 @@ class UIEventCoordinator:
                 if layer_key is None or layer_key == condition_layer_key:
                     return _SuspendedLayerTool(
                         condition_layer_key,
-                        "place",
+                        CURSOR_MODE_PLACE,
                         condition_uid=condition_uid,
                     )
         return None
@@ -840,13 +844,13 @@ class UIEventCoordinator:
         layer_key = str(layer_uid) if layer_uid is not None else None
         if layer_key is not None and suspended.layer_uid != layer_key:
             return
-        if self.plan_view.cursor_mode != "select":
+        if self.plan_view.cursor_mode != CURSOR_MODE_SELECT:
             self._suspended_layer_tool = None
             return
-        if suspended.mode == "annotation_place" and suspended.annotation_type:
+        if suspended.mode == CURSOR_MODE_ANNOTATION_PLACE and suspended.annotation_type:
             if self.ui_access_manager.is_allowed(Feature.PLACE_ANNOTATIONS):
                 self.plan_view.activate_annotation_placement(suspended.annotation_type)
-        elif suspended.mode == "place" and suspended.condition_uid:
+        elif suspended.mode == CURSOR_MODE_PLACE and suspended.condition_uid:
             condition = self.project_data.get_bid_conditions().get(
                 suspended.condition_uid
             )
@@ -1725,7 +1729,7 @@ class UIEventCoordinator:
                 self.plan_view.clear()
             self._sidebar.update_conditions_quantities()
         if self._placement.is_active and self.plan_view is not None:
-            assert self.plan_view._cursor_mode == "place", (
+            assert self.plan_view._cursor_mode == CURSOR_MODE_PLACE, (
                 "placement is active but plan view cursor is "
                 f"{self.plan_view._cursor_mode!r} after page change"
             )
@@ -2446,18 +2450,11 @@ class UIEventCoordinator:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return False
-        layer = (
-            self._sidebar.bid_layers_sidebar.get_layer(layer_uid)
-            if self._sidebar.bid_layers_sidebar
-            else None
-        )
-        image_layer = bool(layer and is_image_layer_name(layer.name))
+        image_layer = self.project_data.is_image_layer_uid(layer_uid)
         condition_layer = self._layer_has_condition_rows(layer_uid)
         if not show and not image_layer:
             self._suspend_active_layer_tool(layer_uid)
-        self.project_data.update_layer_visibility(
-            layer_uid, show, image_layer=image_layer
-        )
+        changed_page_uids = self.project_data.update_layer_visibility(layer_uid, show)
         self.event_bus.publish(
             AppEvents.LAYER_VISIBILITY_CHANGED,
             file_path=bid_ref.file_path,
@@ -2477,9 +2474,9 @@ class UIEventCoordinator:
         self._apply_layer_visibility_to_current_plan_view(
             layer_uid,
             show,
-            image_layer=image_layer,
+            changed_page_uids=changed_page_uids,
         )
-        if not image_layer:
+        if condition_layer:
             self._viewer.update_viewers(self.project_data.get_selected_page_uids())
         self._update_export_menu_state()
         if show and not image_layer:
@@ -2488,7 +2485,12 @@ class UIEventCoordinator:
         return True
 
     def _apply_layer_visibility_to_current_plan_view(
-        self, layer_uid: str, show: bool, *, image_layer: bool = False
+        self,
+        layer_uid: str,
+        show: bool,
+        *,
+        changed_page_uids: Optional[List[str]] = None,
+        all_layers: bool = False,
     ) -> None:
         active_page_uid = self.ui_state_manager.active_page_uid
         if not active_page_uid or not self.plan_view:
@@ -2496,16 +2498,21 @@ class UIEventCoordinator:
         if self.plan_view.current_page_uid != active_page_uid:
             self._update_plan_view(active_page_uid)
             return
-        if image_layer:
+        changed_page_uid_set = {str(uid) for uid in (changed_page_uids or [])}
+        page_layer_changed = active_page_uid in changed_page_uid_set
+        if page_layer_changed:
             page = self.project_data.get_page(active_page_uid)
             if page and self.plan_view.apply_page_image_layer_visibility(page):
+                if not all_layers:
+                    return
+            else:
+                self._update_plan_view(active_page_uid)
                 return
-            self._update_plan_view(active_page_uid)
+        conditions = self.project_data.get_bid_conditions()
+        if all_layers and self.plan_view.apply_all_layer_visibility(show, conditions):
             return
-        if self.plan_view.apply_layer_visibility(
-            layer_uid,
-            show,
-            self.project_data.get_bid_conditions(),
+        if not all_layers and self.plan_view.apply_layer_visibility(
+            layer_uid, show, conditions
         ):
             return
         self._update_plan_view(active_page_uid)
@@ -2571,7 +2578,7 @@ class UIEventCoordinator:
         if not show:
             self._suspend_active_layer_tool()
         self.project_data.set_bid_layer_visibility(layers)
-        self.project_data.update_all_layer_visibility(show)
+        changed_page_uids = self.project_data.update_all_layer_visibility(show)
         self.event_bus.publish(
             AppEvents.LAYER_VISIBILITY_CHANGED,
             file_path=bid_ref.file_path,
@@ -2584,19 +2591,12 @@ class UIEventCoordinator:
             self._deferred_persistence.schedule_layer_show(
                 bid_ref.file_path, layer.uid, show
             )
-        active_page_uid = self.ui_state_manager.active_page_uid
-        if active_page_uid and self.plan_view:
-            if self.plan_view.current_page_uid != active_page_uid:
-                self._update_plan_view(active_page_uid)
-            else:
-                page = self.project_data.get_page(active_page_uid)
-                if page:
-                    self.plan_view.apply_page_image_layer_visibility(page)
-                if not self.plan_view.apply_all_layer_visibility(
-                    show,
-                    self.project_data.get_bid_conditions(),
-                ):
-                    self._update_plan_view(active_page_uid)
+        self._apply_layer_visibility_to_current_plan_view(
+            "",
+            show,
+            changed_page_uids=changed_page_uids,
+            all_layers=True,
+        )
         self._viewer.update_viewers(self.project_data.get_selected_page_uids())
         self._update_export_menu_state()
         if show:

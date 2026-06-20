@@ -1,6 +1,13 @@
 from __future__ import annotations
 from collections.abc import Callable, Mapping
 from PySide6 import QtCore, QtGui, QtWidgets
+from ...domain.entities.annotation import (
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_TEXT,
+)
 from ...domain.entities.annotation_style import AnnotationStyle
 from ..managers.icon_manager import IconId, IconManager
 from .annotation_defaults import get_annotation_style_for_tool
@@ -9,7 +16,13 @@ from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS
 StyleGetter = Callable[[], AnnotationStyle]
 StyleSetter = Callable[..., AnnotationStyle]
 _TEXT_FONT_SIZES = (8, 9, 10, 11, 12, 14, 16, 18, 24, 36)
-_COLOR_ONLY_ANNOTATION_TYPES = frozenset({"highlight", "hotlink", "namedview"})
+_COLOR_ONLY_ANNOTATION_TYPES = frozenset(
+    {
+        ANNOTATION_TYPE_HIGHLIGHT,
+        ANNOTATION_TYPE_HOTLINK,
+        ANNOTATION_TYPE_NAMED_VIEW,
+    }
+)
 
 
 def apply_annotation_tool_icon_color(
@@ -36,7 +49,7 @@ def create_annotation_style_menu(
         raise ValueError("Annotation style menu requires a tool-specific getter")
     if set_style is None:
         raise ValueError("Annotation style menu requires a tool-specific setter")
-    if annotation_type == "text":
+    if annotation_type == ANNOTATION_TYPE_TEXT:
         return _create_font_annotation_style_menu(
             parent,
             get_style,
@@ -45,7 +58,7 @@ def create_annotation_style_menu(
             color_label="Select Font Color...",
             menu_property="textAnnotationDefaultStyleMenu",
         )
-    if annotation_type == "dimension":
+    if annotation_type == ANNOTATION_TYPE_DIMENSION:
         return _create_font_annotation_style_menu(
             parent,
             get_style,
@@ -278,7 +291,7 @@ def create_annotation_style_button(
         button.setFixedWidth(max(14, min(18, icon_size.width() // 2 + 4)))
     if annotation_type in _COLOR_ONLY_ANNOTATION_TYPES:
         button.setProperty("annotationDefaultColorPicker", True)
-        if annotation_type == "highlight":
+        if annotation_type == ANNOTATION_TYPE_HIGHLIGHT:
             button.setProperty("highlightAnnotationDefaultColorPicker", True)
 
         def _choose_default_color() -> None:

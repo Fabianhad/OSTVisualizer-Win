@@ -9,6 +9,30 @@ from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
+from ost_visualizer.presentation.actions.action_ids import (
+    ACTION_ANNOTATION_WINDOW,
+    ACTION_BACKOUT_MODE,
+    ACTION_CONDITIONS_SIDEBAR,
+    ACTION_COPY,
+    ACTION_CUT,
+    ACTION_DELETE,
+    ACTION_DUPLICATE,
+    ACTION_LAYERS_SIDEBAR,
+    ACTION_NEW_DATABASE,
+    ACTION_NEW_FOLDER,
+    ACTION_NEW_PROJECT,
+    ACTION_NEXT_PAGE,
+    ACTION_OPEN_FILES,
+    ACTION_PASTE,
+    ACTION_PREVIOUS_PAGE,
+    ACTION_REDO,
+    ACTION_RESET_VIEW,
+    ACTION_SELECT_ALL,
+    ACTION_STATUS_BAR,
+    ACTION_UNDO,
+    ACTION_ZOOM_IN,
+    ACTION_ZOOM_OUT,
+)
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ost_visualizer.application.events.app_events import AppEvents
@@ -29,6 +53,11 @@ from ost_visualizer.presentation.components.page_combo import (
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
     ImageBackgroundItem,
     TileGraphicsItem,
+)
+from ost_visualizer.presentation.components.plan_view.components.page_loader import (
+    VISUAL_KIND_COMPOSITE,
+    VISUAL_KIND_OVERLAY,
+    VISUAL_KIND_PAGE,
 )
 from ost_visualizer.presentation.components.plan_view.components.placement_mode import (
     PlacementModeMixin,
@@ -487,17 +516,17 @@ def _visible_frame_lifecycle_view(kind="base"):
     if kind == "composite":
         image_show_mode = 2
         image_path = "base.pdf"
-        loaded_visual_kind = "composite"
+        loaded_visual_kind = VISUAL_KIND_COMPOSITE
         can_zoom_rerender = True
     elif kind == "overlay":
         image_show_mode = 1
         image_path = ""
-        loaded_visual_kind = "overlay"
+        loaded_visual_kind = VISUAL_KIND_OVERLAY
         can_zoom_rerender = False
     else:
         image_show_mode = 0
         image_path = "base.pdf"
-        loaded_visual_kind = "page"
+        loaded_visual_kind = VISUAL_KIND_PAGE
         can_zoom_rerender = True
     view._current_page = Page(
         uid="page-1",
@@ -1053,27 +1082,27 @@ class OptionsPreferencesTests(unittest.TestCase):
         shared_actions = {
             key: QtGui.QAction(labels.get(key, key), None)
             for key in (
-                "new_project",
-                "new_folder",
-                "new_database",
-                "open_files",
-                "undo",
-                "redo",
-                "cut",
-                "copy",
-                "paste",
-                "duplicate",
-                "delete",
-                "select_all",
-                "zoom_in",
-                "zoom_out",
-                "reset_view",
-                "next_page",
-                "previous_page",
-                "layers_sidebar",
-                "conditions_sidebar",
-                "status_bar",
-                "annotation_window",
+                ACTION_NEW_PROJECT,
+                ACTION_NEW_FOLDER,
+                ACTION_NEW_DATABASE,
+                ACTION_OPEN_FILES,
+                ACTION_UNDO,
+                ACTION_REDO,
+                ACTION_CUT,
+                ACTION_COPY,
+                ACTION_PASTE,
+                ACTION_DUPLICATE,
+                ACTION_DELETE,
+                ACTION_SELECT_ALL,
+                ACTION_ZOOM_IN,
+                ACTION_ZOOM_OUT,
+                ACTION_RESET_VIEW,
+                ACTION_NEXT_PAGE,
+                ACTION_PREVIOUS_PAGE,
+                ACTION_LAYERS_SIDEBAR,
+                ACTION_CONDITIONS_SIDEBAR,
+                ACTION_STATUS_BAR,
+                ACTION_ANNOTATION_WINDOW,
                 "select_tool",
                 "place_tool",
                 "pan_tool",
@@ -1090,7 +1119,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 "ink_annotation_tool",
                 "hotlink_tool",
                 "named_view_tool",
-                "backout_mode",
+                ACTION_BACKOUT_MODE,
             )
         }
         result = MenuBuilder(None, {}, shared_actions=shared_actions).create_menu()
@@ -3584,7 +3613,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             width_pts=100.0,
             height_pts=100.0,
         )
-        view._loaded_visual_kind = "overlay"
+        view._loaded_visual_kind = VISUAL_KIND_OVERLAY
         view._can_zoom_rerender = False
         view._disable_high_resolution_images = False
         view._pending_page_data = None
@@ -3657,7 +3686,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             width_pts=100.0,
             height_pts=100.0,
         )
-        view._loaded_visual_kind = "composite"
+        view._loaded_visual_kind = VISUAL_KIND_COMPOSITE
         view._can_zoom_rerender = True
         view._disable_high_resolution_images = False
         view._base_raster_scale = 2.0
@@ -3712,7 +3741,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             height_pts=100.0,
             overlay_rect=(0.0, 0.0, 133.333333, 133.333333),
         )
-        view._loaded_visual_kind = "composite"
+        view._loaded_visual_kind = VISUAL_KIND_COMPOSITE
         view._can_zoom_rerender = True
         view._scene_scale = 2.0
         view._pdf_width_pts = 100.0
@@ -3748,7 +3777,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             width_pts=100.0,
             height_pts=100.0,
         )
-        view._loaded_visual_kind = "overlay"
+        view._loaded_visual_kind = VISUAL_KIND_OVERLAY
         view._can_zoom_rerender = False
         view._disable_high_resolution_images = True
         view._base_raster_scale = 3.0

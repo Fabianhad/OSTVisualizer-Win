@@ -1,55 +1,71 @@
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
+ANNOTATION_TYPE_ARROW = "arrow"
+ANNOTATION_TYPE_CALLOUT = "callout"
+ANNOTATION_TYPE_CLOUD = "cloud"
+ANNOTATION_TYPE_DIMENSION = "dimension"
+ANNOTATION_TYPE_HIGHLIGHT = "highlight"
+ANNOTATION_TYPE_HOTLINK = "hotlink"
+ANNOTATION_TYPE_INK = "ink"
+ANNOTATION_TYPE_LINE = "line"
+ANNOTATION_TYPE_NAMED_VIEW = "namedview"
+ANNOTATION_TYPE_OVAL = "oval"
+ANNOTATION_TYPE_POLYGON = "polygon"
+ANNOTATION_TYPE_RECT = "rect"
+ANNOTATION_TYPE_TEXT = "text"
+
 
 @dataclass
 class BidAnnotation:
-    LINEAR_TYPES: ClassVar[frozenset] = frozenset({"line", "arrow", "dimension"})
+    LINEAR_TYPES: ClassVar[frozenset] = frozenset(
+        {ANNOTATION_TYPE_LINE, ANNOTATION_TYPE_ARROW, ANNOTATION_TYPE_DIMENSION}
+    )
     INTERACTIVE_TYPES: ClassVar[frozenset] = frozenset(
         {
-            "line",
-            "arrow",
-            "dimension",
-            "rect",
-            "oval",
-            "highlight",
-            "text",
-            "polygon",
-            "cloud",
-            "ink",
-            "namedview",
-            "hotlink",
-            "callout",
+            ANNOTATION_TYPE_LINE,
+            ANNOTATION_TYPE_ARROW,
+            ANNOTATION_TYPE_DIMENSION,
+            ANNOTATION_TYPE_RECT,
+            ANNOTATION_TYPE_OVAL,
+            ANNOTATION_TYPE_HIGHLIGHT,
+            ANNOTATION_TYPE_TEXT,
+            ANNOTATION_TYPE_POLYGON,
+            ANNOTATION_TYPE_CLOUD,
+            ANNOTATION_TYPE_INK,
+            ANNOTATION_TYPE_NAMED_VIEW,
+            ANNOTATION_TYPE_HOTLINK,
+            ANNOTATION_TYPE_CALLOUT,
         }
     )
     RESIZABLE_TYPES: ClassVar[frozenset] = frozenset(
         {
-            "line",
-            "arrow",
-            "dimension",
-            "rect",
-            "oval",
-            "highlight",
-            "text",
-            "polygon",
-            "cloud",
-            "namedview",
-            "callout",
+            ANNOTATION_TYPE_LINE,
+            ANNOTATION_TYPE_ARROW,
+            ANNOTATION_TYPE_DIMENSION,
+            ANNOTATION_TYPE_RECT,
+            ANNOTATION_TYPE_OVAL,
+            ANNOTATION_TYPE_HIGHLIGHT,
+            ANNOTATION_TYPE_TEXT,
+            ANNOTATION_TYPE_POLYGON,
+            ANNOTATION_TYPE_CLOUD,
+            ANNOTATION_TYPE_NAMED_VIEW,
+            ANNOTATION_TYPE_CALLOUT,
         }
     )
     ROTATABLE_TYPES: ClassVar[frozenset] = frozenset(
         {
-            "line",
-            "arrow",
-            "dimension",
-            "rect",
-            "oval",
-            "highlight",
-            "text",
-            "polygon",
-            "cloud",
-            "ink",
-            "callout",
+            ANNOTATION_TYPE_LINE,
+            ANNOTATION_TYPE_ARROW,
+            ANNOTATION_TYPE_DIMENSION,
+            ANNOTATION_TYPE_RECT,
+            ANNOTATION_TYPE_OVAL,
+            ANNOTATION_TYPE_HIGHLIGHT,
+            ANNOTATION_TYPE_TEXT,
+            ANNOTATION_TYPE_POLYGON,
+            ANNOTATION_TYPE_CLOUD,
+            ANNOTATION_TYPE_INK,
+            ANNOTATION_TYPE_CALLOUT,
         }
     )
     uid: str
@@ -61,10 +77,6 @@ class BidAnnotation:
     width: float = 1.0
     properties: Dict[str, Any] = field(default_factory=dict)
     visible: bool = True
-
-    @property
-    def is_arrow(self) -> bool:
-        return self.annotation_type == "arrow"
 
     @property
     def is_interactive(self) -> bool:
@@ -80,47 +92,43 @@ class BidAnnotation:
 
     @property
     def is_text(self) -> bool:
-        return self.annotation_type == "text"
+        return self.annotation_type == ANNOTATION_TYPE_TEXT
 
     @property
     def is_cloud(self) -> bool:
-        return self.annotation_type == "cloud"
-
-    @property
-    def is_line(self) -> bool:
-        return self.annotation_type == "line"
+        return self.annotation_type == ANNOTATION_TYPE_CLOUD
 
     @property
     def is_dimension(self) -> bool:
-        return self.annotation_type == "dimension"
+        return self.annotation_type == ANNOTATION_TYPE_DIMENSION
 
     @property
     def is_namedview(self) -> bool:
-        return self.annotation_type == "namedview"
+        return self.annotation_type == ANNOTATION_TYPE_NAMED_VIEW
 
     @property
     def is_hotlink(self) -> bool:
-        return self.annotation_type == "hotlink"
+        return self.annotation_type == ANNOTATION_TYPE_HOTLINK
 
     @property
     def is_rect(self) -> bool:
-        return self.annotation_type == "rect"
+        return self.annotation_type == ANNOTATION_TYPE_RECT
 
     @property
     def is_oval(self) -> bool:
-        return self.annotation_type == "oval"
+        return self.annotation_type == ANNOTATION_TYPE_OVAL
 
     @property
     def is_polygon(self) -> bool:
-        return self.annotation_type == "polygon"
+        return self.annotation_type == ANNOTATION_TYPE_POLYGON
 
     @property
     def is_ink(self) -> bool:
-        return self.annotation_type == "ink"
+        return self.annotation_type == ANNOTATION_TYPE_INK
 
     @property
     def is_highlight(self) -> bool:
-        return self.annotation_type == "highlight"
+        return self.annotation_type == ANNOTATION_TYPE_HIGHLIGHT
 
     @property
     def hotlink_target_view_uid(self) -> Optional[str]:

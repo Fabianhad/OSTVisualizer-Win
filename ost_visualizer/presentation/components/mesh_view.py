@@ -5,7 +5,9 @@ from typing import Optional, Sequence, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QTimer, Signal
 from ...domain.entities.identity_refs import BidRef
+from ..actions.action_ids import ACTION_SHOW_ORIGINAL_IMAGE, ACTION_SHOW_OVERLAY_IMAGE
 from ..config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
+from ..modes.cursor import CURSOR_MODE_DEFAULT, CURSOR_MODE_PAN, CURSOR_MODE_ZOOM
 from ..managers.context_menu_manager import ContextMenuManager
 from ..utils.overlay_context_menu import resolve_overlay_menu_action
 from ..utils.theme import set_palette_background
@@ -50,7 +52,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._set_palette_background()
         self._last_mouse_pos: Optional[QtCore.QPoint] = None
         self._zoom_reference_distance: float = 0.0
-        self._cursor_mode: str = "default"
+        self._cursor_mode: str = CURSOR_MODE_DEFAULT
         self._zoom_cursor: Optional[QtGui.QCursor] = None
         self._animation_timer = QTimer(self)
         self._animation_timer.timeout.connect(self._on_animation_frame)
@@ -148,7 +150,7 @@ class OpenGLViewer(QtWidgets.QWidget):
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
-        if self._cursor_mode == "zoom" and self._renderer:
+        if self._cursor_mode == CURSOR_MODE_ZOOM and self._renderer:
             if event.button() == QtCore.Qt.MouseButton.RightButton:
                 self._start_right_context_tracking(event.pos())
             if event.button() == QtCore.Qt.MouseButton.MiddleButton:
@@ -176,14 +178,14 @@ class OpenGLViewer(QtWidgets.QWidget):
         if event.button() == QtCore.Qt.MouseButton.RightButton:
             self._start_right_context_tracking(event.pos())
         self._camera_moving = True
-        if self._cursor_mode == "pan":
+        if self._cursor_mode == CURSOR_MODE_PAN:
             self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
         if not self._animation_timer.isActive():
             self._animation_timer.start()
         event.accept()
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
-        if self._cursor_mode == "zoom":
+        if self._cursor_mode == CURSOR_MODE_ZOOM:
             if event.button() == QtCore.Qt.MouseButton.RightButton:
                 self._finish_right_context_tracking()
             if event.button() == QtCore.Qt.MouseButton.MiddleButton:
@@ -206,12 +208,12 @@ class OpenGLViewer(QtWidgets.QWidget):
         if event.button() == QtCore.Qt.MouseButton.RightButton:
             self._finish_right_context_tracking()
         self._camera_moving = False
-        if self._cursor_mode == "pan":
+        if self._cursor_mode == CURSOR_MODE_PAN:
             self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
         event.accept()
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
-        if self._cursor_mode == "zoom":
+        if self._cursor_mode == CURSOR_MODE_ZOOM:
             if event.buttons() & QtCore.Qt.RightButton:
                 self._update_right_context_drag(event.pos())
             if (
@@ -238,7 +240,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         if event.buttons() & QtCore.Qt.RightButton:
             self._update_right_context_drag(event.pos())
         delta = event.pos() - self._last_mouse_pos
-        if self._cursor_mode == "pan":
+        if self._cursor_mode == CURSOR_MODE_PAN:
             if event.buttons() & QtCore.Qt.LeftButton:
                 self._renderer.camera.pan(delta.x(), delta.y())
             elif event.buttons() & QtCore.Qt.RightButton:
@@ -358,9 +360,9 @@ class OpenGLViewer(QtWidgets.QWidget):
 
     def set_cursor_mode(self, mode: str) -> None:
         self._cursor_mode = mode
-        if mode == "zoom" and self._zoom_cursor:
+        if mode == CURSOR_MODE_ZOOM and self._zoom_cursor:
             self.setCursor(self._zoom_cursor)
-        elif mode == "pan":
+        elif mode == CURSOR_MODE_PAN:
             self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
         else:
             self.unsetCursor()
@@ -437,9 +439,9 @@ class OpenGLViewer(QtWidgets.QWidget):
             return False
         if overlay_mode != self._image_show_mode:
             command_key = (
-                "show_overlay_image"
+                ACTION_SHOW_OVERLAY_IMAGE
                 if action == overlay_action
-                else "show_original_image"
+                else ACTION_SHOW_ORIGINAL_IMAGE
             )
             if self._context_menu_command_trigger:
                 self._trigger_context_command(command_key)

@@ -1,6 +1,10 @@
 import logging
 from typing import Optional
 from ..application.dtos.mcp_context_dtos import (
+    MCP_PDF_SOURCE_AUTO,
+    MCP_STATUS_EMPTY,
+    MCP_STATUS_OK,
+    MCP_STATUS_TRUNCATED,
     McpAreaSummaryDto,
     McpBidQuantitySummaryDto,
     McpDuplicateConditionSummaryDto,
@@ -92,7 +96,7 @@ def build_mcp_server(
         databases = read_service.list_databases()
         return ok(
             databases,
-            status="ok" if databases else "no_checked_database",
+            status=MCP_STATUS_OK if databases else "no_checked_database",
             meta=McpResultMetaDto(
                 returned_count=len(databases),
                 total_count=len(databases),
@@ -169,7 +173,7 @@ def build_mcp_server(
         database_id: str,
         bid_uid: str,
         page_uid: str,
-        source: str = "auto",
+        source: str = MCP_PDF_SOURCE_AUTO,
         include_text: bool = False,
         limit: int = 10,
     ) -> dict:
@@ -189,7 +193,7 @@ def build_mcp_server(
         database_id: str,
         bid_uid: str,
         page_uid: str,
-        source: str = "auto",
+        source: str = MCP_PDF_SOURCE_AUTO,
         limit: int = 20,
     ) -> dict:
         """Return bounded PDF vector line metadata used for snapping."""
@@ -238,7 +242,7 @@ def build_mcp_server(
         bid_uid: str,
         page_uid: str,
         query: str,
-        source: str = "auto",
+        source: str = MCP_PDF_SOURCE_AUTO,
         limit: int = 10,
     ) -> dict:
         """Search embedded PDF text on one page with bounded snippets."""
@@ -901,10 +905,10 @@ def _result_status(result, meta: McpResultMetaDto) -> str:
     if _has_summary_meta(result):
         return result.status
     if meta.truncated:
-        return "truncated"
+        return MCP_STATUS_TRUNCATED
     if meta.returned_count == 0:
-        return "empty"
-    return "ok"
+        return MCP_STATUS_EMPTY
+    return MCP_STATUS_OK
 
 
 def _has_summary_meta(result) -> bool:

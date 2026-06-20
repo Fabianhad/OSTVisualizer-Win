@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict
 from ...application.interfaces.i_page_size_provider import IPageSizeProvider
+from ...domain.entities.file_extensions import is_pdf_suffix
 from ...domain.entities.page import Page
 
 
@@ -29,7 +30,7 @@ class PageLoadStrategyService:
 
     def determine_load_strategy(self, page: Page) -> LoadStrategy:
         has_image_file = page.has_image and page.image_path
-        is_pdf = has_image_file and page.image_path.lower().endswith(".pdf")
+        is_pdf = has_image_file and is_pdf_suffix(page.image_path)
         pdf_width_pts, pdf_height_pts = self._resolve_pdf_page_size(page, is_pdf)
         show_mode = page.image_show_mode
         show_original = show_mode in (0, 2)
@@ -37,7 +38,7 @@ class PageLoadStrategyService:
         is_overlay_pdf = (
             show_overlay
             and page.overlay_image_path
-            and page.overlay_image_path.lower().endswith(".pdf")
+            and is_pdf_suffix(page.overlay_image_path)
         )
         needs_async_loading = (has_image_file or is_overlay_pdf) and page.layer_visible
         page_has_dimensions = page.width_pts > 0 and page.height_pts > 0
@@ -86,7 +87,7 @@ class PageLoadStrategyService:
         pdf_width_pts: float,
     ) -> float:
         if show_mode == 1 and page.has_overlay:
-            is_overlay_pdf_file = page.overlay_image_path.lower().endswith(".pdf")
+            is_overlay_pdf_file = is_pdf_suffix(page.overlay_image_path)
             if not is_overlay_pdf_file:
                 native_width, _ = self._page_size_provider.get_page_size(
                     page.overlay_image_path, 0

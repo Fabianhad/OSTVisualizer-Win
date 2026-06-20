@@ -5,6 +5,37 @@ from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.config import Config
 from ...domain.entities.cover_sheet import CoverSheetData, CoverSheetPage
+from ...domain.entities.file_extensions import is_tiff_suffix
+from ..actions.action_ids import (
+    ACTION_ADJUST_IMAGES,
+    ACTION_ANNOTATION_WINDOW,
+    ACTION_BACKOUT_MODE,
+    ACTION_CONDITIONS_SIDEBAR,
+    ACTION_DELETE_PAGE,
+    ACTION_FLIP_IMAGE_HORIZONTAL,
+    ACTION_FLIP_IMAGE_VERTICAL,
+    ACTION_LAYERS_SIDEBAR,
+    ACTION_NEW_DATABASE,
+    ACTION_NEW_FOLDER,
+    ACTION_NEW_PROJECT,
+    ACTION_NEXT_PAGE,
+    ACTION_OPEN_FILES,
+    ACTION_PREVIOUS_PAGE,
+    ACTION_REMOVE_OVERLAY_IMAGE,
+    ACTION_RESET_VIEW,
+    ACTION_ROTATE_IMAGE_LEFT,
+    ACTION_ROTATE_IMAGE_RIGHT,
+    ACTION_SELECT_OVERLAY_IMAGE,
+    ACTION_SET_TAKEOFF_COLOR_MODE,
+    ACTION_SHOW_COVER_SHEET,
+    ACTION_SHOW_ORIGINAL_IMAGE,
+    ACTION_SHOW_OVERLAY_IMAGE,
+    ACTION_TOGGLE_MAIN_TOOLBAR,
+    ACTION_TOGGLE_PLAN_TOOLS_TOOLBAR,
+    ACTION_TOGGLE_VIEW_TOOLBAR,
+    ACTION_ZOOM_IN,
+    ACTION_ZOOM_OUT,
+)
 from ..components.menu_builder import MenuBuilder
 from ..dialogs.about_dialog import AboutDialog
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
@@ -22,8 +53,8 @@ _TAKEOFF_SCOPED_VARIABLE_KEYS = {
     "grayscale",
     "page_invert",
     "page_bitonal",
-    "show_overlay_image",
-    "show_original_image",
+    ACTION_SHOW_OVERLAY_IMAGE,
+    ACTION_SHOW_ORIGINAL_IMAGE,
     "takeoff_2d_tab_visible",
     "takeoff_3d_tab_visible",
 }
@@ -101,10 +132,10 @@ class MenuController:
 
     def _get_menu_callbacks(self) -> Dict[str, Callable]:
         callbacks = {
-            "new_project": self._new_project,
-            "new_folder": self._new_folder,
-            "new_database": self._new_database,
-            "open_files": self.handlers.file_ops.open_files,
+            ACTION_NEW_PROJECT: self._new_project,
+            ACTION_NEW_FOLDER: self._new_folder,
+            ACTION_NEW_DATABASE: self._new_database,
+            ACTION_OPEN_FILES: self.handlers.file_ops.open_files,
             "unload_file": self.handlers.file_ops.unload_file,
             "check_license": self.window.show_license_dialog,
             "quit": self._on_quit,
@@ -115,11 +146,11 @@ class MenuController:
             ),
             "export_as_ost": lambda: self.handlers.export.export_as_ost(),
             "export_as_osp": lambda: self.handlers.export.export_as_osp(),
-            "set_takeoff_color_mode": self._set_takeoff_color_mode,
+            ACTION_SET_TAKEOFF_COLOR_MODE: self._set_takeoff_color_mode,
             "toggle_takeoff_grayscale": self._toggle_takeoff_grayscale,
-            "toggle_main_toolbar": self._set_main_toolbar_visible,
-            "toggle_view_toolbar": self._set_view_toolbar_visible,
-            "toggle_plan_tools_toolbar": self._set_plan_tools_toolbar_visible,
+            ACTION_TOGGLE_MAIN_TOOLBAR: self._set_main_toolbar_visible,
+            ACTION_TOGGLE_VIEW_TOOLBAR: self._set_view_toolbar_visible,
+            ACTION_TOGGLE_PLAN_TOOLS_TOOLBAR: self._set_plan_tools_toolbar_visible,
             "toggle_2d_tab": self._set_2d_tab_visible,
             "toggle_3d_tab": self._set_3d_tab_visible,
             "toggle_page_invert": self.handlers.ui_event.toggle_page_invert,
@@ -134,16 +165,16 @@ class MenuController:
             "flip_takeoff_vertical": (
                 self.handlers.ui_event.flip_selected_takeoffs_vertical
             ),
-            "rotate_image_left": self.handlers.ui_event.rotate_image_left,
-            "rotate_image_right": self.handlers.ui_event.rotate_image_right,
-            "flip_image_horizontal": self.handlers.ui_event.flip_image_horizontal,
-            "flip_image_vertical": self.handlers.ui_event.flip_image_vertical,
-            "select_overlay_image": self.handlers.ui_event.select_overlay_image,
-            "remove_overlay_image": self.handlers.ui_event.remove_overlay_image,
-            "show_overlay_image": self.handlers.ui_event.show_overlay_image,
-            "show_original_image": self.handlers.ui_event.show_original_image,
-            "delete_page": self.handlers.ui_event.delete_current_page,
-            "show_cover_sheet": self._show_cover_sheet,
+            ACTION_ROTATE_IMAGE_LEFT: self.handlers.ui_event.rotate_image_left,
+            ACTION_ROTATE_IMAGE_RIGHT: self.handlers.ui_event.rotate_image_right,
+            ACTION_FLIP_IMAGE_HORIZONTAL: self.handlers.ui_event.flip_image_horizontal,
+            ACTION_FLIP_IMAGE_VERTICAL: self.handlers.ui_event.flip_image_vertical,
+            ACTION_SELECT_OVERLAY_IMAGE: self.handlers.ui_event.select_overlay_image,
+            ACTION_REMOVE_OVERLAY_IMAGE: self.handlers.ui_event.remove_overlay_image,
+            ACTION_SHOW_OVERLAY_IMAGE: self.handlers.ui_event.show_overlay_image,
+            ACTION_SHOW_ORIGINAL_IMAGE: self.handlers.ui_event.show_original_image,
+            ACTION_DELETE_PAGE: self.handlers.ui_event.delete_current_page,
+            ACTION_SHOW_COVER_SHEET: self._show_cover_sheet,
             "show_areas": self.handlers.ui_event.open_areas_dialog,
             "renumber_conditions": self.handlers.ui_event.renumber_conditions,
             "employees": self.handlers.ui_event.open_employees_dialog,
@@ -153,7 +184,9 @@ class MenuController:
             "select_objects_in_current_area": self._select_objects_in_current_area,
             "set_scale": lambda: self.handlers.ui_event.open_set_scale_dialog(),
             "rename_page": lambda: self.handlers.ui_event.open_rename_page_dialog(),
-            "adjust_images": lambda: self.handlers.ui_event.open_adjust_images_dialog(),
+            ACTION_ADJUST_IMAGES: lambda: (
+                self.handlers.ui_event.open_adjust_images_dialog()
+            ),
             "options": self._show_options_dialog,
             "show_about": self._show_about_dialog,
         }
@@ -180,8 +213,8 @@ class MenuController:
             ),
             "page_invert": lambda: self._active_page_invert(),
             "page_bitonal": lambda: self._active_page_bitonal(),
-            "show_overlay_image": lambda: self._active_page_overlay_flags()[1],
-            "show_original_image": lambda: self._active_page_overlay_flags()[0],
+            ACTION_SHOW_OVERLAY_IMAGE: lambda: self._active_page_overlay_flags()[1],
+            ACTION_SHOW_ORIGINAL_IMAGE: lambda: self._active_page_overlay_flags()[0],
             "takeoff_2d_tab_visible": self.window.is_takeoff_2d_tab_visible,
             "takeoff_3d_tab_visible": self.window.is_takeoff_3d_tab_visible,
         }
@@ -233,13 +266,13 @@ class MenuController:
         if unload_action:
             unload_action.setEnabled(unload_enabled)
         can_create_project_tree_items = self._should_enable_project_tree_creation()
-        new_project_action = self._actions.get("new_project")
+        new_project_action = self._actions.get(ACTION_NEW_PROJECT)
         if new_project_action:
             new_project_action.setEnabled(can_create_project_tree_items)
-        new_folder_action = self._actions.get("new_folder")
+        new_folder_action = self._actions.get(ACTION_NEW_FOLDER)
         if new_folder_action:
             new_folder_action.setEnabled(can_create_project_tree_items)
-        new_database_action = self._actions.get("new_database")
+        new_database_action = self._actions.get(ACTION_NEW_DATABASE)
         if new_database_action:
             new_database_action.setEnabled(
                 self.ui_access_manager.is_allowed(Feature.CREATE_DATABASE)
@@ -279,24 +312,24 @@ class MenuController:
             "toggle_plan_tools_toolbar",
             "toggle_2d_tab",
             "toggle_3d_tab",
-            "zoom_in",
-            "zoom_out",
-            "reset_view",
-            "layers_sidebar",
-            "conditions_sidebar",
-            "annotation_window",
+            ACTION_ZOOM_IN,
+            ACTION_ZOOM_OUT,
+            ACTION_RESET_VIEW,
+            ACTION_LAYERS_SIDEBAR,
+            ACTION_CONDITIONS_SIDEBAR,
+            ACTION_ANNOTATION_WINDOW,
         ):
             action = self._actions.get(action_key)
             if action:
                 action.setEnabled(takeoff_active)
         self._set_variable_actions_enabled("color_mode", takeoff_active)
         self._set_variable_actions_enabled("grayscale", takeoff_active)
-        previous_page_action = self._actions.get("previous_page")
+        previous_page_action = self._actions.get(ACTION_PREVIOUS_PAGE)
         if previous_page_action:
             previous_page_action.setEnabled(
                 takeoff_active and self.window.can_go_previous_takeoff_page()
             )
-        next_page_action = self._actions.get("next_page")
+        next_page_action = self._actions.get(ACTION_NEXT_PAGE)
         if next_page_action:
             next_page_action.setEnabled(
                 takeoff_active and self.window.can_go_next_takeoff_page()
@@ -310,22 +343,22 @@ class MenuController:
             image_menu.setEnabled(True)
         page_image_enabled = self._should_enable_page_image_action()
         for action_key in (
-            "adjust_images",
+            ACTION_ADJUST_IMAGES,
             "toggle_page_invert",
             "toggle_page_bitonal",
-            "rotate_image_left",
-            "rotate_image_right",
-            "flip_image_horizontal",
-            "flip_image_vertical",
-            "select_overlay_image",
-            "show_original_image",
+            ACTION_ROTATE_IMAGE_LEFT,
+            ACTION_ROTATE_IMAGE_RIGHT,
+            ACTION_FLIP_IMAGE_HORIZONTAL,
+            ACTION_FLIP_IMAGE_VERTICAL,
+            ACTION_SELECT_OVERLAY_IMAGE,
+            ACTION_SHOW_ORIGINAL_IMAGE,
         ):
             action = self._actions.get(action_key)
             if action:
                 action.setEnabled(page_image_enabled)
         active_page = self._active_page()
         page_has_overlay = bool(active_page and active_page.overlay_image_path)
-        for action_key in ("remove_overlay_image", "show_overlay_image"):
+        for action_key in (ACTION_REMOVE_OVERLAY_IMAGE, ACTION_SHOW_OVERLAY_IMAGE):
             action = self._actions.get(action_key)
             if action:
                 action.setEnabled(page_image_enabled and page_has_overlay)
@@ -368,7 +401,7 @@ class MenuController:
         project_menu = self._menus.get("project")
         if project_menu:
             project_menu.setEnabled(True)
-        cover_sheet_action = self._actions.get("show_cover_sheet")
+        cover_sheet_action = self._actions.get(ACTION_SHOW_COVER_SHEET)
         if cover_sheet_action:
             cover_sheet_action.setEnabled(
                 bool(selected_bid_ref)
@@ -405,7 +438,7 @@ class MenuController:
     def is_context_command_enabled(self, command_key: str) -> bool:
         if command_key in ("import_ost", "import_osp"):
             return self._should_enable_import()
-        if command_key == "delete_page":
+        if command_key == ACTION_DELETE_PAGE:
             return self.handlers.ui_event.can_delete_current_page()
         self.update_menu_states()
         action = self._actions.get(command_key)
@@ -434,7 +467,7 @@ class MenuController:
                 "checkable": action.isCheckable(),
                 "checked": action.isChecked(),
             }
-        if action_key == "delete_page":
+        if action_key == ACTION_DELETE_PAGE:
             return {
                 "text": "Delete Page",
                 "enabled": self.handlers.ui_event.can_delete_current_page(),
@@ -475,9 +508,9 @@ class MenuController:
                 ):
                     self._tool_action_enabled_state[action_key] = action.isEnabled()
                 action.setEnabled(False)
-        backout_action = self._actions.get("backout_mode")
+        backout_action = self._actions.get(ACTION_BACKOUT_MODE)
         if backout_action:
-            self._tool_action_enabled_state.pop("backout_mode", None)
+            self._tool_action_enabled_state.pop(ACTION_BACKOUT_MODE, None)
             self.handlers.ui_event.refresh_backout_action()
 
     def _set_variable_actions_enabled(self, variable: str, enabled: bool) -> None:
@@ -529,8 +562,8 @@ class MenuController:
             "plan_tools_toolbar_visible",
             "page_invert",
             "page_bitonal",
-            "show_overlay_image",
-            "show_original_image",
+            ACTION_SHOW_OVERLAY_IMAGE,
+            ACTION_SHOW_ORIGINAL_IMAGE,
             "takeoff_2d_tab_visible",
             "takeoff_3d_tab_visible",
         ):
@@ -586,8 +619,7 @@ class MenuController:
         if current_page.width_pts <= 0 or current_page.height_pts <= 0:
             return False
         if current_page.image_path:
-            image_path_lower = current_page.image_path.lower()
-            if image_path_lower.endswith(".tif") or image_path_lower.endswith(".tiff"):
+            if is_tiff_suffix(current_page.image_path):
                 return False
         return True
 

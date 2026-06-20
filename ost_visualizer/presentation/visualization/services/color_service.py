@@ -2,6 +2,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from ....application.dtos.color_dtos import ColorMappingResult, ColorWithOpacity
 from ....application.interfaces.i_color_service import ColorRGBA
 from ....domain.entities import pattern as pt
+from ....domain.entities.config import Config
 from ....domain.entities.condition import Condition
 
 
@@ -219,7 +220,7 @@ class ColorService:
         self,
         bid_conditions,
         bid_takeoffs,
-        color_mode: str = "Solid",
+        color_mode: str = Config.COLOR_MODE_SOLID,
         grayscale_enabled: bool = True,
         extra_condition_uids=None,
     ):
@@ -232,11 +233,11 @@ class ColorService:
             conditions_used.update(
                 uid for uid in extra_condition_uids if uid in bid_conditions
             )
-        apply_pattern_alpha = color_mode == "Original"
+        apply_pattern_alpha = color_mode == Config.COLOR_MODE_ORIGINAL
         hierarchy_map, condition_color_map = _create_hierarchy_map(
             bid_conditions, conditions_used, apply_pattern_alpha=apply_pattern_alpha
         )
-        if color_mode == "Transparent":
+        if color_mode == Config.COLOR_MODE_TRANSPARENT:
             condition_color_map = _apply_transparent(condition_color_map)
         if grayscale_enabled:
             condition_color_map = _apply_grayscale(condition_color_map)
@@ -260,7 +261,7 @@ class ColorService:
         condition_uid = takeoff.condition_uid
         color_entry = color_map.get(condition_uid, "#808080")
         color_hex, opacity = self.as_hex_with_opacity(color_entry)
-        if color_mode == "Original":
+        if color_mode == Config.COLOR_MODE_ORIGINAL:
             pattern_type = condition.pattern if condition.pattern else pt.SOLID
             opacity = pt.get_3d_opacity(pattern_type)
         if self.should_gray_out_takeoff(takeoff, page_area_selections):

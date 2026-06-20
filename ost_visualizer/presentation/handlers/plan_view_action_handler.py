@@ -7,7 +7,13 @@ from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.dtos.annotation_creation_factory import AnnotationCreationFactory
 from ...application.events.app_events import AppEvents
-from ...domain.entities.annotation import BidAnnotation, int_color_to_hex
+from ...domain.entities.annotation import (
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+    int_color_to_hex,
+)
 from ...domain.entities.named_view import (
     build_named_view_from_annotation,
     normalize_named_view_position,
@@ -676,7 +682,7 @@ class PlanViewActionHandler:
         renames = [
             (str(uid), str(properties["Text"] or ""))
             for uid, ann_type, properties in updates
-            if ann_type == "namedview" and "Text" in properties
+            if ann_type == ANNOTATION_TYPE_NAMED_VIEW and "Text" in properties
         ]
         if not renames:
             return
@@ -913,7 +919,9 @@ class PlanViewActionHandler:
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not page_uid or not str(properties.get("Text", "")).strip():
             return
-        spec = build_placed_annotation_spec("text", page_uid, list(position))
+        spec = build_placed_annotation_spec(
+            ANNOTATION_TYPE_TEXT, page_uid, list(position)
+        )
         if spec is None:
             return
         spec.properties = dict(properties)
@@ -933,7 +941,9 @@ class PlanViewActionHandler:
             return
         if not self._validate_named_view_name(name, None):
             return
-        spec = build_placed_annotation_spec("namedview", page_uid, list(position))
+        spec = build_placed_annotation_spec(
+            ANNOTATION_TYPE_NAMED_VIEW, page_uid, list(position)
+        )
         if spec is None:
             return
         spec.properties = {"Text": name}
@@ -948,7 +958,7 @@ class PlanViewActionHandler:
                 page_uid=page_uid,
                 name=name,
             )
-            self._plan_view.activate_annotation_placement("namedview")
+            self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
 
     def on_hotlink_placement_requested(self, position: list, page_uid: str) -> None:
         if not self._is_allowed(Feature.PLACE_ANNOTATIONS):
@@ -964,17 +974,19 @@ class PlanViewActionHandler:
             return
         result = dialog.result_data()
         if result.create_new:
-            self._plan_view.activate_annotation_placement("namedview")
+            self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
             return
         if not result.named_view_uid:
             return
-        spec = build_placed_annotation_spec("hotlink", page_uid, list(position[:2]))
+        spec = build_placed_annotation_spec(
+            ANNOTATION_TYPE_HOTLINK, page_uid, list(position[:2])
+        )
         if spec is None:
             return
         spec.properties = {"BidPageViewUID": result.named_view_uid}
         new_uids = self._insert_annotations_with_undo(bid_ref, [spec])
         if new_uids:
-            self._plan_view.activate_annotation_placement("hotlink")
+            self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_HOTLINK)
 
     def _validate_named_view_name(
         self, name: str, exclude_uid: Optional[str] = None
@@ -1200,7 +1212,7 @@ class PlanViewActionHandler:
         for uid, spec in zip(new_uids, specs):
             position = (
                 normalize_named_view_position(spec.position)
-                if spec.annotation_type == "namedview"
+                if spec.annotation_type == ANNOTATION_TYPE_NAMED_VIEW
                 else list(spec.position)
             )
             annotations.append(

@@ -6,9 +6,23 @@ from ..repositories.i_config_repository import IConfigRepository
 
 
 class ConfigAggregate:
-    VALID_COLOR_MODES = frozenset({"Solid", "Original", "Transparent"})
-    VALID_ROPING_SELECTION_METHODS = frozenset({"touching", "inclusive"})
-    VALID_HOTLINK_TARGETS = frozenset({"annotation", "view", "main"})
+    VALID_COLOR_MODES = frozenset(
+        {
+            Config.COLOR_MODE_SOLID,
+            Config.COLOR_MODE_ORIGINAL,
+            Config.COLOR_MODE_TRANSPARENT,
+        }
+    )
+    VALID_ROPING_SELECTION_METHODS = frozenset(
+        {Config.ROPING_SELECTION_TOUCHING, Config.ROPING_SELECTION_INCLUSIVE}
+    )
+    VALID_HOTLINK_TARGETS = frozenset(
+        {
+            Config.HOTLINK_TARGET_ANNOTATION,
+            Config.HOTLINK_TARGET_VIEW,
+            Config.HOTLINK_TARGET_MAIN,
+        }
+    )
     MIN_AUTO_ZOOM_LEVEL = 0
     MAX_AUTO_ZOOM_LEVEL = 1600
     VALID_MOUSE_SNAP_ANGLES = frozenset({0, 1, 2, 3, 4, 5, 10, 15, 30, 45, 90})
