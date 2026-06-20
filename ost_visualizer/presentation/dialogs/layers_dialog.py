@@ -410,27 +410,55 @@ class LayersDialog(QtWidgets.QDialog):
     def _on_show_changed(self, layer_uid: str, checked: bool) -> None:
         if self._building or not self._is_interactive:
             return
+        layer = self._find_layer_by_uid(layer_uid)
+        if layer is None:
+            show_warning(self, "Layer Visibility", "Layer is no longer available.")
+            return
+        previous = bool(layer.show)
         try:
             success = self._update_show_fn(layer_uid, checked)
         except Exception as exc:
             show_warning(self, "Layer Visibility", str(exc))
             success = False
-        self._reload_items(select_uid=layer_uid)
-        if not success:
+        if success:
+            self._set_layer_show_locally(layer_uid, checked)
+        else:
+            self._set_layer_show_locally(layer_uid, previous)
             show_warning(self, "Layer Visibility", "Failed to update layer visibility.")
 
     def _set_all_show(self, show: bool) -> None:
         if not self._is_interactive:
             return
-        selected = self._selected_layer()
         try:
             success = self._update_all_show_fn(show)
         except Exception as exc:
             show_warning(self, "Layer Visibility", str(exc))
             success = False
-        self._reload_items(select_uid=selected.uid if selected else None)
-        if not success:
+        if success:
+            self._set_all_show_locally(show)
+        else:
             show_warning(self, "Layer Visibility", "Failed to update layer visibility.")
+
+    def _set_layer_show_locally(self, layer_uid: str, show: bool) -> None:
+        for row, layer in enumerate(self._layers):
+            if str(layer.uid) != str(layer_uid):
+                continue
+            layer.show = bool(show)
+            self._set_checkbox_checked(row, show)
+            return
+
+    def _set_all_show_locally(self, show: bool) -> None:
+        for row, layer in enumerate(self._layers):
+            layer.show = bool(show)
+            self._set_checkbox_checked(row, show)
+
+    def _set_checkbox_checked(self, row: int, checked: bool) -> None:
+        if row < 0 or row >= len(self._checkboxes):
+            return
+        checkbox = self._checkboxes[row]
+        checkbox.blockSignals(True)
+        checkbox.setChecked(bool(checked))
+        checkbox.blockSignals(False)
 
     def _move_selected(self, direction: int) -> None:
         if not self._is_interactive:

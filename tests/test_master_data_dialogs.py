@@ -23,6 +23,7 @@ from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesD
 from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
     PayrollClassListDialog,
 )
+from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
 from ost_visualizer.application.services.project_write_service import (
     BatchWriteResult,
     WriteReloadResult,
@@ -121,14 +122,20 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             sequence=1,
         )
 
-    def _layer(self, uid: str, name: str, sequence: int) -> BidLayer:
+    def _layer(
+        self, uid: str, name: str, sequence: int, *, show: bool = True
+    ) -> BidLayer:
         return BidLayer(
             uid=uid,
             bid_uid="bid-1",
             name=name,
-            show=True,
+            show=show,
             sequence=sequence,
         )
+
+    def _click_checkbox(self, checkbox: QtWidgets.QCheckBox) -> None:
+        QTest.mouseClick(checkbox, QtCore.Qt.MouseButton.LeftButton)
+        self.app.processEvents()
 
     def test_employees_picker_keeps_select_and_cancel_buttons(self):
         dialog = self._employee_dialog()
@@ -692,6 +699,107 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_layers_dialog_checkbox_click_updates_state_and_visual_immediately(self):
+        actual_show = {"layer-1": True}
+
+        def update_show(layer_uid, show):
+            actual_show[layer_uid] = bool(show)
+            return True
+
+        dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=[self._layer("layer-1", "Layer 1", 1, show=True)],
+            reload_fn=lambda: [self._layer("layer-1", "Layer 1", 1, show=True)],
+            update_show_fn=update_show,
+        )
+        try:
+            dialog.show()
+            self.app.processEvents()
+            checkbox = dialog._checkboxes[0]
+            self._click_checkbox(checkbox)
+            self.assertFalse(actual_show["layer-1"])
+            self.assertFalse(checkbox.isChecked())
+            self.assertFalse(dialog._layers[0].show)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_layers_dialog_checkbox_repeated_clicks_alternate_cleanly(self):
+        actual_show = {"layer-1": True}
+        calls = []
+
+        def update_show(layer_uid, show):
+            calls.append((layer_uid, bool(show)))
+            actual_show[layer_uid] = bool(show)
+            return True
+
+        dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=[self._layer("layer-1", "Layer 1", 1, show=True)],
+            reload_fn=lambda: [self._layer("layer-1", "Layer 1", 1, show=True)],
+            update_show_fn=update_show,
+        )
+        try:
+            dialog.show()
+            self.app.processEvents()
+            checkbox = dialog._checkboxes[0]
+            observed = []
+            for _ in range(3):
+                self._click_checkbox(checkbox)
+                observed.append((actual_show["layer-1"], checkbox.isChecked()))
+            self.assertEqual(
+                observed,
+                [(False, False), (True, True), (False, False)],
+            )
+            self.assertEqual(
+                calls,
+                [
+                    ("layer-1", False),
+                    ("layer-1", True),
+                    ("layer-1", False),
+                ],
+            )
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_layers_dialog_and_sidebar_checkbox_state_stay_synchronized(self):
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers([self._layer("layer-1", "Layer 1", 1, show=True)])
+
+        def update_show(layer_uid, show):
+            sidebar.set_layer_visible(layer_uid, show)
+            return True
+
+        dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=[self._layer("layer-1", "Layer 1", 1, show=True)],
+            reload_fn=lambda: [self._layer("layer-1", "Layer 1", 1, show=True)],
+            update_show_fn=update_show,
+        )
+        try:
+            dialog.show()
+            sidebar.show()
+            self.app.processEvents()
+            self._click_checkbox(dialog._checkboxes[0])
+            self.assertFalse(dialog._checkboxes[0].isChecked())
+            self.assertFalse(dialog._layers[0].show)
+            self.assertFalse(sidebar._checkboxes[0].isChecked())
+            self.assertFalse(sidebar.get_layer("layer-1").show)
+            self._click_checkbox(dialog._checkboxes[0])
+            self.assertTrue(dialog._checkboxes[0].isChecked())
+            self.assertTrue(dialog._layers[0].show)
+            self.assertTrue(sidebar._checkboxes[0].isChecked())
+            self.assertTrue(sidebar.get_layer("layer-1").show)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+            sidebar.close()
+            sidebar.deleteLater()
 
     def test_layers_dialog_partial_batch_delete_reloads_and_warns(self):
         reload_calls = []

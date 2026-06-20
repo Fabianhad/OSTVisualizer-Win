@@ -536,9 +536,10 @@ class FakePageCombo:
 
 
 class FakeSplitterForSidebarSizes:
-    def __init__(self, sizes=None, height=898, visible=True):
+    def __init__(self, sizes=None, height=898, width=None, visible=True):
         self._sizes = list(sizes or [0, 0])
         self._height = height
+        self._width = height if width is None else width
         self._visible = visible
         self.applied_sizes = []
 
@@ -547,6 +548,9 @@ class FakeSplitterForSidebarSizes:
 
     def height(self):
         return self._height
+
+    def width(self):
+        return self._width
 
     def isVisible(self):
         return self._visible
@@ -573,11 +577,57 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertEqual(window._last_left_splitter_sizes, [260, 340])
         self.assertEqual(window._left_splitter.applied_sizes, [[260, 340]])
 
+    def test_restart_restore_applies_saved_sidebar_column_width_exactly(self):
+        window = MainWindow.__new__(MainWindow)
+        window._takeoff_splitter = FakeSplitterForSidebarSizes([0, 0], width=2000)
+        window._last_takeoff_splitter_sizes = []
+        MainWindow.set_takeoff_splitter_sizes(window, [360, 1640])
+        self.assertEqual(window._takeoff_splitter.applied_sizes, [[360, 1640]])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [360, 1640])
+
     def test_showing_hidden_layer_restores_saved_splitter_ratio(self):
         window = MainWindow.__new__(MainWindow)
         window._left_splitter = FakeSplitterForSidebarSizes([898, 0], height=898)
         window._last_left_splitter_sizes = [651, 242]
         MainWindow._ensure_left_splitter_pane_visible(window, 1)
+        self.assertEqual(window._left_splitter.applied_sizes, [[655, 243]])
+
+    def test_showing_single_hidden_sidebar_keeps_visible_column_width(self):
+        window = MainWindow.__new__(MainWindow)
+        window._takeoff_splitter = FakeSplitterForSidebarSizes([360, 1640], width=2000)
+        window._last_takeoff_splitter_sizes = [360, 1640]
+        MainWindow._ensure_sidebar_column_visible(window)
+        self.assertEqual(window._takeoff_splitter.applied_sizes, [])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [360, 1640])
+
+    def test_showing_hidden_sidebar_column_restores_exact_saved_width(self):
+        window = MainWindow.__new__(MainWindow)
+        window._takeoff_splitter = FakeSplitterForSidebarSizes([0, 2000], width=2000)
+        window._last_takeoff_splitter_sizes = [360, 1640]
+        MainWindow._ensure_sidebar_column_visible(window)
+        self.assertEqual(window._takeoff_splitter.applied_sizes, [[360, 1640]])
+        self.assertEqual(window._last_takeoff_splitter_sizes, [360, 1640])
+
+    def test_repeated_hidden_sidebar_column_restore_keeps_exact_saved_width(self):
+        window = MainWindow.__new__(MainWindow)
+        window._takeoff_splitter = FakeSplitterForSidebarSizes([0, 2000], width=2000)
+        window._last_takeoff_splitter_sizes = [360, 1640]
+        MainWindow._ensure_sidebar_column_visible(window)
+        window._takeoff_splitter._sizes = [0, 2000]
+        MainWindow._ensure_sidebar_column_visible(window)
+        self.assertEqual(
+            window._takeoff_splitter.applied_sizes,
+            [[360, 1640], [360, 1640]],
+        )
+
+    def test_showing_pane_after_both_sidebars_hidden_restores_saved_column_width(self):
+        window = MainWindow.__new__(MainWindow)
+        window._takeoff_splitter = FakeSplitterForSidebarSizes([0, 2000], width=2000)
+        window._last_takeoff_splitter_sizes = [360, 1640]
+        window._left_splitter = FakeSplitterForSidebarSizes([898, 0], height=898)
+        window._last_left_splitter_sizes = [651, 242]
+        MainWindow._ensure_sidebar_pane_visible(window, 1)
+        self.assertEqual(window._takeoff_splitter.applied_sizes, [[360, 1640]])
         self.assertEqual(window._left_splitter.applied_sizes, [[655, 243]])
 
     def test_capture_ignores_not_visible_takeoff_splitter_placeholder_sizes(self):

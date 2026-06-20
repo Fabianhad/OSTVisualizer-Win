@@ -1287,8 +1287,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if sizes[0] > 0:
             return
         total = max(sum(sizes), self._takeoff_splitter.width(), 2)
-        saved_sidebar_width = self._last_takeoff_splitter_sizes[0]
-        restored = max(SIDEBAR_MIN_WIDTH, saved_sidebar_width, total // 4)
+        saved_sidebar_width = 0
+        if self._last_takeoff_splitter_sizes:
+            saved_sidebar_width = max(0, int(self._last_takeoff_splitter_sizes[0]))
+        if saved_sidebar_width > 0:
+            restored = saved_sidebar_width
+        else:
+            restored = max(SIDEBAR_MIN_WIDTH, total // 4)
         restored = min(restored, max(1, total - 1))
         sizes[0] = restored
         sizes[1] = max(1, total - restored)

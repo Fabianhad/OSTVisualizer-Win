@@ -123,21 +123,21 @@ class BidLayersSidebar(QtWidgets.QWidget):
             if str(layer.uid) != str(layer_uid):
                 continue
             layer.show = bool(show)
-            if row < len(self._checkboxes):
-                checkbox = self._checkboxes[row]
-                checkbox.blockSignals(True)
-                checkbox.setChecked(bool(show))
-                checkbox.blockSignals(False)
+            self._set_checkbox_checked(row, show)
             return
 
     def set_all_layers_visible(self, show: bool) -> None:
         for row, layer in enumerate(self._layers):
             layer.show = bool(show)
-            if row < len(self._checkboxes):
-                checkbox = self._checkboxes[row]
-                checkbox.blockSignals(True)
-                checkbox.setChecked(bool(show))
-                checkbox.blockSignals(False)
+            self._set_checkbox_checked(row, show)
+
+    def _set_checkbox_checked(self, row: int, checked: bool) -> None:
+        if row < 0 or row >= len(self._checkboxes):
+            return
+        checkbox = self._checkboxes[row]
+        checkbox.blockSignals(True)
+        checkbox.setChecked(bool(checked))
+        checkbox.blockSignals(False)
 
     def save_header_state(self) -> QtCore.QByteArray:
         return self._table.header().saveState()
