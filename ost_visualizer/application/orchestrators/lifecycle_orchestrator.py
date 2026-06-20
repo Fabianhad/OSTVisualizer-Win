@@ -1,5 +1,4 @@
 import logging
-from typing import Any
 from ..interfaces.i_event_bus import IEventBus
 from ..interfaces.i_shutdown_aware import IShutdownAware
 from ..service_container import ServiceContainer
@@ -23,7 +22,7 @@ class LifecycleOrchestrator:
     def set_app_controller(self, app_controller) -> None:
         self._app_controller = app_controller
 
-    def handle_license_expired(self, **kwargs: Any) -> None:
+    def handle_license_expired(self, message: str | None = None) -> None:
         self._viz_orchestrator.close_realtime_visualization()
 
     def shutdown(self) -> None:

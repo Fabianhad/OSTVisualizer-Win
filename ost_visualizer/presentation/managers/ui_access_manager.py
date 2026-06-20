@@ -271,8 +271,8 @@ class UIAccessManager:
                 return True
         return False
 
-    def _on_ost_status_changed(self, **kwargs) -> None:
-        self._ost_active = kwargs.get("active", False)
+    def _on_ost_status_changed(self, active: bool = False) -> None:
+        self._ost_active = bool(active)
         self._cancel_place_if_blocked()
 
     def set_placement_coordinator(self, placement_coordinator) -> None:

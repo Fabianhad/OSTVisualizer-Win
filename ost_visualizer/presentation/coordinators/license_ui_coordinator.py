@@ -39,7 +39,7 @@ class LicenseUICoordinator:
             dialog.deleteLater()
             self.update_license_ui()
 
-    def on_license_status_changed(self, **kwargs) -> None:
+    def on_license_status_changed(self, has_license: bool) -> None:
         self.update_license_ui()
 
     def update_license_ui(self) -> None:

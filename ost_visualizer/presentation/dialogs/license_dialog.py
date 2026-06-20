@@ -225,7 +225,7 @@ class LicenseDialog(QtWidgets.QDialog):
         else:
             self._on_deactivate()
 
-    def _on_license_status_changed(self, **_):
+    def _on_license_status_changed(self, has_license: bool = False):
         if self._cleaned_up:
             return
         self._update_display()

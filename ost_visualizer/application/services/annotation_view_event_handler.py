@@ -40,7 +40,6 @@ class AnnotationViewEventHandler(IShutdownAware, IStartable):
         target_view_uid: str = None,
         position_x: float = 0,
         position_y: float = 0,
-        **kwargs
     ) -> None:
         try:
             event = AppEvents.HOTLINK_CLICKED(

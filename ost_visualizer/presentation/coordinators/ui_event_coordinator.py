@@ -1229,7 +1229,7 @@ class UIEventCoordinator:
         ):
             self._set_plan_select_mode()
 
-    def _on_ost_status_changed(self, **_) -> None:
+    def _on_ost_status_changed(self, active: bool = False) -> None:
         self.ensure_select_mode()
         self._menu_state_signaler.request_update()
 
@@ -1310,7 +1310,7 @@ class UIEventCoordinator:
         self._save_current_page_view_state()
         return bool(self._deferred_persistence.flush())
 
-    def _on_file_opened(self, **kwargs) -> None:
+    def _on_file_opened(self, file_path: str = "") -> None:
         self._save_current_page_view_state()
         self._placement.force_exit()
         self.ui_state_manager.reset_selections()
@@ -1323,8 +1323,7 @@ class UIEventCoordinator:
         self._rebuild_ui_after_file_load()
         self._update_export_menu_state()
 
-    def _on_database_refreshed(self, **kwargs) -> None:
-        file_path = kwargs.get("file_path")
+    def _on_database_refreshed(self, file_path: str = "") -> None:
         if file_path and not self._flush_deferred_for_file(file_path):
             return
         if not self._nav.start_refresh(
@@ -1338,9 +1337,13 @@ class UIEventCoordinator:
         finally:
             self._finish_refresh()
 
-    def _on_takeoffs_changed(self, **kwargs) -> None:
-        page_uid = kwargs.get("page_uid") or self.ui_state_manager.active_page_uid
-        condition_uids = kwargs.get("condition_uids")
+    def _on_takeoffs_changed(
+        self,
+        page_uid: str = "",
+        takeoff_uids: list | None = None,
+        condition_uids: list | None = None,
+    ) -> None:
+        page_uid = page_uid or self.ui_state_manager.active_page_uid
         if page_uid:
             self._refresh_takeoff_dependent_page_controls(page_uid)
         if page_uid:
@@ -1351,8 +1354,13 @@ class UIEventCoordinator:
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
 
-    def _on_annotations_changed(self, **kwargs) -> None:
-        self._update_plan_view(kwargs["page_uid"])
+    def _on_annotations_changed(
+        self,
+        page_uid: str = "",
+        annotation_uids: list | None = None,
+        annotation_types: list | None = None,
+    ) -> None:
+        self._update_plan_view(page_uid)
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
 
@@ -1508,9 +1516,10 @@ class UIEventCoordinator:
         conditions = self.project_data.get_bid_conditions()
         return {uid for uid in uids if uid in conditions}
 
-    def _on_file_unloaded(self, **kwargs) -> None:
-        removed_path = kwargs.get("file_path") or ""
-        active_context_removed = kwargs.get("active_context_removed", True)
+    def _on_file_unloaded(
+        self, file_path: str = "", active_context_removed: bool = True
+    ) -> None:
+        removed_path = file_path or ""
         selected_path = self.ui_state_manager.selected_file_path
         if removed_path and selected_path:
             active_context_removed = active_context_removed or (
@@ -1548,10 +1557,12 @@ class UIEventCoordinator:
             self._sync_monitoring_state()
             self._nav.transition_to(NavState.NO_FILE)
 
-    def _on_file_selected(self, **kwargs) -> None:
-        file_path = kwargs.get("file_path")
-        is_database_root = kwargs.get("is_database_root", False)
-        project_uid = kwargs.get("project_uid")
+    def _on_file_selected(
+        self,
+        file_path: str | None = None,
+        project_uid: str | None = None,
+        is_database_root: bool = False,
+    ) -> None:
         self._save_current_page_view_state()
         self._placement.force_exit()
         self.ui_state_manager.reset_selections()
@@ -1568,13 +1579,13 @@ class UIEventCoordinator:
         self.visualization_service.refresh_mesh_view([])
         self._update_export_menu_state()
 
-    def _on_app_config_updated(self, **kwargs) -> None:
+    def _on_app_config_updated(self, setting: str = "", value=None) -> None:
         self.ui_state_manager.sync_from_config()
         needs_condition_display_refresh = (
             self._app_config_presentation.apply_updated_options(
                 self.main_window,
                 self.main_window._config_model,
-                kwargs["value"],
+                value,
             )
         )
         self.main_window.menu_controller.update_menu_states()
@@ -1591,7 +1602,7 @@ class UIEventCoordinator:
             self._viewer.update_viewers(selected_pages)
             self._update_plan_view_for_active()
 
-    def _on_license_status_changed(self, **_) -> None:
+    def _on_license_status_changed(self, has_license: bool) -> None:
         self._viewer.update_license_visualization_state()
         if not self.ui_access_manager.is_allowed(Feature.VIEW_3D):
             self._clear_mesh_replay_buffer()
@@ -1600,7 +1611,9 @@ class UIEventCoordinator:
         self._toolbar.refresh()
         self.ensure_select_mode()
 
-    def _on_native_scene_updated(self, **kwargs) -> None:
+    def _on_native_scene_updated(
+        self, geometries: List[MeshGeometry], bounds: tuple | None = None
+    ) -> None:
         if self._nav.is_refreshing:
             return
         if not self.ui_access_manager.is_allowed(Feature.VIEW_3D):
@@ -1611,7 +1624,6 @@ class UIEventCoordinator:
             if self._mesh_window:
                 self._mesh_window.clear_scene()
             return
-        geometries: List[MeshGeometry] = kwargs["geometries"]
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         (
             vertices,

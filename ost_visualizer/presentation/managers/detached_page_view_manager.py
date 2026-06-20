@@ -164,13 +164,21 @@ class DetachedPageViewManager(IShutdownAware):
         self._window = None
         self._notify_visibility_changed()
 
-    def _on_native_scene_updated(self, **_kwargs) -> None:
+    def _on_native_scene_updated(
+        self, geometries: list, bounds: tuple | None = None
+    ) -> None:
         if not self.is_view_open():
             return
         self._refresh_signaler.request_refresh()
 
     def _on_layer_visibility_changed(
-        self, file_path: str = "", bid_uid: str = "", **_kwargs
+        self,
+        file_path: str = "",
+        bid_uid: str = "",
+        layer_uid: str = "",
+        show: bool = True,
+        image_layer: bool = False,
+        all_layers: bool = False,
     ) -> None:
         if not self.is_view_open():
             return
@@ -194,12 +202,17 @@ class DetachedPageViewManager(IShutdownAware):
         if view:
             self._update_window_navigation(view)
 
-    def _on_named_view_deleted(self, **_kwargs) -> None:
+    def _on_named_view_deleted(self, named_view_uids: list | None = None) -> None:
         view = self.repository.get_active_view()
         if view:
             self._update_window_navigation(view)
 
-    def _on_annotations_changed(self, page_uid: str = "", **_kwargs) -> None:
+    def _on_annotations_changed(
+        self,
+        page_uid: str = "",
+        annotation_uids: list | None = None,
+        annotation_types: list | None = None,
+    ) -> None:
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()
