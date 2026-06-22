@@ -85,8 +85,7 @@ class MenuBuilder:
         ]
         export_items.extend(
             [
-                ("cmd", "Summary to CSV", "export_summary_csv"),
-                ("sep",),
+                ("cmd", "To .csv File", "export_summary_csv"),
                 ("cmd", "To .pdf File", "export_as_pdf"),
                 ("cmd", "To .ost File", "export_as_ost"),
                 ("cmd", "To .osp File", "export_as_osp"),

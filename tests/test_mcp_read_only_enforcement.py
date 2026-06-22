@@ -14,6 +14,9 @@ class McpReadOnlyEnforcementTests(unittest.TestCase):
             "ProjectWriteService",
             "project_write_service",
             "execute_command",
+            "SummaryCsvExportService",
+            "summary_csv_export_service",
+            "export_handler",
         )
         for path in files:
             text = path.read_text(encoding="utf-8")

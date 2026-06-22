@@ -20,6 +20,7 @@ from ..dtos.condition_summary_dtos import (
     ConditionSummaryValues,
 )
 from ..dtos.export_dto import ExportErrorCode, ExportResultDto
+from ..utils.quantity_display import format_quantity_number
 from .project_read_service import ProjectReadService
 from ..use_cases.project.condition_summary_service import ConditionSummaryService
 
@@ -235,11 +236,11 @@ class SummaryCsvExportService:
             cells.append(row.area)
         cells.extend(
             [
-                self._format_quantity(values.quantity1),
+                self._format_quantity(values.quantity1, values.uom1),
                 get_uom_label(values.uom1),
-                self._format_quantity(values.quantity2),
+                self._format_quantity(values.quantity2, values.uom2),
                 get_uom_label(values.uom2),
-                self._format_quantity(values.quantity3),
+                self._format_quantity(values.quantity3, values.uom3),
                 get_uom_label(values.uom3),
                 values.notes,
             ]
@@ -257,7 +258,5 @@ class SummaryCsvExportService:
         return f"{value:.5f}"
 
     @staticmethod
-    def _format_quantity(value: float) -> str:
-        if abs(value - round(value)) < 0.0000001:
-            return str(int(round(value)))
-        return f"{value:.2f}".rstrip("0").rstrip(".")
+    def _format_quantity(value: float, uom_code: int) -> str:
+        return format_quantity_number(value, uom_code, zero_text="0")

@@ -133,7 +133,7 @@ class ServiceBuilder:
             "summary_csv_export_service",
             lambda: SummaryCsvExportService(
                 project_data_service,
-                project_read_service,
+                self.container.get("project_read_service"),
             ),
         )
         api_client = license_api_client

@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 from ost_visualizer.application.app_controller import AppController
 from ost_visualizer.application.builders.orchestrator_builder import AppOrchestrators
+from ost_visualizer.application.builders.service_builder import ServiceBuilder
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.interfaces.i_shutdown_aware import IShutdownAware
 from ost_visualizer.application.orchestrators.license_thread_manager import (
@@ -55,6 +56,55 @@ class FakeCleanupObject:
 
     def cleanup(self):
         self.cleanup_calls += 1
+
+
+class FakeParserProvider:
+    def get_parsers(self):
+        return {}
+
+
+class FakeInfrastructureProvider:
+    def get_icon_provider(self):
+        return None
+
+    def get_transaction_monitor(self):
+        return SimpleNamespace(set_ost_status_callback=lambda _callback: None)
+
+    def get_takeoff_domain_service(self):
+        return object()
+
+    def get_uom_service(self):
+        return object()
+
+    def get_visualization_provider(self, _takeoff_service):
+        return object()
+
+    def get_coordinate_transformer_factory(self):
+        return SimpleNamespace(create=lambda: object())
+
+    def get_color_service(self):
+        return object()
+
+    def get_pdf_exporter(self, *_args):
+        return object()
+
+    def get_ost_exporter(self, _uom_service):
+        return object()
+
+    def get_osp_exporter(self, *_args):
+        return object()
+
+    def get_ost_importer(self, **_kwargs):
+        return object()
+
+    def get_osp_importer(self, **_kwargs):
+        return object()
+
+    def get_database_creator(self):
+        return object()
+
+    def get_default_working_dir(self):
+        return ""
 
 
 class ApplicationLifecycleTests(unittest.TestCase):
@@ -127,6 +177,32 @@ class ApplicationLifecycleTests(unittest.TestCase):
         self.assertEqual(container._services, {})
         self.assertEqual(container._factories, {})
         self.assertEqual(container._singletons, {})
+
+    def test_summary_csv_export_service_resolves_project_read_service_from_container(
+        self,
+    ):
+        container = ServiceContainer()
+        container.register_instance("project_read_service", SimpleNamespace())
+        container.register_instance(
+            "reload_database_use_case",
+            SimpleNamespace(execute=lambda: None),
+        )
+        ServiceBuilder(
+            container=container,
+            logger=logging.getLogger("test"),
+            infrastructure_provider=FakeInfrastructureProvider(),
+            parser_provider=FakeParserProvider(),
+            scene_notifier=object(),
+        ).build(
+            config_model=SimpleNamespace(),
+            project_data_service=SimpleNamespace(),
+            project_operations_service=SimpleNamespace(),
+            event_bus=FakeEventBus(),
+            connection_manager=None,
+            license_api_client=object(),
+        )
+        service = container.get("summary_csv_export_service")
+        self.assertIsNotNone(service)
 
     def test_lifecycle_shutdown_releases_controller_and_container_references(self):
         participant = FakeShutdownParticipant()

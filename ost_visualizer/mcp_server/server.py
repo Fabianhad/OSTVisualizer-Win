@@ -2,6 +2,10 @@ import logging
 from typing import Optional
 from ..application.dtos.mcp_context_dtos import (
     MCP_PDF_SOURCE_AUTO,
+    MCP_SUMMARY_DEFAULT_GROUP_BY_AREA,
+    MCP_SUMMARY_DEFAULT_GROUP_BY_PAGE,
+    MCP_SUMMARY_DEFAULT_GROUP_BY_TYPE,
+    MCP_SUMMARY_DEFAULT_LIMIT,
     MCP_STATUS_EMPTY,
     MCP_STATUS_OK,
     MCP_STATUS_TRUNCATED,
@@ -553,6 +557,26 @@ def build_mcp_server(
         """Return bounded per-condition quantity summaries for a bid."""
         return run_read(
             read_service.get_bid_quantity_summary, database_id, bid_uid, limit
+        )
+
+    @mcp.tool()
+    def get_summary(
+        database_id: str,
+        bid_uid: str,
+        group_by_page: bool = MCP_SUMMARY_DEFAULT_GROUP_BY_PAGE,
+        group_by_type: bool = MCP_SUMMARY_DEFAULT_GROUP_BY_TYPE,
+        group_by_area: bool = MCP_SUMMARY_DEFAULT_GROUP_BY_AREA,
+        limit: int = MCP_SUMMARY_DEFAULT_LIMIT,
+    ) -> dict:
+        """Return the structured Summary tree for a bid with explicit grouping."""
+        return run_read(
+            read_service.get_summary,
+            database_id,
+            bid_uid,
+            group_by_page,
+            group_by_type,
+            group_by_area,
+            limit,
         )
 
     @mcp.tool()

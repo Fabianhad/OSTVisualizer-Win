@@ -1,4 +1,15 @@
 import unittest
+from ost_visualizer.application.dtos.condition_summary_dtos import (
+    SUMMARY_GROUP_AREA,
+    SUMMARY_GROUP_PAGE,
+    SUMMARY_GROUP_TYPE,
+    SUMMARY_MULTI_AREA_TOTAL_LABEL,
+    SUMMARY_NODE_AREA_DETAIL,
+    SUMMARY_NODE_CONDITION,
+    SUMMARY_NODE_FOLDER,
+    SUMMARY_NODE_GROUP,
+    SUMMARY_NODE_MULTI_AREA_TOTAL,
+)
 from ost_visualizer.application.dtos.pdf_metadata_dtos import (
     PdfPageInfoDto,
     PdfTextRunDto,
@@ -12,6 +23,7 @@ from ost_visualizer.application.services.mcp_read_service import (
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
 from ost_visualizer.domain.entities.file_results import BidLoadResult, FileLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
@@ -57,6 +69,11 @@ class FakeProjectRepository:
             uom1=UOM_EACH,
             ref_no=1,
             layer_uid="layer-1",
+            cdn_type_uid="type-a",
+            cdn_type_name="Type A",
+            folder_uid="folder-1",
+            height=12.0,
+            notes="Visible notes",
         )
         hidden = Condition(
             uid="cond-2",
@@ -67,6 +84,8 @@ class FakeProjectRepository:
             ref_no=2,
             layer_visible=False,
             layer_uid="layer-2",
+            cdn_type_uid="type-b",
+            cdn_type_name="Type B",
         )
         unused = Condition(
             uid="cond-3",
@@ -74,6 +93,9 @@ class FakeProjectRepository:
             condition_type=Condition.TYPE_LINEAR,
             ref_no=3,
             layer_uid="layer-1",
+            cdn_type_uid="type-a",
+            cdn_type_name="Type A",
+            folder_uid="folder-1",
         )
         page1 = Page(
             uid="page-1",
@@ -131,6 +153,11 @@ class FakeProjectRepository:
         page2.takeoffs = [t3]
         self.bid_data = BidLoadResult(
             bid_conditions={"cond-1": visible, "cond-2": hidden, "cond-3": unused},
+            bid_condition_folders={
+                "folder-1": BidConditionFolder(
+                    uid="folder-1", bid_uid="bid-1", name="Foundation"
+                )
+            },
             bid_takeoffs=[t1, t2, t3],
             bid_areas={
                 "area-1": BidArea(
@@ -622,6 +649,148 @@ class McpReadServiceTests(unittest.TestCase):
         self.assertEqual(first.page_count, 1)
         self.assertFalse(first.zero_quantity)
 
+    def test_structured_summary_uses_default_type_area_grouping(self):
+        summary = self.service.get_summary("db-1", "bid-1")
+        self.assertEqual(summary.status, "ok")
+        self.assertEqual(summary.bid_name, "Bid One")
+        self.assertEqual(summary.project_uid, "project-1")
+        self.assertEqual(summary.project_name, "Project One")
+        self.assertFalse(summary.grouping.group_by_page)
+        self.assertTrue(summary.grouping.group_by_type)
+        self.assertTrue(summary.grouping.group_by_area)
+        self.assertEqual(summary.root_label, "Conditions - Bid One")
+        self.assertEqual(
+            [node.label for node in summary.nodes],
+            ["Foundation", "Type B"],
+        )
+        folder = summary.nodes[0]
+        self.assertEqual(folder.kind, SUMMARY_NODE_FOLDER)
+        self.assertEqual(folder.folder_path, ["Foundation"])
+        self.assertEqual(folder.children[0].kind, SUMMARY_NODE_GROUP)
+        self.assertEqual(folder.children[0].group_level, SUMMARY_GROUP_TYPE)
+        self.assertEqual(folder.children[0].children[0].group_level, SUMMARY_GROUP_AREA)
+        condition = folder.children[0].children[0].children[0]
+        self.assertEqual(condition.kind, SUMMARY_NODE_CONDITION)
+        self.assertEqual(condition.condition_uid, "cond-1")
+        self.assertEqual(condition.type_name, "Type A")
+        self.assertEqual(condition.area, "Level One Deck")
+        self.assertEqual(condition.values.name, "Visible Count")
+        self.assertEqual(condition.values.height, "1' 0\"")
+        self.assertEqual(condition.values.height_inches, 12.0)
+        self.assertEqual(condition.values.quantity1, 2.0)
+        self.assertEqual(condition.values.uom1_label, "EA")
+        self.assertEqual(condition.values.notes, "Visible notes")
+        self.assertTrue(condition.copyable)
+        self.assertTrue(condition.deletable)
+
+    def test_structured_summary_supports_all_grouping_combinations(self):
+        cases = [
+            ((False, False, False), set()),
+            ((False, False, True), {SUMMARY_GROUP_AREA}),
+            ((False, True, False), {SUMMARY_GROUP_TYPE}),
+            ((True, False, False), {SUMMARY_GROUP_PAGE}),
+            ((False, True, True), {SUMMARY_GROUP_TYPE, SUMMARY_GROUP_AREA}),
+            ((True, False, True), {SUMMARY_GROUP_PAGE, SUMMARY_GROUP_AREA}),
+            ((True, True, False), {SUMMARY_GROUP_PAGE, SUMMARY_GROUP_TYPE}),
+            (
+                (True, True, True),
+                {SUMMARY_GROUP_PAGE, SUMMARY_GROUP_TYPE, SUMMARY_GROUP_AREA},
+            ),
+        ]
+        for flags, expected_levels in cases:
+            with self.subTest(flags=flags):
+                summary = self.service.get_summary(
+                    "db-1",
+                    "bid-1",
+                    group_by_page=flags[0],
+                    group_by_type=flags[1],
+                    group_by_area=flags[2],
+                )
+                self.assertEqual(summary.status, "ok")
+                self.assertEqual(
+                    (
+                        summary.grouping.group_by_page,
+                        summary.grouping.group_by_type,
+                        summary.grouping.group_by_area,
+                    ),
+                    flags,
+                )
+                group_levels = {
+                    node.group_level
+                    for node in self._summary_nodes(summary.nodes)
+                    if node.kind == SUMMARY_NODE_GROUP
+                }
+                self.assertEqual(group_levels, expected_levels)
+
+    def test_structured_summary_excludes_unused_conditions(self):
+        summary = self.service.get_summary("db-1", "bid-1", group_by_type=False)
+        condition_uids = [
+            node.condition_uid
+            for node in self._summary_nodes(summary.nodes)
+            if node.condition_uid
+        ]
+        self.assertIn("cond-1", condition_uids)
+        self.assertIn("cond-2", condition_uids)
+        self.assertNotIn("cond-3", condition_uids)
+
+    def test_structured_summary_preserves_multi_area_total_and_details(self):
+        self.repo.bid_data.bid_takeoffs.append(
+            Takeoff(
+                uid="takeoff-3",
+                condition_uid="cond-1",
+                page_uid="page-1",
+                area_uid="area-2",
+            )
+        )
+        summary = self.service.get_summary(
+            "db-1",
+            "bid-1",
+            group_by_page=False,
+            group_by_type=False,
+            group_by_area=False,
+        )
+        nodes = self._summary_nodes(summary.nodes)
+        total = next(
+            node for node in nodes if node.kind == SUMMARY_NODE_MULTI_AREA_TOTAL
+        )
+        self.assertEqual(total.condition_uid, "cond-1")
+        self.assertEqual(total.area, SUMMARY_MULTI_AREA_TOTAL_LABEL)
+        self.assertEqual(total.values.quantity1, 3.0)
+        self.assertEqual(
+            [child.kind for child in total.children],
+            [SUMMARY_NODE_AREA_DETAIL, SUMMARY_NODE_AREA_DETAIL],
+        )
+        self.assertEqual(
+            [child.area for child in total.children],
+            ["Level One Deck", "Nested Area"],
+        )
+
+    def test_structured_summary_reports_empty_and_truncated_results(self):
+        self.repo.bid_data.bid_takeoffs.clear()
+        empty = self.service.get_summary("db-1", "bid-1")
+        self.assertEqual(empty.status, "empty")
+        self.assertEqual(empty.total_node_count, 0)
+        self.assertEqual(empty.meta.returned_count, 0)
+        self.assertEqual(empty.nodes, [])
+        self.repo = FakeProjectRepository()
+        self.service = McpReadService(
+            self.repo,
+            [
+                McpDatabaseRef(
+                    database_id="db-1",
+                    file_path=self.repo.file_path,
+                    display_name="Demo",
+                )
+            ],
+            pdf_metadata_provider=FakePdfMetadataProvider(),
+        )
+        limited = self.service.get_summary("db-1", "bid-1", limit=2)
+        self.assertEqual(limited.status, "truncated")
+        self.assertEqual(limited.meta.limit, 2)
+        self.assertEqual(limited.meta.returned_count, 2)
+        self.assertGreater(limited.meta.total_count, 2)
+        self.assertTrue(limited.meta.has_more)
+
     def test_summary_limits_are_clamped_and_report_exact_counts(self):
         summary = self.service.get_bid_quantity_summary("db-1", "bid-1", limit=0)
         self.assertEqual(summary.status, "truncated")
@@ -675,6 +844,13 @@ class McpReadServiceTests(unittest.TestCase):
             self.service.list_takeoffs("db-1", "bid-1", page_uid="missing")
         with self.assertRaises(McpReadError):
             self.service.list_takeoffs("db-1", "bid-1", condition_uid="missing")
+
+    def _summary_nodes(self, nodes):
+        result = []
+        for node in nodes:
+            result.append(node)
+            result.extend(self._summary_nodes(node.children))
+        return result
 
 
 if __name__ == "__main__":

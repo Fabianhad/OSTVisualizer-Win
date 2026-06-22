@@ -29,6 +29,16 @@ from ...domain.repositories.i_project_repository import IProjectRepository
 from ...domain.services.condition_quantity_service import compute_page_quantities
 from ...domain.services.takeoff_domain_service import is_takeoff_visible
 from ...domain.services.uom_service import get_uom_label
+from ..dtos.condition_summary_dtos import (
+    SUMMARY_GROUP_AREA,
+    SUMMARY_GROUP_PAGE,
+    SUMMARY_GROUP_TYPE,
+    SUMMARY_NODE_FOLDER,
+    SUMMARY_NODE_GROUP,
+    ConditionSummaryGrouping,
+    ConditionSummaryNode,
+    ConditionSummaryValues,
+)
 from ..dtos.mcp_context_dtos import (
     MCP_OVERLAY_KIND_PDF,
     MCP_OVERLAY_KIND_RASTER,
@@ -40,6 +50,11 @@ from ..dtos.mcp_context_dtos import (
     MCP_PDF_SOURCE_MAIN,
     MCP_PDF_SOURCE_OVERLAY,
     MCP_PDF_SOURCES,
+    MCP_SUMMARY_DEFAULT_GROUP_BY_AREA,
+    MCP_SUMMARY_DEFAULT_GROUP_BY_PAGE,
+    MCP_SUMMARY_DEFAULT_GROUP_BY_TYPE,
+    MCP_SUMMARY_DEFAULT_LIMIT,
+    MCP_SUMMARY_MAX_LIMIT,
     MCP_STATUS_CONFIGURED,
     MCP_STATUS_DEFERRED,
     MCP_STATUS_EMPTY,
@@ -81,12 +96,17 @@ from ..dtos.mcp_context_dtos import (
     McpScopeGapSummaryDto,
     McpSelectedPagesSummaryDto,
     McpSelectedTakeoffsSummaryDto,
+    McpSummaryDto,
+    McpSummaryGroupingDto,
+    McpSummaryNodeDto,
+    McpSummaryValuesDto,
     McpTakeoffDto,
     McpUnplacedTakeoffSummaryDto,
     McpZeroQuantitySummaryDto,
 )
 from ..dtos.pdf_metadata_dtos import PdfPageInfoDto, PdfTextRunDto, PdfVectorSegmentDto
 from ..interfaces.i_pdf_metadata_provider import IPdfMetadataProvider
+from ..use_cases.project.condition_summary_service import ConditionSummaryService
 
 
 class McpReadError(ValueError):
@@ -122,15 +142,19 @@ class McpReadService:
     PDF_VECTOR_MAX_LIMIT = 100
     MARKUP_DEFAULT_LIMIT = 50
     MARKUP_MAX_LIMIT = 250
+    SUMMARY_DEFAULT_LIMIT = MCP_SUMMARY_DEFAULT_LIMIT
+    SUMMARY_MAX_LIMIT = MCP_SUMMARY_MAX_LIMIT
 
     def __init__(
         self,
         project_repository: IProjectRepository,
         databases: Iterable[McpDatabaseRef],
         pdf_metadata_provider: Optional[IPdfMetadataProvider] = None,
+        summary_service: Optional[ConditionSummaryService] = None,
     ):
         self._repository = project_repository
         self._pdf_metadata_provider = pdf_metadata_provider
+        self._summary_service = summary_service or ConditionSummaryService()
         self._databases: Dict[str, McpDatabaseRef] = {
             db.database_id: db for db in databases
         }
@@ -807,6 +831,77 @@ class McpReadService:
             conditions=limited,
         )
 
+    def get_summary(
+        self,
+        database_id: str,
+        bid_uid: str,
+        group_by_page: bool = MCP_SUMMARY_DEFAULT_GROUP_BY_PAGE,
+        group_by_type: bool = MCP_SUMMARY_DEFAULT_GROUP_BY_TYPE,
+        group_by_area: bool = MCP_SUMMARY_DEFAULT_GROUP_BY_AREA,
+        limit: int = SUMMARY_DEFAULT_LIMIT,
+    ) -> McpSummaryDto:
+        entry = self._get_file_entry(database_id)
+        bid, project_uid, project_name = self._find_bid(entry, bid_uid)
+        bid_data = self._load_bid(database_id, bid_uid)
+        grouping = ConditionSummaryGrouping(
+            by_page=bool(group_by_page),
+            by_type=bool(group_by_type),
+            by_area=bool(group_by_area),
+        )
+        root = self._summary_service.build_summary(
+            conditions=bid_data.bid_conditions,
+            folders=bid_data.bid_condition_folders,
+            takeoffs=bid_data.bid_takeoffs,
+            pages=list(bid_data.pages.values()),
+            areas=list(bid_data.bid_areas.values()),
+            project_name=bid.name,
+            grouping=grouping,
+        )
+        clean_limit = self._clean_limit(
+            limit, default=self.SUMMARY_DEFAULT_LIMIT, max_limit=self.SUMMARY_MAX_LIMIT
+        )
+        total_count = self._summary_node_count(root)
+        remaining = clean_limit
+        nodes: List[McpSummaryNodeDto] = []
+        for child in root.children:
+            if remaining <= 0:
+                break
+            node, consumed = self._summary_node_dto_limited(
+                child,
+                remaining,
+                folder_path=[],
+                groups={},
+            )
+            if node is not None:
+                nodes.append(node)
+                remaining -= consumed
+        returned_count = clean_limit - remaining
+        truncated = returned_count < total_count
+        meta = McpResultMetaDto(
+            limit=clean_limit,
+            returned_count=returned_count,
+            total_count=total_count,
+            truncated=truncated,
+            has_more=truncated,
+        )
+        return McpSummaryDto(
+            status=_summary_status_for_meta(meta),
+            database_id=database_id,
+            bid_uid=bid_uid,
+            bid_name=bid.name,
+            project_uid=project_uid,
+            project_name=project_name or "",
+            grouping=McpSummaryGroupingDto(
+                group_by_page=grouping.by_page,
+                group_by_type=grouping.by_type,
+                group_by_area=grouping.by_area,
+            ),
+            meta=meta,
+            root_label=root.label,
+            total_node_count=total_count,
+            nodes=nodes,
+        )
+
     def review_scope_gaps(
         self,
         database_id: str,
@@ -1149,6 +1244,89 @@ class McpReadService:
             for condition in self._ordered_conditions(bid_data)
             if condition.uid not in used_condition_uids
         ]
+
+    def _summary_node_count(self, root: ConditionSummaryNode) -> int:
+        return sum(self._summary_subtree_count(child) for child in root.children)
+
+    def _summary_subtree_count(self, node: ConditionSummaryNode) -> int:
+        return 1 + sum(self._summary_subtree_count(child) for child in node.children)
+
+    def _summary_node_dto_limited(
+        self,
+        node: ConditionSummaryNode,
+        remaining: int,
+        folder_path: List[str],
+        groups: Dict[str, str],
+    ) -> Tuple[Optional[McpSummaryNodeDto], int]:
+        if remaining <= 0:
+            return None, 0
+        node_folder_path = list(folder_path)
+        child_folder_path = node_folder_path
+        if node.kind == SUMMARY_NODE_FOLDER:
+            node_folder_path = [*folder_path, node.label]
+            child_folder_path = node_folder_path
+        node_groups = dict(groups)
+        child_groups = node_groups
+        if node.kind == SUMMARY_NODE_GROUP:
+            node_groups[node.group_level] = node.label
+            child_groups = node_groups
+        dto = McpSummaryNodeDto(
+            kind=node.kind,
+            label=node.label,
+            condition_uid=node.condition_uid,
+            folder_uid=node.folder_uid,
+            group_level=node.group_level,
+            folder_path=node_folder_path,
+            page=node_groups.get(SUMMARY_GROUP_PAGE, ""),
+            type_name=(
+                node_groups.get(SUMMARY_GROUP_TYPE, "") or node.values.type_name
+            ),
+            area=node_groups.get(SUMMARY_GROUP_AREA, "") or node.values.area,
+            values=self._summary_values_dto(node.values),
+            child_count=len(node.children),
+            copyable=node.copyable,
+            deletable=node.deletable,
+            layer_visible=node.layer_visible,
+            color_fill=node.color_fill,
+            pattern=node.pattern,
+        )
+        consumed = 1
+        child_remaining = remaining - consumed
+        for child in node.children:
+            if child_remaining <= 0:
+                break
+            child_dto, child_consumed = self._summary_node_dto_limited(
+                child,
+                child_remaining,
+                child_folder_path,
+                child_groups,
+            )
+            if child_dto is not None:
+                dto.children.append(child_dto)
+            consumed += child_consumed
+            child_remaining -= child_consumed
+        return dto, consumed
+
+    @staticmethod
+    def _summary_values_dto(values: ConditionSummaryValues) -> McpSummaryValuesDto:
+        return McpSummaryValuesDto(
+            number=values.number,
+            name=values.name,
+            type_name=values.type_name,
+            height=values.height,
+            height_inches=values.height_inches,
+            area=values.area,
+            quantity1=values.quantity1,
+            uom1=values.uom1,
+            uom1_label=get_uom_label(values.uom1),
+            quantity2=values.quantity2,
+            uom2=values.uom2,
+            uom2_label=get_uom_label(values.uom2),
+            quantity3=values.quantity3,
+            uom3=values.uom3,
+            uom3_label=get_uom_label(values.uom3),
+            notes=values.notes,
+        )
 
     def _load_file(self, db: McpDatabaseRef) -> FileLoadResult:
         result = self._repository.load_file(db.file_path)

@@ -23,6 +23,11 @@ MCP_PAGE_SOURCE_OVERLAY = MCP_PDF_SOURCE_OVERLAY
 MCP_PAGE_SOURCE_COMPOSITE = "composite"
 MCP_OVERLAY_KIND_PDF = "pdf"
 MCP_OVERLAY_KIND_RASTER = "raster"
+MCP_SUMMARY_DEFAULT_GROUP_BY_PAGE = False
+MCP_SUMMARY_DEFAULT_GROUP_BY_TYPE = True
+MCP_SUMMARY_DEFAULT_GROUP_BY_AREA = True
+MCP_SUMMARY_DEFAULT_LIMIT = 500
+MCP_SUMMARY_MAX_LIMIT = 5000
 
 
 @dataclass
@@ -219,6 +224,69 @@ class McpConditionQuantitySummaryDto:
     visible_takeoff_count: int = 0
     page_count: int = 0
     zero_quantity: bool = False
+
+
+@dataclass
+class McpSummaryGroupingDto:
+    group_by_page: bool = MCP_SUMMARY_DEFAULT_GROUP_BY_PAGE
+    group_by_type: bool = MCP_SUMMARY_DEFAULT_GROUP_BY_TYPE
+    group_by_area: bool = MCP_SUMMARY_DEFAULT_GROUP_BY_AREA
+
+
+@dataclass
+class McpSummaryValuesDto:
+    number: str = ""
+    name: str = ""
+    type_name: str = ""
+    height: str = ""
+    height_inches: float = 0.0
+    area: str = ""
+    quantity1: float = 0.0
+    uom1: int = 0
+    uom1_label: str = ""
+    quantity2: float = 0.0
+    uom2: int = 0
+    uom2_label: str = ""
+    quantity3: float = 0.0
+    uom3: int = 0
+    uom3_label: str = ""
+    notes: str = ""
+
+
+@dataclass
+class McpSummaryNodeDto:
+    kind: str
+    label: str = ""
+    condition_uid: str = ""
+    folder_uid: str = ""
+    group_level: str = ""
+    folder_path: List[str] = field(default_factory=list)
+    page: str = ""
+    type_name: str = ""
+    area: str = ""
+    values: McpSummaryValuesDto = field(default_factory=McpSummaryValuesDto)
+    children: List["McpSummaryNodeDto"] = field(default_factory=list)
+    child_count: int = 0
+    copyable: bool = False
+    deletable: bool = False
+    layer_visible: bool = True
+    color_fill: int = 0
+    pattern: int = 0
+
+
+@dataclass
+class McpSummaryDto:
+    status: str
+    database_id: str
+    bid_uid: str
+    bid_name: str = ""
+    project_uid: Optional[str] = None
+    project_name: str = ""
+    grouping: McpSummaryGroupingDto = field(default_factory=McpSummaryGroupingDto)
+    meta: McpResultMetaDto = field(default_factory=McpResultMetaDto)
+    root_label: str = ""
+    total_node_count: int = 0
+    nodes: List[McpSummaryNodeDto] = field(default_factory=list)
 
 
 @dataclass

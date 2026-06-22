@@ -5,6 +5,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from ost_visualizer.application.dtos.condition_summary_dtos import (
     ConditionSummaryGrouping,
+    ConditionSummaryNode,
+    ConditionSummaryValues,
+    SUMMARY_NODE_CONDITION,
+    SUMMARY_NODE_ROOT,
 )
 from ost_visualizer.application.services.summary_csv_export_service import (
     SummaryCsvExportService,
@@ -349,6 +353,32 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
         self.assertEqual(rows[0][8:10], ["2", "EA"])
         self.assertEqual(rows[1][4:8], ["", "", "0", "Area One"])
         self.assertEqual(rows[2][4:8], ["", "", "0", "Area Two"])
+
+    def test_quantity_cells_use_summary_plain_number_format(self):
+        root = ConditionSummaryNode(
+            kind=SUMMARY_NODE_ROOT,
+            children=[
+                ConditionSummaryNode(
+                    kind=SUMMARY_NODE_CONDITION,
+                    values=ConditionSummaryValues(
+                        number="4",
+                        name="Cond D",
+                        type_name="Type D",
+                        height_inches=6.25,
+                        area="Area One",
+                        quantity1=504.0,
+                        uom1=UOM_EACH,
+                        quantity2=37.0,
+                        uom2=UOM_SQUARE_FEET,
+                        quantity3=0.0,
+                        uom3=UOM_CUBIC_YARDS,
+                    ),
+                )
+            ],
+        )
+        rows = self.csv_service.to_csv_rows(root, ConditionSummaryGrouping())
+        self.assertEqual(rows[0][8:14], ["504", "EA", "37", "SF", "0", "CY"])
+        self.assertEqual(rows[0][6], "6.25000")
 
     def test_to_csv_text_has_no_header_and_quotes_all_cells(self):
         text = self.csv_service.to_csv_text(

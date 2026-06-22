@@ -1,4 +1,7 @@
 import unittest
+from ost_visualizer.application.dtos.condition_summary_dtos import (
+    SUMMARY_NODE_CONDITION,
+)
 from ost_visualizer.application.dtos.mcp_context_dtos import (
     McpAreaDto,
     McpAreaSummaryDto,
@@ -18,6 +21,10 @@ from ost_visualizer.application.dtos.mcp_context_dtos import (
     McpPdfVectorsSummaryDto,
     McpResultMetaDto,
     McpSelectedTakeoffsSummaryDto,
+    McpSummaryDto,
+    McpSummaryGroupingDto,
+    McpSummaryNodeDto,
+    McpSummaryValuesDto,
     McpTakeoffDto,
 )
 from ost_visualizer.mcp_server.serializers import error, ok
@@ -315,6 +322,87 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "visible_takeoff_count",
                 "page_count",
                 "zero_quantity",
+            },
+        )
+
+    def test_summary_shape_is_stable(self):
+        payload = ok(
+            McpSummaryDto(
+                status="ok",
+                database_id="db",
+                bid_uid="bid",
+                grouping=McpSummaryGroupingDto(),
+                nodes=[
+                    McpSummaryNodeDto(
+                        kind=SUMMARY_NODE_CONDITION,
+                        condition_uid="cond-1",
+                        values=McpSummaryValuesDto(name="Condition"),
+                    )
+                ],
+            )
+        )
+        self.assertEqual(
+            set(payload["data"].keys()),
+            {
+                "status",
+                "database_id",
+                "bid_uid",
+                "bid_name",
+                "project_uid",
+                "project_name",
+                "grouping",
+                "meta",
+                "root_label",
+                "total_node_count",
+                "nodes",
+            },
+        )
+        self.assertEqual(
+            set(payload["data"]["grouping"].keys()),
+            {"group_by_page", "group_by_type", "group_by_area"},
+        )
+        node = payload["data"]["nodes"][0]
+        self.assertEqual(
+            set(node.keys()),
+            {
+                "kind",
+                "label",
+                "condition_uid",
+                "folder_uid",
+                "group_level",
+                "folder_path",
+                "page",
+                "type_name",
+                "area",
+                "values",
+                "children",
+                "child_count",
+                "copyable",
+                "deletable",
+                "layer_visible",
+                "color_fill",
+                "pattern",
+            },
+        )
+        self.assertEqual(
+            set(node["values"].keys()),
+            {
+                "number",
+                "name",
+                "type_name",
+                "height",
+                "height_inches",
+                "area",
+                "quantity1",
+                "uom1",
+                "uom1_label",
+                "quantity2",
+                "uom2",
+                "uom2_label",
+                "quantity3",
+                "uom3",
+                "uom3_label",
+                "notes",
             },
         )
 
