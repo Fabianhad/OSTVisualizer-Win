@@ -236,6 +236,28 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             IconManager.icon(IconId.FOLDER).cacheKey(),
         )
 
+    def test_condition_sidebar_cdn_type_group_rows_are_bold(self):
+        sidebar = ConditionsSidebar(None)
+        sidebar.load_conditions(
+            {
+                "c1": Condition(
+                    uid="c1",
+                    name="Condition 1",
+                    ref_no=1,
+                    cdn_type_uid="type-1",
+                    cdn_type_name="Type 1",
+                )
+            },
+            {},
+            "Project",
+        )
+        root = sidebar.tree.topLevelItem(0)
+        cdn_type_item = root.child(0)
+        condition_item = cdn_type_item.child(0)
+        self.assertEqual(cdn_type_item.text(0), "Type 1")
+        self.assertTrue(cdn_type_item.font(0).bold())
+        self.assertFalse(condition_item.font(0).bold())
+
     def test_area_combo_clears_deleted_selected_area_uid_on_reload(self):
         combo = AreaComboBox(None)
         combo.load_areas(

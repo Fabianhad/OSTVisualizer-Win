@@ -12,7 +12,7 @@ from ..actions.action_ids import (
     ACTION_UNDO,
 )
 from ..components.conditions_sidebar import ConditionsSidebar
-from ..components.condition_summary_tab import ConditionSummaryTab
+from ..components.condition_summary import ConditionSummaryTab
 from ..components.layers_sidebar import BidLayersSidebar
 from ..components.mesh_view import OpenGLViewer
 from ..components.page_combo import PageComboBox

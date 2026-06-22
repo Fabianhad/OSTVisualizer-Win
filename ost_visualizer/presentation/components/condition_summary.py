@@ -84,6 +84,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         super().__init__(parent)
         self._uom_label_fn = uom_label_fn or (lambda _: "")
         self._root_node: ConditionSummaryNode | None = None
+        self._condition_items: dict[str, list[QtWidgets.QTreeWidgetItem]] = {}
         self._grouping = ConditionSummaryGrouping(by_type=True, by_area=True)
         self._grouping_rebuild_callback: (
             Callable[[ConditionSummaryGrouping], None] | None
@@ -132,6 +133,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
 
     def clear(self) -> None:
         self._root_node = None
+        self._condition_items.clear()
         self.tree.clear()
 
     def refresh_view(self) -> None:
@@ -149,6 +151,43 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         self._grouping = grouping
         self._grayscale = bool(grayscale)
         self._rebuild_tree()
+
+    def apply_layer_visibility_state(
+        self,
+        conditions: dict,
+        grayscale: bool = False,
+        layer_uid: str | None = None,
+    ) -> None:
+        self._grayscale = bool(grayscale)
+        if not self._condition_items:
+            return
+        layer_key = str(layer_uid) if layer_uid is not None else None
+        self.tree.setUpdatesEnabled(False)
+        try:
+            for condition_uid, items in self._condition_items.items():
+                condition = conditions.get(condition_uid)
+                if condition is None:
+                    continue
+                if (
+                    layer_key is not None
+                    and str(condition.layer_uid or "") != layer_key
+                ):
+                    continue
+                for item in items:
+                    node = self._node_for_item(item)
+                    if node is None:
+                        continue
+                    node.layer_visible = condition.layer_visible
+                    node.color_fill = condition.color_fill
+                    node.pattern = condition.pattern
+                    if node.kind in (
+                        SUMMARY_NODE_CONDITION,
+                        SUMMARY_NODE_MULTI_AREA_TOTAL,
+                    ):
+                        self._apply_condition_icon(item, node)
+        finally:
+            self.tree.setUpdatesEnabled(True)
+        self.tree.viewport().update()
 
     def set_grouping_rebuild_callback(
         self, callback: Callable[[ConditionSummaryGrouping], None] | None
@@ -209,6 +248,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         self.tree.setUpdatesEnabled(False)
         try:
             self.tree.clear()
+            self._condition_items.clear()
             for node in self._root_node.children:
                 item = self._create_item(node)
                 self.tree.addTopLevelItem(item)
@@ -242,6 +282,8 @@ class ConditionSummaryTab(QtWidgets.QWidget):
     def _create_item(self, node: ConditionSummaryNode) -> QtWidgets.QTreeWidgetItem:
         item = QtWidgets.QTreeWidgetItem([""] * len(self._column_keys))
         item.setData(_COL_NUMBER, _NODE_ROLE, node)
+        if node.condition_uid:
+            self._condition_items.setdefault(node.condition_uid, []).append(item)
         flags = QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
         item.setFlags(flags)
         self._apply_body_row_size_hint(item)
@@ -254,17 +296,22 @@ class ConditionSummaryTab(QtWidgets.QWidget):
             return item
         self._populate_value_columns(item, node)
         if node.kind in (SUMMARY_NODE_CONDITION, SUMMARY_NODE_MULTI_AREA_TOTAL):
-            item.setIcon(
-                _COL_NUMBER,
-                make_condition_color_icon(
-                    node.color_fill,
-                    node.pattern,
-                    self._grayscale or not node.layer_visible,
-                ),
-            )
+            self._apply_condition_icon(item, node)
         if node.bold_columns:
             self._set_bold_columns(item, node.bold_columns)
         return item
+
+    def _apply_condition_icon(
+        self, item: QtWidgets.QTreeWidgetItem, node: ConditionSummaryNode
+    ) -> None:
+        item.setIcon(
+            _COL_NUMBER,
+            make_condition_color_icon(
+                node.color_fill,
+                node.pattern,
+                self._grayscale or not node.layer_visible,
+            ),
+        )
 
     def _apply_body_row_size_hint(self, item: QtWidgets.QTreeWidgetItem) -> None:
         row_height = max(

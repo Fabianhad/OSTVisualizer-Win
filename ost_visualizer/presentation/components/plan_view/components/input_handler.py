@@ -95,6 +95,27 @@ def _update_ann_trailing_rotation(pos: List[float], snapped_deg: float) -> None:
         pos.append(delta_rad)
 
 
+def _rotate_compact_box_annotation(
+    orig_pos: List[float], snapped_deg: float, cx: float, cy: float
+) -> Optional[List[float]]:
+    n_coords = len(orig_pos) - 1 if len(orig_pos) % 2 == 1 else len(orig_pos)
+    if n_coords != 4:
+        return None
+    x1, y1, x2, y2 = orig_pos[:4]
+    corners = [x2, y2, x1, y1, x2, y1, x1, y2]
+    existing_rad = orig_pos[4] if len(orig_pos) % 2 == 1 else 0.0
+    if existing_rad:
+        corners = rotate_points_around(
+            corners,
+            math.degrees(existing_rad),
+            (x1 + x2) / 2.0,
+            (y1 + y2) / 2.0,
+        )
+    rotated = rotate_points_around(corners, snapped_deg, cx, cy)
+    rotated.append(existing_rad + math.radians(snapped_deg))
+    return rotated
+
+
 def _rotate_annotation(
     ann, orig_pos: List[float], snapped_deg: float, cx: float, cy: float
 ) -> List[float]:
@@ -113,6 +134,10 @@ def _rotate_annotation(
         coords = _ink_strip_prefix(orig_pos)
         rotated = rotate_points_around(coords, snapped_deg, cx, cy)
         return _ink_add_prefix(rotated, orig_pos, snapped_deg)
+    if ann.annotation_type in (ANNOTATION_TYPE_RECT, ANNOTATION_TYPE_HIGHLIGHT):
+        rotated_box = _rotate_compact_box_annotation(orig_pos, snapped_deg, cx, cy)
+        if rotated_box is not None:
+            return rotated_box
     new_pos = rotate_points_around(orig_pos, snapped_deg, cx, cy)
     if ann.annotation_type not in (
         ANNOTATION_TYPE_CLOUD,

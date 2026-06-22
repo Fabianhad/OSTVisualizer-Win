@@ -549,6 +549,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
             group_item.setData(_COL_NO, _ITEM_ROLE, (_TYPE_CDN_TYPE, cdn_uid or ""))
             group_item.setData(_COL_NO, _SORT_ROLE, group_name)
             group_item.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+            group_font = group_item.font(_COL_NO)
+            group_font.setBold(True)
+            group_item.setFont(_COL_NO, group_font)
             parent_item.addChild(group_item)
             group_item.setFirstColumnSpanned(True)
             for cond in group_conds:

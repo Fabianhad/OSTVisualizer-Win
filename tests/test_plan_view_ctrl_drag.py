@@ -516,6 +516,24 @@ class CtrlDragTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = _app()
 
+    def _rendered_box_side_lengths(self, position):
+        points = [
+            (position[0], position[1]),
+            (position[6], position[7]),
+            (position[2], position[3]),
+            (position[4], position[5]),
+        ]
+        return sorted(
+            round(
+                math.hypot(
+                    points[(index + 1) % 4][0] - points[index][0],
+                    points[(index + 1) % 4][1] - points[index][1],
+                ),
+                6,
+            )
+            for index in range(4)
+        )
+
     def _make_view(self, selected_uids=None):
         view = InputHandlerHarness()
         view._cursor_mode = "select"
@@ -1272,6 +1290,66 @@ class CtrlDragTests(unittest.TestCase):
         self.assertTrue(view._rotation_drag_active)
         self.assertIn(path, view._rotation_drag_preview_items)
         self.assertNotIn(label, view._rotation_drag_preview_items)
+
+    def test_multi_rotation_commits_compact_rect_as_rotated_corners(self):
+        view = self._make_view({"rect1"})
+        annotation = BidAnnotation(
+            uid="rect1",
+            annotation_type="rect",
+            position=[0.0, 0.0, 10.0, 4.0],
+        )
+        view._current_takeoffs = {}
+        view._current_annotations = {"rect1": annotation}
+        view._rotation_drag_orig_positions = {"rect1": list(annotation.position)}
+        view._position_before_edit = {}
+        view._dirty_positions = {}
+        view._dirty_ann_positions = {}
+        view._dirty_rotations = {}
+        view._rotation_before_edit = {}
+        view._rotate_ost_center = (20.0, 20.0)
+        view._flush_rotation_group = lambda: None
+        view._apply_multi_rotation(90.0)
+        new_position = annotation.position
+        self.assertEqual(len(new_position), 9)
+        self.assertAlmostEqual(new_position[-1], math.pi / 2.0)
+        self.assertEqual(
+            self._rendered_box_side_lengths(new_position),
+            [4.0, 4.0, 10.0, 10.0],
+        )
+        self.assertEqual(
+            view._dirty_ann_positions["rect1"],
+            ("rect", new_position),
+        )
+
+    def test_multi_rotation_commits_compact_highlight_as_rotated_corners(self):
+        view = self._make_view({"highlight1"})
+        annotation = BidAnnotation(
+            uid="highlight1",
+            annotation_type="highlight",
+            position=[0.0, 0.0, 12.0, 3.0],
+        )
+        view._current_takeoffs = {}
+        view._current_annotations = {"highlight1": annotation}
+        view._rotation_drag_orig_positions = {"highlight1": list(annotation.position)}
+        view._position_before_edit = {}
+        view._dirty_positions = {}
+        view._dirty_ann_positions = {}
+        view._dirty_rotations = {}
+        view._rotation_before_edit = {}
+        view._rotate_ost_center = (20.0, 20.0)
+        view._flush_rotation_group = lambda: None
+        view._apply_multi_rotation(90.0)
+        new_position = annotation.position
+        self.assertEqual(len(new_position), 9)
+        self.assertAlmostEqual(new_position[-1], math.pi / 2.0)
+        self.assertEqual(
+            self._rendered_box_side_lengths(new_position),
+            [3.0, 3.0, 12.0, 12.0],
+        )
+        self.assertEqual(
+            view._dirty_ann_positions["highlight1"],
+            ("highlight", new_position),
+        )
 
     def test_rotate_handle_press_takes_priority_over_condition_label(self):
         view = self._make_view({"t1"})

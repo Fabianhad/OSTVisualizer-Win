@@ -2508,7 +2508,7 @@ class UIEventCoordinator:
         if self._sidebar.bid_layers_sidebar:
             self._sidebar.bid_layers_sidebar.set_layer_visible(layer_uid, show)
         if condition_layer:
-            self._refresh_conditions_sidebar_layer_visibility_from_memory()
+            self._refresh_conditions_sidebar_layer_visibility_from_memory(layer_uid)
         self._deferred_persistence.schedule_layer_show(
             bid_ref.file_path, layer_uid, show
         )
@@ -2627,7 +2627,9 @@ class UIEventCoordinator:
             show=show,
             all_layers=True,
         )
-        self._refresh_conditions_sidebar_layer_visibility_from_memory()
+        self._refresh_conditions_sidebar_layer_visibility_from_memory(
+            update_summary=False
+        )
         for layer in layers:
             self._deferred_persistence.schedule_layer_show(
                 bid_ref.file_path, layer.uid, show
@@ -2646,14 +2648,29 @@ class UIEventCoordinator:
         self._toolbar.refresh()
         return True
 
-    def _refresh_conditions_sidebar_layer_visibility_from_memory(self) -> None:
-        if not self.conditions_sidebar:
+    def _refresh_conditions_sidebar_layer_visibility_from_memory(
+        self,
+        layer_uid: Optional[str] = None,
+        *,
+        update_summary: bool = True,
+    ) -> None:
+        conditions = self.project_data.get_bid_conditions()
+        grayscale = self.ui_state_manager.state.grayscale_enabled
+        conditions_sidebar = getattr(self, "conditions_sidebar", None)
+        if conditions_sidebar:
+            conditions_sidebar.apply_layer_visibility_state(
+                conditions,
+                grayscale,
+            )
+        if not update_summary:
             return
-        self.conditions_sidebar.apply_layer_visibility_state(
-            self.project_data.get_bid_conditions(),
-            self.ui_state_manager.state.grayscale_enabled,
-        )
-        self._load_condition_summary()
+        condition_summary_tab = getattr(self, "condition_summary_tab", None)
+        if condition_summary_tab:
+            condition_summary_tab.apply_layer_visibility_state(
+                conditions,
+                grayscale,
+                layer_uid,
+            )
 
     def _on_layer_moved(self, layer_uid: str, direction: int) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()

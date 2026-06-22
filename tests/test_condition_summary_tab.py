@@ -31,7 +31,7 @@ from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
 )
 from ost_visualizer.domain.services.uom_service import CALC_COUNT, UOM_EACH
-from ost_visualizer.presentation.components.condition_summary_tab import (
+from ost_visualizer.presentation.components.condition_summary import (
     ConditionSummaryTab,
 )
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
@@ -430,6 +430,14 @@ class ConditionSummaryTabTests(unittest.TestCase):
                     return item
         return None
 
+    def _item_for_condition_uid(self, condition_uid):
+        for root_item in _top_level_items(self.tab.tree):
+            for item in _tree_items(root_item):
+                node = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+                if node and node.condition_uid == condition_uid:
+                    return item
+        return None
+
     def _action_by_text(self, menu, text):
         for action in menu.actions():
             if action.text() == text:
@@ -580,6 +588,68 @@ class ConditionSummaryTabTests(unittest.TestCase):
         self._load(self.tab.grouping)
         self.assertEqual(self.tab.grouping, grouping)
 
+    def test_condition_layer_visibility_updates_only_matching_summary_rows(self):
+        self.condition.layer_uid = "layer-a"
+        self.condition.color_fill = 0x336699
+        self.conditions["c2"] = Condition(
+            uid="c2",
+            name="Fdn2",
+            condition_type=Condition.TYPE_COUNT,
+            height=12.0,
+            color_fill=0x993366,
+            layer_uid="layer-b",
+            cdn_type_uid="t2",
+            cdn_type_name="ZZ - Other",
+            uom1=UOM_EACH,
+            calc_type1=CALC_COUNT,
+            ref_no=2,
+        )
+        self.takeoffs = [
+            Takeoff(uid="tk1", condition_uid="c1", page_uid="p1", area_uid="a1"),
+            Takeoff(uid="tk2", condition_uid="c2", page_uid="p1", area_uid="a1"),
+        ]
+        grouping = ConditionSummaryGrouping(by_type=True)
+        self._load(grouping)
+        self.tab.set_column_widths({"name": 222, "quantity1": 91})
+        self._show_and_process()
+        item_a = self._item_for_condition_uid("c1")
+        item_b = self._item_for_condition_uid("c2")
+        self.assertIsNotNone(item_a)
+        self.assertIsNotNone(item_b)
+        parent_a = item_a.parent()
+        parent_a.setExpanded(False)
+        self.tab.tree.setCurrentItem(item_b)
+        item_b.setSelected(True)
+        name_col = self._column_index("Name")
+        quantity_col = self._column_index("Quantity 1")
+        scroll_bar = self.tab.tree.verticalScrollBar()
+        scroll_pos = scroll_bar.value()
+        icon_a_before = item_a.icon(0).cacheKey()
+        icon_b_before = item_b.icon(0).cacheKey()
+        self.conditions["c1"].layer_visible = False
+        self.tab.apply_layer_visibility_state(
+            self.conditions,
+            grayscale=False,
+            layer_uid="layer-a",
+        )
+        same_item_a = self._item_for_condition_uid("c1")
+        same_item_b = self._item_for_condition_uid("c2")
+        node_a = same_item_a.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        node_b = same_item_b.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        self.assertIs(same_item_a, item_a)
+        self.assertIs(same_item_b, item_b)
+        self.assertFalse(node_a.layer_visible)
+        self.assertTrue(node_b.layer_visible)
+        self.assertNotEqual(same_item_a.icon(0).cacheKey(), icon_a_before)
+        self.assertEqual(same_item_b.icon(0).cacheKey(), icon_b_before)
+        self.assertFalse(parent_a.isExpanded())
+        self.assertIs(self.tab.tree.currentItem(), item_b)
+        self.assertTrue(item_b.isSelected())
+        self.assertEqual(scroll_bar.value(), scroll_pos)
+        self.assertEqual(self.tab.tree.header().sectionSize(name_col), 222)
+        self.assertEqual(self.tab.tree.header().sectionSize(quantity_col), 91)
+        self.assertEqual(self.tab.grouping, grouping)
+
     def test_column_widths_survive_refresh_and_grouping_changes(self):
         self.conditions["unused"] = Condition(uid="unused", name="Unused", ref_no=2)
         self._load()
@@ -714,6 +784,88 @@ class ConditionSummaryTabTests(unittest.TestCase):
 
 
 class SummaryTabCoordinatorTests(unittest.TestCase):
+    def test_condition_layer_visibility_path_updates_summary_without_reload(self):
+        conditions = {
+            "c1": Condition(uid="c1", name="A", layer_uid="layer-a"),
+            "c2": Condition(uid="c2", name="B", layer_uid="layer-b"),
+        }
+
+        class FakeProjectData:
+            def get_bid_conditions(self):
+                return conditions
+
+            def is_image_layer_uid(self, _layer_uid):
+                return False
+
+            def update_layer_visibility(self, layer_uid, show):
+                for condition in conditions.values():
+                    if str(condition.layer_uid or "") == str(layer_uid):
+                        condition.layer_visible = bool(show)
+                return []
+
+            def get_selected_page_uids(self):
+                return []
+
+        class FakeConditionsSidebar:
+            def __init__(self):
+                self.calls = []
+
+            def apply_layer_visibility_state(self, applied_conditions, grayscale):
+                self.calls.append((applied_conditions, grayscale))
+
+        class FakeSummaryTab:
+            def __init__(self):
+                self.calls = []
+
+            def apply_layer_visibility_state(
+                self, applied_conditions, grayscale, layer_uid=None
+            ):
+                self.calls.append((applied_conditions, grayscale, layer_uid))
+
+        class FakeLayersSidebar:
+            def __init__(self):
+                self.calls = []
+
+            def set_layer_visible(self, layer_uid, show):
+                self.calls.append((layer_uid, show))
+
+        loads = []
+        layers_sidebar = FakeLayersSidebar()
+        conditions_sidebar = FakeConditionsSidebar()
+        summary_tab = FakeSummaryTab()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = FakeProjectData()
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="",
+            get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1"),
+            state=SimpleNamespace(grayscale_enabled=False),
+        )
+        coordinator._sidebar = SimpleNamespace(bid_layers_sidebar=layers_sidebar)
+        coordinator.conditions_sidebar = conditions_sidebar
+        coordinator.condition_summary_tab = summary_tab
+        coordinator.event_bus = SimpleNamespace(publish=lambda *_args, **_kwargs: None)
+        coordinator._deferred_persistence = SimpleNamespace(
+            schedule_layer_show=lambda *_args: None
+        )
+        coordinator.plan_view = None
+        coordinator._viewer = SimpleNamespace(update_viewers=lambda *_args: None)
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
+        coordinator._suspend_active_layer_tool = lambda *_args: None
+        coordinator._restore_suspended_layer_tool = lambda *_args: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._load_condition_summary = lambda: loads.append("load")
+        self.assertTrue(
+            UIEventCoordinator.update_layer_visibility_deferred(
+                coordinator, "layer-a", False
+            )
+        )
+        self.assertFalse(conditions["c1"].layer_visible)
+        self.assertTrue(conditions["c2"].layer_visible)
+        self.assertEqual(layers_sidebar.calls, [("layer-a", False)])
+        self.assertEqual(conditions_sidebar.calls, [(conditions, False)])
+        self.assertEqual(summary_tab.calls, [(conditions, False, "layer-a")])
+        self.assertEqual(loads, [])
+
     def test_summary_tab_visibility_tracks_takeoff_tab(self):
         class FakeTabWidget:
             def __init__(self):
