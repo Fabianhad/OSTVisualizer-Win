@@ -106,7 +106,6 @@ class ConditionSummaryService:
             if parent_uid not in _PRIMARY_PARENT_VALUES:
                 children_by_parent[parent_uid].append(takeoff)
         contexts: List[_SummaryTakeoffContext] = []
-        conditions_with_takeoffs = set()
         for takeoff in takeoffs:
             parent_uid = str(takeoff.parent_uid or "")
             if parent_uid not in _PRIMARY_PARENT_VALUES:
@@ -114,7 +113,6 @@ class ConditionSummaryService:
             condition_uid = str(takeoff.condition_uid or "")
             if condition_uid not in conditions:
                 continue
-            conditions_with_takeoffs.add(condition_uid)
             page_uid = str(takeoff.page_uid or "") or _NO_PAGE_UID
             area_uid = str(takeoff.area_uid or "") or "0"
             contexts.append(
@@ -125,16 +123,6 @@ class ConditionSummaryService:
                     takeoffs=(takeoff, *children_by_parent.get(takeoff.uid, [])),
                 )
             )
-        for condition_uid in conditions:
-            if condition_uid not in conditions_with_takeoffs:
-                contexts.append(
-                    _SummaryTakeoffContext(
-                        condition_uid=condition_uid,
-                        page_uid=_NO_PAGE_UID,
-                        area_uid="0",
-                        takeoffs=(),
-                    )
-                )
         return contexts
 
     def _conditions_by_folder(
@@ -188,7 +176,6 @@ class ConditionSummaryService:
                 label=folder.name or "",
                 folder_uid=folder.uid,
             )
-            parent_node.children.append(folder_node)
             self._append_folder_nodes(
                 folder_node,
                 parent_uid=folder.uid,
@@ -218,6 +205,8 @@ class ConditionSummaryService:
                         metric,
                     )
                 )
+            if folder_node.children:
+                parent_node.children.append(folder_node)
 
     def _build_grouped_nodes(
         self,

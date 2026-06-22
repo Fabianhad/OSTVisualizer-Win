@@ -11,6 +11,7 @@ from ..config import (
     RELAXED_SPACING,
 )
 from ..utils.messagebox import confirm_multi_delete, show_warning
+from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize, set_initial_window_size
 
 
@@ -142,9 +143,7 @@ class LayersDialog(QtWidgets.QDialog):
         restore_item = None
         for row, layer in enumerate(self._layers):
             item = QtWidgets.QTreeWidgetItem([str(row + 1), "", layer.name])
-            item.setSizeHint(0, QtCore.QSize(0, 26))
-            item.setSizeHint(1, QtCore.QSize(0, 26))
-            item.setSizeHint(2, QtCore.QSize(0, 26))
+            set_tree_item_row_height(item, self.tree.columnCount())
             item.setData(0, self._UID_ROLE, layer.uid)
             item.setTextAlignment(0, QtCore.Qt.AlignmentFlag.AlignCenter)
             flags = (
@@ -239,9 +238,7 @@ class LayersDialog(QtWidgets.QDialog):
             selected.sequence if selected else self._max_sequence()
         )
         item = QtWidgets.QTreeWidgetItem(["", "", ""])
-        item.setSizeHint(0, QtCore.QSize(0, 26))
-        item.setSizeHint(1, QtCore.QSize(0, 26))
-        item.setSizeHint(2, QtCore.QSize(0, 26))
+        set_tree_item_row_height(item, self.tree.columnCount())
         item.setFlags(
             QtCore.Qt.ItemFlag.ItemIsEnabled
             | QtCore.Qt.ItemFlag.ItemIsSelectable

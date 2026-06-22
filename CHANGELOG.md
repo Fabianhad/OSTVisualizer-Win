@@ -42,6 +42,7 @@
 - Improved native PDF export for line, arrow, shape, ink, and text annotations to better match Bluebeam/Revu markups, render line-based appearances correctly on first open, and keep exported text boxes wrapped inside their textbox bounds.
 - Linear takeoff line patterns now rotate with the takeoff direction and exclude area backout/cutout holes, so horizontal, vertical, and diagonal hatches follow the line without drawing through cutouts.
 - Deferred visual/session state persistence for page zoom/pan, selected page, active page area, layer visibility, page image flags, and overlay placement, with 2D zoom/pan/reset, active page area, and layer visibility changes updating in-memory view state immediately while still flushing before close, exports, refreshes, unloads, and structural edits.
+- Changed the Summary tab to show only conditions with placed takeoffs, hiding unused conditions along with empty folders and groups.
 
 ### Fixed
 - Preserved exact Takeoff tab sidebar splitter widths when hiding/showing Layers or Conditions, including when both sidebars are hidden together; refreshed project tree/Takeoff tab state after deleting or moving the selected bid/project; and selected the nearest remaining sibling bid after bid deletion when one is available.

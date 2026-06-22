@@ -11,6 +11,7 @@ from ..config import (
 )
 from ..utils.dialog import save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete, show_warning
+from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize, set_initial_window_size
 
 
@@ -114,7 +115,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self.tree.clear()
         for item in sorted(self._items, key=lambda cdn: cdn.name.lower()):
             tree_item = QtWidgets.QTreeWidgetItem([item.name])
-            tree_item.setSizeHint(0, QtCore.QSize(0, 26))
+            set_tree_item_row_height(tree_item, self.tree.columnCount())
             tree_item.setData(0, self._UID_ROLE, item.uid)
             tree_item.setFlags(
                 QtCore.Qt.ItemFlag.ItemIsEnabled
@@ -166,7 +167,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         )
         self.edit_find.clear()
         item = QtWidgets.QTreeWidgetItem([""])
-        item.setSizeHint(0, QtCore.QSize(0, 26))
+        set_tree_item_row_height(item, self.tree.columnCount())
         item.setFlags(
             QtCore.Qt.ItemFlag.ItemIsEnabled
             | QtCore.Qt.ItemFlag.ItemIsSelectable

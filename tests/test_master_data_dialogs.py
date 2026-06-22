@@ -9,6 +9,7 @@ from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.employee import Employee, PayClass
+from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.presentation.dialogs.areas_dialog import (
     BidAreaPickerDialog,
@@ -20,10 +21,12 @@ from ost_visualizer.presentation.dialogs.condition_types_dialog import (
 from ost_visualizer.presentation.dialogs.employees_dialog import EmployeesDialog
 from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
 from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
+from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialog
 from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
     PayrollClassListDialog,
 )
 from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
+from ost_visualizer.presentation.utils.tree_widget import DEFAULT_TREE_ROW_HEIGHT
 from ost_visualizer.application.services.project_write_service import (
     BatchWriteResult,
     WriteReloadResult,
@@ -136,6 +139,89 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
     def _click_checkbox(self, checkbox: QtWidgets.QCheckBox) -> None:
         QTest.mouseClick(checkbox, QtCore.Qt.MouseButton.LeftButton)
         self.app.processEvents()
+
+    def _assert_row_height(
+        self, item: QtWidgets.QTreeWidgetItem, column_count: int
+    ) -> None:
+        for column in range(column_count):
+            self.assertEqual(
+                item.sizeHint(column).height(),
+                DEFAULT_TREE_ROW_HEIGHT,
+                f"column {column}",
+            )
+
+    def test_fixed_height_tree_rows_use_shared_metrics(self):
+        dialogs = []
+        sidebar = None
+        try:
+            areas = BidAreasDialog(FakeIconProvider(), bid_areas=[self._area()])
+            dialogs.append(areas)
+            self._assert_row_height(areas.tree.topLevelItem(0), areas.tree.columnCount())
+
+            condition_types = self._condition_types_dialog()
+            dialogs.append(condition_types)
+            self._assert_row_height(
+                condition_types.tree.topLevelItem(0),
+                condition_types.tree.columnCount(),
+            )
+
+            employees = self._employee_dialog()
+            dialogs.append(employees)
+            self._assert_row_height(
+                employees.tree.topLevelItem(0), employees.tree.columnCount()
+            )
+
+            layers = LayersDialog(
+                FakeIconProvider(),
+                layers=[self._layer("layer-1", "Layer 1", 1)],
+            )
+            dialogs.append(layers)
+            self._assert_row_height(
+                layers.tree.topLevelItem(0), layers.tree.columnCount()
+            )
+
+            sidebar = BidLayersSidebar(None)
+            sidebar.load_layers([self._layer("layer-1", "Layer 1", 1)])
+            self._assert_row_height(
+                sidebar._table.topLevelItem(0),
+                sidebar._table.columnCount(),
+            )
+
+            job_statuses = self._job_status_dialog_with_save(lambda _changes: {})
+            dialogs.append(job_statuses)
+            self._assert_row_height(
+                job_statuses.tree.topLevelItem(0),
+                job_statuses.tree.columnCount(),
+            )
+
+            payroll = PayrollClassListDialog(
+                FakeIconProvider(),
+                pay_classes=[PayClass(uid="pay-1", name="Regular")],
+            )
+            dialogs.append(payroll)
+            self._assert_row_height(
+                payroll.tree.topLevelItem(0), payroll.tree.columnCount()
+            )
+
+            open_files = OpenFilesDialog(
+                FakeIconProvider(),
+                None,
+                [FileEntry(__file__, is_checked=True)],
+                object(),
+            )
+            dialogs.append(open_files)
+            self._assert_row_height(
+                open_files.table.topLevelItem(0),
+                open_files.table.columnCount(),
+            )
+        finally:
+            for dialog in dialogs:
+                dialog.close()
+                dialog.cleanup()
+                dialog.deleteLater()
+            if sidebar is not None:
+                sidebar.close()
+                sidebar.deleteLater()
 
     def test_employees_picker_keeps_select_and_cancel_buttons(self):
         dialog = self._employee_dialog()

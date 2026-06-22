@@ -14,6 +14,7 @@ from ..config import (
     RELAXED_SPACING,
 )
 from ..utils.messagebox import confirm, show_info
+from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize
 
 logger = logging.getLogger(__name__)
@@ -105,8 +106,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
                 item.setFlags(flags)
                 item.setTextAlignment(2, QtCore.Qt.AlignmentFlag.AlignCenter)
                 item.setTextAlignment(3, QtCore.Qt.AlignmentFlag.AlignCenter)
-                for col in range(self.table.columnCount()):
-                    item.setSizeHint(col, QtCore.QSize(0, 26))
+                set_tree_item_row_height(item, self.table.columnCount())
                 self.table.addTopLevelItem(item)
                 cb = QtWidgets.QCheckBox()
                 cb.setChecked(entry.is_checked)

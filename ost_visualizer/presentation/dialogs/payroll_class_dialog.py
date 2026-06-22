@@ -8,6 +8,7 @@ from ..config import (
 )
 from ..dtos.picker_dialog_result_dto import PickerDialogResult
 from ..utils.dialog import BasePickerDialog, ItemRecord
+from ..utils.tree_widget import set_tree_item_row_height
 
 
 class PayrollClassListDialog(BasePickerDialog):
@@ -62,7 +63,7 @@ class PayrollClassListDialog(BasePickerDialog):
 
     def _add_tree_item(self, record: ItemRecord) -> QtWidgets.QTreeWidgetItem:
         item = QtWidgets.QTreeWidgetItem([record["name"]])
-        item.setSizeHint(0, QtCore.QSize(0, 26))
+        set_tree_item_row_height(item, self.tree.columnCount())
         item.setData(0, self._UID_ROLE, record["uid"])
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
         self.tree.addTopLevelItem(item)

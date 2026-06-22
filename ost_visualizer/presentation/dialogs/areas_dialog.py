@@ -17,6 +17,7 @@ from ..utils.dialog import (
     save_result_succeeded,
 )
 from ..utils.messagebox import confirm_multi_delete, show_warning
+from ..utils.tree_widget import set_tree_item_row_height
 
 
 class BidAreasDialog(BaseListDialog):
@@ -149,7 +150,7 @@ class BidAreasDialog(BaseListDialog):
         item.setData(0, self._UID_ROLE, uid)
         item.setData(0, self._VALID_NAME_ROLE, name)
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-        item.setSizeHint(0, QtCore.QSize(0, 26))
+        set_tree_item_row_height(item, self.tree.columnCount())
         return item
 
     def _set_item_name(self, item: QtWidgets.QTreeWidgetItem, name: str) -> None:

@@ -5,6 +5,7 @@ from ...domain.entities.layer import BidLayer
 from ..config import COMPACT_SPACING, NO_MARGINS
 from ..managers.icon_manager import IconId, IconManager
 from ..utils.messagebox import confirm_multi_delete, show_warning
+from ..utils.tree_widget import set_tree_item_row_height
 
 
 class BidLayersSidebar(QtWidgets.QWidget):
@@ -196,8 +197,7 @@ class BidLayersSidebar(QtWidgets.QWidget):
             if not layer.is_template and not layer.is_locked:
                 flags |= QtCore.Qt.ItemFlag.ItemIsEditable
             item.setFlags(flags)
-            item.setSizeHint(0, QtCore.QSize(0, 26))
-            item.setSizeHint(1, QtCore.QSize(0, 26))
+            set_tree_item_row_height(item, self._table.columnCount())
             self._table.addTopLevelItem(item)
             checkbox = QtWidgets.QCheckBox()
             checkbox.setChecked(layer.show)
@@ -375,8 +375,7 @@ class BidLayersSidebar(QtWidgets.QWidget):
             | QtCore.Qt.ItemFlag.ItemIsSelectable
             | QtCore.Qt.ItemFlag.ItemIsEditable
         )
-        item.setSizeHint(0, QtCore.QSize(0, 26))
-        item.setSizeHint(1, QtCore.QSize(0, 26))
+        set_tree_item_row_height(item, self._table.columnCount())
         self._pending_new_item = item
         self._table.addTopLevelItem(item)
         row = self._table.indexOfTopLevelItem(item)

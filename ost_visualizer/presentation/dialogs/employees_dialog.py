@@ -13,6 +13,7 @@ from ..dtos.employee_edit_dtos import EmployeeRecord, PayClassRecord
 from ..dtos.picker_dialog_result_dto import PickerDialogResult
 from ..utils.dialog import save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete
+from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize, set_initial_window_size
 from .employee_detail_dialog import EmployeeDetailDialog
 
@@ -151,7 +152,7 @@ class EmployeesDialog(QtWidgets.QDialog):
             ]
         )
         item.setTextAlignment(0, QtCore.Qt.AlignmentFlag.AlignCenter)
-        item.setSizeHint(0, QtCore.QSize(0, 26))
+        set_tree_item_row_height(item, self.tree.columnCount())
         item.setData(0, self._UID_ROLE, emp.uid)
         self.tree.addTopLevelItem(item)
         return item

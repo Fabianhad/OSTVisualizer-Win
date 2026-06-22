@@ -1503,6 +1503,11 @@ class UIEventCoordinator:
                 and self._tab_widget.currentIndex() == TAB_INDEX_TAKEOFF
             ):
                 self._activate_takeoff_workspace()
+            elif (
+                self._tab_widget
+                and self._tab_widget.currentIndex() == TAB_INDEX_SUMMARY
+            ):
+                self._load_condition_summary()
         elif snap.project_uid:
             self._reset_takeoff_workspace_state()
             restored_project_file_path = (

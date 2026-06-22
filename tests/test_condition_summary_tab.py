@@ -1,5 +1,6 @@
 import os
 import unittest
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
@@ -8,6 +9,7 @@ from ost_visualizer.application.dtos.condition_summary_dtos import (
     SUMMARY_GROUP_PAGE,
     SUMMARY_GROUP_TYPE,
     SUMMARY_MULTI_AREA_TOTAL_LABEL,
+    SUMMARY_NO_PAGE_LABEL,
     SUMMARY_NODE_AREA_DETAIL,
     SUMMARY_NODE_CONDITION,
     SUMMARY_NODE_FOLDER,
@@ -32,11 +34,13 @@ from ost_visualizer.domain.services.uom_service import CALC_COUNT, UOM_EACH
 from ost_visualizer.presentation.components.condition_summary_tab import (
     ConditionSummaryTab,
 )
+from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.config import (
     TAB_INDEX_PROJECTS,
     TAB_INDEX_SUMMARY,
     TAB_INDEX_TAKEOFF,
 )
+from ost_visualizer.presentation.coordinators.navigation_state_machine import NavState
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
@@ -80,6 +84,30 @@ def _top_level_items(tree):
 
 def _has_alignment(alignment, flag):
     return bool(alignment & flag)
+
+
+def _summary_nodes(node):
+    result = [node]
+    for child in node.children:
+        result.extend(_summary_nodes(child))
+    return result
+
+
+def _condition_row_uids(node):
+    return [
+        child.condition_uid
+        for child in _summary_nodes(node)
+        if child.kind in (SUMMARY_NODE_CONDITION, SUMMARY_NODE_MULTI_AREA_TOTAL)
+    ]
+
+
+def _group_labels(node, level=None):
+    return [
+        child.label
+        for child in _summary_nodes(node)
+        if child.kind == SUMMARY_NODE_GROUP
+        and (level is None or child.group_level == level)
+    ]
 
 
 class _FakeSummaryAccess:
@@ -166,6 +194,103 @@ class ConditionSummaryServiceTests(unittest.TestCase):
         self.assertEqual([group.label for group in groups], ["L-0 FDN", "L-2 FDN"])
         self.assertIsNone(_first_descendant(root, SUMMARY_NODE_MULTI_AREA_TOTAL))
         self.assertEqual(groups[0].children[0].kind, SUMMARY_NODE_CONDITION)
+
+    def test_condition_without_placed_takeoffs_is_excluded(self):
+        self.conditions["c2"] = Condition(
+            uid="c2",
+            name="Unused",
+            condition_type=Condition.TYPE_COUNT,
+            uom1=UOM_EACH,
+            calc_type1=CALC_COUNT,
+            ref_no=2,
+        )
+        root = self._build()
+        self.assertEqual(_condition_row_uids(root), ["c1"])
+
+    def test_condition_with_placed_takeoffs_is_included(self):
+        root = self._build(takeoffs=[self.takeoffs[0]])
+        self.assertEqual(_condition_row_uids(root), ["c1"])
+        row = _first_descendant(root, SUMMARY_NODE_CONDITION)
+        self.assertEqual(row.values.quantity1, 1.0)
+
+    def test_folder_with_only_unused_conditions_is_hidden(self):
+        self.conditions = {
+            "c2": Condition(uid="c2", name="Unused", folder_uid="f2", ref_no=2)
+        }
+        self.folders = {
+            "f2": BidConditionFolder(uid="f2", name="UNUSED FOLDER")
+        }
+        root = self._build(takeoffs=[])
+        self.assertEqual(root.children, [])
+
+    def test_folder_with_used_and_unused_conditions_shows_only_used_condition(self):
+        self.conditions["c2"] = Condition(
+            uid="c2",
+            name="Unused",
+            folder_uid="f1",
+            ref_no=2,
+        )
+        root = self._build()
+        folder = _first_descendant(root, SUMMARY_NODE_FOLDER)
+        self.assertEqual(folder.label, "CONDITION FOLDER")
+        self.assertEqual(_condition_row_uids(folder), ["c1"])
+
+    def test_type_grouping_hides_type_groups_for_unused_conditions(self):
+        self.conditions["c2"] = Condition(
+            uid="c2",
+            name="Unused",
+            cdn_type_uid="t2",
+            cdn_type_name="Unused Type",
+            ref_no=2,
+        )
+        root = self._build(ConditionSummaryGrouping(by_type=True))
+        self.assertEqual(
+            _group_labels(root, SUMMARY_GROUP_TYPE),
+            ["AB - Spread Interior FTG"],
+        )
+
+    def test_area_grouping_hides_area_groups_for_unused_conditions(self):
+        self.conditions["c2"] = Condition(uid="c2", name="Unused", ref_no=2)
+        self.areas.append(
+            BidArea(
+                uid="a3",
+                bid_uid="b1",
+                parent_uid="",
+                name="Unused Area",
+                sequence=3,
+            )
+        )
+        root = self._build(ConditionSummaryGrouping(by_area=True))
+        self.assertEqual(
+            _group_labels(root, SUMMARY_GROUP_AREA), ["L-0 FDN", "L-2 FDN"]
+        )
+
+    def test_page_grouping_hides_no_page_group_for_unused_conditions(self):
+        self.conditions["c2"] = Condition(uid="c2", name="Unused", ref_no=2)
+        root = self._build(ConditionSummaryGrouping(by_page=True))
+        self.assertEqual(_group_labels(root, SUMMARY_GROUP_PAGE), ["S-100.pdf"])
+        self.assertNotIn(SUMMARY_NO_PAGE_LABEL, _group_labels(root, SUMMARY_GROUP_PAGE))
+
+    def test_multi_area_total_ignores_unused_conditions(self):
+        self.conditions["c2"] = Condition(uid="c2", name="Unused", ref_no=2)
+        root = self._build()
+        total = _first_descendant(root, SUMMARY_NODE_MULTI_AREA_TOTAL)
+        self.assertEqual(total.condition_uid, "c1")
+        self.assertEqual(total.values.quantity1, 2.0)
+        self.assertEqual(_condition_row_uids(root), ["c1"])
+
+    def test_rebuild_after_last_takeoff_delete_removes_condition_row(self):
+        populated = self._build(takeoffs=[self.takeoffs[0]])
+        self.assertEqual(_condition_row_uids(populated), ["c1"])
+        empty = self._build(takeoffs=[])
+        self.assertEqual(_condition_row_uids(empty), [])
+        self.assertEqual(empty.children, [])
+
+    def test_rebuild_after_first_takeoff_add_shows_condition_row(self):
+        empty = self._build(takeoffs=[])
+        self.assertEqual(_condition_row_uids(empty), [])
+        populated = self._build(takeoffs=[self.takeoffs[0]])
+        self.assertEqual(_condition_row_uids(populated), ["c1"])
 
     def test_grouping_order_is_page_then_type_then_area(self):
         root = self._build(
@@ -451,12 +576,14 @@ class ConditionSummaryTabTests(unittest.TestCase):
         self.assertNotEqual(top_node.kind, SUMMARY_NODE_ROOT)
 
     def test_grouping_state_survives_refresh(self):
+        self.conditions["unused"] = Condition(uid="unused", name="Unused", ref_no=2)
         grouping = ConditionSummaryGrouping(by_page=True, by_type=True)
         self._load(grouping)
         self._load(self.tab.grouping)
         self.assertEqual(self.tab.grouping, grouping)
 
     def test_column_widths_survive_refresh_and_grouping_changes(self):
+        self.conditions["unused"] = Condition(uid="unused", name="Unused", ref_no=2)
         self._load()
         name_col = self._column_index("Name")
         quantity_col = self._column_index("Quantity 1")
@@ -570,6 +697,23 @@ class ConditionSummaryTabTests(unittest.TestCase):
         self._action_by_text(menu, "Expand All").trigger()
         self.assertTrue(root_item.isExpanded())
 
+    def test_conditions_sidebar_still_shows_unused_conditions(self):
+        sidebar = ConditionsSidebar(None, uom_label_fn=lambda _code: "")
+        try:
+            sidebar.load_conditions(
+                {
+                    "c1": self.condition,
+                    "unused": Condition(uid="unused", name="Unused", ref_no=2),
+                },
+                {},
+                "Project",
+            )
+            self.assertEqual(
+                set(sidebar.collect_ordered_condition_uids()), {"c1", "unused"}
+            )
+        finally:
+            sidebar.deleteLater()
+
 
 class SummaryTabCoordinatorTests(unittest.TestCase):
     def test_summary_tab_visibility_tracks_takeoff_tab(self):
@@ -604,6 +748,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         _app()
         tab = ConditionSummaryTab(None, uom_label_fn=lambda _code: "EA")
         service = ConditionSummaryService()
+        grouping = ConditionSummaryGrouping(by_page=True, by_type=True)
         root = service.build_summary(
             conditions={
                 "c1": Condition(
@@ -613,15 +758,37 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
                     uom1=UOM_EACH,
                     calc_type1=CALC_COUNT,
                     ref_no=1,
-                )
+                ),
+                "unused": Condition(
+                    uid="unused",
+                    name="Unused",
+                    condition_type=Condition.TYPE_COUNT,
+                    uom1=UOM_EACH,
+                    calc_type1=CALC_COUNT,
+                    ref_no=2,
+                ),
             },
             folders={},
             takeoffs=[Takeoff(uid="tk1", condition_uid="c1", page_uid="p1")],
             pages=[Page(uid="p1", name="S-100.pdf", sequence=1)],
             areas=[],
-            grouping=ConditionSummaryGrouping(),
+            grouping=grouping,
         )
-        tab.load_summary(root, ConditionSummaryGrouping())
+        tab.load_summary(root, grouping)
+        tab.set_column_widths({"name": 211, "quantity1": 97})
+        tab.resize(900, 400)
+        tab.show()
+        _app().processEvents()
+        name_col = next(
+            index
+            for index in range(tab.tree.columnCount())
+            if tab.tree.headerItem().text(index) == "Name"
+        )
+        quantity_col = next(
+            index
+            for index in range(tab.tree.columnCount())
+            if tab.tree.headerItem().text(index) == "Quantity 1"
+        )
         refreshes = []
         original_refresh = tab.refresh_view
         tab.refresh_view = lambda: (refreshes.append("refresh"), original_refresh())
@@ -632,8 +799,182 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             "FakeSignaler", (), {"request_update": lambda self: None}
         )()
         UIEventCoordinator._on_ost_status_changed(coordinator, active=True)
+        _app().processEvents()
         self.assertEqual(refreshes, ["refresh"])
         self.assertGreater(tab.tree.topLevelItemCount(), 0)
+        self.assertGreater(
+            tab.tree.visualItemRect(tab.tree.topLevelItem(0)).height(), 0
+        )
+        self.assertEqual(tab.grouping, grouping)
+        self.assertEqual(tab.tree.header().sectionSize(name_col), 211)
+        self.assertEqual(tab.tree.header().sectionSize(quantity_col), 97)
+        self.assertEqual(_condition_row_uids(root), ["c1"])
+        tab.deleteLater()
+
+    def test_database_refresh_after_ost_status_keeps_summary_tree_visible(self):
+        _app()
+        tab = ConditionSummaryTab(None, uom_label_fn=lambda _code: "EA")
+        service = ConditionSummaryService()
+        grouping = ConditionSummaryGrouping(by_type=True, by_area=True)
+        root = service.build_summary(
+            conditions={
+                "c1": Condition(
+                    uid="c1",
+                    name="Fdn1",
+                    condition_type=Condition.TYPE_COUNT,
+                    uom1=UOM_EACH,
+                    calc_type1=CALC_COUNT,
+                    ref_no=1,
+                ),
+                "unused": Condition(uid="unused", name="Unused", ref_no=2),
+            },
+            folders={},
+            takeoffs=[Takeoff(uid="tk1", condition_uid="c1", page_uid="p1")],
+            pages=[Page(uid="p1", name="S-100.pdf", sequence=1)],
+            areas=[BidArea(uid="0", bid_uid="b1", parent_uid="", name="", sequence=1)],
+            grouping=grouping,
+        )
+        tab.load_summary(root, grouping)
+        tab.set_column_widths({"name": 211})
+        tab.resize(900, 400)
+        tab.show()
+        _app().processEvents()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.condition_summary_tab = tab
+        coordinator.ensure_select_mode = lambda: None
+        coordinator._menu_state_signaler = type(
+            "FakeSignaler", (), {"request_update": lambda self: None}
+        )()
+        UIEventCoordinator._on_ost_status_changed(coordinator, active=True)
+        coordinator._deferred_persistence = SimpleNamespace(
+            flush_for_file=lambda _file_path: True
+        )
+        coordinator._nav = SimpleNamespace(
+            start_refresh=lambda *_args, **_kwargs: True
+        )
+        coordinator.ui_state_manager = SimpleNamespace(selected_area_uid="")
+        coordinator._placement = SimpleNamespace()
+        coordinator._do_file_refresh = lambda: None
+        coordinator._finish_refresh = lambda: None
+        UIEventCoordinator._on_database_refreshed(coordinator, file_path="a.mdb")
+        _app().processEvents()
+        self.assertGreater(tab.tree.topLevelItemCount(), 0)
+        self.assertGreater(
+            tab.tree.visualItemRect(tab.tree.topLevelItem(0)).height(), 0
+        )
+        self.assertEqual(tab.grouping, grouping)
+        self.assertEqual(_condition_row_uids(root), ["c1"])
+        tab.deleteLater()
+
+    def test_database_refresh_while_summary_tab_active_reloads_cleared_summary(self):
+        _app()
+        bid_ref = BidRef("a.mdb", "bid-1")
+        tab = ConditionSummaryTab(None, uom_label_fn=lambda _code: "EA")
+        service = ConditionSummaryService()
+        grouping = ConditionSummaryGrouping(by_type=True, by_area=True)
+        conditions = {
+            "c1": Condition(
+                uid="c1",
+                name="Fdn1",
+                condition_type=Condition.TYPE_COUNT,
+                uom1=UOM_EACH,
+                calc_type1=CALC_COUNT,
+                ref_no=1,
+            ),
+            "unused": Condition(uid="unused", name="Unused", ref_no=2),
+        }
+        takeoffs = [Takeoff(uid="tk1", condition_uid="c1", page_uid="p1")]
+        pages = [Page(uid="p1", name="S-100.pdf", sequence=1)]
+
+        def build_root():
+            return service.build_summary(
+                conditions=conditions,
+                folders={},
+                takeoffs=takeoffs,
+                pages=pages,
+                areas=[],
+                grouping=grouping,
+            )
+
+        tab.load_summary(build_root(), grouping)
+        self.assertGreater(tab.tree.topLevelItemCount(), 0)
+
+        class FakeSidebar:
+            def __init__(self):
+                self.loads = 0
+
+            def clear_sidebars(self):
+                tab.clear()
+
+            def load_condition_summary(self):
+                self.loads += 1
+                tab.load_summary(build_root(), grouping)
+
+        class FakeTabWidget:
+            def currentIndex(self):
+                return TAB_INDEX_SUMMARY
+
+        class FakeProjectView:
+            def restore_bid_selection(self, _bid_ref):
+                pass
+
+        class FakeNav:
+            def __init__(self):
+                self.refresh_snapshot = SimpleNamespace(
+                    bid_ref=bid_ref,
+                    page_uids=["p1"],
+                    active_page_uid="p1",
+                    highlighted_condition_uids=set(),
+                    project_uid=None,
+                    database_selected=False,
+                    selected_file_path="a.mdb",
+                    place_condition_uid=None,
+                    place_condition_uids=[],
+                    selected_area_uid="",
+                )
+
+            def compute_state_for(self, **_kwargs):
+                return NavState.BID_ACTIVE_PAGES_SELECTED
+
+            def finish_refresh(self, _state):
+                self.refresh_snapshot = None
+
+        fake_sidebar = FakeSidebar()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._nav = FakeNav()
+        coordinator._sidebar = fake_sidebar
+        coordinator._tab_widget = FakeTabWidget()
+        coordinator._page_settings_bar = None
+        coordinator._last_takeoff_selection_context_by_source = {}
+        coordinator._clear_staged_takeoff_restore = lambda: None
+        coordinator._resolve_bid_lock_state = lambda _bid_ref: None
+        coordinator._is_condition_placeable = lambda _condition_uid: True
+        coordinator._stage_takeoff_restore = lambda **_kwargs: None
+        coordinator._activate_takeoff_workspace = lambda: None
+        coordinator._set_takeoff_tab_visible = lambda _visible: None
+        coordinator._sync_undo_bid = lambda: None
+        coordinator._reset_to_select_mode = lambda: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator.condition_summary_tab = tab
+        coordinator.ui_access_manager = SimpleNamespace(refresh=lambda: None)
+        coordinator.ui_state_manager = SimpleNamespace(
+            set_highlighted_conditions=lambda _uids: None,
+            set_bid_selection=lambda _bid_ref: None,
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_current_file_path=lambda: "a.mdb",
+            get_bid=lambda _bid_ref: object(),
+            get_current_bid_ref=lambda: bid_ref,
+            get_bid_conditions=lambda: conditions,
+            deselect_pages=lambda: None,
+        )
+        coordinator.main_window = SimpleNamespace(project_view=FakeProjectView())
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
+
+        UIEventCoordinator._finish_refresh(coordinator)
+        self.assertEqual(fake_sidebar.loads, 1)
+        self.assertGreater(tab.tree.topLevelItemCount(), 0)
+        self.assertEqual(_condition_row_uids(tab._root_node), ["c1"])
         tab.deleteLater()
 
     def test_delete_condition_flow_refreshes_summary_via_shared_ui_refresh(self):
@@ -643,6 +984,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             "c1": Condition(uid="c1", name="Fdn1"),
             "c2": Condition(uid="c2", name="Fdn2"),
         }
+        takeoffs = [Takeoff(uid="tk1", condition_uid="c1", page_uid="p1")]
         tab = ConditionSummaryTab(None, uom_label_fn=lambda _code: "EA")
         service = ConditionSummaryService()
 
@@ -650,8 +992,8 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             root = service.build_summary(
                 conditions=conditions,
                 folders={},
-                takeoffs=[],
-                pages=[],
+                takeoffs=takeoffs,
+                pages=[Page(uid="p1", name="S-100.pdf", sequence=1)],
                 areas=[],
                 grouping=tab.grouping,
             )
@@ -716,7 +1058,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             tab.deleteLater()
         self.assertEqual(refreshes, ["refresh"])
         self.assertNotIn("c1", conditions)
-        self.assertIsNotNone(tab.tree.topLevelItem(0))
+        self.assertEqual(tab.tree.topLevelItemCount(), 0)
 
 
 if __name__ == "__main__":
