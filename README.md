@@ -1,6 +1,6 @@
 # OST Visualizer
 
-Open your [On-Screen Takeoff](https://www.oncenter.com/products/on-screen-takeoff/) projects and review them in 2D plan view. Upgrade to visualize in 3D, edit conditions, and export to DXF, PDF, and OBJ.
+Open your [On-Screen Takeoff](https://www.oncenter.com/products/on-screen-takeoff/) projects and review them in Projects, Takeoff, and Summary views. Upgrade to visualize in 3D, edit conditions, and export to OST/OSP, PDF, CSV, DXF, OBJ, and FBX.
 
 Built for estimators and construction teams who work with OST project files daily.
 
@@ -16,9 +16,10 @@ Built for estimators and construction teams who work with OST project files dail
 - **2D Plan View** -- Interactive view with annotations overlaid on project pages, including BidDimension placement and detached Annotation/View windows
 - **PDF Plan Sheets** -- View PDF drawings at any scale
 - **Multi-database** -- Open and browse multiple project files at the same time
-- **Bid Organization** -- Full project hierarchy for navigating bids and conditions
+- **Projects, Takeoff, and Summary Tabs** -- Navigate databases and bids, inspect 2D takeoffs, and review grouped condition quantities
+- **Summary Review** -- Group condition quantities by Area, Type, and Page, with unused conditions hidden from placed-takeoff summaries
 - **3D Visualization** -- See takeoff geometry rendered in full 3D with transparent overlays *(Commercial)*
-- **Import/Export** -- Move data between OST, OSP, PDF, DXF, OBJ, and FBX formats *(Commercial)*
+- **Import/Export** -- Move data between OST, OSP, PDF, CSV, DXF, OBJ, and FBX formats *(Commercial)*
 - **Condition Management** -- Create, edit, duplicate, and organize conditions across bids *(Commercial)*
 - **Realtime Sync** -- Detects when On-Screen Takeoff is active and picks up changes automatically ([free companion tool](https://fabianhad.com/ost3d/download))
 
@@ -38,9 +39,10 @@ This software is source-available under the [Elastic License 2.0](LICENSE).
 |---|---|---|
 | Open and browse projects | Included | Included |
 | 2D plan view (read-only) | Included | Included |
+| Summary tab review | Included | Included |
 | 3D visualization | -- | Included |
 | Edit takeoffs, conditions, bids | -- | Included |
-| Import/Export (PDF, DXF, OBJ, FBX) | -- | Included |
+| Import/Export (OST, OSP, PDF, CSV, DXF, OBJ, FBX) | -- | Included |
 | Production use | -- | Included |
 | Support | Community | Email ([fabian@fabianhad.com](mailto:fabian@fabianhad.com)) |
 | Price | Free | [Get a license](https://fabianhad.com/ost3d/download) |
@@ -94,13 +96,13 @@ process and exposes only checked `.mdb` databases from
 `~/.ost_visualizer/file_state.json`. The desktop GUI does not start the stdio
 server; it only provides a live-context bridge when the app is running.
 
-The MCP server exposes project, bid, page metadata, bounded PDF text/vector
-summaries, page-scoped PDF text search, page markup summaries, overlay
-summaries, page search, layer, area, named-view, hotlink, condition, takeoff,
-condition summary, selected-page summary, selected-takeoff summary, search,
-quantity-summary, page-context, duplicate-condition, zero-quantity, unplaced
-takeoff, and lightweight scope-gap review tools. Broad result sets use explicit
-limits and include status/metadata such as returned count, total count,
+The MCP server exposes project, bid, page, layer, area, named-view, hotlink,
+condition, takeoff, quantity, and structured Summary context. Summary reads use
+the same grouping concepts as the desktop Summary tab: Area, Type, and Page.
+It also includes bounded PDF text/vector summaries, page-scoped PDF text search,
+page markup summaries, overlay summaries, selected-page and selected-takeoff
+summaries, and lightweight scope-gap review tools. Broad result sets use
+explicit limits and include status/metadata such as returned count, total count,
 truncation state, and `has_more`. Local database and page source paths are
 redacted to safe IDs, basenames, and path status fields.
 
@@ -108,9 +110,10 @@ Read-only prompts guide common workflows such as bid scope review, page QA,
 markup and hotlink review, overlay/PDF context review, and quantity variance
 review using the existing bounded tools.
 
-It does not support `--database`, `--app-data-dir`, arbitrary database paths,
-shell execution, arbitrary SQL, arbitrary file reads, PDF rendering, OCR,
-unbounded page text dumps, exports, CSV, or database mutation.
+It does not support `--database`, `--app-data-dir`, arbitrary database path
+overrides, generic database access, arbitrary SQL, arbitrary file reads, shell
+execution, PDF rendering, OCR, arbitrary page text dumps, unbounded PDF
+text/vector extraction, CSV/export workflows, or write/mutation operations.
 When the desktop app is running, `get_current_context` also includes a live
 read-only UI snapshot through a local app bridge, including active tab/view,
 selected bid/page/conditions, and selected takeoff UIDs.
@@ -216,6 +219,14 @@ Architecture rules, conventions, and development setup are documented in [AGENTS
 
 ```bash
 python tools/check_architecture.py
+```
+
+Common validation commands:
+
+```powershell
+.\venv\Scripts\python.exe -m unittest discover -s tests -v
+python tools\check_architecture.py --changed-only
+git diff --check
 ```
 
 Tests may require the client virtual environment with PySide6 and native-extension prerequisites installed.
