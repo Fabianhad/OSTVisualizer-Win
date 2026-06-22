@@ -1,5 +1,9 @@
 import logging
 from typing import Dict
+from ...application.dtos.condition_summary_dtos import ConditionSummaryGrouping
+from ...application.use_cases.project.condition_summary_service import (
+    ConditionSummaryService,
+)
 from ...domain.entities.bid import Bid
 from ...domain.entities.identity_refs import BidRef
 
@@ -13,8 +17,10 @@ class SidebarCoordinator:
         self._project_data = project_data
         self.takeoff_sidebar = None
         self.conditions_sidebar = None
+        self.condition_summary_tab = None
         self.bid_layers_sidebar = None
         self._view_stack = None
+        self._condition_summary_service = ConditionSummaryService()
 
     def set_view_stack(self, view_stack) -> None:
         self._view_stack = view_stack
@@ -58,6 +64,43 @@ class SidebarCoordinator:
             conditions, folders, project_name, grayscale
         )
 
+    def load_condition_summary(
+        self, grouping: ConditionSummaryGrouping | None = None
+    ) -> None:
+        if not self.condition_summary_tab:
+            return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if not bid_ref:
+            self.condition_summary_tab.clear()
+            return
+        grouping = grouping or self.condition_summary_tab.grouping
+        conditions = self._project_data.get_bid_conditions()
+        folders = self._project_data.get_bid_condition_folders()
+        bid = self._project_data.get_bid(bid_ref)
+        project_name = (bid.name or "") if bid else ""
+        metric = bool(bid.measure_base) if bid else False
+        areas = self._project_read_service.get_bid_areas(
+            bid_ref.file_path, bid_ref.bid_uid
+        )
+        root = self._condition_summary_service.build_summary(
+            conditions=conditions,
+            folders=folders,
+            takeoffs=self._project_data.get_all_takeoffs(),
+            pages=self._project_data.get_all_pages(),
+            areas=areas,
+            project_name=project_name,
+            grouping=grouping,
+            metric=metric,
+        )
+        self.condition_summary_tab.load_summary(
+            root, grouping, self._ui_state.state.grayscale_enabled
+        )
+
+    def set_condition_summary_grouping(
+        self, grouping: ConditionSummaryGrouping
+    ) -> None:
+        self.load_condition_summary(grouping)
+
     def load_bid_layers_sidebar(self) -> None:
         if not self.bid_layers_sidebar:
             return
@@ -82,12 +125,15 @@ class SidebarCoordinator:
             self.takeoff_sidebar.clear()
         if self.conditions_sidebar:
             self.conditions_sidebar.clear()
+        if self.condition_summary_tab:
+            self.condition_summary_tab.clear()
         if self.bid_layers_sidebar:
             self.bid_layers_sidebar.clear()
 
     def refresh_conditions_ui(self) -> None:
         self.load_conditions_sidebar()
         self.update_conditions_quantities()
+        self.load_condition_summary()
 
     def update_conditions_quantities(self, condition_uids=None) -> None:
         if not self.conditions_sidebar:
@@ -119,8 +165,10 @@ class SidebarCoordinator:
     def cleanup(self) -> None:
         self.takeoff_sidebar = None
         self.conditions_sidebar = None
+        self.condition_summary_tab = None
         self.bid_layers_sidebar = None
         self._view_stack = None
+        self._condition_summary_service = None
         self._project_read_service = None
         self._ui_state = None
         self._project_data = None

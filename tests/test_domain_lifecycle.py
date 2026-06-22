@@ -63,6 +63,39 @@ class DomainLifecycleTests(unittest.TestCase):
         state = WorkspaceState.from_dict({})
         self.assertEqual(state.takeoff_workspace.annotation_styles, {})
 
+    def test_workspace_summary_state_defaults_to_type_area_grouping(self):
+        state = WorkspaceState.from_dict({})
+        self.assertTrue(state.takeoff_workspace.summary_group_by_area)
+        self.assertTrue(state.takeoff_workspace.summary_group_by_type)
+        self.assertFalse(state.takeoff_workspace.summary_group_by_page)
+        self.assertEqual(state.takeoff_workspace.summary_column_widths, {})
+
+    def test_workspace_summary_state_round_trips_and_ignores_invalid_widths(self):
+        state = WorkspaceState.from_dict(
+            {
+                "takeoff_workspace": {
+                    "summary_group_by_area": False,
+                    "summary_group_by_type": True,
+                    "summary_group_by_page": True,
+                    "summary_column_widths": {
+                        "name": "220",
+                        "area": 0,
+                        "notes": -5,
+                        "quantity1": "bad",
+                    },
+                }
+            }
+        )
+        self.assertFalse(state.takeoff_workspace.summary_group_by_area)
+        self.assertTrue(state.takeoff_workspace.summary_group_by_type)
+        self.assertTrue(state.takeoff_workspace.summary_group_by_page)
+        self.assertEqual(state.takeoff_workspace.summary_column_widths, {"name": 220})
+        payload = state.to_dict()["takeoff_workspace"]
+        self.assertEqual(payload["summary_column_widths"], {"name": 220})
+        self.assertFalse(payload["summary_group_by_area"])
+        self.assertTrue(payload["summary_group_by_type"])
+        self.assertTrue(payload["summary_group_by_page"])
+
     def test_workspace_dropdown_popup_sizes_ignore_invalid_values(self):
         state = WorkspaceState.from_dict(
             {

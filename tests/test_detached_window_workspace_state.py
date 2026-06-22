@@ -6,6 +6,9 @@ from PySide6 import QtWidgets
 from ost_visualizer.application.builders.annotation_view_builder import (
     AnnotationViewBuilder,
 )
+from ost_visualizer.application.dtos.condition_summary_dtos import (
+    ConditionSummaryGrouping,
+)
 from ost_visualizer.application.dtos.page_view_dto import PageViewDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.use_cases.annotation_view.open_annotation_view_use_case import (
@@ -698,6 +701,12 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             def is_conditions_group_by_type_enabled(self):
                 return True
 
+            def get_summary_grouping(self):
+                return ConditionSummaryGrouping(by_type=True, by_area=True)
+
+            def get_summary_column_widths(self):
+                return {}
+
             def save_layers_header_state(self):
                 return QtCore.QByteArray(b"layers-header")
 
@@ -723,6 +732,152 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertEqual(
             captured.takeoff_workspace.takeoff_splitter_sizes,
             [360, 1516],
+        )
+
+    def test_capture_persists_summary_grouping_and_column_widths(self):
+        class CaptureShell:
+            def get_takeoff_splitter_sizes(self):
+                return [300, 700]
+
+            def get_left_splitter_sizes(self):
+                return [180, 240]
+
+            def get_takeoff_splitter(self):
+                return FakeSplitterForSidebarSizes(visible=True)
+
+            def get_left_splitter(self):
+                return FakeSplitterForSidebarSizes(visible=True)
+
+            def is_conditions_sidebar_visible(self):
+                return True
+
+            def is_layers_sidebar_visible(self):
+                return True
+
+            def saveGeometry(self):
+                return QtCore.QByteArray(b"main-geometry")
+
+            def saveState(self, _version):
+                return QtCore.QByteArray(b"main-state")
+
+            def isMaximized(self):
+                return False
+
+            def is_status_bar_visible(self):
+                return True
+
+            def save_project_header_state(self):
+                return QtCore.QByteArray(b"project-header")
+
+            def get_project_expanded_node_keys(self):
+                return []
+
+            def is_project_group_by_job_status(self):
+                return False
+
+            def get_project_selected_node(self):
+                return None
+
+            def get_active_takeoff_view(self):
+                return "2d"
+
+            def is_takeoff_2d_tab_visible(self):
+                return True
+
+            def is_takeoff_3d_tab_visible(self):
+                return True
+
+            def get_workspace_toolbar_visibility_state(self):
+                return {}
+
+            def get_takeoff_dropdown_popup_sizes(self):
+                return {}
+
+            def get_annotation_styles_by_tool(self):
+                return {}
+
+            def save_conditions_header_state(self):
+                return QtCore.QByteArray(b"conditions-header")
+
+            def is_conditions_group_by_type_enabled(self):
+                return True
+
+            def get_summary_grouping(self):
+                return ConditionSummaryGrouping(
+                    by_page=True,
+                    by_type=False,
+                    by_area=True,
+                )
+
+            def get_summary_column_widths(self):
+                return {"name": 222, "area": 145}
+
+            def save_layers_header_state(self):
+                return QtCore.QByteArray(b"layers-header")
+
+            def get_mesh_window(self):
+                return None
+
+            def get_annotation_window(self):
+                return None
+
+            def get_view_window(self):
+                return None
+
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._shell = CaptureShell()
+        coordinator._state = WorkspaceState()
+        coordinator._pending_mesh_restore = False
+        coordinator._pending_annotation_restore = False
+        coordinator._pending_view_restore = False
+        captured = coordinator._capture_current_state()
+        self.assertTrue(captured.takeoff_workspace.summary_group_by_page)
+        self.assertFalse(captured.takeoff_workspace.summary_group_by_type)
+        self.assertTrue(captured.takeoff_workspace.summary_group_by_area)
+        self.assertEqual(
+            captured.takeoff_workspace.summary_column_widths,
+            {"name": 222, "area": 145},
+        )
+
+    def test_restore_applies_summary_grouping_and_column_widths(self):
+        class Shell:
+            def __init__(self):
+                self.summary_grouping = None
+                self.summary_column_widths = None
+
+            def restore_conditions_header_state(self, _state):
+                pass
+
+            def set_conditions_group_by_type(self, _enabled):
+                pass
+
+            def set_summary_grouping(self, grouping):
+                self.summary_grouping = grouping
+
+            def set_summary_column_widths(self, widths):
+                self.summary_column_widths = widths
+
+            def restore_layers_header_state(self, _state):
+                pass
+
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._shell = Shell()
+        coordinator._state = WorkspaceState()
+        coordinator._state.takeoff_workspace.summary_group_by_page = True
+        coordinator._state.takeoff_workspace.summary_group_by_type = False
+        coordinator._state.takeoff_workspace.summary_group_by_area = True
+        coordinator._state.takeoff_workspace.summary_column_widths = {
+            "name": 222,
+            "area": 145,
+        }
+        coordinator._restore_takeoff_sidebar_state()
+        self.assertEqual(
+            coordinator._shell.summary_grouping,
+            ConditionSummaryGrouping(by_page=True, by_type=False, by_area=True),
+        )
+        self.assertEqual(
+            coordinator._shell.summary_column_widths,
+            {"name": 222, "area": 145},
         )
 
     def test_hidden_layer_sidebar_capture_keeps_last_valid_splitter_layout(self):
@@ -1178,6 +1333,12 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
 
             def is_conditions_group_by_type_enabled(self):
                 return True
+
+            def get_summary_grouping(self):
+                return ConditionSummaryGrouping(by_type=True, by_area=True)
+
+            def get_summary_column_widths(self):
+                return {}
 
             def save_layers_header_state(self):
                 return QtCore.QByteArray(b"layers-header")

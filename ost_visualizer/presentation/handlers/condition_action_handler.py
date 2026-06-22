@@ -459,7 +459,7 @@ class ConditionActionHandler:
         remaining = self._ui_state.highlighted_condition_uids - set(confirmed_uids)
         self._coordinator.highlight_sidebar(remaining)
         self._coordinator.ensure_select_mode()
-        self._coordinator.update_conditions_quantities()
+        self._coordinator.refresh_conditions_ui()
 
     def can_renumber_conditions(self) -> bool:
         return bool(

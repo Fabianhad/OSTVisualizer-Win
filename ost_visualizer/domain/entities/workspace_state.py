@@ -67,6 +67,20 @@ def _coerce_size_dict(value) -> Dict[str, List[int]]:
     return result
 
 
+def _coerce_positive_int_dict(value) -> Dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    result: Dict[str, int] = {}
+    for key, raw_value in value.items():
+        try:
+            width = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if width > 0:
+            result[str(key)] = width
+    return result
+
+
 def _coerce_str_list(value) -> List[str]:
     if not isinstance(value, list):
         return []
@@ -114,6 +128,10 @@ class TakeoffWorkspaceState:
     conditions_header_state_b64: Optional[str] = None
     layers_header_state_b64: Optional[str] = None
     conditions_group_by_type: bool = True
+    summary_group_by_area: bool = True
+    summary_group_by_type: bool = True
+    summary_group_by_page: bool = False
+    summary_column_widths: Dict[str, int] = field(default_factory=dict)
     annotation_styles: Dict[str, AnnotationStyle] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -132,6 +150,12 @@ class TakeoffWorkspaceState:
             "conditions_header_state_b64": self.conditions_header_state_b64,
             "layers_header_state_b64": self.layers_header_state_b64,
             "conditions_group_by_type": self.conditions_group_by_type,
+            "summary_group_by_area": self.summary_group_by_area,
+            "summary_group_by_type": self.summary_group_by_type,
+            "summary_group_by_page": self.summary_group_by_page,
+            "summary_column_widths": _coerce_positive_int_dict(
+                self.summary_column_widths
+            ),
             "annotation_styles": {
                 str(key): style.to_dict()
                 for key, style in self.annotation_styles.items()
@@ -168,6 +192,14 @@ class TakeoffWorkspaceState:
             ),
             conditions_group_by_type=_coerce_bool(
                 data.get("conditions_group_by_type"), True
+            ),
+            summary_group_by_area=_coerce_bool(data.get("summary_group_by_area"), True),
+            summary_group_by_type=_coerce_bool(data.get("summary_group_by_type"), True),
+            summary_group_by_page=_coerce_bool(
+                data.get("summary_group_by_page"), False
+            ),
+            summary_column_widths=_coerce_positive_int_dict(
+                data.get("summary_column_widths")
             ),
             annotation_styles={
                 str(key): AnnotationStyle.from_dict(value)

@@ -12,6 +12,7 @@ from ..actions.action_ids import (
     ACTION_UNDO,
 )
 from ..components.conditions_sidebar import ConditionsSidebar
+from ..components.condition_summary_tab import ConditionSummaryTab
 from ..components.layers_sidebar import BidLayersSidebar
 from ..components.mesh_view import OpenGLViewer
 from ..components.page_combo import PageComboBox
@@ -56,6 +57,7 @@ from ..config import (
     NO_MARGINS,
     NO_SPACING,
     SIDEBAR_MIN_WIDTH,
+    TAB_INDEX_SUMMARY,
     TAB_INDEX_TAKEOFF,
     PLAN_TOOLS_TOOLBAR_LABEL,
     OVERLAY_TOOLS_TOOLBAR_LABEL,
@@ -137,9 +139,11 @@ class ComponentBundle:
     central_widget: QtWidgets.QWidget
     tab_widget: QtWidgets.QTabWidget
     takeoff_tab: QtWidgets.QWidget
+    summary_tab: QtWidgets.QWidget
     project_view: ProjectView
     takeoff_sidebar: PageComboBox
     conditions_sidebar: ConditionsSidebar
+    condition_summary_tab: ConditionSummaryTab
     opengl_viewer: OpenGLViewer
     plan_view: TakeoffPlanView
     view_stack: QtWidgets.QStackedWidget
@@ -884,6 +888,16 @@ class ComponentBuilder:
         _sync_left_sidebar_visibility()
         tab_widget.addTab(takeoff_tab, "Takeoff")
         tab_widget.setTabVisible(TAB_INDEX_TAKEOFF, False)
+        summary_tab = QtWidgets.QWidget()
+        summary_layout = QtWidgets.QVBoxLayout(summary_tab)
+        summary_layout.setContentsMargins(*NO_MARGINS)
+        summary_layout.setSpacing(NO_SPACING)
+        condition_summary_tab = ConditionSummaryTab(
+            summary_tab, uom_label_fn=project_read_service.get_uom_label
+        )
+        summary_layout.addWidget(condition_summary_tab)
+        tab_widget.addTab(summary_tab, "Summary")
+        tab_widget.setTabVisible(TAB_INDEX_SUMMARY, False)
         central_layout.addWidget(tab_widget)
         status_panel = StatusPanel(central_widget)
 
@@ -956,9 +970,11 @@ class ComponentBuilder:
             central_widget=central_widget,
             tab_widget=tab_widget,
             takeoff_tab=takeoff_tab,
+            summary_tab=summary_tab,
             project_view=project_view,
             takeoff_sidebar=page_combo,
             conditions_sidebar=conditions_sidebar,
+            condition_summary_tab=condition_summary_tab,
             opengl_viewer=canvas,
             plan_view=plan_view,
             view_stack=view_stack,

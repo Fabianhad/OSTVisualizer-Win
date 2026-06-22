@@ -11,7 +11,7 @@ from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.project_factory import build_loaded_files
-from ..config import TAB_INDEX_PROJECTS, TAB_INDEX_TAKEOFF
+from ..config import TAB_INDEX_PROJECTS, TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
 from ..modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_PLACE,
@@ -137,6 +137,7 @@ class UIEventCoordinator:
         self._project_read_service = project_read_service
         self._deferred_persistence = deferred_persistence_manager
         self.conditions_sidebar = None
+        self.condition_summary_tab = None
         self.takeoff_sidebar = None
         self.opengl_viewer = None
         self.plan_view = None
@@ -284,6 +285,10 @@ class UIEventCoordinator:
     def update_conditions_quantities(self) -> None:
         self._sidebar.update_conditions_quantities()
 
+    def _load_condition_summary(self) -> None:
+        if self._sidebar and hasattr(self._sidebar, "load_condition_summary"):
+            self._sidebar.load_condition_summary()
+
     def set_conditions_sidebar(self, sidebar) -> None:
         self.conditions_sidebar = sidebar
         self._sidebar.conditions_sidebar = sidebar
@@ -321,6 +326,17 @@ class UIEventCoordinator:
                 self._condition_handler.on_condition_type_change_requested
             )
             self._toolbar.refresh()
+
+    def set_condition_summary_tab(self, summary_tab) -> None:
+        self.condition_summary_tab = summary_tab
+        self._sidebar.condition_summary_tab = summary_tab
+        if summary_tab:
+            summary_tab.delete_requested.connect(
+                self._condition_handler.on_delete_requested
+            )
+            summary_tab.set_grouping_rebuild_callback(
+                self._sidebar.set_condition_summary_grouping
+            )
 
     def set_bid_layers_sidebar(self, sidebar) -> None:
         self._sidebar.bid_layers_sidebar = sidebar
@@ -540,7 +556,17 @@ class UIEventCoordinator:
         if not self._tab_widget:
             return
         self._tab_widget.setTabVisible(TAB_INDEX_TAKEOFF, visible)
-        if not visible and self._tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
+        has_summary_tab = (
+            hasattr(self._tab_widget, "count")
+            and self._tab_widget.count() > TAB_INDEX_SUMMARY
+        )
+        if has_summary_tab:
+            self._tab_widget.setTabVisible(TAB_INDEX_SUMMARY, visible)
+        if not visible and self._tab_widget.currentIndex() in (
+            (TAB_INDEX_TAKEOFF, TAB_INDEX_SUMMARY)
+            if has_summary_tab
+            else (TAB_INDEX_TAKEOFF,)
+        ):
             self._tab_widget.setCurrentIndex(TAB_INDEX_PROJECTS)
 
     def _clear_staged_takeoff_restore(self) -> None:
@@ -640,6 +666,7 @@ class UIEventCoordinator:
             self._load_takeoff_sidebar(bid_ref)
             self._sidebar.load_bid_layers_sidebar()
             self._sidebar.load_conditions_sidebar()
+            self._load_condition_summary()
             highlighted = self._validate_condition_uids(
                 self.ui_state_manager.highlighted_condition_uids
             )
@@ -683,6 +710,10 @@ class UIEventCoordinator:
         self._toolbar.refresh()
         if index == TAB_INDEX_TAKEOFF:
             self._activate_takeoff_workspace()
+            self._update_export_menu_state()
+            return
+        if index == TAB_INDEX_SUMMARY:
+            self._load_condition_summary()
             self._update_export_menu_state()
             return
         self._clear_page_info_status()
@@ -1235,6 +1266,8 @@ class UIEventCoordinator:
 
     def _on_ost_status_changed(self, active: bool = False) -> None:
         self.ensure_select_mode()
+        if self.condition_summary_tab:
+            self.condition_summary_tab.refresh_view()
         self._menu_state_signaler.request_update()
 
     def cleanup(self) -> None:
@@ -1305,6 +1338,7 @@ class UIEventCoordinator:
         self._project_read_service = None
         self.takeoff_sidebar = None
         self.conditions_sidebar = None
+        self.condition_summary_tab = None
         self.opengl_viewer = None
         self.plan_view = None
         self._condition_handler = None
@@ -1355,6 +1389,7 @@ class UIEventCoordinator:
         else:
             self._update_plan_view_for_active(condition_uids=condition_uids)
         self._viewer.update_viewers(self.project_data.get_selected_page_uids())
+        self._load_condition_summary()
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
 
@@ -1599,6 +1634,7 @@ class UIEventCoordinator:
     def _refresh_condition_display_after_app_config_change(self) -> None:
         prev_highlighted = set(self.ui_state_manager.highlighted_condition_uids)
         self._sidebar.load_conditions_sidebar()
+        self._load_condition_summary()
         if prev_highlighted and self.conditions_sidebar:
             self.conditions_sidebar.highlight_conditions(prev_highlighted)
         if self.ui_access_manager.is_allowed(Feature.VIEW_2D):
@@ -2598,6 +2634,7 @@ class UIEventCoordinator:
             all_layers=True,
         )
         self._viewer.update_viewers(self.project_data.get_selected_page_uids())
+        self._load_condition_summary()
         self._update_export_menu_state()
         if show:
             self._restore_suspended_layer_tool()
@@ -2611,6 +2648,7 @@ class UIEventCoordinator:
             self.project_data.get_bid_conditions(),
             self.ui_state_manager.state.grayscale_enabled,
         )
+        self._load_condition_summary()
 
     def _on_layer_moved(self, layer_uid: str, direction: int) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()

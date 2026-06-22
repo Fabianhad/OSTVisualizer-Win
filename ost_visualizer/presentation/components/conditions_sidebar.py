@@ -7,13 +7,13 @@ from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
 from ...domain.entities.condition_folder import BidConditionFolder
 from ...domain.entities.layer import BidLayer
-from ...domain.services.uom_service import is_metric_uom
 from ..config import COMPACT_SPACING, NO_MARGINS
 from ..managers.context_menu_manager import ContextMenuManager
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..utils.condition_icon import make_condition_color_icon
 from ..utils.messagebox import confirm_multi_delete, show_warning
+from ..utils.quantity_display import format_quantity_with_uom
 
 _ITEM_ROLE = QtCore.Qt.ItemDataRole.UserRole
 _SORT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
@@ -626,14 +626,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 for col, (val, uom_code) in enumerate(
                     zip(qtys, uom_codes), start=_COL_QTY1
                 ):
-                    label = self._uom_label_fn(uom_code)
-                    if label:
-                        if is_metric_uom(uom_code) and abs(val) < 100.0:
-                            text = f"{val:,.2f} {label}"
-                        else:
-                            text = f"{val:,.0f} {label}"
-                    else:
-                        text = f"{val:,.0f}" if val != 0.0 else ""
+                    text = format_quantity_with_uom(val, uom_code, self._uom_label_fn)
                     item.setText(col, text)
                     item.setData(col, _SORT_ROLE, val)
         finally:

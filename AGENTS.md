@@ -69,6 +69,14 @@ Persistence:
 - Restorable workspace shell state belongs in `workspace_state.json`.
 - New JSON persistence should use `JsonRepositoryBase` for atomic writes.
 
+State and identity:
+
+- Treat persisted keys, protocol values, registry keys, action IDs, cursor modes, layer IDs, and annotation/tool types as contracts. Reuse the canonical owner instead of repeating raw strings.
+- Keep ownership near the concept: domain for business identifiers, application for use-case/protocol DTO values, infrastructure for storage/transport details, and presentation for UI actions, cursor modes, tool metadata, and display text.
+- Do not use display labels as logic keys when a stable ID, type, enum, registry entry, or value object exists.
+- Prefer registry and service lookups over type-specific branches. Special-case behavior only when the domain model proves the behavior is genuinely different.
+- Mirrored UI/render state is acceptable when synchronized from an owner; avoid adding competing mutation paths or extra refresh/event dispatch paths.
+
 C++ extensions:
 
 - All 13 native modules are required and imported directly.
@@ -79,14 +87,11 @@ C++ extensions:
 
 MCP is a read-only local adapter outside the core layers.
 
-Current production path:
+Runtime shape:
 
 - Internal stdlib stdio server in `ost_visualizer/mcp_server/internal_server.py`.
 - Source command: `.\venv\Scripts\python.exe -m ost_visualizer.mcp_server.main`.
-- Packaged command: MCP clients launch `ostv-mcp.exe`.
-- Codex setup should use `~/.codex/config.toml` (or a trusted project
-  `.codex/config.toml`) with `[mcp_servers."ost-visualizer"]`, or
-  `codex mcp add ost-visualizer -- <path-to-ostv-mcp.exe>`.
+- Packaged clients launch `ostv-mcp.exe`; user-facing setup details belong in `README.md` and the Options dialog MCP setup tab.
 - Production helper route: `McpServer.py` -> `ost_visualizer.mcp_server.main`.
 - GUI app owns only the live-context bridge in `presentation/services/mcp_context_bridge.py`; it does not start the stdio MCP server.
 - MCP helper path must not import PySide6, presentation startup, or `config/di_config.py`.
@@ -104,24 +109,13 @@ Database scope:
 - Registry validation should keep missing, unchecked, non-MDB, and duplicate paths out.
 - Broad MCP tools should keep bounded outputs and explicit status/metadata.
 
-Important MCP files:
+MCP ownership map:
 
-- `McpServer.py`
-- `ost_visualizer/mcp_server/main.py`
-- `ost_visualizer/mcp_server/internal_server.py`
-- `ost_visualizer/mcp_server/server.py`
-- `ost_visualizer/mcp_server/registry.py`
-- `ost_visualizer/mcp_server/serializers.py`
-- `ost_visualizer/mcp_server/bridge_client.py`
-- `ost_visualizer/application/services/mcp_read_service.py`
-- `ost_visualizer/application/dtos/mcp_context_dtos.py`
-- `ost_visualizer/application/interfaces/i_pdf_metadata_provider.py`
-- `ost_visualizer/infrastructure/pdf_metadata_provider.py`
-- `ost_visualizer/presentation/services/mcp_context_bridge.py`
-- `ost_visualizer/presentation/utils/mcp_setup_config.py`
-- `ost_visualizer/presentation/dialogs/options/components.py`
-- `ost_visualizer/presentation/dialogs/options/dialog.py`
-- `tests/test_mcp*.py`
+- `ost_visualizer/mcp_server/` owns the stdio protocol surface, registry, serializers, resources, prompts, and tool registration.
+- `ost_visualizer/application/dtos/mcp_context_dtos.py` owns MCP DTOs plus protocol status/source constants.
+- `ost_visualizer/application/services/mcp_read_service.py` owns read-only query behavior and bounded result shaping.
+- `ost_visualizer/presentation/services/mcp_context_bridge.py` owns the GUI live-context bridge only.
+- `tests/test_mcp*.py` should cover public surface counts, status/source compatibility, registry filtering, and bounded outputs.
 
 Expected public MCP counts should remain 36 tools, 1 resource, 4 resource templates, and 7 prompts unless a change intentionally updates the public surface.
 

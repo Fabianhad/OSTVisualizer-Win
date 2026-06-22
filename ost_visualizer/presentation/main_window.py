@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
 from ..application.events.app_events import AppEvents
+from ..application.dtos.condition_summary_dtos import ConditionSummaryGrouping
 from ..domain.entities.annotation_style import AnnotationStyle
 from ..domain.entities.file_state import normalize_path
 from .actions.action_ids import (
@@ -186,6 +187,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.tab_widget = components.tab_widget
         self.takeoff_tab = components.takeoff_tab
+        self.summary_tab = components.summary_tab
         self.takeoff_sidebar = components.takeoff_sidebar
         self.opengl_viewer = components.opengl_viewer
         self.plan_view = components.plan_view
@@ -208,6 +210,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._view_window_action = components.view_window_action
         self._mesh_window_action = components.mesh_window_action
         self._conditions_sidebar = components.conditions_sidebar
+        self._condition_summary_tab = components.condition_summary_tab
         self._bid_layers_sidebar = components.bid_layers_sidebar
         self._page_settings_bar = components.page_settings_bar
         self._layers_toggle_action.toggled.connect(self.set_layers_sidebar_visible)
@@ -312,6 +315,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handlers.ui_event.set_backout_action(components.backout_action)
         self.handlers.ui_event.set_move_overlay_action(components.move_overlay_action)
         self.handlers.ui_event.set_conditions_sidebar(components.conditions_sidebar)
+        self.handlers.ui_event.set_condition_summary_tab(
+            components.condition_summary_tab
+        )
         self.handlers.ui_event.set_bid_layers_sidebar(components.bid_layers_sidebar)
         self.handlers.ui_event.set_undo_service(components.undo_service)
         container = QtWidgets.QWidget()
@@ -1271,6 +1277,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def set_conditions_group_by_type(self, enabled: bool) -> None:
         self._conditions_sidebar.set_group_by_type(enabled, notify=False)
+
+    def get_summary_grouping(self) -> ConditionSummaryGrouping:
+        return self._condition_summary_tab.grouping
+
+    def set_summary_grouping(self, grouping: ConditionSummaryGrouping) -> None:
+        self._condition_summary_tab.set_grouping(grouping, notify=False)
+
+    def get_summary_column_widths(self) -> dict[str, int]:
+        return self._condition_summary_tab.get_column_widths()
+
+    def set_summary_column_widths(self, widths: dict[str, int]) -> None:
+        self._condition_summary_tab.set_column_widths(widths)
+
+    def get_condition_summary_tab(self):
+        return self._condition_summary_tab
 
     def save_layers_header_state(self) -> QtCore.QByteArray:
         return self._bid_layers_sidebar.save_header_state()

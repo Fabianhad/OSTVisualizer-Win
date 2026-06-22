@@ -1,6 +1,7 @@
 import logging
 from typing import Callable, Dict, Optional, cast
 from PySide6 import QtCore, QtWidgets
+from ...application.dtos.condition_summary_dtos import ConditionSummaryGrouping
 from ...domain.entities.workspace_state import (
     DetachedWindowState,
     ProjectTreeSelectionState,
@@ -69,6 +70,9 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         for header in self._tracked_headers:
             self._connect_header_tracking(header)
         self._shell.get_conditions_sidebar().group_by_type_changed.connect(
+            self.request_save
+        )
+        self._shell.get_condition_summary_tab().summary_ui_state_changed.connect(
             self.request_save
         )
         self._shell.get_project_tree().itemExpanded.connect(self.request_save)
@@ -163,6 +167,16 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             self._shell.restore_conditions_header_state(conditions_header_state)
         self._shell.set_conditions_group_by_type(
             self._state.takeoff_workspace.conditions_group_by_type
+        )
+        self._shell.set_summary_grouping(
+            ConditionSummaryGrouping(
+                by_page=self._state.takeoff_workspace.summary_group_by_page,
+                by_type=self._state.takeoff_workspace.summary_group_by_type,
+                by_area=self._state.takeoff_workspace.summary_group_by_area,
+            )
+        )
+        self._shell.set_summary_column_widths(
+            self._state.takeoff_workspace.summary_column_widths
         )
         layers_header_state = self._decode_byte_array(
             self._state.takeoff_workspace.layers_header_state_b64
@@ -269,6 +283,10 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             self._disconnect(header.sortIndicatorChanged, self.request_save)
         self._disconnect(
             self._shell.get_conditions_sidebar().group_by_type_changed,
+            self.request_save,
+        )
+        self._disconnect(
+            self._shell.get_condition_summary_tab().summary_ui_state_changed,
             self.request_save,
         )
         self._disconnect(self._shell.get_project_tree().itemExpanded, self.request_save)
@@ -721,6 +739,13 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         )
         state.takeoff_workspace.conditions_group_by_type = (
             self._shell.is_conditions_group_by_type_enabled()
+        )
+        summary_grouping = self._shell.get_summary_grouping()
+        state.takeoff_workspace.summary_group_by_page = summary_grouping.by_page
+        state.takeoff_workspace.summary_group_by_type = summary_grouping.by_type
+        state.takeoff_workspace.summary_group_by_area = summary_grouping.by_area
+        state.takeoff_workspace.summary_column_widths = (
+            self._shell.get_summary_column_widths()
         )
         state.takeoff_workspace.layers_header_state_b64 = self._encode_byte_array(
             self._shell.save_layers_header_state()

@@ -103,6 +103,9 @@ class ProjectDataService:
     def get_page(self, page_uid: str) -> Optional[Page]:
         return self.model.get_page(page_uid)
 
+    def get_all_pages(self) -> List[Page]:
+        return self.model.get_all_pages()
+
     def get_bid(self, bid_ref: BidRef) -> Optional[Bid]:
         if self.model.current_bid_ref == bid_ref and self.model.current_bid:
             return self.model.current_bid
