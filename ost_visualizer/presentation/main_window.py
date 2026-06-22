@@ -41,6 +41,7 @@ from .config import (
     NO_SPACING,
     SHOW_TOOLBARS_MENU_TITLE,
     SIDEBAR_MIN_WIDTH,
+    TAB_INDEX_SUMMARY,
     TAB_INDEX_TAKEOFF,
     PLAN_TOOLS_TOOLBAR_LABEL,
     OVERLAY_TOOLS_TOOLBAR_LABEL,
@@ -661,6 +662,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
                 return
             self.plan_view.delete_selected()
+        elif self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY:
+            self._condition_summary_tab.delete_current_row()
         else:
             if not self.ui_access_manager.is_allowed(Feature.DELETE_BID):
                 return
@@ -674,6 +677,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
                 return
             self.plan_view.duplicate_selected()
+        elif self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY:
+            return
         else:
             if not self.ui_access_manager.is_allowed(Feature.DUPLICATE_BID):
                 return
@@ -687,6 +692,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self.plan_view.copy_selected()
             return
+        if self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY:
+            self._condition_summary_tab.copy_current_row()
+            return
         if not self.ui_access_manager.is_allowed(Feature.DUPLICATE_BID):
             return
         bid_refs = self.ui_state_manager.get_selected_bid_refs()
@@ -699,6 +707,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._handle_inline_text_shortcut("cut"):
             return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
+            return
+        if self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY:
             return
         if not self.ui_access_manager.is_allowed(Feature.DELETE_BID):
             return
@@ -717,6 +727,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self._plan_view_handler.can_paste_to_current_bid():
                 return
             self.plan_view.paste_clipboard()
+            return
+        if self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY:
             return
         target = self._get_bid_paste_target()
         if target is None:
@@ -1041,6 +1053,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def is_takeoff_tab_active(self) -> bool:
         return self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF
+
+    def is_summary_tab_active(self) -> bool:
+        return self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY
 
     def get_takeoff_plan_view(self):
         return self.plan_view

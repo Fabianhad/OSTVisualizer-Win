@@ -448,7 +448,6 @@ class RecordingPlanView:
         self.all_layer_visibility_calls = []
         self.cursor_modes = []
         self.annotation_placements = []
-        self.reset_ctrl_held_calls = 0
 
     def apply_page_image_layer_visibility(self, page):
         self.image_visibility_pages.append(page.uid)
@@ -463,7 +462,7 @@ class RecordingPlanView:
         return True
 
     def reset_ctrl_held(self):
-        self.reset_ctrl_held_calls += 1
+        pass
 
     def set_cursor_mode(self, mode):
         self.cursor_mode = mode
@@ -676,8 +675,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                 set_all_layers_visible=lambda *_args: None,
             ),
             update_conditions_quantities=lambda: quantity_calls.append("quantity"),
+            load_condition_summary=lambda: None,
         )
         coordinator.conditions_sidebar = None
+        coordinator.condition_summary_tab = None
         coordinator.layer_events = []
         coordinator.event_bus = SimpleNamespace(
             publish=lambda event, **kwargs: coordinator.layer_events.append(
@@ -754,8 +755,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._sidebar = SimpleNamespace(
             bid_layers_sidebar=None,
             update_conditions_quantities=lambda: quantity_calls.append("quantity"),
+            load_condition_summary=lambda: None,
         )
         coordinator.conditions_sidebar = None
+        coordinator.condition_summary_tab = None
         coordinator.event_bus = SimpleNamespace(publish=lambda *_args, **_kwargs: None)
         coordinator.plan_view = None
         mesh_calls = []

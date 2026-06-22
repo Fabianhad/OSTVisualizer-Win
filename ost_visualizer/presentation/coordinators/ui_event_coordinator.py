@@ -286,7 +286,7 @@ class UIEventCoordinator:
         self._sidebar.update_conditions_quantities()
 
     def _load_condition_summary(self) -> None:
-        if self._sidebar and hasattr(self._sidebar, "load_condition_summary"):
+        if self._sidebar:
             self._sidebar.load_condition_summary()
 
     def set_conditions_sidebar(self, sidebar) -> None:
@@ -329,14 +329,17 @@ class UIEventCoordinator:
 
     def set_condition_summary_tab(self, summary_tab) -> None:
         self.condition_summary_tab = summary_tab
+        self._toolbar.set_condition_summary_tab(summary_tab)
         self._sidebar.condition_summary_tab = summary_tab
         if summary_tab:
             summary_tab.delete_requested.connect(
                 self._condition_handler.on_delete_requested
             )
+            summary_tab.summary_action_state_changed.connect(self._toolbar.refresh)
             summary_tab.set_grouping_rebuild_callback(
                 self._sidebar.set_condition_summary_grouping
             )
+        self._toolbar.refresh()
 
     def set_bid_layers_sidebar(self, sidebar) -> None:
         self._sidebar.bid_layers_sidebar = sidebar
@@ -556,10 +559,7 @@ class UIEventCoordinator:
         if not self._tab_widget:
             return
         self._tab_widget.setTabVisible(TAB_INDEX_TAKEOFF, visible)
-        has_summary_tab = (
-            hasattr(self._tab_widget, "count")
-            and self._tab_widget.count() > TAB_INDEX_SUMMARY
-        )
+        has_summary_tab = self._tab_widget.count() > TAB_INDEX_SUMMARY
         if has_summary_tab:
             self._tab_widget.setTabVisible(TAB_INDEX_SUMMARY, visible)
         if not visible and self._tab_widget.currentIndex() in (
@@ -1624,6 +1624,7 @@ class UIEventCoordinator:
         self._update_export_menu_state()
 
     def _on_app_config_updated(self, setting: str = "", value=None) -> None:
+        _ = setting
         self.ui_state_manager.sync_from_config()
         needs_condition_display_refresh = (
             self._app_config_presentation.apply_updated_options(
@@ -2656,17 +2657,15 @@ class UIEventCoordinator:
     ) -> None:
         conditions = self.project_data.get_bid_conditions()
         grayscale = self.ui_state_manager.state.grayscale_enabled
-        conditions_sidebar = getattr(self, "conditions_sidebar", None)
-        if conditions_sidebar:
-            conditions_sidebar.apply_layer_visibility_state(
+        if self.conditions_sidebar:
+            self.conditions_sidebar.apply_layer_visibility_state(
                 conditions,
                 grayscale,
             )
         if not update_summary:
             return
-        condition_summary_tab = getattr(self, "condition_summary_tab", None)
-        if condition_summary_tab:
-            condition_summary_tab.apply_layer_visibility_state(
+        if self.condition_summary_tab:
+            self.condition_summary_tab.apply_layer_visibility_state(
                 conditions,
                 grayscale,
                 layer_uid,

@@ -1,6 +1,6 @@
 from typing import Optional
 from PySide6 import QtGui, QtWidgets
-from ..config import TAB_INDEX_TAKEOFF
+from ..config import TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
 from ..modes.cursor import CURSOR_MODE_SELECT
 from ..managers.ui_access_manager import Feature
 from ..services.bid_clipboard_service import BidClipboardService
@@ -36,6 +36,7 @@ class ToolbarStateCoordinator:
         self.undo_service = None
         self.opengl_viewer = None
         self.conditions_sidebar = None
+        self.condition_summary_tab = None
         self._tab_widget = None
         self._view_stack = None
 
@@ -101,6 +102,9 @@ class ToolbarStateCoordinator:
 
     def set_conditions_sidebar(self, sidebar) -> None:
         self.conditions_sidebar = sidebar
+
+    def set_condition_summary_tab(self, summary_tab) -> None:
+        self.condition_summary_tab = summary_tab
 
     def set_tab_widget(self, tab_widget) -> None:
         self._tab_widget = tab_widget
@@ -178,6 +182,7 @@ class ToolbarStateCoordinator:
     def refresh(self) -> None:
         current_tab = self._tab_widget.currentIndex() if self._tab_widget else 0
         on_takeoff_tab = current_tab == TAB_INDEX_TAKEOFF
+        on_summary_tab = current_tab == TAB_INDEX_SUMMARY
         has_takeoff_selection = bool(self.plan_view and self.plan_view.has_selection)
         selected_bid_refs = self._ui_state.get_selected_bid_refs()
         selected_bids_same_file = self._same_file_refs(selected_bid_refs)
@@ -188,6 +193,13 @@ class ToolbarStateCoordinator:
                     self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
                     and has_takeoff_selection
                 )
+            elif on_summary_tab:
+                self._copy_action.setEnabled(
+                    bool(
+                        self.condition_summary_tab
+                        and self.condition_summary_tab.can_copy_current_row()
+                    )
+                )
             else:
                 self._copy_action.setEnabled(
                     bool(selected_bid_refs)
@@ -196,6 +208,8 @@ class ToolbarStateCoordinator:
                 )
         if self._cut_action:
             if on_takeoff_tab:
+                self._cut_action.setEnabled(False)
+            elif on_summary_tab:
                 self._cut_action.setEnabled(False)
             else:
                 self._cut_action.setEnabled(
@@ -212,6 +226,8 @@ class ToolbarStateCoordinator:
                         and self.plan_view_handler.can_paste_to_current_bid()
                     )
                 )
+            elif on_summary_tab:
+                self._paste_action.setEnabled(False)
             else:
                 self._paste_action.setEnabled(bid_paste_allowed)
         if self._delete_action:
@@ -219,6 +235,13 @@ class ToolbarStateCoordinator:
                 self._delete_action.setEnabled(
                     self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
                     and bool(self.plan_view and self.plan_view.has_selection)
+                )
+            elif on_summary_tab:
+                self._delete_action.setEnabled(
+                    bool(
+                        self.condition_summary_tab
+                        and self.condition_summary_tab.can_delete_current_row()
+                    )
                 )
             elif not self._access.is_allowed(Feature.DELETE_BID):
                 self._delete_action.setEnabled(False)
@@ -250,6 +273,8 @@ class ToolbarStateCoordinator:
                     self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
                     and bool(self.plan_view and self.plan_view.has_selection)
                 )
+            elif on_summary_tab:
+                self._duplicate_action.setEnabled(False)
             else:
                 self._duplicate_action.setEnabled(
                     self._access.is_allowed(Feature.DUPLICATE_BID)
@@ -260,6 +285,8 @@ class ToolbarStateCoordinator:
                     self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
                     and bool(self.plan_view)
                 )
+            elif on_summary_tab:
+                self._select_all_action.setEnabled(False)
             else:
                 self._select_all_action.setEnabled(False)
         if self._cover_sheet_button:
@@ -385,6 +412,7 @@ class ToolbarStateCoordinator:
         self.undo_service = None
         self.opengl_viewer = None
         self.conditions_sidebar = None
+        self.condition_summary_tab = None
         self._tab_widget = None
         self._view_stack = None
         self._ui_state = None

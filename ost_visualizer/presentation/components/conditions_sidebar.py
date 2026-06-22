@@ -12,6 +12,7 @@ from ..managers.context_menu_manager import ContextMenuManager
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..utils.condition_icon import make_condition_color_icon
+from ..utils.condition_tree_style import apply_condition_tree_style
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.quantity_display import format_quantity_with_uom
 
@@ -177,8 +178,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self.tree.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self.tree.setIndentation(10)
-        self.tree.setUniformRowHeights(True)
+        apply_condition_tree_style(self.tree)
         self.tree.setAnimated(False)
         self.tree.setSortingEnabled(True)
         self.tree.setEditTriggers(

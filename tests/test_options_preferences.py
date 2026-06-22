@@ -1733,6 +1733,21 @@ class OptionsPreferencesTests(unittest.TestCase):
             [_app_config_event({"color_mode": "Transparent"})],
         )
 
+    def test_summary_tab_disables_project_tree_creation_and_import_menu_paths(self):
+        controller = MenuController.__new__(MenuController)
+        controller.window = SimpleNamespace(is_summary_tab_active=lambda: True)
+        controller.ui_state_manager = SimpleNamespace(selected_project_uid="2")
+        controller.ui_access_manager = SimpleNamespace(
+            can_create_project_tree_items=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("project selection should not be queried")
+            ),
+            is_allowed=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("import permissions should not be queried")
+            ),
+        )
+        self.assertFalse(controller._should_enable_project_tree_creation())
+        self.assertFalse(controller._should_enable_import())
+
     def test_update_app_options_does_not_publish_when_nothing_changed(self):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)
@@ -2199,12 +2214,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             uid="area",
             condition_uid="area-condition",
             position=[0.0, 0.0, 4.0, 0.0, 4.0, 4.0],
-            parent_uid="0",
-        )
-        other_area = Takeoff(
-            uid="other",
-            condition_uid="area-condition",
-            position=[5.0, 5.0, 6.0, 5.0, 6.0, 6.0],
             parent_uid="0",
         )
         conditions = {
@@ -3376,16 +3385,17 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._scene_scale = 2.0
         view._visible_frame_request_id = "frame-1"
         view._visible_frame_item = None
+        view._background_item = None
+        view._overlay_items = []
         view._visible_frame_key = ("base",)
         view._visible_frame_kind = "base"
         view._visible_frame_scale = 0.0
+        view._current_page = SimpleNamespace(layer_visible=True)
         view._current_load_token = "load-1"
         view._current_render_identity = {"page": "page-1"}
         view._page_render_generation_id = 7
         view._overlay_move_suppresses_normal_tiles = lambda: False
         view._remove_tile_item = lambda _item: None
-        view._sync_low_res_base_visibility_for_tiles = lambda: None
-        view._sync_low_res_overlay_visibility_for_tiles = lambda: None
         view._get_page_transform = lambda _w, _h: QtGui.QTransform()
         image = QtGui.QImage(101, 83, QtGui.QImage.Format.Format_ARGB32)
         image.fill(0xFFFFFFFF)
@@ -4345,7 +4355,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         coordinator._app_config_presentation = FakeAppConfigPresentation()
         coordinator._sidebar = SimpleNamespace(
-            load_conditions_sidebar=lambda: calls.append("conditions")
+            load_conditions_sidebar=lambda: calls.append("conditions"),
+            load_condition_summary=lambda: calls.append("summary"),
         )
         coordinator.conditions_sidebar = SimpleNamespace(
             highlight_conditions=lambda uids: calls.append(("highlight", list(uids)))
@@ -4365,6 +4376,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 "sync",
                 "menu",
                 "conditions",
+                "summary",
                 ("highlight", ["cond-1"]),
                 ("viewers", ["page-1"]),
                 "plan_view",

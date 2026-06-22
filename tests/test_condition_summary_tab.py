@@ -47,7 +47,12 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
 from ost_visualizer.presentation.handlers.condition_action_handler import (
     ConditionActionHandler,
 )
+from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.utils.condition_tree_style import (
+    CONDITION_TREE_INDENTATION,
+)
 
 
 def _app():
@@ -530,6 +535,71 @@ class ConditionSummaryTabTests(unittest.TestCase):
         alignment = condition_item.textAlignment(self._column_index("Height"))
         self.assertTrue(_has_alignment(alignment, QtCore.Qt.AlignmentFlag.AlignRight))
 
+    def test_summary_tree_uses_condition_sidebar_tree_style(self):
+        sidebar = ConditionsSidebar(None, uom_label_fn=lambda _code: "")
+        try:
+            self.assertEqual(self.tab.tree.iconSize(), sidebar.tree.iconSize())
+            self.assertEqual(self.tab.tree.indentation(), CONDITION_TREE_INDENTATION)
+            self.assertEqual(self.tab.tree.indentation(), sidebar.tree.indentation())
+            self.assertEqual(
+                self.tab.tree.uniformRowHeights(), sidebar.tree.uniformRowHeights()
+            )
+        finally:
+            sidebar.deleteLater()
+
+    def test_summary_items_do_not_add_custom_row_size_hints(self):
+        self._load(ConditionSummaryGrouping(by_area=True))
+        sidebar = ConditionsSidebar(None, uom_label_fn=lambda _code: "")
+        try:
+            sidebar.load_conditions(
+                {
+                    "c1": Condition(
+                        uid="c1",
+                        name="Fdn1",
+                        ref_no=1,
+                        color_fill=0x336699,
+                    )
+                },
+                {},
+                "Project",
+            )
+            summary_item = self._item_for_kind(SUMMARY_NODE_CONDITION)
+            sidebar_item = sidebar._condition_items["c1"]
+            self.assertEqual(summary_item.sizeHint(0), sidebar_item.sizeHint(0))
+            self.assertFalse(summary_item.sizeHint(0).isValid())
+        finally:
+            sidebar.deleteLater()
+
+    def test_summary_condition_row_height_matches_condition_sidebar(self):
+        self._load(ConditionSummaryGrouping(by_area=True))
+        sidebar = ConditionsSidebar(None, uom_label_fn=lambda _code: "")
+        try:
+            sidebar.load_conditions(
+                {
+                    "c1": Condition(
+                        uid="c1",
+                        name="Fdn1",
+                        ref_no=1,
+                        color_fill=0x336699,
+                    )
+                },
+                {},
+                "Project",
+            )
+            self.tab.resize(900, 400)
+            sidebar.resize(420, 300)
+            self.tab.show()
+            sidebar.show()
+            _app().processEvents()
+            summary_item = self._item_for_kind(SUMMARY_NODE_CONDITION)
+            sidebar_item = sidebar._condition_items["c1"]
+            self.assertEqual(
+                self.tab.tree.visualItemRect(summary_item).height(),
+                sidebar.tree.visualItemRect(sidebar_item).height(),
+            )
+        finally:
+            sidebar.deleteLater()
+
     def test_group_total_and_detail_rows_have_uniform_body_height(self):
         self._load(ConditionSummaryGrouping(by_page=True))
         self._show_and_process()
@@ -560,6 +630,28 @@ class ConditionSummaryTabTests(unittest.TestCase):
         top_node = top_items[0].data(0, QtCore.Qt.ItemDataRole.UserRole)
         self.assertEqual(top_node.kind, SUMMARY_NODE_FOLDER)
         self.assertEqual(top_node.label, "CONDITION FOLDER")
+
+    def test_summary_folder_rows_use_sidebar_folder_icon_source(self):
+        self.condition.folder_uid = "f1"
+        root = self.service.build_summary(
+            conditions=self.conditions,
+            folders={"f1": BidConditionFolder(uid="f1", name="CONDITION FOLDER")},
+            takeoffs=self.takeoffs,
+            pages=self.pages,
+            areas=self.areas,
+            grouping=ConditionSummaryGrouping(),
+        )
+        self.tab.load_summary(root, ConditionSummaryGrouping())
+        folder_item = self.tab.tree.topLevelItem(0)
+        sidebar = ConditionsSidebar(None)
+        try:
+            self.assertEqual(self.tab.tree.iconSize(), sidebar.tree.iconSize())
+            self.assertEqual(
+                folder_item.icon(0).cacheKey(),
+                IconManager.icon(IconId.FOLDER).cacheKey(),
+            )
+        finally:
+            sidebar.deleteLater()
 
     def test_logical_root_node_is_not_visible(self):
         self._load()
@@ -738,12 +830,102 @@ class ConditionSummaryTabTests(unittest.TestCase):
             ).isEnabled()
         )
 
+    def test_context_menu_and_main_state_agree_for_summary_copy_delete(self):
+        self._load()
+        total_item = self._item_for_kind(SUMMARY_NODE_MULTI_AREA_TOTAL)
+        self.tab.tree.setCurrentItem(total_item)
+        total_menu = self.tab.build_context_menu(total_item)
+        self.assertEqual(
+            self._action_by_text(total_menu, "Copy").isEnabled(),
+            self.tab.can_copy_current_row(),
+        )
+        self.assertEqual(
+            self._action_by_text(total_menu, "Delete").isEnabled(),
+            self.tab.can_delete_current_row(),
+        )
+        detail_item = self._item_for_kind(SUMMARY_NODE_AREA_DETAIL)
+        self.tab.tree.setCurrentItem(detail_item)
+        detail_menu = self.tab.build_context_menu(detail_item)
+        self.assertEqual(
+            self._action_by_text(detail_menu, "Copy").isEnabled(),
+            self.tab.can_copy_current_row(),
+        )
+        self.assertEqual(
+            self._action_by_text(detail_menu, "Delete").isEnabled(),
+            self.tab.can_delete_current_row(),
+        )
+
     def test_copy_uses_only_visible_non_empty_cells(self):
         self._load()
         detail_item = self._item_for_kind(SUMMARY_NODE_AREA_DETAIL)
         self.tab.tree.setCurrentItem(detail_item)
         self.tab.copy_current_row()
         self.assertEqual(QtWidgets.QApplication.clipboard().text(), "L-0 FDN\t1\tEA")
+
+    def test_delete_current_row_emits_condition_delete_request(self):
+        self._load()
+        deleted = []
+        self.tab.delete_requested.connect(lambda uids: deleted.append(list(uids)))
+        self.tab.tree.setCurrentItem(self._item_for_kind(SUMMARY_NODE_MULTI_AREA_TOTAL))
+        self.tab.delete_current_row()
+        self.assertEqual(deleted, [["c1"]])
+
+    def test_main_window_summary_delete_routes_to_summary_tab(self):
+        calls = []
+        window = MainWindow.__new__(MainWindow)
+        window._handle_inline_text_shortcut = lambda _action: False
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_SUMMARY)
+        window._condition_summary_tab = SimpleNamespace(
+            delete_current_row=lambda: calls.append("summary-delete")
+        )
+        window.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: (_ for _ in ()).throw(
+                AssertionError("project delete should not be queried")
+            )
+        )
+        window.project_view = SimpleNamespace(
+            get_delete_replacement_selection_state=lambda: (_ for _ in ()).throw(
+                AssertionError("project tree delete should not run")
+            )
+        )
+        window.handlers = SimpleNamespace(
+            delete=SimpleNamespace(
+                delete_selected=lambda *_args: (_ for _ in ()).throw(
+                    AssertionError("bid delete should not run")
+                )
+            )
+        )
+        MainWindow._delete_selected(window)
+        self.assertEqual(calls, ["summary-delete"])
+
+    def test_main_window_summary_copy_routes_to_summary_tab(self):
+        calls = []
+        window = MainWindow.__new__(MainWindow)
+        window._handle_inline_text_shortcut = lambda _action: False
+        window.tab_widget = SimpleNamespace(currentIndex=lambda: TAB_INDEX_SUMMARY)
+        window._condition_summary_tab = SimpleNamespace(
+            copy_current_row=lambda: calls.append("summary-copy")
+        )
+        window.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: (_ for _ in ()).throw(
+                AssertionError("bid copy should not be queried")
+            )
+        )
+        window.ui_state_manager = SimpleNamespace(
+            get_selected_bid_refs=lambda: (_ for _ in ()).throw(
+                AssertionError("project selection should not be read")
+            )
+        )
+        window._bid_clipboard = SimpleNamespace(
+            copy=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("bid clipboard should not be used")
+            )
+        )
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(refresh_toolbar=lambda: None)
+        )
+        MainWindow._copy_selected(window)
+        self.assertEqual(calls, ["summary-copy"])
 
     def test_group_actions_are_checkable_and_request_rebuild(self):
         self._load()

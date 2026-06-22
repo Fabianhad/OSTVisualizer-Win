@@ -504,33 +504,28 @@ class PageLoaderMixin:
         self._sync_page_image_layer_visibility()
 
     def _set_low_res_base_item_visible(self, visible: bool) -> None:
-        background_item = getattr(self, "_background_item", None)
-        if background_item is not None and isValid(background_item):
-            background_item.setVisible(visible)
+        if self._background_item is not None and isValid(self._background_item):
+            self._background_item.setVisible(visible)
 
     def _page_image_layer_visible(self) -> bool:
-        page = getattr(self, "_current_page", None)
-        return bool(page is None or page.layer_visible)
+        return bool(self._current_page is None or self._current_page.layer_visible)
 
     def _has_loaded_page_visual_items(self) -> bool:
-        background_item = getattr(self, "_background_item", None)
-        if background_item is not None and isValid(background_item):
+        if self._background_item is not None and isValid(self._background_item):
             return True
-        visible_frame_item = getattr(self, "_visible_frame_item", None)
-        if visible_frame_item is not None and isValid(visible_frame_item):
+        if self._visible_frame_item is not None and isValid(self._visible_frame_item):
             return True
-        return any(isValid(item) for item in getattr(self, "_overlay_items", []))
+        return any(isValid(item) for item in self._overlay_items)
 
     def _sync_page_image_layer_visibility(self) -> None:
         visible = self._page_image_layer_visible()
         self._set_low_res_base_item_visible(visible)
         self._set_low_res_overlay_items_visible(visible)
-        visible_frame_item = getattr(self, "_visible_frame_item", None)
-        if visible_frame_item is not None and isValid(visible_frame_item):
-            visible_frame_item.setVisible(visible)
+        if self._visible_frame_item is not None and isValid(self._visible_frame_item):
+            self._visible_frame_item.setVisible(visible)
 
     def _set_low_res_overlay_items_visible(self, visible: bool) -> None:
-        for item in getattr(self, "_overlay_items", []):
+        for item in self._overlay_items:
             if isValid(item):
                 item.setVisible(visible)
 

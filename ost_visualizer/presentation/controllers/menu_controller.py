@@ -260,6 +260,7 @@ class MenuController:
         if not self.menu_bar:
             return
         takeoff_active = self.window.is_takeoff_tab_active()
+        summary_active = self._is_summary_tab_active()
         self._sync_variable_actions(takeoff_active)
         export_allowed = self.ui_access_manager.is_allowed(Feature.EXPORT)
         unload_enabled = self.ui_access_manager.is_allowed(Feature.UNLOAD_FILE)
@@ -280,7 +281,7 @@ class MenuController:
             )
         import_menu = self._menus.get("import")
         if import_menu:
-            import_menu.setEnabled(self._should_enable_import())
+            import_menu.setEnabled(not summary_active and self._should_enable_import())
         export_enabled = export_allowed and self._should_enable_export()
         bid_file_export_enabled = self.ui_access_manager.is_allowed(
             Feature.EXPORT_BID_FILE
@@ -640,9 +641,14 @@ class MenuController:
         )
 
     def _should_enable_import(self) -> bool:
+        if self._is_summary_tab_active():
+            return False
         if self.ui_state_manager.selected_project_uid == "1":
             return False
         return self.ui_access_manager.is_allowed(Feature.IMPORT)
+
+    def _is_summary_tab_active(self) -> bool:
+        return self.window.is_summary_tab_active()
 
     def _select_objects_in_current_area(self) -> None:
         if not self.window.is_takeoff_tab_active():
@@ -663,6 +669,8 @@ class MenuController:
         self.handlers.cover_sheet.open_cover_sheet()
 
     def _should_enable_project_tree_creation(self) -> bool:
+        if self._is_summary_tab_active():
+            return False
         return self.ui_access_manager.can_create_project_tree_items(
             self._resolve_project_tree_file_path() is not None
         )

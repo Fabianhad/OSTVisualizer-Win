@@ -25,12 +25,12 @@ from ..actions.action_ids import ACTION_COPY, ACTION_DELETE
 from ..config import COMPACT_SPACING, NO_MARGINS
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
-from ..utils.condition_icon import COLOR_BOX_SIZE, make_condition_color_icon
+from ..utils.condition_icon import make_condition_color_icon
+from ..utils.condition_tree_style import apply_condition_tree_style
 from ..utils.quantity_display import format_quantity_number
 
 _NODE_ROLE = QtCore.Qt.ItemDataRole.UserRole
 _COL_NUMBER = 0
-_BODY_ROW_VERTICAL_PADDING = 6
 _BASE_COLUMN_KEYS = [
     SUMMARY_COLUMN_NUMBER,
     SUMMARY_COLUMN_NAME,
@@ -79,6 +79,7 @@ _RIGHT_CELL_ALIGNMENT = (
 class ConditionSummaryTab(QtWidgets.QWidget):
     delete_requested = Signal(list)
     summary_ui_state_changed = Signal()
+    summary_action_state_changed = Signal()
 
     def __init__(self, parent: QtWidgets.QWidget | None = None, uom_label_fn=None):
         super().__init__(parent)
@@ -116,11 +117,12 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         self.tree.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
         )
-        self.tree.setUniformRowHeights(True)
-        self.tree.setIconSize(QtCore.QSize(COLOR_BOX_SIZE, COLOR_BOX_SIZE))
-        self.tree.setIndentation(12)
+        apply_condition_tree_style(self.tree)
         self.tree.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
+        self.tree.currentItemChanged.connect(
+            lambda _current, _previous: self.summary_action_state_changed.emit()
+        )
         header = self.tree.header()
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(30)
@@ -135,6 +137,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         self._root_node = None
         self._condition_items.clear()
         self.tree.clear()
+        self.summary_action_state_changed.emit()
 
     def refresh_view(self) -> None:
         if self._column_widths_initialized:
@@ -188,6 +191,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         finally:
             self.tree.setUpdatesEnabled(True)
         self.tree.viewport().update()
+        self.summary_action_state_changed.emit()
 
     def set_grouping_rebuild_callback(
         self, callback: Callable[[ConditionSummaryGrouping], None] | None
@@ -286,7 +290,6 @@ class ConditionSummaryTab(QtWidgets.QWidget):
             self._condition_items.setdefault(node.condition_uid, []).append(item)
         flags = QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
         item.setFlags(flags)
-        self._apply_body_row_size_hint(item)
         if node.kind in (SUMMARY_NODE_FOLDER, SUMMARY_NODE_GROUP):
             item.setText(_COL_NUMBER, node.label)
             item.setFirstColumnSpanned(True)
@@ -312,15 +315,6 @@ class ConditionSummaryTab(QtWidgets.QWidget):
                 self._grayscale or not node.layer_visible,
             ),
         )
-
-    def _apply_body_row_size_hint(self, item: QtWidgets.QTreeWidgetItem) -> None:
-        row_height = max(
-            self.tree.fontMetrics().height() + _BODY_ROW_VERTICAL_PADDING,
-            self.tree.iconSize().height() + _BODY_ROW_VERTICAL_PADDING,
-        )
-        size = QtCore.QSize(0, row_height)
-        for col in range(len(self._column_keys)):
-            item.setSizeHint(col, size)
 
     def _populate_value_columns(
         self, item: QtWidgets.QTreeWidgetItem, node: ConditionSummaryNode
@@ -445,14 +439,12 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         copy_action = menu.addAction("Copy")
         ShortcutManager.apply_to_action(copy_action, ACTION_COPY)
         IconManager.apply_to_action(copy_action, ACTION_COPY)
-        copy_action.setEnabled(
-            bool(node and node.copyable and self._copyable_text(item))
-        )
+        copy_action.setEnabled(self._can_copy_item(item))
         copy_action.triggered.connect(lambda _checked=False: self.copy_current_row())
         delete_action = menu.addAction("Delete")
         ShortcutManager.apply_to_action(delete_action, ACTION_DELETE)
         IconManager.apply_to_action(delete_action, ACTION_DELETE)
-        delete_action.setEnabled(bool(node and node.deletable and node.condition_uid))
+        delete_action.setEnabled(self._can_delete_node(node))
         delete_action.triggered.connect(lambda _checked=False: self._delete_node(node))
         menu.addSeparator()
         self._add_group_action(
@@ -503,11 +495,25 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         action.setChecked(checked)
         action.toggled.connect(callback)
 
+    def can_copy_current_row(self) -> bool:
+        return self._can_copy_item(self.tree.currentItem())
+
+    def can_delete_current_row(self) -> bool:
+        return self._can_delete_node(self._node_for_item(self.tree.currentItem()))
+
     def copy_current_row(self) -> None:
         item = self.tree.currentItem()
+        if not self._can_copy_item(item):
+            return
         text = self._copyable_text(item)
-        if text:
-            QtWidgets.QApplication.clipboard().setText(text)
+        QtWidgets.QApplication.clipboard().setText(text)
+
+    def delete_current_row(self) -> None:
+        self._delete_node(self._node_for_item(self.tree.currentItem()))
+
+    def _can_copy_item(self, item: QtWidgets.QTreeWidgetItem | None) -> bool:
+        node = self._node_for_item(item)
+        return bool(node and node.copyable and self._copyable_text(item))
 
     def _copyable_text(self, item: QtWidgets.QTreeWidgetItem | None) -> str:
         if item is None:
@@ -519,8 +525,12 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         ]
         return "\t".join(values)
 
+    @staticmethod
+    def _can_delete_node(node: ConditionSummaryNode | None) -> bool:
+        return bool(node and node.deletable and node.condition_uid)
+
     def _delete_node(self, node: ConditionSummaryNode | None) -> None:
-        if node and node.deletable and node.condition_uid:
+        if self._can_delete_node(node):
             self.delete_requested.emit([node.condition_uid])
 
     def _node_for_item(
