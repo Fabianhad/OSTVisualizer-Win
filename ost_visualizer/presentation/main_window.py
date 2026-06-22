@@ -114,6 +114,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._project_read_service = app_controller.get_service("project_read_service")
         self._export_service = app_controller.get_service("export_service")
+        self._summary_csv_export_service = app_controller.get_service(
+            "summary_csv_export_service"
+        )
         self._infrastructure_provider = app_controller.get_service(
             "infrastructure_provider"
         )
@@ -498,6 +501,7 @@ class MainWindow(QtWidgets.QMainWindow):
             window=self,
             config_model=self._config_model,
             export_service=self._export_service,
+            summary_csv_export_service=self._summary_csv_export_service,
             project_data_service=self._project_data_service,
             pdf_exporter=self._pdf_exporter,
             ost_exporter=self._ost_exporter,

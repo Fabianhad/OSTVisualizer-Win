@@ -11,6 +11,7 @@ from ..services.config_service import ConfigService
 from ..services.export_service import ExportService
 from ..services.file_loading_service import FileLoadingService
 from ..services.import_service import ImportService
+from ..services.summary_csv_export_service import SummaryCsvExportService
 from ..services.update_check_service import UpdateCheckService
 from ..services.visualization_service import VisualizationService
 from ..services.working_directory_service import WorkingDirectoryService
@@ -126,6 +127,13 @@ class ServiceBuilder:
             lambda: ExportService(
                 visualization_provider,
                 project_data_service,
+            ),
+        )
+        self.container.register_singleton(
+            "summary_csv_export_service",
+            lambda: SummaryCsvExportService(
+                project_data_service,
+                project_read_service,
             ),
         )
         api_client = license_api_client

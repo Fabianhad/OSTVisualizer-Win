@@ -430,7 +430,9 @@ class ConditionSummaryService:
         return ConditionSummaryValues(
             number=str(condition.ref_no) if condition.ref_no else "",
             name=condition.name or "",
+            type_name=condition.cdn_type_name or SUMMARY_UNASSIGNED_LABEL,
             height=inches_to_display(float(condition.height or 0.0), metric),
+            height_inches=float(condition.height or 0.0),
             area=area_label,
             quantity1=quantities[0],
             uom1=condition.uom1,

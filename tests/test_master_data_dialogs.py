@@ -156,21 +156,20 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         try:
             areas = BidAreasDialog(FakeIconProvider(), bid_areas=[self._area()])
             dialogs.append(areas)
-            self._assert_row_height(areas.tree.topLevelItem(0), areas.tree.columnCount())
-
+            self._assert_row_height(
+                areas.tree.topLevelItem(0), areas.tree.columnCount()
+            )
             condition_types = self._condition_types_dialog()
             dialogs.append(condition_types)
             self._assert_row_height(
                 condition_types.tree.topLevelItem(0),
                 condition_types.tree.columnCount(),
             )
-
             employees = self._employee_dialog()
             dialogs.append(employees)
             self._assert_row_height(
                 employees.tree.topLevelItem(0), employees.tree.columnCount()
             )
-
             layers = LayersDialog(
                 FakeIconProvider(),
                 layers=[self._layer("layer-1", "Layer 1", 1)],
@@ -179,21 +178,18 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self._assert_row_height(
                 layers.tree.topLevelItem(0), layers.tree.columnCount()
             )
-
             sidebar = BidLayersSidebar(None)
             sidebar.load_layers([self._layer("layer-1", "Layer 1", 1)])
             self._assert_row_height(
                 sidebar._table.topLevelItem(0),
                 sidebar._table.columnCount(),
             )
-
             job_statuses = self._job_status_dialog_with_save(lambda _changes: {})
             dialogs.append(job_statuses)
             self._assert_row_height(
                 job_statuses.tree.topLevelItem(0),
                 job_statuses.tree.columnCount(),
             )
-
             payroll = PayrollClassListDialog(
                 FakeIconProvider(),
                 pay_classes=[PayClass(uid="pay-1", name="Regular")],
@@ -202,7 +198,6 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self._assert_row_height(
                 payroll.tree.topLevelItem(0), payroll.tree.columnCount()
             )
-
             open_files = OpenFilesDialog(
                 FakeIconProvider(),
                 None,

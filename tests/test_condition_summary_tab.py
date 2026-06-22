@@ -217,9 +217,7 @@ class ConditionSummaryServiceTests(unittest.TestCase):
         self.conditions = {
             "c2": Condition(uid="c2", name="Unused", folder_uid="f2", ref_no=2)
         }
-        self.folders = {
-            "f2": BidConditionFolder(uid="f2", name="UNUSED FOLDER")
-        }
+        self.folders = {"f2": BidConditionFolder(uid="f2", name="UNUSED FOLDER")}
         root = self._build(takeoffs=[])
         self.assertEqual(root.children, [])
 
@@ -849,9 +847,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._deferred_persistence = SimpleNamespace(
             flush_for_file=lambda _file_path: True
         )
-        coordinator._nav = SimpleNamespace(
-            start_refresh=lambda *_args, **_kwargs: True
-        )
+        coordinator._nav = SimpleNamespace(start_refresh=lambda *_args, **_kwargs: True)
         coordinator.ui_state_manager = SimpleNamespace(selected_area_uid="")
         coordinator._placement = SimpleNamespace()
         coordinator._do_file_refresh = lambda: None
@@ -970,7 +966,6 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         )
         coordinator.main_window = SimpleNamespace(project_view=FakeProjectView())
         coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
-
         UIEventCoordinator._finish_refresh(coordinator)
         self.assertEqual(fake_sidebar.loads, 1)
         self.assertGreater(tab.tree.topLevelItemCount(), 0)

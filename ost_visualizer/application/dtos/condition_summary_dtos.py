@@ -56,7 +56,9 @@ class ConditionSummaryGrouping:
 class ConditionSummaryValues:
     number: str = ""
     name: str = ""
+    type_name: str = ""
     height: str = ""
+    height_inches: float = 0.0
     area: str = ""
     quantity1: float = 0.0
     uom1: int = 0

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 PDF_EXTENSION = ".pdf"
+CSV_EXTENSION = ".csv"
 TIF_EXTENSION = ".tif"
 TIFF_EXTENSION = ".tiff"
 TIFF_EXTENSIONS = frozenset({TIF_EXTENSION, TIFF_EXTENSION})
@@ -20,6 +21,10 @@ def _suffix_from_value(value) -> str:
 
 def is_pdf_suffix(value) -> bool:
     return _suffix_from_value(value) == PDF_EXTENSION
+
+
+def is_csv_suffix(value) -> bool:
+    return _suffix_from_value(value) == CSV_EXTENSION
 
 
 def is_tiff_suffix(value) -> bool:

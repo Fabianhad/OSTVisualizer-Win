@@ -2,7 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from ost_visualizer.application.dtos.export_dto import ExportResultDto
+from ost_visualizer.application.dtos.condition_summary_dtos import (
+    ConditionSummaryGrouping,
+)
+from ost_visualizer.application.dtos.export_dto import (
+    ExportErrorCode,
+    ExportResultDto,
+)
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.handlers import export_handler as export_handler_module
@@ -46,6 +52,23 @@ class _FakeDeferredPersistence:
         return self.result
 
 
+def _make_export_handler(**overrides):
+    kwargs = {
+        "window": None,
+        "config_model": SimpleNamespace(),
+        "export_service": SimpleNamespace(),
+        "summary_csv_export_service": SimpleNamespace(),
+        "project_data_service": SimpleNamespace(),
+        "pdf_exporter": SimpleNamespace(),
+        "ost_exporter": SimpleNamespace(),
+        "osp_exporter": SimpleNamespace(),
+        "mdb_file_parser": SimpleNamespace(),
+        "deferred_persistence_manager": _FakeDeferredPersistence(),
+    }
+    kwargs.update(overrides)
+    return ExportHandler(**kwargs)
+
+
 def _capture_pdf_default_filename(page_names):
     captured = {}
     original_get_save = export_handler_module.QtWidgets.QFileDialog.getSaveFileName
@@ -58,16 +81,8 @@ def _capture_pdf_default_filename(page_names):
         fake_get_save_file_name
     )
     try:
-        handler = ExportHandler(
-            window=None,
-            config_model=SimpleNamespace(),
-            export_service=SimpleNamespace(),
+        handler = _make_export_handler(
             project_data_service=_FakeProjectData(page_names),
-            pdf_exporter=SimpleNamespace(),
-            ost_exporter=SimpleNamespace(),
-            osp_exporter=SimpleNamespace(),
-            mdb_file_parser=SimpleNamespace(),
-            deferred_persistence_manager=_FakeDeferredPersistence(),
         )
         handler.export_as_pdf(
             [f"page-{index}" for index in range(1, len(page_names) + 1)]
@@ -80,19 +95,12 @@ def _capture_pdf_default_filename(page_names):
 class ExportHandlerPdfFilenameTests(unittest.TestCase):
     def test_pdf_export_stops_when_deferred_persistence_flush_fails(self):
         deferred = _FakeDeferredPersistence(result=False)
-        handler = ExportHandler(
-            window=None,
-            config_model=SimpleNamespace(),
-            export_service=SimpleNamespace(),
+        handler = _make_export_handler(
             project_data_service=SimpleNamespace(
                 get_bid_conditions=lambda: self.fail(
                     "export should not read project data after failed flush"
                 )
             ),
-            pdf_exporter=SimpleNamespace(),
-            ost_exporter=SimpleNamespace(),
-            osp_exporter=SimpleNamespace(),
-            mdb_file_parser=SimpleNamespace(),
             deferred_persistence_manager=deferred,
         )
         handler.export_as_pdf(["page-1"])
@@ -122,6 +130,84 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         filename = _capture_pdf_default_filename(["S-100.pdf", "S-101.pdf"])
         self.assertEqual(
             filename, "25-051 Marriott Element, Capel Hill, NC - 2 Pages.pdf"
+        )
+
+    def test_summary_csv_export_uses_current_grouping_and_appends_extension(self):
+        grouping = ConditionSummaryGrouping(by_type=True, by_area=True)
+        calls = []
+        infos = []
+        original_get_save = export_handler_module.QtWidgets.QFileDialog.getSaveFileName
+        original_show_info = export_handler_module.show_info
+
+        def fake_get_save_file_name(_window, title, default_filename, filter_str):
+            self.assertEqual(title, "Export Summary as CSV")
+            self.assertEqual(default_filename, "Bid Summary.csv")
+            self.assertEqual(filter_str, "CSV Files (*.csv);;All Files (*.*)")
+            return r"C:\tmp\summary", ""
+
+        export_handler_module.QtWidgets.QFileDialog.getSaveFileName = (
+            fake_get_save_file_name
+        )
+        export_handler_module.show_info = lambda _window, title, message: infos.append(
+            (title, message)
+        )
+        try:
+            service = SimpleNamespace(
+                default_filename=lambda: "Bid Summary.csv",
+                export_current_summary=lambda used_grouping, filename: calls.append(
+                    (used_grouping, filename)
+                )
+                or ExportResultDto(success=True, format_name="Summary CSV"),
+            )
+            handler = _make_export_handler(
+                window=SimpleNamespace(get_summary_grouping=lambda: grouping),
+                summary_csv_export_service=service,
+            )
+            handler.export_summary_csv()
+        finally:
+            export_handler_module.QtWidgets.QFileDialog.getSaveFileName = (
+                original_get_save
+            )
+            export_handler_module.show_info = original_show_info
+        self.assertEqual(calls, [(grouping, r"C:\tmp\summary.csv")])
+        self.assertEqual(infos[0][0], "Export Complete")
+
+    def test_summary_csv_export_reports_empty_data_as_warning(self):
+        warnings = []
+        original_get_save = export_handler_module.QtWidgets.QFileDialog.getSaveFileName
+        original_show_warning = export_handler_module.show_warning
+        export_handler_module.QtWidgets.QFileDialog.getSaveFileName = lambda *_args: (
+            r"C:\tmp\summary.csv",
+            "",
+        )
+        export_handler_module.show_warning = (
+            lambda _window, title, message: warnings.append((title, message))
+        )
+        try:
+            service = SimpleNamespace(
+                default_filename=lambda: "Bid Summary.csv",
+                export_current_summary=lambda _grouping, _filename: ExportResultDto(
+                    success=False,
+                    format_name="Summary CSV",
+                    error_message="No summary rows are available to export.",
+                    error_code=ExportErrorCode.NO_DATA,
+                ),
+            )
+            handler = _make_export_handler(
+                window=SimpleNamespace(
+                    get_summary_grouping=lambda: ConditionSummaryGrouping()
+                ),
+                summary_csv_export_service=service,
+            )
+            handler.export_summary_csv()
+        finally:
+            export_handler_module.QtWidgets.QFileDialog.getSaveFileName = (
+                original_get_save
+            )
+            export_handler_module.show_warning = original_show_warning
+        self.assertEqual(
+            warnings,
+            [("No Data", "No summary rows are available to export.")],
         )
 
 

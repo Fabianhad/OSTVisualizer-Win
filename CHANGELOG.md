@@ -18,6 +18,7 @@
 - Added shared toolbar/menu/context-menu/Annotation Window placement tools for named views, hotlinks, text, highlight, line, arrow, rectangle, oval, polygon, cloud, and ink annotations, including click-point and click-drag Polygon/Cloud placement plus freehand Ink placement.
 - Added persisted per-tool annotation defaults, with shape color/line-width controls plus text and dimension font controls for newly placed annotations.
 - Added a Move Overlay Image toolbar action with separated red/base and blue/overlay live preview, preserving OST `OverlayRect` placement for PlanView and PDF export.
+- Added Summary CSV export from the current Summary grouping, matching OST-style flat CSV output.
 
 ### Changed
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.

@@ -8,7 +8,12 @@ from ...application.dtos.export_dto import (
     ExportResultDto,
 )
 from ...application.dtos.page_export_data_dto import PageExportData
-from ...domain.entities.file_extensions import PDF_EXTENSION, is_pdf_suffix
+from ...domain.entities.file_extensions import (
+    CSV_EXTENSION,
+    PDF_EXTENSION,
+    is_csv_suffix,
+    is_pdf_suffix,
+)
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.messagebox import show_critical, show_info, show_warning
 
@@ -27,6 +32,7 @@ class ExportHandler:
         window,
         config_model,
         export_service,
+        summary_csv_export_service,
         project_data_service,
         pdf_exporter,
         ost_exporter,
@@ -37,6 +43,7 @@ class ExportHandler:
         self.window = window
         self.config_model = config_model
         self.export_service = export_service
+        self.summary_csv_export_service = summary_csv_export_service
         self.project_data = project_data_service
         self.pdf_exporter = pdf_exporter
         self.ost_exporter = ost_exporter
@@ -164,6 +171,47 @@ class ExportHandler:
                 "Export Error",
                 "An unexpected error occurred while exporting the PDF. Please try again or choose a different destination.",
             )
+
+    def export_summary_csv(self) -> None:
+        if not self._flush_deferred_persistence():
+            return
+        default_filename = self.summary_csv_export_service.default_filename()
+        if not is_csv_suffix(default_filename):
+            default_filename = f"{default_filename}{CSV_EXTENSION}"
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self.window,
+            "Export Summary as CSV",
+            default_filename,
+            "CSV Files (*.csv);;All Files (*.*)",
+        )
+        if not filename:
+            return
+        if not is_csv_suffix(filename):
+            filename = f"{filename}{CSV_EXTENSION}"
+        grouping = self.window.get_summary_grouping()
+        result = self.summary_csv_export_service.export_current_summary(
+            grouping,
+            filename,
+        )
+        if result.success:
+            show_info(
+                self.window,
+                "Export Complete",
+                f"Successfully exported Summary to {filename}",
+            )
+            return
+        if result.error_code == ExportErrorCode.NO_DATA:
+            show_warning(
+                self.window,
+                "No Data",
+                result.error_message or "No summary rows are available to export.",
+            )
+            return
+        show_critical(
+            self.window,
+            "Export Error",
+            f"Error creating Summary CSV export: {result.error_message}",
+        )
 
     def export_as_ost(self) -> None:
         if not self._flush_deferred_persistence():

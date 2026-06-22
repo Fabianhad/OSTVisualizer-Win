@@ -144,6 +144,7 @@ class MenuController:
             "export_as_pdf": lambda: self.handlers.export.export_as_pdf(
                 self.project_data.get_selected_page_uids()
             ),
+            "export_summary_csv": lambda: self.handlers.export.export_summary_csv(),
             "export_as_ost": lambda: self.handlers.export.export_as_ost(),
             "export_as_osp": lambda: self.handlers.export.export_as_osp(),
             ACTION_SET_TAKEOFF_COLOR_MODE: self._set_takeoff_color_mode,
@@ -284,9 +285,14 @@ class MenuController:
         bid_file_export_enabled = self.ui_access_manager.is_allowed(
             Feature.EXPORT_BID_FILE
         )
+        summary_csv_enabled = (
+            export_allowed and self._should_enable_summary_csv_export()
+        )
         export_menu = self._menus.get("export")
         if export_menu:
-            export_menu.setEnabled(export_enabled or bid_file_export_enabled)
+            export_menu.setEnabled(
+                export_enabled or summary_csv_enabled or bid_file_export_enabled
+            )
         for fmt in self._export_formats:
             action = self._actions.get(f"export_as_{fmt}")
             if action:
@@ -295,6 +301,9 @@ class MenuController:
         if pdf_action:
             pdf_enabled = export_allowed and self._should_enable_pdf_export()
             pdf_action.setEnabled(pdf_enabled)
+        summary_csv_action = self._actions.get("export_summary_csv")
+        if summary_csv_action:
+            summary_csv_action.setEnabled(summary_csv_enabled)
         ost_action = self._actions.get("export_as_ost")
         if ost_action:
             ost_action.setEnabled(bid_file_export_enabled)
@@ -622,6 +631,13 @@ class MenuController:
             if is_tiff_suffix(current_page.image_path):
                 return False
         return True
+
+    def _should_enable_summary_csv_export(self) -> bool:
+        return bool(
+            self.project_data.get_current_bid_ref()
+            and self.project_data.get_bid_conditions()
+            and self.project_data.get_all_takeoffs()
+        )
 
     def _should_enable_import(self) -> bool:
         if self.ui_state_manager.selected_project_uid == "1":
