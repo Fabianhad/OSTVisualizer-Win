@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.update_condition_dto import UpdateConditionDto, UpdateConditionResultDto
@@ -113,10 +113,17 @@ class WriteReloadResult:
     value: object = None
     write_success: bool = False
     reload_success: bool = False
+    failure_reason: Optional[str] = None
+    blocked_uids: List[str] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
-        return self.write_success and self.reload_success
+        return (
+            self.write_success
+            and self.reload_success
+            and not self.failure_reason
+            and not self.blocked_uids
+        )
 
     @property
     def refresh_failed(self) -> bool:
@@ -124,6 +131,13 @@ class WriteReloadResult:
 
     def __bool__(self) -> bool:
         return self.success
+
+
+@dataclass
+class DeleteValidationResult:
+    requested_uids: List[str] = field(default_factory=list)
+    blocked_uids: List[str] = field(default_factory=list)
+    failure_reason: Optional[str] = None
 
 
 class ProjectWriteService(BaseWriteService):
@@ -183,12 +197,16 @@ class ProjectWriteService(BaseWriteService):
         event_bus=None,
         logger=None,
         bid_write_guard: Optional[ActiveBidWriteGuard] = None,
+        project_data_service=None,
+        condition_type_uids_in_use_provider: Optional[Callable[[str], set]] = None,
     ) -> None:
         if bid_write_guard is None:
             raise ValueError("ProjectWriteService requires bid_write_guard")
         super().__init__(reload_database, event_bus, logger)
         self._bid_write_guard = bid_write_guard
         self._connection_manager = connection_manager
+        self._project_data = project_data_service
+        self._condition_type_uids_in_use_provider = condition_type_uids_in_use_provider
         self._delete_bids = delete_bids
         self._delete_projects = delete_projects
         self._create_project = create_project
@@ -416,15 +434,79 @@ class ProjectWriteService(BaseWriteService):
         success = self._rename_condition_folder.execute(db_path, folder_uid, name)
         return self._reload_after_success(db_path, success)
 
-    def delete_condition_folders(self, db_path: str, folder_uids: List[str]) -> bool:
+    def validate_condition_folder_delete(
+        self, db_path: str, bid_uid: str, folder_uids: List[str]
+    ) -> DeleteValidationResult:
+        requested = [str(uid) for uid in (folder_uids or [])]
+        blocked = self._condition_folder_uids_in_use(requested)
+        return DeleteValidationResult(
+            requested_uids=requested,
+            blocked_uids=blocked,
+            failure_reason="condition_folder_in_use" if blocked else None,
+        )
+
+    def delete_condition_folders_result(
+        self, db_path: str, bid_uid: str, folder_uids: List[str]
+    ) -> WriteReloadResult:
         if not folder_uids:
-            return True
+            return WriteReloadResult([], write_success=True, reload_success=True)
         if self._bid_write_guard.blocks_active_locked_bid_write(
-            "delete_condition_folders", db_path
+            "delete_condition_folders", db_path, bid_uid
         ):
-            return False
-        success = self._delete_condition_folders.execute(db_path, folder_uids)
-        return self._reload_after_success(db_path, success)
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        validation = self.validate_condition_folder_delete(
+            db_path, bid_uid, folder_uids
+        )
+        blocked = set(validation.blocked_uids)
+        deletable_uids = [
+            uid for uid in validation.requested_uids if uid not in blocked
+        ]
+        if not deletable_uids:
+            return WriteReloadResult(
+                None,
+                write_success=False,
+                reload_success=False,
+                failure_reason=validation.failure_reason,
+                blocked_uids=validation.blocked_uids,
+            )
+        success = self._delete_condition_folders.execute(db_path, deletable_uids)
+        reload_success = self.reload_and_notify(db_path) if success else False
+        return WriteReloadResult(
+            deletable_uids,
+            write_success=success,
+            reload_success=reload_success,
+            failure_reason=validation.failure_reason,
+            blocked_uids=validation.blocked_uids,
+        )
+
+    def delete_condition_folders(self, db_path: str, folder_uids: List[str]) -> bool:
+        bid_uid = ""
+        if self._project_data is not None:
+            bid_ref = self._project_data.get_current_bid_ref()
+            bid_uid = bid_ref.bid_uid if bid_ref else ""
+        result = self.delete_condition_folders_result(db_path, bid_uid, folder_uids)
+        return result.success
+
+    def _condition_folder_uids_in_use(self, folder_uids: List[str]) -> List[str]:
+        if self._project_data is None:
+            return []
+        folders = self._project_data.get_bid_condition_folders()
+        folder_keys = {str(uid) for uid in folders}
+        selected = {str(uid) for uid in folder_uids}
+        parent_by_uid = {
+            str(uid): str(folder.parent_uid) if folder.parent_uid else None
+            for uid, folder in folders.items()
+        }
+        blocked: set[str] = set()
+        for condition in self._project_data.get_bid_conditions().values():
+            current = str(condition.folder_uid) if condition.folder_uid else None
+            if current not in folder_keys:
+                continue
+            while current:
+                if current in selected:
+                    blocked.add(current)
+                current = parent_by_uid.get(current)
+        return [uid for uid in folder_uids if uid in blocked]
 
     def duplicate_conditions(
         self, db_path: str, bid_uid: str, condition_uids: list
@@ -1000,21 +1082,82 @@ class ProjectWriteService(BaseWriteService):
         result = self.save_condition_types_result(db_path, changes)
         return result.value if result.success else None
 
+    def validate_condition_types_delete(
+        self, db_path: str, condition_type_uids: List[str]
+    ) -> DeleteValidationResult:
+        requested = [str(uid) for uid in (condition_type_uids or [])]
+        used_uids = self._condition_type_uids_in_use(db_path)
+        blocked = [uid for uid in requested if uid in used_uids]
+        return DeleteValidationResult(
+            requested_uids=requested,
+            blocked_uids=blocked,
+            failure_reason="condition_type_in_use" if blocked else None,
+        )
+
+    def delete_condition_types_result(
+        self, db_path: str, condition_type_uids: List[str]
+    ) -> WriteReloadResult:
+        return self.save_condition_types_result(
+            db_path,
+            {"new": [], "updated": [], "deleted_uids": list(condition_type_uids or [])},
+        )
+
     def save_condition_types_result(
         self, db_path: str, changes: dict
     ) -> WriteReloadResult:
-        result = self._save_condition_types.execute(db_path, changes)
-        if result is None or result is False:
-            return WriteReloadResult(None, write_success=False, reload_success=False)
+        changes_to_write = dict(changes or {})
+        deleted_uids = [
+            str(uid) for uid in (changes_to_write.get("deleted_uids") or [])
+        ]
+        validation = self.validate_condition_types_delete(db_path, deleted_uids)
+        blocked = set(validation.blocked_uids)
+        changes_to_write["deleted_uids"] = [
+            uid for uid in validation.requested_uids if uid not in blocked
+        ]
         has_changes = any(
-            changes.get(key) for key in ("new", "updated", "deleted_uids")
+            changes_to_write.get(key) for key in ("new", "updated", "deleted_uids")
         )
+        if not has_changes and validation.blocked_uids:
+            return WriteReloadResult(
+                None,
+                write_success=False,
+                reload_success=False,
+                failure_reason=validation.failure_reason,
+                blocked_uids=validation.blocked_uids,
+            )
+        result = self._save_condition_types.execute(db_path, changes_to_write)
+        if result is None or result is False:
+            return WriteReloadResult(
+                None,
+                write_success=False,
+                reload_success=False,
+                failure_reason=validation.failure_reason,
+                blocked_uids=validation.blocked_uids,
+            )
         reload_success = self.reload_and_notify(db_path) if has_changes else True
         return WriteReloadResult(
             result,
             write_success=True,
             reload_success=reload_success,
+            failure_reason=validation.failure_reason,
+            blocked_uids=validation.blocked_uids,
         )
+
+    def _condition_type_uids_in_use(self, db_path: str) -> set[str]:
+        if self._condition_type_uids_in_use_provider is None:
+            return set()
+        try:
+            return {
+                str(uid)
+                for uid in self._condition_type_uids_in_use_provider(db_path)
+                if uid is not None
+            }
+        except Exception:
+            self.logger.warning(
+                "Failed to validate condition type usage before delete",
+                exc_info=True,
+            )
+            return set()
 
     def save_bid_areas(self, db_path: str, bid_uid: str, changes) -> Optional[dict]:
         result = self.save_bid_areas_result(db_path, bid_uid, changes)

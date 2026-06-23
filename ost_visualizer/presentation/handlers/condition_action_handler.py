@@ -18,6 +18,7 @@ from ..utils.messagebox import (
     DB_LOCKED_HINT,
     confirm,
     confirm_delete_conditions,
+    confirm_multi_delete,
     show_warning,
 )
 from ..utils.ost_blocking import exec_with_ost_blocking
@@ -134,6 +135,26 @@ class ConditionActionHandler:
             "condition types.",
         )
 
+    def _blocked_condition_type_delete_uids_from_dialog(
+        self, bid_ref, write_service, condition_type_uids: list
+    ):
+        result = write_service.validate_condition_types_delete(
+            bid_ref.file_path, condition_type_uids
+        )
+        return {str(uid) for uid in result.blocked_uids}
+
+    def _delete_condition_types_from_dialog(
+        self, bid_ref, write_service, condition_type_uids: list
+    ):
+        if not self._flush_deferred_for_bid(bid_ref):
+            return None
+        result = write_service.delete_condition_types_result(
+            bid_ref.file_path, condition_type_uids
+        )
+        if result.refresh_failed:
+            self._warn_condition_type_refresh_failed()
+        return result
+
     def on_create_requested(self, folder_uid: str = "") -> None:
         if not self._coordinator.ui_access_manager.is_allowed(Feature.EDIT_CONDITION):
             return
@@ -150,8 +171,13 @@ class ConditionActionHandler:
         reload_condition_types = lambda: list(
             self._read_service.get_cdn_types(bid_ref.file_path).values()
         )
-        condition_type_uids_in_use = (
-            lambda: self._read_service.get_condition_type_uids_in_use(bid_ref.file_path)
+        blocked_condition_type_delete_uids = lambda uids: (
+            self._blocked_condition_type_delete_uids_from_dialog(
+                bid_ref, write_service, uids
+            )
+        )
+        delete_condition_types = lambda uids: (
+            self._delete_condition_types_from_dialog(bid_ref, write_service, uids)
         )
         all_layers = self._read_service.get_merged_bid_layers(
             bid_ref.file_path, bid_ref.bid_uid
@@ -258,7 +284,8 @@ class ConditionActionHandler:
             save_fn=save_new_condition,
             condition_type_save_fn=save_condition_types,
             condition_type_reload_fn=reload_condition_types,
-            condition_type_used_uids_fn=condition_type_uids_in_use,
+            condition_type_blocked_delete_uids_fn=blocked_condition_type_delete_uids,
+            condition_type_delete_fn=delete_condition_types,
             **self._layer_dialog_callbacks(bid_ref, write_service),
             read_service=self._read_service,
             read_only=False,
@@ -580,8 +607,28 @@ class ConditionActionHandler:
             return
         if not self._flush_deferred_for_bid(bid_ref):
             return
-        success = write_service.delete_condition_folders(bid_ref.file_path, folder_uids)
-        if not success:
+        validation = write_service.validate_condition_folder_delete(
+            bid_ref.file_path, bid_ref.bid_uid, folder_uids
+        )
+        folder_names = {
+            str(uid): folder.name
+            for uid, folder in self._project_data.get_bid_condition_folders().items()
+        }
+        items = [
+            (folder_names.get(str(uid), str(uid)), str(uid)) for uid in folder_uids
+        ]
+        to_delete = confirm_multi_delete(
+            self._coordinator.conditions_sidebar.window(),
+            "Delete Folder",
+            items,
+            set(validation.blocked_uids),
+        )
+        if not to_delete:
+            return
+        result = write_service.delete_condition_folders_result(
+            bid_ref.file_path, bid_ref.bid_uid, [uid for _, uid in to_delete]
+        )
+        if not result.write_success:
             logger.warning("Failed to delete condition folders %s", folder_uids)
 
     def on_move_condition_to_folder(self, condition_uid: str, folder_uid: str) -> None:
@@ -690,8 +737,13 @@ class ConditionActionHandler:
         reload_condition_types = lambda: list(
             self._read_service.get_cdn_types(bid_ref.file_path).values()
         )
-        condition_type_uids_in_use = (
-            lambda: self._read_service.get_condition_type_uids_in_use(bid_ref.file_path)
+        blocked_condition_type_delete_uids = lambda uids: (
+            self._blocked_condition_type_delete_uids_from_dialog(
+                bid_ref, write_service, uids
+            )
+        )
+        delete_condition_types = lambda uids: (
+            self._delete_condition_types_from_dialog(bid_ref, write_service, uids)
         )
         all_bid_layers = self._read_service.get_merged_bid_layers(
             bid_ref.file_path, bid_ref.bid_uid
@@ -740,7 +792,8 @@ class ConditionActionHandler:
             save_fn=save_condition,
             condition_type_save_fn=save_condition_types,
             condition_type_reload_fn=reload_condition_types,
-            condition_type_used_uids_fn=condition_type_uids_in_use,
+            condition_type_blocked_delete_uids_fn=blocked_condition_type_delete_uids,
+            condition_type_delete_fn=delete_condition_types,
             **self._layer_dialog_callbacks(bid_ref, write_service),
             read_service=self._read_service,
             read_only=bid_locked,

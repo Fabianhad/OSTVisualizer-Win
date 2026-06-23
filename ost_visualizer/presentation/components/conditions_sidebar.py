@@ -13,7 +13,7 @@ from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..utils.condition_icon import make_condition_color_icon
 from ..utils.condition_tree_style import apply_condition_tree_style
-from ..utils.messagebox import confirm_multi_delete, show_warning
+from ..utils.messagebox import show_warning
 from ..utils.quantity_display import format_quantity_with_uom
 
 _ITEM_ROLE = QtCore.Qt.ItemDataRole.UserRole
@@ -141,7 +141,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._available_layers: List[BidLayer] = []
         self._available_condition_types: List[CdnType] = []
         self._selected_folder_uids: List[str] = []
-        self._non_empty_folder_uids: Set[str] = set()
         self._pending_folder_edit_uid: Optional[str] = None
         self._pending_condition_select_uid: Optional[str] = None
         self._block_item_changed: bool = False
@@ -397,14 +396,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
         children_by_parent: Dict[Optional[str], List[BidConditionFolder]] = defaultdict(
             list
         )
-        parent_by_uid: Dict[str, Optional[str]] = {}
         for folder in self._folders.values():
             parent = folder.parent_uid if folder.parent_uid in self._folders else None
             children_by_parent[parent].append(folder)
-            parent_by_uid[folder.uid] = parent
-        self._non_empty_folder_uids = self._compute_non_empty_folder_uids(
-            conds_by_folder, parent_by_uid, None, self._folders
-        )
         self._build_folder_tree(
             root, children_by_parent, conds_by_folder, None, self._grayscale
         )
@@ -1348,39 +1342,12 @@ class ConditionsSidebar(QtWidgets.QWidget):
     def _request_folder_delete(self) -> None:
         if not self._delete_allowed:
             return
-        items: List[Tuple[str, str]] = []
-        for uid in self._selected_folder_uids:
-            folder_item = self._folder_items.get(uid)
-            if folder_item is None:
-                continue
-            items.append((folder_item.text(_COL_NO), uid))
-        if not items:
+        folder_uids = [
+            uid for uid in self._selected_folder_uids if uid in self._folder_items
+        ]
+        if not folder_uids:
             return
-        to_delete = confirm_multi_delete(
-            self, "Delete Folder", items, self._non_empty_folder_uids
-        )
-        if not to_delete:
-            return
-        self.folder_delete_requested.emit([uid for _, uid in to_delete])
-
-    def _compute_non_empty_folder_uids(
-        self,
-        conds_by_folder: Dict[Optional[str], List[Condition]],
-        parent_by_uid: Dict[str, Optional[str]],
-        fallback_folder_uid: Optional[str],
-        folders: Dict[str, BidConditionFolder],
-    ) -> Set[str]:
-        non_empty: Set[str] = set()
-        for cond in self._conditions.values():
-            fuid = cond.folder_uid
-            effective = fuid if (fuid and fuid in folders) else fallback_folder_uid
-            current = effective
-            while current is not None:
-                if current in non_empty:
-                    break
-                non_empty.add(current)
-                current = parent_by_uid.get(current)
-        return non_empty
+        self.folder_delete_requested.emit(folder_uids)
 
     def _on_condition_folder_move(self, condition_uid: str, folder_uid: str) -> None:
         self.condition_folder_move_requested.emit(condition_uid, folder_uid)
@@ -1403,7 +1370,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._selected_folder_uids = []
         self._copied_condition_uids = []
         self._condition_clipboard_cut = False
-        self._non_empty_folder_uids = set()
         self._create_allowed = False
         self._create_folder_allowed = False
         self._duplicate_allowed = False

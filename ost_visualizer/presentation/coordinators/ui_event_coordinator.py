@@ -1149,12 +1149,16 @@ class UIEventCoordinator:
             condition_types=list(
                 self._project_read_service.get_cdn_types(file_path).values()
             ),
-            used_uids=self._project_read_service.get_condition_type_uids_in_use(
-                file_path
-            ),
             save_fn=lambda changes: self._save_master_condition_types(
                 file_path, changes
             ),
+            blocked_delete_uids_fn=lambda uids: {
+                str(uid)
+                for uid in self._project_write_service.validate_condition_types_delete(
+                    file_path, uids
+                ).blocked_uids
+            },
+            delete_fn=lambda uids: self._delete_master_condition_types(file_path, uids),
             reload_fn=lambda: list(
                 self._project_read_service.get_cdn_types(file_path).values()
             ),
@@ -1225,6 +1229,22 @@ class UIEventCoordinator:
                 "condition types.",
             )
         return result.value
+
+    def _delete_master_condition_types(self, file_path: str, uids: list):
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
+            return None
+        result = self._project_write_service.delete_condition_types_result(
+            file_path, uids
+        )
+        if result.refresh_failed:
+            show_warning(
+                self.main_window,
+                "Refresh Error",
+                "The condition type changes were saved, but the condition type list "
+                "could not be refreshed. Reopen the database to see the latest "
+                "condition types.",
+            )
+        return result
 
     def _resolve_master_data_file_path(self) -> Optional[str]:
         return self.main_window.get_selected_database_context_file_path()

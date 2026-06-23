@@ -719,6 +719,37 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_condition_type_delete_uses_shared_validation_for_blocked_uids(self):
+        validate_calls = []
+        delete_calls = []
+        dialog = ConditionTypesDialog(
+            FakeIconProvider(),
+            condition_types=[CdnType(uid="type-1", name="Concrete")],
+            save_fn=lambda _changes: False,
+            blocked_delete_uids_fn=lambda uids: validate_calls.append(list(uids))
+            or set(),
+            delete_fn=lambda uids: delete_calls.append(list(uids))
+            or WriteReloadResult({}, True, True),
+            reload_fn=lambda: [],
+            menu_mode=True,
+        )
+        try:
+            item = dialog.tree.topLevelItem(0)
+            dialog.tree.setCurrentItem(item)
+            with patch(
+                "ost_visualizer.presentation.dialogs."
+                "condition_types_dialog.confirm_multi_delete",
+                return_value=[("Concrete", "type-1")],
+            ) as confirm_delete:
+                dialog._on_delete()
+            self.assertEqual(validate_calls, [["type-1"]])
+            self.assertEqual(delete_calls, [["type-1"]])
+            self.assertEqual(confirm_delete.call_args.args[3], set())
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_condition_type_stale_selected_item_does_not_crash_button_update(self):
         save_calls = []
         dialog = ConditionTypesDialog(

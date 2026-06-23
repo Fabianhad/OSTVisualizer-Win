@@ -1,12 +1,14 @@
 import logging
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
 from ost_visualizer.application.services.active_bid_write_guard import (
     ActiveBidWriteGuard,
 )
 from ost_visualizer.application.services.project_write_service import (
+    DeleteValidationResult,
     ProjectWriteService,
     WriteReloadResult,
 )
@@ -246,6 +248,16 @@ class _ConditionStructureWriteService:
     def delete_condition_folders(self, file_path, folder_uids):
         self.deleted_folders.append((file_path, list(folder_uids)))
         return True
+
+    def validate_condition_folder_delete(self, _file_path, _bid_uid, folder_uids):
+        return DeleteValidationResult(
+            requested_uids=list(folder_uids),
+            blocked_uids=[],
+        )
+
+    def delete_condition_folders_result(self, file_path, bid_uid, folder_uids):
+        self.deleted_folders.append((file_path, list(folder_uids)))
+        return WriteReloadResult(list(folder_uids), True, True)
 
     def update_condition(self, file_path, bid_uid, condition_uid, dto, **kwargs):
         self.condition_updates.append((file_path, bid_uid, condition_uid, dto))
@@ -529,7 +541,7 @@ class BidLockPermissionTests(unittest.TestCase):
         write_service = _ConditionStructureWriteService()
         coordinator = SimpleNamespace(
             ui_access_manager=access,
-            conditions_sidebar=None,
+            conditions_sidebar=SimpleNamespace(window=lambda: None),
             flush_deferred_for_file=lambda _file_path: True,
         )
         ui_state = SimpleNamespace(
@@ -539,7 +551,11 @@ class BidLockPermissionTests(unittest.TestCase):
             coordinator=coordinator,
             project_write_service=write_service,
             project_read_service=None,
-            project_data=SimpleNamespace(),
+            project_data=SimpleNamespace(
+                get_bid_condition_folders=lambda: {
+                    "folder-1": SimpleNamespace(name="Folder 1")
+                }
+            ),
             ui_state_manager=ui_state,
         )
         return handler, access, write_service
@@ -562,7 +578,12 @@ class BidLockPermissionTests(unittest.TestCase):
         handler, access, write_service = self._condition_structure_handler(
             {Feature.EDIT_CONDITION_STRUCTURE}
         )
-        handler.on_folder_delete_requested(["folder-1"])
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "confirm_multi_delete",
+            return_value=[("Folder 1", "folder-1")],
+        ):
+            handler.on_folder_delete_requested(["folder-1"])
         handler.on_move_condition_to_folder("cond-1", "folder-2")
         self.assertEqual(write_service.deleted_folders, [("db.mdb", ["folder-1"])])
         self.assertEqual(len(write_service.condition_updates), 1)
@@ -1349,6 +1370,141 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(result.write_success)
         self.assertFalse(result.reload_success)
         self.assertIsNone(result.value)
+
+    def test_condition_folder_delete_result_blocks_in_use_folder(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        service._project_data = SimpleNamespace(
+            get_bid_condition_folders=lambda: {
+                "folder-1": SimpleNamespace(parent_uid=None)
+            },
+            get_bid_conditions=lambda: {
+                "cond-1": SimpleNamespace(folder_uid="folder-1")
+            },
+        )
+        delete_use_case = _UseCase(True)
+        service._delete_condition_folders = delete_use_case
+        result = service.delete_condition_folders_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            ["folder-1"],
+        )
+        self.assertFalse(result)
+        self.assertFalse(result.write_success)
+        self.assertEqual(result.failure_reason, "condition_folder_in_use")
+        self.assertEqual(result.blocked_uids, ["folder-1"])
+        self.assertEqual(delete_use_case.calls, [])
+
+    def test_condition_folder_delete_result_allows_unused_folder(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        service._project_data = SimpleNamespace(
+            get_bid_condition_folders=lambda: {
+                "folder-1": SimpleNamespace(parent_uid=None)
+            },
+            get_bid_conditions=lambda: {},
+        )
+        delete_use_case = _UseCase(True)
+        service._delete_condition_folders = delete_use_case
+        result = service.delete_condition_folders_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            ["folder-1"],
+        )
+        self.assertTrue(result)
+        self.assertEqual(result.value, ["folder-1"])
+        self.assertEqual(
+            delete_use_case.calls,
+            [((project_data.bid_ref.file_path, ["folder-1"]), {})],
+        )
+
+    def test_condition_type_delete_result_blocks_in_use_type(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        service._condition_type_uids_in_use_provider = lambda _file_path: {"type-used"}
+        save_use_case = _SequenceUseCase([{}])
+        service._save_condition_types = save_use_case
+        result = service.delete_condition_types_result(
+            project_data.bid_ref.file_path, ["type-used"]
+        )
+        self.assertFalse(result)
+        self.assertFalse(result.write_success)
+        self.assertEqual(result.failure_reason, "condition_type_in_use")
+        self.assertEqual(result.blocked_uids, ["type-used"])
+        self.assertEqual(save_use_case.calls, [])
+
+    def test_condition_type_delete_result_allows_unused_type(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        service._condition_type_uids_in_use_provider = lambda _file_path: {"type-used"}
+        save_use_case = _SequenceUseCase([{}])
+        service._save_condition_types = save_use_case
+        result = service.delete_condition_types_result(
+            project_data.bid_ref.file_path, ["type-unused"]
+        )
+        self.assertTrue(result)
+        self.assertEqual(
+            save_use_case.calls,
+            [
+                (
+                    (
+                        project_data.bid_ref.file_path,
+                        {
+                            "new": [],
+                            "updated": [],
+                            "deleted_uids": ["type-unused"],
+                        },
+                    ),
+                    {},
+                )
+            ],
+        )
+
+    def test_condition_folder_delete_handler_uses_shared_validation(self):
+        access = _FakeAccess({Feature.EDIT_CONDITION_STRUCTURE})
+        validate_calls = []
+        delete_calls = []
+
+        class WriteService:
+            def validate_condition_folder_delete(self, file_path, bid_uid, folder_uids):
+                validate_calls.append((file_path, bid_uid, list(folder_uids)))
+                return DeleteValidationResult(
+                    requested_uids=list(folder_uids),
+                    blocked_uids=["folder-1"],
+                    failure_reason="condition_folder_in_use",
+                )
+
+            def delete_condition_folders_result(self, *_args):
+                delete_calls.append(_args)
+                raise AssertionError("blocked folder delete should not run")
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=access,
+            conditions_sidebar=SimpleNamespace(window=lambda: None),
+            flush_deferred_for_file=lambda _file_path: True,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(
+                get_bid_condition_folders=lambda: {
+                    "folder-1": SimpleNamespace(name="Folder 1")
+                }
+            ),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
+            ),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler."
+            "confirm_multi_delete",
+            return_value=None,
+        ) as confirm_delete:
+            handler.on_folder_delete_requested(["folder-1"])
+        self.assertEqual(validate_calls, [("db.mdb", "bid-1", ["folder-1"])])
+        self.assertEqual(delete_calls, [])
+        self.assertEqual(confirm_delete.call_args.args[3], {"folder-1"})
 
     def test_condition_dialog_layer_insert_warns_when_refresh_fails(self):
         warnings = []

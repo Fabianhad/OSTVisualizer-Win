@@ -352,6 +352,7 @@ class UseCaseBuilder:
         save_page_view_state_uc = SavePageViewStateUseCase(
             mdb_writer, write_logger.getChild("SavePageViewState")
         )
+        project_read_service = self.container.get("project_read_service")
         self.container.register_instance("delete_bids_use_case", delete_bids_uc)
         self.container.register_instance("delete_projects_use_case", delete_projects_uc)
         self.container.register_instance("create_project_use_case", create_project_uc)
@@ -462,6 +463,10 @@ class UseCaseBuilder:
                 reload_database=reload_database_uc.execute,
                 event_bus=event_bus,
                 bid_write_guard=bid_write_guard,
+                project_data_service=project_data_service,
+                condition_type_uids_in_use_provider=(
+                    project_read_service.get_condition_type_uids_in_use
+                ),
             ),
         )
         self.container.register_instance(

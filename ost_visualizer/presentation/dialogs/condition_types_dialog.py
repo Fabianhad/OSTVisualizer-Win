@@ -24,8 +24,9 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         parent: Optional[QtWidgets.QWidget] = None,
         condition_types: Optional[List[CdnType]] = None,
         current_name: str = "",
-        used_uids: Optional[Set[str]] = None,
         save_fn: Optional[Callable[[dict], Optional[Dict[str, str]]]] = None,
+        blocked_delete_uids_fn: Optional[Callable[[List[str]], Set[str]]] = None,
+        delete_fn: Optional[Callable[[List[str]], object]] = None,
         reload_fn: Optional[Callable[[], List[CdnType]]] = None,
         has_license: bool = True,
         menu_mode: bool = False,
@@ -33,8 +34,9 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.icon_provider = icon_provider
         self._items = list(condition_types or [])
-        self._used_uids = {str(uid) for uid in (used_uids or set())}
         self._save_fn = save_fn
+        self._blocked_delete_uids_fn = blocked_delete_uids_fn
+        self._delete_fn = delete_fn
         self._reload_fn = reload_fn
         self._selected_name: str = ""
         self._has_license: bool = has_license
@@ -336,16 +338,16 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             max(0, self.tree.topLevelItemCount() - len(selected) - 1),
         )
         pairs = [(item.text(0), str(item.data(0, self._UID_ROLE))) for item in selected]
+        selected_uids = [uid for _, uid in pairs]
+        blocked_uids = self._blocked_delete_uids(selected_uids)
         to_delete = confirm_multi_delete(
-            self, "Delete Condition Type", pairs, self._used_uids
+            self, "Delete Condition Type", pairs, blocked_uids
         )
         if to_delete is None:
             return
         deleted_uids = [uid for _, uid in to_delete]
         try:
-            result = self._save_fn(
-                {"new": [], "updated": [], "deleted_uids": deleted_uids}
-            )
+            result = self._delete_condition_types(deleted_uids)
         except Exception:
             show_warning(self, "Condition Types", "Failed to delete condition type.")
             return
@@ -355,6 +357,16 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._reload_items()
         if self.tree.topLevelItemCount():
             self.tree.setCurrentItem(self.tree.topLevelItem(next_row))
+
+    def _blocked_delete_uids(self, uids: List[str]) -> Set[str]:
+        if self._blocked_delete_uids_fn is None:
+            return set()
+        return {str(uid) for uid in self._blocked_delete_uids_fn(uids)}
+
+    def _delete_condition_types(self, uids: List[str]):
+        if self._delete_fn is not None:
+            return self._delete_fn(uids)
+        return self._save_fn({"new": [], "updated": [], "deleted_uids": uids})
 
     def _on_select(self) -> None:
         if not self._is_interactive:
@@ -402,6 +414,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._disconnect_pending_new_editor_signal()
         self.icon_provider = None
         self._save_fn = None
+        self._blocked_delete_uids_fn = None
+        self._delete_fn = None
         self._reload_fn = None
         self._items.clear()
-        self._used_uids.clear()

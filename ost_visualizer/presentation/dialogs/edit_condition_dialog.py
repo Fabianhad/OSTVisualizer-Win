@@ -220,7 +220,8 @@ class EditConditionDialog(QtWidgets.QDialog):
         has_license: bool = True,
         condition_type_save_fn=None,
         condition_type_reload_fn=None,
-        condition_type_used_uids_fn=None,
+        condition_type_blocked_delete_uids_fn=None,
+        condition_type_delete_fn=None,
         layer_reload_fn=None,
         layer_used_uids_fn=None,
         layer_insert_fn=None,
@@ -265,7 +266,10 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._has_license: bool = has_license
         self._condition_type_save_fn = condition_type_save_fn
         self._condition_type_reload_fn = condition_type_reload_fn
-        self._condition_type_used_uids_fn = condition_type_used_uids_fn
+        self._condition_type_blocked_delete_uids_fn = (
+            condition_type_blocked_delete_uids_fn
+        )
+        self._condition_type_delete_fn = condition_type_delete_fn
         self._layer_reload_fn = layer_reload_fn
         self._layer_used_uids_fn = layer_used_uids_fn
         self._layer_insert_fn = layer_insert_fn
@@ -991,9 +995,6 @@ class EditConditionDialog(QtWidgets.QDialog):
         self._cdn_types = {cdn.uid: cdn for cdn in values}
         return list(self._cdn_types.values())
 
-    def _used_cdn_type_uids(self) -> set:
-        return {str(uid) for uid in self._condition_type_used_uids_fn()}
-
     def _open_condition_types_dialog(self, *_args) -> None:
         current_name = self._type_edit.text().strip()
         dialog = ConditionTypesDialog(
@@ -1001,8 +1002,9 @@ class EditConditionDialog(QtWidgets.QDialog):
             parent=self,
             condition_types=list(self._cdn_types.values()),
             current_name=current_name,
-            used_uids=self._used_cdn_type_uids(),
             save_fn=self._condition_type_save_fn,
+            blocked_delete_uids_fn=self._condition_type_blocked_delete_uids_fn,
+            delete_fn=self._condition_type_delete_fn,
             reload_fn=self._reload_condition_types,
             has_license=self._has_license,
         )
