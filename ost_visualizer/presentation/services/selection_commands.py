@@ -11,6 +11,8 @@ AnnotationInsertFn = Callable[
     [BidRef, List[InsertAnnotationSpec], Optional[PasteRefRemap]], List[str]
 ]
 AnnotationDeleteFn = Callable[[str, List[str], List[InsertAnnotationSpec]], bool]
+SavedAnnotationInsertFn = Callable[[BidRef, list], list]
+SavedAnnotationDeleteFn = Callable[[str, list], bool]
 
 
 def _default_insert_takeoffs(write_svc) -> TakeoffInsertFn:
@@ -94,27 +96,29 @@ class InsertAnnotationsCommand:
         specs: list,
         write_svc,
         plan_view,
+        insert_annotations_fn: Optional[AnnotationInsertFn] = None,
+        delete_annotations_fn: Optional[AnnotationDeleteFn] = None,
     ) -> None:
         self._current_uids = list(uids)
         self._bid_ref = bid_ref
         self._specs = list(specs)
         self._write_svc = write_svc
         self._plan_view = plan_view
+        self._insert_annotations_fn = (
+            insert_annotations_fn or _default_insert_annotations(write_svc)
+        )
+        self._delete_annotations_fn = (
+            delete_annotations_fn or _default_delete_annotations(write_svc)
+        )
 
     def undo(self) -> None:
-        self._write_svc.delete_annotations(
-            self._bid_ref.file_path,
-            [
-                (uid, spec.annotation_type)
-                for uid, spec in zip(self._current_uids, self._specs)
-            ],
-        )
-        self._plan_view.clear_selection()
+        if self._delete_annotations_fn(
+            self._bid_ref.file_path, list(self._current_uids), self._specs
+        ):
+            self._plan_view.clear_selection()
 
     def redo(self) -> None:
-        new_uids = self._write_svc.insert_annotations(
-            self._bid_ref.file_path, self._bid_ref.bid_uid, self._specs
-        )
+        new_uids = self._insert_annotations_fn(self._bid_ref, self._specs, None)
         self._specs = self._specs[: len(new_uids)]
         self._current_uids = list(new_uids)
         if self._current_uids:
@@ -306,14 +310,31 @@ class DeleteAnnotationsCommand:
         bid_ref: BidRef,
         write_svc,
         plan_view,
+        insert_saved_annotations_fn: Optional[SavedAnnotationInsertFn] = None,
+        delete_saved_annotations_fn: Optional[SavedAnnotationDeleteFn] = None,
     ) -> None:
         self._saved = list(saved_annotations)
         self._bid_ref = bid_ref
         self._write_svc = write_svc
         self._plan_view = plan_view
         self._current_uids: List[str] = [a.uid for a in saved_annotations]
+        self._insert_saved_annotations_fn = insert_saved_annotations_fn
+        self._delete_saved_annotations_fn = delete_saved_annotations_fn
 
     def undo(self) -> None:
+        if self._insert_saved_annotations_fn is not None:
+            restored = self._insert_saved_annotations_fn(self._bid_ref, self._saved)
+            if not restored:
+                return
+            self._saved = list(restored)
+            self._current_uids = [annotation.uid for annotation in self._saved]
+            uid_type_set = {
+                (annotation.uid, annotation.annotation_type)
+                for annotation in self._saved
+            }
+            keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+            self._plan_view.set_selected_uids(keys)
+            return
         nv_indices = [
             i
             for i, a in enumerate(self._saved)
@@ -376,6 +397,10 @@ class DeleteAnnotationsCommand:
             self._plan_view.set_selected_uids(keys)
 
     def redo(self) -> None:
+        if self._delete_saved_annotations_fn is not None:
+            if self._delete_saved_annotations_fn(self._bid_ref.file_path, self._saved):
+                self._plan_view.clear_selection()
+            return
         self._write_svc.delete_annotations(
             self._bid_ref.file_path,
             [

@@ -22,6 +22,7 @@ from ...domain.repositories.i_annotation_view_repository import (
 )
 from ...domain.services.project_data_service import ProjectDataService
 from ..services.undo_redo_service import UndoRedoService
+from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from .ui_access_manager import Feature
 
 
@@ -470,6 +471,11 @@ class DetachedPageViewManager(IShutdownAware):
         undo_svc = UndoRedoService()
         if bid_ref:
             undo_svc.set_active_bid(bid_ref)
+        annotation_write_coordinator = AnnotationWriteCoordinator(
+            self._annotation_write_service,
+            self.project_data,
+            self.event_bus,
+        )
         snap_preferences = SnapPreferencesDto.from_config(self.config_model)
         self._window = self._window_factory(
             icon_provider=self.icon_provider,
@@ -486,6 +492,7 @@ class DetachedPageViewManager(IShutdownAware):
             on_named_view_selected=self._on_window_named_view_selected,
             on_scale_changed=self._on_window_scale_changed,
             annotation_write_service=self._annotation_write_service,
+            annotation_write_coordinator=annotation_write_coordinator,
             file_path=file_path,
             undo_service=undo_svc,
             initial_geometry=initial_geometry,

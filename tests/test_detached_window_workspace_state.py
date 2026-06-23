@@ -35,6 +35,9 @@ from ost_visualizer.presentation.managers.detached_page_view_manager import (
 from ost_visualizer.presentation.services.selection_clipboard_service import (
     SelectionClipboardService,
 )
+from ost_visualizer.presentation.services.annotation_write_coordinator import (
+    AnnotationWriteCoordinator,
+)
 from ost_visualizer.presentation.utils.plan_tool_registry import (
     PLAN_ANNOTATION_TOOL_SPECS,
 )
@@ -371,9 +374,19 @@ class FakeDetachedLoadPlanView:
 class FakeAnnotationWriteService:
     def __init__(self):
         self.insert_calls = []
+        self.insert_reload_flags = []
+        self.position_calls = []
+        self.position_reload_flags = []
+        self.text_property_calls = []
+        self.text_property_reload_flags = []
+        self.text_and_position_calls = []
+        self.text_and_position_reload_flags = []
         self.style_calls = []
+        self.style_reload_flags = []
         self.delete_calls = []
+        self.delete_reload_flags = []
         self.next_uids = ["ann-1"]
+        self.next_uid_batches = []
 
     def insert_annotations(
         self,
@@ -384,19 +397,144 @@ class FakeAnnotationWriteService:
         publish_database_refreshed_after_write=True,
     ):
         self.insert_calls.append((db_path, bid_uid, specs, ref_remap))
+        self.insert_reload_flags.append(publish_database_refreshed_after_write)
+        if self.next_uid_batches:
+            return list(self.next_uid_batches.pop(0)[: len(specs)])
         return list(self.next_uids[: len(specs)])
+
+    def save_annotation_positions(
+        self, db_path, positions, publish_database_refreshed_after_write=True
+    ):
+        self.position_calls.append((db_path, positions))
+        self.position_reload_flags.append(publish_database_refreshed_after_write)
+        return True
+
+    def save_annotation_text_properties(
+        self, db_path, updates, publish_database_refreshed_after_write=True
+    ):
+        self.text_property_calls.append((db_path, updates))
+        self.text_property_reload_flags.append(publish_database_refreshed_after_write)
+        return True
+
+    def save_annotation_text_properties_and_positions(
+        self, db_path, updates, positions, publish_database_refreshed_after_write=True
+    ):
+        self.text_and_position_calls.append((db_path, updates, positions))
+        self.text_and_position_reload_flags.append(
+            publish_database_refreshed_after_write
+        )
+        return True
 
     def save_annotation_styles(
         self, db_path, updates, publish_database_refreshed_after_write=True
     ):
         self.style_calls.append((db_path, updates))
+        self.style_reload_flags.append(publish_database_refreshed_after_write)
         return True
 
     def delete_annotations(
         self, db_path, annotation_keys, publish_database_refreshed_after_write=True
     ):
         self.delete_calls.append((db_path, list(annotation_keys)))
+        self.delete_reload_flags.append(publish_database_refreshed_after_write)
         return True
+
+
+class FakeAnnotationProjectData:
+    def __init__(self, annotations=None):
+        self.annotations = list(annotations or [])
+        self.named_view_updates = []
+
+    def get_annotation_layer_uid(self):
+        return "detached-annotation-layer"
+
+    def add_annotations(self, annotations):
+        self.annotations.extend(annotations)
+
+    def remove_annotations_by_keys(self, annotation_keys):
+        wanted = {
+            (str(uid), str(annotation_type)) for uid, annotation_type in annotation_keys
+        }
+        page_uids = []
+        retained = []
+        for annotation in self.annotations:
+            key = (str(annotation.uid), str(annotation.annotation_type))
+            if key in wanted:
+                if annotation.page_uid not in page_uids:
+                    page_uids.append(annotation.page_uid)
+            else:
+                retained.append(annotation)
+        self.annotations = retained
+        return page_uids
+
+    def get_page_uids_for_annotation_keys(self, annotation_keys):
+        wanted = {
+            (str(uid), str(annotation_type)) for uid, annotation_type in annotation_keys
+        }
+        page_uids = []
+        for annotation in self.annotations:
+            key = (str(annotation.uid), str(annotation.annotation_type))
+            if key in wanted and annotation.page_uid not in page_uids:
+                page_uids.append(annotation.page_uid)
+        return page_uids
+
+    def update_annotation_positions(self, positions):
+        page_uids = self.get_page_uids_for_annotation_keys(
+            (uid, annotation_type) for uid, annotation_type, _position in positions
+        )
+        by_key = {
+            (str(uid), str(annotation_type)): list(position)
+            for uid, annotation_type, position in positions
+        }
+        for annotation in self.annotations:
+            key = (str(annotation.uid), str(annotation.annotation_type))
+            if key in by_key:
+                annotation.position = list(by_key[key])
+        return page_uids
+
+    def update_annotation_text_properties(self, updates):
+        page_uids = self.get_page_uids_for_annotation_keys(
+            (uid, annotation_type) for uid, annotation_type, _properties in updates
+        )
+        by_key = {
+            (str(uid), str(annotation_type)): dict(properties)
+            for uid, annotation_type, properties in updates
+        }
+        for annotation in self.annotations:
+            key = (str(annotation.uid), str(annotation.annotation_type))
+            if key in by_key:
+                annotation.properties.update(by_key[key])
+        return page_uids
+
+    def update_annotation_styles(self, updates):
+        page_uids = self.get_page_uids_for_annotation_keys(
+            (uid, annotation_type) for uid, annotation_type, _style in updates
+        )
+        by_key = {
+            (str(uid), str(annotation_type)): dict(style)
+            for uid, annotation_type, style in updates
+        }
+        for annotation in self.annotations:
+            key = (str(annotation.uid), str(annotation.annotation_type))
+            style = by_key.get(key)
+            if style is None:
+                continue
+            if "Color" in style:
+                annotation.color = str(style["Color"])
+            if "Width" in style:
+                annotation.width = float(style["Width"])
+        return page_uids
+
+    def update_named_view_names(self, updates):
+        self.named_view_updates.extend(list(updates))
+
+
+class FakeEventBus:
+    def __init__(self):
+        self.events = []
+
+    def publish(self, event_type, **kwargs):
+        self.events.append((event_type, kwargs))
 
 
 class FakeUndoService:
@@ -1482,11 +1620,28 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service or FakeAnnotationWriteService()
+        project_data, event_bus = self._attach_annotation_write_coordinator(
+            window, window._ann_write_svc, annotations
+        )
         window._undo_svc = undo_service
         window._annotation_clipboard_svc = SelectionClipboardService()
         window.plan_view = plan_view
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window.event_bus = event_bus
+        window._test_project_data = project_data
         return window, plan_view, window._ann_write_svc
+
+    def _attach_annotation_write_coordinator(
+        self, window, write_service, annotations=None
+    ):
+        project_data = FakeAnnotationProjectData(annotations)
+        event_bus = FakeEventBus()
+        window._annotation_write_coordinator = AnnotationWriteCoordinator(
+            write_service,
+            project_data,
+            event_bus,
+        )
+        return project_data, event_bus
 
     def test_annotation_window_uses_shared_annotation_tool_specs_only(self):
         self.assertEqual(
@@ -1671,6 +1826,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         plan_view.mouse_ost_position = (50.0, 75.0)
         DetachedPageViewWindow._on_paste_requested(window)
         self.assertEqual(len(write_service.insert_calls), 1)
+        self.assertEqual(write_service.insert_reload_flags, [False])
         db_path, bid_uid, specs, ref_remap = write_service.insert_calls[0]
         self.assertEqual((db_path, bid_uid, ref_remap), ("bid.mdb", "7", None))
         self.assertEqual(len(specs), 1)
@@ -1687,7 +1843,34 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             plan_view.intelligent_paste_calls,
             [(["ann-1_text"], (10.0, 20.0))],
         )
+        inserted = window._test_project_data.annotations[-1]
+        self.assertEqual((inserted.uid, inserted.annotation_type), ("ann-1", "text"))
+        self.assertEqual(inserted.position, [50.0, 75.0, 30.0, 12.0, 0.25])
+        self.assertEqual(
+            window.event_bus.events[-1],
+            (
+                AppEvents.ANNOTATIONS_CHANGED,
+                {
+                    "page_uid": "p1",
+                    "annotation_uids": ["ann-1"],
+                    "annotation_types": ["text"],
+                },
+            ),
+        )
         self.assertEqual(len(undo_service.pushes), 1)
+        undo, redo = undo_service.pushes[0]
+        undo()
+        self.assertEqual(write_service.delete_reload_flags, [False])
+        self.assertEqual(
+            [
+                (annotation.uid, annotation.annotation_type)
+                for annotation in window._test_project_data.annotations
+            ],
+            [("a1", "text")],
+        )
+        redo()
+        self.assertEqual(write_service.insert_reload_flags, [False, False])
+        self.assertEqual(plan_view.selected_uids, {"ann-1_text"})
 
     def test_create_window_defers_first_show_until_after_manager_setup(self):
         calls = []
@@ -2136,6 +2319,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 window.page_data = FakeDetachedPageData()
                 window._is_closing = False
                 window._ann_write_svc = write_service
+                project_data, event_bus = self._attach_annotation_write_coordinator(
+                    window, write_service
+                )
                 window._undo_svc = undo_service
                 window.plan_view = plan_view
                 window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
@@ -2146,12 +2332,21 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 )
                 window._on_annotation_created(annotation_type, position, "p1")
                 self.assertEqual(len(write_service.insert_calls), 1)
+                self.assertEqual(write_service.insert_reload_flags, [False])
                 db_path, bid_uid, specs, ref_remap = write_service.insert_calls[0]
                 self.assertEqual((db_path, bid_uid, ref_remap), ("bid.mdb", "7", None))
                 self.assertEqual(specs[0].annotation_type, annotation_type)
                 self.assertEqual(specs[0].position, position)
                 self.assertEqual(specs[0].layer_uid, "detached-annotation-layer")
                 self.assertEqual(plan_view.selected_uids, {f"ann-1_{annotation_type}"})
+                self.assertEqual(
+                    [
+                        (annotation.uid, annotation.annotation_type)
+                        for annotation in project_data.annotations
+                    ],
+                    [("ann-1", annotation_type)],
+                )
+                self.assertEqual(event_bus.events[-1][0], AppEvents.ANNOTATIONS_CHANGED)
                 self.assertEqual(len(undo_service.pushes), 1)
 
     def test_detached_text_annotation_commit_uses_annotation_write_path(self):
@@ -2413,6 +2608,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
+        project_data, event_bus = self._attach_annotation_write_coordinator(
+            window, write_service, [named_view, hotlink]
+        )
         window._undo_svc = undo_service
         window.plan_view = plan_view
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
@@ -2433,9 +2631,31 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             write_service.delete_calls,
             [("bid.mdb", [("hl1", "hotlink"), ("nv1", "namedview")])],
         )
+        self.assertEqual(write_service.delete_reload_flags, [False])
+        self.assertEqual(project_data.annotations, [])
+        self.assertEqual(
+            [event[0] for event in event_bus.events],
+            [AppEvents.ANNOTATIONS_CHANGED, AppEvents.NAMED_VIEW_DELETED],
+        )
         self.assertEqual(len(undo_service.pushes), 1)
+        undo, redo = undo_service.pushes[0]
+        write_service.next_uid_batches = [["nv2"], ["hl2"]]
+        plan_view.annotation_key_map[("nv2", "namedview")] = "nv2_namedview"
+        plan_view.annotation_key_map[("hl2", "hotlink")] = "hl2_hotlink"
+        undo()
+        self.assertEqual(write_service.insert_reload_flags, [False, False])
+        self.assertEqual(plan_view.selected_uids, {"nv2_namedview", "hl2_hotlink"})
+        redo()
+        self.assertEqual(write_service.delete_reload_flags, [False, False])
 
     def test_detached_annotation_style_change_uses_style_write_path(self):
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="cloud",
+            page_uid="p1",
+            color="#ff0000",
+            width=4.0,
+        )
         write_service = FakeAnnotationWriteService()
         undo_service = FakeUndoService()
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
@@ -2444,6 +2664,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
+        project_data, event_bus = self._attach_annotation_write_coordinator(
+            window, write_service, [annotation]
+        )
         window._undo_svc = undo_service
         window.plan_view = FakeDetachedPlanView()
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
@@ -2461,7 +2684,14 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             write_service.style_calls,
             [("bid.mdb", [("a1", "cloud", {"Color": "#336699", "Width": 8.0})])],
         )
+        self.assertEqual(write_service.style_reload_flags, [False])
+        self.assertEqual((annotation.color, annotation.width), ("#336699", 8.0))
+        self.assertEqual(event_bus.events[-1][0], AppEvents.ANNOTATIONS_CHANGED)
         self.assertEqual(len(undo_service.pushes), 1)
+        undo, redo = undo_service.pushes[0]
+        undo()
+        redo()
+        self.assertEqual(write_service.style_reload_flags, [False, False, False])
 
     def test_detached_dimension_annotation_creation_obeys_annotation_edit_gate(self):
         write_service = FakeAnnotationWriteService()
