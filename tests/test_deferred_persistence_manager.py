@@ -718,8 +718,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def _install_conditions_sidebar_recorder(self, coordinator):
         calls = []
         coordinator.conditions_sidebar = SimpleNamespace(
-            apply_layer_visibility_state=lambda conditions, grayscale: calls.append(
-                ("apply", list(conditions), grayscale)
+            apply_layer_visibility_state=(
+                lambda conditions, grayscale, layer_uid=None: calls.append(
+                    ("apply", list(conditions), grayscale, layer_uid)
+                )
             ),
             load_conditions=lambda *_args: self.fail(
                 "visibility-only toggle should not reload condition tree"
@@ -829,7 +831,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
         calls = self._install_conditions_sidebar_recorder(coordinator)
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
-        self.assertEqual(calls, [("apply", ["c1"], False)])
+        self.assertEqual(calls, [("apply", ["c1"], False, "l1")])
 
     def test_layers_without_condition_rows_skip_conditions_sidebar_refresh(self):
         for layer_name in ("Annotation", "Image", "Future Visual", "Custom Empty"):
@@ -902,7 +904,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator = self._make_visibility_coordinator(layer_name="Annotation")
         calls = self._install_conditions_sidebar_recorder(coordinator)
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
-        self.assertEqual(calls, [("apply", ["c1"], False)])
+        self.assertEqual(calls, [("apply", ["c1"], False, "l1")])
         self.assertEqual(coordinator.quantity_update_calls, [])
 
     def test_repeated_layer_toggles_refresh_view_immediately(self):

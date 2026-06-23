@@ -3,6 +3,7 @@ import os
 import unittest
 from dataclasses import fields
 from types import SimpleNamespace
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
@@ -18,6 +19,9 @@ from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
 )
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
+from ost_visualizer.presentation.components import (
+    conditions_sidebar as conditions_sidebar_module,
+)
 from ost_visualizer.presentation.components.area_combo import AreaComboBox
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
@@ -176,6 +180,34 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         sidebar.apply_layer_visibility_state({"c1": condition})
         self.assertEqual([item.text(col) for col in range(2, 5)], before)
         self.assertFalse(sidebar.is_condition_placeable("c1"))
+
+    def test_condition_sidebar_layer_visibility_updates_only_matching_layer_rows(self):
+        sidebar = ConditionsSidebar(None)
+        condition_a = Condition(
+            uid="c1", name="Condition 1", ref_no=1, layer_uid="layer-a"
+        )
+        condition_b = Condition(
+            uid="c2", name="Condition 2", ref_no=2, layer_uid="layer-b"
+        )
+        try:
+            sidebar.load_conditions(
+                {"c1": condition_a, "c2": condition_b}, {}, "Project"
+            )
+            condition_a.layer_visible = False
+            with patch.object(
+                conditions_sidebar_module,
+                "make_condition_color_icon",
+                wraps=conditions_sidebar_module.make_condition_color_icon,
+            ) as make_icon:
+                sidebar.apply_layer_visibility_state(
+                    {"c1": condition_a, "c2": condition_b},
+                    layer_uid="layer-a",
+                )
+            self.assertEqual(make_icon.call_count, 1)
+            self.assertFalse(sidebar.is_condition_placeable("c1"))
+            self.assertTrue(sidebar.is_condition_placeable("c2"))
+        finally:
+            sidebar.deleteLater()
 
     def test_takeoff_renderer_creates_items_for_hidden_condition_layers(self):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())

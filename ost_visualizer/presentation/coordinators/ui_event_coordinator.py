@@ -2681,6 +2681,7 @@ class UIEventCoordinator:
             self.conditions_sidebar.apply_layer_visibility_state(
                 conditions,
                 grayscale,
+                layer_uid,
             )
         if not update_summary:
             return

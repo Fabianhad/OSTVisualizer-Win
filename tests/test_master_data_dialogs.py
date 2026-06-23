@@ -913,6 +913,19 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             sidebar.close()
             sidebar.deleteLater()
 
+    def test_layers_sidebar_checkbox_click_updates_visual_state_and_emits_once(self):
+        sidebar = BidLayersSidebar(None)
+        calls = []
+        sidebar.load_layers([self._layer("layer-1", "Layer 1", 1, show=True)])
+        sidebar.set_toggle_callback(lambda uid, show: calls.append((uid, show)))
+        try:
+            self._click_checkbox(sidebar._checkboxes[0])
+            self.assertFalse(sidebar._checkboxes[0].isChecked())
+            self.assertEqual(calls, [("layer-1", False)])
+        finally:
+            sidebar.close()
+            sidebar.deleteLater()
+
     def test_layers_dialog_partial_batch_delete_reloads_and_warns(self):
         reload_calls = []
         warnings = []

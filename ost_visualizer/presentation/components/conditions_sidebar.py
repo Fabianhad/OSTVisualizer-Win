@@ -339,15 +339,22 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self,
         conditions: Dict[str, Condition],
         grayscale: bool = False,
+        layer_uid: Optional[str] = None,
     ) -> None:
         self._conditions = conditions
         self._grayscale = grayscale
+        layer_key = str(layer_uid) if layer_uid is not None else None
         self.tree.setUpdatesEnabled(False)
         self._block_item_changed = True
         try:
             for condition_uid, item in self._condition_items.items():
                 condition = conditions.get(condition_uid)
                 if not condition:
+                    continue
+                if (
+                    layer_key is not None
+                    and str(condition.layer_uid or "") != layer_key
+                ):
                     continue
                 item.setIcon(
                     _COL_NO,

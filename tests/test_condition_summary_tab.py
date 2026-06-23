@@ -992,8 +992,10 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def apply_layer_visibility_state(self, applied_conditions, grayscale):
-                self.calls.append((applied_conditions, grayscale))
+            def apply_layer_visibility_state(
+                self, applied_conditions, grayscale, layer_uid=None
+            ):
+                self.calls.append((applied_conditions, grayscale, layer_uid))
 
         class FakeSummaryTab:
             def __init__(self):
@@ -1044,7 +1046,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         self.assertFalse(conditions["c1"].layer_visible)
         self.assertTrue(conditions["c2"].layer_visible)
         self.assertEqual(layers_sidebar.calls, [("layer-a", False)])
-        self.assertEqual(conditions_sidebar.calls, [(conditions, False)])
+        self.assertEqual(conditions_sidebar.calls, [(conditions, False, "layer-a")])
         self.assertEqual(summary_tab.calls, [(conditions, False, "layer-a")])
         self.assertEqual(loads, [])
 

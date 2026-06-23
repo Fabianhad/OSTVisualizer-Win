@@ -1,3 +1,4 @@
+from functools import lru_cache
 from PySide6 import QtGui
 from ...domain.entities import pattern as _pattern
 
@@ -24,6 +25,7 @@ def _is_fill_pixel(pattern: int, row: int, col: int) -> bool:
     return False
 
 
+@lru_cache(maxsize=1024)
 def make_condition_color_icon(
     color_int: int, pattern: int = _pattern.SOLID, grayscale: bool = False
 ) -> QtGui.QIcon:
