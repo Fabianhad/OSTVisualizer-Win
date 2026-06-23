@@ -314,6 +314,9 @@ class SelectionManagerMixin:
             uid for uid in self._selected_uids if uid in self._current_takeoffs
         )
 
+    def get_selected_uids(self) -> List[str]:
+        return sorted(self._selected_uids)
+
     def set_selected_uids(self, uids: set, emit: bool = True) -> None:
         uids = {uid for uid in uids if self._is_selectable(uid)}
         if self._selected_uids == uids:

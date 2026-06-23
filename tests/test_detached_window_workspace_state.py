@@ -19,6 +19,7 @@ from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.workspace_state import WorkspaceState
+from ost_visualizer.presentation.actions.action_ids import ACTION_COPY, ACTION_PASTE
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
@@ -30,6 +31,9 @@ from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.windows.components.window import DetachedPageViewWindow
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
+)
+from ost_visualizer.presentation.services.selection_clipboard_service import (
+    SelectionClipboardService,
 )
 from ost_visualizer.presentation.utils.plan_tool_registry import (
     PLAN_ANNOTATION_TOOL_SPECS,
@@ -273,13 +277,19 @@ class FakeInitialRestoreWindow(FakeInitialGeometryWindow):
 class FakeDetachedPlanView:
     def __init__(self, annotations=None):
         self.annotations = {ann.uid: ann for ann in annotations or []}
+        self.current_page_uid = "p1"
+        self.snap_increments = 1.0
+        self.intelligent_paste_enabled = True
+        self.mouse_ost_position = None
         self.restored_positions = []
         self.restored_text_properties = []
         self.restored_text_and_positions = []
         self.selected_uids = set()
         self.annotation_key_map = {}
-        self.cleared = False
         self.activate_calls = []
+        self.clipboard_emit_count = 0
+        self.intelligent_paste_calls = []
+        self.clipboard_changed = SimpleNamespace(emit=self._emit_clipboard_changed)
 
     def restore_flushed_positions(self, takeoff_changes, ann_changes):
         self.restored_positions.append((list(takeoff_changes), list(ann_changes)))
@@ -298,11 +308,13 @@ class FakeDetachedPlanView:
     def get_annotation(self, uid):
         return self.annotations.get(uid)
 
+    def get_selected_uids(self):
+        return sorted(self.selected_uids)
+
     def set_selected_uids(self, uids):
         self.selected_uids = set(uids)
 
     def clear_selection(self):
-        self.cleared = True
         self.selected_uids = set()
 
     def find_annotation_keys_by_uid_type(self, uid_type_set):
@@ -315,6 +327,16 @@ class FakeDetachedPlanView:
     def activate_annotation_placement(self, annotation_type):
         self.activate_calls.append(annotation_type)
         return True
+
+    def current_mouse_ost_position(self):
+        return self.mouse_ost_position
+
+    def mark_intelligent_paste_drag_pending(self, pasted_uids, source_anchor_ost):
+        self.intelligent_paste_calls.append((list(pasted_uids), source_anchor_ost))
+        return True
+
+    def _emit_clipboard_changed(self):
+        self.clipboard_emit_count += 1
 
 
 class FakeDetachedLoadPlanView:
@@ -1402,6 +1424,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         window._hotlink_adapter = None
         window.plan_view = plan_view
         window._undo_svc = None
+        window._annotation_clipboard_svc = None
         window._ann_write_svc = retained
         window._file_path = "file.mdb"
         window._renderers = retained
@@ -1445,6 +1468,26 @@ def FakeDetachedPageData(*, annotation_layer_hidden: bool = False):
 
 
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
+    def _make_annotation_clipboard_window(
+        self,
+        annotations=None,
+        *,
+        write_service=None,
+        undo_service=None,
+    ):
+        plan_view = FakeDetachedPlanView(annotations)
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window.page_data = FakeDetachedPageData()
+        window._is_closing = False
+        window._ann_write_svc = write_service or FakeAnnotationWriteService()
+        window._undo_svc = undo_service
+        window._annotation_clipboard_svc = SelectionClipboardService()
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        return window, plan_view, window._ann_write_svc
+
     def test_annotation_window_uses_shared_annotation_tool_specs_only(self):
         self.assertEqual(
             _ANNOTATION_WINDOW_CONFIG.annotation_tool_specs,
@@ -1497,6 +1540,154 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 for spec in _ANNOTATION_WINDOW_CONFIG.annotation_tool_specs
             ],
         )
+
+    def test_detached_annotation_copy_state_requires_selected_annotation(self):
+        annotation = BidAnnotation(uid="a1", annotation_type="line", page_uid="p1")
+        window, plan_view, _write_service = self._make_annotation_clipboard_window(
+            [annotation]
+        )
+        self.assertFalse(
+            DetachedPageViewWindow._context_menu_action_state(window, ACTION_COPY)[
+                "enabled"
+            ]
+        )
+        plan_view.set_selected_uids({"a1"})
+        self.assertTrue(
+            DetachedPageViewWindow._context_menu_action_state(window, ACTION_COPY)[
+                "enabled"
+            ]
+        )
+
+    def test_detached_annotation_paste_disabled_until_same_window_copy(self):
+        annotation = BidAnnotation(uid="a1", annotation_type="line", page_uid="p1")
+        window, plan_view, _write_service = self._make_annotation_clipboard_window(
+            [annotation]
+        )
+        plan_view.set_selected_uids({"a1"})
+        self.assertFalse(
+            DetachedPageViewWindow._context_menu_action_state(window, ACTION_PASTE)[
+                "enabled"
+            ]
+        )
+        DetachedPageViewWindow._on_copy_requested(window, ["a1"])
+        self.assertTrue(
+            DetachedPageViewWindow._context_menu_action_state(window, ACTION_PASTE)[
+                "enabled"
+            ]
+        )
+        self.assertEqual(plan_view.clipboard_emit_count, 1)
+
+    def test_detached_annotation_paste_ignores_main_plan_clipboard(self):
+        main_clipboard = SelectionClipboardService()
+        main_clipboard.copy(
+            [],
+            [BidAnnotation(uid="a1", annotation_type="line", page_uid="p1")],
+            source_bid_uid="7",
+            source_file_path="bid.mdb",
+        )
+        window, _plan_view, _write_service = self._make_annotation_clipboard_window()
+        self.assertFalse(
+            DetachedPageViewWindow._context_menu_action_state(window, ACTION_PASTE)[
+                "enabled"
+            ]
+        )
+
+    def test_detached_annotation_context_copy_enables_local_paste_only(self):
+        annotation = BidAnnotation(uid="a1", annotation_type="line", page_uid="p1")
+        source_window, source_plan_view, _write_service = (
+            self._make_annotation_clipboard_window([annotation])
+        )
+        other_window, _other_plan_view, _other_write = (
+            self._make_annotation_clipboard_window([annotation])
+        )
+        source_plan_view.set_selected_uids({"a1"})
+        DetachedPageViewWindow._trigger_context_menu_command(source_window, ACTION_COPY)
+        self.assertTrue(
+            DetachedPageViewWindow._context_menu_action_state(
+                source_window, ACTION_PASTE
+            )["enabled"]
+        )
+        self.assertFalse(
+            DetachedPageViewWindow._context_menu_action_state(
+                other_window, ACTION_PASTE
+            )["enabled"]
+        )
+
+    def test_detached_annotation_paste_disables_when_window_changes_bid(self):
+        annotation = BidAnnotation(uid="a1", annotation_type="line", page_uid="p1")
+        window, plan_view, _write_service = self._make_annotation_clipboard_window(
+            [annotation]
+        )
+        plan_view.set_selected_uids({"a1"})
+        DetachedPageViewWindow._on_copy_requested(window, ["a1"])
+        self.assertTrue(
+            DetachedPageViewWindow._context_menu_action_state(window, ACTION_PASTE)[
+                "enabled"
+            ]
+        )
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "other-bid"))
+        self.assertFalse(
+            DetachedPageViewWindow._context_menu_action_state(window, ACTION_PASTE)[
+                "enabled"
+            ]
+        )
+
+    def test_detached_annotation_clipboard_resets_when_context_changes(self):
+        annotation = BidAnnotation(uid="a1", annotation_type="line", page_uid="p1")
+        window, plan_view, _write_service = self._make_annotation_clipboard_window(
+            [annotation]
+        )
+        plan_view.set_selected_uids({"a1"})
+        DetachedPageViewWindow._on_copy_requested(window, ["a1"])
+        self.assertTrue(window._annotation_clipboard_svc.has_content())
+        DetachedPageViewWindow._reset_annotation_clipboard_if_context_changed(
+            window,
+            SimpleNamespace(bid_ref=BidRef("other.mdb", "other-bid")),
+        )
+        self.assertFalse(window._annotation_clipboard_svc.has_content())
+        self.assertEqual(plan_view.clipboard_emit_count, 2)
+
+    def test_detached_annotation_paste_writes_specs_and_preserves_annotation_data(self):
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type="text",
+            page_uid="p1",
+            layer_uid="custom-layer",
+            position=[10.0, 20.0, 30.0, 12.0, 0.25],
+            color="#112233",
+            width=3.5,
+            properties={"Text": "Copied", "FontName": "Segoe UI"},
+        )
+        write_service = FakeAnnotationWriteService()
+        undo_service = FakeUndoService()
+        window, plan_view, _write_service = self._make_annotation_clipboard_window(
+            [annotation],
+            write_service=write_service,
+            undo_service=undo_service,
+        )
+        plan_view.annotation_key_map[("ann-1", "text")] = "ann-1_text"
+        plan_view.set_selected_uids({"a1"})
+        DetachedPageViewWindow._on_copy_requested(window, ["a1"])
+        plan_view.mouse_ost_position = (50.0, 75.0)
+        DetachedPageViewWindow._on_paste_requested(window)
+        self.assertEqual(len(write_service.insert_calls), 1)
+        db_path, bid_uid, specs, ref_remap = write_service.insert_calls[0]
+        self.assertEqual((db_path, bid_uid, ref_remap), ("bid.mdb", "7", None))
+        self.assertEqual(len(specs), 1)
+        spec = specs[0]
+        self.assertEqual(spec.annotation_type, "text")
+        self.assertEqual(spec.page_uid, "p1")
+        self.assertEqual(spec.layer_uid, "custom-layer")
+        self.assertEqual(spec.position, [50.0, 75.0, 30.0, 12.0, 0.25])
+        self.assertEqual(spec.color, "#112233")
+        self.assertEqual(spec.width, 3.5)
+        self.assertEqual(spec.properties, {"Text": "Copied", "FontName": "Segoe UI"})
+        self.assertEqual(plan_view.selected_uids, {"ann-1_text"})
+        self.assertEqual(
+            plan_view.intelligent_paste_calls,
+            [(["ann-1_text"], (10.0, 20.0))],
+        )
+        self.assertEqual(len(undo_service.pushes), 1)
 
     def test_create_window_defers_first_show_until_after_manager_setup(self):
         calls = []

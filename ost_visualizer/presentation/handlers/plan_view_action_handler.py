@@ -37,6 +37,10 @@ from ..utils.annotation_delete import (
 from ..utils.annotation_defaults import (
     build_placed_annotation_spec,
 )
+from ..utils.annotation_paste import (
+    annotation_paste_anchor,
+    translate_annotation_position,
+)
 from ..utils.messagebox import confirm
 from ..utils.named_view_validation import (
     named_view_name_exists,
@@ -1799,7 +1803,7 @@ class PlanViewActionHandler:
         }
         ann_specs = []
         for a in clipboard_anns:
-            pos = self._translate_annotation_position(a, paste_dx, paste_dy)
+            pos = translate_annotation_position(a, paste_dx, paste_dy)
             ann_specs.append(
                 InsertAnnotationSpec(
                     page_uid=page_uid,
@@ -1932,20 +1936,9 @@ class PlanViewActionHandler:
             if len(takeoff.position) >= 2:
                 return float(takeoff.position[0]), float(takeoff.position[1])
         for annotation in annotations:
-            anchor = self._annotation_paste_anchor(annotation)
+            anchor = annotation_paste_anchor(annotation)
             if anchor is not None:
                 return anchor
-        return None
-
-    def _annotation_paste_anchor(self, annotation) -> Optional[tuple]:
-        pos = list(annotation.position)
-        if annotation.is_ink:
-            start = 1 if len(pos) % 2 == 1 else 0
-            if len(pos) >= start + 2:
-                return float(pos[start]), float(pos[start + 1])
-            return None
-        if len(pos) >= 2:
-            return float(pos[0]), float(pos[1])
         return None
 
     def _translate_position(self, position: list, dx: float, dy: float) -> list:
@@ -1954,23 +1947,6 @@ class PlanViewActionHandler:
             translated[i] += dx
             translated[i + 1] += dy
         return translated
-
-    def _translate_annotation_position(self, annotation, dx: float, dy: float) -> list:
-        pos = list(annotation.position)
-        if annotation.is_text and len(pos) >= 4:
-            pos[0] += dx
-            pos[1] += dy
-        elif annotation.is_ink:
-            start = 1 if len(pos) % 2 == 1 else 0
-            for i in range(start, len(pos) - 1, 2):
-                pos[i] += dx
-                pos[i + 1] += dy
-        else:
-            n = len(pos) // 2
-            for i in range(n):
-                pos[i * 2] += dx
-                pos[i * 2 + 1] += dy
-        return pos
 
     def _is_condition_placeable(self, condition_uid: str) -> bool:
         condition = self._data_svc.get_bid_conditions().get(condition_uid)

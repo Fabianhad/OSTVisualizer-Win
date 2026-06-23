@@ -4,6 +4,7 @@ from typing import Callable, List, Optional, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
 from ....application.dtos.page_view_dto import PageViewDto
 from ....application.dtos.plan_view_renderers_dto import PlanViewRenderers
+from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.events.app_events import AppEvents
 from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
@@ -32,6 +33,7 @@ from ...modes.cursor import (
 from ...components.plan_view.view import TakeoffPlanView
 from ...components.resizable_combo import ResizableComboBox
 from ...components.viewer_cursors import make_zoom_cursor
+from ...actions.action_ids import ACTION_COPY, ACTION_PASTE
 from ...config import (
     ACTION_NEXT_PAGE_TOOLTIP,
     ACTION_PAN_TOOLTIP,
@@ -53,8 +55,10 @@ from ...config import (
 )
 from ...dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ...managers.icon_manager import IconId, IconManager
+from ...services.selection_clipboard_service import SelectionClipboardService
 from ...services.selection_commands import DeleteAnnotationsCommand
 from ...services.selection_commands import InsertAnnotationsCommand
+from ...services.selection_commands import PasteAnnotationsCommand
 from ...utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
     order_annotations_for_delete,
@@ -63,6 +67,10 @@ from ...utils.annotation_defaults import (
     build_placed_annotation_spec,
     get_annotation_style_for_tool,
     set_annotation_style_for_tool,
+)
+from ...utils.annotation_paste import (
+    annotation_paste_translation,
+    translate_annotation_position,
 )
 from ...utils.annotation_style_controls import (
     apply_annotation_tool_icon_color,
@@ -165,6 +173,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._ann_write_svc = annotation_write_service
         self._file_path: Optional[str] = file_path
         self._undo_svc = undo_service
+        self._annotation_clipboard_svc: Optional[SelectionClipboardService] = (
+            SelectionClipboardService() if config.allow_annotation_editing else None
+        )
         self.plan_view: Optional[TakeoffPlanView] = None
         self._read_only: bool = False
         self._is_closing: bool = False
@@ -487,6 +498,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.plan_view.hotlink_placement_requested.connect(
             self._on_hotlink_placement_requested
         )
+        if self._annotation_clipboard_svc is not None:
+            self.plan_view.copy_requested.connect(self._on_copy_requested)
+            self.plan_view.paste_requested.connect(self._on_paste_requested)
+            self.plan_view.set_context_menu_command_handlers(
+                self._trigger_context_menu_command,
+                self._context_menu_action_state,
+            )
         if self._undo_svc is not None:
             self.plan_view.undo_requested.connect(self._undo_svc.undo)
             self.plan_view.redo_requested.connect(self._undo_svc.redo)
@@ -720,6 +738,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         page_data: Optional[PageViewDto] = None,
         navigation_source: str = "unknown",
     ) -> None:
+        self._reset_annotation_clipboard_if_context_changed(view)
         self._navigation_source = navigation_source
         self.view = view
         if page_data is not None:
@@ -1192,6 +1211,155 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         factory = AnnotationCreationFactory(self.page_data.annotation_layer_uid)
         factory.assign_default_layer(spec)
 
+    def _reset_annotation_clipboard(self) -> None:
+        if self._annotation_clipboard_svc is None:
+            return
+        self._annotation_clipboard_svc = SelectionClipboardService()
+        if self.plan_view is not None:
+            self.plan_view.clipboard_changed.emit()
+
+    def _reset_annotation_clipboard_if_context_changed(
+        self, view: AnnotationView
+    ) -> None:
+        if self._annotation_clipboard_svc is None:
+            return
+        bid_ref = view.bid_ref if view else None
+        if bid_ref is None:
+            self._reset_annotation_clipboard()
+            return
+        if not self._annotation_clipboard_svc.has_content():
+            return
+        if (
+            self._annotation_clipboard_svc.source_file_path != bid_ref.file_path
+            or self._annotation_clipboard_svc.source_bid_uid != bid_ref.bid_uid
+        ):
+            self._reset_annotation_clipboard()
+
+    def _copyable_annotations_for_uids(self, uids: list) -> list:
+        if self.plan_view is None:
+            return []
+        annotations = []
+        for uid in uids:
+            annotation = self.plan_view.get_annotation(uid)
+            if annotation and annotation.is_interactive and not annotation.is_namedview:
+                annotations.append(annotation)
+        return annotations
+
+    def _selected_copyable_annotations(self) -> list:
+        if self.plan_view is None:
+            return []
+        return self._copyable_annotations_for_uids(self.plan_view.get_selected_uids())
+
+    def _can_copy_selected_annotations(self) -> bool:
+        return self._selection_enabled() and bool(self._selected_copyable_annotations())
+
+    def _can_paste_annotations(self) -> bool:
+        if (
+            not self._selection_enabled()
+            or self._is_closing
+            or self._ann_write_svc is None
+            or self.plan_view is None
+            or self.view is None
+            or self.view.bid_ref is None
+            or self._annotation_clipboard_svc is None
+        ):
+            return False
+        bid_ref = self.view.bid_ref
+        if (
+            self._annotation_clipboard_svc.source_file_path != bid_ref.file_path
+            or self._annotation_clipboard_svc.source_bid_uid != bid_ref.bid_uid
+        ):
+            return False
+        return bool(
+            self.plan_view.current_page_uid
+            and self._annotation_clipboard_svc.annotations
+        )
+
+    def _context_menu_action_state(self, action_key: str) -> dict:
+        if action_key == ACTION_COPY:
+            return {"enabled": self._can_copy_selected_annotations()}
+        if action_key == ACTION_PASTE:
+            return {"enabled": self._can_paste_annotations()}
+        return {}
+
+    def _trigger_context_menu_command(self, action_key: str) -> None:
+        if action_key == ACTION_COPY and self.plan_view is not None:
+            self._on_copy_requested(self.plan_view.get_selected_uids())
+        elif action_key == ACTION_PASTE:
+            self._on_paste_requested()
+
+    def _on_copy_requested(self, uids: list) -> None:
+        if (
+            not self._selection_enabled()
+            or self._annotation_clipboard_svc is None
+            or self.view is None
+            or self.view.bid_ref is None
+        ):
+            return
+        annotations = self._copyable_annotations_for_uids(uids)
+        if not annotations:
+            return
+        self._annotation_clipboard_svc.copy(
+            [],
+            annotations,
+            source_bid_uid=self.view.bid_ref.bid_uid,
+            source_file_path=self.view.bid_ref.file_path,
+        )
+        if self.plan_view is not None:
+            self.plan_view.clipboard_changed.emit()
+
+    def _on_paste_requested(self) -> None:
+        if not self._can_paste_annotations():
+            return
+        bid_ref = self.view.bid_ref
+        page_uid = self.plan_view.current_page_uid
+        clipboard_annotations = self._annotation_clipboard_svc.annotations
+        paste_dx, paste_dy, source_anchor = annotation_paste_translation(
+            self.plan_view, clipboard_annotations
+        )
+        specs = [
+            InsertAnnotationSpec(
+                page_uid=page_uid,
+                annotation_type=annotation.annotation_type,
+                position=translate_annotation_position(annotation, paste_dx, paste_dy),
+                color=annotation.color,
+                width=annotation.width,
+                properties=dict(annotation.properties),
+                layer_uid=annotation.layer_uid,
+            )
+            for annotation in clipboard_annotations
+        ]
+        for spec in specs:
+            self._apply_default_annotation_layer(spec)
+        new_uids = self._ann_write_svc.insert_annotations(
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            specs,
+        )
+        new_uids = list(new_uids[: len(specs)])
+        specs = specs[: len(new_uids)]
+        uid_type_set = {
+            (uid, specs[i].annotation_type) for i, uid in enumerate(new_uids)
+        }
+        keys = self.plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+        if keys:
+            self.plan_view.set_selected_uids(keys)
+            if source_anchor:
+                self.plan_view.mark_intelligent_paste_drag_pending(
+                    sorted(keys),
+                    source_anchor,
+                )
+        if self._undo_svc is None or not new_uids or not specs:
+            return
+        cmd = PasteAnnotationsCommand(
+            specs=specs,
+            new_uids=list(new_uids),
+            bid_ref=bid_ref,
+            write_svc=self._ann_write_svc,
+            plan_view=self.plan_view,
+        )
+        self._undo_svc.push(cmd.undo, cmd.redo)
+
     def _on_annotation_created(
         self, annotation_type: str, position: list, page_uid: str
     ) -> None:
@@ -1559,6 +1727,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self.plan_view.hotlink_placement_requested.disconnect(
                 self._on_hotlink_placement_requested
             )
+            if self._annotation_clipboard_svc is not None:
+                self.plan_view.copy_requested.disconnect(self._on_copy_requested)
+                self.plan_view.paste_requested.disconnect(self._on_paste_requested)
+                self.plan_view.set_context_menu_command_handlers(None, None)
             self.plan_view.cursor_mode_change_requested.disconnect(
                 self._on_cursor_mode_change_requested
             )
@@ -1570,7 +1742,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self.plan_view = None
         if self._undo_svc is not None:
             self._undo_svc.clear()
-            self._undo_svc = None
+        self._undo_svc = None
+        self._annotation_clipboard_svc = None
         self._ann_write_svc = None
         self._file_path = None
         self._renderers = None
