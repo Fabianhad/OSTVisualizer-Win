@@ -3,7 +3,11 @@ import uuid
 from typing import Dict, List, Optional
 import pyodbc
 from ..schema_contract import BID_SECTIONS, BID_TAIL_SECTIONS, PAGE_SECTIONS
-from .constants import HANDLED_SEPARATELY
+from .constants import (
+    HANDLED_SEPARATELY,
+    PAGE_DELETE_CHILD_TABLES,
+    TAKEOFF_REFERENCE_TABLES,
+)
 from .sql_helpers import placeholders
 
 _BID_SCOPED_PRE = (
@@ -24,22 +28,7 @@ _BID_SCOPED_PRE = (
 )
 _PAGE_SCOPED = (
     "BidPercents",
-    "BidDimensions",
-    "BidALines",
-    "BidArrows",
-    "BidHighlights",
-    "BidTexts",
-    "BidCallOuts",
-    "BidAnnotationRects",
-    "BidAnnotationOvals",
-    "BidAnnotationPolygons",
-    "BidAnnotationClouds",
-    "BidAnnoInk",
-    "BidLegends",
-    "BidPageSettings",
-    "BidAreaTranslations",
-    "BidMarkedPages",
-    "BidComments",
+    *PAGE_DELETE_CHILD_TABLES,
 )
 _BID_SCOPED_POST = (
     "BidHotLinks",
@@ -102,6 +91,40 @@ class BidOperationsMixin:
                         *uids,
                     )
 
+                def _del_takeoff_link(table: str) -> None:
+                    if (
+                        schema.optional_table_missing(table)
+                        or schema.optional_table_missing("BidTakeoffs")
+                        or not schema.column_exists(table, "BidTakeoffFromUID")
+                        or not schema.column_exists("BidTakeoffs", "UID")
+                        or not schema.column_exists("BidTakeoffs", "BidUID")
+                    ):
+                        return
+                    cursor.execute(
+                        f"DELETE FROM [{table}] WHERE [BidTakeoffFromUID] IN "
+                        f"(SELECT [UID] FROM [BidTakeoffs] "
+                        f"WHERE BidUID IN ({placeholders_sql}))",
+                        *uids,
+                    )
+
+                def _del_child_by_bid_parent(
+                    child_table: str, child_fk: str, parent_table: str
+                ) -> None:
+                    if (
+                        schema.optional_table_missing(child_table)
+                        or schema.optional_table_missing(parent_table)
+                        or not schema.column_exists(child_table, child_fk)
+                        or not schema.column_exists(parent_table, "UID")
+                        or not schema.column_exists(parent_table, "BidUID")
+                    ):
+                        return
+                    cursor.execute(
+                        f"DELETE FROM [{child_table}] WHERE [{child_fk}] IN "
+                        f"(SELECT [UID] FROM [{parent_table}] "
+                        f"WHERE BidUID IN ({placeholders_sql}))",
+                        *uids,
+                    )
+
                 if (
                     not schema.optional_table_missing("BidPercents")
                     and not schema.optional_table_missing("BidTakeoffs")
@@ -114,34 +137,32 @@ class BidOperationsMixin:
                         f"(SELECT [UID] FROM [BidTakeoffs] WHERE BidUID IN ({placeholders_sql}))",
                         *uids,
                     )
+                for table in TAKEOFF_REFERENCE_TABLES:
+                    _del_takeoff_link(table)
                 for table in _PAGE_SCOPED:
                     _del_page(table)
+                    _del_bid(table)
                 for table in _BID_SCOPED_PRE:
                     _del_bid(table)
-                if (
-                    not schema.optional_table_missing("BidTimeCards")
-                    and not schema.optional_table_missing("BidEmployees")
-                    and schema.column_exists("BidTimeCards", "BidEmployeeUID")
-                    and schema.column_exists("BidEmployees", "UID")
-                    and schema.column_exists("BidEmployees", "BidUID")
+                for parent_table, child_fk in (
+                    ("BidLaborCostCodes", "BidLaborCostCodeUID"),
+                    ("BidTimeCardStates", "BidTimeCardStateUID"),
                 ):
-                    cursor.execute(
-                        "DELETE FROM [BidTimeCards] WHERE [BidEmployeeUID] IN "
-                        f"(SELECT [UID] FROM [BidEmployees] WHERE BidUID IN ({placeholders_sql}))",
-                        *uids,
-                    )
-                if (
-                    not schema.optional_table_missing("BidTypAreaCounts")
-                    and not schema.optional_table_missing("BidAreas")
-                    and schema.column_exists("BidTypAreaCounts", "BidAreaUID")
-                    and schema.column_exists("BidAreas", "UID")
-                    and schema.column_exists("BidAreas", "BidUID")
+                    _del_child_by_bid_parent("BidPercents", child_fk, parent_table)
+                for parent_table, child_fk in (
+                    ("BidEmployees", "BidEmployeeUID"),
+                    ("BidAreas", "BidAreaUID"),
+                    ("BidTypAreas", "BidTypicalAreaUID"),
+                    ("BidLaborCostCodes", "BidLaborCostCodeUID"),
+                    ("BidTimeCardStates", "BidTimeCardStateUID"),
                 ):
-                    cursor.execute(
-                        "DELETE FROM [BidTypAreaCounts] WHERE [BidAreaUID] IN "
-                        f"(SELECT [UID] FROM [BidAreas] WHERE BidUID IN ({placeholders_sql}))",
-                        *uids,
-                    )
+                    _del_child_by_bid_parent("BidTimeCards", child_fk, parent_table)
+                for parent_table, child_fk in (
+                    ("BidAreas", "BidAreaUID"),
+                    ("BidTypAreas", "BidTypAreaUID"),
+                ):
+                    _del_child_by_bid_parent("BidTypAreaCounts", child_fk, parent_table)
+                    _del_child_by_bid_parent("BidPageSettings", child_fk, parent_table)
                 if (
                     not schema.optional_table_missing("ConditionSetStyles")
                     and not schema.optional_table_missing("BidConditions")
@@ -154,7 +175,15 @@ class BidOperationsMixin:
                         f"(SELECT [UID] FROM [BidConditions] WHERE BidUID IN ({placeholders_sql}))",
                         *uids,
                     )
-                _del_page("BidTakeoffs")
+                if not schema.optional_table_missing("BidTakeoffs"):
+                    if schema.column_exists("BidTakeoffs", "BidUID"):
+                        cursor.execute(
+                            "DELETE FROM [BidTakeoffs] "
+                            f"WHERE BidUID IN ({placeholders_sql})",
+                            *uids,
+                        )
+                    else:
+                        _del_page("BidTakeoffs")
                 for table in _BID_SCOPED_POST:
                     _del_bid(table)
                 cursor.execute(

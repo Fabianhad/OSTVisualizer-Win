@@ -52,6 +52,40 @@ HANDLED_SEPARATELY: Set[str] = {
     "BidPageFolders",
     "BidNamedViews",
 }
+TAKEOFF_REFERENCE_TABLES = (
+    "BidDimensions",
+    "BidALines",
+    "BidArrows",
+)
+PAGE_ANNOTATION_TABLES = (
+    "BidDimensions",
+    "BidALines",
+    "BidArrows",
+    "BidHighlights",
+    "BidTexts",
+    "BidCallOuts",
+    "BidAnnotationRects",
+    "BidAnnotationOvals",
+    "BidAnnotationPolygons",
+    "BidAnnotationClouds",
+    "BidAnnoInk",
+    "BidLegends",
+    "BidComments",
+)
+PAGE_AUXILIARY_CHILD_TABLES = (
+    "BidPageSettings",
+    "BidAreaTranslations",
+    "BidMarkedPages",
+)
+PAGE_DELETE_CHILD_TABLES = PAGE_ANNOTATION_TABLES + PAGE_AUXILIARY_CHILD_TABLES
+PAGE_CONTENT_TABLES = (
+    ("BidTakeoffs",)
+    + PAGE_ANNOTATION_TABLES
+    + (
+        "BidNamedViews",
+        "BidHotLinks",
+    )
+)
 LAYER_REFERENCE_TABLES = (
     "BidConditions",
     "BidZones",

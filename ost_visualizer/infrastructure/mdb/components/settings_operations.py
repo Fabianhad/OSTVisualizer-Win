@@ -3,6 +3,7 @@ import pyodbc
 from ....domain.entities.area import BidAreaChangeset
 from ....domain.services.uom_service import normalize_uom_for_system
 from ...parsers.position_parser import convert_elevation_in_name
+from .constants import PAGE_DELETE_CHILD_TABLES, TAKEOFF_REFERENCE_TABLES
 from .overlay_rect import default_overlay_rect
 
 
@@ -338,7 +339,7 @@ class SettingsOperationsMixin:
                 "(SELECT [UID] FROM [BidTakeoffs] WHERE [BidPageUID] = ?)",
                 page_int,
             )
-        for child in ("BidDimensions", "BidALines", "BidArrows"):
+        for child in TAKEOFF_REFERENCE_TABLES:
             if (
                 not schema.optional_table_missing(child)
                 and not schema.optional_table_missing("BidTakeoffs")
@@ -351,24 +352,7 @@ class SettingsOperationsMixin:
                     "(SELECT [UID] FROM [BidTakeoffs] WHERE [BidPageUID] = ?)",
                     page_int,
                 )
-        for table in (
-            "BidDimensions",
-            "BidALines",
-            "BidArrows",
-            "BidHighlights",
-            "BidTexts",
-            "BidCallOuts",
-            "BidAnnotationRects",
-            "BidAnnotationOvals",
-            "BidAnnotationPolygons",
-            "BidAnnotationClouds",
-            "BidAnnoInk",
-            "BidLegends",
-            "BidPageSettings",
-            "BidAreaTranslations",
-            "BidMarkedPages",
-            "BidComments",
-        ):
+        for table in PAGE_DELETE_CHILD_TABLES:
             try:
                 if schema.optional_table_missing(table) or not schema.column_exists(
                     table, "BidPageUID"
@@ -709,7 +693,7 @@ class SettingsOperationsMixin:
             self.logger.exception("Failed to save pay classes in %s", db_path)
             return {}
 
-    def save_condition_types(self, db_path: str, changes: dict) -> dict:
+    def save_condition_types(self, db_path: str, changes: dict) -> dict | None:
         uid_map: dict = {}
         try:
             with self._connection(db_path) as conn:
@@ -723,6 +707,21 @@ class SettingsOperationsMixin:
                     try:
                         uid_int = int(uid)
                         self._require_write_columns(schema, "CdnTypes", ("UID",))
+                        if not schema.optional_table_missing(
+                            "BidConditions"
+                        ) and schema.column_exists("BidConditions", "CdnTypeUID"):
+                            cursor.execute(
+                                "SELECT COUNT(*) FROM [BidConditions] "
+                                "WHERE [CdnTypeUID]=?",
+                                uid_int,
+                            )
+                            row = cursor.fetchone()
+                            if row and int(row[0] or 0) > 0:
+                                self.logger.warning(
+                                    "Refusing to delete condition type in use: %s",
+                                    uid_int,
+                                )
+                                return None
                         cursor.execute("DELETE FROM [CdnTypes] WHERE [UID]=?", uid_int)
                     except (pyodbc.Error, ValueError) as exc:
                         self.logger.warning(

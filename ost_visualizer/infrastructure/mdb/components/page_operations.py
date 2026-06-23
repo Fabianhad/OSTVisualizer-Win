@@ -1,27 +1,10 @@
 import pyodbc
+from .constants import PAGE_CONTENT_TABLES
 from .overlay_rect import default_overlay_rect
 
 
 class PageOperationsMixin:
-    _POSITION_TABLES = (
-        "BidTakeoffs",
-        "BidHighlights",
-        "BidTexts",
-        "BidDimensions",
-        "BidArrows",
-        "BidALines",
-        "BidCallOuts",
-        "BidAnnotationRects",
-        "BidAnnotationOvals",
-        "BidAnnotationPolygons",
-        "BidAnnotationClouds",
-        "BidAnnoInk",
-        "BidLegends",
-        "BidHotLinks",
-        "BidNamedViews",
-        "BidTypGroupViews",
-        "BidComments",
-    )
+    _POSITION_TABLES = PAGE_CONTENT_TABLES + ("BidTypGroupViews",)
 
     def save_page_scale(
         self, db_path: str, page_uid: str, sf1: float, sf2: float

@@ -1337,6 +1337,19 @@ class BidLockPermissionTests(unittest.TestCase):
             service.save_condition_types(project_data.bid_ref.file_path, changes)
         )
 
+    def test_condition_type_save_result_reports_write_failure(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        service._save_condition_types = _SequenceUseCase([None])
+        changes = {"new": [], "updated": [], "deleted_uids": ["type-used"]}
+        result = service.save_condition_types_result(
+            project_data.bid_ref.file_path, changes
+        )
+        self.assertFalse(result)
+        self.assertFalse(result.write_success)
+        self.assertFalse(result.reload_success)
+        self.assertIsNone(result.value)
+
     def test_condition_dialog_layer_insert_warns_when_refresh_fails(self):
         warnings = []
         bid_ref = BidRef("db.mdb", "bid-1")

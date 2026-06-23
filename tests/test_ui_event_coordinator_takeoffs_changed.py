@@ -101,6 +101,7 @@ class FakeSidebar:
         self.quantity_updates = 0
         self.condition_quantity_updates = []
         self.condition_refreshes = 0
+        self.condition_summary_loads = 0
         self.clears = 0
 
     def update_conditions_quantities(self, condition_uids=None):
@@ -111,6 +112,9 @@ class FakeSidebar:
 
     def refresh_conditions_ui(self):
         self.condition_refreshes += 1
+
+    def load_condition_summary(self):
+        self.condition_summary_loads += 1
 
     def clear_sidebars(self):
         self.clears += 1
@@ -187,6 +191,9 @@ class FakeTabWidget:
 
     def currentIndex(self):
         return self.index
+
+    def count(self):
+        return 3
 
     def setCurrentIndex(self, index):
         self.index = index
@@ -1044,7 +1051,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(coordinator.ui_state_manager.reset_count, 1)
         self.assertEqual(coordinator._viewer.clears, 1)
-        self.assertEqual(coordinator._tab_widget.visibility, [(1, False)])
+        self.assertEqual(coordinator._tab_widget.visibility, [(1, False), (2, False)])
         self.assertEqual(coordinator._tab_widget.currentIndex(), 0)
         self.assertEqual(coordinator.main_window.project_view.resets, 1)
         self.assertEqual(coordinator.main_window.menu_controller.updates, 1)
@@ -1065,7 +1072,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             coordinator.main_window.project_view.restored_file,
             "active.mdb",
         )
-        self.assertEqual(coordinator._tab_widget.visibility, [(1, False)])
+        self.assertEqual(coordinator._tab_widget.visibility, [(1, False), (2, False)])
         self.assertEqual(coordinator._tab_widget.currentIndex(), 0)
 
     def test_file_refresh_rebuilds_tree_from_reloaded_hierarchy(self):
@@ -1139,7 +1146,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             (True, "active.mdb"),
         )
         self.assertEqual(coordinator._sidebar.clears, 1)
-        self.assertEqual(coordinator._tab_widget.visibility, [(1, False)])
+        self.assertEqual(coordinator._tab_widget.visibility, [(1, False), (2, False)])
         self.assertEqual(coordinator._tab_widget.currentIndex(), 0)
         self.assertIsNone(coordinator.main_window.project_view.restored_project)
         self.assertEqual(
@@ -1183,7 +1190,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertIsNone(coordinator.ui_state_manager.get_selected_bid_ref())
         self.assertEqual(undo_calls, [None])
         self.assertEqual(coordinator.project_data.deselect_count, 1)
-        self.assertEqual(coordinator._tab_widget.visibility, [(1, False)])
+        self.assertEqual(coordinator._tab_widget.visibility, [(1, False), (2, False)])
         self.assertEqual(coordinator._tab_widget.currentIndex(), 0)
         self.assertEqual(
             coordinator.main_window.project_view.restored_file, "active.mdb"
@@ -1280,7 +1287,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(
             coordinator.project_data.get_current_bid_ref(), replacement_ref
         )
-        self.assertEqual(coordinator._tab_widget.visibility, [(1, True)])
+        self.assertEqual(coordinator._tab_widget.visibility, [(1, True), (2, True)])
 
 
 if __name__ == "__main__":

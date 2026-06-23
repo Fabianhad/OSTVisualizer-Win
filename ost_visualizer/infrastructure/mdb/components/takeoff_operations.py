@@ -1,7 +1,7 @@
 import uuid
 from typing import List
 from ....application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
-from .constants import encode_position
+from .constants import TAKEOFF_REFERENCE_TABLES, encode_position
 
 
 class TakeoffOperationsMixin:
@@ -246,7 +246,7 @@ class TakeoffOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidTakeoffs", ("UID",))
                 cursor = conn.cursor()
-                for child in ("BidDimensions", "BidALines", "BidArrows"):
+                for child in TAKEOFF_REFERENCE_TABLES:
                     if schema.optional_table_missing(child) or not schema.column_exists(
                         child, "BidTakeoffFromUID"
                     ):
@@ -262,6 +262,12 @@ class TakeoffOperationsMixin:
                     cursor.execute(
                         f"DELETE FROM [BidPercents] WHERE [BidTakeoffUID] IN "
                         f"({placeholders})",
+                        *uids,
+                    )
+                if schema.column_exists("BidTakeoffs", "ParentUID"):
+                    cursor.execute(
+                        f"UPDATE [BidTakeoffs] SET [ParentUID]=NULL "
+                        f"WHERE [ParentUID] IN ({placeholders})",
                         *uids,
                     )
                 cursor.execute(

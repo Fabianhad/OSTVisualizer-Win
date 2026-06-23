@@ -71,6 +71,20 @@ class ConditionFolderOperationsMixin:
                 schema = self._schema(conn)
                 self._require_write_columns(schema, "BidConditionFolders", ("UID",))
                 cursor = conn.cursor()
+                if not schema.optional_table_missing(
+                    "BidConditions"
+                ) and schema.column_exists("BidConditions", "BidConditionFolderUID"):
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM [BidConditions] "
+                        f"WHERE [BidConditionFolderUID] IN ({placeholders})",
+                        *uids,
+                    )
+                    row = cursor.fetchone()
+                    if row and int(row[0] or 0) > 0:
+                        self.logger.warning(
+                            "Refusing to delete condition folders in use: %s", uids
+                        )
+                        return False
                 cursor.execute(
                     f"DELETE FROM [BidConditionFolders] WHERE [UID] IN ({placeholders})",
                     *uids,

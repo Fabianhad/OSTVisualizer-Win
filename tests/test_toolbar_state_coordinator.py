@@ -163,7 +163,9 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         coordinator.refresh()
         self.assertFalse(action.isEnabled())
 
-    def test_summary_tab_disables_project_only_edit_actions_despite_project_selection(self):
+    def test_summary_tab_disables_project_only_edit_actions_despite_project_selection(
+        self,
+    ):
         _app()
         ref = BidRef("db.mdb", "bid-1")
         copy_action = QtGui.QAction()

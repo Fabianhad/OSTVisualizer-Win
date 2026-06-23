@@ -19,6 +19,7 @@ from ...parsers.ost_serializer import serialize_row
 from ...parsers.position_parser import extract_z_value_from_name, parse_position
 from ...parsers.utils.parser import decode_value, parse_float, parse_overlay_rect
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES
+from .constants import PAGE_CONTENT_TABLES
 from ..schema_compatibility import MdbSchemaInspector
 
 BidConditions = Dict[str, Condition]
@@ -365,24 +366,7 @@ class BidDataReaderMixin:
 
     def get_pages_with_delete_content(self, file_path: str, bid_uid: str) -> set:
         result = set()
-        content_tables = (
-            "BidTakeoffs",
-            "BidDimensions",
-            "BidAnnotationClouds",
-            "BidAnnotationOvals",
-            "BidAnnotationPolygons",
-            "BidAnnotationRects",
-            "BidAnnoInk",
-            "BidALines",
-            "BidArrows",
-            "BidTexts",
-            "BidHighlights",
-            "BidNamedViews",
-            "BidHotLinks",
-            "BidCallOuts",
-            "BidLegends",
-            "BidComments",
-        )
+        content_tables = PAGE_CONTENT_TABLES
         try:
             with self._connection(file_path) as connection:
                 schema = MdbSchemaInspector(connection, self.logger)
