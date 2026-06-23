@@ -1,8 +1,7 @@
 import logging
 from dataclasses import dataclass
 from typing import Callable, Dict, Hashable, Optional, Tuple
-from PySide6 import QtCore, QtWidgets
-from ..utils.messagebox import show_warning
+from PySide6 import QtCore
 
 DeferredPersistenceKey = Tuple[Hashable, ...]
 
@@ -22,12 +21,10 @@ class DeferredPersistenceManager(QtCore.QObject):
         self,
         project_write_service,
         parent: Optional[QtCore.QObject] = None,
-        warning_parent: Optional[QtWidgets.QWidget] = None,
         logger_: Optional[logging.Logger] = None,
     ) -> None:
         super().__init__(parent)
         self._write_service = project_write_service
-        self._warning_parent = warning_parent
         self._logger = logger_ or logging.getLogger(__name__)
         self._pending: Dict[DeferredPersistenceKey, DeferredPersistenceItem] = {}
         self._flushing = False
@@ -171,7 +168,6 @@ class DeferredPersistenceManager(QtCore.QObject):
         finally:
             self._flushing = False
         if failed:
-            self._notify_failure(len(failed))
             return False
         return True
 
@@ -194,7 +190,6 @@ class DeferredPersistenceManager(QtCore.QObject):
         finally:
             self._flushing = False
         if failed:
-            self._notify_failure(len(failed))
             return False
         if self._pending:
             self._timer.start()
@@ -249,18 +244,5 @@ class DeferredPersistenceManager(QtCore.QObject):
             return False
         self._timer.stop()
         self._write_service = None
-        self._warning_parent = None
         self._cleaned_up = True
         return True
-
-    def _notify_failure(self, failed_count: int) -> None:
-        parent = self._warning_parent
-        if parent is None:
-            return
-        show_warning(
-            parent,
-            "Persistence Warning",
-            f"{failed_count} pending visual state change(s) could not be saved. "
-            "The visible state remains active for this session, but may not be "
-            "restored after reopening the database.",
-        )

@@ -222,14 +222,14 @@ class DialogLifecycleTests(unittest.TestCase):
         FakeProgressDialog.result_code = QtWidgets.QDialog.DialogCode.Accepted
         try:
             main_window_module.ProgressDialog = FakeProgressDialog
-            result = MainWindow._create_database_with_progress(window)
+            result = MainWindow._create_database_with_progress(window, "Named DB")
         finally:
             main_window_module.ProgressDialog = original_dialog
         dialog = FakeProgressDialog.instances[0]
         self.assertEqual(result, "created.mdb")
         self.assertEqual(dialog.filename, "new database")
         self.assertEqual(dialog.action_text, "Creating database")
-        self.assertEqual(window.app_controller.calls, [(None, True)])
+        self.assertEqual(window.app_controller.calls, [("Named DB", True)])
         self.assertEqual(dialog.messages, ["schema tables"])
         self.assertEqual(dialog.exec_calls, 1)
         self.assertEqual(dialog.cleanup_calls, 1)

@@ -162,7 +162,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._deferred_persistence_manager = DeferredPersistenceManager(
             self._project_write_service,
             parent=self,
-            warning_parent=self,
         )
         self.icon_provider = QtWindowIconProvider()
         self.window_configurator = WindowConfigurator(
@@ -379,7 +378,7 @@ class MainWindow(QtWidgets.QMainWindow):
             infrastructure_provider=self._infrastructure_provider,
             event_bus=self.event_bus,
             file_loading_service=self._file_loading_service,
-            create_new_database_fn=self.app_controller.create_new_database,
+            create_new_database_fn=self._create_database_with_progress,
             deferred_persistence_manager=self._deferred_persistence_manager,
             shared_actions={
                 ACTION_NEW_PROJECT: components.new_project_action,
@@ -587,12 +586,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 file_path=result.file_path,
             )
 
-    def _create_database_with_progress(self) -> str | None:
+    def _create_database_with_progress(self, name: str | None = None) -> str | None:
         reporter = ProgressReporter()
         progress = ProgressDialog(
             "new database",
             lambda: self.app_controller.create_new_database(
-                progress_callback=reporter.report
+                name, progress_callback=reporter.report
             ),
             parent=self,
             reporter=reporter,
