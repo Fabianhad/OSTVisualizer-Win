@@ -9,6 +9,8 @@ from .renderers.page_renderer import PageRenderer
 
 _PAGE_CACHE_MAX_BYTES = 160 * 1024 * 1024
 _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES = 96 * 1024 * 1024
+_FRAME_CACHE_MAX_BYTES = 160 * 1024 * 1024
+_FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES = 96 * 1024 * 1024
 _TINTED_CACHE_MAX_BYTES = 64 * 1024 * 1024
 _TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES = 32 * 1024 * 1024
 _BASE_RASTER_MAX_PIXELS = 20_000_000
@@ -23,6 +25,19 @@ class CacheKey:
     page_index: int
     scale: float
     rotation: int
+
+
+@dataclass(frozen=True)
+class FrameCacheKey:
+    file_path: str
+    file_signature: Optional[tuple[int, int]]
+    page_index: int
+    scale: float
+    rotation: int
+    frame_x_pts: float
+    frame_y_pts: float
+    frame_w_pts: float
+    frame_h_pts: float
 
 
 @dataclass(frozen=True)
@@ -42,9 +57,11 @@ class PageCache:
     MAX_METADATA_ENTRIES = 512
     BASE_RASTER_MAX_PIXELS = _BASE_RASTER_MAX_PIXELS
     PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES = _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
+    FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES = _FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES
 
     def __init__(self):
         self._cache: OrderedDict[CacheKey, QImage] = OrderedDict()
+        self._frame_cache: OrderedDict[FrameCacheKey, QImage] = OrderedDict()
         self._tinted_cache: OrderedDict[TintedCacheKey, QImage] = OrderedDict()
         self._page_info_cache: OrderedDict[str, Dict] = OrderedDict()
         self._page_count_cache: OrderedDict[str, int] = OrderedDict()
@@ -55,6 +72,7 @@ class PageCache:
         self._renderers: List[PageRenderer] = []
         self._renderers_lock = threading.Lock()
         self._in_flight: set[CacheKey] = set()
+        self._frame_in_flight: set[FrameCacheKey] = set()
         self._in_flight_condition = threading.Condition(self._lock)
 
     def _get_renderer(self) -> PageRenderer:
@@ -69,6 +87,33 @@ class PageCache:
 
     def _quantize_scale(self, scale: float) -> float:
         return max(0.1, round(scale, 3))
+
+    @staticmethod
+    def _quantize_frame_coord(value: float) -> float:
+        return round(float(value), 3)
+
+    def _build_frame_cache_key(
+        self,
+        file_path: str,
+        page_index: int,
+        scale: float,
+        frame_x_pts: float,
+        frame_y_pts: float,
+        frame_w_pts: float,
+        frame_h_pts: float,
+        rotation: int,
+    ) -> FrameCacheKey:
+        return FrameCacheKey(
+            file_path=file_path,
+            file_signature=self._file_signature(file_path),
+            page_index=page_index,
+            scale=self._quantize_scale(scale),
+            rotation=rotation,
+            frame_x_pts=self._quantize_frame_coord(frame_x_pts),
+            frame_y_pts=self._quantize_frame_coord(frame_y_pts),
+            frame_w_pts=self._quantize_frame_coord(frame_w_pts),
+            frame_h_pts=self._quantize_frame_coord(frame_h_pts),
+        )
 
     @staticmethod
     def _file_signature(file_path: str) -> Optional[tuple[int, int]]:
@@ -271,6 +316,66 @@ class PageCache:
             rotation,
         )
 
+    def get_frame(
+        self,
+        file_path: str,
+        page_index: int,
+        scale: float,
+        frame_x_pts: float,
+        frame_y_pts: float,
+        frame_w_pts: float,
+        frame_h_pts: float,
+        rotation: int = 0,
+    ) -> Optional[QImage]:
+        if not file_path or frame_w_pts <= 0.0 or frame_h_pts <= 0.0:
+            return None
+        key = self._build_frame_cache_key(
+            file_path,
+            page_index,
+            scale,
+            frame_x_pts,
+            frame_y_pts,
+            frame_w_pts,
+            frame_h_pts,
+            rotation,
+        )
+        with self._in_flight_condition:
+            if key in self._frame_cache:
+                self._frame_cache.move_to_end(key)
+                return self._frame_cache[key]
+            while key in self._frame_in_flight:
+                self._in_flight_condition.wait()
+                if key in self._frame_cache:
+                    self._frame_cache.move_to_end(key)
+                    return self._frame_cache[key]
+            self._frame_in_flight.add(key)
+        image = None
+        try:
+            renderer = self._get_renderer()
+            image = renderer.render_frame(
+                key.file_path,
+                key.page_index,
+                key.scale,
+                key.frame_x_pts,
+                key.frame_y_pts,
+                key.frame_w_pts,
+                key.frame_h_pts,
+                key.rotation,
+            )
+        finally:
+            with self._in_flight_condition:
+                self._frame_in_flight.discard(key)
+                if image:
+                    self._store_cache_image(
+                        self._frame_cache,
+                        key,
+                        image,
+                        _FRAME_CACHE_MAX_BYTES,
+                        _FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES,
+                    )
+                self._in_flight_condition.notify_all()
+        return image
+
     def get_page_info(self, file_path: str, page_index: int = 0) -> Dict:
         cache_key = (file_path, self._file_signature(file_path), page_index)
         with self._lock:
@@ -358,6 +463,7 @@ class PageCache:
     def clear(self):
         with self._lock:
             self._cache.clear()
+            self._frame_cache.clear()
             self._tinted_cache.clear()
             self._page_info_cache.clear()
             self._page_count_cache.clear()

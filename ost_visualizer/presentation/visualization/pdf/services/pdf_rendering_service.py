@@ -435,7 +435,7 @@ class PDFRenderingService:
         )
 
     def _execute_frame_render(self, request: RenderRequest) -> RenderResult:
-        image = self._page_cache.render_frame_uncached(
+        image = self._page_cache.get_frame(
             request.file_path,
             request.page_index,
             request.scale,

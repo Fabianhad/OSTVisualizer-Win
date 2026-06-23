@@ -289,7 +289,31 @@ def _plan_view_with_tracking_viewport(cursor_mode="select"):
     return view, viewport
 
 
-class FakeCompositeFramePageCache:
+class FakeFrameCacheAdapter:
+    def get_frame(
+        self,
+        file_path,
+        page_index,
+        scale,
+        frame_x_pts,
+        frame_y_pts,
+        frame_w_pts,
+        frame_h_pts,
+        rotation,
+    ):
+        return self.render_frame_uncached(
+            file_path,
+            page_index,
+            scale,
+            frame_x_pts,
+            frame_y_pts,
+            frame_w_pts,
+            frame_h_pts,
+            rotation,
+        )
+
+
+class FakeCompositeFramePageCache(FakeFrameCacheAdapter):
     def __init__(self, source_size=(100.0, 100.0)):
         self.calls = []
         self.source_size = source_size
@@ -326,7 +350,7 @@ class FakeCompositeFramePageCache:
         return self.source_size
 
 
-class FakeOverlayMovementPageCache:
+class FakeOverlayMovementPageCache(FakeFrameCacheAdapter):
     def _source_image(
         self,
         scale,
@@ -388,7 +412,7 @@ class FakeOverlayMovementPageCache:
         return image
 
 
-class FakeShiftedSourceMarkerTifPageCache:
+class FakeShiftedSourceMarkerTifPageCache(FakeFrameCacheAdapter):
     def __init__(self):
         self.page_scales = []
 

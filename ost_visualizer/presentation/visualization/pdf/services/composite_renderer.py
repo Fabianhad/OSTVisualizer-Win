@@ -204,7 +204,7 @@ class CompositeRenderer:
             return None
         frame_x, frame_y, frame_w, frame_h = frame
         render_scale = _quantize_render_scale(scale)
-        red_frame = self._page_cache.render_frame_uncached(
+        red_frame = self._page_cache.get_frame(
             page.image_path,
             page.page_index,
             render_scale,
@@ -281,7 +281,7 @@ class CompositeRenderer:
         )
         if context is None:
             return
-        blue_frame = self._page_cache.render_frame_uncached(
+        blue_frame = self._page_cache.get_frame(
             page.overlay_image_path,
             0,
             context["overlay_scale"],
