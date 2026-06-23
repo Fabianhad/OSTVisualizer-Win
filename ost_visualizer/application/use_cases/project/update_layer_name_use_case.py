@@ -12,3 +12,6 @@ class UpdateLayerNameUseCase:
 
     def execute(self, db_path: str, layer_uid: str, name: str) -> bool:
         return self._writer.update_layer_name(db_path, layer_uid, name)
+
+    def execute_default(self, db_path: str, layer_uid: str, name: str) -> bool:
+        return self._writer.update_default_layer_name(db_path, layer_uid, name)

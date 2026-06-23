@@ -19,7 +19,13 @@ from ost_visualizer.presentation.dialogs.condition_types_dialog import (
     ConditionTypesDialog,
 )
 from ost_visualizer.presentation.dialogs.employees_dialog import EmployeesDialog
-from ost_visualizer.presentation.dialogs.layers_dialog import LayersDialog
+from ost_visualizer.presentation.dialogs.layers_dialog import (
+    LayersDialog,
+    LayersDialogMode,
+)
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
 from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
 from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialog
 from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
@@ -134,6 +140,19 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             name=name,
             show=show,
             sequence=sequence,
+        )
+
+    def _default_layer(
+        self, uid: str, name: str, sequence: int, *, show: bool = True
+    ) -> BidLayer:
+        return BidLayer(
+            uid=uid,
+            bid_uid="",
+            name=name,
+            show=show,
+            sequence=sequence,
+            is_template=True,
+            is_locked=True,
         )
 
     def _click_checkbox(self, checkbox: QtWidgets.QCheckBox) -> None:
@@ -772,6 +791,166 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_layers_dialog_select_mode_shows_select_and_cancel(self):
+        dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=[self._layer("layer-1", "Layer 1", 1)],
+        )
+        try:
+            button_texts = [
+                button.text() for button in dialog.findChildren(QtWidgets.QPushButton)
+            ]
+            self.assertEqual(dialog.btn_select.text(), "Select")
+            self.assertFalse(dialog.btn_select.isEnabled())
+            self.assertIsNotNone(dialog.btn_cancel)
+            self.assertEqual(dialog.btn_cancel.text(), "Cancel")
+            self.assertIn("Select", button_texts)
+            self.assertIn("Cancel", button_texts)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_default_layers_dialog_shows_ok_only_for_close_action(self):
+        dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=[self._default_layer("layer-1", "Layer 1", 1)],
+            mode=LayersDialogMode.DEFAULT_LAYERS,
+        )
+        try:
+            button_texts = [
+                button.text() for button in dialog.findChildren(QtWidgets.QPushButton)
+            ]
+            self.assertEqual(dialog.btn_select.text(), "OK")
+            self.assertTrue(dialog.btn_select.isEnabled())
+            self.assertIsNone(dialog.btn_cancel)
+            self.assertIn("OK", button_texts)
+            self.assertNotIn("Select", button_texts)
+            self.assertNotIn("Cancel", button_texts)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_default_layers_dialog_allows_template_layer_management(self):
+        dialog = LayersDialog(
+            FakeIconProvider(),
+            layers=[
+                self._default_layer("default-1", "Default 1", 1),
+                self._default_layer("default-2", "Default 2", 2),
+                self._layer("bid-layer-1", "Bid Layer", 3),
+            ],
+            mode=LayersDialogMode.DEFAULT_LAYERS,
+        )
+        try:
+            self.assertEqual(dialog.tree.topLevelItemCount(), 2)
+            default_item = dialog.tree.topLevelItem(0)
+            self.assertTrue(default_item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+            dialog.tree.setCurrentItem(default_item)
+            dialog._update_button_states()
+            self.assertTrue(dialog.btn_delete.isEnabled())
+            self.assertFalse(dialog.btn_move_up.isEnabled())
+            self.assertTrue(dialog.btn_move_down.isEnabled())
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_default_layers_menu_opens_layers_dialog_with_default_source(self):
+        default_layers = [self._default_layer("default-1", "Default 1", 1)]
+        observed = {}
+
+        class ReadService:
+            def __init__(self):
+                self.default_calls = []
+
+            def get_default_layers(self, file_path):
+                self.default_calls.append(file_path)
+                return list(default_layers)
+
+            def get_merged_bid_layers(self, _file_path, _bid_uid):
+                raise AssertionError("Default Layers should not load bid layers")
+
+        class WriteService:
+            def insert_default_layer_result(self, db_path, name, after_sequence):
+                observed["insert"] = (db_path, name, after_sequence)
+                return WriteReloadResult("default-new", True, True)
+
+            def delete_default_layers(self, db_path, layer_uids):
+                observed["delete"] = (db_path, list(layer_uids))
+                return BatchWriteResult(
+                    requested_uids=list(layer_uids),
+                    succeeded_uids=list(layer_uids),
+                    reload_success=True,
+                )
+
+            def update_default_layer_show(self, db_path, layer_uid, show):
+                observed["show"] = (db_path, layer_uid, show)
+                return True
+
+            def update_all_default_layers_show(self, db_path, show):
+                observed["show_all"] = (db_path, show)
+                return True
+
+            def update_default_layer_name(self, db_path, layer_uid, name):
+                observed["name"] = (db_path, layer_uid, name)
+                return True
+
+            def swap_default_layer_sequence(self, db_path, layer_uid, neighbor_uid):
+                observed["move"] = (db_path, layer_uid, neighbor_uid)
+                return True
+
+        class ProjectData:
+            def __init__(self):
+                self.current_file = None
+
+            def set_current_file(self, file_path):
+                self.current_file = file_path
+
+        class AccessManager:
+            def is_allowed(self, _feature):
+                return True
+
+        class MainWindow(QtWidgets.QWidget):
+            def get_selected_database_context_file_path(self):
+                return "defaults.mdb"
+
+        read_service = ReadService()
+        project_data = ProjectData()
+        main_window = MainWindow()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = main_window
+        coordinator.ui_access_manager = AccessManager()
+        coordinator.project_data = project_data
+        coordinator._icon_provider = FakeIconProvider()
+        coordinator._project_read_service = read_service
+        coordinator._project_write_service = WriteService()
+        coordinator.event_bus = object()
+
+        def capture_dialog(dialog, _event_bus):
+            observed["button_text"] = dialog.btn_select.text()
+            observed["cancel_button"] = dialog.btn_cancel
+            observed["layer_names"] = [layer.name for layer in dialog._layers]
+            observed["new_uid"] = dialog._insert_fn("Added", 1)
+
+        try:
+            with patch(
+                "ost_visualizer.presentation.coordinators.ui_event_coordinator."
+                "exec_with_ost_blocking",
+                side_effect=capture_dialog,
+            ):
+                UIEventCoordinator.open_default_layers_dialog(coordinator)
+        finally:
+            main_window.close()
+            main_window.deleteLater()
+        self.assertEqual(read_service.default_calls, ["defaults.mdb"])
+        self.assertEqual(project_data.current_file, "defaults.mdb")
+        self.assertEqual(observed["button_text"], "OK")
+        self.assertIsNone(observed["cancel_button"])
+        self.assertEqual(observed["layer_names"], ["Default 1"])
+        self.assertEqual(observed["insert"], ("defaults.mdb", "Added", 1))
+        self.assertEqual(observed["new_uid"], "default-new")
 
     def test_layers_dialog_multi_delete_uses_batch_callback_once(self):
         delete_many_calls = []

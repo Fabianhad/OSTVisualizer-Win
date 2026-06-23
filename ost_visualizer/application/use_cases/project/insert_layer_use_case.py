@@ -14,3 +14,8 @@ class InsertLayerUseCase:
         self, db_path: str, bid_uid: str, name: str, after_sequence: int
     ) -> Optional[str]:
         return self._writer.insert_layer(db_path, bid_uid, name, after_sequence)
+
+    def execute_default(
+        self, db_path: str, name: str, after_sequence: int
+    ) -> Optional[str]:
+        return self._writer.insert_default_layer(db_path, name, after_sequence)

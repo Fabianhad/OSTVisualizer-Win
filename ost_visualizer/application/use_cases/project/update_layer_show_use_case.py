@@ -12,3 +12,6 @@ class UpdateLayerShowUseCase:
 
     def execute(self, db_path: str, layer_uid: str, show: bool) -> bool:
         return self._writer.update_layer_show(db_path, layer_uid, show)
+
+    def execute_default(self, db_path: str, layer_uid: str, show: bool) -> bool:
+        return self._writer.update_default_layer_show(db_path, layer_uid, show)

@@ -15,6 +15,7 @@ from ost_visualizer.presentation.actions.action_ids import (
     ACTION_CONDITIONS_SIDEBAR,
     ACTION_COPY,
     ACTION_CUT,
+    ACTION_DEFAULT_LAYERS,
     ACTION_DELETE,
     ACTION_DUPLICATE,
     ACTION_LAYERS_SIDEBAR,
@@ -1059,6 +1060,18 @@ class OptionsPreferencesTests(unittest.TestCase):
         old_key = "mcp_" + "setup"
         self.assertIn(("cmd", "Options...", "options"), tools_items)
         self.assertNotIn(("cmd", old_label, old_key), tools_items)
+
+    def test_master_menu_lists_default_layers_below_payroll_classes(self):
+        builder = MenuBuilder(None, {})
+        master_items = builder._get_menu_definition()["Master"]
+        payroll_index = master_items.index(
+            ("cmd", "Payroll Classes", "payroll_classes")
+        )
+        self.assertEqual(master_items[payroll_index + 1], ("sep",))
+        self.assertEqual(
+            master_items[payroll_index + 2],
+            ("cmd", "Default Layers", ACTION_DEFAULT_LAYERS),
+        )
 
     def test_tools_menu_lists_text_after_dimension_with_serif_icon(self):
         labels = {

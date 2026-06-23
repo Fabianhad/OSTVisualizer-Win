@@ -946,6 +946,20 @@ class ProjectWriteService(BaseWriteService):
             reload_success=self.reload_and_notify(db_path),
         )
 
+    def insert_default_layer_result(
+        self, db_path: str, name: str, after_sequence: int
+    ) -> WriteReloadResult:
+        if self._is_write_blocked():
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        new_uid = self._insert_layer.execute_default(db_path, name, after_sequence)
+        if new_uid is None:
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        return WriteReloadResult(
+            new_uid,
+            write_success=True,
+            reload_success=self.reload_and_notify(db_path),
+        )
+
     def delete_layer(
         self,
         db_path: str,
@@ -962,12 +976,7 @@ class ProjectWriteService(BaseWriteService):
         )
 
     def delete_layers(self, db_path: str, layer_uids: List[str]) -> BatchWriteResult:
-        unique_uids = []
-        seen = set()
-        for uid in layer_uids:
-            if uid and uid not in seen:
-                seen.add(uid)
-                unique_uids.append(uid)
+        unique_uids = self._unique_nonempty_uids(layer_uids)
         result = BatchWriteResult(requested_uids=list(unique_uids))
         if not unique_uids:
             result.reload_success = False
@@ -988,12 +997,40 @@ class ProjectWriteService(BaseWriteService):
             result.reload_success = self.reload_and_notify(db_path)
         return result
 
+    def delete_default_layers(
+        self, db_path: str, layer_uids: List[str]
+    ) -> BatchWriteResult:
+        unique_uids = self._unique_nonempty_uids(layer_uids)
+        result = BatchWriteResult(requested_uids=list(unique_uids))
+        if not unique_uids:
+            result.reload_success = False
+            return result
+        if self._is_write_blocked():
+            result.failed_uids = list(unique_uids)
+            return result
+        for uid in unique_uids:
+            success = self._delete_layer.execute_default(db_path, uid)
+            if success:
+                result.succeeded_uids.append(uid)
+            else:
+                result.failed_uids.append(uid)
+                break
+        if result.any_success:
+            result.reload_success = self.reload_and_notify(db_path)
+        return result
+
     def update_all_layers_show(self, db_path: str, bid_uid: str, show: bool) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "update_all_layers_show", db_path, bid_uid
         ):
             return False
         success = self._update_all_layers_show.execute(db_path, bid_uid, show)
+        return self._reload_after_success(db_path, success)
+
+    def update_all_default_layers_show(self, db_path: str, show: bool) -> bool:
+        if self._is_write_blocked():
+            return False
+        success = self._update_all_layers_show.execute_default(db_path, show)
         return self._reload_after_success(db_path, success)
 
     def swap_layer_sequence(
@@ -1006,6 +1043,16 @@ class ProjectWriteService(BaseWriteService):
         success = self._swap_layer_sequence.execute(db_path, layer_uid_a, layer_uid_b)
         return self._reload_after_success(db_path, success)
 
+    def swap_default_layer_sequence(
+        self, db_path: str, layer_uid_a: str, layer_uid_b: str
+    ) -> bool:
+        if self._is_write_blocked():
+            return False
+        success = self._swap_layer_sequence.execute_default(
+            db_path, layer_uid_a, layer_uid_b
+        )
+        return self._reload_after_success(db_path, success)
+
     def update_layer_name(self, db_path: str, layer_uid: str, name: str) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(
             "update_layer_name", db_path
@@ -1013,6 +1060,32 @@ class ProjectWriteService(BaseWriteService):
             return False
         success = self._update_layer_name.execute(db_path, layer_uid, name)
         return self._reload_after_success(db_path, success)
+
+    def update_default_layer_name(
+        self, db_path: str, layer_uid: str, name: str
+    ) -> bool:
+        if self._is_write_blocked():
+            return False
+        success = self._update_layer_name.execute_default(db_path, layer_uid, name)
+        return self._reload_after_success(db_path, success)
+
+    def update_default_layer_show(
+        self, db_path: str, layer_uid: str, show: bool
+    ) -> bool:
+        if self._is_write_blocked():
+            return False
+        success = self._update_layer_show.execute_default(db_path, layer_uid, show)
+        return self._reload_after_success(db_path, success)
+
+    @staticmethod
+    def _unique_nonempty_uids(uids: List[str]) -> List[str]:
+        unique_uids = []
+        seen = set()
+        for uid in uids:
+            if uid and uid not in seen:
+                seen.add(uid)
+                unique_uids.append(uid)
+        return unique_uids
 
     def save_page_view_state(
         self,

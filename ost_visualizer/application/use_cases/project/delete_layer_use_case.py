@@ -12,3 +12,6 @@ class DeleteLayerUseCase:
 
     def execute(self, db_path: str, layer_uid: str) -> bool:
         return self._writer.delete_layer(db_path, layer_uid)
+
+    def execute_default(self, db_path: str, layer_uid: str) -> bool:
+        return self._writer.delete_default_layer(db_path, layer_uid)

@@ -6,6 +6,7 @@ from ..actions.action_ids import (
     ACTION_ANNOTATION_WINDOW,
     ACTION_BACKOUT_MODE,
     ACTION_CONDITIONS_SIDEBAR,
+    ACTION_DEFAULT_LAYERS,
     ACTION_FLIP_IMAGE_HORIZONTAL,
     ACTION_FLIP_IMAGE_VERTICAL,
     ACTION_LAYERS_SIDEBAR,
@@ -275,6 +276,8 @@ class MenuBuilder:
                 ("cmd", "Condition Types", "condition_types"),
                 ("sep",),
                 ("cmd", "Payroll Classes", "payroll_classes"),
+                ("sep",),
+                ("cmd", "Default Layers", ACTION_DEFAULT_LAYERS),
             ],
             "Help": [
                 ("cmd", "About OST Visualizer...", "show_about"),

@@ -441,22 +441,58 @@ class BidDataReaderMixin:
                 )
                 layers: List[BidLayer] = []
                 for row in cursor.fetchall():
-                    raw_bid_uid = row.BidUID
-                    layer_bid_uid = str(raw_bid_uid) if raw_bid_uid else ""
-                    layers.append(
-                        BidLayer(
-                            uid=str(row.UID),
-                            bid_uid=layer_bid_uid,
-                            name=decode_value(row.Name) or "",
-                            show=row.Show in (1, -1),
-                            sequence=(
-                                int(row.Sequence) if row.Sequence is not None else 0
-                            ),
-                            is_template=row.IsTemplate not in (0, None),
-                            is_locked=row.IsLocked not in (0, None),
-                        )
-                    )
+                    layers.append(self._bid_layer_from_row(row))
                 return layers
+
+    def get_default_layers(self, file_path: str) -> List[BidLayer]:
+        with self._connection(file_path) as connection:
+            schema = MdbSchemaInspector(connection, self.logger)
+            if schema.optional_table_missing("BidLayers"):
+                return []
+            schema.require_column("BidLayers", "UID")
+            schema.require_column("BidLayers", "Name")
+            if not schema.column_exists("BidLayers", "IsTemplate"):
+                return []
+            layer_select = ", ".join(
+                [
+                    "[UID]",
+                    schema.optional_column("BidLayers", "BidUID", "NULL"),
+                    "[IsTemplate]",
+                    "[Name]",
+                    schema.optional_column("BidLayers", "Show", "-1"),
+                    schema.optional_column("BidLayers", "IsLocked", "0"),
+                    schema.optional_column("BidLayers", "Sequence", "0"),
+                ]
+            )
+            order_expr = (
+                "[Sequence]"
+                if schema.column_exists("BidLayers", "Sequence")
+                else "[UID]"
+            )
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT {layer_select}
+                    FROM [BidLayers]
+                    WHERE [IsTemplate] <> 0
+                    ORDER BY {order_expr}
+                    """
+                )
+                return [self._bid_layer_from_row(row) for row in cursor.fetchall()]
+
+    @staticmethod
+    def _bid_layer_from_row(row) -> BidLayer:
+        raw_bid_uid = row.BidUID
+        layer_bid_uid = str(raw_bid_uid) if raw_bid_uid else ""
+        return BidLayer(
+            uid=str(row.UID),
+            bid_uid=layer_bid_uid,
+            name=decode_value(row.Name) or "",
+            show=row.Show in (1, -1),
+            sequence=int(row.Sequence) if row.Sequence is not None else 0,
+            is_template=row.IsTemplate not in (0, None),
+            is_locked=row.IsLocked not in (0, None),
+        )
 
     def _parse_bid_pages_for_bid(
         self,

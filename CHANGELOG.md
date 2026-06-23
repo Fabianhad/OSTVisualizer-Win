@@ -19,6 +19,7 @@
 - Added persisted per-tool annotation defaults, with shape color/line-width controls plus text and dimension font controls for newly placed annotations.
 - Added a Move Overlay Image toolbar action with separated red/base and blue/overlay live preview, preserving OST `OverlayRect` placement for PlanView and PDF export.
 - Added Summary CSV export from the current Summary grouping, matching OST-style flat CSV output.
+- Added a Master > Default Layers dialog for managing template layer visibility, names, order, and membership.
 
 ### Changed
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.

@@ -11,6 +11,7 @@ from ..actions.action_ids import (
     ACTION_ANNOTATION_WINDOW,
     ACTION_BACKOUT_MODE,
     ACTION_CONDITIONS_SIDEBAR,
+    ACTION_DEFAULT_LAYERS,
     ACTION_DELETE_PAGE,
     ACTION_FLIP_IMAGE_HORIZONTAL,
     ACTION_FLIP_IMAGE_VERTICAL,
@@ -182,6 +183,7 @@ class MenuController:
             "job_statuses": self.handlers.ui_event.open_job_statuses_dialog,
             "condition_types": self.handlers.ui_event.open_condition_types_dialog,
             "payroll_classes": self.handlers.ui_event.open_payroll_classes_dialog,
+            ACTION_DEFAULT_LAYERS: self.handlers.ui_event.open_default_layers_dialog,
             "select_objects_in_current_area": self._select_objects_in_current_area,
             "set_scale": lambda: self.handlers.ui_event.open_set_scale_dialog(),
             "rename_page": lambda: self.handlers.ui_event.open_rename_page_dialog(),
@@ -435,6 +437,7 @@ class MenuController:
             "job_statuses",
             "payroll_classes",
             "condition_types",
+            ACTION_DEFAULT_LAYERS,
         ):
             action = self._actions.get(action_key)
             if action:

@@ -33,6 +33,13 @@ class ProjectReadService:
             return []
         return merge_layers_for_bid(all_layers)
 
+    def get_default_layers(self, file_path: str) -> List[BidLayer]:
+        try:
+            return self._reader.get_default_layers(file_path)
+        except Exception:
+            self.logger.warning("Failed to load default layers", exc_info=True)
+            return []
+
     def get_cdn_types(self, file_path: str) -> Dict[str, CdnType]:
         try:
             return self._reader.get_cdn_types(file_path)

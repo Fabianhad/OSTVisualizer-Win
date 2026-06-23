@@ -12,3 +12,8 @@ class SwapLayerSequenceUseCase:
 
     def execute(self, db_path: str, layer_uid_a: str, layer_uid_b: str) -> bool:
         return self._writer.swap_layer_sequence(db_path, layer_uid_a, layer_uid_b)
+
+    def execute_default(self, db_path: str, layer_uid_a: str, layer_uid_b: str) -> bool:
+        return self._writer.swap_default_layer_sequence(
+            db_path, layer_uid_a, layer_uid_b
+        )

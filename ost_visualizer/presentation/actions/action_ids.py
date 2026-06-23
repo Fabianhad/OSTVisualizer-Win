@@ -1,5 +1,3 @@
-"""Stable presentation action identifiers used for menu and command routing."""
-
 ACTION_OPEN_FILES = "open_files"
 ACTION_ADD = "add"
 ACTION_EDIT = "edit"
@@ -14,6 +12,7 @@ ACTION_REDO = "redo"
 ACTION_NEW_PROJECT = "new_project"
 ACTION_NEW_FOLDER = "new_folder"
 ACTION_NEW_DATABASE = "new_database"
+ACTION_DEFAULT_LAYERS = "default_layers"
 ACTION_SELECT_ALL = "select_all"
 ACTION_PREVIOUS_PAGE = "previous_page"
 ACTION_NEXT_PAGE = "next_page"

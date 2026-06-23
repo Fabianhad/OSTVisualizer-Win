@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 from ..application.dtos.mesh_geometry_dto import MeshGeometry
 from ..application.interfaces.i_color_service import IColorService
 from ..application.interfaces.i_coordinate_transformer_factory import (

@@ -22,6 +22,7 @@ from ..dialogs.areas_dialog import BidAreasDialog
 from ..dialogs.condition_types_dialog import ConditionTypesDialog
 from ..dialogs.employees_dialog import EmployeesDialog
 from ..dialogs.job_statuses_dialog import JobStatusesDialog
+from ..dialogs.layers_dialog import LayersDialog, LayersDialogMode
 from ..dialogs.payroll_class_dialog import PayrollClassListDialog
 from ..dialogs.rename_page_dialog import PageRenameTarget, RenamePageDialog
 from ..dialogs.set_scale_dialog import ScaleSettings, SetScaleDialog
@@ -1197,6 +1198,50 @@ class UIEventCoordinator:
             dialog.cleanup()
             dialog.deleteLater()
 
+    def open_default_layers_dialog(self) -> None:
+        file_path = self._editable_master_data_file_path()
+        if not file_path:
+            return
+        dialog = LayersDialog(
+            self._icon_provider,
+            parent=self.main_window,
+            layers=self._project_read_service.get_default_layers(file_path),
+            reload_fn=lambda: self._project_read_service.get_default_layers(file_path),
+            insert_fn=lambda name, after_sequence: (
+                self._insert_default_layer_from_dialog(file_path, name, after_sequence)
+            ),
+            delete_many_fn=lambda layer_uids: (
+                self._project_write_service.delete_default_layers(file_path, layer_uids)
+            ),
+            update_show_fn=lambda layer_uid, show: (
+                self._project_write_service.update_default_layer_show(
+                    file_path, layer_uid, show
+                )
+            ),
+            update_all_show_fn=lambda show: (
+                self._project_write_service.update_all_default_layers_show(
+                    file_path, show
+                )
+            ),
+            update_name_fn=lambda layer_uid, name: (
+                self._project_write_service.update_default_layer_name(
+                    file_path, layer_uid, name
+                )
+            ),
+            move_fn=lambda layer_uid, neighbor_uid: (
+                self._project_write_service.swap_default_layer_sequence(
+                    file_path, layer_uid, neighbor_uid
+                )
+            ),
+            has_license=True,
+            mode=LayersDialogMode.DEFAULT_LAYERS,
+        )
+        try:
+            exec_with_ost_blocking(dialog, self.event_bus)
+        finally:
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def _save_master_employees(self, file_path: str, changes) -> bool:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
             return False
@@ -1245,6 +1290,25 @@ class UIEventCoordinator:
                 "condition types.",
             )
         return result
+
+    def _insert_default_layer_from_dialog(
+        self, file_path: str, name: str, after_sequence: int
+    ) -> Optional[str]:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
+            return None
+        result = self._project_write_service.insert_default_layer_result(
+            file_path, name, after_sequence
+        )
+        if not result.write_success or result.value is None:
+            return None
+        if result.refresh_failed:
+            show_warning(
+                self.main_window,
+                "Refresh Error",
+                "The default layer was saved, but the default layer list could not "
+                "be refreshed. Reopen the database to see the latest default layers.",
+            )
+        return str(result.value)
 
     def _resolve_master_data_file_path(self) -> Optional[str]:
         return self.main_window.get_selected_database_context_file_path()

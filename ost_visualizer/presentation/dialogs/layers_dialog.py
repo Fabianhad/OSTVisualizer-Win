@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Callable, List, Optional, Set
 from PySide6 import QtCore, QtWidgets
 from ...domain.entities.layer import BidLayer
@@ -13,6 +14,11 @@ from ..config import (
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize, set_initial_window_size
+
+
+class LayersDialogMode(Enum):
+    SELECT = "select"
+    DEFAULT_LAYERS = "default_layers"
 
 
 class LayersDialog(QtWidgets.QDialog):
@@ -33,10 +39,12 @@ class LayersDialog(QtWidgets.QDialog):
         update_name_fn: Optional[Callable[[str, str], bool]] = None,
         move_fn: Optional[Callable[[str, str], bool]] = None,
         has_license: bool = True,
+        mode: LayersDialogMode = LayersDialogMode.SELECT,
     ) -> None:
         super().__init__(parent)
         self.icon_provider = icon_provider
-        self._layers = list(layers or [])
+        self._mode = mode
+        self._layers = self._filter_layers_for_mode(list(layers or []))
         self._used_uids = {str(uid) for uid in (used_uids or set())}
         self._reload_fn = reload_fn
         self._insert_fn = insert_fn
@@ -56,6 +64,11 @@ class LayersDialog(QtWidgets.QDialog):
         self._pending_new_editor_connected = False
         self._setup_ui()
         self._populate(select_name=current_name.strip())
+
+    def _filter_layers_for_mode(self, layers: List[BidLayer]) -> List[BidLayer]:
+        if self._mode == LayersDialogMode.DEFAULT_LAYERS:
+            return [layer for layer in layers if layer.is_template]
+        return layers
 
     def _setup_ui(self) -> None:
         self.setWindowTitle("Layers")
@@ -89,11 +102,17 @@ class LayersDialog(QtWidgets.QDialog):
         main_layout.addWidget(self.tree, 1)
         btn_layout = QtWidgets.QVBoxLayout()
         btn_layout.setSpacing(COMPACT_SPACING)
-        self.btn_select = self._button("Select", self._on_select)
-        self.btn_select.setEnabled(False)
-        btn_layout.addWidget(self.btn_select)
-        self.btn_cancel = self._button("Cancel", self.reject)
-        btn_layout.addWidget(self.btn_cancel)
+        if self._mode == LayersDialogMode.DEFAULT_LAYERS:
+            self.btn_select = self._button("OK", self.accept)
+            self.btn_cancel = None
+            self.btn_select.setEnabled(True)
+            btn_layout.addWidget(self.btn_select)
+        else:
+            self.btn_select = self._button("Select", self._on_select)
+            self.btn_select.setEnabled(False)
+            self.btn_cancel = self._button("Cancel", self.reject)
+            btn_layout.addWidget(self.btn_select)
+            btn_layout.addWidget(self.btn_cancel)
         btn_layout.addSpacing(RELAXED_SPACING)
         self.btn_check_all = self._button("Check All", self._check_all)
         btn_layout.addWidget(self.btn_check_all)
@@ -179,7 +198,7 @@ class LayersDialog(QtWidgets.QDialog):
     def _reload_items(
         self, select_uid: Optional[str] = None, select_name: str = ""
     ) -> None:
-        self._layers = list(self._reload_fn())
+        self._layers = self._filter_layers_for_mode(list(self._reload_fn()))
         self._populate(select_uid, select_name)
 
     def _selected_items(self) -> List[QtWidgets.QTreeWidgetItem]:
@@ -202,6 +221,8 @@ class LayersDialog(QtWidgets.QDialog):
         return self.tree.indexOfTopLevelItem(selected[0])
 
     def _can_modify(self, layer: Optional[BidLayer]) -> bool:
+        if self._mode == LayersDialogMode.DEFAULT_LAYERS:
+            return bool(layer and layer.is_template)
         return bool(layer and not layer.is_template and not layer.is_locked)
 
     def _find_layer_by_name(self, name: str) -> Optional[BidLayer]:
@@ -489,7 +510,10 @@ class LayersDialog(QtWidgets.QDialog):
         selected_layer = self._selected_layer()
         selected_row = self._selected_row()
         can_modify_selected = self._can_modify(selected_layer)
-        self.btn_select.setEnabled(selected_layer is not None)
+        if self._mode == LayersDialogMode.DEFAULT_LAYERS:
+            self.btn_select.setEnabled(True)
+        else:
+            self.btn_select.setEnabled(selected_layer is not None)
         self.btn_check_all.setEnabled(bool(self._layers))
         self.btn_uncheck_all.setEnabled(bool(self._layers))
         self.btn_new.setEnabled(True)
