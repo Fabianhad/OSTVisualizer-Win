@@ -98,6 +98,7 @@ from .components.page_loader import (
     VISUAL_KIND_PAGE,
     PageLoaderMixin,
 )
+from .components.page_render_loading_bar import PageRenderLoadingBar
 from .components.pdf_text import PdfTextChar, PdfTextRect, PdfTextRun, PdfTextSelection
 from .components.placement_mode import (
     PDF_INTELLIGENCE_SOURCE_MAIN,
@@ -222,6 +223,9 @@ class TakeoffPlanView(
     MAX_ZOOM = 16.0
     ZOOM_FACTOR = 1.15
     _FRAME_ACTIVATE_RATIO: float = 1.1
+    _render_loading_bar: Optional[PageRenderLoadingBar] = None
+    _current_page_loading_token: Optional[str] = None
+    _visible_frame_loading_token: Optional[str] = None
 
     def __init__(
         self,
@@ -251,6 +255,9 @@ class TakeoffPlanView(
         self._pending_page_data: Optional[Dict] = None
         self._defer_page_visual_reveal: bool = False
         self._deferred_page_visual_result: Optional[Tuple[str, Dict, object]] = None
+        self._render_loading_bar = PageRenderLoadingBar(self.viewport())
+        self._current_page_loading_token: Optional[str] = None
+        self._visible_frame_loading_token: Optional[str] = None
         self._background_item: Optional[ImageBackgroundItem] = None
         self._overlay_items: List[QGraphicsPixmapItem] = []
         self._zoom_debouncer = ZoomDebouncer(parent=self)
@@ -485,6 +492,7 @@ class TakeoffPlanView(
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self._set_palette_background()
+        self._position_render_loading_bar()
 
     def _build_condition_text_toolbar(self) -> QFrame:
         toolbar = QFrame(self)
@@ -594,9 +602,75 @@ class TakeoffPlanView(
         if toolbar is not None:
             toolbar.move(8, 8)
 
+    def _position_render_loading_bar(self) -> None:
+        bar = self._render_loading_bar
+        if bar is None:
+            return
+        viewport = self.viewport()
+        bar.setGeometry(0, 0, viewport.width(), bar.height())
+        bar.raise_()
+
+    def _start_current_page_render_loading(self) -> str:
+        token = uuid.uuid4().hex
+        self._current_page_loading_token = token
+        bar = self._render_loading_bar
+        if bar is not None:
+            bar.start(token)
+        self._position_render_loading_bar()
+        return token
+
+    def _complete_current_page_render_loading(self) -> None:
+        token = self._current_page_loading_token
+        if token is None:
+            return
+        self._current_page_loading_token = None
+        bar = self._render_loading_bar
+        if bar is not None:
+            bar.complete(token)
+
+    def _reset_current_page_render_loading(self) -> None:
+        token = self._current_page_loading_token
+        self._current_page_loading_token = None
+        bar = self._render_loading_bar
+        if token is not None and bar is not None:
+            bar.reset(token)
+
+    def _start_visible_frame_render_loading(self) -> str:
+        token = uuid.uuid4().hex
+        self._visible_frame_loading_token = token
+        bar = self._render_loading_bar
+        if bar is not None:
+            bar.start(token)
+        self._position_render_loading_bar()
+        return token
+
+    def _complete_visible_frame_render_loading(self, token: Optional[str]) -> None:
+        if token is None:
+            return
+        if self._visible_frame_loading_token == token:
+            self._visible_frame_loading_token = None
+        bar = self._render_loading_bar
+        if bar is not None:
+            bar.complete(token)
+
+    def _reset_visible_frame_render_loading(self) -> None:
+        token = self._visible_frame_loading_token
+        self._visible_frame_loading_token = None
+        bar = self._render_loading_bar
+        if token is not None and bar is not None:
+            bar.reset(token)
+
+    def _reset_render_loading(self) -> None:
+        self._current_page_loading_token = None
+        self._visible_frame_loading_token = None
+        bar = self._render_loading_bar
+        if bar is not None:
+            bar.reset()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._position_condition_text_toolbar()
+        self._position_render_loading_bar()
 
     def _condition_text_label_at(
         self, viewport_pos: QtCore.QPoint
@@ -2313,6 +2387,7 @@ class TakeoffPlanView(
     def _mark_load_geometry_ready(self) -> None:
         self._update_scene_rect()
         self._load_geometry_ready = True
+        self._complete_current_page_render_loading()
         if not self._load_geometry_notified:
             self._load_geometry_notified = True
             self.page_geometry_ready.emit()
@@ -4514,6 +4589,7 @@ class TakeoffPlanView(
             self._pending_page_data["bid_ref"] = resolved_bid_ref
             self._pending_page_data["load_token"] = self._current_load_token
             self._pending_page_data["render_identity"] = dict(next_render_identity)
+            self._start_current_page_render_loading()
             if strategy.load_composite or strategy.load_main:
                 if strategy.load_composite:
                     base_raster_scale = strategy.main_scale
@@ -4771,6 +4847,7 @@ class TakeoffPlanView(
     def clear(self, preserve_place_session: bool = False):
         if self._prefetch_coordinator is not None:
             self._prefetch_coordinator.cancel_pending()
+        self._reset_render_loading()
         self.cancel_overlay_move_mode(restore_preview=True)
         self.finish_intelligent_paste_placement()
         if self._place_session_uid is not None and not preserve_place_session:
@@ -5113,6 +5190,7 @@ class TakeoffPlanView(
     def cleanup(self):
         self._zoom_debouncer.cancel()
         self._finish_active_inline_text_edit(commit=True)
+        self._reset_render_loading()
         if self._prefetch_coordinator is not None:
             self._prefetch_coordinator.cancel_pending()
         self._cancel_pending_renders()

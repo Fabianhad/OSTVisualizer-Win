@@ -354,6 +354,7 @@ class FakeDetachedLoadPlanView:
         self._stable = stable
         self._view_state = view_state
         self.load_calls = []
+        self.prefetch_calls = []
         self.clear_calls = 0
 
     @property
@@ -366,6 +367,9 @@ class FakeDetachedLoadPlanView:
     def load_page(self, **kwargs):
         self.load_calls.append(kwargs)
         return True
+
+    def prefetch_nearby_pages(self, *args):
+        self.prefetch_calls.append(args)
 
     def clear(self):
         self.clear_calls += 1
@@ -2851,6 +2855,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             color_map={},
             bid_ref=BidRef("bid.mdb", "bid-1"),
             annotations=[],
+            ordered_pages=[page],
             page_area_selections={},
             hidden_layer_uids={"annotation-layer"},
         )
@@ -2886,6 +2891,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             color_map={},
             bid_ref=BidRef("bid.mdb", "bid-1"),
             annotations=[],
+            ordered_pages=[page],
             page_area_selections={},
             hidden_layer_uids=set(),
         )

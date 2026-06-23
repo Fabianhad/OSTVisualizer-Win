@@ -503,6 +503,301 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view._condition_text_toolbar.isHidden())
         view.cleanup()
 
+    def test_current_page_render_starts_and_completes_loading_bar(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        self.assertTrue(view._render_loading_bar.is_loading)
+        self.assertTrue(view._render_loading_bar.isHidden())
+        request_id, request = view._rendering_service.page_requests[-1]
+        request["callback"](
+            RenderResult(
+                request_id,
+                True,
+                QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        QApplication.processEvents()
+        self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertTrue(view._render_loading_bar.isHidden())
+        view.cleanup()
+
+    def test_composite_and_overlay_only_renders_start_loading_bar(self):
+        view = self._make_plan_view()
+        composite_page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(composite_page, [], {}, {}))
+        self.assertTrue(view._render_loading_bar.is_loading)
+        self.assertEqual(len(view._rendering_service.composite_requests), 1)
+        view.clear()
+        overlay_page = Page(
+            uid="p2",
+            name="P2",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=1,
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(overlay_page, [], {}, {}))
+        self.assertTrue(view._render_loading_bar.is_loading)
+        self.assertEqual(len(view._rendering_service.overlay_requests), 1)
+        view.cleanup()
+
+    def test_main_page_plus_overlay_chain_hides_loading_after_overlay_completion(self):
+        class ChainedOverlayLoadCoordinator(FakeLoadCoordinator):
+            def determine_load_strategy(self, page):
+                strategy = super().determine_load_strategy(page)
+                return LoadStrategy(
+                    needs_async_loading=True,
+                    view_scale=strategy.view_scale,
+                    show_canvas=True,
+                    pdf_width_pts=strategy.pdf_width_pts,
+                    pdf_height_pts=strategy.pdf_height_pts,
+                    placeholder_width=strategy.placeholder_width,
+                    placeholder_height=strategy.placeholder_height,
+                    load_composite=False,
+                    load_main=True,
+                    load_overlay=False,
+                    main_scale=strategy.main_scale,
+                )
+
+            def create_pending_page_data(
+                self, page, strategy, pdf_width_pts, pdf_height_pts
+            ):
+                data = super().create_pending_page_data(
+                    page, strategy, pdf_width_pts, pdf_height_pts
+                )
+                data["show_mode"] = 2
+                data["show_overlay"] = True
+                return data
+
+        view = self._make_plan_view()
+        view._load_coordinator = ChainedOverlayLoadCoordinator()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        page_request_id, page_request = view._rendering_service.page_requests[-1]
+        page_request["callback"](
+            RenderResult(
+                page_request_id,
+                True,
+                QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        QApplication.processEvents()
+        self.assertTrue(view._render_loading_bar.is_loading)
+        overlay_request_id, overlay_request = view._rendering_service.overlay_requests[
+            -1
+        ]
+        overlay_request["callback"](
+            RenderResult(
+                overlay_request_id,
+                True,
+                QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        QApplication.processEvents()
+        self.assertFalse(view._render_loading_bar.is_loading)
+        view.cleanup()
+
+    def test_page_switch_restarts_loading_and_stale_completion_does_not_hide_newer_bar(
+        self,
+    ):
+        view = self._make_plan_view()
+        first = Page(
+            uid="p1",
+            name="P1",
+            image_path="first.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        second = Page(
+            uid="p2",
+            name="P2",
+            image_path="second.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(first, [], {}, {}))
+        first_request_id, first_request = view._rendering_service.page_requests[-1]
+        self.assertTrue(view.load_page(second, [], {}, {}))
+        first_request["callback"](
+            RenderResult(
+                first_request_id,
+                True,
+                QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        QApplication.processEvents()
+        self.assertTrue(view._render_loading_bar.is_loading)
+        second_request_id, second_request = view._rendering_service.page_requests[-1]
+        second_request["callback"](
+            RenderResult(
+                second_request_id,
+                True,
+                QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        QApplication.processEvents()
+        self.assertFalse(view._render_loading_bar.is_loading)
+        view.cleanup()
+
+    def test_fast_render_completion_before_reveal_keeps_loading_bar_hidden(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        request_id, request = view._rendering_service.page_requests[-1]
+        request["callback"](
+            RenderResult(
+                request_id,
+                True,
+                QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertTrue(view._render_loading_bar.isHidden())
+        view.cleanup()
+
+    def test_clear_resets_active_loading_bar(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        self.assertTrue(view._render_loading_bar.is_loading)
+        view.clear()
+        self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertTrue(view._render_loading_bar.isHidden())
+        view.cleanup()
+
+    def test_nearby_prefetch_does_not_drive_loading_bar(self):
+        class RecordingPrefetchCoordinator:
+            def __init__(self):
+                self.calls = []
+
+            def prefetch_nearby_pages(self, current_page, ordered_pages, bid_ref):
+                self.calls.append((current_page, ordered_pages, bid_ref))
+
+            def cancel_pending(self):
+                pass
+
+        coordinator = RecordingPrefetchCoordinator()
+        view = self._make_plan_view()
+        view._prefetch_coordinator = coordinator
+        current = Page(uid="p2", name="P2")
+        ordered = [Page(uid="p1", name="P1"), current, Page(uid="p3", name="P3")]
+        view.prefetch_nearby_pages(current, ordered, None)
+        self.assertEqual(len(coordinator.calls), 1)
+        self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertTrue(view._render_loading_bar.isHidden())
+        view.cleanup()
+
+    def test_zoom_visible_frame_render_starts_and_completes_loading_bar(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self._install_page_canvas(view, page)
+        view._current_load_token = "load-token"
+        view._current_render_identity = {}
+        context = {
+            "kind": "base",
+            "page_uid": "p1",
+            "file_path": "page.pdf",
+            "page_index": 0,
+            "scale": 4.0,
+            "rotation": 0,
+            "render_identity": {},
+            "frame_x_pts": 0.0,
+            "frame_y_pts": 0.0,
+            "frame_w_pts": 100.0,
+            "frame_h_pts": 100.0,
+            "visible_x_pts": 0.0,
+            "visible_y_pts": 0.0,
+            "visible_w_pts": 100.0,
+            "visible_h_pts": 100.0,
+            "source_w_pts": 612.0,
+            "source_h_pts": 792.0,
+            "overlay_state_key": None,
+            "identity": ("base", "p1"),
+            "key": ("base", "page.pdf", 0, 4.0),
+        }
+        view._request_visible_frame(context)
+        self.assertTrue(view._render_loading_bar.is_loading)
+        request_id, request = view._rendering_service.frame_requests[-1]
+        request["callback"](
+            RenderResult(
+                request_id,
+                True,
+                QImage(400, 400, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        QApplication.processEvents()
+        self.assertFalse(view._render_loading_bar.is_loading)
+        view.cleanup()
+
+    def test_stale_visible_frame_completion_does_not_hide_newer_loading_bar(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self._install_page_canvas(view, page)
+        view._current_load_token = "load-token"
+        view._current_render_identity = {}
+        old_token = view._start_visible_frame_render_loading()
+        new_token = view._start_current_page_render_loading()
+        view._render_loading_bar.complete(old_token)
+        self.assertTrue(view._render_loading_bar.is_loading)
+        view._render_loading_bar.complete(new_token)
+        self.assertFalse(view._render_loading_bar.is_loading)
+        view.cleanup()
+
     def test_show_both_strategy_uses_composite_layer(self):
         strategy = PageLoadStrategyService(
             FakePageSizeProvider()

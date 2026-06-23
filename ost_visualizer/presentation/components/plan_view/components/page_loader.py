@@ -540,6 +540,7 @@ class PageLoaderMixin:
     def _cancel_visible_frame_request(self) -> None:
         if self._visible_frame_request_id:
             self._rendering_service.cancel_request(self._visible_frame_request_id)
+        self._reset_visible_frame_render_loading()
         self._visible_frame_request_id = None
         self._pending_visible_frame_metadata = None
         self._restore_visible_frame_state_from_current_metadata()
@@ -841,6 +842,7 @@ class PageLoaderMixin:
         self._sync_page_image_layer_visibility()
         load_token = self._current_load_token
         render_identity = dict(self._current_render_identity or {})
+        loading_token = self._start_visible_frame_render_loading()
         weak_self = weakref.ref(self)
 
         def on_frame_loaded(result: RenderResult) -> None:
@@ -852,6 +854,7 @@ class PageLoaderMixin:
                     load_token,
                     render_identity,
                     generation_id,
+                    loading_token,
                 )
 
         if context["kind"] == VISUAL_KIND_COMPOSITE:
@@ -901,12 +904,15 @@ class PageLoaderMixin:
         load_token: str,
         render_identity,
         generation_id: int,
+        loading_token: Optional[str] = None,
     ) -> None:
         if self._visible_frame_request_id != result.request_id:
             return
         if not self._is_current_async_result(load_token, render_identity):
+            self._complete_visible_frame_render_loading(loading_token)
             return
         self._visible_frame_request_id = None
+        self._complete_visible_frame_render_loading(loading_token)
         if (
             self._is_stale_generation(generation_id)
             or self._overlay_move_suppresses_normal_tiles()
@@ -1206,6 +1212,7 @@ class PageLoaderMixin:
         for request_id in self._current_render_requests:
             self._rendering_service.cancel_request(request_id)
         self._current_render_requests.clear()
+        self._reset_current_page_render_loading()
         self._cancel_pdf_text_extraction()
         self._pending_page_data = None
         self._deferred_page_visual_result = None
