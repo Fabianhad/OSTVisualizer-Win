@@ -23,7 +23,7 @@
 
 ### Changed
 - Shows a thin in-view loading bar during current PDF page and zoom-frame renders, without including nearby-page prefetch or other background cache work.
-- Warm nearby PDF pages in the background after 2D page navigation so adjacent page switches can reuse the render cache without delaying the current page render.
+- Warm nearby PDF pages in the background after 2D page navigation and cap large base renders to cacheable sizes so adjacent heavy-PDF page switches can reuse the render cache without delaying the current page render.
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.
 - Replaced the external MCP runtime dependency with an internal stdlib stdio adapter, and removed obsolete MCP dependency/setup files.
 - Limited MCP database access to checked OST Visualizer database settings, with redacted local paths plus bounded responses and status/result-limit metadata.

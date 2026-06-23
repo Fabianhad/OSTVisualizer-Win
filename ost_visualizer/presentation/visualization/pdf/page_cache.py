@@ -11,6 +11,9 @@ _PAGE_CACHE_MAX_BYTES = 160 * 1024 * 1024
 _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES = 96 * 1024 * 1024
 _TINTED_CACHE_MAX_BYTES = 64 * 1024 * 1024
 _TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES = 32 * 1024 * 1024
+_BASE_RASTER_MAX_PIXELS = 20_000_000
+_IMAGE_BYTES_PER_PIXEL = 4
+_CACHEABLE_RENDER_HEADROOM = 0.95
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,8 @@ class TintedCacheKey:
 class PageCache:
     MAX_ENTRIES = 20
     MAX_METADATA_ENTRIES = 512
+    BASE_RASTER_MAX_PIXELS = _BASE_RASTER_MAX_PIXELS
+    PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES = _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
 
     def __init__(self):
         self._cache: OrderedDict[CacheKey, QImage] = OrderedDict()
@@ -119,6 +124,79 @@ class PageCache:
                 len(self._cache) < self.MAX_ENTRIES
                 and self._cache_size_bytes(self._cache) < _PAGE_CACHE_MAX_BYTES
             )
+
+    def can_accept_prefetch_render(
+        self,
+        width_pts: float,
+        height_pts: float,
+        scale: float,
+        *,
+        tinted: bool = False,
+    ) -> bool:
+        max_single_bytes = (
+            _TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES
+            if tinted
+            else _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
+        )
+        if self.estimated_render_bytes(width_pts, height_pts, scale) > max_single_bytes:
+            return False
+        return self.can_accept_prefetch()
+
+    @classmethod
+    def cacheable_base_render_scale(
+        cls,
+        width_pts: float,
+        height_pts: float,
+        desired_scale: float,
+        *,
+        tinted: bool = False,
+    ) -> float:
+        return cls.cacheable_render_scale(
+            width_pts,
+            height_pts,
+            desired_scale,
+            max_pixels=cls.BASE_RASTER_MAX_PIXELS,
+            tinted=tinted,
+        )
+
+    @staticmethod
+    def cacheable_render_scale(
+        width_pts: float,
+        height_pts: float,
+        desired_scale: float,
+        *,
+        max_pixels: Optional[int] = None,
+        tinted: bool = False,
+    ) -> float:
+        if width_pts <= 0.0 or height_pts <= 0.0 or desired_scale <= 0.0:
+            return desired_scale
+        max_single_bytes = (
+            _TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES
+            if tinted
+            else _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
+        )
+        max_scale_by_bytes = (
+            (max_single_bytes * _CACHEABLE_RENDER_HEADROOM)
+            / (width_pts * height_pts * _IMAGE_BYTES_PER_PIXEL)
+        ) ** 0.5
+        max_scale = max_scale_by_bytes
+        if max_pixels is not None and max_pixels > 0:
+            max_scale_by_pixels = (max_pixels / (width_pts * height_pts)) ** 0.5
+            max_scale = min(max_scale, max_scale_by_pixels)
+        clamped = max(0.1, min(desired_scale, max_scale))
+        return int(clamped * 1000) / 1000
+
+    @staticmethod
+    def estimated_render_bytes(
+        width_pts: float,
+        height_pts: float,
+        scale: float,
+    ) -> int:
+        if width_pts <= 0.0 or height_pts <= 0.0 or scale <= 0.0:
+            return 0
+        width_px = max(1, int(width_pts * scale + 0.999999))
+        height_px = max(1, int(height_pts * scale + 0.999999))
+        return width_px * height_px * _IMAGE_BYTES_PER_PIXEL
 
     def get_tinted_page(
         self,

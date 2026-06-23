@@ -2675,6 +2675,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._disable_high_resolution_images = True
         view._current_page = None
         view._loaded_visual_kind = None
+        view._pdf_width_pts = 0.0
+        view._pdf_height_pts = 0.0
         self.assertEqual(view._target_base_raster_scale(1.0, view_m11=4.0), 1.0)
         view._disable_high_resolution_images = False
         view._scene_scale = 2.0

@@ -27,6 +27,24 @@ class _FakeRenderer:
 
 
 class PageCacheLifecycleTests(unittest.TestCase):
+    def test_cacheable_base_scale_keeps_heavy_pdf_under_cache_budget(self):
+        scale = PageCache.cacheable_base_render_scale(3024.0, 2160.0, 2.0)
+        self.assertLess(scale, 2.0)
+        self.assertLessEqual(
+            PageCache.estimated_render_bytes(3024.0, 2160.0, scale),
+            PageCache.PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES,
+        )
+        self.assertLessEqual(
+            int(3024.0 * scale + 0.999999) * int(2160.0 * scale + 0.999999),
+            PageCache.BASE_RASTER_MAX_PIXELS,
+        )
+
+    def test_cacheable_base_scale_preserves_small_pdf_scale(self):
+        self.assertEqual(
+            PageCache.cacheable_base_render_scale(612.0, 792.0, 2.0),
+            2.0,
+        )
+
     def test_pdf_metadata_caches_are_bounded_lru(self):
         renderer = _FakeRenderer()
         cache = PageCache()

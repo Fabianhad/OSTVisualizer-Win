@@ -73,8 +73,6 @@ class PageRenderPrefetchCoordinator:
     def _schedule_page(
         self, page: Page, bid_ref: Optional[BidRef], generation: int
     ) -> None:
-        if not self._page_cache.can_accept_prefetch():
-            return
         strategy = self._load_coordinator.determine_load_strategy(page)
         if not strategy.needs_async_loading or not page.layer_visible:
             return
@@ -84,19 +82,33 @@ class PageRenderPrefetchCoordinator:
             self._on_prefetch_complete(result, generation)
 
         if strategy.load_composite:
+            render_scale = self._cacheable_prefetch_scale(
+                strategy.pdf_width_pts,
+                strategy.pdf_height_pts,
+                strategy.main_scale,
+            )
+            if render_scale is None:
+                return
             request_id = self._rendering_service.render_composite_async(
                 page=page,
                 bid_ref=bid_ref,
-                render_scale=strategy.main_scale,
+                render_scale=render_scale,
                 rotation=0,
                 callback=callback,
                 priority=RenderPriority.NEARBY_PREFETCH,
             )
         elif strategy.load_main:
+            render_scale = self._cacheable_prefetch_scale(
+                strategy.pdf_width_pts,
+                strategy.pdf_height_pts,
+                strategy.main_scale,
+            )
+            if render_scale is None:
+                return
             request_id = self._rendering_service.render_page_async(
                 file_path=page.image_path,
                 page_index=page.page_index,
-                scale=strategy.main_scale,
+                scale=render_scale,
                 rotation=0,
                 callback=callback,
                 priority=RenderPriority.NEARBY_PREFETCH,
@@ -104,7 +116,13 @@ class PageRenderPrefetchCoordinator:
                 bitonal=page.bitonal,
             )
         elif strategy.load_overlay and page.overlay_image_path:
-            render_scale = strategy.view_scale
+            render_scale = self._cacheable_prefetch_scale(
+                strategy.pdf_width_pts,
+                strategy.pdf_height_pts,
+                strategy.view_scale,
+            )
+            if render_scale is None:
+                return
             request_id = self._rendering_service.render_overlay_async(
                 page=page,
                 bid_ref=bid_ref,
@@ -132,3 +150,22 @@ class PageRenderPrefetchCoordinator:
             self._active_request_ids.discard(result.request_id)
             if stale:
                 return
+
+    def _cacheable_prefetch_scale(
+        self,
+        pdf_width_pts: float,
+        pdf_height_pts: float,
+        desired_scale: float,
+    ) -> Optional[float]:
+        render_scale = PageCache.cacheable_base_render_scale(
+            pdf_width_pts,
+            pdf_height_pts,
+            desired_scale,
+        )
+        if not self._page_cache.can_accept_prefetch_render(
+            pdf_width_pts,
+            pdf_height_pts,
+            render_scale,
+        ):
+            return None
+        return render_scale

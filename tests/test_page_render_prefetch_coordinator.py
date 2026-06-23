@@ -18,8 +18,11 @@ from ost_visualizer.presentation.visualization.pdf.render_priority import Render
 
 
 class FakePageSizeProvider:
+    def __init__(self, sizes=None):
+        self.sizes = sizes or {}
+
     def get_page_size(self, _file_path, _page_index):
-        return 612.0, 792.0
+        return self.sizes.get(_file_path, (612.0, 792.0))
 
 
 class FakeRenderingService:
@@ -54,13 +57,19 @@ class FakeRenderingService:
 
 
 class FakeCache:
-    def __init__(self, can_accept=True):
+    def __init__(self, can_accept=True, can_accept_render=True):
         self.can_accept = can_accept
+        self.can_accept_render = can_accept_render
         self.checks = 0
+        self.render_checks = []
 
     def can_accept_prefetch(self):
         self.checks += 1
         return self.can_accept
+
+    def can_accept_prefetch_render(self, width_pts, height_pts, scale):
+        self.render_checks.append((width_pts, height_pts, scale))
+        return self.can_accept_prefetch() and self.can_accept_render
 
 
 class FakeImageRenderer:
@@ -75,12 +84,13 @@ class FakeImageRenderer:
 
 
 class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
-    def _coordinator(self, rendering_service=None, cache=None):
+    def _coordinator(self, rendering_service=None, cache=None, size_provider=None):
         rendering_service = rendering_service or FakeRenderingService()
         cache = cache or FakeCache()
+        size_provider = size_provider or FakePageSizeProvider()
         return PageRenderPrefetchCoordinator(
             rendering_service,
-            PageLoadStrategyService(FakePageSizeProvider()),
+            PageLoadStrategyService(size_provider),
             cache,
         )
 
@@ -170,6 +180,40 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         coordinator.prefetch_nearby_pages(pages[0], pages, None)
         self.assertEqual(rendering.calls, [])
         self.assertEqual(cache.checks, 1)
+
+    def test_heavy_pdf_prefetch_uses_cache_aware_scale(self):
+        rendering = FakeRenderingService()
+        cache = FakeCache()
+        coordinator = self._coordinator(
+            rendering,
+            cache,
+            FakePageSizeProvider({"heavy.pdf": (3024.0, 2160.0)}),
+        )
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page("p2", image_path="heavy.pdf"),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        self.assertEqual(len(rendering.calls), 1)
+        scale = rendering.calls[0][2]["scale"]
+        self.assertLess(scale, 2.0)
+        self.assertEqual(cache.render_checks, [(3024.0, 2160.0, scale)])
+
+    def test_uncacheable_prefetch_estimate_skips_render(self):
+        rendering = FakeRenderingService()
+        cache = FakeCache(can_accept_render=False)
+        coordinator = self._coordinator(
+            rendering,
+            cache,
+            FakePageSizeProvider({"heavy.pdf": (3024.0, 2160.0)}),
+        )
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page("p2", image_path="heavy.pdf"),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        self.assertEqual(rendering.calls, [])
+        self.assertEqual(len(cache.render_checks), 1)
 
     def test_prefetch_warms_same_page_cache_used_by_normal_rendering(self):
         cache = PageCache()

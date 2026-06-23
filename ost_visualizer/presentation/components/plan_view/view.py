@@ -4592,7 +4592,11 @@ class TakeoffPlanView(
             self._start_current_page_render_loading()
             if strategy.load_composite or strategy.load_main:
                 if strategy.load_composite:
-                    base_raster_scale = strategy.main_scale
+                    base_raster_scale = self._cache_aware_base_raster_scale(
+                        strategy.main_scale,
+                        pdf_width_pts,
+                        pdf_height_pts,
+                    )
                 else:
                     base_raster_scale = self._target_base_raster_scale(
                         strategy.main_scale

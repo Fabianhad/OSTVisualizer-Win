@@ -9,6 +9,7 @@ from shiboken6 import isValid
 from .....application.dtos.render_result_dto import RenderResult
 from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.page import Page
+from ....visualization.pdf.page_cache import PageCache
 from ....visualization.pdf.render_priority import RenderPriority
 from .graphics_items import ImageBackgroundItem, TileGraphicsItem
 
@@ -21,7 +22,6 @@ _VISIBLE_FRAME_OVERSCAN_RATIO = 0.25
 _BASE_RASTER_SCALE_STEP = 0.25
 _BASE_RASTER_MIN_SCALE = 1.0
 _BASE_RASTER_MAX_SCALE = 3.0
-_BASE_RASTER_MAX_PIXELS = 20_000_000
 _PLAN_VIEW_RASTER_ROTATION = 0
 VISUAL_KIND_BASE = "base"
 VISUAL_KIND_COMPOSITE = "composite"
@@ -201,10 +201,30 @@ class PageLoaderMixin:
         raster_width_pts, raster_height_pts = self._active_tile_raster_dimensions()
         if raster_width_pts <= 0 or raster_height_pts <= 0:
             return _BASE_RASTER_MAX_SCALE
-        budget_scale = math.sqrt(
-            _BASE_RASTER_MAX_PIXELS / (raster_width_pts * raster_height_pts)
+        return max(
+            0.25,
+            PageCache.cacheable_base_render_scale(
+                raster_width_pts,
+                raster_height_pts,
+                _BASE_RASTER_MAX_SCALE,
+            ),
         )
-        return max(0.25, min(_BASE_RASTER_MAX_SCALE, budget_scale))
+
+    def _cache_aware_base_raster_scale(
+        self,
+        desired_scale: float,
+        pdf_width_pts: Optional[float] = None,
+        pdf_height_pts: Optional[float] = None,
+    ) -> float:
+        width_pts, height_pts = self._rendered_pdf_page_dimensions(
+            pdf_width_pts=pdf_width_pts,
+            pdf_height_pts=pdf_height_pts,
+        )
+        return PageCache.cacheable_base_render_scale(
+            width_pts,
+            height_pts,
+            desired_scale,
+        )
 
     def _quantize_base_raster_scale(self, scale: float) -> float:
         max_scale = self._max_base_raster_scale()
@@ -220,12 +240,12 @@ class PageLoaderMixin:
         self, default_scale: float, view_m11: Optional[float] = None
     ) -> float:
         if not self._can_zoom_rerender or self._disable_high_resolution_images:
-            return default_scale
+            return self._cache_aware_base_raster_scale(default_scale)
         view_transform_scale = (
             view_m11 if view_m11 and view_m11 > 0 else self.transform().m11()
         )
         if view_transform_scale <= 0:
-            return default_scale
+            return self._cache_aware_base_raster_scale(default_scale)
         target_scale = (
             self._scene_scale * view_transform_scale * self._device_pixel_ratio()
         )
