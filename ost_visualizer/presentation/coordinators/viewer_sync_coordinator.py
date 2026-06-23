@@ -28,6 +28,12 @@ class ViewerSyncCoordinator:
         if self.plan_view:
             self.plan_view.clear()
 
+    def _ordered_pages(self) -> List:
+        return list(self._project_data.get_all_pages())
+
+    def _prefetch_nearby_pages(self, page, bid_ref) -> None:
+        self.plan_view.prefetch_nearby_pages(page, self._ordered_pages(), bid_ref)
+
     def update_plan_view_for_active(self) -> None:
         uid = self._ui_state.active_page_uid
         if not uid:
@@ -84,6 +90,7 @@ class ViewerSyncCoordinator:
                         bid.takeoff_increments,
                         bid.measure_base,
                     )
+            self._prefetch_nearby_pages(page, bid_ref)
             return
         self.plan_view.load_page(
             page=page,
@@ -102,6 +109,7 @@ class ViewerSyncCoordinator:
                     bid.takeoff_increments,
                     bid.measure_base,
                 )
+        self._prefetch_nearby_pages(page, bid_ref)
 
     def update_viewers(self, page_uids: List[str]) -> None:
         if not page_uids and self.opengl_viewer:

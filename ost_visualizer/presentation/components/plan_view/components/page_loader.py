@@ -9,12 +9,10 @@ from shiboken6 import isValid
 from .....application.dtos.render_result_dto import RenderResult
 from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.page import Page
+from ....visualization.pdf.render_priority import RenderPriority
 from .graphics_items import ImageBackgroundItem, TileGraphicsItem
 
 logger = logging.getLogger(__name__)
-_RENDER_PRIORITY_REQUIRED_PAGE = 0
-_RENDER_PRIORITY_VISIBLE_FRAME = 1
-_RENDER_PRIORITY_OPTIONAL_BASE = 3
 _SHOW_MODE_OVERLAY_ONLY = 1
 _PDF_FRAME_CURRENT_Z = 0.35
 _OVERLAY_FRAME_CURRENT_Z = 0.45
@@ -88,7 +86,7 @@ class PageLoaderMixin:
             render_scale=render_scale,
             rotation=_PLAN_VIEW_RASTER_ROTATION,
             callback=self._on_composite_loaded,
-            priority=_RENDER_PRIORITY_REQUIRED_PAGE,
+            priority=RenderPriority.REQUIRED_PAGE,
         )
         self._current_render_requests.append(request_id)
 
@@ -108,7 +106,7 @@ class PageLoaderMixin:
             scale=scale,
             rotation=_PLAN_VIEW_RASTER_ROTATION,
             callback=self._on_page_loaded,
-            priority=_RENDER_PRIORITY_REQUIRED_PAGE,
+            priority=RenderPriority.REQUIRED_PAGE,
             invert=invert,
             bitonal=bitonal,
             tint_rgb=tint_rgb,
@@ -133,7 +131,7 @@ class PageLoaderMixin:
             show_mode=show_mode,
             rotation=rotation,
             callback=self._on_overlay_loaded,
-            priority=_RENDER_PRIORITY_REQUIRED_PAGE,
+            priority=RenderPriority.REQUIRED_PAGE,
             render_scale=render_scale,
         )
         self._current_render_requests.append(request_id)
@@ -867,7 +865,7 @@ class PageLoaderMixin:
                 frame_w_pts=context["frame_w_pts"],
                 frame_h_pts=context["frame_h_pts"],
                 callback=on_frame_loaded,
-                priority=_RENDER_PRIORITY_VISIBLE_FRAME,
+                priority=RenderPriority.VISIBLE_FRAME,
             )
         else:
             tint_rgb = None
@@ -889,7 +887,7 @@ class PageLoaderMixin:
                 frame_w_pts=context["frame_w_pts"],
                 frame_h_pts=context["frame_h_pts"],
                 callback=on_frame_loaded,
-                priority=_RENDER_PRIORITY_VISIBLE_FRAME,
+                priority=RenderPriority.VISIBLE_FRAME,
                 invert=page.invert,
                 bitonal=page.bitonal,
                 tint_rgb=tint_rgb,
@@ -975,7 +973,7 @@ class PageLoaderMixin:
             scale=base_raster_scale,
             rotation=_PLAN_VIEW_RASTER_ROTATION,
             callback=on_base_loaded,
-            priority=_RENDER_PRIORITY_OPTIONAL_BASE,
+            priority=RenderPriority.OPTIONAL_BASE,
             invert=page.invert,
             bitonal=page.bitonal,
             tint_rgb=(
@@ -1017,7 +1015,7 @@ class PageLoaderMixin:
             show_mode=page.image_show_mode,
             rotation=self._active_page_raster_rotation(),
             callback=on_base_loaded,
-            priority=_RENDER_PRIORITY_OPTIONAL_BASE,
+            priority=RenderPriority.OPTIONAL_BASE,
             render_scale=base_raster_scale,
         )
         self._base_raster_request_id = request_id

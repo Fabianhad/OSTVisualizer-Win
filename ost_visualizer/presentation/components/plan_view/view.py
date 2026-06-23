@@ -46,6 +46,9 @@ from ....application.interfaces.i_page_load_strategy_service import (
     IPageLoadStrategyService,
 )
 from ....application.interfaces.i_page_rendering_service import IPageRenderingService
+from ...visualization.pdf.services.page_render_prefetch_coordinator import (
+    PageRenderPrefetchCoordinator,
+)
 from ....domain.entities.annotation import BidAnnotation, int_color_to_hex
 from ....domain.entities.condition import Condition
 from ....domain.entities.config import Config
@@ -75,6 +78,7 @@ from ...visualization.pdf.renderers.annotation_item_renderer import (
 from ...visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_geometry,
 )
+from ...visualization.pdf.render_priority import RenderPriority
 from ...visualization.utils.image_effects import page_effect_paper_color
 from ..viewer_cursors import OUTLINE_OFFSETS, recolor_pixmap
 from .components.drag_handler import DragHandlerMixin
@@ -227,6 +231,7 @@ class TakeoffPlanView(
         takeoff_renderer: ITakeoffRenderer,
         annotation_renderer: IAnnotationItemRenderer,
         linear_geometry: ILinearGeometry,
+        prefetch_coordinator: Optional[PageRenderPrefetchCoordinator] = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -241,6 +246,7 @@ class TakeoffPlanView(
             annotation_renderer,
         )
         self._rendering_service = rendering_service
+        self._prefetch_coordinator = prefetch_coordinator
         self._current_render_requests: List[str] = []
         self._pending_page_data: Optional[Dict] = None
         self._defer_page_visual_reveal: bool = False
@@ -2459,7 +2465,7 @@ class TakeoffPlanView(
             file_path=file_path,
             page_index=page_index,
             callback=self._on_pdf_text_extracted,
-            priority=2,
+            priority=RenderPriority.PDF_TEXT,
         )
         self._pdf_text_request_id = request_id
 
@@ -4342,6 +4348,20 @@ class TakeoffPlanView(
             hidden_layer_uids,
         )
 
+    def prefetch_nearby_pages(
+        self,
+        current_page: Page,
+        ordered_pages: List[Page],
+        bid_ref: Optional[BidRef] = None,
+    ) -> None:
+        if self._prefetch_coordinator is None:
+            return
+        self._prefetch_coordinator.prefetch_nearby_pages(
+            current_page=current_page,
+            ordered_pages=ordered_pages,
+            bid_ref=bid_ref,
+        )
+
     def _load_page_impl(
         self,
         page: Page,
@@ -4749,6 +4769,8 @@ class TakeoffPlanView(
         return True
 
     def clear(self, preserve_place_session: bool = False):
+        if self._prefetch_coordinator is not None:
+            self._prefetch_coordinator.cancel_pending()
         self.cancel_overlay_move_mode(restore_preview=True)
         self.finish_intelligent_paste_placement()
         if self._place_session_uid is not None and not preserve_place_session:
@@ -5091,6 +5113,8 @@ class TakeoffPlanView(
     def cleanup(self):
         self._zoom_debouncer.cancel()
         self._finish_active_inline_text_edit(commit=True)
+        if self._prefetch_coordinator is not None:
+            self._prefetch_coordinator.cancel_pending()
         self._cancel_pending_renders()
         self._rendering_service.shutdown()
         self.clear()
@@ -5112,6 +5136,7 @@ class TakeoffPlanView(
         self._text_annotation_inline_edit_allowed_fn = None
         self._annotation_placement_allowed_fn = None
         self._rendering_service = None
+        self._prefetch_coordinator = None
         self._load_coordinator = None
         self._color_service = None
         self._scene_builder = None

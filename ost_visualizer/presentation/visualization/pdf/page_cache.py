@@ -113,6 +113,13 @@ class PageCache:
                 self._in_flight_condition.notify_all()
         return image
 
+    def can_accept_prefetch(self) -> bool:
+        with self._lock:
+            return (
+                len(self._cache) < self.MAX_ENTRIES
+                and self._cache_size_bytes(self._cache) < _PAGE_CACHE_MAX_BYTES
+            )
+
     def get_tinted_page(
         self,
         file_path: str,

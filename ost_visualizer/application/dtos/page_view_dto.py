@@ -16,6 +16,7 @@ class PageViewDto:
     color_map: Dict[str, Any] = field(default_factory=dict)
     bid_ref: Optional[BidRef] = None
     annotations: List[BidAnnotation] = field(default_factory=list)
+    ordered_pages: List[Page] = field(default_factory=list)
     named_view: Optional[NamedView] = None
     page_area_selections: Optional[Dict[str, Optional[str]]] = None
     hidden_layer_uids: Set[str] = field(default_factory=set)

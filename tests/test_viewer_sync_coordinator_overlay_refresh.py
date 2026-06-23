@@ -81,6 +81,9 @@ class FakeProjectData:
     def get_page(self, page_uid):
         return self.page if page_uid == self.page.uid else None
 
+    def get_all_pages(self):
+        return [self.page]
+
     def get_bid_conditions(self):
         return {}
 
@@ -329,6 +332,7 @@ class FakePlanView:
         self.snap_settings = []
         self.overlay_kwargs = []
         self.load_kwargs = []
+        self.prefetch_calls = []
 
     def clear(self):
         self.clear_calls += 1
@@ -346,6 +350,9 @@ class FakePlanView:
 
     def set_snap_settings(self, increments, measure_base):
         self.snap_settings.append((increments, measure_base))
+
+    def prefetch_nearby_pages(self, page, ordered_pages, bid_ref):
+        self.prefetch_calls.append((page, ordered_pages, bid_ref))
 
 
 class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):

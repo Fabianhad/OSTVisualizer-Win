@@ -564,6 +564,7 @@ class DetachedPageViewManager(IShutdownAware):
             color_map=color_map,
             bid_ref=bid_ref,
             annotations=page_annotations,
+            ordered_pages=self.project_data.get_all_pages(),
             named_view=named_view,
             page_area_selections=self.project_data.get_page_area_selections(),
             hidden_layer_uids=self.project_data.get_hidden_layer_uids(),

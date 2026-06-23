@@ -450,6 +450,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._renderers.takeoff_renderer,
             self._renderers.annotation_renderer,
             self._renderers.linear_geometry,
+            self._renderers.prefetch_coordinator,
         )
         self.plan_view.set_selection_enabled(self._selection_enabled())
         self.plan_view.set_annotation_only_selection(
@@ -814,6 +815,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 annotations=self.page_data.annotations,
                 page_area_selections=self.page_data.page_area_selections,
                 hidden_layer_uids=self.page_data.hidden_layer_uids,
+            )
+            self.plan_view.prefetch_nearby_pages(
+                page,
+                self.page_data.ordered_pages,
+                self.page_data.bid_ref,
             )
             self._apply_named_view_focus_if_possible(require_stable_view=False)
             return True

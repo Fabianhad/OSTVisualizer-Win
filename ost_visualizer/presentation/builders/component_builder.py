@@ -290,6 +290,7 @@ class ComponentBuilder:
             renderers.takeoff_renderer,
             renderers.annotation_renderer,
             renderers.linear_geometry,
+            renderers.prefetch_coordinator,
             viewer_frame_2d,
         )
         if ui_access_manager:

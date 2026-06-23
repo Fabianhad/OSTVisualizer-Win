@@ -10,6 +10,7 @@ class PlanViewRenderers:
     page_cache: Any
     rendering_service: IPageRenderingService
     load_coordinator: IPageLoadStrategyService
+    prefetch_coordinator: Any
     takeoff_renderer: Any
     annotation_renderer: Any
     linear_geometry: ILinearGeometry

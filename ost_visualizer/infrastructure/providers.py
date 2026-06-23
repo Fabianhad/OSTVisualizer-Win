@@ -50,6 +50,9 @@ from ..presentation.visualization.factories.coordinate_transformer_factory impor
 )
 from ..presentation.visualization.pdf import ost_pdf as _ost_pdf
 from ..presentation.visualization.pdf.page_cache import PageCache
+from ..presentation.visualization.pdf.services.page_render_prefetch_coordinator import (
+    PageRenderPrefetchCoordinator,
+)
 from ..presentation.visualization.pdf.renderers.annotation_item_renderer import (
     AnnotationItemRenderer,
 )
@@ -240,10 +243,17 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
         self, coord_system, color_service
     ) -> "PlanViewRenderers":
         page_cache = PageCache()
+        rendering_service = PDFRenderingService(page_cache, num_workers=1)
+        load_coordinator = PageLoadStrategyService(page_cache)
         return PlanViewRenderers(
             page_cache=page_cache,
-            rendering_service=PDFRenderingService(page_cache, num_workers=1),
-            load_coordinator=PageLoadStrategyService(page_cache),
+            rendering_service=rendering_service,
+            load_coordinator=load_coordinator,
+            prefetch_coordinator=PageRenderPrefetchCoordinator(
+                rendering_service,
+                load_coordinator,
+                page_cache,
+            ),
             takeoff_renderer=TakeoffRenderer(coord_system, color_service),
             annotation_renderer=AnnotationItemRenderer(coord_system),
             linear_geometry=LinearGeometry(),

@@ -22,6 +22,7 @@
 - Added a Master > Default Layers dialog for managing template layer visibility, names, order, and membership.
 
 ### Changed
+- Warm nearby PDF pages in the background after 2D page navigation so adjacent page switches can reuse the render cache without delaying the current page render.
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.
 - Replaced the external MCP runtime dependency with an internal stdlib stdio adapter, and removed obsolete MCP dependency/setup files.
 - Limited MCP database access to checked OST Visualizer database settings, with redacted local paths plus bounded responses and status/result-limit metadata.
