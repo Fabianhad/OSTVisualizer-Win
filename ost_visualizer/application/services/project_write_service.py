@@ -647,7 +647,6 @@ class ProjectWriteService(BaseWriteService):
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
         return self._save_takeoffs_assignment(
-            "save_takeoffs_area",
             self._save_takeoffs_area,
             db_path,
             takeoff_uids,
@@ -663,7 +662,6 @@ class ProjectWriteService(BaseWriteService):
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
         return self._save_takeoffs_assignment(
-            "save_takeoffs_condition",
             self._save_takeoffs_condition,
             db_path,
             takeoff_uids,
@@ -673,14 +671,13 @@ class ProjectWriteService(BaseWriteService):
 
     def _save_takeoffs_assignment(
         self,
-        operation: str,
         use_case,
         db_path: str,
         takeoff_uids: List[str],
         target_uid: str,
         publish_database_refreshed_after_write: bool,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(operation, db_path):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = use_case.execute(db_path, takeoff_uids, target_uid)
         return self._reload_after_success(

@@ -12,9 +12,6 @@ from ..schema_contract import singular as _singular
 
 logger = logging.getLogger(__name__)
 _GLOBAL_ZERO_UID_FIELDS: Set[str] = {
-    "EstimatorUID",
-    "PrManagerUID",
-    "JobSiteManagerUID",
     "BidProjectUID",
     "ParentBidUID",
     "OrigBidProjectUID",
@@ -22,6 +19,12 @@ _GLOBAL_ZERO_UID_FIELDS: Set[str] = {
     "SourceBidUID",
     "OCRUID",
     "CoverSheetSelItemUID",
+}
+_EMPLOYEE_UID_FIELDS: Set[str] = {
+    "EstimatorUID",
+    "PrManagerUID",
+    "JobSiteManagerUID",
+    "EmployeeUID",
 }
 _BID_INTERNAL_UID_FIELDS: Set[str] = {
     "UID",
@@ -45,6 +48,12 @@ _BID_INTERNAL_UID_FIELDS: Set[str] = {
     "TypGroupUID",
     "BidPageSelectedUID",
 }
+
+
+def _matches_section_child(section: str, tag: str) -> bool:
+    if tag == _singular(section):
+        return True
+    return bool(section.endswith("s") and tag == section[:-1])
 
 
 class OstImporter:
@@ -72,9 +81,18 @@ class OstImporter:
         max_uid: int,
         cdn_uid_map: Dict[str, str],
         job_status_uid_map: Dict[str, str],
+        employee_uid_map: Dict[str, str],
+        pay_class_uid_map: Dict[str, str],
     ) -> RawBidData:
         uid_map = self._build_uid_map(raw_data, max_uid)
-        return self._remap_data(raw_data, uid_map, cdn_uid_map, job_status_uid_map)
+        return self._remap_data(
+            raw_data,
+            uid_map,
+            cdn_uid_map,
+            job_status_uid_map,
+            employee_uid_map,
+            pay_class_uid_map,
+        )
 
     def _build_uid_map(self, raw_data: RawBidData, max_uid: int) -> Dict[str, str]:
         uid_map: Dict[str, str] = {}
@@ -102,6 +120,8 @@ class OstImporter:
         uid_map: Dict[str, str],
         cdn_uid_map: Dict[str, str],
         job_status_uid_map: Dict[str, str],
+        employee_uid_map: Dict[str, str],
+        pay_class_uid_map: Dict[str, str],
     ) -> str:
         if not value:
             return value
@@ -111,6 +131,10 @@ class OstImporter:
             return cdn_uid_map.get(value, value)
         if field == "JobStatusUID":
             return job_status_uid_map.get(value, "NULL")
+        if field in _EMPLOYEE_UID_FIELDS:
+            return employee_uid_map.get(value, "NULL")
+        if field == "PayClassUID":
+            return pay_class_uid_map.get(value, "NULL")
         if field in _GLOBAL_ZERO_UID_FIELDS:
             return "NULL"
         if field in _BID_INTERNAL_UID_FIELDS:
@@ -123,10 +147,18 @@ class OstImporter:
         uid_map: Dict[str, str],
         cdn_uid_map: Dict[str, str],
         job_status_uid_map: Dict[str, str],
+        employee_uid_map: Dict[str, str],
+        pay_class_uid_map: Dict[str, str],
     ) -> Dict[str, str]:
         return {
             field: self._remap_uid_value(
-                field, value, uid_map, cdn_uid_map, job_status_uid_map
+                field,
+                value,
+                uid_map,
+                cdn_uid_map,
+                job_status_uid_map,
+                employee_uid_map,
+                pay_class_uid_map,
             )
             for field, value in row.items()
         }
@@ -137,29 +169,89 @@ class OstImporter:
         uid_map: Dict[str, str],
         cdn_uid_map: Dict[str, str],
         job_status_uid_map: Dict[str, str],
+        employee_uid_map: Dict[str, str],
+        pay_class_uid_map: Dict[str, str],
     ) -> RawBidData:
         remapped_bid_row = self._remap_row(
-            raw_data.bid_row, uid_map, cdn_uid_map, job_status_uid_map
+            raw_data.bid_row,
+            uid_map,
+            cdn_uid_map,
+            job_status_uid_map,
+            employee_uid_map,
+            pay_class_uid_map,
         )
         remapped_bid_tables = {
             table: [
-                self._remap_row(r, uid_map, cdn_uid_map, job_status_uid_map)
+                self._remap_row(
+                    r,
+                    uid_map,
+                    cdn_uid_map,
+                    job_status_uid_map,
+                    employee_uid_map,
+                    pay_class_uid_map,
+                )
                 for r in rows
             ]
             for table, rows in raw_data.bid_tables.items()
         }
         remapped_page_tables = {
             table: [
-                self._remap_row(r, uid_map, cdn_uid_map, job_status_uid_map)
+                self._remap_row(
+                    r,
+                    uid_map,
+                    cdn_uid_map,
+                    job_status_uid_map,
+                    employee_uid_map,
+                    pay_class_uid_map,
+                )
                 for r in rows
             ]
             for table, rows in raw_data.page_tables.items()
         }
+        remapped_page_tables["BidPageSettings"] = self._canonicalize_page_area_settings(
+            remapped_page_tables.get("BidPageSettings", [])
+        )
         return RawBidData(
             bid_row=remapped_bid_row,
             bid_tables=remapped_bid_tables,
             page_tables=remapped_page_tables,
         )
+
+    def _canonicalize_page_area_settings(
+        self, rows: List[Dict[str, str]]
+    ) -> List[Dict[str, str]]:
+        if not rows:
+            return rows
+        unselected_rows: List[Dict[str, str]] = []
+        selected_by_page: Dict[str, Dict[str, str]] = {}
+        for row in rows:
+            page_uid = row.get("BidPageUID", "")
+            try:
+                selected_value = int(row.get("BidAreaSelected", "0") or "0")
+            except ValueError:
+                selected_value = 0
+            if selected_value <= 0:
+                unselected_rows.append(row)
+                continue
+            current = selected_by_page.get(page_uid)
+            if current is None:
+                selected_by_page[page_uid] = row
+                continue
+            try:
+                current_selected = int(current.get("BidAreaSelected", "0") or "0")
+            except ValueError:
+                current_selected = 0
+            try:
+                current_uid = int(current.get("UID", "0") or "0")
+            except ValueError:
+                current_uid = 0
+            try:
+                row_uid = int(row.get("UID", "0") or "0")
+            except ValueError:
+                row_uid = 0
+            if (selected_value, row_uid) >= (current_selected, current_uid):
+                selected_by_page[page_uid] = row
+        return unselected_rows + list(selected_by_page.values())
 
     def _parse_ost_xml(self, ost_path: str) -> RawBidData:
         tree = ET.parse(ost_path)
@@ -175,9 +267,8 @@ class OstImporter:
             rows: List[Dict[str, str]] = []
             container = bid_elem.find(section)
             if container is not None:
-                singular = _singular(section)
                 for child in container:
-                    if child.tag == singular:
+                    if _matches_section_child(section, child.tag):
                         rows.append(dict(child.attrib))
             bid_tables[section] = rows
         pages_container = bid_elem.find("BidPages")
@@ -190,9 +281,8 @@ class OstImporter:
                 for section in PAGE_SECTIONS:
                     container = page_elem.find(section)
                     if container is not None:
-                        singular = _singular(section)
                         for child in container:
-                            if child.tag == singular:
+                            if _matches_section_child(section, child.tag):
                                 page_tables.setdefault(section, []).append(
                                     dict(child.attrib)
                                 )
@@ -201,18 +291,16 @@ class OstImporter:
             rows = []
             container = bid_elem.find(section)
             if container is not None:
-                singular = _singular(section)
                 for child in container:
-                    if child.tag == singular:
+                    if _matches_section_child(section, child.tag):
                         rows.append(dict(child.attrib))
             bid_tables[section] = rows
         for section in GLOBAL_SECTIONS:
             rows = []
             container = root.find(section)
             if container is not None:
-                singular = _singular(section)
                 for child in container:
-                    if child.tag == singular:
+                    if _matches_section_child(section, child.tag):
                         rows.append(dict(child.attrib))
             global_tables[section] = rows
         return RawBidData(

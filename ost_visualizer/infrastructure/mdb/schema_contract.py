@@ -7,6 +7,7 @@ BID_SECTIONS: List[str] = [
     "BidConditionFolders",
     "BidPageFolders",
     "BidSettings",
+    "BidEmployees",
     "BidLayers",
     "BidTypAreaCounts",
     "BidConditions",
@@ -36,9 +37,25 @@ PAGE_SECTIONS: List[str] = [
     "BidComments",
 ]
 BID_TAIL_SECTIONS: List[str] = ["BidNamedViews", "BidHotLinks"]
-GLOBAL_SECTIONS: List[str] = ["Employees", "AccessLevels", "CdnTypes", "JobStatuses"]
+GLOBAL_SECTIONS: List[str] = [
+    "Employees",
+    "PayClasses",
+    "AccessLevels",
+    "CdnTypes",
+    "JobStatuses",
+]
 RAW_BID_TABLES: List[str] = BID_SECTIONS + ["BidPages"] + BID_TAIL_SECTIONS
-RAW_GLOBAL_TABLES: List[str] = ["Employees", "AccessLevels", "CdnTypes", "JobStatuses"]
+RAW_GLOBAL_TABLES: List[str] = [
+    "Employees",
+    "PayClasses",
+    "AccessLevels",
+    "CdnTypes",
+    "JobStatuses",
+]
+_SINGULAR_OVERRIDES = {
+    "JobStatuses": "JobStatus",
+    "PayClasses": "PayClass",
+}
 DEFAULT_LAYER_ROWS: Tuple[Tuple[str, bool, bool, int], ...] = (
     ("Default", True, True, 2),
     ("Annotation", True, True, 1),
@@ -48,6 +65,8 @@ DEFAULT_LAYER_ROWS: Tuple[Tuple[str, bool, bool, int], ...] = (
 
 
 def singular(table_name: str) -> str:
+    if table_name in _SINGULAR_OVERRIDES:
+        return _SINGULAR_OVERRIDES[table_name]
     if table_name.endswith("s"):
         return table_name[:-1]
     return table_name

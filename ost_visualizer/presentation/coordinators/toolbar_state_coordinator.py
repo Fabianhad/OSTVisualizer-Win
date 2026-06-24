@@ -323,6 +323,9 @@ class ToolbarStateCoordinator:
             self.is_takeoff_2d_view_active()
             and self._access.is_allowed(Feature.PLACE_PLAN_ITEMS)
             and bool(self.plan_view)
+            and bool(self._ui_state.selected_page_uids)
+            and bool(self._ui_state.active_page_uid)
+            and bool(self.plan_view.current_page_uid)
             and (
                 bool(selected_placeable_condition_uids)
                 or selected_takeoff_condition_placeable

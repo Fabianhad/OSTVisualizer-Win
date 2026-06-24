@@ -348,27 +348,13 @@ class PageOperationsMixin:
                 )
                 cursor = conn.cursor()
                 if area_uid == "0":
-                    cursor.execute(
-                        "UPDATE [BidPageSettings] SET [BidAreaUID]=NULL, [BidAreaSelected]=1 WHERE [BidPageUID]=?",
-                        int(page_uid),
+                    self._replace_page_area_selection(
+                        cursor, schema, int(page_uid), None, 1
                     )
-                    if cursor.rowcount == 0:
-                        cursor.execute(
-                            "INSERT INTO [BidPageSettings] ([BidPageUID], [BidAreaUID], [BidAreaSelected]) VALUES (?, NULL, 1)",
-                            int(page_uid),
-                        )
                 elif area_uid:
-                    cursor.execute(
-                        "UPDATE [BidPageSettings] SET [BidAreaUID]=?, [BidAreaSelected]=2 WHERE [BidPageUID]=?",
-                        int(area_uid),
-                        int(page_uid),
+                    self._replace_page_area_selection(
+                        cursor, schema, int(page_uid), int(area_uid), 2
                     )
-                    if cursor.rowcount == 0:
-                        cursor.execute(
-                            "INSERT INTO [BidPageSettings] ([BidPageUID], [BidAreaUID], [BidAreaSelected]) VALUES (?, ?, 2)",
-                            int(page_uid),
-                            int(area_uid),
-                        )
                 else:
                     cursor.execute(
                         "DELETE FROM [BidPageSettings] WHERE [BidPageUID]=?",
@@ -380,3 +366,68 @@ class PageOperationsMixin:
                 "Failed to save page area for page %s in %s", page_uid, db_path
             )
             return False
+
+    def _replace_page_area_selection(
+        self,
+        cursor: "pyodbc.Cursor",
+        schema,
+        page_uid: int,
+        area_uid: int | None,
+        selected_value: int,
+    ) -> None:
+        if not schema.column_exists("BidPageSettings", "UID"):
+            cursor.execute(
+                "DELETE FROM [BidPageSettings] "
+                "WHERE [BidPageUID]=? AND [BidAreaSelected] > 0",
+                page_uid,
+            )
+            cursor.execute(
+                "INSERT INTO [BidPageSettings] "
+                "([BidPageUID], [BidAreaUID], [BidAreaSelected]) "
+                "VALUES (?, ?, ?)",
+                page_uid,
+                area_uid,
+                selected_value,
+            )
+            return
+        cursor.execute(
+            "SELECT [UID], [BidAreaSelected] FROM [BidPageSettings] "
+            "WHERE [BidPageUID]=? AND [BidAreaSelected] > 0",
+            page_uid,
+        )
+        selected_rows = cursor.fetchall()
+        target_uid = None
+        fallback_uid = None
+        for row in selected_rows:
+            row_uid = int(row.UID)
+            fallback_uid = row_uid
+            if (
+                row.BidAreaSelected is not None
+                and int(row.BidAreaSelected) == selected_value
+            ):
+                target_uid = row_uid
+        if target_uid is None:
+            target_uid = fallback_uid
+        if target_uid is None:
+            cursor.execute(
+                "INSERT INTO [BidPageSettings] "
+                "([BidPageUID], [BidAreaUID], [BidAreaSelected]) "
+                "VALUES (?, ?, ?)",
+                page_uid,
+                area_uid,
+                selected_value,
+            )
+            return
+        cursor.execute(
+            "DELETE FROM [BidPageSettings] "
+            "WHERE [BidPageUID]=? AND [BidAreaSelected] > 0 AND [UID]<>?",
+            page_uid,
+            target_uid,
+        )
+        cursor.execute(
+            "UPDATE [BidPageSettings] "
+            "SET [BidAreaUID]=?, [BidAreaSelected]=? WHERE [UID]=?",
+            area_uid,
+            selected_value,
+            target_uid,
+        )

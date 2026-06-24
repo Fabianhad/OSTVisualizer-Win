@@ -158,6 +158,26 @@ _BID_LAYER_ATTR_ORDER = [
     "Sequence",
 ]
 _CDN_TYPE_ATTR_ORDER = ["UID", "Name", "ExpandState"]
+_EMPLOYEE_ATTR_ORDER = [
+    "UID",
+    "PayClassUID",
+    "AccessLevelUID",
+    "EmployeeNo",
+    "FirstName",
+    "LastName",
+    "EnableLogin",
+    "LoginName",
+    "Address1",
+    "Address2",
+    "City",
+    "State",
+    "Zip",
+    "HomePhone",
+    "MobilePhone",
+    "EMail",
+]
+_PAY_CLASS_ATTR_ORDER = ["UID", "Name"]
+_ACCESS_LEVEL_ATTR_ORDER = ["UID", "Description", "Privileges"]
 _BID_SETTING_ATTR_ORDER = [
     "UID",
     "BidUID",
@@ -469,6 +489,9 @@ _ATTR_ORDER_MAP: Dict[str, List[str]] = {
     "Bid": _BID_ATTR_ORDER,
     "BidLayer": _BID_LAYER_ATTR_ORDER,
     "CdnType": _CDN_TYPE_ATTR_ORDER,
+    "Employee": _EMPLOYEE_ATTR_ORDER,
+    "PayClass": _PAY_CLASS_ATTR_ORDER,
+    "AccessLevel": _ACCESS_LEVEL_ATTR_ORDER,
     "BidSetting": _BID_SETTING_ATTR_ORDER,
     "BidConditionFolder": _BID_CONDITION_FOLDER_ATTR_ORDER,
     "BidArea": _BID_AREA_ATTR_ORDER,
@@ -898,14 +921,48 @@ class OstExporter:
     ) -> None:
         job_status_uid = bid_row.get("JobStatusUID", "")
         condition_rows = bid_tables.get("BidConditions", [])
+        bid_employee_rows = bid_tables.get("BidEmployees", [])
         used_cdn_types = {
             c.get("CdnTypeUID") for c in condition_rows if c.get("CdnTypeUID")
         }
+        used_employee_uids = {
+            uid
+            for uid in (
+                bid_row.get("EstimatorUID", ""),
+                bid_row.get("PrManagerUID", ""),
+                bid_row.get("JobSiteManagerUID", ""),
+            )
+            if uid and uid != "0"
+        }
+        used_employee_uids.update(
+            row.get("EmployeeUID", "")
+            for row in bid_employee_rows
+            if row.get("EmployeeUID") and row.get("EmployeeUID") != "0"
+        )
+        employee_rows = [
+            row
+            for row in global_tables.get("Employees", [])
+            if row.get("UID") in used_employee_uids
+        ]
+        used_pay_class_uids = {
+            row.get("PayClassUID", "")
+            for row in employee_rows + bid_employee_rows
+            if row.get("PayClassUID") and row.get("PayClassUID") != "0"
+        }
+        used_access_level_uids = {
+            row.get("AccessLevelUID", "")
+            for row in employee_rows
+            if row.get("AccessLevelUID") and row.get("AccessLevelUID") != "0"
+        }
         for table_name in _GLOBAL_SECTIONS:
-            if table_name == "Employees":
-                continue
             rows = global_tables.get(table_name, [])
-            if table_name == "CdnTypes":
+            if table_name == "Employees":
+                rows = employee_rows
+            elif table_name == "PayClasses":
+                rows = [r for r in rows if r.get("UID") in used_pay_class_uids]
+            elif table_name == "AccessLevels":
+                rows = [r for r in rows if r.get("UID") in used_access_level_uids]
+            elif table_name == "CdnTypes":
                 rows = [r for r in rows if r.get("UID") in used_cdn_types]
             elif table_name == "JobStatuses":
                 rows = [r for r in rows if r.get("UID") == job_status_uid]

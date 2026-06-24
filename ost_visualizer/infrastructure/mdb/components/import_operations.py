@@ -13,7 +13,15 @@ class ImportOperationsMixin:
         db_path: str,
         raw_data: RawBidData,
         transform_fn: Callable[
-            [RawBidData, int, Dict[str, str], Dict[str, str]], RawBidData
+            [
+                RawBidData,
+                int,
+                Dict[str, str],
+                Dict[str, str],
+                Dict[str, str],
+                Dict[str, str],
+            ],
+            RawBidData,
         ],
         target_project_uid: Optional[str] = None,
     ) -> bool:
@@ -24,8 +32,21 @@ class ImportOperationsMixin:
                 job_status_uid_map, max_uid = self._resolve_job_statuses(
                     conn, raw_data, max_uid
                 )
+                access_level_uid_map = self._resolve_access_levels(conn, raw_data)
+                pay_class_uid_map = self._resolve_pay_classes(conn, raw_data)
+                employee_uid_map = self._resolve_employees(
+                    conn,
+                    raw_data,
+                    pay_class_uid_map,
+                    access_level_uid_map,
+                )
                 remapped = transform_fn(
-                    raw_data, max_uid, cdn_uid_map, job_status_uid_map
+                    raw_data,
+                    max_uid,
+                    cdn_uid_map,
+                    job_status_uid_map,
+                    employee_uid_map,
+                    pay_class_uid_map,
                 )
                 self._assign_next_bid_no(conn, remapped)
                 if target_project_uid:
@@ -142,6 +163,111 @@ class ImportOperationsMixin:
                 self._insert_raw_row(connection, "JobStatuses", insert_row, table_info)
         return job_status_uid_map, next_uid - 1
 
+    def _resolve_access_levels(
+        self,
+        connection: ConnWrapper,
+        raw_data: RawBidData,
+    ) -> Dict[str, str]:
+        access_level_uid_map: Dict[str, str] = {}
+        incoming = raw_data.global_tables.get("AccessLevels", [])
+        if not incoming:
+            return access_level_uid_map
+        schema = self._schema(connection)
+        if schema.optional_table_missing("AccessLevels"):
+            return access_level_uid_map
+        existing_by_description = self._load_existing_uid_by_column(
+            connection, "AccessLevels", "Description"
+        )
+        next_uid = self._next_table_uid(connection, "AccessLevels")
+        table_info = self._get_table_info(connection, "AccessLevels")
+        for row in incoming:
+            old_uid = row.get("UID", "")
+            description = row.get("Description", "")
+            if description and description in existing_by_description:
+                access_level_uid_map[old_uid] = existing_by_description[description]
+                continue
+            new_uid = str(next_uid)
+            next_uid += 1
+            access_level_uid_map[old_uid] = new_uid
+            if description:
+                existing_by_description[description] = new_uid
+            insert_row = dict(row)
+            insert_row["UID"] = new_uid
+            self._insert_raw_row(connection, "AccessLevels", insert_row, table_info)
+        return access_level_uid_map
+
+    def _resolve_pay_classes(
+        self,
+        connection: ConnWrapper,
+        raw_data: RawBidData,
+    ) -> Dict[str, str]:
+        pay_class_uid_map: Dict[str, str] = {}
+        incoming = raw_data.global_tables.get("PayClasses", [])
+        if not incoming:
+            return pay_class_uid_map
+        schema = self._schema(connection)
+        if schema.optional_table_missing("PayClasses"):
+            return pay_class_uid_map
+        existing_by_name = self._load_existing_uid_by_name(connection, "PayClasses")
+        next_uid = self._next_table_uid(connection, "PayClasses")
+        table_info = self._get_table_info(connection, "PayClasses")
+        for row in incoming:
+            old_uid = row.get("UID", "")
+            name = row.get("Name", "")
+            if name and name in existing_by_name:
+                pay_class_uid_map[old_uid] = existing_by_name[name]
+                continue
+            new_uid = str(next_uid)
+            next_uid += 1
+            pay_class_uid_map[old_uid] = new_uid
+            if name:
+                existing_by_name[name] = new_uid
+            insert_row = dict(row)
+            insert_row["UID"] = new_uid
+            self._insert_raw_row(connection, "PayClasses", insert_row, table_info)
+        return pay_class_uid_map
+
+    def _resolve_employees(
+        self,
+        connection: ConnWrapper,
+        raw_data: RawBidData,
+        pay_class_uid_map: Dict[str, str],
+        access_level_uid_map: Dict[str, str],
+    ) -> Dict[str, str]:
+        employee_uid_map: Dict[str, str] = {}
+        incoming = raw_data.global_tables.get("Employees", [])
+        if not incoming:
+            return employee_uid_map
+        schema = self._schema(connection)
+        if schema.optional_table_missing("Employees"):
+            return employee_uid_map
+        existing_by_key = self._load_existing_employee_uid_by_key(connection)
+        next_uid = self._next_table_uid(connection, "Employees")
+        table_info = self._get_table_info(connection, "Employees")
+        for row in incoming:
+            old_uid = row.get("UID", "")
+            employee_key = self._employee_identity_key(row)
+            if employee_key and employee_key in existing_by_key:
+                employee_uid_map[old_uid] = existing_by_key[employee_key]
+                continue
+            new_uid = str(next_uid)
+            next_uid += 1
+            employee_uid_map[old_uid] = new_uid
+            if employee_key:
+                existing_by_key[employee_key] = new_uid
+            insert_row = dict(row)
+            insert_row["UID"] = new_uid
+            pay_class_uid = insert_row.get("PayClassUID", "")
+            if pay_class_uid:
+                insert_row["PayClassUID"] = pay_class_uid_map.get(pay_class_uid, "NULL")
+            access_level_uid = insert_row.get("AccessLevelUID", "")
+            if access_level_uid:
+                insert_row["AccessLevelUID"] = access_level_uid_map.get(
+                    access_level_uid, "NULL"
+                )
+            self._insert_raw_row(connection, "Employees", insert_row, table_info)
+        return employee_uid_map
+
     def _write_to_db(
         self,
         connection: ConnWrapper,
@@ -179,26 +305,91 @@ class ImportOperationsMixin:
     def _load_existing_uid_by_name(
         self, connection: ConnWrapper, table: str
     ) -> Dict[str, str]:
+        return self._load_existing_uid_by_column(connection, table, "Name")
+
+    def _load_existing_uid_by_column(
+        self, connection: ConnWrapper, table: str, column: str
+    ) -> Dict[str, str]:
         schema = self._schema(connection)
         if schema.optional_table_missing(table):
             return {}
         if not schema.column_exists(table, "UID") or not schema.column_exists(
-            table, "Name"
+            table, column
         ):
             return {}
-        existing_by_name: Dict[str, str] = {}
+        existing_by_value: Dict[str, str] = {}
         cursor = connection.cursor()
         try:
-            cursor.execute(f"SELECT [UID], [Name] FROM [{table}]")
+            cursor.execute(f"SELECT [UID], [{column}] FROM [{table}]")
             for row in cursor.fetchall():
                 uid_val = str(row[0]) if row[0] is not None else ""
-                name_val = str(row[1]) if row[1] is not None else ""
-                existing_by_name[name_val] = uid_val
+                column_val = str(row[1]) if row[1] is not None else ""
+                existing_by_value[column_val] = uid_val
         except pyodbc.Error:
             pass
         finally:
             cursor.close()
-        return existing_by_name
+        return existing_by_value
+
+    def _load_existing_employee_uid_by_key(
+        self, connection: ConnWrapper
+    ) -> Dict[str, str]:
+        schema = self._schema(connection)
+        if schema.optional_table_missing("Employees"):
+            return {}
+        if not schema.column_exists("Employees", "UID"):
+            return {}
+        columns = [
+            column
+            for column in ("UID", "EmployeeNo", "FirstName", "LastName", "EMail")
+            if schema.column_exists("Employees", column)
+        ]
+        if "UID" not in columns:
+            return {}
+        existing_by_key: Dict[str, str] = {}
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                f"SELECT {', '.join(f'[{column}]' for column in columns)} "
+                "FROM [Employees]"
+            )
+            for row in cursor.fetchall():
+                row_data = {
+                    columns[index]: str(row[index]) if row[index] is not None else ""
+                    for index in range(len(columns))
+                }
+                key = self._employee_identity_key(row_data)
+                if key:
+                    existing_by_key[key] = row_data["UID"]
+        except pyodbc.Error:
+            pass
+        finally:
+            cursor.close()
+        return existing_by_key
+
+    def _employee_identity_key(self, row: Dict[str, str]) -> str:
+        employee_no = (row.get("EmployeeNo") or "").strip().casefold()
+        if employee_no:
+            return f"no:{employee_no}"
+        first_name = (row.get("FirstName") or "").strip().casefold()
+        last_name = (row.get("LastName") or "").strip().casefold()
+        email = (row.get("EMail") or "").strip().casefold()
+        if first_name or last_name or email:
+            return f"name:{first_name}|{last_name}|{email}"
+        return ""
+
+    def _next_table_uid(self, connection: ConnWrapper, table: str) -> int:
+        cursor = connection.cursor()
+        try:
+            cursor.execute(f"SELECT MAX([UID]) FROM [{table}]")
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return int(row[0]) + 1
+        except pyodbc.Error:
+            pass
+        finally:
+            cursor.close()
+        return 1
 
     def _get_table_info(
         self, connection: ConnWrapper, table: str

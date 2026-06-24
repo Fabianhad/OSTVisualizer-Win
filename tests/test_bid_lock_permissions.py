@@ -96,6 +96,8 @@ class _UiState:
         self.selected_file_path = bid_ref.file_path
         self.selected_project_uid = None
         self.place_condition_uid = None
+        self.selected_page_uids = ["page-1"]
+        self.active_page_uid = "page-1"
 
     def get_selected_bid_ref(self):
         return self._bid_ref
@@ -1001,7 +1003,6 @@ class BidLockPermissionTests(unittest.TestCase):
         with self.assertNoLogs(logger, level="WARNING"):
             self.assertTrue(
                 guard.blocks_active_locked_bid_write(
-                    "save_page_view_state",
                     project_data.bid_ref.file_path,
                 )
             )

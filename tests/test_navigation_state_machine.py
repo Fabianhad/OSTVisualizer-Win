@@ -1,10 +1,19 @@
 import logging
 import unittest
 from types import SimpleNamespace
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.coordinators.placement_coordinator import (
+    PlacementCoordinator,
+)
 from ost_visualizer.presentation.coordinators.navigation_state_machine import (
     NavState,
     NavigationStateMachine,
 )
+from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
+    ToolbarStateCoordinator,
+)
+from ost_visualizer.presentation.managers.ui_access_manager import Feature
 
 
 class FakeUiState:
@@ -128,6 +137,108 @@ class NavigationStateMachineTests(unittest.TestCase):
             self.assertFalse(nav.finish_refresh(NavState.REFRESHING))
         self.assertEqual(nav.current_state, NavState.NO_FILE)
         self.assertIsNone(nav.refresh_snapshot)
+
+    def test_placement_coordinator_blocks_place_mode_when_bid_has_no_pages(self):
+        nav = NavigationStateMachine()
+        nav.transition_to(NavState.FILE_LOADED_NO_BID)
+        nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
+        ui_state = SimpleNamespace(
+            active_page_uid=None,
+            selected_page_uids=[],
+            place_condition_uid=None,
+            set_place_condition_uids=lambda _uids: None,
+            clear_place_condition=lambda: None,
+            state=SimpleNamespace(color_mode="condition", grayscale_enabled=False),
+        )
+        plan_view = SimpleNamespace(
+            activate_place_for_condition=lambda _condition_uid, _condition_uids: True,
+            update_color_map=lambda _color_map: None,
+            cancel_place_mode=lambda: None,
+        )
+        project_data = SimpleNamespace(
+            get_bid_conditions=lambda: {
+                "c1": Condition(
+                    uid="c1",
+                    name="Area",
+                    condition_type=Condition.TYPE_AREA,
+                )
+            },
+            get_page_takeoffs=lambda _page_uid: [],
+        )
+        placement = PlacementCoordinator(
+            ui_state_manager=ui_state,
+            ui_access_manager=SimpleNamespace(
+                is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
+                set_area_placement_active=lambda _active: None,
+            ),
+            color_service=SimpleNamespace(
+                get_color_mapping=lambda *_args, **_kwargs: ({}, {})
+            ),
+            project_data=project_data,
+        )
+        placement._plan_view = plan_view
+        placement.set_nav(nav)
+        with self.assertNoLogs(self.logger, level="WARNING"):
+            self.assertFalse(placement.enter("c1", ["c1"]))
+        self.assertEqual(nav.current_state, NavState.BID_ACTIVE_NO_PAGES)
+
+    def test_toolbar_disables_place_action_when_bid_has_no_active_page(self):
+        class FakeAction:
+            def __init__(self):
+                self.enabled = None
+                self.checked = False
+
+            def setEnabled(self, enabled):
+                self.enabled = enabled
+
+            def isChecked(self):
+                return self.checked
+
+        class FakePlanView:
+            has_selection = False
+            current_page_uid = None
+            place_condition_uid = None
+            is_rotate_mode_active = False
+
+            def selected_takeoff_condition_uid(self):
+                return "c1"
+
+            def set_selection_enabled(self, _enabled):
+                pass
+
+            def can_move_overlay_image(self):
+                return False
+
+        toolbar = ToolbarStateCoordinator(
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_refs=lambda: [],
+                get_selected_bid_ref=lambda: None,
+                selected_project_uid=None,
+                selected_page_uids=[],
+                active_page_uid=None,
+            ),
+            ui_access_manager=SimpleNamespace(
+                is_allowed=lambda _feature: True,
+                is_bid_locked=lambda: False,
+                has_license=lambda: True,
+            ),
+            project_data=SimpleNamespace(
+                get_bid_conditions=lambda: {
+                    "c1": Condition(
+                        uid="c1",
+                        name="Area",
+                        condition_type=Condition.TYPE_AREA,
+                    )
+                }
+            ),
+        )
+        action = FakeAction()
+        toolbar.set_place_action(action)
+        toolbar.set_plan_view(FakePlanView())
+        toolbar.set_tab_widget(SimpleNamespace(currentIndex=lambda: TAB_INDEX_TAKEOFF))
+        toolbar.set_view_stack(SimpleNamespace(currentIndex=lambda: 1))
+        toolbar.refresh()
+        self.assertFalse(action.enabled)
 
 
 if __name__ == "__main__":

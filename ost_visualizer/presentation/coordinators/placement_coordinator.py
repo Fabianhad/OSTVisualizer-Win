@@ -57,6 +57,9 @@ class PlacementCoordinator:
             return False
         if not self._access.is_allowed(Feature.PLACE_PLAN_ITEMS):
             return False
+        if not self._has_active_page_context():
+            self.force_exit()
+            return False
         if not self._is_condition_placeable(condition_uid):
             self.force_exit()
             return False
@@ -111,6 +114,11 @@ class PlacementCoordinator:
     def _is_condition_placeable(self, condition_uid: str) -> bool:
         condition = self._project_data.get_bid_conditions().get(condition_uid)
         return bool(condition and condition.layer_visible)
+
+    def _has_active_page_context(self) -> bool:
+        return bool(
+            self._ui_state.active_page_uid and self._ui_state.selected_page_uids
+        )
 
     def _ensure_color_map_includes(self, condition_uid: str) -> None:
         conditions = self._project_data.get_bid_conditions()

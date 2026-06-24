@@ -78,6 +78,8 @@
 - Fixed the plan-view snap cursor marker staying visible after entering rotation mode with Ctrl+R.
 - Fixed takeoff-driven condition selection being cleared after switching pages.
 - Fixed Apply in the Edit Condition dialog visually switching the Conditions sidebar back to a selected takeoff's condition.
+- Fixed OST/OSP import-export round trips so estimator employees and payroll classes are preserved, imported page-area selections respect database constraints, and active page-area changes after import save successfully.
+- Fixed Place mode controls so they stay disabled without an active page, and kept locked bids from accepting takeoff area or condition reassignment writes.
 - Fixed layer visibility toggles to use loaded layer identity/state instead of sidebar display names, keeping custom layer, Image layer, Conditions sidebar, and dialog checkbox updates on the same deferred visibility path.
 - Loaded existing named views from older OST databases whose `BidNamedViews` table does not include the newer `Color` column, restoring named-view lists and hotlink navigation.
 - Kept newly placed annotations visible while the Annotation/View window is open by refreshing detached windows against their target page UID.
