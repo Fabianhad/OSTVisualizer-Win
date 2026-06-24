@@ -1076,8 +1076,22 @@ class ProjectWriteService(BaseWriteService):
         return self._reload_after_success(db_path, success)
 
     def save_employees(self, db_path: str, changes: dict) -> bool:
-        success = self._save_employees.execute(db_path, changes)
-        return self._reload_after_success(db_path, success)
+        return bool(self.save_employees_result(db_path, changes))
+
+    def save_employees_result(self, db_path: str, changes: dict) -> WriteReloadResult:
+        changes_to_write = changes or {}
+        has_changes = any(
+            changes_to_write.get(key) for key in ("new", "updated", "deleted_uids")
+        )
+        result = self._save_employees.execute(db_path, changes_to_write)
+        if result is None or result is False:
+            return WriteReloadResult(None, write_success=False, reload_success=False)
+        reload_success = self.reload_and_notify(db_path) if has_changes else True
+        return WriteReloadResult(
+            result if isinstance(result, dict) else {},
+            write_success=True,
+            reload_success=reload_success,
+        )
 
     def save_pay_classes(self, db_path: str, changes: dict) -> bool:
         success = self._save_pay_classes.execute(db_path, changes)

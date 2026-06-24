@@ -485,7 +485,8 @@ class SettingsOperationsMixin:
             self.logger.exception("Failed to save job statuses in %s", db_path)
             return False
 
-    def save_employees(self, db_path: str, changes: dict) -> bool:
+    def save_employees(self, db_path: str, changes: dict) -> dict | None:
+        uid_map: dict = {}
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
@@ -588,12 +589,13 @@ class SettingsOperationsMixin:
                             if raw_pc_uid and not str(raw_pc_uid).startswith("new_")
                             else None
                         )
+                        assigned_uid = self._next_uid(cursor, "Employees")
                         self._execute_insert_values(
                             cursor,
                             schema,
                             "Employees",
                             {
-                                "UID": self._next_uid(cursor, "Employees"),
+                                "UID": assigned_uid,
                                 "EmployeeNo": e.employee_no,
                                 "FirstName": e.first_name,
                                 "LastName": e.last_name,
@@ -610,12 +612,13 @@ class SettingsOperationsMixin:
                             ("UID",),
                             "save_employee_new",
                         )
-                    except pyodbc.Error:
+                        uid_map[str(e.uid)] = str(assigned_uid)
+                    except (pyodbc.Error, ValueError):
                         pass
-                return True
+                return uid_map
         except Exception:
             self.logger.exception("Failed to save employees in %s", db_path)
-            return False
+            return None
 
     def save_pay_classes(self, db_path: str, changes: dict) -> dict:
         uid_map: dict = {}

@@ -37,10 +37,10 @@ class CoverSheetContext:
     def reload_job_statuses(self):
         return self._read.get_job_statuses(self._bid_ref.file_path)
 
-    def save_employees(self, changes) -> bool:
+    def save_employees(self, changes):
         if not self._flush_pending_visual_state():
             return False
-        return self._write.save_employees(self._bid_ref.file_path, changes)
+        return self._write.save_employees_result(self._bid_ref.file_path, changes)
 
     def save_pay_classes(self, changes) -> bool:
         if not self._flush_pending_visual_state():

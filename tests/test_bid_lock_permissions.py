@@ -1372,6 +1372,24 @@ class BidLockPermissionTests(unittest.TestCase):
             service.save_condition_types(project_data.bid_ref.file_path, changes)
         )
 
+    def test_employee_save_result_keeps_mapping_when_refresh_fails(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data, reload_success=False)
+        service._save_employees = _SequenceUseCase([{"new_0": "employee-new"}])
+        changes = {
+            "new": [SimpleNamespace(uid="new_0")],
+            "updated": [],
+            "deleted_uids": [],
+        }
+        result = service.save_employees_result(project_data.bid_ref.file_path, changes)
+        self.assertFalse(result)
+        self.assertTrue(result.write_success)
+        self.assertTrue(result.refresh_failed)
+        self.assertEqual(result.value, {"new_0": "employee-new"})
+        self.assertFalse(
+            service.save_employees(project_data.bid_ref.file_path, changes)
+        )
+
     def test_condition_type_save_result_reports_write_failure(self):
         project_data = _ProjectData()
         service, *_ = _write_service(project_data)

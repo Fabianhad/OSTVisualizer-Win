@@ -11,8 +11,8 @@ from ..config import (
 )
 from ..dtos.employee_edit_dtos import EmployeeRecord, PayClassRecord
 from ..dtos.picker_dialog_result_dto import PickerDialogResult
-from ..utils.dialog import save_result_succeeded
-from ..utils.messagebox import confirm_multi_delete
+from ..utils.dialog import save_result_mapping, save_result_succeeded
+from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize, set_initial_window_size
 from .employee_detail_dialog import EmployeeDetailDialog
@@ -241,13 +241,43 @@ class EmployeesDialog(QtWidgets.QDialog):
         self._active_detail_dialog = form
         try:
             if form.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-                self._employees = form.get_results()
-                self._populate(select_uid=form.get_current_uid())
+                results = form.get_results()
+                current_uid = form.get_current_uid()
+                persisted_uid = self._save_new_employee(results, current_uid)
+                if persisted_uid:
+                    self._employees = results
+                    self._populate(select_uid=persisted_uid)
         finally:
             self._pay_classes = form.get_pay_classes()
             self._active_detail_dialog = None
             form.cleanup()
             form.deleteLater()
+
+    def _save_new_employee(
+        self, employees: List[EmployeeRecord], current_uid: Optional[str]
+    ) -> Optional[str]:
+        if not current_uid:
+            return ""
+        new_employees = [employee for employee in employees if employee.is_new]
+        if not new_employees:
+            return current_uid
+        if not self._save_fn:
+            return current_uid
+        result = self._save_fn(
+            {"new": new_employees, "updated": [], "deleted_uids": []}
+        )
+        if not save_result_succeeded(result):
+            show_warning(self, "Employees", "Failed to create employee.")
+            return ""
+        uid_map = save_result_mapping(result)
+        if any(employee.uid not in uid_map for employee in new_employees):
+            show_warning(self, "Employees", "Failed to create employee.")
+            return ""
+        persisted_current_uid = uid_map.get(current_uid, current_uid)
+        for employee in new_employees:
+            employee.uid = str(uid_map[employee.uid])
+            employee.is_new = False
+        return str(persisted_current_uid)
 
     def _on_delete(self) -> None:
         selected_items = self.tree.selectedItems()

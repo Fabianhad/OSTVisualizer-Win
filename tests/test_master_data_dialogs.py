@@ -604,6 +604,151 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_employee_detail_new_employee_saves_immediately_and_selects_real_uid(self):
+        save_calls = []
+
+        def save_fn(changes):
+            employee = changes["new"][0]
+            save_calls.append(
+                {
+                    "new_uid": employee.uid,
+                    "new_is_new": employee.is_new,
+                    "updated": list(changes["updated"]),
+                }
+            )
+            return {"new_0": "emp-2"}
+
+        dialog = self._employee_dialog_with_save(save_fn)
+        try:
+            detail_dialog = self._employee_detail_dialog_stub()
+            with patch(
+                "ost_visualizer.presentation.dialogs.employees_dialog."
+                "EmployeeDetailDialog",
+                detail_dialog,
+            ):
+                dialog._on_new_with_first_name("Mia")
+            self.assertEqual(len(save_calls), 1)
+            self.assertEqual(save_calls[0]["new_uid"], "new_0")
+            self.assertTrue(save_calls[0]["new_is_new"])
+            self.assertEqual(save_calls[0]["updated"], [])
+            current_item = dialog.tree.currentItem()
+            self.assertIsNotNone(current_item)
+            self.assertEqual(current_item.data(0, dialog._UID_ROLE), "emp-2")
+            self.assertTrue(dialog.btn_select.isEnabled())
+            self.assertEqual(dialog._employees[-1].uid, "emp-2")
+            self.assertFalse(dialog._employees[-1].is_new)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_employee_detail_new_employee_remains_after_reopen_from_saved_source(self):
+        saved_employees = []
+
+        def save_fn(changes):
+            employee = changes["new"][0]
+            saved_employees.append(
+                Employee(
+                    uid="emp-2",
+                    employee_no=employee.employee_no,
+                    first_name=employee.first_name,
+                    last_name=employee.last_name,
+                )
+            )
+            return {"new_0": "emp-2"}
+
+        dialog = self._employee_dialog_with_save(save_fn)
+        try:
+            detail_dialog = self._employee_detail_dialog_stub()
+            with patch(
+                "ost_visualizer.presentation.dialogs.employees_dialog."
+                "EmployeeDetailDialog",
+                detail_dialog,
+            ):
+                dialog._on_new_with_first_name("Mia")
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+        reopened = EmployeesDialog(
+            FakeIconProvider(),
+            employees=saved_employees,
+            selected_uid="emp-2",
+        )
+        try:
+            self.assertEqual(reopened.tree.topLevelItemCount(), 1)
+            self.assertEqual(
+                reopened.tree.topLevelItem(0).data(0, reopened._UID_ROLE), "emp-2"
+            )
+            self.assertEqual(reopened.tree.currentItem().text(1), "Mia Ray")
+        finally:
+            reopened.close()
+            reopened.cleanup()
+            reopened.deleteLater()
+
+    def test_employee_detail_cancel_does_not_save_new_employee(self):
+        save_calls = []
+        dialog = self._employee_dialog_with_save(
+            lambda changes: save_calls.append(changes) or {"new_0": "emp-2"}
+        )
+        try:
+            detail_dialog = self._employee_detail_dialog_stub(
+                QtWidgets.QDialog.DialogCode.Rejected
+            )
+            with patch(
+                "ost_visualizer.presentation.dialogs.employees_dialog."
+                "EmployeeDetailDialog",
+                detail_dialog,
+            ):
+                dialog._on_new_with_first_name("Mia")
+            self.assertEqual(save_calls, [])
+            self.assertEqual(dialog.tree.topLevelItemCount(), 1)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    @staticmethod
+    def _employee_detail_dialog_stub(
+        result=QtWidgets.QDialog.DialogCode.Accepted,
+    ):
+        class DetailDialog:
+            def __init__(
+                self,
+                _icon_provider,
+                employees,
+                current_index,
+                parent=None,
+                pay_classes=None,
+                pay_classes_save_fn=None,
+            ):
+                self._employees = list(employees)
+                self._current_index = current_index
+                employee = self._employees[current_index]
+                employee.employee_no = "2"
+                employee.first_name = "Mia"
+                employee.last_name = "Ray"
+
+            def exec(self):
+                return result
+
+            def get_results(self):
+                return self._employees
+
+            def get_current_uid(self):
+                return self._employees[self._current_index].uid
+
+            def get_pay_classes(self):
+                return []
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        return DetailDialog
+
     def test_master_data_x_close_cancel_and_escape_do_not_save_pending_edits(self):
         cases = (
             (

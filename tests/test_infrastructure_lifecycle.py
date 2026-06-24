@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from ost_visualizer.infrastructure import providers
 from ost_visualizer.infrastructure.mdb import database_creator
 from ost_visualizer.infrastructure.mdb.schema_contract import DEFAULT_LAYER_ROWS
@@ -670,6 +670,72 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(result, {})
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM CdnTypes").fetchone()[0], 0)
+
+    def test_save_employees_returns_uid_map_for_new_employee(self):
+        class EmployeeOps(_SqliteMdbOps):
+            def _next_uid(self, cursor, table):
+                cursor.execute(f"SELECT MAX([UID]) FROM [{table}]")
+                row = cursor.fetchone()
+                return int(row[0]) + 1 if row and row[0] is not None else 1
+
+            def _execute_insert_values(
+                self, cursor, _schema, table, values, _required_columns, _operation
+            ):
+                columns = list(values)
+                column_sql = ", ".join(f"[{column}]" for column in columns)
+                placeholders = ", ".join("?" for _column in columns)
+                cursor.execute(
+                    f"INSERT INTO [{table}] ({column_sql}) VALUES ({placeholders})",
+                    *[values[column] for column in columns],
+                )
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """
+            CREATE TABLE Employees (
+                UID INTEGER PRIMARY KEY,
+                EmployeeNo TEXT,
+                FirstName TEXT,
+                LastName TEXT,
+                Address1 TEXT,
+                Address2 TEXT,
+                City TEXT,
+                State TEXT,
+                Zip TEXT,
+                HomePhone TEXT,
+                MobilePhone TEXT,
+                EMail TEXT,
+                PayClassUID INTEGER
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO Employees (UID, EmployeeNo, FirstName, LastName) "
+            "VALUES (7, 'E1', 'Ava', 'Lee')"
+        )
+        employee = SimpleNamespace(
+            uid="new_0",
+            employee_no="E2",
+            first_name="Mia",
+            last_name="Ray",
+            address1="",
+            address2="",
+            city="",
+            state="",
+            zip="",
+            home_phone="",
+            mobile_phone="",
+            email="",
+            pay_class_uid="",
+        )
+        result = EmployeeOps(conn).save_employees(
+            "bid.mdb", {"new": [employee], "updated": [], "deleted_uids": []}
+        )
+        self.assertEqual(result, {"new_0": "8"})
+        inserted = conn.execute(
+            "SELECT EmployeeNo, FirstName, LastName FROM Employees WHERE UID=8"
+        ).fetchone()
+        self.assertEqual(inserted, ("E2", "Mia", "Ray"))
 
     def test_delete_parent_takeoff_clears_child_parent_uid(self):
         conn = sqlite3.connect(":memory:")

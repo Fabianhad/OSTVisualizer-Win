@@ -764,7 +764,7 @@ class MenuController:
             ),
             save_employees_fn=lambda ch: (
                 self._flush_deferred_for_file(file_path)
-                and self._project_write_service.save_employees(file_path, ch)
+                and self._project_write_service.save_employees_result(file_path, ch)
             ),
             save_pay_classes_fn=lambda ch: (
                 self._flush_deferred_for_file(file_path)

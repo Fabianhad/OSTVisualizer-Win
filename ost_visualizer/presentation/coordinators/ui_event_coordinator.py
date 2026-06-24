@@ -1097,7 +1097,9 @@ class UIEventCoordinator:
             employees=employees,
             used_uids=used_employee_uids,
             pay_classes=pay_classes,
-            save_fn=lambda changes: self._save_master_employees(file_path, changes),
+            save_fn=lambda changes: self._save_master_employees_result(
+                file_path, changes
+            ),
             pay_classes_save_fn=lambda changes: self._save_master_pay_classes(
                 file_path, changes
             ),
@@ -1242,10 +1244,18 @@ class UIEventCoordinator:
             dialog.cleanup()
             dialog.deleteLater()
 
-    def _save_master_employees(self, file_path: str, changes) -> bool:
+    def _save_master_employees_result(self, file_path: str, changes):
         if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
             return False
-        return self._project_write_service.save_employees(file_path, changes)
+        result = self._project_write_service.save_employees_result(file_path, changes)
+        if result.refresh_failed:
+            show_warning(
+                self.main_window,
+                "Refresh Error",
+                "The employee changes were saved, but the employee list could not be "
+                "refreshed. Reopen the database to see the latest employees.",
+            )
+        return result
 
     def _save_master_job_statuses(self, file_path: str, changes) -> bool:
         if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
