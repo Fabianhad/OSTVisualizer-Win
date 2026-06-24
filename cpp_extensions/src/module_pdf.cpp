@@ -80,6 +80,16 @@ NB_MODULE(ost_pdf, m)
                 int64_t strides[3] = {static_cast<int64_t>(page.stride), 4, 1};
                 return nb::ndarray<nb::numpy, uint8_t>(
                     const_cast<uint8_t *>(page.pixels.data()), 3, shape, nb::handle(), strides); }, "Get pixel data as memoryview (BGRA format, shape: height x width x 4)");
+        nb::class_<RenderCancelToken>(m, "RenderCancelToken",
+                                      "Cooperative cancellation token for PDFium progressive renders")
+            .def(nb::init<>(),
+                 "Create a render cancellation token")
+            .def("cancel", &RenderCancelToken::cancel,
+                 "Request cancellation of an active progressive render")
+            .def("reset", &RenderCancelToken::reset,
+                 "Clear the cancellation request")
+            .def("is_cancelled", &RenderCancelToken::is_cancelled,
+                 "Return True when cancellation has been requested");
         nb::class_<PDFRenderer>(m, "PDFRenderer",
                                 "High-performance PDF renderer using PDFium")
             .def(nb::init<>(),
@@ -161,6 +171,20 @@ Args:
 Returns:
     RenderedPage clipped to the loaded page bounds, or None on failure
 )doc")
+            .def("render_page_frame_cancellable", &PDFRenderer::render_page_frame_cancellable,
+                 nb::arg("page_index"),
+                 nb::arg("scale"),
+                 nb::arg("frame_x_pts"),
+                 nb::arg("frame_y_pts"),
+                 nb::arg("frame_w_pts"),
+                 nb::arg("frame_h_pts"),
+                 nb::arg("rotation"),
+                 nb::arg("cancel_token"),
+                 nb::call_guard<nb::gil_scoped_release>(),
+                 R"doc(
+Render a PDF page frame using PDFium progressive rendering.
+Returns None when cancellation is requested or rendering fails.
+)doc")
             .def("render_page", &PDFRenderer::render_page,
                  nb::arg("page_index"),
                  nb::arg("scale") = 1.0f,
@@ -185,6 +209,16 @@ Example:
             # Use page.to_bytes() for QImage construction
             data = page.to_bytes()
             # Or page.to_memoryview() for numpy array
+)doc")
+            .def("render_page_cancellable", &PDFRenderer::render_page_cancellable,
+                 nb::arg("page_index"),
+                 nb::arg("scale"),
+                 nb::arg("rotation"),
+                 nb::arg("cancel_token"),
+                 nb::call_guard<nb::gil_scoped_release>(),
+                 R"doc(
+Render a PDF page using PDFium progressive rendering.
+Returns None when cancellation is requested or rendering fails.
 )doc");
         m.def("initialize", &initialize_pdfium,
               "Initialize PDFium library (called automatically on first use)");

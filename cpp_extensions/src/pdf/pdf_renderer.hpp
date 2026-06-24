@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -6,6 +7,16 @@
 #include <utility>
 namespace ost_pdf
 {
+    class RenderCancelToken
+    {
+    public:
+        void cancel();
+        void reset();
+        bool is_cancelled() const;
+
+    private:
+        std::atomic_bool cancelled_{false};
+    };
     struct RenderedPage
     {
         std::vector<uint8_t> pixels;
@@ -68,6 +79,11 @@ namespace ost_pdf
             int page_index,
             float scale = 1.0f,
             int rotation = 0);
+        std::optional<RenderedPage> render_page_cancellable(
+            int page_index,
+            float scale,
+            int rotation,
+            RenderCancelToken &cancel_token);
         std::optional<RenderedPage> render_page_frame(
             int page_index,
             float scale,
@@ -76,8 +92,31 @@ namespace ost_pdf
             double frame_w_pts,
             double frame_h_pts,
             int rotation = 0);
+        std::optional<RenderedPage> render_page_frame_cancellable(
+            int page_index,
+            float scale,
+            double frame_x_pts,
+            double frame_y_pts,
+            double frame_w_pts,
+            double frame_h_pts,
+            int rotation,
+            RenderCancelToken &cancel_token);
 
     private:
+        std::optional<RenderedPage> render_page_impl(
+            int page_index,
+            float scale,
+            int rotation,
+            RenderCancelToken *cancel_token);
+        std::optional<RenderedPage> render_page_frame_impl(
+            int page_index,
+            float scale,
+            double frame_x_pts,
+            double frame_y_pts,
+            double frame_w_pts,
+            double frame_h_pts,
+            int rotation,
+            RenderCancelToken *cancel_token);
         void *doc_ = nullptr;
         mutable std::string last_error_;
     };

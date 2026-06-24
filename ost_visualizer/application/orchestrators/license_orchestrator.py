@@ -173,9 +173,6 @@ class LicenseOrchestrator:
         license_key = self._model.license_key
         if not license_key:
             return result
-        self._logger.info(
-            "Cached license device activation is inactive; attempting one startup reactivation"
-        )
         return self._activate_use_case.execute(license_key)
 
     def has_valid_license(self) -> bool:

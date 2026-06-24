@@ -13,6 +13,9 @@ from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
 from ost_visualizer.presentation.visualization.pdf.services.page_render_prefetch_coordinator import (
     PageRenderPrefetchCoordinator,
 )
+from ost_visualizer.presentation.visualization.pdf.services.pdf_rendering_service import (
+    PDFRenderingService,
+)
 from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
 from ost_visualizer.presentation.visualization.pdf.render_priority import RenderPriority
 
@@ -20,9 +23,11 @@ from ost_visualizer.presentation.visualization.pdf.render_priority import Render
 class FakePageSizeProvider:
     def __init__(self, sizes=None):
         self.sizes = sizes or {}
+        self.calls = []
 
-    def get_page_size(self, _file_path, _page_index):
-        return self.sizes.get(_file_path, (612.0, 792.0))
+    def get_page_size(self, file_path, page_index):
+        self.calls.append((file_path, page_index))
+        return self.sizes.get(file_path, (612.0, 792.0))
 
 
 class FakeRenderingService:
@@ -76,8 +81,8 @@ class FakeImageRenderer:
     def __init__(self):
         self.calls = []
 
-    def render(self, file_path, page_index, scale, rotation):
-        self.calls.append((file_path, page_index, scale, rotation))
+    def render(self, file_path, page_index, scale, rotation, native_cancel_token=None):
+        self.calls.append((file_path, page_index, scale, rotation, native_cancel_token))
         image = QImage(10, 10, QImage.Format.Format_ARGB32)
         image.fill(0)
         return image
@@ -103,6 +108,34 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         }
         values.update(kwargs)
         return Page(**values)
+
+    def test_pdf_load_strategy_uses_stored_dimensions_without_page_size_lookup(self):
+        size_provider = FakePageSizeProvider({"slow.pdf": (3024.0, 2160.0)})
+        strategy = PageLoadStrategyService(size_provider).determine_load_strategy(
+            self._page(
+                "p1",
+                image_path="slow.pdf",
+                width_pts=3024.0,
+                height_pts=2160.0,
+            )
+        )
+        self.assertEqual(strategy.pdf_width_pts, 3024.0)
+        self.assertEqual(strategy.pdf_height_pts, 2160.0)
+        self.assertEqual(size_provider.calls, [])
+
+    def test_pdf_load_strategy_reads_page_size_when_stored_dimensions_missing(self):
+        size_provider = FakePageSizeProvider({"slow.pdf": (3024.0, 2160.0)})
+        strategy = PageLoadStrategyService(size_provider).determine_load_strategy(
+            self._page(
+                "p1",
+                image_path="slow.pdf",
+                width_pts=0.0,
+                height_pts=0.0,
+            )
+        )
+        self.assertEqual(strategy.pdf_width_pts, 3024.0)
+        self.assertEqual(strategy.pdf_height_pts, 2160.0)
+        self.assertEqual(size_provider.calls, [("slow.pdf", 0)])
 
     def test_only_previous_and_next_pages_are_prefetched_at_lower_priority(self):
         rendering = FakeRenderingService()
@@ -184,36 +217,42 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
     def test_heavy_pdf_prefetch_uses_cache_aware_scale(self):
         rendering = FakeRenderingService()
         cache = FakeCache()
-        coordinator = self._coordinator(
-            rendering,
-            cache,
-            FakePageSizeProvider({"heavy.pdf": (3024.0, 2160.0)}),
-        )
+        size_provider = FakePageSizeProvider({"heavy.pdf": (100.0, 100.0)})
+        coordinator = self._coordinator(rendering, cache, size_provider)
         pages = [
             self._page("p1", image_path="p1.pdf"),
-            self._page("p2", image_path="heavy.pdf"),
+            self._page(
+                "p2",
+                image_path="heavy.pdf",
+                width_pts=3024.0,
+                height_pts=2160.0,
+            ),
         ]
         coordinator.prefetch_nearby_pages(pages[0], pages, None)
         self.assertEqual(len(rendering.calls), 1)
         scale = rendering.calls[0][2]["scale"]
         self.assertLess(scale, 2.0)
         self.assertEqual(cache.render_checks, [(3024.0, 2160.0, scale)])
+        self.assertEqual(size_provider.calls, [])
 
     def test_uncacheable_prefetch_estimate_skips_render(self):
         rendering = FakeRenderingService()
         cache = FakeCache(can_accept_render=False)
-        coordinator = self._coordinator(
-            rendering,
-            cache,
-            FakePageSizeProvider({"heavy.pdf": (3024.0, 2160.0)}),
-        )
+        size_provider = FakePageSizeProvider({"heavy.pdf": (100.0, 100.0)})
+        coordinator = self._coordinator(rendering, cache, size_provider)
         pages = [
             self._page("p1", image_path="p1.pdf"),
-            self._page("p2", image_path="heavy.pdf"),
+            self._page(
+                "p2",
+                image_path="heavy.pdf",
+                width_pts=3024.0,
+                height_pts=2160.0,
+            ),
         ]
         coordinator.prefetch_nearby_pages(pages[0], pages, None)
         self.assertEqual(rendering.calls, [])
         self.assertEqual(len(cache.render_checks), 1)
+        self.assertEqual(size_provider.calls, [])
 
     def test_prefetch_warms_same_page_cache_used_by_normal_rendering(self):
         cache = PageCache()
@@ -242,7 +281,7 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         ]
         coordinator.prefetch_nearby_pages(pages[0], pages, None)
         cache.get_page("p2.pdf", 0, 2.0, 0)
-        self.assertEqual(renderer.calls, [("p2.pdf", 0, 2.0, 0)])
+        self.assertEqual(renderer.calls, [("p2.pdf", 0, 2.0, 0, None)])
 
     def test_scale_and_rotation_use_distinct_cache_entries(self):
         cache = PageCache()
@@ -255,11 +294,72 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         self.assertEqual(
             renderer.calls,
             [
-                ("p1.pdf", 0, 2.0, 0),
-                ("p1.pdf", 0, 3.0, 0),
-                ("p1.pdf", 0, 2.0, 90),
+                ("p1.pdf", 0, 2.0, 0, None),
+                ("p1.pdf", 0, 3.0, 0, None),
+                ("p1.pdf", 0, 2.0, 90, None),
             ],
         )
+
+    def test_required_and_visible_frame_renders_do_not_wait_on_prefetch_cache_keys(
+        self,
+    ):
+        service = PDFRenderingService(PageCache(), num_workers=0)
+        try:
+            required_id = service.render_page_async(
+                file_path="page.pdf",
+                page_index=0,
+                scale=1.75,
+                rotation=0,
+                callback=lambda _result: None,
+                priority=RenderPriority.REQUIRED_PAGE,
+            )
+            visible_frame_id = service.render_frame_async(
+                file_path="page.pdf",
+                page_index=0,
+                scale=2.0,
+                rotation=0,
+                frame_x_pts=0.0,
+                frame_y_pts=0.0,
+                frame_w_pts=100.0,
+                frame_h_pts=100.0,
+                callback=lambda _result: None,
+                priority=RenderPriority.VISIBLE_FRAME,
+            )
+            prefetch_id = service.render_page_async(
+                file_path="page.pdf",
+                page_index=0,
+                scale=1.75,
+                rotation=0,
+                callback=lambda _result: None,
+                priority=RenderPriority.NEARBY_PREFETCH,
+            )
+            self.assertFalse(service._active_requests[required_id].wait_for_in_flight)
+            self.assertFalse(
+                service._active_requests[visible_frame_id].wait_for_in_flight
+            )
+            self.assertTrue(service._active_requests[prefetch_id].wait_for_in_flight)
+        finally:
+            service.shutdown()
+
+    def test_cancel_request_signals_native_render_token(self):
+        service = PDFRenderingService(PageCache(), num_workers=0)
+        try:
+            request_id = service.render_page_async(
+                file_path="page.pdf",
+                page_index=0,
+                scale=1.75,
+                rotation=0,
+                callback=lambda _result: None,
+                priority=RenderPriority.REQUIRED_PAGE,
+            )
+            request = service._active_requests[request_id]
+            self.assertFalse(request.cancelled.is_set())
+            self.assertFalse(request.native_cancel_token.is_cancelled())
+            service.cancel_request(request_id)
+            self.assertTrue(request.cancelled.is_set())
+            self.assertTrue(request.native_cancel_token.is_cancelled())
+        finally:
+            service.shutdown()
 
 
 class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):

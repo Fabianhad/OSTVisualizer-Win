@@ -2,6 +2,7 @@
 #include <fpdfview.h>
 #include <fpdf_doc.h>
 #include <fpdf_edit.h>
+#include <fpdf_progressive.h>
 #include <fpdf_text.h>
 #include <algorithm>
 #include <cmath>
@@ -13,6 +14,18 @@ namespace ost_pdf
 #define DOC() (static_cast<FPDF_DOCUMENT>(doc_))
     static std::once_flag g_init_flag;
     static std::atomic<bool> g_initialized{false};
+    void RenderCancelToken::cancel()
+    {
+        cancelled_.store(true);
+    }
+    void RenderCancelToken::reset()
+    {
+        cancelled_.store(false);
+    }
+    bool RenderCancelToken::is_cancelled() const
+    {
+        return cancelled_.load();
+    }
     void initialize_pdfium()
     {
         std::call_once(g_init_flag, []()
@@ -54,7 +67,6 @@ namespace ost_pdf
                 text.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
             }
         }
-
         bool is_text_separator(unsigned int codepoint)
         {
             return codepoint == 0 ||
@@ -63,12 +75,64 @@ namespace ost_pdf
                    codepoint == '\r' ||
                    codepoint == ' ';
         }
-
         struct PDFiumCleanup
         {
             ~PDFiumCleanup() { shutdown_pdfium(); }
         };
         static PDFiumCleanup g_cleanup;
+        FPDF_BOOL need_to_pause(IFSDK_PAUSE *pause)
+        {
+            if (!pause || !pause->user)
+            {
+                return 0;
+            }
+            auto *token = static_cast<RenderCancelToken *>(pause->user);
+            return token->is_cancelled() ? 1 : 0;
+        }
+        bool render_page_bitmap_progressive(
+            FPDF_BITMAP bitmap,
+            FPDF_PAGE page,
+            int start_x,
+            int start_y,
+            int size_x,
+            int size_y,
+            int rotation,
+            int flags,
+            RenderCancelToken *cancel_token)
+        {
+            if (cancel_token && cancel_token->is_cancelled())
+            {
+                return false;
+            }
+            IFSDK_PAUSE pause{};
+            pause.version = 1;
+            pause.NeedToPauseNow = need_to_pause;
+            pause.user = cancel_token;
+            int status = FPDF_RenderPageBitmap_Start(
+                bitmap,
+                page,
+                start_x,
+                start_y,
+                size_x,
+                size_y,
+                rotation,
+                flags,
+                &pause);
+            while (status == FPDF_RENDER_TOBECONTINUED)
+            {
+                if (cancel_token && cancel_token->is_cancelled())
+                {
+                    break;
+                }
+                status = FPDF_RenderPage_Continue(page, &pause);
+            }
+            FPDF_RenderPage_Close(page);
+            if (cancel_token && cancel_token->is_cancelled())
+            {
+                return false;
+            }
+            return status == FPDF_RENDER_DONE;
+        }
     }
     PDFRenderer::PDFRenderer()
     {
@@ -344,7 +408,6 @@ namespace ost_pdf
         FPDF_ClosePage(page);
         return result;
     }
-
     std::vector<PDFTextRun> PDFRenderer::extract_text_runs(int page_index) const
     {
         std::vector<PDFTextRun> result;
@@ -363,11 +426,9 @@ namespace ost_pdf
             FPDF_ClosePage(page);
             return result;
         }
-
         PDFTextRun current;
         current.page_index = page_index;
         bool has_current = false;
-
         auto finish_run = [&]()
         {
             if (has_current && !current.text.empty())
@@ -378,7 +439,6 @@ namespace ost_pdf
             current.page_index = page_index;
             has_current = false;
         };
-
         const int char_count = FPDFText_CountChars(text_page);
         for (int char_index = 0; char_index < char_count; ++char_index)
         {
@@ -388,7 +448,6 @@ namespace ost_pdf
                 finish_run();
                 continue;
             }
-
             double left = 0.0;
             double right = 0.0;
             double bottom = 0.0;
@@ -403,7 +462,6 @@ namespace ost_pdf
                 finish_run();
                 continue;
             }
-
             if (!has_current)
             {
                 current.text.clear();
@@ -436,12 +494,10 @@ namespace ost_pdf
                 });
         }
         finish_run();
-
         FPDFText_ClosePage(text_page);
         FPDF_ClosePage(page);
         return result;
     }
-
     static int normalize_user_rotation_deg(int rotation_deg)
     {
         int r = ((rotation_deg % 360) + 360) % 360;
@@ -452,7 +508,27 @@ namespace ost_pdf
         float scale,
         int rotation)
     {
+        return render_page_impl(page_index, scale, rotation, nullptr);
+    }
+    std::optional<RenderedPage> PDFRenderer::render_page_cancellable(
+        int page_index,
+        float scale,
+        int rotation,
+        RenderCancelToken &cancel_token)
+    {
+        return render_page_impl(page_index, scale, rotation, &cancel_token);
+    }
+    std::optional<RenderedPage> PDFRenderer::render_page_impl(
+        int page_index,
+        float scale,
+        int rotation,
+        RenderCancelToken *cancel_token)
+    {
         if (!doc_ || page_index < 0 || page_index >= page_count())
+        {
+            return std::nullopt;
+        }
+        if (cancel_token && cancel_token->is_cancelled())
         {
             return std::nullopt;
         }
@@ -487,16 +563,21 @@ namespace ost_pdf
             return std::nullopt;
         }
         FPDFBitmap_FillRect(bitmap, 0, 0, render_width, render_height, 0xFFFFFFFF);
-        FPDF_RenderPageBitmap(
+        bool rendered = render_page_bitmap_progressive(
             bitmap,
             page,
             0, 0,
             render_width,
             render_height,
             rotation,
-            FPDF_ANNOT | FPDF_LCD_TEXT);
+            FPDF_ANNOT | FPDF_LCD_TEXT,
+            cancel_token);
         FPDFBitmap_Destroy(bitmap);
         FPDF_ClosePage(page);
+        if (!rendered)
+        {
+            return std::nullopt;
+        }
         RenderedPage result;
         result.pixels = std::move(pixels);
         result.width = render_width;
@@ -513,11 +594,55 @@ namespace ost_pdf
         double frame_h_pts,
         int rotation)
     {
+        return render_page_frame_impl(
+            page_index,
+            scale,
+            frame_x_pts,
+            frame_y_pts,
+            frame_w_pts,
+            frame_h_pts,
+            rotation,
+            nullptr);
+    }
+    std::optional<RenderedPage> PDFRenderer::render_page_frame_cancellable(
+        int page_index,
+        float scale,
+        double frame_x_pts,
+        double frame_y_pts,
+        double frame_w_pts,
+        double frame_h_pts,
+        int rotation,
+        RenderCancelToken &cancel_token)
+    {
+        return render_page_frame_impl(
+            page_index,
+            scale,
+            frame_x_pts,
+            frame_y_pts,
+            frame_w_pts,
+            frame_h_pts,
+            rotation,
+            &cancel_token);
+    }
+    std::optional<RenderedPage> PDFRenderer::render_page_frame_impl(
+        int page_index,
+        float scale,
+        double frame_x_pts,
+        double frame_y_pts,
+        double frame_w_pts,
+        double frame_h_pts,
+        int rotation,
+        RenderCancelToken *cancel_token)
+    {
         if (!doc_ || page_index < 0 || page_index >= page_count())
         {
             return std::nullopt;
         }
         if (scale <= 0.0f || frame_w_pts <= 0.0 || frame_h_pts <= 0.0)
+        {
+            return std::nullopt;
+        }
+        if (cancel_token && cancel_token->is_cancelled())
         {
             return std::nullopt;
         }
@@ -534,7 +659,6 @@ namespace ost_pdf
             FPDF_ClosePage(page);
             return std::nullopt;
         }
-
         double canvas_w = (rotation == 1 || rotation == 3) ? page_h : page_w;
         double canvas_h = (rotation == 1 || rotation == 3) ? page_w : page_h;
         double left = std::max(0.0, frame_x_pts);
@@ -548,7 +672,6 @@ namespace ost_pdf
             FPDF_ClosePage(page);
             return std::nullopt;
         }
-
         int render_width = static_cast<int>(std::ceil(clipped_w * scale));
         int render_height = static_cast<int>(std::ceil(clipped_h * scale));
         if (render_width < 1)
@@ -567,7 +690,6 @@ namespace ost_pdf
             full_h = 1;
         int offset_x = static_cast<int>(left * scale + 0.5);
         int offset_y = static_cast<int>(top * scale + 0.5);
-
         int stride = render_width * 4;
         std::vector<uint8_t> pixels(static_cast<size_t>(stride) * render_height);
         FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(
@@ -581,17 +703,21 @@ namespace ost_pdf
             return std::nullopt;
         }
         FPDFBitmap_FillRect(bitmap, 0, 0, render_width, render_height, 0xFFFFFFFF);
-        FPDF_RenderPageBitmap(
+        bool rendered = render_page_bitmap_progressive(
             bitmap,
             page,
             -offset_x, -offset_y,
             full_w,
             full_h,
             rotation,
-            FPDF_ANNOT | FPDF_LCD_TEXT);
-
+            FPDF_ANNOT | FPDF_LCD_TEXT,
+            cancel_token);
         FPDFBitmap_Destroy(bitmap);
         FPDF_ClosePage(page);
+        if (!rendered)
+        {
+            return std::nullopt;
+        }
         RenderedPage result;
         result.pixels = std::move(pixels);
         result.width = render_width;

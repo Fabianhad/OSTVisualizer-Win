@@ -1,8 +1,9 @@
 import os
 import threading
 from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Iterator, List, Optional
 from PySide6.QtGui import QImage
 from ..utils.image_effects import tint_image
 from .renderers.page_renderer import PageRenderer
@@ -16,6 +17,27 @@ _TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES = 32 * 1024 * 1024
 _BASE_RASTER_MAX_PIXELS = 20_000_000
 _IMAGE_BYTES_PER_PIXEL = 4
 _CACHEABLE_RENDER_HEADROOM = 0.95
+_CANCEL_TOKEN_KEY = "native_cancel_token"
+_render_context = threading.local()
+
+
+@contextmanager
+def scoped_pdf_render_cancellation_token(native_cancel_token) -> Iterator[None]:
+    state = _render_context.__dict__
+    had_previous = _CANCEL_TOKEN_KEY in state
+    previous_token = state.get(_CANCEL_TOKEN_KEY)
+    state[_CANCEL_TOKEN_KEY] = native_cancel_token
+    try:
+        yield
+    finally:
+        if had_previous:
+            state[_CANCEL_TOKEN_KEY] = previous_token
+        else:
+            state.pop(_CANCEL_TOKEN_KEY, None)
+
+
+def _current_pdf_render_cancel_token():
+    return _render_context.__dict__.get(_CANCEL_TOKEN_KEY)
 
 
 @dataclass(frozen=True)
@@ -129,29 +151,42 @@ class PageCache:
         page_index: int = 0,
         scale: float = 1.0,
         rotation: int = 0,
+        wait_for_in_flight: bool = True,
     ) -> Optional[QImage]:
         if not file_path:
             return None
         quantized_scale = self._quantize_scale(scale)
         file_signature = self._file_signature(file_path)
         key = CacheKey(file_path, file_signature, page_index, quantized_scale, rotation)
+        track_in_flight = True
         with self._in_flight_condition:
             if key in self._cache:
                 self._cache.move_to_end(key)
                 return self._cache[key]
-            while key in self._in_flight:
-                self._in_flight_condition.wait()
-                if key in self._cache:
-                    self._cache.move_to_end(key)
-                    return self._cache[key]
-            self._in_flight.add(key)
+            if key in self._in_flight and wait_for_in_flight:
+                while key in self._in_flight:
+                    self._in_flight_condition.wait()
+                    if key in self._cache:
+                        self._cache.move_to_end(key)
+                        return self._cache[key]
+            elif key in self._in_flight:
+                track_in_flight = False
+            if track_in_flight:
+                self._in_flight.add(key)
         image = None
         try:
             renderer = self._get_renderer()
-            image = renderer.render(file_path, page_index, quantized_scale, rotation)
+            image = renderer.render(
+                file_path,
+                page_index,
+                quantized_scale,
+                rotation,
+                native_cancel_token=_current_pdf_render_cancel_token(),
+            )
         finally:
             with self._in_flight_condition:
-                self._in_flight.discard(key)
+                if track_in_flight:
+                    self._in_flight.discard(key)
                 if image:
                     self._store_cache_image(
                         self._cache,
@@ -250,6 +285,7 @@ class PageCache:
         scale: float = 1.0,
         rotation: int = 0,
         tint_rgb: tuple = (255, 80, 80),
+        wait_for_in_flight: bool = True,
     ) -> Optional[QImage]:
         if not file_path:
             return None
@@ -263,7 +299,13 @@ class PageCache:
             if key in self._tinted_cache:
                 self._tinted_cache.move_to_end(key)
                 return self._tinted_cache[key]
-        base_image = self.get_page(file_path, page_index, scale, rotation)
+        base_image = self.get_page(
+            file_path,
+            page_index,
+            scale,
+            rotation,
+            wait_for_in_flight=wait_for_in_flight,
+        )
         if not base_image:
             return None
         tinted = tint_image(base_image, r, g, b)
@@ -288,7 +330,11 @@ class PageCache:
             return None
         quantized_scale = self._quantize_scale(scale)
         return self._get_renderer().render(
-            file_path, page_index, quantized_scale, rotation
+            file_path,
+            page_index,
+            quantized_scale,
+            rotation,
+            native_cancel_token=_current_pdf_render_cancel_token(),
         )
 
     def render_frame_uncached(
@@ -314,6 +360,7 @@ class PageCache:
             frame_w_pts,
             frame_h_pts,
             rotation,
+            native_cancel_token=_current_pdf_render_cancel_token(),
         )
 
     def get_frame(
@@ -326,6 +373,7 @@ class PageCache:
         frame_w_pts: float,
         frame_h_pts: float,
         rotation: int = 0,
+        wait_for_in_flight: bool = True,
     ) -> Optional[QImage]:
         if not file_path or frame_w_pts <= 0.0 or frame_h_pts <= 0.0:
             return None
@@ -339,16 +387,21 @@ class PageCache:
             frame_h_pts,
             rotation,
         )
+        track_in_flight = True
         with self._in_flight_condition:
             if key in self._frame_cache:
                 self._frame_cache.move_to_end(key)
                 return self._frame_cache[key]
-            while key in self._frame_in_flight:
-                self._in_flight_condition.wait()
-                if key in self._frame_cache:
-                    self._frame_cache.move_to_end(key)
-                    return self._frame_cache[key]
-            self._frame_in_flight.add(key)
+            if key in self._frame_in_flight and wait_for_in_flight:
+                while key in self._frame_in_flight:
+                    self._in_flight_condition.wait()
+                    if key in self._frame_cache:
+                        self._frame_cache.move_to_end(key)
+                        return self._frame_cache[key]
+            elif key in self._frame_in_flight:
+                track_in_flight = False
+            if track_in_flight:
+                self._frame_in_flight.add(key)
         image = None
         try:
             renderer = self._get_renderer()
@@ -361,10 +414,12 @@ class PageCache:
                 key.frame_w_pts,
                 key.frame_h_pts,
                 key.rotation,
+                native_cancel_token=_current_pdf_render_cancel_token(),
             )
         finally:
             with self._in_flight_condition:
-                self._frame_in_flight.discard(key)
+                if track_in_flight:
+                    self._frame_in_flight.discard(key)
                 if image:
                     self._store_cache_image(
                         self._frame_cache,

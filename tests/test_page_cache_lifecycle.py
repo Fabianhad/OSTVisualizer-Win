@@ -1,6 +1,10 @@
 import unittest
+import threading
 from PySide6.QtGui import QImage
-from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
+from ost_visualizer.presentation.visualization.pdf.page_cache import (
+    PageCache,
+    scoped_pdf_render_cancellation_token,
+)
 
 
 class _FakeRenderer:
@@ -37,6 +41,7 @@ class _FakeRenderer:
         frame_w_pts,
         frame_h_pts,
         rotation,
+        native_cancel_token=None,
     ):
         self.frame_calls.append(
             (
@@ -48,8 +53,60 @@ class _FakeRenderer:
                 frame_w_pts,
                 frame_h_pts,
                 rotation,
+                native_cancel_token,
             )
         )
+        return QImage(16, 16, QImage.Format.Format_ARGB32)
+
+
+class _BlockingPageRenderer:
+    def __init__(self):
+        self.calls = []
+        self.first_render_started = threading.Event()
+        self.release_first_render = threading.Event()
+
+    def render(self, file_path, page_index, scale, rotation, native_cancel_token=None):
+        self.calls.append((file_path, page_index, scale, rotation, native_cancel_token))
+        if len(self.calls) == 1:
+            self.first_render_started.set()
+            self.release_first_render.wait(timeout=2.0)
+        return QImage(16, 16, QImage.Format.Format_ARGB32)
+
+
+class _RecordingCancelToken:
+    def __init__(self, cancelled=False):
+        self._cancelled = cancelled
+
+    def is_cancelled(self):
+        return self._cancelled
+
+
+class _TokenAwareRenderer:
+    def __init__(self):
+        self.page_tokens = []
+        self.frame_tokens = []
+
+    def render(self, file_path, page_index, scale, rotation, native_cancel_token=None):
+        self.page_tokens.append(native_cancel_token)
+        if native_cancel_token and native_cancel_token.is_cancelled():
+            return None
+        return QImage(16, 16, QImage.Format.Format_ARGB32)
+
+    def render_frame(
+        self,
+        file_path,
+        page_index,
+        scale,
+        frame_x_pts,
+        frame_y_pts,
+        frame_w_pts,
+        frame_h_pts,
+        rotation,
+        native_cancel_token=None,
+    ):
+        self.frame_tokens.append(native_cancel_token)
+        if native_cancel_token and native_cancel_token.is_cancelled():
+            return None
         return QImage(16, 16, QImage.Format.Format_ARGB32)
 
 
@@ -153,6 +210,88 @@ class PageCacheLifecycleTests(unittest.TestCase):
         cache.get_frame("page.pdf", 0, 2.0, 10.0, 20.0, 30.0, 40.0, 0)
         cache.get_frame("page.pdf", 0, 2.0, 10.0, 20.0, 30.0, 40.0, 0)
         self.assertEqual(len(renderer.frame_calls), 2)
+
+    def test_required_page_render_can_bypass_in_flight_prefetch_key(self):
+        renderer = _BlockingPageRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        results = []
+        prefetch_thread = threading.Thread(
+            target=lambda: results.append(cache.get_page("page.pdf", 0, 1.75, 0)),
+            daemon=True,
+        )
+        prefetch_thread.start()
+        self.assertTrue(renderer.first_render_started.wait(timeout=1.0))
+        current_image = cache.get_page(
+            "page.pdf",
+            0,
+            1.75,
+            0,
+            wait_for_in_flight=False,
+        )
+        self.assertIsNotNone(current_image)
+        self.assertEqual(
+            renderer.calls,
+            [
+                ("page.pdf", 0, 1.75, 0, None),
+                ("page.pdf", 0, 1.75, 0, None),
+            ],
+        )
+        renderer.release_first_render.set()
+        prefetch_thread.join(timeout=1.0)
+        self.assertEqual(len(results), 1)
+
+    def test_prefetch_cache_lookup_waits_for_same_in_flight_key(self):
+        renderer = _BlockingPageRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        first_results = []
+        second_results = []
+        first_thread = threading.Thread(
+            target=lambda: first_results.append(cache.get_page("page.pdf", 0, 1.75, 0)),
+            daemon=True,
+        )
+        second_thread = threading.Thread(
+            target=lambda: second_results.append(
+                cache.get_page("page.pdf", 0, 1.75, 0)
+            ),
+            daemon=True,
+        )
+        first_thread.start()
+        self.assertTrue(renderer.first_render_started.wait(timeout=1.0))
+        second_thread.start()
+        second_thread.join(timeout=0.05)
+        self.assertEqual(len(second_results), 0)
+        self.assertEqual(renderer.calls, [("page.pdf", 0, 1.75, 0, None)])
+        renderer.release_first_render.set()
+        first_thread.join(timeout=1.0)
+        second_thread.join(timeout=1.0)
+        self.assertEqual(len(first_results), 1)
+        self.assertEqual(len(second_results), 1)
+
+    def test_render_cancellation_token_reaches_page_and_frame_renderer(self):
+        renderer = _TokenAwareRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        token = _RecordingCancelToken()
+        with scoped_pdf_render_cancellation_token(token):
+            cache.get_page("page.pdf", 0, 1.0, 0)
+            cache.get_frame("page.pdf", 0, 1.0, 0.0, 0.0, 10.0, 10.0, 0)
+        self.assertEqual(renderer.page_tokens, [token])
+        self.assertEqual(renderer.frame_tokens, [token])
+
+    def test_cancelled_page_and_frame_renders_are_not_cached(self):
+        renderer = _TokenAwareRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        token = _RecordingCancelToken(cancelled=True)
+        with scoped_pdf_render_cancellation_token(token):
+            page = cache.get_page("page.pdf", 0, 1.0, 0)
+            frame = cache.get_frame("page.pdf", 0, 1.0, 0.0, 0.0, 10.0, 10.0, 0)
+        self.assertIsNone(page)
+        self.assertIsNone(frame)
+        self.assertEqual(cache._cache, {})
+        self.assertEqual(cache._frame_cache, {})
 
 
 if __name__ == "__main__":

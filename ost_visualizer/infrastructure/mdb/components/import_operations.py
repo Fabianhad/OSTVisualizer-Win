@@ -437,11 +437,7 @@ class ImportOperationsMixin:
         filtered = {
             column: value
             for column, value in filtered.items()
-            if not (
-                column == "UID"
-                and col_types.get(column, "") == "counter"
-                and value in (None, "", "NULL")
-            )
+            if not self._should_omit_autonumber_uid(column, value, col_types)
         }
         if not filtered:
             return
@@ -460,6 +456,15 @@ class ImportOperationsMixin:
             )
         finally:
             cursor.close()
+
+    def _should_omit_autonumber_uid(
+        self, column: str, value: str, col_types: Dict[str, str]
+    ) -> bool:
+        return (
+            column == "UID"
+            and col_types.get(column, "") == "counter"
+            and value in (None, "", "0", "NULL")
+        )
 
     def _convert_access_value(self, value: str, type_name: str) -> Any:
         if value is None or value == "NULL":

@@ -3206,7 +3206,9 @@ class OptionsPreferencesTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def render(self, file_path, page_index, scale, rotation):
+            def render(
+                self, file_path, page_index, scale, rotation, native_cancel_token=None
+            ):
                 self.calls.append((file_path, page_index, scale, rotation))
                 return QtGui.QImage(
                     int(scale * 10),
@@ -3235,7 +3237,9 @@ class OptionsPreferencesTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def render(self, file_path, page_index, scale, rotation):
+            def render(
+                self, file_path, page_index, scale, rotation, native_cancel_token=None
+            ):
                 self.calls.append((file_path, page_index, scale, rotation))
                 return QtGui.QImage(
                     len(self.calls),
@@ -3264,7 +3268,9 @@ class OptionsPreferencesTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def render(self, file_path, page_index, scale, rotation):
+            def render(
+                self, file_path, page_index, scale, rotation, native_cancel_token=None
+            ):
                 self.calls.append(("page", scale))
                 return QtGui.QImage(10, 10, QtGui.QImage.Format.Format_ARGB32)
 
@@ -3278,6 +3284,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                 frame_w_pts,
                 frame_h_pts,
                 rotation,
+                native_cancel_token=None,
             ):
                 self.calls.append(
                     (

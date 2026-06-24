@@ -73,6 +73,7 @@ class PageRenderer:
         page_index: int = 0,
         scale: float = 1.0,
         rotation: int = 0,
+        native_cancel_token=None,
     ) -> Optional[QImage]:
         if not file_path:
             return None
@@ -82,7 +83,13 @@ class PageRenderer:
             return None
         ext = path.suffix.lower()
         if is_pdf_suffix(ext):
-            return self._render_pdf(file_path, page_index, scale, rotation)
+            return self._render_pdf(
+                file_path,
+                page_index,
+                scale,
+                rotation,
+                native_cancel_token,
+            )
         elif ext in self.IMAGE_EXTENSIONS:
             return self._render_image(file_path, scale)
         else:
@@ -90,7 +97,12 @@ class PageRenderer:
             return None
 
     def _render_pdf(
-        self, file_path: str, page_index: int, scale: float, rotation: int
+        self,
+        file_path: str,
+        page_index: int,
+        scale: float,
+        rotation: int,
+        native_cancel_token=None,
     ) -> Optional[QImage]:
         with self._pdfium_lock:
             renderer = self._ensure_pdf_open_locked(file_path)
@@ -99,8 +111,18 @@ class PageRenderer:
             page_count = renderer.page_count()
             if page_index < 0 or page_index >= page_count:
                 page_index = max(0, min(page_index, page_count - 1))
-            result = renderer.render_page(page_index, scale, rotation)
+            if native_cancel_token is None:
+                result = renderer.render_page(page_index, scale, rotation)
+            else:
+                result = renderer.render_page_cancellable(
+                    page_index,
+                    scale,
+                    rotation,
+                    native_cancel_token,
+                )
         if not result:
+            if native_cancel_token is not None and native_cancel_token.is_cancelled():
+                return None
             logger.error(f"Failed to render PDF page {page_index}")
             return None
         data = result.to_bytes()
@@ -145,6 +167,7 @@ class PageRenderer:
         frame_w_pts: float,
         frame_h_pts: float,
         rotation: int = 0,
+        native_cancel_token=None,
     ) -> Optional[QImage]:
         if not file_path:
             return None
@@ -155,15 +178,27 @@ class PageRenderer:
             renderer = self._ensure_pdf_open_locked(file_path)
             if not renderer:
                 return None
-            result = renderer.render_page_frame(
-                page_index,
-                scale,
-                frame_x_pts,
-                frame_y_pts,
-                frame_w_pts,
-                frame_h_pts,
-                rotation,
-            )
+            if native_cancel_token is None:
+                result = renderer.render_page_frame(
+                    page_index,
+                    scale,
+                    frame_x_pts,
+                    frame_y_pts,
+                    frame_w_pts,
+                    frame_h_pts,
+                    rotation,
+                )
+            else:
+                result = renderer.render_page_frame_cancellable(
+                    page_index,
+                    scale,
+                    frame_x_pts,
+                    frame_y_pts,
+                    frame_w_pts,
+                    frame_h_pts,
+                    rotation,
+                    native_cancel_token,
+                )
         if not result:
             return None
         data = result.to_bytes()

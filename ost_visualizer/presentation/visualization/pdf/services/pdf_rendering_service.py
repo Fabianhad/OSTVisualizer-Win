@@ -2,7 +2,7 @@ import logging
 import queue
 import threading
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Callable, Dict, List, Optional, Tuple
 from PySide6.QtCore import QObject, Signal
 from .....application.dtos.render_result_dto import RenderResult
@@ -10,7 +10,9 @@ from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
 from ...utils.image_effects import apply_page_image_effects, tint_image
-from ..page_cache import PageCache
+from .. import ost_pdf
+from ..page_cache import PageCache, scoped_pdf_render_cancellation_token
+from ..render_priority import RenderPriority
 from .composite_renderer import CompositeRenderer
 
 logger = logging.getLogger(__name__)
@@ -40,8 +42,11 @@ class RenderRequest:
     bid_ref: Optional[BidRef]
     view_scale: Optional[float]
     show_mode: Optional[int]
-    cancelled: threading.Event
     callback: Callable[[RenderResult], None]
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    native_cancel_token: ost_pdf.RenderCancelToken = field(
+        default_factory=ost_pdf.RenderCancelToken
+    )
     use_cache: bool = True
     apply_invert_effect: bool = True
     apply_bitonal_effect: bool = True
@@ -49,6 +54,7 @@ class RenderRequest:
     frame_y_pts: float = 0.0
     frame_w_pts: float = 0.0
     frame_h_pts: float = 0.0
+    wait_for_in_flight: bool = True
 
 
 class RenderBridge(QObject):
@@ -125,11 +131,11 @@ class PDFRenderingService:
             bid_ref=None,
             view_scale=None,
             show_mode=None,
-            cancelled=threading.Event(),
             callback=callback,
             use_cache=use_cache,
             apply_invert_effect=apply_invert_effect,
             apply_bitonal_effect=apply_bitonal_effect,
+            wait_for_in_flight=self._should_wait_for_in_flight(priority),
         )
         return self._enqueue_request(request)
 
@@ -164,12 +170,12 @@ class PDFRenderingService:
             bid_ref=None,
             view_scale=None,
             show_mode=None,
-            cancelled=threading.Event(),
             callback=callback,
             frame_x_pts=frame_x_pts,
             frame_y_pts=frame_y_pts,
             frame_w_pts=frame_w_pts,
             frame_h_pts=frame_h_pts,
+            wait_for_in_flight=self._should_wait_for_in_flight(priority),
         )
         return self._enqueue_request(request)
 
@@ -198,8 +204,8 @@ class PDFRenderingService:
             bid_ref=bid_ref,
             view_scale=None,
             show_mode=None,
-            cancelled=threading.Event(),
             callback=callback,
+            wait_for_in_flight=self._should_wait_for_in_flight(priority),
         )
         return self._enqueue_request(request)
 
@@ -234,10 +240,10 @@ class PDFRenderingService:
             bid_ref=bid_ref,
             view_scale=view_scale,
             show_mode=show_mode,
-            cancelled=threading.Event(),
             callback=callback,
             apply_invert_effect=apply_invert_effect,
             apply_bitonal_effect=apply_bitonal_effect,
+            wait_for_in_flight=self._should_wait_for_in_flight(priority),
         )
         return self._enqueue_request(request)
 
@@ -270,12 +276,12 @@ class PDFRenderingService:
             bid_ref=bid_ref,
             view_scale=None,
             show_mode=None,
-            cancelled=threading.Event(),
             callback=callback,
             frame_x_pts=frame_x_pts,
             frame_y_pts=frame_y_pts,
             frame_w_pts=frame_w_pts,
             frame_h_pts=frame_h_pts,
+            wait_for_in_flight=self._should_wait_for_in_flight(priority),
         )
         return self._enqueue_request(request)
 
@@ -301,16 +307,22 @@ class PDFRenderingService:
             bid_ref=None,
             view_scale=None,
             show_mode=None,
-            cancelled=threading.Event(),
             callback=callback,
         )
         return self._enqueue_request(request)
+
+    def _should_wait_for_in_flight(self, priority: int) -> bool:
+        return priority not in (
+            RenderPriority.REQUIRED_PAGE,
+            RenderPriority.VISIBLE_FRAME,
+        )
 
     def cancel_request(self, request_id: str) -> None:
         with self._lock:
             request = self._active_requests.get(request_id)
             if request:
                 request.cancelled.set()
+                request.native_cancel_token.cancel()
 
     def _start_workers(self, num_workers: int):
         for i in range(num_workers):
@@ -331,7 +343,8 @@ class PDFRenderingService:
             if request.cancelled.is_set():
                 self._cleanup_request(request.request_id)
                 continue
-            result = self._execute_render(request)
+            with scoped_pdf_render_cancellation_token(request.native_cancel_token):
+                result = self._execute_render(request)
             if not request.cancelled.is_set():
                 self._render_bridge.request_callback(
                     request.request_id, request.callback, result
@@ -368,7 +381,11 @@ class PDFRenderingService:
     def _execute_page_render(self, request: RenderRequest) -> RenderResult:
         if request.use_cache:
             image = self._page_cache.get_page(
-                request.file_path, request.page_index, request.scale, request.rotation
+                request.file_path,
+                request.page_index,
+                request.scale,
+                request.rotation,
+                wait_for_in_flight=request.wait_for_in_flight,
             )
         else:
             image = self._page_cache.render_uncached(
@@ -391,6 +408,7 @@ class PDFRenderingService:
             request.scale,
             request.rotation,
             tint_rgb=request.tint_rgb,
+            wait_for_in_flight=request.wait_for_in_flight,
         )
         if request.cancelled.is_set() or not tinted:
             return RenderResult(request.request_id, False, None, "Cancelled or failed")
@@ -406,6 +424,7 @@ class PDFRenderingService:
             request.scale,
             request.rotation,
             cancelled_check=lambda: request.cancelled.is_set(),
+            wait_for_in_flight=request.wait_for_in_flight,
         )
         if not composited:
             return RenderResult(
@@ -444,6 +463,7 @@ class PDFRenderingService:
             request.frame_w_pts,
             request.frame_h_pts,
             request.rotation,
+            wait_for_in_flight=request.wait_for_in_flight,
         )
         if request.cancelled.is_set() or not image:
             return RenderResult(request.request_id, False, None, "Cancelled or failed")
@@ -466,6 +486,7 @@ class PDFRenderingService:
             request.frame_h_pts,
             request.rotation,
             cancelled_check=lambda: request.cancelled.is_set(),
+            wait_for_in_flight=request.wait_for_in_flight,
         )
         if not composited:
             return RenderResult(
@@ -489,10 +510,15 @@ class PDFRenderingService:
                 request.scale,
                 request.rotation,
                 tint_rgb=request.tint_rgb,
+                wait_for_in_flight=request.wait_for_in_flight,
             )
         else:
             overlay_image = self._page_cache.get_page(
-                request.file_path, request.page_index, request.scale, request.rotation
+                request.file_path,
+                request.page_index,
+                request.scale,
+                request.rotation,
+                wait_for_in_flight=request.wait_for_in_flight,
             )
         if request.cancelled.is_set() or not overlay_image:
             return RenderResult(request.request_id, False, None, "Cancelled or failed")
@@ -521,6 +547,7 @@ class PDFRenderingService:
         with self._lock:
             for request in self._active_requests.values():
                 request.cancelled.set()
+                request.native_cancel_token.cancel()
         for _ in range(len(self._worker_threads)):
             try:
                 self._request_queue.put_nowait((0, 0, None))

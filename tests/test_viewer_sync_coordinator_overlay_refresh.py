@@ -529,6 +529,24 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view._render_loading_bar.isHidden())
         view.cleanup()
 
+    def test_page_switch_updates_canvas_and_schedules_render_before_completion(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        self.assertEqual(view.current_page_uid, "p1")
+        self.assertIsNotNone(view._white_canvas_item)
+        self.assertIs(view._white_canvas_item.scene(), view._scene)
+        self.assertIsNone(view._background_item)
+        self.assertEqual(len(view._rendering_service.page_requests), 1)
+        self.assertTrue(view._render_loading_bar.is_loading)
+        view.cleanup()
+
     def test_composite_and_overlay_only_renders_start_loading_bar(self):
         view = self._make_plan_view()
         composite_page = Page(

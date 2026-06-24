@@ -37,6 +37,7 @@ class CompositeRenderer:
         render_scale: float,
         raster_rotation: int,
         cancelled_check=None,
+        wait_for_in_flight: bool = True,
     ) -> Optional[QImage]:
         cache_key = self._build_cache_key(page, bid_ref, render_scale, raster_rotation)
         if cache_key in self._composite_cache:
@@ -44,12 +45,13 @@ class CompositeRenderer:
             return self._composite_cache[cache_key]
         if cancelled_check and cancelled_check():
             return None
-        red_tinted = self._page_cache.get_tinted_page(
+        red_tinted = self._get_tinted_page(
             page.image_path,
             page.page_index,
             render_scale,
             raster_rotation,
-            tint_rgb=(255, 80, 80),
+            (255, 80, 80),
+            wait_for_in_flight,
         )
         if not red_tinted:
             return None
@@ -57,12 +59,13 @@ class CompositeRenderer:
             return None
         is_overlay_pdf = is_pdf_suffix(page.overlay_image_path)
         overlay_scale = 2.0 if is_overlay_pdf else 1.0
-        blue_tinted = self._page_cache.get_tinted_page(
+        blue_tinted = self._get_tinted_page(
             page.overlay_image_path,
             0,
             overlay_scale,
             raster_rotation,
-            tint_rgb=(80, 80, 255),
+            (80, 80, 255),
+            wait_for_in_flight,
         )
         if not blue_tinted:
             return red_tinted
@@ -97,6 +100,85 @@ class CompositeRenderer:
                 str(page.deskew_rotation_overlay),
                 str(page.overlay_rect),
             ]
+        )
+
+    def _get_page(
+        self,
+        file_path: str,
+        page_index: int,
+        scale: float,
+        rotation: int,
+        wait_for_in_flight: bool,
+    ) -> Optional[QImage]:
+        if wait_for_in_flight:
+            return self._page_cache.get_page(file_path, page_index, scale, rotation)
+        return self._page_cache.get_page(
+            file_path,
+            page_index,
+            scale,
+            rotation,
+            wait_for_in_flight=False,
+        )
+
+    def _get_tinted_page(
+        self,
+        file_path: str,
+        page_index: int,
+        scale: float,
+        rotation: int,
+        tint_rgb: tuple[int, int, int],
+        wait_for_in_flight: bool,
+    ) -> Optional[QImage]:
+        if wait_for_in_flight:
+            return self._page_cache.get_tinted_page(
+                file_path,
+                page_index,
+                scale,
+                rotation,
+                tint_rgb=tint_rgb,
+            )
+        return self._page_cache.get_tinted_page(
+            file_path,
+            page_index,
+            scale,
+            rotation,
+            tint_rgb=tint_rgb,
+            wait_for_in_flight=False,
+        )
+
+    def _get_frame(
+        self,
+        file_path: str,
+        page_index: int,
+        scale: float,
+        frame_x: float,
+        frame_y: float,
+        frame_w: float,
+        frame_h: float,
+        rotation: int,
+        wait_for_in_flight: bool,
+    ) -> Optional[QImage]:
+        if wait_for_in_flight:
+            return self._page_cache.get_frame(
+                file_path,
+                page_index,
+                scale,
+                frame_x,
+                frame_y,
+                frame_w,
+                frame_h,
+                rotation,
+            )
+        return self._page_cache.get_frame(
+            file_path,
+            page_index,
+            scale,
+            frame_x,
+            frame_y,
+            frame_w,
+            frame_h,
+            rotation,
+            wait_for_in_flight=False,
         )
 
     def _composite_images(self, red: QImage, blue: QImage, page: Page) -> QImage:
@@ -189,6 +271,7 @@ class CompositeRenderer:
         frame_h_pts: float,
         rotation: int,
         cancelled_check=None,
+        wait_for_in_flight: bool = True,
     ) -> Optional[QImage]:
         if frame_w_pts <= 0.0 or frame_h_pts <= 0.0:
             return None
@@ -204,7 +287,7 @@ class CompositeRenderer:
             return None
         frame_x, frame_y, frame_w, frame_h = frame
         render_scale = _quantize_render_scale(scale)
-        red_frame = self._page_cache.get_frame(
+        red_frame = self._get_frame(
             page.image_path,
             page.page_index,
             render_scale,
@@ -213,6 +296,7 @@ class CompositeRenderer:
             frame_w,
             frame_h,
             rotation,
+            wait_for_in_flight,
         )
         if not red_frame:
             return None
@@ -240,6 +324,7 @@ class CompositeRenderer:
                     frame_h,
                     rotation,
                     cancelled_check,
+                    wait_for_in_flight,
                 )
             else:
                 self._draw_overlay_raster_frame(
@@ -252,6 +337,7 @@ class CompositeRenderer:
                     frame_h,
                     rotation,
                     cancelled_check,
+                    wait_for_in_flight,
                 )
         painter.end()
         return result
@@ -267,6 +353,7 @@ class CompositeRenderer:
         frame_h: float,
         rotation: int,
         cancelled_check=None,
+        wait_for_in_flight: bool = True,
     ) -> None:
         source_w, source_h = self._page_cache.get_page_size(page.overlay_image_path, 0)
         context = self._build_overlay_frame_context(
@@ -281,7 +368,7 @@ class CompositeRenderer:
         )
         if context is None:
             return
-        blue_frame = self._page_cache.get_frame(
+        blue_frame = self._get_frame(
             page.overlay_image_path,
             0,
             context["overlay_scale"],
@@ -290,6 +377,7 @@ class CompositeRenderer:
             context["source_frame_w"],
             context["source_frame_h"],
             rotation,
+            wait_for_in_flight,
         )
         if not blue_frame:
             return
@@ -312,6 +400,7 @@ class CompositeRenderer:
         frame_h: float,
         rotation: int,
         cancelled_check=None,
+        wait_for_in_flight: bool = True,
     ) -> None:
         source_w, source_h = self._page_cache.get_page_size(page.overlay_image_path, 0)
         context = self._build_overlay_frame_context(
@@ -333,15 +422,17 @@ class CompositeRenderer:
                 frame_x,
                 frame_y,
                 rotation,
+                wait_for_in_flight,
             )
             return
         if cancelled_check and cancelled_check():
             return
-        blue_source = self._page_cache.get_page(
+        blue_source = self._get_page(
             page.overlay_image_path,
             0,
             context["overlay_scale"],
             rotation,
+            wait_for_in_flight,
         )
         if not blue_source:
             return
@@ -404,13 +495,15 @@ class CompositeRenderer:
         frame_x: float,
         frame_y: float,
         rotation: int,
+        wait_for_in_flight: bool = True,
     ) -> None:
-        blue = self._page_cache.get_tinted_page(
+        blue = self._get_tinted_page(
             page.overlay_image_path,
             0,
             1.0,
             rotation,
-            tint_rgb=(80, 80, 255),
+            (80, 80, 255),
+            wait_for_in_flight,
         )
         if not blue:
             return

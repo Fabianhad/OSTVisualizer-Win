@@ -108,6 +108,8 @@ class PageLoadStrategyService:
         fallback_height = page.height_pts if page.height_pts else 792.0
         if not (is_pdf and page.image_path):
             return fallback_width, fallback_height
+        if page.width_pts > 0 and page.height_pts > 0:
+            return page.width_pts, page.height_pts
         actual_width, actual_height = self._page_size_provider.get_page_size(
             page.image_path, page.page_index
         )
