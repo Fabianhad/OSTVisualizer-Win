@@ -168,10 +168,7 @@ class LicenseOrchestrator:
     def _reactivate_once_if_device_activation_inactive(
         self, result: LicenseOperationResultDto
     ) -> LicenseOperationResultDto:
-        if (
-            result.operation_status
-            != LicenseOperationStatus.DEVICE_ACTIVATION_INACTIVE
-        ):
+        if result.operation_status != LicenseOperationStatus.DEVICE_ACTIVATION_INACTIVE:
             return result
         license_key = self._model.license_key
         if not license_key:

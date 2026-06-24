@@ -6,14 +6,12 @@ from .....domain.entities.license import LicenseStatus
 from ....dtos.license_dto import LicenseOperationResultDto, LicenseOperationStatus
 
 LicenseOperation = Literal["activate", "deactivate", "validate"]
-
 ERROR_LICENSE_NOT_FOUND = "LICENSE_NOT_FOUND"
 ERROR_LICENSE_EXPIRED = "LICENSE_EXPIRED"
 ERROR_LICENSE_REVOKED = "LICENSE_REVOKED"
 ERROR_MAX_ACTIVATIONS_REACHED = "MAX_ACTIVATIONS_REACHED"
 ERROR_INVALID_HWID = "INVALID_HWID"
 ERROR_DEVICE_ACTIVATION_INACTIVE = "DEVICE_ACTIVATION_INACTIVE"
-
 ERROR_CONTRACT = {
     ERROR_LICENSE_NOT_FOUND: 1001,
     ERROR_LICENSE_EXPIRED: 1002,

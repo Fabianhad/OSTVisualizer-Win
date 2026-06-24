@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.3 - Unreleased
+## 1.2.4 - Unreleased
 
 ### Added
 - Added a first-pass OST-style Options dialog with persisted roping, page label, hotlink target, and Cover Sheet toolbar text preferences.

@@ -1,6 +1,5 @@
 import logging
 import unittest
-
 from ost_visualizer.application.dtos.license_dto import (
     LicenseOperationResultDto,
     LicenseOperationStatus,
@@ -133,7 +132,6 @@ class LicenseActivationContractTests(unittest.TestCase):
             network_message="network",
             network_license_status=LicenseStatus.NETWORK_ERROR,
         )
-
         self.assertEqual(
             failure.result.operation_status,
             LicenseOperationStatus.DEVICE_ACTIVATION_INACTIVE,
@@ -153,7 +151,6 @@ class LicenseActivationContractTests(unittest.TestCase):
             network_message="network",
             network_license_status=LicenseStatus.NETWORK_ERROR,
         )
-
         self.assertEqual(
             failure.result.operation_status, LicenseOperationStatus.NETWORK_ERROR
         )
@@ -171,7 +168,6 @@ class LicenseActivationContractTests(unittest.TestCase):
             operation="activate",
             network_message="network",
         )
-
         self.assertEqual(
             failure.result.operation_status, LicenseOperationStatus.NETWORK_ERROR
         )
@@ -183,7 +179,6 @@ class LicenseActivationContractTests(unittest.TestCase):
             success_field="valid",
             operation="validate",
         )
-
         self.assertIsNotNone(contract_error)
         self.assertEqual(
             contract_error.operation_status, LicenseOperationStatus.NETWORK_ERROR
@@ -209,9 +204,7 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         publisher = FakeEventPublisher()
         orchestrator = self._build_orchestrator(validate, activate, publisher)
-
         orchestrator.initialize()
-
         self.assertEqual(validate.calls, [None])
         self.assertEqual(activate.calls, ["LIC-test-key"])
         self.assertEqual(publisher.activated_calls, 1)
@@ -237,12 +230,12 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         publisher = FakeEventPublisher()
         orchestrator = self._build_orchestrator(validate, activate, publisher)
-
         orchestrator.initialize()
-
         self.assertEqual(activate.calls, [])
         self.assertEqual(publisher.activated_calls, 0)
-        self.assertEqual(publisher.invalidated, [("max devices", LicenseStatus.INVALID)])
+        self.assertEqual(
+            publisher.invalidated, [("max devices", LicenseStatus.INVALID)]
+        )
 
     def test_startup_reactivation_surfaces_activation_limit_without_looping(self):
         validate = FakeUseCase(
@@ -265,12 +258,12 @@ class LicenseActivationContractTests(unittest.TestCase):
         )
         publisher = FakeEventPublisher()
         orchestrator = self._build_orchestrator(validate, activate, publisher)
-
         orchestrator.initialize()
-
         self.assertEqual(activate.calls, ["LIC-test-key"])
         self.assertEqual(publisher.activated_calls, 0)
-        self.assertEqual(publisher.invalidated, [("max devices", LicenseStatus.INVALID)])
+        self.assertEqual(
+            publisher.invalidated, [("max devices", LicenseStatus.INVALID)]
+        )
 
     def test_deactivate_clears_cache_on_already_inactive_success(self):
         model = FakeModel()
@@ -287,9 +280,7 @@ class LicenseActivationContractTests(unittest.TestCase):
             ),
             logger=logging.getLogger("test"),
         )
-
         result = use_case.execute()
-
         self.assertTrue(result.success)
         self.assertEqual(model.clear_calls, 1)
         self.assertEqual(result.license_status, LicenseStatus.NO_LICENSE)
