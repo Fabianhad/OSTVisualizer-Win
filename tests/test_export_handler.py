@@ -106,6 +106,19 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         handler.export_as_pdf(["page-1"])
         self.assertEqual(deferred.flush_calls, 1)
 
+    def test_osp_export_stops_when_deferred_persistence_flush_fails(self):
+        deferred = _FakeDeferredPersistence(result=False)
+        handler = _make_export_handler(
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: self.fail(
+                    "export should not read bid data after failed flush"
+                )
+            ),
+            deferred_persistence_manager=deferred,
+        )
+        handler.export_as_osp()
+        self.assertEqual(deferred.flush_calls, 1)
+
     def test_single_page_pdf_default_filename_keeps_existing_pdf_extension(self):
         filename = _capture_pdf_default_filename(["S-100.pdf"])
         self.assertEqual(

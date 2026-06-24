@@ -18,6 +18,7 @@ from ost_visualizer.infrastructure.mdb.components.page_operations import (
 )
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
+from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 
 
 class _Rows:
@@ -157,6 +158,11 @@ class _SqliteMdbWriter(ImportOperationsMixin, PageOperationsMixin):
     def _require_write_columns(self, schema, table, columns):
         for column in columns:
             schema.require_column(table, column)
+
+    def _next_uid(self, cursor, table):
+        cursor.execute(f"SELECT MAX([UID]) FROM [{table}]")
+        row = cursor.fetchone()
+        return int(row[0]) + 1 if row and row[0] is not None else 1
 
     def _filter_existing_write_values(
         self, schema, table, values, required_columns, operation
@@ -420,7 +426,116 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             writer.save_page_area("target.mdb", str(page_uid), str(area_uid))
         )
 
-    def test_database_creator_defines_page_area_selection_uniqueness(self):
+    def test_access_page_area_insert_uses_explicit_uid_after_imported_uid_gap(self):
+        if "Microsoft Access Driver (*.mdb, *.accdb)" not in pyodbc.drivers():
+            self.skipTest("Microsoft Access ODBC driver is not available")
+        settings = [
+            (86, 451, 81),
+            (87, 450, 82),
+            (88, 449, 83),
+            (89, 448, 84),
+            (90, 447, 85),
+            (91, 444, 86),
+            (92, 440, 87),
+            (93, 436, 88),
+            (94, 428, 89),
+            (906, 183, 0),
+            (907, 409, 94),
+            (908, 410, 93),
+            (909, 417, 92),
+            (910, 418, 91),
+            (911, 424, 90),
+        ]
+        page_uids = sorted({452} | {page_uid for _uid, page_uid, _area in settings})
+        pages = []
+        for page_uid in page_uids:
+            nested = []
+            for uid, settings_page_uid, area_uid in settings:
+                if settings_page_uid != page_uid:
+                    continue
+                area_attr = "" if area_uid == 0 else f' BidAreaUID="{area_uid}"'
+                nested.append(
+                    f'<BidPageSetting UID="{uid}" BidPageUID="{settings_page_uid}"'
+                    f'{area_attr} BidAreaSelected="2"/>'
+                )
+            if nested:
+                pages.append(
+                    f'<BidPage UID="{page_uid}" BidUID="80" Name="P{page_uid}">'
+                    f'<BidPageSettings>{"".join(nested)}</BidPageSettings>'
+                    f"</BidPage>"
+                )
+            else:
+                pages.append(
+                    f'<BidPage UID="{page_uid}" BidUID="80" Name="P{page_uid}"/>'
+                )
+        areas = "".join(
+            f'<BidArea UID="{area_uid}" BidUID="80" Name="A{area_uid}" '
+            f'Sequence="{area_uid}"/>'
+            for area_uid in range(81, 95)
+        )
+        xml = (
+            '<XML_ROOT><Bid UID="80" JobName="Mini">'
+            f"<BidAreas>{areas}</BidAreas>"
+            f'<BidPages>{"".join(pages)}</BidPages>'
+            "</Bid></XML_ROOT>"
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            temp_path = Path(temp_dir)
+            ost_path = temp_path / "mini.ost"
+            db_path = temp_path / "mini.mdb"
+            ost_path.write_text(xml, encoding="utf-8")
+            if not database_creator.DatabaseCreator().create_database(db_path, "Mini"):
+                self.skipTest("Could not create an Access test database")
+            writer = MdbWriter()
+            try:
+                self.assertTrue(
+                    OstImporter(writer).import_ost(str(ost_path), str(db_path))
+                )
+            finally:
+                writer._conn_manager.close()
+            conn = pyodbc.connect(
+                "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};",
+                autocommit=False,
+            )
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT [UID] FROM [BidPages] WHERE [Name]='P452'")
+                page_uid = int(cursor.fetchone()[0])
+                with self.assertRaises(pyodbc.IntegrityError):
+                    cursor.execute(
+                        "INSERT INTO [BidPageSettings] "
+                        "([BidPageUID], [BidAreaUID], [BidAreaSelected]) "
+                        "VALUES (?, NULL, 1)",
+                        page_uid,
+                    )
+                conn.rollback()
+            finally:
+                cursor.close()
+                conn.close()
+            writer = MdbWriter()
+            try:
+                self.assertTrue(writer.save_page_area(str(db_path), str(page_uid), "0"))
+            finally:
+                writer._conn_manager.close()
+            conn = pyodbc.connect(
+                "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};",
+                autocommit=False,
+            )
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "SELECT [UID], [BidAreaUID], [BidAreaSelected] "
+                    "FROM [BidPageSettings] WHERE [BidPageUID]=?",
+                    page_uid,
+                )
+                row = cursor.fetchone()
+                self.assertEqual((int(row[0]), row[1], int(row[2])), (42, None, 1))
+            finally:
+                conn.rollback()
+                cursor.close()
+                conn.close()
+
+    def test_database_creator_does_not_add_non_ost_page_area_selection_uniqueness(self):
         class FakeCursor:
             def __init__(self):
                 self.calls = []
@@ -454,7 +569,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             database_creator.DatabaseCreator()._create_schema(Path("test.mdb"))
         finally:
             database_creator.pyodbc.connect = original_connect
-        self.assertIn(
+        self.assertNotIn(
             "CREATE UNIQUE INDEX [UI_BidPageSettings_PageSelected] "
             "ON [BidPageSettings] ([BidPageUID], [BidAreaSelected])",
             fake_connection.cursor_instance.calls,

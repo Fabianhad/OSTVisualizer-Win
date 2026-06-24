@@ -334,6 +334,22 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             [("page_area", "a.mdb", "p1", "2", False)],
         )
 
+    def test_page_area_selection_retry_clears_after_write_succeeds(self):
+        self.service.fail_methods.add("save_page_area")
+        self.manager.schedule_page_area_selection("a.mdb", "452", "95")
+        self.assertFalse(self.manager.flush())
+        self.assertEqual(self.manager.pending_count, 1)
+        self.service.fail_methods.clear()
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(
+            self.service.calls,
+            [
+                ("page_area", "a.mdb", "452", "95", False),
+                ("page_area", "a.mdb", "452", "95", False),
+            ],
+        )
+
 
 class RecordingDeferredPersistence:
     def __init__(self):

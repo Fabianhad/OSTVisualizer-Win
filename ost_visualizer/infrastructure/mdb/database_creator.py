@@ -1153,10 +1153,6 @@ class DatabaseCreator:
             cursor.execute(
                 "CREATE UNIQUE INDEX [UI_Locking] " "ON [Locking] ([Essence], [Owner])"
             )
-            cursor.execute(
-                "CREATE UNIQUE INDEX [UI_BidPageSettings_PageSelected] "
-                "ON [BidPageSettings] ([BidPageUID], [BidAreaSelected])"
-            )
             self._report_progress(progress_callback, "schema relationships")
             for child, child_col, parent, parent_col in _FK_RELATIONSHIPS:
                 cursor.execute(

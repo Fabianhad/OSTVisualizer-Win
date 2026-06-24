@@ -381,13 +381,8 @@ class PageOperationsMixin:
                 "WHERE [BidPageUID]=? AND [BidAreaSelected] > 0",
                 page_uid,
             )
-            cursor.execute(
-                "INSERT INTO [BidPageSettings] "
-                "([BidPageUID], [BidAreaUID], [BidAreaSelected]) "
-                "VALUES (?, ?, ?)",
-                page_uid,
-                area_uid,
-                selected_value,
+            self._insert_page_area_selection(
+                cursor, schema, page_uid, area_uid, selected_value
             )
             return
         cursor.execute(
@@ -409,13 +404,8 @@ class PageOperationsMixin:
         if target_uid is None:
             target_uid = fallback_uid
         if target_uid is None:
-            cursor.execute(
-                "INSERT INTO [BidPageSettings] "
-                "([BidPageUID], [BidAreaUID], [BidAreaSelected]) "
-                "VALUES (?, ?, ?)",
-                page_uid,
-                area_uid,
-                selected_value,
+            self._insert_page_area_selection(
+                cursor, schema, page_uid, area_uid, selected_value
             )
             return
         cursor.execute(
@@ -430,4 +420,32 @@ class PageOperationsMixin:
             area_uid,
             selected_value,
             target_uid,
+        )
+
+    def _insert_page_area_selection(
+        self,
+        cursor: "pyodbc.Cursor",
+        schema,
+        page_uid: int,
+        area_uid: int | None,
+        selected_value: int,
+    ) -> None:
+        if not schema.column_exists("BidPageSettings", "UID"):
+            cursor.execute(
+                "INSERT INTO [BidPageSettings] "
+                "([BidPageUID], [BidAreaUID], [BidAreaSelected]) "
+                "VALUES (?, ?, ?)",
+                page_uid,
+                area_uid,
+                selected_value,
+            )
+            return
+        cursor.execute(
+            "INSERT INTO [BidPageSettings] "
+            "([UID], [BidPageUID], [BidAreaUID], [BidAreaSelected]) "
+            "VALUES (?, ?, ?, ?)",
+            self._next_uid(cursor, "BidPageSettings"),
+            page_uid,
+            area_uid,
+            selected_value,
         )
