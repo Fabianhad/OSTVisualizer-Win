@@ -49,7 +49,7 @@ class LicenseOrchestrator:
             if self._model.can_use_offline_grace():
                 self._current_license_status = LicenseStatus.GRACE
                 self._event_publisher.publish_activated()
-            self.validate_license_async(lambda _success, _msg: None)
+            self._startup_validate_license_async(lambda _success, _msg: None)
         else:
             self._current_license_status = None
             self._event_publisher.publish_license_lost()
@@ -131,17 +131,7 @@ class LicenseOrchestrator:
         def on_main(
             _s: bool, message: str, license_status: Optional[LicenseStatus]
         ) -> None:
-            if _s or (
-                license_status == LicenseStatus.NETWORK_ERROR
-                and self.has_valid_license()
-            ):
-                self._event_publisher.publish_activated()
-            elif license_status in (
-                LicenseStatus.INVALID,
-                LicenseStatus.EXPIRED,
-                LicenseStatus.NETWORK_ERROR,
-            ):
-                self._event_publisher.publish_invalidated(message, license_status)
+            self._publish_validation_outcome(_s, message, license_status)
             callback(_s, message)
 
         self._thread_manager.spawn_with_bridge(
@@ -150,6 +140,46 @@ class LicenseOrchestrator:
             on_main_thread=on_main,
             error_prefix="validation",
         )
+
+    def _startup_validate_license_async(
+        self, callback: Callable[[bool, str], None]
+    ) -> None:
+        self._ensure_hwid()
+
+        def operation() -> tuple[bool, str, Optional[LicenseStatus]]:
+            result = self._validate_use_case.execute()
+            result = self._reactivate_once_if_device_activation_inactive(result)
+            self._apply_result(result)
+            return result.success, result.message, result.license_status
+
+        def on_main(
+            _s: bool, message: str, license_status: Optional[LicenseStatus]
+        ) -> None:
+            self._publish_validation_outcome(_s, message, license_status)
+            callback(_s, message)
+
+        self._thread_manager.spawn_with_bridge(
+            operation=operation,
+            callback_bridge=self._callback_bridge,
+            on_main_thread=on_main,
+            error_prefix="startup license validation",
+        )
+
+    def _reactivate_once_if_device_activation_inactive(
+        self, result: LicenseOperationResultDto
+    ) -> LicenseOperationResultDto:
+        if (
+            result.operation_status
+            != LicenseOperationStatus.DEVICE_ACTIVATION_INACTIVE
+        ):
+            return result
+        license_key = self._model.license_key
+        if not license_key:
+            return result
+        self._logger.info(
+            "Cached license device activation is inactive; attempting one startup reactivation"
+        )
+        return self._activate_use_case.execute(license_key)
 
     def has_valid_license(self) -> bool:
         if self._current_license_status == LicenseStatus.VALID:
@@ -195,6 +225,23 @@ class LicenseOrchestrator:
         if result.success:
             self._event_publisher.reset_failure_state()
         return result
+
+    def _publish_validation_outcome(
+        self,
+        success: bool,
+        message: str,
+        license_status: Optional[LicenseStatus],
+    ) -> None:
+        if success or (
+            license_status == LicenseStatus.NETWORK_ERROR and self.has_valid_license()
+        ):
+            self._event_publisher.publish_activated()
+        elif license_status in (
+            LicenseStatus.INVALID,
+            LicenseStatus.EXPIRED,
+            LicenseStatus.NETWORK_ERROR,
+        ):
+            self._event_publisher.publish_invalidated(message, license_status)
 
     def _apply_result(self, result: LicenseOperationResultDto) -> None:
         if result.license_status:

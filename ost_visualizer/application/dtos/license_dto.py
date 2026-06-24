@@ -11,6 +11,7 @@ class LicenseOperationStatus(Enum):
     INVALID_KEY = "invalid_key"
     EXPIRED = "expired"
     ACTIVATION_LIMIT_REACHED = "activation_limit_reached"
+    DEVICE_ACTIVATION_INACTIVE = "device_activation_inactive"
     REVOKED = "revoked"
     NO_LICENSE = "no_license"
 

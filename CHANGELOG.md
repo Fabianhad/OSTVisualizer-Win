@@ -22,6 +22,7 @@
 - Added a Master > Default Layers dialog for managing template layer visibility, names, order, and membership.
 
 ### Changed
+- License startup validation now uses the explicit inactive-device server state to reactivate once after an admin removes the current device, while treating unexpected license responses as contract errors.
 - Shows a thin in-view loading bar during current PDF page and zoom-frame renders, without including nearby-page prefetch or other background cache work.
 - Warm nearby PDF pages in the background after 2D page navigation, cap large base renders to cacheable sizes, and cache high-resolution visible PDF frames so adjacent heavy-PDF page switches and repeated zoom/pan views can reuse render cache without delaying the current page render.
 - Moved MCP setup out of its standalone Tools menu dialog and into the Options dialog.

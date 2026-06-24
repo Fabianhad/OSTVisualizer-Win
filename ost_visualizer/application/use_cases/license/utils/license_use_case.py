@@ -7,6 +7,22 @@ from ....dtos.license_dto import LicenseOperationResultDto, LicenseOperationStat
 
 LicenseOperation = Literal["activate", "deactivate", "validate"]
 
+ERROR_LICENSE_NOT_FOUND = "LICENSE_NOT_FOUND"
+ERROR_LICENSE_EXPIRED = "LICENSE_EXPIRED"
+ERROR_LICENSE_REVOKED = "LICENSE_REVOKED"
+ERROR_MAX_ACTIVATIONS_REACHED = "MAX_ACTIVATIONS_REACHED"
+ERROR_INVALID_HWID = "INVALID_HWID"
+ERROR_DEVICE_ACTIVATION_INACTIVE = "DEVICE_ACTIVATION_INACTIVE"
+
+ERROR_CONTRACT = {
+    ERROR_LICENSE_NOT_FOUND: 1001,
+    ERROR_LICENSE_EXPIRED: 1002,
+    ERROR_LICENSE_REVOKED: 1003,
+    ERROR_MAX_ACTIVATIONS_REACHED: 1005,
+    ERROR_INVALID_HWID: 1006,
+    ERROR_DEVICE_ACTIVATION_INACTIVE: 1007,
+}
+
 
 @dataclass(frozen=True)
 class SignedLicenseResponse:
@@ -66,20 +82,16 @@ def build_success_result(
 
 
 def map_error(
-    error_code: Optional[int],
-    error_message: str,
+    error_name: str,
     operation: LicenseOperation = "activate",
 ) -> Tuple[LicenseOperationStatus, LicenseStatus, str]:
-    default_status = LicenseOperationStatus.FAILED
-    default_license_status = LicenseStatus.INVALID
-    default_message = f"{operation.capitalize()} failed. {error_message}"
-    if error_code == 1001:
+    if error_name == ERROR_LICENSE_NOT_FOUND:
         return (
             LicenseOperationStatus.INVALID_KEY,
             LicenseStatus.INVALID,
             "License key not found. Please check the key and try again, or contact support.",
         )
-    elif error_code == 1002:
+    elif error_name == ERROR_LICENSE_EXPIRED:
         return (
             LicenseOperationStatus.EXPIRED,
             LicenseStatus.EXPIRED if operation == "validate" else LicenseStatus.INVALID,
@@ -89,19 +101,31 @@ def map_error(
                 else "This license has expired and cannot be deactivated. Please contact support for assistance."
             ),
         )
-    elif error_code == 1003:
+    elif error_name == ERROR_LICENSE_REVOKED:
         return (
             LicenseOperationStatus.REVOKED,
             LicenseStatus.INVALID,
             "This license has been revoked. Please contact support for more information.",
         )
-    elif error_code == 1005:
+    elif error_name == ERROR_MAX_ACTIVATIONS_REACHED:
         return (
             LicenseOperationStatus.ACTIVATION_LIMIT_REACHED,
             LicenseStatus.INVALID,
             "License activation limit reached. This license is active on the maximum number of devices.",
         )
-    return (default_status, default_license_status, default_message)
+    elif error_name == ERROR_DEVICE_ACTIVATION_INACTIVE:
+        return (
+            LicenseOperationStatus.DEVICE_ACTIVATION_INACTIVE,
+            LicenseStatus.INVALID,
+            "This device is not currently activated for this license.",
+        )
+    elif error_name == ERROR_INVALID_HWID:
+        return (
+            LicenseOperationStatus.FAILED,
+            LicenseStatus.INVALID,
+            "Unable to determine this computer's hardware ID.",
+        )
+    raise ValueError(f"Unknown license error contract: {error_name}")
 
 
 def parse_signed_success_response(
@@ -167,12 +191,33 @@ def parse_failure_response(
             server_message="Network error",
             error_code=None,
         )
+    expected_marker = "valid" if operation == "validate" else "success"
+    if response.get(expected_marker) is not False:
+        contract_result = create_server_contract_error(operation)
+        return LicenseFailureResponse(
+            result=contract_result,
+            server_message=contract_result.message,
+            error_code=None,
+        )
+    error_name = _required_string(response, "error_name")
     error_code = response.get("error_code")
+    if (
+        not error_name
+        or error_name not in ERROR_CONTRACT
+        or type(error_code) is not int
+        or ERROR_CONTRACT[error_name] != error_code
+    ):
+        contract_result = create_server_contract_error(operation)
+        return LicenseFailureResponse(
+            result=contract_result,
+            server_message=contract_result.message,
+            error_code=error_code if type(error_code) is int else None,
+        )
     server_message = _required_string(response, "error") or (
         f"{operation.capitalize()} failed"
     )
     operation_status, license_status, user_message = map_error(
-        error_code, server_message, operation=operation
+        error_name, operation=operation
     )
     return LicenseFailureResponse(
         result=create_error_result(
