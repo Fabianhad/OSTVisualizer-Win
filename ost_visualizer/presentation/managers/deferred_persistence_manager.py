@@ -12,6 +12,7 @@ class DeferredPersistenceItem:
     key: DeferredPersistenceKey
     description: str
     write_fn: Callable[[], bool]
+    skippable_when_blocked: bool = False
 
 
 class DeferredPersistenceManager(QtCore.QObject):
@@ -44,10 +45,17 @@ class DeferredPersistenceManager(QtCore.QObject):
         key: DeferredPersistenceKey,
         description: str,
         write_fn: Callable[[], bool],
+        skippable_when_blocked: bool = False,
     ) -> None:
         if self._cleaned_up:
             return
-        self._pending[key] = DeferredPersistenceItem(kind, key, description, write_fn)
+        self._pending[key] = DeferredPersistenceItem(
+            kind,
+            key,
+            description,
+            write_fn,
+            skippable_when_blocked,
+        )
         self._timer.start()
 
     def schedule_page_view_state(
@@ -65,6 +73,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             lambda: self._write_service.save_page_view_state(
                 db_path, page_uid, zoom_fac, current_x, current_y
             ),
+            skippable_when_blocked=True,
         )
 
     def schedule_bid_selected_page(
@@ -77,6 +86,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             lambda: self._write_service.save_bid_selected_page(
                 db_path, bid_uid, page_uid
             ),
+            skippable_when_blocked=True,
         )
 
     def schedule_layer_show(self, db_path: str, layer_uid: str, show: bool) -> None:
@@ -87,6 +97,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             lambda: self._write_service.update_layer_show(
                 db_path, layer_uid, show, publish_database_refreshed_after_write=False
             ),
+            skippable_when_blocked=True,
         )
 
     def schedule_page_show_mode(
@@ -102,6 +113,7 @@ class DeferredPersistenceManager(QtCore.QObject):
                 show_mode,
                 publish_database_refreshed_after_write=False,
             ),
+            skippable_when_blocked=True,
         )
 
     def schedule_page_area_selection(
@@ -117,6 +129,7 @@ class DeferredPersistenceManager(QtCore.QObject):
                 area_uid,
                 publish_database_refreshed_after_write=False,
             ),
+            skippable_when_blocked=True,
         )
 
     def schedule_page_invert(self, db_path: str, page_uid: str, invert: bool) -> None:
@@ -125,6 +138,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             ("page_invert", db_path, page_uid),
             f"page invert state for page {page_uid}",
             lambda: self._write_service.save_page_invert(db_path, page_uid, invert),
+            skippable_when_blocked=True,
         )
 
     def schedule_page_bitonal(self, db_path: str, page_uid: str, bitonal: bool) -> None:
@@ -133,6 +147,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             ("page_bitonal", db_path, page_uid),
             f"page bitonal state for page {page_uid}",
             lambda: self._write_service.save_page_bitonal(db_path, page_uid, bitonal),
+            skippable_when_blocked=True,
         )
 
     def schedule_page_overlay_rect(
@@ -154,6 +169,7 @@ class DeferredPersistenceManager(QtCore.QObject):
                     publish_database_refreshed_after_write=False,
                 ).write_success
             ),
+            skippable_when_blocked=True,
         )
 
     def flush(self) -> bool:
@@ -210,6 +226,8 @@ class DeferredPersistenceManager(QtCore.QObject):
         return failed
 
     def _execute_item(self, item: DeferredPersistenceItem) -> bool:
+        if self._should_skip_expected_block(item):
+            return True
         try:
             success = bool(item.write_fn())
         except Exception:
@@ -227,6 +245,13 @@ class DeferredPersistenceManager(QtCore.QObject):
                 item.key,
             )
         return success
+
+    def _should_skip_expected_block(self, item: DeferredPersistenceItem) -> bool:
+        if not item.skippable_when_blocked:
+            return False
+        if len(item.key) <= 1:
+            return False
+        return self._write_service.is_expected_deferred_write_blocked(str(item.key[1]))
 
     def cancel_for_file(self, db_path: str) -> None:
         if not db_path:

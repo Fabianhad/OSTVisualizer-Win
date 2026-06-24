@@ -45,15 +45,11 @@ class McpBridgeClient:
                 return None
             self.last_status = "live_context"
             return context
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError):
             self.last_status = "malformed_bridge_payload"
-            self._logger.debug(
-                "MCP live context bridge returned malformed data: %s", exc
-            )
             return None
-        except (OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError):
             self.last_status = "bridge_unavailable"
-            self._logger.debug("MCP live context bridge unavailable: %s", exc)
             return None
 
     def _request_windows_pipe(self, payload: bytes) -> bytes:

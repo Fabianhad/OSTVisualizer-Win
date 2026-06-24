@@ -25,18 +25,24 @@ class ActiveBidWriteGuard:
         return bid_ref
 
     def blocks_active_locked_bid_write(
-        self, operation: str, file_path: str, bid_uid: Optional[str] = None
+        self, file_path: str, bid_uid: Optional[str] = None
+    ) -> bool:
+        if not self.is_active_locked_bid_write_blocked(file_path, bid_uid):
+            return False
+        return True
+
+    def is_active_locked_bid_write_blocked(
+        self, file_path: str, bid_uid: Optional[str] = None
     ) -> bool:
         bid_ref = self.active_locked_bid_ref_for(file_path)
         if not bid_ref:
             return False
         if bid_uid is not None and str(bid_uid) != str(bid_ref.bid_uid):
             return False
-        self._log_blocked_write(operation, file_path)
         return True
 
     def blocks_active_locked_bid_project_delete(
-        self, operation: str, file_path: str, project_uids: Iterable[str]
+        self, file_path: str, project_uids: Iterable[str]
     ) -> bool:
         bid_ref = self.active_locked_bid_ref_for(file_path)
         if not bid_ref:
@@ -46,12 +52,4 @@ class ActiveBidWriteGuard:
             return False
         if str(project_uid) not in {str(uid) for uid in project_uids}:
             return False
-        self._log_blocked_write(operation, file_path)
         return True
-
-    def _log_blocked_write(self, operation: str, file_path: str) -> None:
-        self.logger.warning(
-            "Blocked %s because the active bid is locked in %s",
-            operation,
-            file_path,
-        )

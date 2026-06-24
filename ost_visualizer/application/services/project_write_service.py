@@ -262,6 +262,15 @@ class ProjectWriteService(BaseWriteService):
             self._connection_manager and self._connection_manager.is_write_blocked()
         )
 
+    def is_expected_deferred_write_blocked(
+        self, db_path: str, bid_uid: Optional[str] = None
+    ) -> bool:
+        if self._is_write_blocked():
+            return True
+        return self._bid_write_guard.is_active_locked_bid_write_blocked(
+            db_path, bid_uid
+        )
+
     def _reload_after_success(
         self,
         db_path: str,
@@ -291,7 +300,7 @@ class ProjectWriteService(BaseWriteService):
         if not project_uids:
             return True
         if self._bid_write_guard.blocks_active_locked_bid_project_delete(
-            "delete_projects", db_path, project_uids
+            db_path, project_uids
         ):
             return False
         success = self._delete_projects.execute(db_path, project_uids)
@@ -326,9 +335,7 @@ class ProjectWriteService(BaseWriteService):
         if not bid_uids:
             return True
         if any(
-            self._bid_write_guard.blocks_active_locked_bid_write(
-                "move_bids", db_path, uid
-            )
+            self._bid_write_guard.blocks_active_locked_bid_write(db_path, uid)
             for uid in bid_uids
         ):
             return False
@@ -381,9 +388,7 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if not condition_uids:
             return True
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "delete_conditions", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
         success = self._delete_conditions.execute(db_path, bid_uid, condition_uids)
         return self._reload_after_success(db_path, success)
@@ -391,9 +396,7 @@ class ProjectWriteService(BaseWriteService):
     def create_condition_result(
         self, db_path: str, bid_uid: str, spec: CreateConditionSpec
     ) -> WriteReloadResult:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "create_condition", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult(None, write_success=False, reload_success=False)
         new_uid = self._insert_condition.execute(db_path, bid_uid, spec)
         if new_uid is None:
@@ -411,9 +414,7 @@ class ProjectWriteService(BaseWriteService):
         name: str,
         parent_uid: Optional[str] = None,
     ) -> WriteReloadResult:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "create_condition_folder", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult(None, write_success=False, reload_success=False)
         new_uid = self._insert_condition_folder.execute(
             db_path, bid_uid, name, parent_uid
@@ -427,9 +428,7 @@ class ProjectWriteService(BaseWriteService):
         )
 
     def rename_condition_folder(self, db_path: str, folder_uid: str, name: str) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "rename_condition_folder", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._rename_condition_folder.execute(db_path, folder_uid, name)
         return self._reload_after_success(db_path, success)
@@ -450,9 +449,7 @@ class ProjectWriteService(BaseWriteService):
     ) -> WriteReloadResult:
         if not folder_uids:
             return WriteReloadResult([], write_success=True, reload_success=True)
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "delete_condition_folders", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult(None, write_success=False, reload_success=False)
         validation = self.validate_condition_folder_delete(
             db_path, bid_uid, folder_uids
@@ -517,9 +514,7 @@ class ProjectWriteService(BaseWriteService):
     def duplicate_conditions_result(
         self, db_path: str, bid_uid: str, condition_uids: list
     ) -> WriteReloadResult:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "duplicate_conditions", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult([], write_success=False, reload_success=False)
         new_uids = self._duplicate_conditions.execute(db_path, bid_uid, condition_uids)
         if not new_uids:
@@ -539,7 +534,7 @@ class ProjectWriteService(BaseWriteService):
         publish_database_refreshed_after_write: bool = True,
     ) -> dict:
         if self._bid_write_guard.blocks_active_locked_bid_write(
-            "duplicate_conditions_to_bid", db_path, destination_bid_uid
+            db_path, destination_bid_uid
         ):
             return {}
         uid_map = self._duplicate_conditions.execute_to_bid(
@@ -562,9 +557,7 @@ class ProjectWriteService(BaseWriteService):
         all_conditions=None,
         publish_database_refreshed_after_write: bool = True,
     ) -> UpdateConditionResultDto:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "update_condition", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return UpdateConditionResultDto(
                 success=False, error="The active bid is locked"
             )
@@ -585,9 +578,7 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if not ordered_condition_uids:
             return True
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "renumber_conditions", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
         success = self._renumber_conditions.execute(
             db_path, bid_uid, ordered_condition_uids
@@ -602,9 +593,7 @@ class ProjectWriteService(BaseWriteService):
         curve: int,
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "set_takeoff_curve", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._set_takeoff_curve.execute(db_path, takeoff_uid, position, curve)
         return self._reload_after_success(
@@ -617,9 +606,7 @@ class ProjectWriteService(BaseWriteService):
         positions: List[Tuple[str, List[float]]],
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_takeoff_positions", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_takeoff_positions.execute(db_path, positions)
         return self._reload_after_success(
@@ -632,9 +619,7 @@ class ProjectWriteService(BaseWriteService):
         rotations: List[Tuple[str, float]],
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_takeoff_rotations", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_takeoff_rotations.execute(db_path, rotations)
         return self._reload_after_success(
@@ -647,9 +632,7 @@ class ProjectWriteService(BaseWriteService):
         updates: List[Tuple[str, dict]],
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_takeoff_text_properties", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_takeoff_text_properties.execute(db_path, updates)
         return self._reload_after_success(
@@ -711,9 +694,7 @@ class ProjectWriteService(BaseWriteService):
         is_negative: bool,
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "set_takeoffs_negative", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._set_takeoffs_negative.execute(
             db_path, takeoff_uids, is_negative
@@ -729,9 +710,7 @@ class ProjectWriteService(BaseWriteService):
         takeoff_specs: List[InsertTakeoffSpec],
         publish_database_refreshed_after_write: bool = True,
     ) -> List[str]:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "insert_takeoffs", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return []
         new_uids = self._insert_takeoffs.execute(db_path, bid_uid, takeoff_specs)
         if (
@@ -748,9 +727,7 @@ class ProjectWriteService(BaseWriteService):
         takeoff_uids: List[str],
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "delete_takeoffs", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._delete_takeoffs.execute(db_path, takeoff_uids)
         return self._reload_after_success(
@@ -760,17 +737,13 @@ class ProjectWriteService(BaseWriteService):
     def save_page_scale(
         self, db_path: str, page_uid: str, sf1: float, sf2: float
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_scale", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_page_scale.execute(db_path, page_uid, sf1, sf2)
         return self._reload_after_success(db_path, success)
 
     def save_page_name(self, db_path: str, page_uid: str, name: str) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_name", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_page_name.execute(db_path, page_uid, name)
         return self._reload_after_success(db_path, success)
@@ -778,9 +751,7 @@ class ProjectWriteService(BaseWriteService):
     def save_page_scales(
         self, db_path: str, page_uids: List[str], sf1: float, sf2: float
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_scales", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         valid_page_uids = self._unique_page_uids(page_uids)
         if not valid_page_uids:
@@ -802,9 +773,7 @@ class ProjectWriteService(BaseWriteService):
         show_mode: int,
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_show_mode", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_page_show_mode.execute(db_path, page_uid, show_mode)
         return self._reload_after_success(
@@ -814,9 +783,7 @@ class ProjectWriteService(BaseWriteService):
     def save_page_overlay_image(
         self, db_path: str, page_uid: str, overlay_image_path: str
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_overlay_image", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_page_overlay_image.execute(
             db_path, page_uid, overlay_image_path
@@ -830,9 +797,7 @@ class ProjectWriteService(BaseWriteService):
         overlay_rect: Tuple[float, float, float, float],
         publish_database_refreshed_after_write: bool = True,
     ) -> WriteReloadResult:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_overlay_rect", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return WriteReloadResult(None, write_success=False, reload_success=False)
         success = self._save_page_overlay_rect.execute(db_path, page_uid, overlay_rect)
         if not success:
@@ -847,16 +812,12 @@ class ProjectWriteService(BaseWriteService):
         )
 
     def save_page_invert(self, db_path: str, page_uid: str, invert: bool) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_invert", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         return self._save_page_invert.execute(db_path, page_uid, invert)
 
     def save_page_bitonal(self, db_path: str, page_uid: str, bitonal: bool) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_bitonal", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         return self._save_page_bitonal.execute(db_path, page_uid, bitonal)
 
@@ -870,9 +831,7 @@ class ProjectWriteService(BaseWriteService):
         invert: bool,
         bitonal: bool,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_image_adjustments", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         valid_page_uids = self._unique_page_uids(page_uids)
         if not valid_page_uids:
@@ -899,9 +858,7 @@ class ProjectWriteService(BaseWriteService):
         area_uid: str,
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_area", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_page_area.execute(db_path, page_uid, area_uid)
         return self._reload_after_success(
@@ -915,9 +872,7 @@ class ProjectWriteService(BaseWriteService):
         show: bool,
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "update_layer_show", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._update_layer_show.execute(db_path, layer_uid, show)
         return self._reload_after_success(
@@ -933,9 +888,7 @@ class ProjectWriteService(BaseWriteService):
     def insert_layer_result(
         self, db_path: str, bid_uid: str, name: str, after_sequence: int
     ) -> WriteReloadResult:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "insert_layer", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult(None, write_success=False, reload_success=False)
         new_uid = self._insert_layer.execute(db_path, bid_uid, name, after_sequence)
         if new_uid is None:
@@ -966,9 +919,7 @@ class ProjectWriteService(BaseWriteService):
         layer_uid: str,
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "delete_layer", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._delete_layer.execute(db_path, layer_uid)
         return self._reload_after_success(
@@ -981,9 +932,7 @@ class ProjectWriteService(BaseWriteService):
         if not unique_uids:
             result.reload_success = False
             return result
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "delete_layers", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             result.failed_uids = list(unique_uids)
             return result
         for uid in unique_uids:
@@ -1020,9 +969,7 @@ class ProjectWriteService(BaseWriteService):
         return result
 
     def update_all_layers_show(self, db_path: str, bid_uid: str, show: bool) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "update_all_layers_show", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
         success = self._update_all_layers_show.execute(db_path, bid_uid, show)
         return self._reload_after_success(db_path, success)
@@ -1036,9 +983,7 @@ class ProjectWriteService(BaseWriteService):
     def swap_layer_sequence(
         self, db_path: str, layer_uid_a: str, layer_uid_b: str
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "swap_layer_sequence", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._swap_layer_sequence.execute(db_path, layer_uid_a, layer_uid_b)
         return self._reload_after_success(db_path, success)
@@ -1054,9 +999,7 @@ class ProjectWriteService(BaseWriteService):
         return self._reload_after_success(db_path, success)
 
     def update_layer_name(self, db_path: str, layer_uid: str, name: str) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "update_layer_name", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._update_layer_name.execute(db_path, layer_uid, name)
         return self._reload_after_success(db_path, success)
@@ -1097,9 +1040,7 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._is_write_blocked():
             return False
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_page_view_state", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         return self._save_page_view_state.execute(
             db_path, page_uid, zoom_fac, current_x, current_y
@@ -1108,16 +1049,12 @@ class ProjectWriteService(BaseWriteService):
     def save_bid_selected_page(self, db_path: str, bid_uid: str, page_uid: str) -> bool:
         if self._is_write_blocked():
             return False
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_bid_selected_page", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
         return self._save_bid_selected_page.execute(db_path, bid_uid, page_uid)
 
     def save_cover_sheet(self, db_path: str, bid_uid: str, updates: dict) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_cover_sheet", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
         success = self._save_cover_sheet.execute(db_path, bid_uid, updates)
         return self._reload_after_success(db_path, success)
@@ -1126,9 +1063,7 @@ class ProjectWriteService(BaseWriteService):
         valid_page_uids = self._unique_page_uids(page_uids)
         if not valid_page_uids:
             return False
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "delete_pages", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._delete_pages.execute(db_path, valid_page_uids)
         return self._reload_after_success(db_path, success)
@@ -1239,9 +1174,7 @@ class ProjectWriteService(BaseWriteService):
     def save_bid_areas_result(
         self, db_path: str, bid_uid: str, changes
     ) -> WriteReloadResult:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_bid_areas", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult(None, write_success=False, reload_success=False)
         result = self._save_bid_areas.execute(db_path, bid_uid, changes)
         if result is None or result is False:

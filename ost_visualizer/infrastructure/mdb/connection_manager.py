@@ -32,7 +32,6 @@ class MdbConnectionManager:
         self, db_path: str, autocommit: bool = True
     ) -> Generator[pyodbc.Connection, None, None]:
         if not autocommit and self._write_blocked:
-            logger.warning("Write blocked: OST is active")
             raise WriteBlockedError("Database writes are blocked while OST is active")
         abs_path = os.path.abspath(db_path)
         pool = self._read_conns if autocommit else self._write_conns

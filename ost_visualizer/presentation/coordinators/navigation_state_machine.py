@@ -18,6 +18,7 @@ class NavState(Enum):
 
 _VALID_TRANSITIONS = {
     NavState.NO_FILE: {
+        NavState.NO_FILE,
         NavState.FILE_LOADED_NO_BID,
     },
     NavState.FILE_LOADED_NO_BID: {
@@ -49,13 +50,14 @@ _VALID_TRANSITIONS = {
         NavState.PLACE_MODE,
         NavState.REFRESHING,
     },
-    NavState.REFRESHING: {
-        NavState.NO_FILE,
-        NavState.FILE_LOADED_NO_BID,
-        NavState.BID_ACTIVE_NO_PAGES,
-        NavState.BID_ACTIVE_PAGES_SELECTED,
-        NavState.PLACE_MODE,
-    },
+    NavState.REFRESHING: set(),
+}
+_VALID_REFRESH_TARGETS = {
+    NavState.NO_FILE,
+    NavState.FILE_LOADED_NO_BID,
+    NavState.BID_ACTIVE_NO_PAGES,
+    NavState.BID_ACTIVE_PAGES_SELECTED,
+    NavState.PLACE_MODE,
 }
 
 
@@ -149,9 +151,16 @@ class NavigationStateMachine:
         )
         return True
 
-    def finish_refresh(self, target: NavState) -> None:
+    def finish_refresh(self, target: NavState) -> bool:
+        if self._state != NavState.REFRESHING:
+            self._refresh_snapshot = None
+            logger.warning(
+                "finish_refresh ignored because current state is %s",
+                self._state.name,
+            )
+            return False
         self._refresh_snapshot = None
-        if not self.transition_to(target):
+        if target not in _VALID_REFRESH_TARGETS:
             prev = self._state
             self._state = NavState.NO_FILE
             logger.error(
@@ -160,3 +169,6 @@ class NavigationStateMachine:
                 prev.name,
                 target.name,
             )
+            return False
+        self._state = target
+        return True

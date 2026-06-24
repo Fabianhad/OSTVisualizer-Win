@@ -37,6 +37,10 @@ class FakeProjectWriteService:
     def __init__(self):
         self.calls = []
         self.fail_methods = set()
+        self.expected_deferred_write_blocked = False
+
+    def is_expected_deferred_write_blocked(self, db_path):
+        return self.expected_deferred_write_blocked
 
     def save_page_view_state(self, db_path, page_uid, zoom_fac, current_x, current_y):
         self.calls.append(
@@ -188,6 +192,42 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
                 ("page_bitonal", "a.mdb", "p1", True),
             ],
         )
+
+    def test_expected_blocked_visual_write_is_skipped_without_warning(self):
+        self.service.expected_deferred_write_blocked = True
+        logger = logging.getLogger("tests.deferred_persistence_expected_block")
+        manager = DeferredPersistenceManager(self.service, logger_=logger)
+        self.addCleanup(manager.cleanup)
+        manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        with self.assertNoLogs(logger, level="WARNING"):
+            self.assertTrue(manager.flush())
+        self.assertEqual(manager.pending_count, 0)
+        self.assertEqual(self.service.calls, [])
+
+    def test_expected_blocked_visual_write_does_not_block_cleanup(self):
+        self.service.expected_deferred_write_blocked = True
+        manager = DeferredPersistenceManager(
+            self.service, logger_=logging.getLogger(__name__)
+        )
+        manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        self.assertTrue(manager.cleanup())
+        self.assertEqual(manager.pending_count, 0)
+        self.assertEqual(self.service.calls, [])
+
+    def test_expected_block_does_not_skip_critical_deferred_write(self):
+        self.service.expected_deferred_write_blocked = True
+        logger = logging.getLogger("tests.deferred_persistence_critical_block")
+        manager = DeferredPersistenceManager(self.service, logger_=logger)
+        self.addCleanup(manager.cleanup)
+        manager.schedule(
+            "critical_data",
+            ("critical_data", "a.mdb"),
+            "critical data write",
+            lambda: False,
+        )
+        with self.assertLogs(logger, level="WARNING"):
+            self.assertFalse(manager.flush())
+        self.assertEqual(manager.pending_count, 1)
 
     def test_cancel_for_file_removes_only_matching_file_writes(self):
         self.manager.schedule_layer_show("a.mdb", "l1", False)
@@ -1165,6 +1205,26 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
 
 class DeferredPersistenceBoundaryTests(unittest.TestCase):
+    def test_project_write_service_reports_ost_active_as_expected_deferred_block(self):
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service._connection_manager = SimpleNamespace(is_write_blocked=lambda: True)
+        service._bid_write_guard = SimpleNamespace(
+            is_active_locked_bid_write_blocked=lambda *_args: False
+        )
+        self.assertTrue(service.is_expected_deferred_write_blocked("a.mdb"))
+
+    def test_project_write_service_reports_locked_bid_as_expected_deferred_block(self):
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service._connection_manager = SimpleNamespace(is_write_blocked=lambda: False)
+        service._bid_write_guard = SimpleNamespace(
+            is_active_locked_bid_write_blocked=lambda db_path, bid_uid=None: (
+                db_path,
+                bid_uid,
+            )
+            == ("a.mdb", None)
+        )
+        self.assertTrue(service.is_expected_deferred_write_blocked("a.mdb"))
+
     def test_page_area_write_can_skip_database_refresh(self):
         calls = []
         service = ProjectWriteService.__new__(ProjectWriteService)

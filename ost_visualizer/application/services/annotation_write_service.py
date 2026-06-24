@@ -45,9 +45,7 @@ class AnnotationWriteService(BaseWriteService):
         positions: List[Tuple[str, str, List[float]]],
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_annotation_positions", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_annotation_positions.execute(db_path, positions)
         if success and publish_database_refreshed_after_write:
@@ -60,9 +58,7 @@ class AnnotationWriteService(BaseWriteService):
         updates: List[Tuple[str, str, dict]],
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_annotation_text_properties", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_annotation_text_properties.execute(db_path, updates)
         if success and publish_database_refreshed_after_write:
@@ -75,9 +71,7 @@ class AnnotationWriteService(BaseWriteService):
         updates: List[Tuple[str, str, dict]],
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_annotation_styles", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._save_annotation_styles.execute(db_path, updates)
         if success and publish_database_refreshed_after_write:
@@ -91,9 +85,7 @@ class AnnotationWriteService(BaseWriteService):
         positions: List[Tuple[str, str, List[float]]],
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "save_annotation_text_properties_and_positions", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = True
         if updates:
@@ -112,9 +104,7 @@ class AnnotationWriteService(BaseWriteService):
         ref_remap: Optional[PasteRefRemap] = None,
         publish_database_refreshed_after_write: bool = True,
     ) -> List[str]:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "insert_annotations", db_path, bid_uid
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return []
         new_uids = self._insert_annotations.execute(
             db_path, bid_uid, specs, ref_remap=ref_remap
@@ -129,9 +119,7 @@ class AnnotationWriteService(BaseWriteService):
         annotations: List[Tuple[str, str]],
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(
-            "delete_annotations", db_path
-        ):
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
         success = self._delete_annotations.execute(db_path, annotations)
         if success and publish_database_refreshed_after_write:

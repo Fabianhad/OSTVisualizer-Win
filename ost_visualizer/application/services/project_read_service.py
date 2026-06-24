@@ -4,7 +4,11 @@ from ...domain.entities.area import BidArea
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.cover_sheet import CoverSheetData, JobStatus
 from ...domain.entities.employee import Employee, PayClass
-from ...domain.entities.layer import BidLayer, merge_layers_for_bid
+from ...domain.entities.layer import (
+    BidLayer,
+    is_comments_layer_name,
+    merge_layers_for_bid,
+)
 from ...domain.services.dimension_format_service import (
     display_to_inches as _display_to_inches,
 )
@@ -31,7 +35,11 @@ class ProjectReadService:
         except Exception:
             self.logger.warning("Failed to load bid layers", exc_info=True)
             return []
-        return merge_layers_for_bid(all_layers)
+        return [
+            layer
+            for layer in merge_layers_for_bid(all_layers)
+            if not is_comments_layer_name(layer.name)
+        ]
 
     def get_default_layers(self, file_path: str) -> List[BidLayer]:
         try:

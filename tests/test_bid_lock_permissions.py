@@ -993,6 +993,19 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual("The active bid is locked", result.error)
 
+    def test_locked_bid_expected_block_does_not_warn(self):
+        project_data = _ProjectData()
+        project_data.locked = True
+        logger = logging.getLogger("tests.locked_bid_expected_block")
+        guard = ActiveBidWriteGuard(project_data, logger)
+        with self.assertNoLogs(logger, level="WARNING"):
+            self.assertTrue(
+                guard.blocks_active_locked_bid_write(
+                    "save_page_view_state",
+                    project_data.bid_ref.file_path,
+                )
+            )
+
     def test_locked_bid_blocks_bid_internal_mutations_but_allows_status_change(self):
         project_data = _ProjectData()
         project_data.locked = True

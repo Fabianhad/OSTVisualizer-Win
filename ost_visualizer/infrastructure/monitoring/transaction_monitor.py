@@ -54,12 +54,9 @@ class TransactionMonitor:
             return False
 
     def _open_status_event(self) -> Optional[ost_winevent.WinEvent]:
-        try:
-            evt = ost_winevent.WinEvent()
-            if evt.open(self.STATUS_EVENT_NAME):
-                return evt
-        except Exception:
-            logger.debug("Unable to open OST realtime status event", exc_info=True)
+        evt = ost_winevent.WinEvent()
+        if evt.open(self.STATUS_EVENT_NAME):
+            return evt
         return None
 
     def _sync_status_state(self) -> None:

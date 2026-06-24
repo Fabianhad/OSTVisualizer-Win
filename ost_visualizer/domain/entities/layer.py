@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Tuple
 
 ANNOTATION_LAYER_NAME = "annotation"
 IMAGE_LAYER_NAME = "image"
+COMMENTS_LAYER_NAME = "comments"
 
 
 def normalize_layer_name(name: str) -> str:
@@ -15,6 +16,10 @@ def is_annotation_layer_name(name: str) -> bool:
 
 def is_image_layer_name(name: str) -> bool:
     return normalize_layer_name(name) == IMAGE_LAYER_NAME
+
+
+def is_comments_layer_name(name: str) -> bool:
+    return normalize_layer_name(name) == COMMENTS_LAYER_NAME
 
 
 @dataclass
