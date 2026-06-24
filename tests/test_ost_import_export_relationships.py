@@ -17,8 +17,10 @@ from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
 )
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
+from ost_visualizer.infrastructure.mdb.importers.osp_importer import OspImporter
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+from ost_visualizer.presentation.visualization.exporters.osp_exporter import OspExporter
 
 
 class _Rows:
@@ -350,6 +352,272 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertIsNotNone(imported_pay_class)
         self.assertEqual(imported_employee[1], imported_pay_class[0])
         self.assertEqual(imported_bid, (5, imported_employee[0]))
+
+    def test_ost_import_remaps_bid_settings_selected_page_to_imported_page(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidSettings>
+              <BidSetting UID="30" BidUID="1" BidPageSelectedUID="20"/>
+            </BidSettings>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1"/>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "import.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            self.assertTrue(OstImporter(writer).import_ost(str(ost_path), "target.mdb"))
+        page_uid = connection.execute(
+            "SELECT UID FROM BidPages WHERE Name='Sheet'"
+        ).fetchone()[0]
+        selected_uid = connection.execute(
+            "SELECT BidPageSelectedUID FROM BidSettings"
+        ).fetchone()[0]
+        self.assertEqual(selected_uid, page_uid)
+
+    def test_ost_import_clears_missing_bid_settings_selected_page(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidSettings>
+              <BidSetting UID="30" BidUID="1" BidPageSelectedUID="999"/>
+            </BidSettings>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1"/>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "import.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            self.assertTrue(OstImporter(writer).import_ost(str(ost_path), "target.mdb"))
+        selected_uid = connection.execute(
+            "SELECT BidPageSelectedUID FROM BidSettings"
+        ).fetchone()[0]
+        self.assertIsNone(selected_uid)
+
+    def test_ost_import_clears_zero_blank_and_invalid_selected_page(self):
+        for selected_value in ("0", "", "not-a-uid"):
+            with self.subTest(selected_value=selected_value):
+                xml = f"""
+                <XML_ROOT>
+                  <Bid UID="1" JobName="Imported">
+                    <BidSettings>
+                      <BidSetting UID="30" BidUID="1"
+                                  BidPageSelectedUID="{selected_value}"/>
+                    </BidSettings>
+                    <BidPages>
+                      <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1"/>
+                    </BidPages>
+                  </Bid>
+                </XML_ROOT>
+                """
+                connection = sqlite3.connect(":memory:")
+                _create_import_schema(connection)
+                writer = _SqliteMdbWriter(connection)
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    ost_path = Path(temp_dir) / "import.ost"
+                    ost_path.write_text(xml, encoding="utf-8")
+                    self.assertTrue(
+                        OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                    )
+                selected_uid = connection.execute(
+                    "SELECT BidPageSelectedUID FROM BidSettings"
+                ).fetchone()[0]
+                self.assertIsNone(selected_uid)
+
+    def test_ost_import_does_not_insert_stale_source_selected_page_uid(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidSettings>
+              <BidSetting UID="30" BidUID="1" BidPageSelectedUID="999"/>
+            </BidSettings>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1"/>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "import.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            self.assertTrue(OstImporter(writer).import_ost(str(ost_path), "target.mdb"))
+        stale_count = connection.execute(
+            "SELECT COUNT(*) FROM BidSettings WHERE BidPageSelectedUID=999"
+        ).fetchone()[0]
+        self.assertEqual(stale_count, 0)
+
+    def test_access_import_clears_old_ost_missing_selected_page_reference(self):
+        if "Microsoft Access Driver (*.mdb, *.accdb)" not in pyodbc.drivers():
+            self.skipTest("Microsoft Access ODBC driver is not available")
+        xml = """
+        <XML_ROOT>
+          <Bid UID="757" JobName="Imported">
+            <BidSettings>
+              <BidSetting UID="740" BidUID="757" BidPageSelectedUID="138631"/>
+            </BidSettings>
+            <BidPages>
+              <BidPage UID="138791" BidUID="757" Name="Sheet" Sequence="1"/>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            temp_path = Path(temp_dir)
+            ost_path = temp_path / "old_shape.ost"
+            db_path = temp_path / "old_shape.mdb"
+            ost_path.write_text(xml, encoding="utf-8")
+            self.assertTrue(
+                database_creator.DatabaseCreator().create_database(db_path, "Old Shape")
+            )
+            writer = MdbWriter()
+            try:
+                self.assertTrue(
+                    OstImporter(writer).import_ost(str(ost_path), str(db_path))
+                )
+            finally:
+                writer._conn_manager.close()
+            conn = pyodbc.connect(
+                "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};",
+                autocommit=False,
+            )
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT [BidPageSelectedUID] FROM [BidSettings]")
+                self.assertIsNone(cursor.fetchone()[0])
+            finally:
+                conn.rollback()
+                cursor.close()
+                conn.close()
+
+    def test_access_import_handles_new_ost_zero_bid_settings_uid(self):
+        if "Microsoft Access Driver (*.mdb, *.accdb)" not in pyodbc.drivers():
+            self.skipTest("Microsoft Access ODBC driver is not available")
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidSettings>
+              <BidSetting UID="0" BidUID="1" BidPageSelectedUID="0"/>
+            </BidSettings>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1"/>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            temp_path = Path(temp_dir)
+            ost_path = temp_path / "new_shape.ost"
+            db_path = temp_path / "new_shape.mdb"
+            ost_path.write_text(xml, encoding="utf-8")
+            self.assertTrue(
+                database_creator.DatabaseCreator().create_database(db_path, "New Shape")
+            )
+            writer = MdbWriter()
+            try:
+                self.assertTrue(
+                    OstImporter(writer).import_ost(str(ost_path), str(db_path))
+                )
+            finally:
+                writer._conn_manager.close()
+            conn = pyodbc.connect(
+                "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};",
+                autocommit=False,
+            )
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT [UID], [BidPageSelectedUID] FROM [BidSettings]")
+                row = cursor.fetchone()
+                self.assertIsNotNone(row[0])
+                self.assertIsNone(row[1])
+            finally:
+                conn.rollback()
+                cursor.close()
+                conn.close()
+
+    def test_database_creator_enforces_nullable_bid_settings_page_relationship(self):
+        if "Microsoft Access Driver (*.mdb, *.accdb)" not in pyodbc.drivers():
+            self.skipTest("Microsoft Access ODBC driver is not available")
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            db_path = Path(temp_dir) / "relationship.mdb"
+            self.assertTrue(
+                database_creator.DatabaseCreator().create_database(
+                    db_path, "Relationship"
+                )
+            )
+            conn = pyodbc.connect(
+                "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};",
+                autocommit=False,
+            )
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "INSERT INTO [Bids] ([UID], [JobName]) VALUES (?, ?)", 100, "Bid"
+                )
+                cursor.execute(
+                    "INSERT INTO [BidSettings] ([BidUID], [BidPageSelectedUID]) "
+                    "VALUES (?, ?)",
+                    100,
+                    None,
+                )
+                with self.assertRaises(pyodbc.IntegrityError):
+                    cursor.execute(
+                        "INSERT INTO [BidSettings] "
+                        "([BidUID], [BidPageSelectedUID]) VALUES (?, ?)",
+                        100,
+                        999,
+                    )
+            finally:
+                conn.rollback()
+                cursor.close()
+                conn.close()
+
+    def test_osp_export_import_preserves_valid_selected_page_reference(self):
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Imported"},
+            bid_tables={
+                "BidSettings": [{"UID": "2", "BidUID": "1", "BidPageSelectedUID": "3"}],
+                "BidPages": [
+                    {"UID": "3", "BidUID": "1", "Name": "Sheet", "Sequence": "1"}
+                ],
+            },
+        )
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            osp_path = Path(temp_dir) / "roundtrip.osp"
+            exporter = OspExporter(
+                SimpleNamespace(),
+                "test",
+                lambda _uom_service: OstExporter(SimpleNamespace()),
+            )
+            result = exporter.export(raw_data, str(osp_path), bid_name="Roundtrip")
+            self.assertTrue(result.success, result.error_message)
+            self.assertTrue(
+                OspImporter(OstImporter(writer)).import_osp(str(osp_path), "target.mdb")
+            )
+        page_uid = connection.execute(
+            "SELECT UID FROM BidPages WHERE Name='Sheet'"
+        ).fetchone()[0]
+        selected_uid = connection.execute(
+            "SELECT BidPageSelectedUID FROM BidSettings"
+        ).fetchone()[0]
+        self.assertEqual(selected_uid, page_uid)
 
     def test_save_page_area_handles_duplicate_selected_settings_rows(self):
         connection = sqlite3.connect(":memory:")

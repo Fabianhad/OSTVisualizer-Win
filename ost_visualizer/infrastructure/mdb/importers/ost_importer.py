@@ -85,9 +85,11 @@ class OstImporter:
         pay_class_uid_map: Dict[str, str],
     ) -> RawBidData:
         uid_map = self._build_uid_map(raw_data, max_uid)
+        page_uid_map = self._build_page_uid_map(raw_data, uid_map)
         return self._remap_data(
             raw_data,
             uid_map,
+            page_uid_map,
             cdn_uid_map,
             job_status_uid_map,
             employee_uid_map,
@@ -113,16 +115,35 @@ class OstImporter:
                 assign(row.get("UID", ""))
         return uid_map
 
+    def _build_page_uid_map(
+        self, raw_data: RawBidData, uid_map: Dict[str, str]
+    ) -> Dict[str, str]:
+        page_uid_map: Dict[str, str] = {}
+        for page_row in raw_data.bid_tables.get("BidPages", []):
+            source_uid = (page_row.get("UID") or "").strip()
+            if not source_uid or source_uid == "0":
+                continue
+            mapped_uid = uid_map.get(source_uid)
+            if mapped_uid:
+                page_uid_map[source_uid] = mapped_uid
+        return page_uid_map
+
     def _remap_uid_value(
         self,
         field: str,
         value: str,
         uid_map: Dict[str, str],
+        page_uid_map: Dict[str, str],
         cdn_uid_map: Dict[str, str],
         job_status_uid_map: Dict[str, str],
         employee_uid_map: Dict[str, str],
         pay_class_uid_map: Dict[str, str],
     ) -> str:
+        if field == "BidPageSelectedUID":
+            source_uid = (value or "").strip()
+            if not source_uid or source_uid == "0":
+                return "NULL"
+            return page_uid_map.get(source_uid, "NULL")
         if not value:
             return value
         if value == "0":
@@ -145,6 +166,7 @@ class OstImporter:
         self,
         row: Dict[str, str],
         uid_map: Dict[str, str],
+        page_uid_map: Dict[str, str],
         cdn_uid_map: Dict[str, str],
         job_status_uid_map: Dict[str, str],
         employee_uid_map: Dict[str, str],
@@ -155,6 +177,7 @@ class OstImporter:
                 field,
                 value,
                 uid_map,
+                page_uid_map,
                 cdn_uid_map,
                 job_status_uid_map,
                 employee_uid_map,
@@ -167,6 +190,7 @@ class OstImporter:
         self,
         raw_data: RawBidData,
         uid_map: Dict[str, str],
+        page_uid_map: Dict[str, str],
         cdn_uid_map: Dict[str, str],
         job_status_uid_map: Dict[str, str],
         employee_uid_map: Dict[str, str],
@@ -175,6 +199,7 @@ class OstImporter:
         remapped_bid_row = self._remap_row(
             raw_data.bid_row,
             uid_map,
+            page_uid_map,
             cdn_uid_map,
             job_status_uid_map,
             employee_uid_map,
@@ -185,6 +210,7 @@ class OstImporter:
                 self._remap_row(
                     r,
                     uid_map,
+                    page_uid_map,
                     cdn_uid_map,
                     job_status_uid_map,
                     employee_uid_map,
@@ -199,6 +225,7 @@ class OstImporter:
                 self._remap_row(
                     r,
                     uid_map,
+                    page_uid_map,
                     cdn_uid_map,
                     job_status_uid_map,
                     employee_uid_map,

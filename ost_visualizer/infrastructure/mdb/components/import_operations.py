@@ -434,6 +434,15 @@ class ImportOperationsMixin:
     ) -> None:
         db_columns, col_types = table_info
         filtered = {k: v for k, v in row.items() if k in db_columns}
+        filtered = {
+            column: value
+            for column, value in filtered.items()
+            if not (
+                column == "UID"
+                and col_types.get(column, "") == "counter"
+                and value in (None, "", "NULL")
+            )
+        }
         if not filtered:
             return
         cols = list(filtered.keys())
