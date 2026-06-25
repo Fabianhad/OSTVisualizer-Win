@@ -11,6 +11,9 @@ from ost_visualizer.presentation.visualization.core.mesh_generator import MeshDa
 from ost_visualizer.presentation.visualization.renderers.threejs.adapters.threejs_mesh_adapter import (
     ThreejsMeshAdapter,
 )
+from ost_visualizer.presentation.visualization.renderers.threejs.two_d_takeoff_processor import (
+    process_takeoffs_2d_for_threejs,
+)
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
 )
@@ -85,6 +88,14 @@ class _Provider:
         return self.strategy
 
 
+class _TakeoffService:
+    def group_area_takeoffs_with_holes(self, takeoffs, _conditions):
+        return list(takeoffs), {}
+
+    def group_takeoffs_by_type(self, _conditions, takeoffs):
+        return {1: list(takeoffs)}
+
+
 class _ProjectData:
     def __init__(self):
         self.visible_only_calls = []
@@ -98,6 +109,11 @@ class _ProjectData:
             scale_factor2=1.0,
             width_pts=72.0,
             height_pts=144.0,
+            effective_width_pts=72.0,
+            effective_height_pts=144.0,
+            rotation=0,
+            flip_x=False,
+            flip_y=False,
             image_path="",
             page_index=1,
             layer_visible=False,
@@ -119,9 +135,12 @@ class _ProjectData:
                 Takeoff(
                     uid="takeoff-visible",
                     condition_uid="visible",
+                    page_uid="page-1",
                     area_uid="area-1",
                 ),
-                Takeoff(uid="takeoff-hidden", condition_uid="hidden"),
+                Takeoff(
+                    uid="takeoff-hidden", condition_uid="hidden", page_uid="page-1"
+                ),
             ],
             valid_page_uids=list(page_uids),
             page_count=len(page_uids),
@@ -240,6 +259,13 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertEqual(kwargs["areas"][0].uid, "area-1")
         self.assertEqual(kwargs["page_image_layer"]["uid"], "image")
         self.assertFalse(kwargs["page_image_layer"]["visible"])
+        self.assertEqual(kwargs["page_uid"], "page-1")
+        self.assertEqual(kwargs["page_width_2d"], 72.0)
+        self.assertEqual(kwargs["page_height_2d"], 144.0)
+        self.assertEqual(kwargs["page_scale_ratio"], 1.0)
+        self.assertEqual(kwargs["page_rotation"], 0)
+        self.assertFalse(kwargs["page_flip_x"])
+        self.assertFalse(kwargs["page_flip_y"])
 
     def test_non_html_export_keeps_visible_only_collection(self):
         strategy = _ExportStrategy("obj")
@@ -346,6 +372,80 @@ class ThreejsExportLayerTests(unittest.TestCase):
         )
         self.assertEqual(scene["geometries"][0]["area_uid"], "")
         self.assertNotIn("areas", scene)
+
+    def test_two_d_takeoff_export_includes_visibility_metadata_and_rings(self):
+        condition = Condition(
+            uid="condition-1",
+            name="Slab",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0x336699,
+            layer_uid="layer-1",
+        )
+        takeoff = Takeoff(
+            uid="takeoff-1",
+            condition_uid="condition-1",
+            page_uid="page-1",
+            area_uid="area-1",
+            position=[0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
+        )
+        entries = process_takeoffs_2d_for_threejs(
+            {"condition-1": condition},
+            [takeoff],
+            ColorService(),
+            _TakeoffService(),
+            {
+                "scale_factor1": 1.0,
+                "scale_factor2": 1.0,
+                "rotation": 0,
+                "flip_x": False,
+                "flip_y": False,
+                "width": 72.0,
+                "height": 72.0,
+                "view_scale": 1.0,
+            },
+            grayscale_enabled=False,
+        )
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["takeoff_uid"], "takeoff-1")
+        self.assertEqual(entry["condition_uid"], "condition-1")
+        self.assertEqual(entry["area_uid"], "area-1")
+        self.assertEqual(entry["layer_uid"], "layer-1")
+        self.assertEqual(entry["kind"], "area")
+        self.assertEqual(entry["color"], "#996633")
+        self.assertTrue(entry["visible"])
+        self.assertFalse(entry["is_negative"])
+        self.assertEqual(len(entry["rings"]), 1)
+        self.assertGreaterEqual(len(entry["rings"][0]), 3)
+
+    def test_two_d_takeoff_export_keeps_unassigned_area_empty(self):
+        condition = Condition(
+            uid="condition-1",
+            name="Count",
+            condition_type=Condition.TYPE_COUNT,
+            color_fill=0,
+            layer_uid="layer-1",
+            width=1.0,
+        )
+        takeoff = Takeoff(
+            uid="takeoff-1",
+            condition_uid="condition-1",
+            area_uid="0",
+            position=[1.0, 1.0],
+        )
+        entries = process_takeoffs_2d_for_threejs(
+            {"condition-1": condition},
+            [takeoff],
+            ColorService(),
+            _TakeoffService(),
+            {
+                "scale_factor1": 1.0,
+                "scale_factor2": 1.0,
+                "width": 72.0,
+                "height": 72.0,
+            },
+        )
+        self.assertEqual(entries[0]["area_uid"], "")
 
 
 if __name__ == "__main__":

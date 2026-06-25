@@ -16,6 +16,7 @@ class FakeProjectModel:
         self.bid_layer_visibility = {}
         self.bid_layer_names_by_uid = {}
         self.bid_layer_visibility_by_name = {}
+        self.bid_layers = []
 
     def get_bid_conditions(self):
         return dict(self.bid_conditions)

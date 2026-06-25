@@ -6,7 +6,6 @@ class MeshMetadata(TypedDict, total=False):
     color: str
     opacity: float
     name: str
-    cdn_type: str
     cdn_type_uid: str
     cdn_type_name: str
     condition_color: str

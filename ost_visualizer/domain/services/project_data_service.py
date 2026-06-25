@@ -147,14 +147,14 @@ class ProjectDataService:
         }
 
     def get_bid_layer_snapshot(self) -> List[BidLayer]:
-        layers = list(getattr(self.model, "bid_layers", []) or [])
+        layers = list(self.model.bid_layers or [])
         if layers:
             return [
                 layer
                 for layer in merge_layers_for_bid(layers)
                 if not is_comments_layer_name(layer.name)
             ]
-        current_bid_ref = getattr(self.model, "current_bid_ref", None)
+        current_bid_ref = self.model.current_bid_ref
         bid_uid = current_bid_ref.bid_uid if current_bid_ref else ""
         snapshot = []
         for sequence, (layer_uid, layer_name) in enumerate(
@@ -183,7 +183,7 @@ class ProjectDataService:
                 for takeoff in takeoffs
                 if str(takeoff.area_uid or "") not in ("", "0")
             }
-        areas = list(getattr(self.model, "bid_areas", {}).values())
+        areas = list(self.model.bid_areas.values())
         if used_area_uids is not None:
             areas = [area for area in areas if str(area.uid) in used_area_uids]
         return sorted(areas, key=lambda area: int(area.sequence or 0))
@@ -229,7 +229,7 @@ class ProjectDataService:
         for condition in self.model.bid_conditions.values():
             if str(condition.layer_uid or "") == layer_key:
                 condition.layer_visible = visible
-        for layer in getattr(self.model, "bid_layers", []) or []:
+        for layer in self.model.bid_layers or []:
             if str(layer.uid) == layer_key:
                 layer.show = visible
         if self.is_image_layer_uid(layer_key):
@@ -245,7 +245,7 @@ class ProjectDataService:
             self._set_named_layer_visibility(layer_uid, visible)
         for condition in self.model.bid_conditions.values():
             condition.layer_visible = visible
-        for layer in getattr(self.model, "bid_layers", []) or []:
+        for layer in self.model.bid_layers or []:
             layer.show = visible
         changed_pages: List[str] = []
         for page in self.model.get_all_pages():

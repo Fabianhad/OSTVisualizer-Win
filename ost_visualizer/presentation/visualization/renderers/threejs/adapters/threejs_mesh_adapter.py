@@ -48,9 +48,7 @@ class ThreejsMeshAdapter:
                     "visible": True,
                     "cdn_type_uid": str(metadata.get("cdn_type_uid", "") or ""),
                     "cdn_type_name": str(
-                        metadata.get("cdn_type_name")
-                        or metadata.get("cdn_type")
-                        or "Unknown"
+                        metadata.get("cdn_type_name", "") or "Unknown"
                     ),
                     "color": str(metadata.get("condition_color", "") or ""),
                     "ref_no": int(metadata.get("condition_ref_no", 0) or 0),
@@ -188,8 +186,6 @@ class ThreejsMeshAdapter:
             "area_uid": str(metadata.get("area_uid", "") or ""),
             "layer_uid": str(metadata.get("layer_uid", "") or ""),
             "cdn_type_uid": str(metadata.get("cdn_type_uid", "") or ""),
-            "cdn_type_name": str(
-                metadata.get("cdn_type_name") or metadata.get("cdn_type") or "Unknown"
-            ),
+            "cdn_type_name": str(metadata.get("cdn_type_name", "") or "Unknown"),
         }
         return entry

@@ -17,6 +17,7 @@ from .....domain.entities.layer import BidLayer
 from .....domain.entities.takeoff import Takeoff
 from .adapters.threejs_mesh_adapter import ThreejsMeshAdapter
 from .mesh_processor import process_meshes_for_threejs
+from .two_d_takeoff_processor import process_takeoffs_2d_for_threejs
 
 
 def visualize_with_threejs(
@@ -36,6 +37,13 @@ def visualize_with_threejs(
     pdf_page_index: int = 0,
     page_width_inches: float = 0.0,
     page_height_inches: float = 0.0,
+    page_uid: str = "",
+    page_width_2d: float = 0.0,
+    page_height_2d: float = 0.0,
+    page_scale_ratio: float = 1.0,
+    page_rotation: int = 0,
+    page_flip_x: bool = False,
+    page_flip_y: bool = False,
     layers: Optional[List[BidLayer]] = None,
     areas: Optional[List[BidArea]] = None,
     page_image_layer: Optional[ScenePageImageLayer] = None,
@@ -65,6 +73,39 @@ def visualize_with_threejs(
         areas=areas,
         page_image_layer=page_image_layer,
     )
+    if page_width_2d > 0 and page_height_2d > 0:
+        first_page_takeoffs = [
+            takeoff
+            for takeoff in bid_takeoffs
+            if not page_uid or not takeoff.page_uid or takeoff.page_uid == page_uid
+        ]
+        page_info = {
+            "scale_factor1": 1.0,
+            "scale_factor2": page_scale_ratio or 1.0,
+            "rotation": page_rotation,
+            "flip_x": page_flip_x,
+            "flip_y": page_flip_y,
+            "width": page_width_2d,
+            "height": page_height_2d,
+            "view_scale": 1.0,
+        }
+        scene_data["page_2d"] = {
+            "uid": page_uid,
+            "width": page_width_2d,
+            "height": page_height_2d,
+            "image_layer_uid": (str((page_image_layer or {}).get("uid", "") or "")),
+            "visible": bool((page_image_layer or {}).get("visible", True)),
+        }
+        scene_data["takeoffs_2d"] = process_takeoffs_2d_for_threejs(
+            bid_conditions,
+            first_page_takeoffs,
+            color_service,
+            takeoff_service,
+            page_info,
+            color_mode=color_mode,
+            grayscale_enabled=grayscale_enabled,
+            page_area_selections=page_area_selections,
+        )
     if pdf_path and os.path.isfile(pdf_path):
         try:
             with open(pdf_path, "rb") as pf:

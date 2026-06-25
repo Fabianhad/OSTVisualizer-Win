@@ -58,6 +58,28 @@ class ScenePageImageLayer(TypedDict):
     visible: bool
 
 
+class ScenePage2DEntry(TypedDict):
+    uid: str
+    width: float
+    height: float
+    image_layer_uid: str
+    visible: bool
+
+
+class SceneTakeoff2DEntry(TypedDict):
+    takeoff_uid: str
+    condition_uid: str
+    area_uid: str
+    layer_uid: str
+    name: str
+    visible: bool
+    kind: str
+    color: str
+    opacity: float
+    rings: List[List[List[float]]]
+    is_negative: bool
+
+
 class SceneData(TypedDict, total=False):
     title: str
     geometries: List[SceneGeometryEntry]
@@ -67,6 +89,8 @@ class SceneData(TypedDict, total=False):
     conditions: List[SceneConditionEntry]
     areas: List[SceneAreaEntry]
     page_image_layer: ScenePageImageLayer
+    page_2d: ScenePage2DEntry
+    takeoffs_2d: List[SceneTakeoff2DEntry]
     pdf_base64: str
     pdf_page_index: int
     page_width: float

@@ -6,6 +6,8 @@ from ..dtos.export_dialog_dto import ExportDialogDto
 from ..dtos.export_dto import ExportErrorCode, ExportRequestDto, ExportResultDto
 from ..interfaces.i_visualization_provider import IVisualizationProvider
 
+HTML_EXTENSION = "html"
+
 
 class ExportService:
     def __init__(
@@ -32,9 +34,7 @@ class ExportService:
                 error=f"Unknown export format: {format_key}",
                 error_code=ExportErrorCode.UNKNOWN_FORMAT,
             )
-        result = self.project_data.collect_takeoffs_for_pages(
-            page_uids, visible_only=strategy.extension != "html"
-        )
+        result = self._collect_takeoffs_for_strategy(page_uids, strategy)
         if result.is_empty():
             return ExportDialogDto(
                 success=False,
@@ -68,9 +68,7 @@ class ExportService:
                 error_message=f"Unknown export format: {request.format_key}",
                 error_code=ExportErrorCode.UNKNOWN_FORMAT,
             )
-        result = self.project_data.collect_takeoffs_for_pages(
-            request.page_uids, visible_only=strategy.extension != "html"
-        )
+        result = self._collect_takeoffs_for_strategy(request.page_uids, strategy)
         if result.is_empty():
             return ExportResultDto(
                 success=False,
@@ -94,7 +92,7 @@ class ExportService:
             kwargs = strategy.get_kwargs(
                 config_model, self.project_data.get_page_area_selections()
             )
-            if strategy.extension == "html":
+            if strategy.extension == HTML_EXTENSION:
                 layers = self.project_data.get_bid_layer_snapshot()
                 areas = self.project_data.get_bid_area_snapshot(result.takeoffs)
                 kwargs.update(
@@ -111,7 +109,7 @@ class ExportService:
                         image_layer_uid = self.project_data.get_image_layer_uid()
                         kwargs["page_image_layer"] = {
                             "uid": image_layer_uid or IMAGE_LAYER_NAME,
-                            "name": "Image",
+                            "name": IMAGE_LAYER_NAME.title(),
                             "visible": bool(page.layer_visible),
                         }
                         sf1 = page.scale_factor1 or 1.0
@@ -119,6 +117,13 @@ class ExportService:
                         ratio = sf2 / sf1 if sf1 > 0 else 1.0
                         kwargs["page_width_inches"] = (page.width_pts / 72.0) * ratio
                         kwargs["page_height_inches"] = (page.height_pts / 72.0) * ratio
+                        kwargs["page_uid"] = page.uid
+                        kwargs["page_width_2d"] = page.effective_width_pts
+                        kwargs["page_height_2d"] = page.effective_height_pts
+                        kwargs["page_scale_ratio"] = ratio
+                        kwargs["page_rotation"] = page.rotation
+                        kwargs["page_flip_x"] = page.flip_x
+                        kwargs["page_flip_y"] = page.flip_y
                         if page.image_path:
                             if is_pdf_suffix(page.image_path):
                                 kwargs["pdf_path"] = page.image_path
@@ -150,3 +155,8 @@ class ExportService:
                 error_message=str(e),
                 error_code=ExportErrorCode.UNEXPECTED,
             )
+
+    def _collect_takeoffs_for_strategy(self, page_uids: List[str], strategy):
+        return self.project_data.collect_takeoffs_for_pages(
+            page_uids, visible_only=strategy.extension != HTML_EXTENSION
+        )

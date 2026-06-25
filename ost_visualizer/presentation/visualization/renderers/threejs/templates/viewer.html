@@ -64,6 +64,87 @@
             display: block;
         }
 
+        body.plan-mode #canvas {
+            display: none;
+        }
+
+        #view-mode-switch {
+            position: fixed;
+            top: calc(12px + var(--viewer-safe-top));
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 12;
+            display: flex;
+            padding: 3px;
+            gap: 2px;
+            background: var(--viewer-surface);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--viewer-border);
+            border-radius: 999px;
+            user-select: none;
+        }
+
+        .view-mode-button {
+            min-width: 58px;
+            padding: 6px 14px;
+            border: none;
+            border-radius: 999px;
+            background: transparent;
+            color: var(--viewer-muted);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .view-mode-button.active {
+            background: var(--viewer-accent);
+            color: white;
+        }
+
+        .view-mode-button:disabled {
+            cursor: default;
+            color: var(--viewer-disabled);
+        }
+
+        #plan-view {
+            position: fixed;
+            inset: 0;
+            overflow: hidden;
+            background: #202020;
+            touch-action: none;
+            cursor: grab;
+        }
+
+        body:not(.plan-mode) #plan-view {
+            display: none;
+        }
+
+        #plan-view.panning {
+            cursor: grabbing;
+        }
+
+        #plan-content {
+            position: absolute;
+            left: 0;
+            top: 0;
+            transform-origin: 0 0;
+            background: white;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+        }
+
+        #plan-pdf-canvas,
+        #plan-overlay {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        #plan-overlay {
+            pointer-events: none;
+        }
+
         #layer-panel {
             position: fixed;
             top: calc(12px + var(--viewer-safe-top));
@@ -213,8 +294,17 @@
         }
 
         @media (max-width: 480px) {
-            #layer-panel {
+            #view-mode-switch {
                 top: calc(8px + var(--viewer-safe-top));
+            }
+
+            .view-mode-button {
+                min-width: 54px;
+                padding: 7px 12px;
+            }
+
+            #layer-panel {
+                top: calc(52px + var(--viewer-safe-top));
                 left: calc(8px + var(--viewer-safe-left));
                 right: calc(8px + var(--viewer-safe-right));
                 min-width: 0;
@@ -265,6 +355,10 @@
 </head>
 
 <body>
+    <div id="view-mode-switch" role="group" aria-label="View mode">
+        <button type="button" id="view-mode-plan" class="view-mode-button">Plan</button>
+        <button type="button" id="view-mode-3d" class="view-mode-button active">3D</button>
+    </div>
     <div id="layer-panel" class="collapsed">
         <div id="layer-header">
             <span>Visibility</span>
@@ -275,6 +369,12 @@
             <button type="button" id="layer-hide-all">Hide All</button>
         </div>
         <div id="layer-list"></div>
+    </div>
+    <div id="plan-view" aria-label="2D plan view">
+        <div id="plan-content">
+            <canvas id="plan-pdf-canvas"></canvas>
+            <svg id="plan-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
     </div>
     <canvas id="canvas"></canvas>
     <script type="application/json" id="scene-data">
@@ -331,6 +431,12 @@
         const layerHeader = document.getElementById('layer-header');
         const layerShowAll = document.getElementById('layer-show-all');
         const layerHideAll = document.getElementById('layer-hide-all');
+        const planView = document.getElementById('plan-view');
+        const planContent = document.getElementById('plan-content');
+        const planPdfCanvas = document.getElementById('plan-pdf-canvas');
+        const planOverlay = document.getElementById('plan-overlay');
+        const planModeButton = document.getElementById('view-mode-plan');
+        const threeModeButton = document.getElementById('view-mode-3d');
         const layerVisibility = new Map();
         const conditionVisibility = new Map();
         const areaVisibility = new Map();
@@ -339,8 +445,20 @@
         const areaRows = new Map();
         const visibilityObjects = [];
         const UNLAYERED_UID = '__unlayered__';
+        const IMAGE_LAYER_DISPLAY_NAME = 'Image';
+        const UNLAYERED_LAYER_NAME = 'Unlayered';
+        const FALLBACK_VISIBILITY_NAME = 'Unassigned';
+        const FALLBACK_CONDITION_NAME = 'Condition';
+        const FALLBACK_AREA_NAME = 'Area';
         const UNASSIGNED_CDN_TYPE_UID = '__unassigned_cdn_type__';
         const UNASSIGNED_CDN_TYPE_NAME = '(unassigned)';
+        const UNKNOWN_CDN_TYPE_NAME = 'Unknown';
+        const FALLBACK_HEX_COLOR = '#808080';
+        const NEGATIVE_TAKEOFF_STROKE = '#dc2626';
+        const PLAN_FIT_MARGIN = 0.95;
+        const PLAN_MIN_SCALE = 0.05;
+        const PLAN_MAX_SCALE = 50.0;
+        const PLAN_WHEEL_SENSITIVITY = 0.001;
 
         function normalizeLayerUid(layerUid) {
             const uid = layerUid === undefined || layerUid === null ? '' : String(layerUid);
@@ -353,7 +471,7 @@
             return normalized === '0' ? '' : normalized;
         }
 
-        function ensureVisibilityEntry(registry, uid, name, visible = true, fallbackName = 'Unassigned') {
+        function ensureVisibilityEntry(registry, uid, name, visible = true, fallbackName = FALLBACK_VISIBILITY_NAME) {
             if (!uid) return null;
             if (!registry.has(uid)) {
                 registry.set(uid, {
@@ -381,7 +499,7 @@
         function getConditionTypeName(condition) {
             const cdnTypeUid = normalizeOptionalUid(condition.cdn_type_uid);
             if (!cdnTypeUid) return UNASSIGNED_CDN_TYPE_NAME;
-            return condition.cdn_type_name || 'Unknown';
+            return condition.cdn_type_name || UNKNOWN_CDN_TYPE_NAME;
         }
 
         function compareByName(a, b) {
@@ -400,7 +518,7 @@
                     normalizeLayerUid(layer.uid),
                     layer.name,
                     layer.visible,
-                    'Unlayered'
+                    UNLAYERED_LAYER_NAME
                 );
             });
             if (sceneData.page_image_layer) {
@@ -408,9 +526,9 @@
                 const pageEntry = ensureVisibilityEntry(
                     layerVisibility,
                     normalizeLayerUid(layer.uid),
-                    layer.name || 'Image',
+                    layer.name || IMAGE_LAYER_DISPLAY_NAME,
                     layer.visible,
-                    'Image'
+                    IMAGE_LAYER_DISPLAY_NAME
                 );
                 pageEntry.visible = layer.visible !== false;
             }
@@ -421,7 +539,7 @@
                     normalizeOptionalUid(condition.uid),
                     condition.name,
                     condition.visible,
-                    'Condition'
+                    FALLBACK_CONDITION_NAME
                 );
                 if (entry) {
                     entry.cdnTypeUid = getConditionTypeUid(condition);
@@ -439,7 +557,7 @@
                     normalizeOptionalUid(area.uid),
                     area.name,
                     area.visible,
-                    'Area'
+                    FALLBACK_AREA_NAME
                 );
             });
         }
@@ -459,23 +577,32 @@
             );
         }
 
+        function setRenderedObjectVisible(object, visible) {
+            if (object && object.isObject3D) {
+                object.visible = visible;
+            } else if (object && object.style) {
+                object.style.display = visible ? '' : 'none';
+            }
+        }
+
         function registerVisibilityObject(keys, object, baseVisible = true) {
             const layerUid = normalizeLayerUid(keys.layerUid);
             const conditionUid = normalizeOptionalUid(keys.conditionUid);
             const areaUid = normalizeOptionalUid(keys.areaUid);
-            ensureVisibilityEntry(layerVisibility, layerUid, keys.layerName, true, 'Unlayered');
+            ensureVisibilityEntry(layerVisibility, layerUid, keys.layerName, true, UNLAYERED_LAYER_NAME);
             if (conditionUid) {
-                ensureVisibilityEntry(conditionVisibility, conditionUid, keys.conditionName, true, 'Condition');
+                ensureVisibilityEntry(conditionVisibility, conditionUid, keys.conditionName, true, FALLBACK_CONDITION_NAME);
             }
             if (areaUid) {
-                ensureVisibilityEntry(areaVisibility, areaUid, keys.areaName, true, 'Area');
+                ensureVisibilityEntry(areaVisibility, areaUid, keys.areaName, true, FALLBACK_AREA_NAME);
             }
+            if (!object.userData) object.userData = {};
             object.userData.layerUid = layerUid;
             object.userData.conditionUid = conditionUid;
             object.userData.areaUid = areaUid;
             object.userData.baseVisible = baseVisible !== false;
             visibilityObjects.push(object);
-            object.visible = isObjectVisible(object);
+            setRenderedObjectVisible(object, isObjectVisible(object));
         }
 
         function updateVisibilityRows(registry, rows) {
@@ -490,7 +617,7 @@
 
         function applyObjectVisibility() {
             visibilityObjects.forEach(object => {
-                object.visible = isObjectVisible(object);
+                setRenderedObjectVisible(object, isObjectVisible(object));
             });
             updateVisibilityRows(layerVisibility, layerRows);
             updateVisibilityRows(conditionVisibility, conditionRows);
@@ -513,6 +640,36 @@
             applyObjectVisibility();
         }
 
+        function createVisibilityRow(entry, registry, rows, options = {}) {
+            const row = document.createElement('label');
+            row.className = options.rowClass ? `visibility-row ${options.rowClass}` : 'visibility-row';
+            row.title = entry.name;
+            row.classList.toggle('disabled', !entry.visible);
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = entry.visible;
+            checkbox.addEventListener('change', () => {
+                setGroupVisible(registry, entry.uid, checkbox.checked);
+            });
+
+            const name = document.createElement('span');
+            name.className = 'visibility-name';
+            name.textContent = entry.name;
+
+            if (options.swatchClass) {
+                const swatch = document.createElement('div');
+                swatch.className = options.swatchClass;
+                if (entry.color) swatch.style.background = entry.color;
+                row.append(checkbox, swatch, name);
+            } else {
+                row.append(checkbox, name);
+            }
+
+            rows.set(entry.uid, row);
+            return row;
+        }
+
         function renderVisibilitySection(title, registry, rows) {
             const entries = Array.from(registry.values());
             if (!entries.length) return 0;
@@ -525,25 +682,7 @@
             section.appendChild(heading);
 
             entries.forEach(entry => {
-                const row = document.createElement('label');
-                row.className = 'visibility-row';
-                row.title = entry.name;
-                row.classList.toggle('disabled', !entry.visible);
-
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                checkbox.checked = entry.visible;
-                checkbox.addEventListener('change', () => {
-                    setGroupVisible(registry, entry.uid, checkbox.checked);
-                });
-
-                const name = document.createElement('span');
-                name.className = 'visibility-name';
-                name.textContent = entry.name;
-
-                row.append(checkbox, name);
-                section.appendChild(row);
-                rows.set(entry.uid, row);
+                section.appendChild(createVisibilityRow(entry, registry, rows));
             });
 
             layerList.appendChild(section);
@@ -584,29 +723,15 @@
                 group.entries
                     .sort(compareConditionEntries)
                     .forEach(entry => {
-                        const row = document.createElement('label');
-                        row.className = 'visibility-row condition-row';
-                        row.title = entry.name;
-                        row.classList.toggle('disabled', !entry.visible);
-
-                        const checkbox = document.createElement('input');
-                        checkbox.type = 'checkbox';
-                        checkbox.checked = entry.visible;
-                        checkbox.addEventListener('change', () => {
-                            setGroupVisible(conditionVisibility, entry.uid, checkbox.checked);
-                        });
-
-                        const swatch = document.createElement('div');
-                        swatch.className = 'condition-color-swatch';
-                        if (entry.color) swatch.style.background = entry.color;
-
-                        const name = document.createElement('span');
-                        name.className = 'visibility-name';
-                        name.textContent = entry.name;
-
-                        row.append(checkbox, swatch, name);
-                        section.appendChild(row);
-                        conditionRows.set(entry.uid, row);
+                        section.appendChild(createVisibilityRow(
+                            entry,
+                            conditionVisibility,
+                            conditionRows,
+                            {
+                                rowClass: 'condition-row',
+                                swatchClass: 'condition-color-swatch',
+                            }
+                        ));
                     });
             });
 
@@ -638,6 +763,194 @@
         layerShowAll.addEventListener('click', () => setAllGroupsVisible(true));
         layerHideAll.addEventListener('click', () => setAllGroupsVisible(false));
         window.toggleAll = setAllGroupsVisible;
+
+        const page2D = sceneData.page_2d || null;
+        const takeoffs2D = Array.isArray(sceneData.takeoffs_2d) ? sceneData.takeoffs_2d : [];
+        const hasPlanData = Boolean(page2D && Number(page2D.width) > 0 && Number(page2D.height) > 0);
+        let planPageRegistered = false;
+        const planState = {
+            scale: 1.0,
+            offsetX: 0.0,
+            offsetY: 0.0,
+            initialized: false,
+            userInteracted: false,
+            isPanning: false,
+            panStartX: 0.0,
+            panStartY: 0.0,
+            startOffsetX: 0.0,
+            startOffsetY: 0.0,
+        };
+
+        function clamp(value, min, max) {
+            return Math.max(min, Math.min(max, value));
+        }
+
+        function setPlanTransform() {
+            planContent.style.transform =
+                `translate(${planState.offsetX}px, ${planState.offsetY}px) scale(${planState.scale})`;
+        }
+
+        function fitPlanToViewport(force = false) {
+            if (!hasPlanData || (!force && planState.initialized && planState.userInteracted)) return;
+            const pageWidth = Number(page2D.width);
+            const pageHeight = Number(page2D.height);
+            const viewWidth = planView.clientWidth || window.innerWidth;
+            const viewHeight = planView.clientHeight || window.innerHeight;
+            const fitScale = Math.min(viewWidth / pageWidth, viewHeight / pageHeight) * PLAN_FIT_MARGIN;
+            planState.scale = clamp(fitScale, PLAN_MIN_SCALE, PLAN_MAX_SCALE);
+            planState.offsetX = (viewWidth - pageWidth * planState.scale) / 2.0;
+            planState.offsetY = (viewHeight - pageHeight * planState.scale) / 2.0;
+            planState.initialized = true;
+            setPlanTransform();
+        }
+
+        function ringToPath(ring) {
+            if (!Array.isArray(ring) || ring.length < 3) return '';
+            return ring.map((point, index) => {
+                const x = Number(point[0]);
+                const y = Number(point[1]);
+                return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
+            }).join(' ') + ' Z';
+        }
+
+        function renderPlanTakeoffs() {
+            planOverlay.innerHTML = '';
+            takeoffs2D.forEach(takeoff => {
+                if (!Array.isArray(takeoff.rings) || !takeoff.rings.length) return;
+                const pathData = takeoff.rings.map(ringToPath).filter(Boolean).join(' ');
+                if (!pathData) return;
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                const color = normalizeHexColor(takeoff.color) || FALLBACK_HEX_COLOR;
+                const opacity = clamp(Number(takeoff.opacity || 0.5), 0.0, 1.0);
+                path.setAttribute('d', pathData);
+                path.setAttribute('fill-rule', 'evenodd');
+                path.setAttribute('fill', color);
+                path.setAttribute('fill-opacity', String(Math.min(opacity, 0.45)));
+                path.setAttribute('stroke', takeoff.is_negative ? NEGATIVE_TAKEOFF_STROKE : color);
+                path.setAttribute('stroke-opacity', String(Math.max(opacity, 0.75)));
+                path.setAttribute('stroke-width', '1.5');
+                path.setAttribute('vector-effect', 'non-scaling-stroke');
+                if (takeoff.is_negative) {
+                    path.setAttribute('stroke-dasharray', '8 6');
+                    path.setAttribute('fill-opacity', '0.08');
+                }
+                planOverlay.appendChild(path);
+                registerVisibilityObject(
+                    {
+                        layerUid: takeoff.layer_uid,
+                        conditionUid: takeoff.condition_uid,
+                        conditionName: takeoff.name,
+                        areaUid: takeoff.area_uid,
+                    },
+                    path,
+                    takeoff.visible !== false
+                );
+            });
+        }
+
+        function setupBlankPlanPage() {
+            if (!hasPlanData) return;
+            const pageWidth = Number(page2D.width);
+            const pageHeight = Number(page2D.height);
+            const dpr = Math.max(window.devicePixelRatio || 1, 1);
+            planPdfCanvas.width = Math.max(1, Math.round(pageWidth * dpr));
+            planPdfCanvas.height = Math.max(1, Math.round(pageHeight * dpr));
+            const ctx = planPdfCanvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, pageWidth, pageHeight);
+        }
+
+        function setupPlanView(pdfCanvas = null) {
+            if (!hasPlanData) {
+                planModeButton.disabled = true;
+                return;
+            }
+            const pageWidth = Number(page2D.width);
+            const pageHeight = Number(page2D.height);
+            planContent.style.width = `${pageWidth}px`;
+            planContent.style.height = `${pageHeight}px`;
+            planPdfCanvas.style.width = `${pageWidth}px`;
+            planPdfCanvas.style.height = `${pageHeight}px`;
+            planOverlay.setAttribute('viewBox', `0 0 ${pageWidth} ${pageHeight}`);
+            planOverlay.setAttribute('width', String(pageWidth));
+            planOverlay.setAttribute('height', String(pageHeight));
+            if (pdfCanvas) {
+                planPdfCanvas.width = pdfCanvas.width;
+                planPdfCanvas.height = pdfCanvas.height;
+                const ctx = planPdfCanvas.getContext('2d');
+                ctx.clearRect(0, 0, planPdfCanvas.width, planPdfCanvas.height);
+                ctx.drawImage(pdfCanvas, 0, 0);
+            } else {
+                setupBlankPlanPage();
+            }
+            if (!planOverlay.childElementCount) renderPlanTakeoffs();
+            if (!planPageRegistered) {
+                const pageLayer = sceneData.page_image_layer || {};
+                registerVisibilityObject(
+                    {
+                        layerUid: pageLayer.uid || page2D.image_layer_uid,
+                        layerName: pageLayer.name || IMAGE_LAYER_DISPLAY_NAME,
+                    },
+                    planPdfCanvas,
+                    page2D.visible !== false
+                );
+                planPageRegistered = true;
+            }
+            fitPlanToViewport(true);
+            buildLayerPanel();
+        }
+
+        planView.addEventListener('wheel', event => {
+            if (!hasPlanData) return;
+            event.preventDefault();
+            planState.userInteracted = true;
+            const rect = planView.getBoundingClientRect();
+            const pointerX = event.clientX - rect.left;
+            const pointerY = event.clientY - rect.top;
+            const worldX = (pointerX - planState.offsetX) / planState.scale;
+            const worldY = (pointerY - planState.offsetY) / planState.scale;
+            const nextScale = clamp(
+                planState.scale * Math.exp(-event.deltaY * PLAN_WHEEL_SENSITIVITY),
+                PLAN_MIN_SCALE,
+                PLAN_MAX_SCALE
+            );
+            planState.scale = nextScale;
+            planState.offsetX = pointerX - worldX * nextScale;
+            planState.offsetY = pointerY - worldY * nextScale;
+            setPlanTransform();
+        }, { passive: false });
+
+        planView.addEventListener('pointerdown', event => {
+            if (!hasPlanData || event.button !== 0) return;
+            planState.userInteracted = true;
+            planState.isPanning = true;
+            planState.panStartX = event.clientX;
+            planState.panStartY = event.clientY;
+            planState.startOffsetX = planState.offsetX;
+            planState.startOffsetY = planState.offsetY;
+            planView.classList.add('panning');
+            planView.setPointerCapture(event.pointerId);
+        });
+
+        planView.addEventListener('pointermove', event => {
+            if (!planState.isPanning) return;
+            planState.offsetX = planState.startOffsetX + event.clientX - planState.panStartX;
+            planState.offsetY = planState.startOffsetY + event.clientY - planState.panStartY;
+            setPlanTransform();
+        });
+
+        function endPlanPan(event) {
+            if (!planState.isPanning) return;
+            planState.isPanning = false;
+            planView.classList.remove('panning');
+            if (event && planView.hasPointerCapture(event.pointerId)) {
+                planView.releasePointerCapture(event.pointerId);
+            }
+        }
+
+        planView.addEventListener('pointerup', endPlanPan);
+        planView.addEventListener('pointercancel', endPlanPan);
 
         function readVector3(values, fallback) {
             if (Array.isArray(values) && values.length >= 3) {
@@ -756,6 +1069,20 @@
         controls.dampingFactor = 0.05;
         controls.maxDistance = Math.max(sceneClippingBounds.radius * 100.0, 1.0);
         controls.update();
+
+        function setViewMode(mode) {
+            const usePlan = mode === 'plan' && hasPlanData;
+            document.body.classList.toggle('plan-mode', usePlan);
+            controls.enabled = !usePlan;
+            planModeButton.classList.toggle('active', usePlan);
+            threeModeButton.classList.toggle('active', !usePlan);
+            if (usePlan) fitPlanToViewport(false);
+        }
+
+        if (!hasPlanData) planModeButton.disabled = true;
+        planModeButton.addEventListener('click', () => setViewMode('plan'));
+        threeModeButton.addEventListener('click', () => setViewMode('3d'));
+        setViewMode('3d');
 
         function getSceneDepthRange() {
             if (sceneClippingBounds.nearBox.containsPoint(camera.position)) {
@@ -932,9 +1259,22 @@
                 pdfPlane.userData.takeoffUid = '';
                 scene.add(pdfPlane);
                 const pageLayer = sceneData.page_image_layer || {};
-                registerVisibilityObject({ layerUid: pageLayer.uid, layerName: pageLayer.name || 'Image' }, pdfPlane, true);
+                registerVisibilityObject(
+                    {
+                        layerUid: pageLayer.uid,
+                        layerName: pageLayer.name || IMAGE_LAYER_DISPLAY_NAME,
+                    },
+                    pdfPlane,
+                    true
+                );
+                setupPlanView(off);
                 buildLayerPanel();
-            }).catch(e => console.warn('PDF floor failed:', e));
+            }).catch(e => {
+                console.warn('PDF floor failed:', e);
+                setupPlanView();
+            });
+        } else {
+            setupPlanView();
         }
 
         function animate() {
@@ -953,6 +1293,7 @@
             updateCameraClipping(true);
             renderer.setSize(window.innerWidth, window.innerHeight);
             if (wboitPass) wboitPass.setSize(window.innerWidth, window.innerHeight);
+            fitPlanToViewport(false);
         });
 
         animate();

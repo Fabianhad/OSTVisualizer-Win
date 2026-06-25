@@ -73,18 +73,9 @@ def process_meshes_for_threejs(
                         condition.name if condition.name else f"Element {takeoff.uid}"
                     ),
                     "cdn_type_uid": condition.cdn_type_uid or "",
-                    "cdn_type_name": (
-                        condition.cdn_type_name
-                        if condition.cdn_type_name
-                        else "Unknown"
-                    ),
+                    "cdn_type_name": condition.cdn_type_name or "Unknown",
                     "condition_color": int_to_hex(condition.color_fill or 0),
                     "condition_ref_no": condition.ref_no,
-                    "cdn_type": (
-                        condition.cdn_type_name
-                        if condition.cdn_type_name
-                        else "Unknown"
-                    ),
                 }
                 meshes_with_metadata.append((mesh_data, metadata))
     processed_meshes = apply_boolean_operations(meshes_with_metadata)
