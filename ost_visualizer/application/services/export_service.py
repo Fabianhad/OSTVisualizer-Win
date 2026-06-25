@@ -1,4 +1,5 @@
 from typing import List
+from ...domain.entities.layer import IMAGE_LAYER_NAME
 from ...domain.entities.file_extensions import is_pdf_suffix
 from ...domain.services.project_data_service import ProjectDataService
 from ..dtos.export_dialog_dto import ExportDialogDto
@@ -31,7 +32,9 @@ class ExportService:
                 error=f"Unknown export format: {format_key}",
                 error_code=ExportErrorCode.UNKNOWN_FORMAT,
             )
-        result = self.project_data.collect_takeoffs_for_pages(page_uids)
+        result = self.project_data.collect_takeoffs_for_pages(
+            page_uids, visible_only=strategy.extension != "html"
+        )
         if result.is_empty():
             return ExportDialogDto(
                 success=False,
@@ -65,7 +68,9 @@ class ExportService:
                 error_message=f"Unknown export format: {request.format_key}",
                 error_code=ExportErrorCode.UNKNOWN_FORMAT,
             )
-        result = self.project_data.collect_takeoffs_for_pages(request.page_uids)
+        result = self.project_data.collect_takeoffs_for_pages(
+            request.page_uids, visible_only=strategy.extension != "html"
+        )
         if result.is_empty():
             return ExportResultDto(
                 success=False,
@@ -90,15 +95,23 @@ class ExportService:
                 config_model, self.project_data.get_page_area_selections()
             )
             if strategy.extension == "html":
+                layers = self.project_data.get_bid_layer_snapshot()
                 kwargs.update(
                     {
                         "title": metadata.get("title", "3D View"),
                         "bid_name": bid_name,
+                        "layers": layers,
                     }
                 )
                 if result.valid_page_uids:
                     page = self.project_data.get_page(result.valid_page_uids[0])
                     if page:
+                        image_layer_uid = self.project_data.get_image_layer_uid()
+                        kwargs["page_image_layer"] = {
+                            "uid": image_layer_uid or IMAGE_LAYER_NAME,
+                            "name": "Image",
+                            "visible": bool(page.layer_visible),
+                        }
                         sf1 = page.scale_factor1 or 1.0
                         sf2 = page.scale_factor2 or 1.0
                         ratio = sf2 / sf1 if sf1 > 0 else 1.0

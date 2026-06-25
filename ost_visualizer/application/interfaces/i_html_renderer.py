@@ -1,6 +1,8 @@
 from typing import Dict, List, Optional, Protocol
+from ..dtos.scene_data_dto import ScenePageImageLayer
 from ...domain.entities.config import Config
 from ...domain.entities.condition import Condition
+from ...domain.entities.layer import BidLayer
 from ...domain.entities.takeoff import Takeoff
 
 
@@ -16,4 +18,10 @@ class IHtmlRenderer(Protocol):
         grayscale_enabled: bool = True,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         auto_open: bool = False,
+        pdf_path: Optional[str] = None,
+        pdf_page_index: int = 0,
+        page_width_inches: float = 0.0,
+        page_height_inches: float = 0.0,
+        layers: Optional[List[BidLayer]] = None,
+        page_image_layer: Optional[ScenePageImageLayer] = None,
     ) -> bool: ...

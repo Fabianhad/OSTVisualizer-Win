@@ -6,12 +6,13 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Dict, List, Optional
-from .....application.dtos.scene_data_dto import SceneData
+from .....application.dtos.scene_data_dto import SceneData, ScenePageImageLayer
 from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from .....domain.entities.config import Config
 from .....domain.entities.condition import Condition
+from .....domain.entities.layer import BidLayer
 from .....domain.entities.takeoff import Takeoff
 from .adapters.threejs_mesh_adapter import ThreejsMeshAdapter
 from .mesh_processor import process_meshes_for_threejs
@@ -34,6 +35,8 @@ def visualize_with_threejs(
     pdf_page_index: int = 0,
     page_width_inches: float = 0.0,
     page_height_inches: float = 0.0,
+    layers: Optional[List[BidLayer]] = None,
+    page_image_layer: Optional[ScenePageImageLayer] = None,
 ) -> Optional[str]:
     start_time = time.time()
     if not bid_conditions or not bid_takeoffs:
@@ -51,7 +54,13 @@ def visualize_with_threejs(
     if not processed_meshes:
         return None
     adapter = ThreejsMeshAdapter(color_service)
-    scene_data = adapter.build_scene_data(processed_meshes, bounds, title)
+    scene_data = adapter.build_scene_data(
+        processed_meshes,
+        bounds,
+        title,
+        layers=layers,
+        page_image_layer=page_image_layer,
+    )
     if pdf_path and os.path.isfile(pdf_path):
         try:
             with open(pdf_path, "rb") as pf:

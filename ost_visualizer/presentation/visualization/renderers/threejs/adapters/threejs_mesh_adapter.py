@@ -1,11 +1,15 @@
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from ......application.dtos.scene_data_dto import (
     SceneBoundsConfig,
     SceneCameraConfig,
+    SceneConditionEntry,
     SceneData,
     SceneGeometryEntry,
+    SceneLayerEntry,
+    ScenePageImageLayer,
 )
 from ......domain.dtos.mesh_metadata_dto import MeshMetadata
+from ......domain.entities.layer import BidLayer
 from ....core.mesh_generator import MeshData
 from ....services.color_service import ColorService
 from ....utils.mesh import prepare_vertices_for_shading
@@ -22,12 +26,29 @@ class ThreejsMeshAdapter:
         meshes: List[Tuple[MeshData, MeshMetadata]],
         bounds: Bounds,
         title: str,
+        layers: Optional[List[BidLayer]] = None,
+        page_image_layer: Optional[ScenePageImageLayer] = None,
     ) -> SceneData:
         geometries = []
+        conditions_by_uid: Dict[str, SceneConditionEntry] = {}
         for mesh_data, metadata in meshes:
             geometry = self.convert_mesh(mesh_data, metadata)
             if geometry:
                 geometries.append(geometry)
+            condition_uid = str(metadata.get("condition_uid", "") or "")
+            if condition_uid and condition_uid not in conditions_by_uid:
+                conditions_by_uid[condition_uid] = {
+                    "uid": condition_uid,
+                    "name": str(metadata.get("name", "") or ""),
+                    "layer_uid": str(metadata.get("layer_uid", "") or ""),
+                    "visible": bool(metadata.get("layer_visible", True)),
+                    "cdn_type_uid": str(metadata.get("cdn_type_uid", "") or ""),
+                    "cdn_type_name": str(
+                        metadata.get("cdn_type_name")
+                        or metadata.get("cdn_type")
+                        or "Unknown"
+                    ),
+                }
         center_x = (bounds[0] + bounds[1]) / 2
         center_y = (bounds[2] + bounds[3]) / 2
         center_z = (bounds[4] + bounds[5]) / 2
@@ -48,7 +69,52 @@ class ThreejsMeshAdapter:
             "camera": camera,
             "bounds": scene_bounds,
         }
+        scene_layers = self._convert_layers(layers or [], page_image_layer)
+        if scene_layers:
+            scene["layers"] = scene_layers
+        if conditions_by_uid:
+            scene["conditions"] = list(conditions_by_uid.values())
+        if page_image_layer:
+            scene["page_image_layer"] = page_image_layer
         return scene
+
+    @staticmethod
+    def _convert_layers(
+        layers: List[BidLayer],
+        page_image_layer: Optional[ScenePageImageLayer] = None,
+    ) -> List[SceneLayerEntry]:
+        scene_layers: List[SceneLayerEntry] = []
+        seen = set()
+        ordered_layers = sorted(
+            layers,
+            key=lambda item: item.sequence if item.sequence is not None else 0,
+        )
+        for index, layer in enumerate(ordered_layers):
+            uid = str(layer.uid or "")
+            if not uid or uid in seen:
+                continue
+            sequence = layer.sequence if layer.sequence is not None else index
+            scene_layers.append(
+                {
+                    "uid": uid,
+                    "name": str(layer.name or uid),
+                    "visible": bool(layer.show),
+                    "sequence": int(sequence),
+                }
+            )
+            seen.add(uid)
+        if page_image_layer:
+            uid = str(page_image_layer.get("uid", "") or "")
+            if uid and uid not in seen:
+                scene_layers.append(
+                    {
+                        "uid": uid,
+                        "name": str(page_image_layer.get("name", "") or uid),
+                        "visible": bool(page_image_layer.get("visible", True)),
+                        "sequence": len(scene_layers),
+                    }
+                )
+        return scene_layers
 
     def convert_mesh(
         self,
@@ -78,5 +144,13 @@ class ThreejsMeshAdapter:
             "color": [r, g, b],
             "opacity": metadata.get("opacity", 1.0),
             "name": metadata.get("name", "Mesh"),
+            "visible": bool(metadata.get("visible", True)),
+            "takeoff_uid": str(metadata.get("takeoff_uid", "") or ""),
+            "condition_uid": str(metadata.get("condition_uid", "") or ""),
+            "layer_uid": str(metadata.get("layer_uid", "") or ""),
+            "cdn_type_uid": str(metadata.get("cdn_type_uid", "") or ""),
+            "cdn_type_name": str(
+                metadata.get("cdn_type_name") or metadata.get("cdn_type") or "Unknown"
+            ),
         }
         return entry

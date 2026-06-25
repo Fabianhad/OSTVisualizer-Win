@@ -52,8 +52,20 @@ def process_meshes_for_threejs(
                     "IsNegativeQuantity": takeoff.is_negative,
                     "color": color_hex,
                     "opacity": opacity,
+                    "condition_uid": condition_uid,
+                    "takeoff_uid": takeoff.uid,
+                    "condition_type": condition.condition_type,
+                    "layer_uid": condition.layer_uid or "",
+                    "layer_visible": condition.layer_visible,
+                    "visible": True,
                     "name": (
                         condition.name if condition.name else f"Element {takeoff.uid}"
+                    ),
+                    "cdn_type_uid": condition.cdn_type_uid or "",
+                    "cdn_type_name": (
+                        condition.cdn_type_name
+                        if condition.cdn_type_name
+                        else "Unknown"
                     ),
                     "cdn_type": (
                         condition.cdn_type_name

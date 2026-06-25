@@ -8,6 +8,7 @@ from ..entities.condition_folder import BidConditionFolder
 from ..entities.hierarchy_data import HierarchyBidInfo, HierarchyData
 from ..entities.hierarchy_manager import HierarchyManager
 from ..entities.identity_refs import BidRef
+from ..entities.layer import BidLayer
 from ..entities.page import Page
 from ..entities.project import Project
 from ..entities.takeoff import Takeoff
@@ -32,6 +33,7 @@ class OstAggregate:
         self.cdn_types: Dict[str, CdnType] = {}
         self.bid_condition_folders: Dict[str, BidConditionFolder] = {}
         self.page_area_selections: Dict[str, Optional[str]] = {}
+        self.bid_layers: List[BidLayer] = []
         self.bid_layer_visibility: Dict[str, bool] = {}
         self.bid_layer_names_by_uid: Dict[str, str] = {}
         self.bid_layer_visibility_by_name: Dict[str, bool] = {}
@@ -124,6 +126,7 @@ class OstAggregate:
         self.bid_takeoff_extras = {}
         self.bid_condition_folders = {}
         self.page_area_selections = {}
+        self.bid_layers = []
         self.bid_layer_visibility = {}
         self.bid_layer_names_by_uid = {}
         self.bid_layer_visibility_by_name = {}

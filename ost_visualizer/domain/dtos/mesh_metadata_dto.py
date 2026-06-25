@@ -7,6 +7,11 @@ class MeshMetadata(TypedDict, total=False):
     opacity: float
     name: str
     cdn_type: str
+    cdn_type_uid: str
+    cdn_type_name: str
     takeoff_uid: str
     condition_uid: str
     condition_type: int
+    layer_uid: str
+    layer_visible: bool
+    visible: bool

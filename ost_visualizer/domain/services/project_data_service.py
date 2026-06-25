@@ -17,6 +17,8 @@ from ..entities.layer import (
     BidLayer,
     Layer,
     LayerSet,
+    is_comments_layer_name,
+    merge_layers_for_bid,
     normalize_layer_name,
 )
 from .condition_quantity_service import compute_page_quantities
@@ -58,7 +60,7 @@ class ProjectDataService:
         return self.model.has_takeoffs_for_pages(page_uids)
 
     def collect_takeoffs_for_pages(
-        self, page_uids: List[str]
+        self, page_uids: List[str], visible_only: bool = True
     ) -> CollectedTakeoffsResult:
         all_takeoffs: List[Takeoff] = []
         valid_pages: List[str] = []
@@ -66,11 +68,13 @@ class ProjectDataService:
         for page_uid in page_uids:
             takeoffs = self.model.get_page_takeoffs(page_uid)
             if takeoffs:
-                visible_takeoffs = [
-                    t for t in takeoffs if is_takeoff_visible(t, bid_conditions)
-                ]
-                if visible_takeoffs:
-                    all_takeoffs.extend(visible_takeoffs)
+                page_takeoffs = (
+                    [t for t in takeoffs if is_takeoff_visible(t, bid_conditions)]
+                    if visible_only
+                    else list(takeoffs)
+                )
+                if page_takeoffs:
+                    all_takeoffs.extend(page_takeoffs)
                     valid_pages.append(page_uid)
         return CollectedTakeoffsResult(
             takeoffs=all_takeoffs, valid_page_uids=valid_pages
@@ -118,10 +122,12 @@ class ProjectDataService:
         return self.model.bid_conditions
 
     def set_bid_layer_visibility(self, layers: Iterable[BidLayer]) -> None:
+        layer_list = list(layers)
+        self.model.bid_layers = layer_list
         self.model.bid_layer_visibility = {}
         self.model.bid_layer_names_by_uid = {}
         self.model.bid_layer_visibility_by_name = {}
-        for layer in layers:
+        for layer in layer_list:
             if not layer.uid:
                 continue
             layer_uid = str(layer.uid)
@@ -138,6 +144,33 @@ class ProjectDataService:
             for layer_uid, visible in self.model.bid_layer_visibility.items()
             if not visible
         }
+
+    def get_bid_layer_snapshot(self) -> List[BidLayer]:
+        layers = list(getattr(self.model, "bid_layers", []) or [])
+        if layers:
+            return [
+                layer
+                for layer in merge_layers_for_bid(layers)
+                if not is_comments_layer_name(layer.name)
+            ]
+        current_bid_ref = getattr(self.model, "current_bid_ref", None)
+        bid_uid = current_bid_ref.bid_uid if current_bid_ref else ""
+        snapshot = []
+        for sequence, (layer_uid, layer_name) in enumerate(
+            self.model.bid_layer_names_by_uid.items()
+        ):
+            if is_comments_layer_name(layer_name):
+                continue
+            snapshot.append(
+                BidLayer(
+                    uid=str(layer_uid),
+                    bid_uid=bid_uid,
+                    name=layer_name or str(layer_uid),
+                    show=self.model.bid_layer_visibility.get(str(layer_uid), True),
+                    sequence=sequence,
+                )
+            )
+        return snapshot
 
     def _set_named_layer_visibility(self, layer_uid: str, visible: bool) -> None:
         layer_name = self.model.bid_layer_names_by_uid.get(layer_uid)
@@ -168,6 +201,9 @@ class ProjectDataService:
         layer_name = self.model.bid_layer_names_by_uid.get(str(layer_uid))
         return normalize_layer_name(layer_name or "") == IMAGE_LAYER_NAME
 
+    def get_image_layer_uid(self) -> Optional[str]:
+        return self._bid_layer_set().uid_by_name(IMAGE_LAYER_NAME)
+
     def update_layer_visibility(self, layer_uid: str, show: bool) -> List[str]:
         changed_pages: List[str] = []
         layer_key = str(layer_uid)
@@ -177,6 +213,9 @@ class ProjectDataService:
         for condition in self.model.bid_conditions.values():
             if str(condition.layer_uid or "") == layer_key:
                 condition.layer_visible = visible
+        for layer in getattr(self.model, "bid_layers", []) or []:
+            if str(layer.uid) == layer_key:
+                layer.show = visible
         if self.is_image_layer_uid(layer_key):
             for page in self.model.get_all_pages():
                 page.layer_visible = visible
@@ -190,6 +229,8 @@ class ProjectDataService:
             self._set_named_layer_visibility(layer_uid, visible)
         for condition in self.model.bid_conditions.values():
             condition.layer_visible = visible
+        for layer in getattr(self.model, "bid_layers", []) or []:
+            layer.show = visible
         changed_pages: List[str] = []
         for page in self.model.get_all_pages():
             page.layer_visible = visible

@@ -6,54 +6,260 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{TITLE}}</title>
     <style>
+        :root {
+            --viewer-surface: rgba(15, 15, 21, 0.92);
+            --viewer-border: rgba(255, 255, 255, 0.08);
+            --viewer-divider: rgba(255, 255, 255, 0.06);
+            --viewer-control-border: rgba(255, 255, 255, 0.1);
+            --viewer-swatch-border: rgba(255, 255, 255, 0.15);
+            --viewer-scrollbar: rgba(255, 255, 255, 0.1);
+            --viewer-control-bg: rgba(255, 255, 255, 0.03);
+            --viewer-hover-bg: rgba(255, 255, 255, 0.06);
+            --viewer-text: #e2e8f0;
+            --viewer-muted: #8892b0;
+            --viewer-accent: #4a9eff;
+            --viewer-disabled: #555;
+            --viewer-radius: 10px;
+            --viewer-radius-sm: 6px;
+            --viewer-safe-top: env(safe-area-inset-top, 0px);
+            --viewer-safe-right: env(safe-area-inset-right, 0px);
+            --viewer-safe-bottom: env(safe-area-inset-bottom, 0px);
+            --viewer-safe-left: env(safe-area-inset-left, 0px);
+        }
+
+        html[data-theme="light"] {
+            --viewer-surface: rgba(255, 255, 255, 0.92);
+            --viewer-border: rgba(15, 23, 42, 0.12);
+            --viewer-divider: rgba(15, 23, 42, 0.08);
+            --viewer-control-border: rgba(15, 23, 42, 0.14);
+            --viewer-swatch-border: rgba(15, 23, 42, 0.2);
+            --viewer-scrollbar: rgba(15, 23, 42, 0.18);
+            --viewer-control-bg: rgba(15, 23, 42, 0.04);
+            --viewer-hover-bg: rgba(15, 23, 42, 0.07);
+            --viewer-text: #121826;
+            --viewer-muted: #5f6f86;
+            --viewer-accent: #2563eb;
+            --viewer-disabled: #94a3b8;
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
+        html,
         body {
+            height: 100%;
+            min-height: 100dvh;
             overflow: hidden;
             background: #1a1a1a;
+            font-family: system-ui, -apple-system, sans-serif;
         }
 
         #canvas {
             width: 100vw;
             height: 100vh;
+            height: 100dvh;
             display: block;
         }
 
-        #pdf-toggle {
+        #layer-panel {
             position: fixed;
-            bottom: 16px;
-            right: 16px;
+            top: calc(12px + var(--viewer-safe-top));
+            left: calc(12px + var(--viewer-safe-left));
             z-index: 10;
-            background: #333;
-            color: #ccc;
-            border: 1px solid #555;
-            padding: 8px 14px;
-            border-radius: 4px;
+            background: var(--viewer-surface);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--viewer-border);
+            border-radius: var(--viewer-radius);
+            color: var(--viewer-text);
+            font-size: 13px;
+            min-width: 200px;
+            max-width: 280px;
+            max-height: calc(100dvh - 24px - var(--viewer-safe-top) - var(--viewer-safe-bottom));
+            display: none;
+            flex-direction: column;
+            user-select: none;
+        }
+
+        #layer-panel.visible {
+            display: flex;
+        }
+
+        #layer-panel.collapsed #layer-list,
+        #layer-panel.collapsed #layer-actions {
+            display: none;
+        }
+
+        #layer-panel.collapsed {
+            min-width: 0;
+        }
+
+        #layer-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
             cursor: pointer;
-            font: 13px sans-serif;
+            font-weight: 600;
+            border-bottom: 1px solid var(--viewer-divider);
         }
 
-        #pdf-toggle:hover {
-            background: #444;
+        #layer-panel.collapsed #layer-header {
+            border-bottom: none;
+            border-radius: var(--viewer-radius);
         }
 
-        #pdf-toggle.active {
-            background: #00796b;
-            color: #fff;
-            border-color: #00897b;
+        #layer-count {
+            font-size: 11px;
+            color: var(--viewer-muted);
+        }
+
+        #layer-actions {
+            display: flex;
+            gap: 6px;
+            padding: 8px 14px;
+            border-bottom: 1px solid var(--viewer-divider);
+        }
+
+        #layer-actions button {
+            flex: 1;
+            padding: 5px 8px;
+            border: 1px solid var(--viewer-control-border);
+            border-radius: var(--viewer-radius-sm);
+            background: var(--viewer-control-bg);
+            color: var(--viewer-muted);
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        #layer-actions button:hover {
+            background: var(--viewer-hover-bg);
+            color: var(--viewer-text);
+        }
+
+        #layer-list {
+            overflow-y: auto;
+            padding: 4px 0;
+            scrollbar-width: thin;
+            scrollbar-color: var(--viewer-scrollbar) transparent;
+        }
+
+        .layer-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            cursor: pointer;
+            transition: background 0.1s;
+        }
+
+        .layer-row:hover {
+            background: var(--viewer-hover-bg);
+        }
+
+        .layer-row input[type="checkbox"] {
+            accent-color: var(--viewer-accent);
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .layer-swatch {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            flex-shrink: 0;
+            border: 1px solid var(--viewer-swatch-border);
+            background: var(--viewer-muted);
+        }
+
+        .layer-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .layer-row.disabled .layer-name {
+            color: var(--viewer-disabled);
+            text-decoration: line-through;
+        }
+
+        @media (max-width: 480px) {
+            #layer-panel {
+                top: calc(8px + var(--viewer-safe-top));
+                left: calc(8px + var(--viewer-safe-left));
+                right: calc(8px + var(--viewer-safe-right));
+                min-width: 0;
+                max-width: none;
+                font-size: 12px;
+                max-height: min(50dvh, calc(100dvh - 16px - var(--viewer-safe-top) - var(--viewer-safe-bottom)));
+            }
+
+            #layer-header {
+                padding: 10px 12px;
+            }
+
+            #layer-actions {
+                padding: 6px 12px;
+            }
+
+            #layer-actions button {
+                padding: 8px 6px;
+                font-size: 12px;
+                min-height: 36px;
+            }
+
+            .layer-row {
+                padding: 8px 12px;
+                gap: 10px;
+                min-height: 40px;
+            }
+
+            .layer-row input[type="checkbox"] {
+                width: 18px;
+                height: 18px;
+            }
+
+            .layer-swatch {
+                width: 16px;
+                height: 16px;
+            }
         }
     </style>
 </head>
 
 <body>
+    <div id="layer-panel" class="collapsed">
+        <div id="layer-header">
+            <span>Layers</span>
+            <span id="layer-count"></span>
+        </div>
+        <div id="layer-actions">
+            <button type="button" id="layer-show-all">Show All</button>
+            <button type="button" id="layer-hide-all">Hide All</button>
+        </div>
+        <div id="layer-list"></div>
+    </div>
     <canvas id="canvas"></canvas>
-    <button id="pdf-toggle" style="display:none;">Show Plan</button>
     <script type="application/json" id="scene-data">
 {{SCENE_DATA}}
+    </script>
+    <script>
+        (function () {
+            var theme = window.matchMedia
+                && window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark';
+            try {
+                var storedTheme = localStorage.getItem('fabian-theme');
+                if (storedTheme === 'light' || storedTheme === 'dark') theme = storedTheme;
+            } catch (_) { }
+            document.documentElement.dataset.theme = theme;
+        })();
     </script>
     <script type="importmap">
     {
@@ -87,6 +293,153 @@
         const pdfPageIndex = sceneData.pdf_page_index || 0;
         const pageW = Number(sceneData.page_width || 0);
         const pageH = Number(sceneData.page_height || 0);
+        const layerPanel = document.getElementById('layer-panel');
+        const layerList = document.getElementById('layer-list');
+        const layerCount = document.getElementById('layer-count');
+        const layerHeader = document.getElementById('layer-header');
+        const layerShowAll = document.getElementById('layer-show-all');
+        const layerHideAll = document.getElementById('layer-hide-all');
+        const layerRegistry = new Map();
+        const layerObjects = new Map();
+        const layerRows = new Map();
+        const UNLAYERED_UID = '__unlayered__';
+
+        function normalizeLayerUid(layerUid) {
+            const uid = layerUid === undefined || layerUid === null ? '' : String(layerUid);
+            return uid || UNLAYERED_UID;
+        }
+
+        function colorArrayToHex(color) {
+            if (!Array.isArray(color) || color.length < 3) {
+                return '#8892b0';
+            }
+            const parts = color.slice(0, 3).map(value => {
+                const channel = Math.max(0, Math.min(255, Math.round(Number(value) * 255)));
+                return channel.toString(16).padStart(2, '0');
+            });
+            return `#${parts.join('')}`;
+        }
+
+        function ensureLayerEntry(layerUid, name, visible = true, color = '#8892b0') {
+            const uid = normalizeLayerUid(layerUid);
+            if (!layerRegistry.has(uid)) {
+                layerRegistry.set(uid, {
+                    uid: uid,
+                    name: name || (uid === UNLAYERED_UID ? 'Unlayered' : uid),
+                    visible: visible !== false,
+                    color: color,
+                    objects: [],
+                });
+            } else {
+                const entry = layerRegistry.get(uid);
+                if (name && entry.name === uid) entry.name = name;
+                if (color && entry.color === '#8892b0') entry.color = color;
+            }
+            if (!layerObjects.has(uid)) {
+                layerObjects.set(uid, []);
+            }
+            return layerRegistry.get(uid);
+        }
+
+        function buildLayerRegistry() {
+            const layers = Array.isArray(sceneData.layers) ? sceneData.layers : [];
+            layers.forEach(layer => {
+                ensureLayerEntry(layer.uid, layer.name, layer.visible, layer.color || '#8892b0');
+            });
+            if (sceneData.page_image_layer) {
+                const layer = sceneData.page_image_layer;
+                const pageEntry = ensureLayerEntry(
+                    layer.uid,
+                    layer.name || 'Image',
+                    layer.visible,
+                    '#ffffff'
+                );
+                pageEntry.visible = layer.visible !== false;
+            }
+        }
+
+        function registerLayerObject(layerUid, object, baseVisible = true) {
+            const uid = normalizeLayerUid(layerUid);
+            ensureLayerEntry(uid);
+            object.userData.layerUid = uid;
+            object.userData.baseVisible = baseVisible !== false;
+            layerObjects.get(uid).push(object);
+            applyLayerVisibility(uid);
+        }
+
+        function applyLayerVisibility(layerUid) {
+            const uid = normalizeLayerUid(layerUid);
+            const entry = layerRegistry.get(uid);
+            const layerVisible = entry ? entry.visible : true;
+            const objects = layerObjects.get(uid) || [];
+            objects.forEach(object => {
+                object.visible = object.userData.baseVisible !== false && layerVisible;
+            });
+            const row = layerRows.get(uid);
+            if (row) {
+                row.classList.toggle('disabled', !layerVisible);
+                const checkbox = row.querySelector('input[type="checkbox"]');
+                if (checkbox) checkbox.checked = layerVisible;
+            }
+        }
+
+        function setLayerVisible(layerUid, visible) {
+            const uid = normalizeLayerUid(layerUid);
+            const entry = layerRegistry.get(uid);
+            if (!entry) return;
+            entry.visible = Boolean(visible);
+            applyLayerVisibility(uid);
+        }
+
+        function setAllLayersVisible(visible) {
+            for (const uid of layerRegistry.keys()) {
+                setLayerVisible(uid, visible);
+            }
+        }
+
+        function buildLayerPanel() {
+            layerList.innerHTML = '';
+            layerRows.clear();
+            const entries = Array.from(layerRegistry.values());
+            if (!entries.length) {
+                layerPanel.classList.remove('visible');
+                return;
+            }
+            layerCount.textContent = String(entries.length);
+            layerPanel.classList.add('visible');
+
+            entries.forEach(entry => {
+                const row = document.createElement('label');
+                row.className = 'layer-row';
+                row.title = entry.name;
+                row.classList.toggle('disabled', !entry.visible);
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = entry.visible;
+                checkbox.addEventListener('change', () => {
+                    setLayerVisible(entry.uid, checkbox.checked);
+                });
+
+                const swatch = document.createElement('div');
+                swatch.className = 'layer-swatch';
+                swatch.style.background = entry.color;
+
+                const name = document.createElement('span');
+                name.className = 'layer-name';
+                name.textContent = entry.name;
+
+                row.append(checkbox, swatch, name);
+                layerList.appendChild(row);
+                layerRows.set(entry.uid, row);
+            });
+        }
+
+        buildLayerRegistry();
+        layerHeader.addEventListener('click', () => layerPanel.classList.toggle('collapsed'));
+        layerShowAll.addEventListener('click', () => setAllLayersVisible(true));
+        layerHideAll.addEventListener('click', () => setAllLayersVisible(false));
+        window.toggleAll = setAllLayersVisible;
 
         function readVector3(values, fallback) {
             if (Array.isArray(values) && values.length >= 3) {
@@ -305,6 +658,9 @@
             geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(geomData.indices), 1));
             const color = new THREE.Color(geomData.color[0], geomData.color[1], geomData.color[2]);
             const isTransparent = geomData.opacity < 1.0;
+            const layerUid = normalizeLayerUid(geomData.layer_uid);
+            ensureLayerEntry(layerUid, geomData.layer_name || geomData.name, true, colorArrayToHex(geomData.color));
+            let mesh;
 
             if (isTransparent && wboitPass) {
                 const material = new MeshWboitMaterial({
@@ -315,7 +671,8 @@
                     depthWrite: false,
                     weight: 1.0,
                 });
-                scene.add(new THREE.Mesh(geometry, material));
+                mesh = new THREE.Mesh(geometry, material);
+                scene.add(mesh);
             } else {
                 const material = new THREE.MeshPhongMaterial({
                     color: color,
@@ -324,14 +681,17 @@
                     side: THREE.DoubleSide,
                     depthWrite: !isTransparent,
                 });
-                const mesh = new THREE.Mesh(geometry, material);
+                mesh = new THREE.Mesh(geometry, material);
                 mesh.renderOrder = isTransparent ? 1 : 0;
                 scene.add(mesh);
             }
+            mesh.userData.conditionUid = geomData.condition_uid || '';
+            mesh.userData.takeoffUid = geomData.takeoff_uid || '';
+            registerLayerObject(layerUid, mesh, geomData.visible !== false);
         });
 
-        const pdfToggle = document.getElementById('pdf-toggle');
         let pdfPlane = null;
+        buildLayerPanel();
 
         if (pdfBase64 && pageW > 0 && pageH > 0 && typeof pdfjsLib !== 'undefined') {
             pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -364,20 +724,13 @@
                 for (let i = 0; i < uv.count; i++) { uv.setX(i, 1 - uv.getX(i)); uv.setY(i, 1 - uv.getY(i)); }
                 uv.needsUpdate = true;
                 pdfPlane.renderOrder = -1;
-                pdfToggle.style.display = 'block';
+                pdfPlane.userData.conditionUid = '';
+                pdfPlane.userData.takeoffUid = '';
+                scene.add(pdfPlane);
+                const pageLayer = sceneData.page_image_layer || {};
+                registerLayerObject(pageLayer.uid, pdfPlane, true);
+                buildLayerPanel();
             }).catch(e => console.warn('PDF floor failed:', e));
-
-            pdfToggle.addEventListener('click', () => {
-                if (!pdfPlane) return;
-                const showing = pdfPlane.parent === scene;
-                if (showing) {
-                    scene.remove(pdfPlane);
-                } else {
-                    scene.add(pdfPlane);
-                }
-                pdfToggle.textContent = !showing ? 'Hide Plan' : 'Show Plan';
-                pdfToggle.classList.toggle('active', !showing);
-            });
         }
 
         function animate() {

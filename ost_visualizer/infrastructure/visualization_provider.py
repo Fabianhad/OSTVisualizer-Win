@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 from ..application.dtos.mesh_geometry_dto import MeshGeometry
+from ..application.dtos.scene_data_dto import ScenePageImageLayer
 from ..application.interfaces.i_color_service import IColorService
 from ..application.interfaces.i_coordinate_transformer_factory import (
     ICoordinateTransformerFactory,
@@ -12,6 +13,7 @@ from ..application.interfaces.i_visualization_provider import (
     Bounds,
     IVisualizationProvider,
 )
+from ..domain.entities.layer import BidLayer
 from ..presentation.visualization.exporters.dxf_exporter import DXFExporter
 from ..presentation.visualization.exporters.fbx_exporter import FBXExporter
 from ..presentation.visualization.exporters.obj_exporter import OBJExporter
@@ -86,6 +88,8 @@ class _HtmlRendererAdapter(IHtmlRenderer):
         pdf_page_index: int = 0,
         page_width_inches: float = 0.0,
         page_height_inches: float = 0.0,
+        layers: Optional[List[BidLayer]] = None,
+        page_image_layer: Optional[ScenePageImageLayer] = None,
     ) -> bool:
         try:
             coord_system = self._coord_factory.create()
@@ -106,6 +110,8 @@ class _HtmlRendererAdapter(IHtmlRenderer):
                 pdf_page_index=pdf_page_index,
                 page_width_inches=page_width_inches,
                 page_height_inches=page_height_inches,
+                layers=layers,
+                page_image_layer=page_image_layer,
             )
             return True
         except Exception:
@@ -295,6 +301,8 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             pdf_page_index=kwargs.get("pdf_page_index", 0),
             page_width_inches=kwargs.get("page_width_inches", 0.0),
             page_height_inches=kwargs.get("page_height_inches", 0.0),
+            layers=kwargs.get("layers"),
+            page_image_layer=kwargs.get("page_image_layer"),
         )
 
 
