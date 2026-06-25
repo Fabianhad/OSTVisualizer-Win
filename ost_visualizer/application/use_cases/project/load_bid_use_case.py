@@ -26,6 +26,7 @@ class LoadBidUseCase:
         bid_data = self.file_manager.load_bid(bid_ref.bid_uid, bid_ref.file_path)
         self.model.bid_conditions = bid_data.bid_conditions
         self.model.bid_takeoffs = bid_data.bid_takeoffs
+        self.model.bid_areas = dict(bid_data.bid_areas or {})
         self.model.bid_takeoff_extras = bid_data.takeoff_extras
         self.model.bid_condition_folders = bid_data.bid_condition_folders
         self.model.page_area_selections = bid_data.page_area_selections

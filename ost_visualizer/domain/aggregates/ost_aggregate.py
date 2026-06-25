@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from ..entities.annotation import BidAnnotation
+from ..entities.area import BidArea
 from ..entities.bid import Bid
 from ..entities.cdn_type import CdnType
 from ..entities.condition import Condition
@@ -29,6 +30,7 @@ class OstAggregate:
         self.projects: List[Project] = []
         self.bid_conditions: Dict[str, Condition] = {}
         self.bid_takeoffs: List[Takeoff] = []
+        self.bid_areas: Dict[str, BidArea] = {}
         self.bid_takeoff_extras: Dict[str, Dict[str, Any]] = {}
         self.cdn_types: Dict[str, CdnType] = {}
         self.bid_condition_folders: Dict[str, BidConditionFolder] = {}
@@ -123,6 +125,7 @@ class OstAggregate:
     def clear_bid(self) -> None:
         self.bid_conditions = {}
         self.bid_takeoffs = []
+        self.bid_areas = {}
         self.bid_takeoff_extras = {}
         self.bid_condition_folders = {}
         self.page_area_selections = {}

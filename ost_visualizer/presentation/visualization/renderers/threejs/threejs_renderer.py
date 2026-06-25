@@ -12,6 +12,7 @@ from .....application.interfaces.i_coordinate_transformer import ICoordinateTran
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from .....domain.entities.config import Config
 from .....domain.entities.condition import Condition
+from .....domain.entities.area import BidArea
 from .....domain.entities.layer import BidLayer
 from .....domain.entities.takeoff import Takeoff
 from .adapters.threejs_mesh_adapter import ThreejsMeshAdapter
@@ -36,6 +37,7 @@ def visualize_with_threejs(
     page_width_inches: float = 0.0,
     page_height_inches: float = 0.0,
     layers: Optional[List[BidLayer]] = None,
+    areas: Optional[List[BidArea]] = None,
     page_image_layer: Optional[ScenePageImageLayer] = None,
 ) -> Optional[str]:
     start_time = time.time()
@@ -50,6 +52,7 @@ def visualize_with_threejs(
         color_mode=color_mode,
         grayscale_enabled=grayscale_enabled,
         page_area_selections=page_area_selections,
+        areas=areas,
     )
     if not processed_meshes:
         return None
@@ -59,6 +62,7 @@ def visualize_with_threejs(
         bounds,
         title,
         layers=layers,
+        areas=areas,
         page_image_layer=page_image_layer,
     )
     if pdf_path and os.path.isfile(pdf_path):

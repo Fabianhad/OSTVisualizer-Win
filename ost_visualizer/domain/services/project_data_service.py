@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 from ...domain.aggregates.ost_aggregate import OstAggregate
+from ...domain.entities.area import BidArea
 from ...domain.entities.bid import Bid
 from ...domain.entities.condition import Condition
 from ...domain.entities.hierarchy_data import HierarchyData
@@ -171,6 +172,21 @@ class ProjectDataService:
                 )
             )
         return snapshot
+
+    def get_bid_area_snapshot(
+        self, takeoffs: Optional[Iterable[Takeoff]] = None
+    ) -> List[BidArea]:
+        used_area_uids: Optional[set[str]] = None
+        if takeoffs is not None:
+            used_area_uids = {
+                str(takeoff.area_uid or "")
+                for takeoff in takeoffs
+                if str(takeoff.area_uid or "") not in ("", "0")
+            }
+        areas = list(getattr(self.model, "bid_areas", {}).values())
+        if used_area_uids is not None:
+            areas = [area for area in areas if str(area.uid) in used_area_uids]
+        return sorted(areas, key=lambda area: int(area.sequence or 0))
 
     def _set_named_layer_visibility(self, layer_uid: str, visible: bool) -> None:
         layer_name = self.model.bid_layer_names_by_uid.get(layer_uid)

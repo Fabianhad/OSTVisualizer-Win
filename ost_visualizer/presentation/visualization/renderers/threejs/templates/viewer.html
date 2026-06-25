@@ -11,7 +11,6 @@
             --viewer-border: rgba(255, 255, 255, 0.08);
             --viewer-divider: rgba(255, 255, 255, 0.06);
             --viewer-control-border: rgba(255, 255, 255, 0.1);
-            --viewer-swatch-border: rgba(255, 255, 255, 0.15);
             --viewer-scrollbar: rgba(255, 255, 255, 0.1);
             --viewer-control-bg: rgba(255, 255, 255, 0.03);
             --viewer-hover-bg: rgba(255, 255, 255, 0.06);
@@ -32,7 +31,6 @@
             --viewer-border: rgba(15, 23, 42, 0.12);
             --viewer-divider: rgba(15, 23, 42, 0.08);
             --viewer-control-border: rgba(15, 23, 42, 0.14);
-            --viewer-swatch-border: rgba(15, 23, 42, 0.2);
             --viewer-scrollbar: rgba(15, 23, 42, 0.18);
             --viewer-control-bg: rgba(15, 23, 42, 0.04);
             --viewer-hover-bg: rgba(15, 23, 42, 0.07);
@@ -147,7 +145,24 @@
             scrollbar-color: var(--viewer-scrollbar) transparent;
         }
 
-        .layer-row {
+        .visibility-section {
+            padding: 4px 0;
+        }
+
+        .visibility-section+.visibility-section {
+            border-top: 1px solid var(--viewer-divider);
+        }
+
+        .visibility-section-title {
+            padding: 8px 14px 4px;
+            color: var(--viewer-muted);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0;
+            text-transform: uppercase;
+        }
+
+        .visibility-row {
             display: flex;
             align-items: center;
             gap: 8px;
@@ -156,11 +171,11 @@
             transition: background 0.1s;
         }
 
-        .layer-row:hover {
+        .visibility-row:hover {
             background: var(--viewer-hover-bg);
         }
 
-        .layer-row input[type="checkbox"] {
+        .visibility-row input[type="checkbox"] {
             accent-color: var(--viewer-accent);
             width: 14px;
             height: 14px;
@@ -168,22 +183,13 @@
             flex-shrink: 0;
         }
 
-        .layer-swatch {
-            width: 14px;
-            height: 14px;
-            border-radius: 3px;
-            flex-shrink: 0;
-            border: 1px solid var(--viewer-swatch-border);
-            background: var(--viewer-muted);
-        }
-
-        .layer-name {
+        .visibility-name {
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
 
-        .layer-row.disabled .layer-name {
+        .visibility-row.disabled .visibility-name {
             color: var(--viewer-disabled);
             text-decoration: line-through;
         }
@@ -213,20 +219,19 @@
                 min-height: 36px;
             }
 
-            .layer-row {
+            .visibility-section-title {
+                padding: 8px 12px 4px;
+            }
+
+            .visibility-row {
                 padding: 8px 12px;
                 gap: 10px;
                 min-height: 40px;
             }
 
-            .layer-row input[type="checkbox"] {
+            .visibility-row input[type="checkbox"] {
                 width: 18px;
                 height: 18px;
-            }
-
-            .layer-swatch {
-                width: 16px;
-                height: 16px;
             }
         }
     </style>
@@ -235,7 +240,7 @@
 <body>
     <div id="layer-panel" class="collapsed">
         <div id="layer-header">
-            <span>Layers</span>
+            <span>Visibility</span>
             <span id="layer-count"></span>
         </div>
         <div id="layer-actions">
@@ -299,9 +304,13 @@
         const layerHeader = document.getElementById('layer-header');
         const layerShowAll = document.getElementById('layer-show-all');
         const layerHideAll = document.getElementById('layer-hide-all');
-        const layerRegistry = new Map();
-        const layerObjects = new Map();
+        const layerVisibility = new Map();
+        const conditionVisibility = new Map();
+        const areaVisibility = new Map();
         const layerRows = new Map();
+        const conditionRows = new Map();
+        const areaRows = new Map();
+        const visibilityObjects = [];
         const UNLAYERED_UID = '__unlayered__';
 
         function normalizeLayerUid(layerUid) {
@@ -309,108 +318,154 @@
             return uid || UNLAYERED_UID;
         }
 
-        function colorArrayToHex(color) {
-            if (!Array.isArray(color) || color.length < 3) {
-                return '#8892b0';
-            }
-            const parts = color.slice(0, 3).map(value => {
-                const channel = Math.max(0, Math.min(255, Math.round(Number(value) * 255)));
-                return channel.toString(16).padStart(2, '0');
-            });
-            return `#${parts.join('')}`;
+        function normalizeOptionalUid(uid) {
+            if (uid === undefined || uid === null) return '';
+            const normalized = String(uid);
+            return normalized === '0' ? '' : normalized;
         }
 
-        function ensureLayerEntry(layerUid, name, visible = true, color = '#8892b0') {
-            const uid = normalizeLayerUid(layerUid);
-            if (!layerRegistry.has(uid)) {
-                layerRegistry.set(uid, {
+        function ensureVisibilityEntry(registry, uid, name, visible = true, fallbackName = 'Unassigned') {
+            if (!uid) return null;
+            if (!registry.has(uid)) {
+                registry.set(uid, {
                     uid: uid,
-                    name: name || (uid === UNLAYERED_UID ? 'Unlayered' : uid),
+                    name: name || fallbackName || uid,
                     visible: visible !== false,
-                    color: color,
-                    objects: [],
                 });
             } else {
-                const entry = layerRegistry.get(uid);
+                const entry = registry.get(uid);
                 if (name && entry.name === uid) entry.name = name;
-                if (color && entry.color === '#8892b0') entry.color = color;
             }
-            if (!layerObjects.has(uid)) {
-                layerObjects.set(uid, []);
-            }
-            return layerRegistry.get(uid);
+            return registry.get(uid);
         }
 
-        function buildLayerRegistry() {
+        function buildVisibilityRegistries() {
             const layers = Array.isArray(sceneData.layers) ? sceneData.layers : [];
             layers.forEach(layer => {
-                ensureLayerEntry(layer.uid, layer.name, layer.visible, layer.color || '#8892b0');
+                ensureVisibilityEntry(
+                    layerVisibility,
+                    normalizeLayerUid(layer.uid),
+                    layer.name,
+                    layer.visible,
+                    'Unlayered'
+                );
             });
             if (sceneData.page_image_layer) {
                 const layer = sceneData.page_image_layer;
-                const pageEntry = ensureLayerEntry(
-                    layer.uid,
+                const pageEntry = ensureVisibilityEntry(
+                    layerVisibility,
+                    normalizeLayerUid(layer.uid),
                     layer.name || 'Image',
                     layer.visible,
-                    '#ffffff'
+                    'Image'
                 );
                 pageEntry.visible = layer.visible !== false;
             }
-        }
-
-        function registerLayerObject(layerUid, object, baseVisible = true) {
-            const uid = normalizeLayerUid(layerUid);
-            ensureLayerEntry(uid);
-            object.userData.layerUid = uid;
-            object.userData.baseVisible = baseVisible !== false;
-            layerObjects.get(uid).push(object);
-            applyLayerVisibility(uid);
-        }
-
-        function applyLayerVisibility(layerUid) {
-            const uid = normalizeLayerUid(layerUid);
-            const entry = layerRegistry.get(uid);
-            const layerVisible = entry ? entry.visible : true;
-            const objects = layerObjects.get(uid) || [];
-            objects.forEach(object => {
-                object.visible = object.userData.baseVisible !== false && layerVisible;
+            const conditions = Array.isArray(sceneData.conditions) ? sceneData.conditions : [];
+            conditions.forEach(condition => {
+                ensureVisibilityEntry(
+                    conditionVisibility,
+                    normalizeOptionalUid(condition.uid),
+                    condition.name,
+                    condition.visible,
+                    'Condition'
+                );
             });
-            const row = layerRows.get(uid);
-            if (row) {
-                row.classList.toggle('disabled', !layerVisible);
+            const areas = Array.isArray(sceneData.areas) ? sceneData.areas : [];
+            areas.forEach(area => {
+                ensureVisibilityEntry(
+                    areaVisibility,
+                    normalizeOptionalUid(area.uid),
+                    area.name,
+                    area.visible,
+                    'Area'
+                );
+            });
+        }
+
+        function isGroupVisible(registry, uid) {
+            if (!uid) return true;
+            const entry = registry.get(uid);
+            return entry ? entry.visible !== false : true;
+        }
+
+        function isObjectVisible(object) {
+            return (
+                object.userData.baseVisible !== false
+                && isGroupVisible(layerVisibility, object.userData.layerUid)
+                && isGroupVisible(conditionVisibility, object.userData.conditionUid)
+                && isGroupVisible(areaVisibility, object.userData.areaUid)
+            );
+        }
+
+        function registerVisibilityObject(keys, object, baseVisible = true) {
+            const layerUid = normalizeLayerUid(keys.layerUid);
+            const conditionUid = normalizeOptionalUid(keys.conditionUid);
+            const areaUid = normalizeOptionalUid(keys.areaUid);
+            ensureVisibilityEntry(layerVisibility, layerUid, keys.layerName, true, 'Unlayered');
+            if (conditionUid) {
+                ensureVisibilityEntry(conditionVisibility, conditionUid, keys.conditionName, true, 'Condition');
+            }
+            if (areaUid) {
+                ensureVisibilityEntry(areaVisibility, areaUid, keys.areaName, true, 'Area');
+            }
+            object.userData.layerUid = layerUid;
+            object.userData.conditionUid = conditionUid;
+            object.userData.areaUid = areaUid;
+            object.userData.baseVisible = baseVisible !== false;
+            visibilityObjects.push(object);
+            object.visible = isObjectVisible(object);
+        }
+
+        function updateVisibilityRows(registry, rows) {
+            for (const [uid, row] of rows) {
+                const entry = registry.get(uid);
+                const visible = entry ? entry.visible !== false : true;
+                row.classList.toggle('disabled', !visible);
                 const checkbox = row.querySelector('input[type="checkbox"]');
-                if (checkbox) checkbox.checked = layerVisible;
+                if (checkbox) checkbox.checked = visible;
             }
         }
 
-        function setLayerVisible(layerUid, visible) {
-            const uid = normalizeLayerUid(layerUid);
-            const entry = layerRegistry.get(uid);
+        function applyObjectVisibility() {
+            visibilityObjects.forEach(object => {
+                object.visible = isObjectVisible(object);
+            });
+            updateVisibilityRows(layerVisibility, layerRows);
+            updateVisibilityRows(conditionVisibility, conditionRows);
+            updateVisibilityRows(areaVisibility, areaRows);
+        }
+
+        function setGroupVisible(registry, uid, visible) {
+            const entry = registry.get(uid);
             if (!entry) return;
             entry.visible = Boolean(visible);
-            applyLayerVisibility(uid);
+            applyObjectVisibility();
         }
 
-        function setAllLayersVisible(visible) {
-            for (const uid of layerRegistry.keys()) {
-                setLayerVisible(uid, visible);
-            }
+        function setAllGroupsVisible(visible) {
+            [layerVisibility, conditionVisibility, areaVisibility].forEach(registry => {
+                for (const entry of registry.values()) {
+                    entry.visible = Boolean(visible);
+                }
+            });
+            applyObjectVisibility();
         }
 
-        function buildLayerPanel() {
-            layerList.innerHTML = '';
-            layerRows.clear();
-            const entries = Array.from(layerRegistry.values());
-            if (!entries.length) {
-                layerPanel.classList.remove('visible');
-                return;
-            }
-            layerCount.textContent = String(entries.length);
-            layerPanel.classList.add('visible');
+        function renderVisibilitySection(title, registry, rows) {
+            const entries = Array.from(registry.values());
+            if (!entries.length) return 0;
+            const section = document.createElement('div');
+            section.className = 'visibility-section';
+
+            const heading = document.createElement('div');
+            heading.className = 'visibility-section-title';
+            heading.textContent = title;
+            section.appendChild(heading);
 
             entries.forEach(entry => {
                 const row = document.createElement('label');
-                row.className = 'layer-row';
+                row.className = 'visibility-row';
                 row.title = entry.name;
                 row.classList.toggle('disabled', !entry.visible);
 
@@ -418,28 +473,46 @@
                 checkbox.type = 'checkbox';
                 checkbox.checked = entry.visible;
                 checkbox.addEventListener('change', () => {
-                    setLayerVisible(entry.uid, checkbox.checked);
+                    setGroupVisible(registry, entry.uid, checkbox.checked);
                 });
 
-                const swatch = document.createElement('div');
-                swatch.className = 'layer-swatch';
-                swatch.style.background = entry.color;
-
                 const name = document.createElement('span');
-                name.className = 'layer-name';
+                name.className = 'visibility-name';
                 name.textContent = entry.name;
 
-                row.append(checkbox, swatch, name);
-                layerList.appendChild(row);
-                layerRows.set(entry.uid, row);
+                row.append(checkbox, name);
+                section.appendChild(row);
+                rows.set(entry.uid, row);
             });
+
+            layerList.appendChild(section);
+            return entries.length;
         }
 
-        buildLayerRegistry();
+        function buildLayerPanel() {
+            layerList.innerHTML = '';
+            layerRows.clear();
+            conditionRows.clear();
+            areaRows.clear();
+            const entryCount =
+                renderVisibilitySection('Layers', layerVisibility, layerRows)
+                + renderVisibilitySection('Conditions', conditionVisibility, conditionRows)
+                + renderVisibilitySection('Areas', areaVisibility, areaRows);
+
+            if (!entryCount) {
+                layerPanel.classList.remove('visible');
+                return;
+            }
+            layerCount.textContent = String(entryCount);
+            layerPanel.classList.add('visible');
+            applyObjectVisibility();
+        }
+
+        buildVisibilityRegistries();
         layerHeader.addEventListener('click', () => layerPanel.classList.toggle('collapsed'));
-        layerShowAll.addEventListener('click', () => setAllLayersVisible(true));
-        layerHideAll.addEventListener('click', () => setAllLayersVisible(false));
-        window.toggleAll = setAllLayersVisible;
+        layerShowAll.addEventListener('click', () => setAllGroupsVisible(true));
+        layerHideAll.addEventListener('click', () => setAllGroupsVisible(false));
+        window.toggleAll = setAllGroupsVisible;
 
         function readVector3(values, fallback) {
             if (Array.isArray(values) && values.length >= 3) {
@@ -659,7 +732,6 @@
             const color = new THREE.Color(geomData.color[0], geomData.color[1], geomData.color[2]);
             const isTransparent = geomData.opacity < 1.0;
             const layerUid = normalizeLayerUid(geomData.layer_uid);
-            ensureLayerEntry(layerUid, geomData.layer_name || geomData.name, true, colorArrayToHex(geomData.color));
             let mesh;
 
             if (isTransparent && wboitPass) {
@@ -685,9 +757,17 @@
                 mesh.renderOrder = isTransparent ? 1 : 0;
                 scene.add(mesh);
             }
-            mesh.userData.conditionUid = geomData.condition_uid || '';
             mesh.userData.takeoffUid = geomData.takeoff_uid || '';
-            registerLayerObject(layerUid, mesh, geomData.visible !== false);
+            registerVisibilityObject(
+                {
+                    layerUid: layerUid,
+                    conditionUid: geomData.condition_uid,
+                    conditionName: geomData.name,
+                    areaUid: geomData.area_uid,
+                },
+                mesh,
+                geomData.visible !== false
+            );
         });
 
         let pdfPlane = null;
@@ -724,11 +804,10 @@
                 for (let i = 0; i < uv.count; i++) { uv.setX(i, 1 - uv.getX(i)); uv.setY(i, 1 - uv.getY(i)); }
                 uv.needsUpdate = true;
                 pdfPlane.renderOrder = -1;
-                pdfPlane.userData.conditionUid = '';
                 pdfPlane.userData.takeoffUid = '';
                 scene.add(pdfPlane);
                 const pageLayer = sceneData.page_image_layer || {};
-                registerLayerObject(pageLayer.uid, pdfPlane, true);
+                registerVisibilityObject({ layerUid: pageLayer.uid, layerName: pageLayer.name || 'Image' }, pdfPlane, true);
                 buildLayerPanel();
             }).catch(e => console.warn('PDF floor failed:', e));
         }

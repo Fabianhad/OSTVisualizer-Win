@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional, Tuple
 from ......application.dtos.scene_data_dto import (
+    SceneAreaEntry,
     SceneBoundsConfig,
     SceneCameraConfig,
     SceneConditionEntry,
@@ -9,6 +10,7 @@ from ......application.dtos.scene_data_dto import (
     ScenePageImageLayer,
 )
 from ......domain.dtos.mesh_metadata_dto import MeshMetadata
+from ......domain.entities.area import BidArea
 from ......domain.entities.layer import BidLayer
 from ....core.mesh_generator import MeshData
 from ....services.color_service import ColorService
@@ -27,10 +29,12 @@ class ThreejsMeshAdapter:
         bounds: Bounds,
         title: str,
         layers: Optional[List[BidLayer]] = None,
+        areas: Optional[List[BidArea]] = None,
         page_image_layer: Optional[ScenePageImageLayer] = None,
     ) -> SceneData:
         geometries = []
         conditions_by_uid: Dict[str, SceneConditionEntry] = {}
+        areas_by_uid: Dict[str, SceneAreaEntry] = self._convert_areas(areas or [])
         for mesh_data, metadata in meshes:
             geometry = self.convert_mesh(mesh_data, metadata)
             if geometry:
@@ -41,13 +45,21 @@ class ThreejsMeshAdapter:
                     "uid": condition_uid,
                     "name": str(metadata.get("name", "") or ""),
                     "layer_uid": str(metadata.get("layer_uid", "") or ""),
-                    "visible": bool(metadata.get("layer_visible", True)),
+                    "visible": True,
                     "cdn_type_uid": str(metadata.get("cdn_type_uid", "") or ""),
                     "cdn_type_name": str(
                         metadata.get("cdn_type_name")
                         or metadata.get("cdn_type")
                         or "Unknown"
                     ),
+                }
+            area_uid = str(metadata.get("area_uid", "") or "")
+            if area_uid and area_uid not in areas_by_uid:
+                areas_by_uid[area_uid] = {
+                    "uid": area_uid,
+                    "name": str(metadata.get("area_name", "") or area_uid),
+                    "visible": True,
+                    "sequence": len(areas_by_uid),
                 }
         center_x = (bounds[0] + bounds[1]) / 2
         center_y = (bounds[2] + bounds[3]) / 2
@@ -74,6 +86,10 @@ class ThreejsMeshAdapter:
             scene["layers"] = scene_layers
         if conditions_by_uid:
             scene["conditions"] = list(conditions_by_uid.values())
+        if areas_by_uid:
+            scene["areas"] = sorted(
+                areas_by_uid.values(), key=lambda area: int(area["sequence"])
+            )
         if page_image_layer:
             scene["page_image_layer"] = page_image_layer
         return scene
@@ -116,6 +132,26 @@ class ThreejsMeshAdapter:
                 )
         return scene_layers
 
+    @staticmethod
+    def _convert_areas(areas: List[BidArea]) -> Dict[str, SceneAreaEntry]:
+        scene_areas: Dict[str, SceneAreaEntry] = {}
+        ordered_areas = sorted(
+            areas,
+            key=lambda item: item.sequence if item.sequence is not None else 0,
+        )
+        for index, area in enumerate(ordered_areas):
+            uid = str(area.uid or "")
+            if not uid or uid == "0" or uid in scene_areas:
+                continue
+            sequence = area.sequence if area.sequence is not None else index
+            scene_areas[uid] = {
+                "uid": uid,
+                "name": str(area.name or uid),
+                "visible": True,
+                "sequence": int(sequence),
+            }
+        return scene_areas
+
     def convert_mesh(
         self,
         mesh_data: MeshData,
@@ -147,6 +183,7 @@ class ThreejsMeshAdapter:
             "visible": bool(metadata.get("visible", True)),
             "takeoff_uid": str(metadata.get("takeoff_uid", "") or ""),
             "condition_uid": str(metadata.get("condition_uid", "") or ""),
+            "area_uid": str(metadata.get("area_uid", "") or ""),
             "layer_uid": str(metadata.get("layer_uid", "") or ""),
             "cdn_type_uid": str(metadata.get("cdn_type_uid", "") or ""),
             "cdn_type_name": str(

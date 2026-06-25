@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional, Protocol
 from ..dtos.scene_data_dto import ScenePageImageLayer
+from ...domain.entities.area import BidArea
 from ...domain.entities.config import Config
 from ...domain.entities.condition import Condition
 from ...domain.entities.layer import BidLayer
@@ -23,5 +24,6 @@ class IHtmlRenderer(Protocol):
         page_width_inches: float = 0.0,
         page_height_inches: float = 0.0,
         layers: Optional[List[BidLayer]] = None,
+        areas: Optional[List[BidArea]] = None,
         page_image_layer: Optional[ScenePageImageLayer] = None,
     ) -> bool: ...

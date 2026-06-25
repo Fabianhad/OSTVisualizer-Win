@@ -96,11 +96,13 @@ class ExportService:
             )
             if strategy.extension == "html":
                 layers = self.project_data.get_bid_layer_snapshot()
+                areas = self.project_data.get_bid_area_snapshot(result.takeoffs)
                 kwargs.update(
                     {
                         "title": metadata.get("title", "3D View"),
                         "bid_name": bid_name,
                         "layers": layers,
+                        "areas": areas,
                     }
                 )
                 if result.valid_page_uids:

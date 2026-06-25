@@ -5,6 +5,7 @@ from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainS
 from .....domain.dtos.mesh_metadata_dto import MeshMetadata
 from .....domain.entities.config import Config
 from .....domain.entities.condition import Condition
+from .....domain.entities.area import BidArea
 from .....domain.entities.takeoff import Takeoff
 from ...core.boolean_operations import apply_boolean_operations
 from ...core.mesh_generator import MeshData
@@ -23,7 +24,11 @@ def process_meshes_for_threejs(
     color_mode: str = Config.COLOR_MODE_SOLID,
     grayscale_enabled: bool = True,
     page_area_selections: Optional[Dict] = None,
+    areas: Optional[List[BidArea]] = None,
 ) -> Tuple[List[Tuple[MeshData, MeshMetadata]], Bounds]:
+    area_names_by_uid = {
+        str(area.uid): str(area.name or area.uid) for area in (areas or []) if area.uid
+    }
     hierarchy_map, color_map = color_service.get_color_mapping(
         bid_conditions, bid_takeoffs, color_mode, grayscale_enabled
     )
@@ -54,9 +59,14 @@ def process_meshes_for_threejs(
                     "opacity": opacity,
                     "condition_uid": condition_uid,
                     "takeoff_uid": takeoff.uid,
+                    "area_uid": (
+                        str(takeoff.area_uid or "")
+                        if str(takeoff.area_uid or "") not in ("", "0")
+                        else ""
+                    ),
+                    "area_name": area_names_by_uid.get(str(takeoff.area_uid or ""), ""),
                     "condition_type": condition.condition_type,
                     "layer_uid": condition.layer_uid or "",
-                    "layer_visible": condition.layer_visible,
                     "visible": True,
                     "name": (
                         condition.name if condition.name else f"Element {takeoff.uid}"

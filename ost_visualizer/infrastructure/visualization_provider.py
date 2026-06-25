@@ -13,6 +13,7 @@ from ..application.interfaces.i_visualization_provider import (
     Bounds,
     IVisualizationProvider,
 )
+from ..domain.entities.area import BidArea
 from ..domain.entities.layer import BidLayer
 from ..presentation.visualization.exporters.dxf_exporter import DXFExporter
 from ..presentation.visualization.exporters.fbx_exporter import FBXExporter
@@ -89,6 +90,7 @@ class _HtmlRendererAdapter(IHtmlRenderer):
         page_width_inches: float = 0.0,
         page_height_inches: float = 0.0,
         layers: Optional[List[BidLayer]] = None,
+        areas: Optional[List[BidArea]] = None,
         page_image_layer: Optional[ScenePageImageLayer] = None,
     ) -> bool:
         try:
@@ -111,6 +113,7 @@ class _HtmlRendererAdapter(IHtmlRenderer):
                 page_width_inches=page_width_inches,
                 page_height_inches=page_height_inches,
                 layers=layers,
+                areas=areas,
                 page_image_layer=page_image_layer,
             )
             return True
@@ -302,6 +305,7 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             page_width_inches=kwargs.get("page_width_inches", 0.0),
             page_height_inches=kwargs.get("page_height_inches", 0.0),
             layers=kwargs.get("layers"),
+            areas=kwargs.get("areas"),
             page_image_layer=kwargs.get("page_image_layer"),
         )
 

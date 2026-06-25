@@ -76,24 +76,60 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
                     "sequence": 2,
                 },
             ],
+            "conditions": [
+                {"uid": "condition-a", "name": "Condition A", "visible": True},
+            ],
+            "areas": [
+                {"uid": "area-a", "name": "Area A", "visible": True, "sequence": 1},
+            ],
             "page_image_layer": {"uid": "image", "name": "Image", "visible": False},
         }
-
         html = _generate_html(scene_data, "Layer Test")
-
         self.assertIn('id="layer-panel"', html)
         self.assertIn('id="layer-list"', html)
         self.assertIn('id="layer-show-all"', html)
-        self.assertIn("const layerRegistry = new Map()", html)
-        self.assertIn("function registerLayerObject(layerUid, object", html)
-        self.assertIn("function setLayerVisible(layerUid, visible)", html)
-        self.assertIn("function setAllLayersVisible(visible)", html)
-        self.assertIn("mesh.userData.conditionUid = geomData.condition_uid", html)
+        self.assertIn("const layerVisibility = new Map()", html)
+        self.assertIn("const conditionVisibility = new Map()", html)
+        self.assertIn("const areaVisibility = new Map()", html)
+        self.assertIn("function registerVisibilityObject(keys, object", html)
+        self.assertIn("function setGroupVisible(registry, uid, visible)", html)
+        self.assertIn("function setAllGroupsVisible(visible)", html)
+        self.assertIn("renderVisibilitySection('Layers'", html)
+        self.assertIn("renderVisibilitySection('Conditions'", html)
+        self.assertIn("renderVisibilitySection('Areas'", html)
         self.assertIn("mesh.userData.takeoffUid = geomData.takeoff_uid", html)
-        self.assertIn("registerLayerObject(layerUid, mesh", html)
+        self.assertIn("object.userData.conditionUid = conditionUid", html)
+        self.assertIn("object.userData.areaUid = areaUid", html)
+        self.assertIn("registerVisibilityObject(", html)
         self.assertIn("sceneData.page_image_layer", html)
         self.assertIn("pageEntry.visible = layer.visible !== false", html)
         self.assertNotIn("pdf-toggle", html)
+        self.assertNotIn("layer-swatch", html)
+
+    def test_viewer_combines_layer_condition_and_area_visibility(self):
+        html = _generate_html(
+            {
+                "title": "Visibility Test",
+                "geometries": [],
+                "camera": {
+                    "position": [0.0, 150.0, -100.0],
+                    "target": [0.0, 0.0, 0.0],
+                },
+                "bounds": {
+                    "min": [-50.0, -5.0, -50.0],
+                    "max": [50.0, 75.0, 50.0],
+                },
+            },
+            "Visibility Test",
+        )
+        self.assertIn("function isObjectVisible(object)", html)
+        self.assertIn("isGroupVisible(layerVisibility, object.userData.layerUid)", html)
+        self.assertIn(
+            "isGroupVisible(conditionVisibility, object.userData.conditionUid)",
+            html,
+        )
+        self.assertIn("isGroupVisible(areaVisibility, object.userData.areaUid)", html)
+        self.assertIn("if (!uid) return true", html)
 
 
 if __name__ == "__main__":
