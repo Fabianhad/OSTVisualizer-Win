@@ -28,6 +28,7 @@ from ..application.services.mcp_read_service import (
     McpReadError,
     McpReadService,
 )
+from ..domain.entities.area import is_unassigned_area_uid
 from ..infrastructure.mdb.mdb_reader import MdbReader
 from ..infrastructure.pdf_metadata_provider import NativePdfMetadataProvider
 from ..infrastructure.persistence.repositories.file_project_repository import (
@@ -866,7 +867,7 @@ def _add_selected_area_name(
     area_uid = payload.get("selected_area_uid")
     database_id = payload.get("database_id")
     bid_uid = payload.get("bid_uid")
-    if area_uid in (None, "", "0", 0) or not database_id or not bid_uid:
+    if is_unassigned_area_uid(area_uid) or not database_id or not bid_uid:
         return
     try:
         payload["selected_area_name"] = read_service.resolve_area_name(

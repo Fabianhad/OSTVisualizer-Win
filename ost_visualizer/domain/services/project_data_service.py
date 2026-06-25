@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 from ...domain.aggregates.ost_aggregate import OstAggregate
-from ...domain.entities.area import BidArea
+from ...domain.entities.area import BidArea, is_unassigned_area_uid, normalize_area_uid
 from ...domain.entities.bid import Bid
 from ...domain.entities.condition import Condition
 from ...domain.entities.hierarchy_data import HierarchyData
@@ -179,9 +179,9 @@ class ProjectDataService:
         used_area_uids: Optional[set[str]] = None
         if takeoffs is not None:
             used_area_uids = {
-                str(takeoff.area_uid or "")
+                normalize_area_uid(takeoff.area_uid)
                 for takeoff in takeoffs
-                if str(takeoff.area_uid or "") not in ("", "0")
+                if not is_unassigned_area_uid(takeoff.area_uid)
             }
         areas = list(self.model.bid_areas.values())
         if used_area_uids is not None:
@@ -459,7 +459,7 @@ class ProjectDataService:
         page_uids = self.get_page_uids_for_takeoffs(wanted)
         if not wanted:
             return page_uids
-        target_area_uid = str(area_uid or "0")
+        target_area_uid = normalize_area_uid(area_uid)
         for takeoff in self.model.get_all_takeoffs():
             if takeoff.uid in wanted:
                 takeoff.area_uid = target_area_uid
@@ -592,13 +592,13 @@ class ProjectDataService:
         return self.model.bid_conditions.get(uid)
 
     def get_area_uids_with_takeoff(self) -> set:
-        return {t.area_uid or "0" for t in self.model.get_all_takeoffs()}
+        return {normalize_area_uid(t.area_uid) for t in self.model.get_all_takeoffs()}
 
     def get_area_uids_with_takeoff_for_page(self, page_uid: str) -> set:
         page = self.model.get_page(page_uid)
         if not page:
             return set()
-        return {t.area_uid or "0" for t in page.takeoffs}
+        return {normalize_area_uid(t.area_uid) for t in page.takeoffs}
 
     def get_bid_condition_folders(self) -> Dict[str, BidConditionFolder]:
         return self.model.bid_condition_folders

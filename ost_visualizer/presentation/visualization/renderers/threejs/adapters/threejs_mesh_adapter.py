@@ -10,7 +10,11 @@ from ......application.dtos.scene_data_dto import (
     ScenePageImageLayer,
 )
 from ......domain.dtos.mesh_metadata_dto import MeshMetadata
-from ......domain.entities.area import BidArea
+from ......domain.entities.area import (
+    BidArea,
+    is_unassigned_area_uid,
+    normalize_area_uid,
+)
 from ......domain.entities.layer import BidLayer
 from ....core.mesh_generator import MeshData
 from ....services.color_service import ColorService
@@ -140,8 +144,8 @@ class ThreejsMeshAdapter:
             key=lambda item: item.sequence if item.sequence is not None else 0,
         )
         for index, area in enumerate(ordered_areas):
-            uid = str(area.uid or "")
-            if not uid or uid == "0" or uid in scene_areas:
+            uid = normalize_area_uid(area.uid)
+            if is_unassigned_area_uid(uid) or uid in scene_areas:
                 continue
             sequence = area.sequence if area.sequence is not None else index
             scene_areas[uid] = {

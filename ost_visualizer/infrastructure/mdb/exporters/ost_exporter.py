@@ -5,6 +5,7 @@ from xml.etree.ElementTree import Element, SubElement
 from ....application.dtos.export_dto import ExportErrorCode, ExportResultDto
 from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
+from ....domain.entities.area import UNASSIGNED_AREA_UID
 from ....domain.entities.condition import Condition
 from ..schema_contract import BID_SECTIONS as _BID_SECTIONS
 from ..schema_contract import BID_TAIL_SECTIONS as _BID_TAIL_SECTIONS
@@ -772,8 +773,10 @@ class OstExporter:
                     ]
                     for takeoff in main_takeoffs:
                         area_key = (
-                            takeoff.get("BidAreaUID", "0") or "0",
-                            takeoff.get("BidTypAreaUID", "0") or "0",
+                            takeoff.get("BidAreaUID", UNASSIGNED_AREA_UID)
+                            or UNASSIGNED_AREA_UID,
+                            takeoff.get("BidTypAreaUID", UNASSIGNED_AREA_UID)
+                            or UNASSIGNED_AREA_UID,
                         )
                         position = parse_position(takeoff.get("Position", ""))
                         takeoff_uid = takeoff.get("UID", "")
@@ -825,8 +828,10 @@ class OstExporter:
                 else:
                     for takeoff in condition_takeoffs:
                         area_key = (
-                            takeoff.get("BidAreaUID", "0") or "0",
-                            takeoff.get("BidTypAreaUID", "0") or "0",
+                            takeoff.get("BidAreaUID", UNASSIGNED_AREA_UID)
+                            or UNASSIGNED_AREA_UID,
+                            takeoff.get("BidTypAreaUID", UNASSIGNED_AREA_UID)
+                            or UNASSIGNED_AREA_UID,
                         )
                         position = parse_position(takeoff.get("Position", ""))
                         q1, q2, q3 = self._uom_service.calculate_condition_quantities(

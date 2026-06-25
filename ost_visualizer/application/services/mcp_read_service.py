@@ -3,7 +3,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
-from ...domain.entities.area import BidArea
+from ...domain.entities.area import (
+    BidArea,
+    is_unassigned_area_uid as _is_unassigned_area_uid,
+    normalize_area_uid as _normalize_area_uid,
+)
 from ...domain.entities.annotation import (
     ANNOTATION_TYPE_CALLOUT,
     ANNOTATION_TYPE_DIMENSION,
@@ -1848,11 +1852,11 @@ class McpReadService:
 
     @staticmethod
     def _normalize_area_uid(area_uid: str) -> str:
-        return str(area_uid or "0")
+        return _normalize_area_uid(area_uid)
 
     @staticmethod
     def _is_unassigned_area_uid(area_uid: str) -> bool:
-        return str(area_uid or "").strip() in {"", "0"}
+        return _is_unassigned_area_uid(area_uid)
 
     def _area_usage_maps(
         self, bid_data: BidLoadResult

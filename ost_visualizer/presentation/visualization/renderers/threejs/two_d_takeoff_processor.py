@@ -3,6 +3,7 @@ from .....application.dtos.scene_data_dto import SceneTakeoff2DEntry
 from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from .....domain.dtos.page_render_info_dto import PageRenderInfo
+from .....domain.entities.area import area_group_uid
 from .....domain.entities.config import Config
 from .....domain.entities.condition import Condition
 from .....domain.entities.takeoff import Takeoff
@@ -55,7 +56,7 @@ def process_takeoffs_2d_for_threejs(
             {
                 "takeoff_uid": str(takeoff.uid or ""),
                 "condition_uid": str(takeoff.condition_uid or ""),
-                "area_uid": _normalized_area_uid(takeoff.area_uid),
+                "area_uid": area_group_uid(takeoff.area_uid),
                 "layer_uid": str(condition.layer_uid or ""),
                 "name": condition.name if condition.name else f"Takeoff {takeoff.uid}",
                 "visible": True,
@@ -189,7 +190,6 @@ def _points_to_ring(points: List[Point]) -> Ring:
 def _transform_vertices_to_points(
     position: List[float], coord_system: OSTCoordinateSystem
 ) -> List[Point]:
-    # Match the Qt plan-view overlay coordinate space: top-left page coordinates.
     transformed = coord_system.transform_vertices_to_2d(position)
     return [
         (float(transformed[index]), float(transformed[index + 1]))
@@ -199,11 +199,6 @@ def _transform_vertices_to_points(
 
 def _ost_to_pdf_points(value: float, coord_system: OSTCoordinateSystem) -> float:
     return coord_system.ost_to_pdf_points(float(value))
-
-
-def _normalized_area_uid(area_uid) -> str:
-    uid = str(area_uid or "")
-    return "" if uid in ("", "0") else uid
 
 
 def _condition_kind(condition: Condition) -> str:

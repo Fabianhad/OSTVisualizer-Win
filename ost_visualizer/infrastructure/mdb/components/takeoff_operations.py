@@ -1,6 +1,7 @@
 import uuid
 from typing import List
 from ....application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+from ....domain.entities.area import is_unassigned_area_uid
 from .constants import TAKEOFF_REFERENCE_TABLES, encode_position
 
 
@@ -48,7 +49,7 @@ class TakeoffOperationsMixin:
         self, db_path: str, takeoff_uids: List[str], area_uid: str
     ) -> bool:
         try:
-            area_val = None if area_uid in ("0", "", None) else int(area_uid)
+            area_val = None if is_unassigned_area_uid(area_uid) else int(area_uid)
         except (TypeError, ValueError):
             self.logger.exception(
                 "Invalid area uid for takeoff assignment: %s", area_uid
@@ -303,7 +304,7 @@ class TakeoffOperationsMixin:
                     position_bytes = encode_position(spec.position)
                     area_val = (
                         None
-                        if not spec.area_uid or spec.area_uid in ("0", "")
+                        if is_unassigned_area_uid(spec.area_uid)
                         else int(spec.area_uid)
                     )
                     parent_val = (

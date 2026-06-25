@@ -12,6 +12,7 @@ from ...domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
     int_color_to_hex,
 )
+from ...domain.entities.area import normalize_area_uid
 from ...domain.entities.named_view import (
     build_named_view_from_annotation,
 )
@@ -1141,7 +1142,7 @@ class PlanViewActionHandler:
                 uid=str(uid),
                 condition_uid=str(spec.condition_uid),
                 page_uid=str(spec.page_uid),
-                area_uid=str(spec.area_uid or "0"),
+                area_uid=normalize_area_uid(spec.area_uid),
                 position=list(spec.position),
                 rotation=spec.rotation,
                 curve=spec.curve,

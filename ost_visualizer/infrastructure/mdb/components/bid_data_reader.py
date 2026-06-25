@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 import pyodbc
 from ....domain.dtos.raw_bid_data_dto import RawBidData
-from ....domain.entities.area import BidArea
+from ....domain.entities.area import BidArea, UNASSIGNED_AREA_UID
 from ....domain.entities.cdn_type import CdnType
 from ....domain.entities.condition import Condition
 from ....domain.entities.condition_folder import BidConditionFolder
@@ -892,7 +892,9 @@ class BidDataReaderMixin:
                     uid = str(row_data["UID"])
                     condition_uid = str(row_data["BidConditionUID"])
                     bid_page_uid = str(row_data["BidPageUID"])
-                    bid_area_uid = str(row_data.get("BidAreaUID") or "0")
+                    bid_area_uid = str(
+                        row_data.get("BidAreaUID") or UNASSIGNED_AREA_UID
+                    )
                     position_raw = row_data["Position"]
                     parent_uid = str(row_data.get("ParentUID") or "0")
                     rotation = (

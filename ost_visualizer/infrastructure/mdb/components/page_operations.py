@@ -1,4 +1,5 @@
 import pyodbc
+from ....domain.entities.area import UNASSIGNED_AREA_UID
 from .constants import PAGE_CONTENT_TABLES
 from .overlay_rect import default_overlay_rect
 
@@ -347,7 +348,7 @@ class PageOperationsMixin:
                     ("BidPageUID", "BidAreaUID", "BidAreaSelected"),
                 )
                 cursor = conn.cursor()
-                if area_uid == "0":
+                if area_uid == UNASSIGNED_AREA_UID:
                     self._replace_page_area_selection(
                         cursor, schema, int(page_uid), None, 1
                     )

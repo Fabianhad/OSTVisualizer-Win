@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+from ...domain.entities.area import UNASSIGNED_AREA_UID
 
 MCP_BRIDGE_SERVER_NAME = "OSTVisualizerMcpBridge.v1"
 MCP_STATUS_OK = "ok"
@@ -130,7 +131,7 @@ class McpTakeoffDto:
     condition_name: str = ""
     page_uid: str = ""
     page_name: str = ""
-    area_uid: str = "0"
+    area_uid: str = UNASSIGNED_AREA_UID
     area_name: Optional[str] = None
     parent_uid: str = "0"
     is_hole: bool = False

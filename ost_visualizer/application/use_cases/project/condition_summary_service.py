@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
-from ....domain.entities.area import BidArea
+from ....domain.entities.area import BidArea, UNASSIGNED_AREA_UID, normalize_area_uid
 from ....domain.entities.condition import Condition
 from ....domain.entities.condition_folder import BidConditionFolder
 from ....domain.entities.page import Page
@@ -114,7 +114,7 @@ class ConditionSummaryService:
             if condition_uid not in conditions:
                 continue
             page_uid = str(takeoff.page_uid or "") or _NO_PAGE_UID
-            area_uid = str(takeoff.area_uid or "") or "0"
+            area_uid = normalize_area_uid(takeoff.area_uid)
             contexts.append(
                 _SummaryTakeoffContext(
                     condition_uid=condition_uid,
@@ -362,7 +362,7 @@ class ConditionSummaryService:
                     )
                 nodes.append(parent)
                 continue
-            area_uid = next(iter(contexts_by_area), "0")
+            area_uid = next(iter(contexts_by_area), UNASSIGNED_AREA_UID)
             quantities = self._quantities_for_contexts(
                 conditions, condition_uid, condition_contexts
             )
@@ -462,7 +462,7 @@ class ConditionSummaryService:
         if level == SUMMARY_GROUP_PAGE:
             return context.page_uid or _NO_PAGE_UID
         if level == SUMMARY_GROUP_AREA:
-            return context.area_uid or "0"
+            return normalize_area_uid(context.area_uid)
         if level == SUMMARY_GROUP_TYPE:
             condition = conditions[context.condition_uid]
             return str(condition.cdn_type_uid or "")
@@ -529,13 +529,16 @@ class ConditionSummaryService:
     def _area_metadata(
         self, areas: Sequence[BidArea]
     ) -> Tuple[Dict[str, str], Dict[str, Tuple[int, str]]]:
-        labels = {"": SUMMARY_UNASSIGNED_LABEL, "0": SUMMARY_UNASSIGNED_LABEL}
+        labels = {
+            "": SUMMARY_UNASSIGNED_LABEL,
+            UNASSIGNED_AREA_UID: SUMMARY_UNASSIGNED_LABEL,
+        }
         sorts = {
             "": (_SORT_LAST_SEQUENCE, SUMMARY_UNASSIGNED_LABEL),
-            "0": (_SORT_LAST_SEQUENCE, SUMMARY_UNASSIGNED_LABEL),
+            UNASSIGNED_AREA_UID: (_SORT_LAST_SEQUENCE, SUMMARY_UNASSIGNED_LABEL),
         }
         for area in areas:
-            uid = str(area.uid or "0")
+            uid = normalize_area_uid(area.uid)
             label = area.name or SUMMARY_UNASSIGNED_LABEL
             labels[uid] = label
             sorts[uid] = (int(area.sequence or 0), label.lower())

@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
+from .area import UNASSIGNED_AREA_UID
 from .condition import Condition
 
 
@@ -10,7 +11,7 @@ class Takeoff:
     uid: str
     condition_uid: str
     page_uid: str = ""
-    area_uid: str = "0"
+    area_uid: str = UNASSIGNED_AREA_UID
     position: List[float] = field(default_factory=list)
     rotation: float = 0.0
     curve: int = -1
