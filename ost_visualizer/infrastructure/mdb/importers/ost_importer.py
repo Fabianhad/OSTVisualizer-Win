@@ -2,6 +2,12 @@ import logging
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set
 from ....domain.dtos.raw_bid_data_dto import RawBidData
+from ..reference_validation import (
+    collect_present_uids,
+    is_present_uid,
+    row_has_valid_named_view_reference,
+    row_has_valid_page_reference,
+)
 from ..schema_contract import (
     BID_SECTIONS,
     BID_TAIL_SECTIONS,
@@ -68,6 +74,8 @@ class OstImporter:
     ) -> bool:
         try:
             raw_data = self._parse_ost_xml(ost_file_path)
+            if not self._validate_page_references(raw_data):
+                return False
             return self._mdb_writer.import_ost_data(
                 target_db_path, raw_data, self._transform, target_project_uid
             )
@@ -243,6 +251,48 @@ class OstImporter:
             bid_tables=remapped_bid_tables,
             page_tables=remapped_page_tables,
         )
+
+    def _validate_page_references(self, raw_data: RawBidData) -> bool:
+        valid_page_uids = collect_present_uids(raw_data.bid_tables.get("BidPages", []))
+        invalid_refs: List[str] = []
+        for table in ("BidTypGroupViews", "BidNamedViews", "BidHotLinks"):
+            for row in raw_data.bid_tables.get(table, []):
+                if not row_has_valid_page_reference(row, valid_page_uids):
+                    invalid_refs.append(
+                        f"{table}.UID={row.get('UID', '')} "
+                        f"BidPageUID={row.get('BidPageUID', '')}"
+                    )
+        valid_named_view_uids = {
+            row.get("UID", "")
+            for row in raw_data.bid_tables.get("BidNamedViews", [])
+            if is_present_uid(row.get("UID", ""))
+            and row_has_valid_page_reference(row, valid_page_uids)
+        }
+        for row in raw_data.bid_tables.get("BidHotLinks", []):
+            if not row_has_valid_named_view_reference(row, valid_named_view_uids):
+                invalid_refs.append(
+                    f"BidHotLinks.UID={row.get('UID', '')} "
+                    f"BidPageViewUID={row.get('BidPageViewUID', '')}"
+                )
+        for table, rows in raw_data.page_tables.items():
+            for row in rows:
+                if not row_has_valid_page_reference(row, valid_page_uids):
+                    invalid_refs.append(
+                        f"{table}.UID={row.get('UID', '')} "
+                        f"BidPageUID={row.get('BidPageUID', '')}"
+                    )
+        if invalid_refs:
+            preview = "; ".join(invalid_refs[:10])
+            suffix = (
+                "" if len(invalid_refs) <= 10 else f"; +{len(invalid_refs) - 10} more"
+            )
+            logger.error(
+                "Rejecting OST import because it contains invalid page references: %s%s",
+                preview,
+                suffix,
+            )
+            return False
+        return True
 
     def _canonicalize_page_area_settings(
         self, rows: List[Dict[str, str]]

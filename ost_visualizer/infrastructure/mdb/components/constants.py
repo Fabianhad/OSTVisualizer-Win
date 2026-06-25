@@ -34,9 +34,9 @@ NUMERIC_TYPE_SUBSTRINGS = (
     "decimal",
 )
 BID_TABLES_WRITE_ORDER: List[str] = (
-    [t for t in BID_SECTIONS if t != "BidSettings"]
+    [t for t in BID_SECTIONS if t not in {"BidSettings", "BidTypGroupViews"}]
     + ["BidPages"]
-    + ["BidSettings"]
+    + ["BidSettings", "BidTypGroupViews"]
     + ["BidNamedViews", "BidHotLinks"]
 )
 HANDLED_SEPARATELY: Set[str] = {

@@ -12,6 +12,11 @@ from ..schema_contract import BID_TAIL_SECTIONS as _BID_TAIL_SECTIONS
 from ..schema_contract import GLOBAL_SECTIONS as _GLOBAL_SECTIONS
 from ..schema_contract import PAGE_SECTIONS as _PAGE_SECTIONS
 from ..schema_contract import singular as _singular
+from ..reference_validation import (
+    collect_present_uids,
+    filter_hotlink_rows,
+    filter_page_referenced_rows,
+)
 from ....domain.utils.position import parse_position
 
 logger = logging.getLogger(__name__)
@@ -642,6 +647,8 @@ class OstExporter:
             self._build_pages_section(bid_elem, bid_tables, page_tables)
             self._build_tail_sections(bid_elem, bid_tables)
             self._build_global_sections(root, bid_tables, global_tables, bid_row)
+            if on_progress:
+                on_progress(1, 1, "Writing OST")
             with open(output_path, "w", encoding="utf-8") as f:
                 _write_element(f, root)
             return ExportResultDto(success=True, format_name="OST")
@@ -912,8 +919,23 @@ class OstExporter:
     def _build_tail_sections(
         self, bid_elem: Element, bid_tables: Dict[str, List]
     ) -> None:
+        valid_page_uids = collect_present_uids(bid_tables.get("BidPages", []))
+        named_view_rows = filter_page_referenced_rows(
+            bid_tables.get("BidNamedViews", []),
+            valid_page_uids,
+        )
+        valid_named_view_uids = collect_present_uids(named_view_rows)
         for table_name in _BID_TAIL_SECTIONS:
-            rows = bid_tables.get(table_name, [])
+            if table_name == "BidNamedViews":
+                rows = named_view_rows
+            elif table_name == "BidHotLinks":
+                rows = filter_hotlink_rows(
+                    bid_tables.get(table_name, []),
+                    valid_page_uids,
+                    valid_named_view_uids,
+                )
+            else:
+                rows = bid_tables.get(table_name, [])
             sorted_rows = self._sort_rows(table_name, rows)
             _build_section(bid_elem, table_name, sorted_rows, self_closing=True)
 

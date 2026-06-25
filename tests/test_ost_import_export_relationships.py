@@ -288,6 +288,68 @@ def _create_import_schema(connection, *, unique_page_selected=False):
         )
 
 
+def _orphan_named_view_hotlink_raw_data() -> RawBidData:
+    return RawBidData(
+        bid_row={"UID": "1", "JobName": "Exported"},
+        bid_tables={
+            "BidPages": [
+                {"UID": "20", "BidUID": "1", "Name": "Sheet", "Sequence": "1"}
+            ],
+            "BidNamedViews": [
+                {"UID": "30", "BidUID": "1", "BidPageUID": "20", "Name": "Valid"},
+                {"UID": "31", "BidUID": "1", "BidPageUID": "99", "Name": "Orphan"},
+            ],
+            "BidHotLinks": [
+                {
+                    "UID": "40",
+                    "BidUID": "1",
+                    "BidPageUID": "20",
+                    "BidPageViewUID": "30",
+                    "Name": "Valid Link",
+                },
+                {
+                    "UID": "41",
+                    "BidUID": "1",
+                    "BidPageUID": "20",
+                    "BidPageViewUID": "31",
+                    "Name": "Orphan Target",
+                },
+                {
+                    "UID": "42",
+                    "BidUID": "1",
+                    "BidPageUID": "99",
+                    "BidPageViewUID": "30",
+                    "Name": "Orphan Page",
+                },
+            ],
+        },
+    )
+
+
+def _orphan_named_view_hotlink_xml() -> str:
+    return """
+    <XML_ROOT>
+      <Bid UID="1" JobName="Imported">
+        <BidPages>
+          <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1"/>
+        </BidPages>
+        <BidNamedViews>
+          <BidNamedView UID="30" BidUID="1" BidPageUID="20" Name="Valid"/>
+          <BidNamedView UID="31" BidUID="1" BidPageUID="99" Name="Orphan"/>
+        </BidNamedViews>
+        <BidHotLinks>
+          <BidHotLink UID="40" BidUID="1" BidPageUID="20"
+                      BidPageViewUID="30" Name="Valid Link"/>
+          <BidHotLink UID="41" BidUID="1" BidPageUID="20"
+                      BidPageViewUID="31" Name="Orphan Target"/>
+          <BidHotLink UID="42" BidUID="1" BidPageUID="99"
+                      BidPageViewUID="30" Name="Orphan Page"/>
+        </BidHotLinks>
+      </Bid>
+    </XML_ROOT>
+    """
+
+
 class OstImportExportRelationshipTests(unittest.TestCase):
     def test_ost_export_includes_referenced_estimator_employee_and_pay_class(self):
         raw_data = RawBidData(
@@ -629,6 +691,71 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             "SELECT BidPageSelectedUID FROM BidSettings"
         ).fetchone()[0]
         self.assertEqual(selected_uid, page_uid)
+
+    def test_ost_import_rejects_named_views_and_hotlinks_for_missing_pages(self):
+        connection = sqlite3.connect(":memory:")
+        connection.execute("PRAGMA foreign_keys=ON")
+        _create_import_schema(connection)
+        connection.execute(
+            """
+            CREATE TABLE BidNamedViews (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER REFERENCES BidPages(UID),
+                Name TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE BidHotLinks (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER REFERENCES BidPages(UID),
+                BidPageViewUID INTEGER REFERENCES BidNamedViews(UID),
+                Name TEXT
+            )
+            """
+        )
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "import.ost"
+            ost_path.write_text(_orphan_named_view_hotlink_xml(), encoding="utf-8")
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ) as logs:
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        self.assertIn("invalid page references", logs.output[0])
+        bid_count = connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0]
+        named_view_count = connection.execute(
+            "SELECT COUNT(*) FROM BidNamedViews"
+        ).fetchone()[0]
+        hotlink_count = connection.execute(
+            "SELECT COUNT(*) FROM BidHotLinks"
+        ).fetchone()[0]
+        self.assertEqual((bid_count, named_view_count, hotlink_count), (0, 0, 0))
+
+    def test_ost_export_skips_named_views_and_hotlinks_for_missing_pages(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "bid.ost"
+            result = OstExporter(SimpleNamespace()).export(
+                _orphan_named_view_hotlink_raw_data(),
+                str(output_path),
+            )
+            self.assertTrue(result.success, result.error_message)
+            root = ET.parse(output_path).getroot()
+        named_view_names = [
+            elem.get("Name")
+            for elem in root.findall("./Bid/BidNamedViews/BidNamedView")
+        ]
+        hotlink_names = [
+            elem.get("Name") for elem in root.findall("./Bid/BidHotLinks/BidHotLink")
+        ]
+        self.assertEqual(named_view_names, ["Valid"])
+        self.assertEqual(hotlink_names, ["Valid Link"])
 
     def test_save_page_area_handles_duplicate_selected_settings_rows(self):
         connection = sqlite3.connect(":memory:")
