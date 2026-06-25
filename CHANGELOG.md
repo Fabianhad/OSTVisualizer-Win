@@ -49,6 +49,7 @@
 - Deferred visual/session state persistence for page zoom/pan, selected page, active page area, layer visibility, page image flags, and overlay placement, with 2D zoom/pan/reset, active page area, and layer visibility changes updating in-memory view state immediately while still flushing before close, exports, refreshes, unloads, and structural edits.
 - Changed the Summary tab to show only conditions with placed takeoffs, hiding unused conditions along with empty folders and groups.
 - Matched the Summary tab condition tree indentation, icon sizing, and row height behavior to the Conditions sidebar.
+- Tightened the exported HTML 3D viewer camera clipping range while zooming, including PDF/background sheet bounds in the padded checks to reduce depth flicker without clipping meshes or page corners at oblique angles.
 
 ### Fixed
 - Preserved exact Takeoff tab sidebar splitter widths when hiding/showing Layers or Conditions, including when both sidebars are hidden together; refreshed project tree/Takeoff tab state after deleting or moving the selected bid/project; and selected the nearest remaining sibling bid after bid deletion when one is available.

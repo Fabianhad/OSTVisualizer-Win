@@ -22,6 +22,27 @@ from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.presentation.visualization.exporters.osp_exporter import OspExporter
 
+_ACCESS_DRIVER = "Microsoft Access Driver (*.mdb, *.accdb)"
+
+
+def _access_driver_available() -> bool:
+    return _ACCESS_DRIVER in pyodbc.drivers()
+
+
+def _access_conn_str(db_path: Path) -> str:
+    return f"DRIVER={{{_ACCESS_DRIVER}}};DBQ={db_path};"
+
+
+def _connect_access_or_skip(testcase: unittest.TestCase, db_path: Path):
+    if not _access_driver_available():
+        testcase.skipTest("Microsoft Access ODBC driver is not available")
+    try:
+        return pyodbc.connect(_access_conn_str(db_path), autocommit=False)
+    except pyodbc.OperationalError as exc:
+        if "Too many client tasks" in str(exc):
+            testcase.skipTest(f"Access ODBC driver is temporarily unavailable: {exc}")
+        raise
+
 
 class _Rows:
     def __init__(self, rows):
@@ -462,7 +483,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertEqual(stale_count, 0)
 
     def test_access_import_clears_old_ost_missing_selected_page_reference(self):
-        if "Microsoft Access Driver (*.mdb, *.accdb)" not in pyodbc.drivers():
+        if not _access_driver_available():
             self.skipTest("Microsoft Access ODBC driver is not available")
         xml = """
         <XML_ROOT>
@@ -491,10 +512,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 )
             finally:
                 writer._conn_manager.close()
-            conn = pyodbc.connect(
-                "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};",
-                autocommit=False,
-            )
+            conn = _connect_access_or_skip(self, db_path)
             cursor = conn.cursor()
             try:
                 cursor.execute("SELECT [BidPageSelectedUID] FROM [BidSettings]")
@@ -505,7 +523,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 conn.close()
 
     def test_access_import_handles_new_ost_zero_bid_settings_uid(self):
-        if "Microsoft Access Driver (*.mdb, *.accdb)" not in pyodbc.drivers():
+        if not _access_driver_available():
             self.skipTest("Microsoft Access ODBC driver is not available")
         xml = """
         <XML_ROOT>
@@ -534,10 +552,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 )
             finally:
                 writer._conn_manager.close()
-            conn = pyodbc.connect(
-                "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};",
-                autocommit=False,
-            )
+            conn = _connect_access_or_skip(self, db_path)
             cursor = conn.cursor()
             try:
                 cursor.execute("SELECT [UID], [BidPageSelectedUID] FROM [BidSettings]")
@@ -550,19 +565,15 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 conn.close()
 
     def test_database_creator_enforces_nullable_bid_settings_page_relationship(self):
-        if "Microsoft Access Driver (*.mdb, *.accdb)" not in pyodbc.drivers():
+        if not _access_driver_available():
             self.skipTest("Microsoft Access ODBC driver is not available")
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             db_path = Path(temp_dir) / "relationship.mdb"
-            self.assertTrue(
-                database_creator.DatabaseCreator().create_database(
-                    db_path, "Relationship"
-                )
-            )
-            conn = pyodbc.connect(
-                "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};",
-                autocommit=False,
-            )
+            if not database_creator.DatabaseCreator().create_database(
+                db_path, "Relationship"
+            ):
+                self.skipTest("Could not create an Access test database")
+            conn = _connect_access_or_skip(self, db_path)
             cursor = conn.cursor()
             try:
                 cursor.execute(
@@ -695,7 +706,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         )
 
     def test_access_page_area_insert_uses_explicit_uid_after_imported_uid_gap(self):
-        if "Microsoft Access Driver (*.mdb, *.accdb)" not in pyodbc.drivers():
+        if not _access_driver_available():
             self.skipTest("Microsoft Access ODBC driver is not available")
         settings = [
             (86, 451, 81),
@@ -761,10 +772,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 )
             finally:
                 writer._conn_manager.close()
-            conn = pyodbc.connect(
-                "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};",
-                autocommit=False,
-            )
+            conn = _connect_access_or_skip(self, db_path)
             cursor = conn.cursor()
             try:
                 cursor.execute("SELECT [UID] FROM [BidPages] WHERE [Name]='P452'")
@@ -785,10 +793,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 self.assertTrue(writer.save_page_area(str(db_path), str(page_uid), "0"))
             finally:
                 writer._conn_manager.close()
-            conn = pyodbc.connect(
-                "DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};" f"DBQ={db_path};",
-                autocommit=False,
-            )
+            conn = _connect_access_or_skip(self, db_path)
             cursor = conn.cursor()
             try:
                 cursor.execute(

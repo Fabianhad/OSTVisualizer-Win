@@ -32,11 +32,15 @@ class _UiState:
         selected_bid_ref=None,
         selected_project_uid=None,
         selected_file_path=None,
+        selected_page_uids=None,
+        active_page_uid=None,
     ):
         self._selected_bid_refs = selected_bid_refs or []
         self._selected_bid_ref = selected_bid_ref
         self.selected_project_uid = selected_project_uid
         self.selected_file_path = selected_file_path
+        self.selected_page_uids = selected_page_uids or []
+        self.active_page_uid = active_page_uid
 
     def get_selected_bid_refs(self):
         return self._selected_bid_refs

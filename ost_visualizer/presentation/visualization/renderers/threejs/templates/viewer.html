@@ -83,7 +83,112 @@
         renderer.toneMappingExposure = 0.5;
 
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100000);
+        const pdfBase64 = sceneData.pdf_base64 || null;
+        const pdfPageIndex = sceneData.pdf_page_index || 0;
+        const pageW = Number(sceneData.page_width || 0);
+        const pageH = Number(sceneData.page_height || 0);
+
+        function readVector3(values, fallback) {
+            if (Array.isArray(values) && values.length >= 3) {
+                const x = Number(values[0]);
+                const y = Number(values[1]);
+                const z = Number(values[2]);
+                if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+                    return new THREE.Vector3(x, y, z);
+                }
+            }
+            return fallback.clone();
+        }
+
+        function getBoxCorners(box) {
+            const min = box.min;
+            const max = box.max;
+            return [
+                new THREE.Vector3(min.x, min.y, min.z),
+                new THREE.Vector3(min.x, min.y, max.z),
+                new THREE.Vector3(min.x, max.y, min.z),
+                new THREE.Vector3(min.x, max.y, max.z),
+                new THREE.Vector3(max.x, min.y, min.z),
+                new THREE.Vector3(max.x, min.y, max.z),
+                new THREE.Vector3(max.x, max.y, min.z),
+                new THREE.Vector3(max.x, max.y, max.z),
+            ];
+        }
+
+        function buildClippingBounds(center, radius, box) {
+            const depthPadding = Math.max(radius * 0.05, 1.0);
+            const nearBoxPadding = Math.max(radius * 0.02, 0.5);
+            const depthBox = box.clone().expandByScalar(depthPadding);
+            const nearBox = box.clone().expandByScalar(nearBoxPadding);
+            return {
+                center: center,
+                radius: radius,
+                minNear: Math.max(radius / 10000.0, 0.01),
+                box: box,
+                depthPadding: depthPadding,
+                nearBox: nearBox,
+                depthCorners: getBoxCorners(depthBox),
+            };
+        }
+
+        function getPagePlaneBox(pageWidth, pageHeight, modelBox) {
+            if (!(pageWidth > 0.0 && pageHeight > 0.0)) {
+                return null;
+            }
+
+            const pagePadding = Math.max(Math.max(pageWidth, pageHeight) * 0.001, 0.05);
+            const floorY = modelBox ? modelBox.min.y - 0.01 : -0.01;
+            return new THREE.Box3(
+                new THREE.Vector3(-pageWidth, floorY - pagePadding, -pageHeight),
+                new THREE.Vector3(0.0, floorY + pagePadding, 0.0)
+            );
+        }
+
+        function getSceneClippingBounds(bounds, pageWidth, pageHeight) {
+            const fallbackCenter = readVector3(sceneData.camera && sceneData.camera.target, new THREE.Vector3());
+            const fallbackRadius = 1000.0;
+            const fallbackBox = new THREE.Box3(
+                new THREE.Vector3(
+                    fallbackCenter.x - fallbackRadius,
+                    fallbackCenter.y - fallbackRadius,
+                    fallbackCenter.z - fallbackRadius
+                ),
+                new THREE.Vector3(
+                    fallbackCenter.x + fallbackRadius,
+                    fallbackCenter.y + fallbackRadius,
+                    fallbackCenter.z + fallbackRadius
+                )
+            );
+            const buildFromBox = (box) => {
+                const pageBox = getPagePlaneBox(pageWidth, pageHeight, box);
+                const clippingBox = pageBox ? box.clone().union(pageBox) : box;
+                const sphere = new THREE.Sphere();
+                clippingBox.getBoundingSphere(sphere);
+                const radius = Math.max(sphere.radius, 1.0);
+                return buildClippingBounds(sphere.center, radius, clippingBox);
+            };
+
+            if (!bounds || !bounds.min || !bounds.max) {
+                return buildFromBox(fallbackBox);
+            }
+
+            const min = readVector3(bounds.min, fallbackCenter);
+            const max = readVector3(bounds.max, fallbackCenter);
+            if (min.x > max.x || min.y > max.y || min.z > max.z) {
+                return buildFromBox(fallbackBox);
+            }
+
+            const box = new THREE.Box3(min, max);
+            return buildFromBox(box);
+        }
+
+        const sceneClippingBounds = getSceneClippingBounds(sceneData.bounds, pageW, pageH);
+        const camera = new THREE.PerspectiveCamera(
+            45,
+            window.innerWidth / window.innerHeight,
+            sceneClippingBounds.minNear,
+            sceneClippingBounds.radius * 10.0
+        );
         camera.position.set(
             sceneData.camera.position[0],
             sceneData.camera.position[1],
@@ -98,7 +203,77 @@
         );
         controls.enableDamping = true;
         controls.dampingFactor = 0.05;
+        controls.maxDistance = Math.max(sceneClippingBounds.radius * 100.0, 1.0);
         controls.update();
+
+        function getSceneDepthRange() {
+            if (sceneClippingBounds.nearBox.containsPoint(camera.position)) {
+                return null;
+            }
+
+            const viewDirection = new THREE.Vector3();
+            camera.getWorldDirection(viewDirection);
+            let nearest = Infinity;
+            let farthest = 0.0;
+            let cornersBehindCamera = 0;
+
+            for (const corner of sceneClippingBounds.depthCorners) {
+                const depth = corner.clone().sub(camera.position).dot(viewDirection);
+                if (depth <= sceneClippingBounds.minNear) {
+                    cornersBehindCamera += 1;
+                } else {
+                    nearest = Math.min(nearest, depth);
+                    farthest = Math.max(farthest, depth);
+                }
+            }
+
+            if (
+                cornersBehindCamera > 0
+                || !Number.isFinite(nearest)
+                || farthest <= 0.0
+                || nearest <= sceneClippingBounds.depthPadding
+            ) {
+                return null;
+            }
+            return { nearest: nearest, farthest: farthest };
+        }
+
+        function updateCameraClipping(force = false) {
+            const baseNear = sceneClippingBounds.minNear;
+            const depthRange = getSceneDepthRange();
+            let nextNear;
+            let nextFar;
+
+            if (depthRange) {
+                nextNear = Math.max(baseNear, depthRange.nearest - sceneClippingBounds.depthPadding);
+                nextFar = Math.max(
+                    nextNear + sceneClippingBounds.radius * 0.25,
+                    depthRange.farthest + sceneClippingBounds.depthPadding,
+                    nextNear + 1.0
+                );
+            } else {
+                const distanceToCenter = camera.position.distanceTo(sceneClippingBounds.center);
+                const outsideNear = distanceToCenter - sceneClippingBounds.radius * 1.5;
+                nextNear = Math.max(baseNear, outsideNear);
+                nextFar = Math.max(
+                    nextNear + sceneClippingBounds.radius * 3.0,
+                    distanceToCenter + sceneClippingBounds.radius * 1.5
+                );
+            }
+
+            const nearDelta = Math.abs(camera.near - nextNear);
+            const farDelta = Math.abs(camera.far - nextFar);
+            const nearThreshold = Math.max(nextNear * 0.001, 0.001);
+            const farThreshold = Math.max(nextFar * 0.001, 0.01);
+
+            if (force || nearDelta > nearThreshold || farDelta > farThreshold) {
+                camera.near = nextNear;
+                camera.far = nextFar;
+                camera.updateProjectionMatrix();
+            }
+        }
+
+        updateCameraClipping(true);
 
         scene.add(new THREE.AmbientLight(0xffffff, 0.35));
         const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
@@ -155,10 +330,6 @@
             }
         });
 
-        const pdfBase64 = sceneData.pdf_base64 || null;
-        const pdfPageIndex = sceneData.pdf_page_index || 0;
-        const pageW = sceneData.page_width || 0;
-        const pageH = sceneData.page_height || 0;
         const pdfToggle = document.getElementById('pdf-toggle');
         let pdfPlane = null;
 
@@ -212,6 +383,7 @@
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
+            updateCameraClipping();
             if (wboitPass) {
                 wboitPass.render(renderer);
             } else {
@@ -221,7 +393,7 @@
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
+            updateCameraClipping(true);
             renderer.setSize(window.innerWidth, window.innerHeight);
             if (wboitPass) wboitPass.setSize(window.innerWidth, window.innerHeight);
         });
