@@ -61,6 +61,7 @@ def process_meshes_for_threejs(
                     "opacity": opacity,
                     "condition_uid": condition_uid,
                     "takeoff_uid": takeoff.uid,
+                    "page_uid": takeoff.page_uid or "",
                     "area_uid": takeoff_area_uid,
                     "area_name": area_names_by_uid.get(takeoff_area_uid, ""),
                     "condition_type": condition.condition_type,

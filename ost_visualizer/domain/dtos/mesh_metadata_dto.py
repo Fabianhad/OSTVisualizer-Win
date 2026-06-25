@@ -11,6 +11,7 @@ class MeshMetadata(TypedDict, total=False):
     condition_color: str
     condition_ref_no: int
     takeoff_uid: str
+    page_uid: str
     area_uid: str
     area_name: str
     condition_uid: str

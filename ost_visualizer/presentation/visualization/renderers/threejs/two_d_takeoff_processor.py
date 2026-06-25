@@ -55,6 +55,7 @@ def process_takeoffs_2d_for_threejs(
         entries.append(
             {
                 "takeoff_uid": str(takeoff.uid or ""),
+                "page_uid": str(takeoff.page_uid or ""),
                 "condition_uid": str(takeoff.condition_uid or ""),
                 "area_uid": area_group_uid(takeoff.area_uid),
                 "layer_uid": str(condition.layer_uid or ""),

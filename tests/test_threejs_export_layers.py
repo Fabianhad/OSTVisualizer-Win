@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from ost_visualizer.application.services.export_service import ExportService
 from ost_visualizer.application.dtos.export_dto import ExportRequestDto
@@ -13,6 +15,9 @@ from ost_visualizer.presentation.visualization.renderers.threejs.adapters.threej
 )
 from ost_visualizer.presentation.visualization.renderers.threejs.two_d_takeoff_processor import (
     process_takeoffs_2d_for_threejs,
+)
+from ost_visualizer.presentation.visualization.renderers.threejs.threejs_renderer import (
+    _build_multi_page_data,
 )
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
@@ -103,21 +108,45 @@ class _ProjectData:
             "visible": Condition(uid="visible"),
             "hidden": Condition(uid="hidden"),
         }
-        self.page = SimpleNamespace(
-            uid="page-1",
-            scale_factor1=1.0,
-            scale_factor2=1.0,
-            width_pts=72.0,
-            height_pts=144.0,
-            effective_width_pts=72.0,
-            effective_height_pts=144.0,
-            rotation=0,
-            flip_x=False,
-            flip_y=False,
-            image_path="",
-            page_index=1,
-            layer_visible=False,
-        )
+        self.pages = {
+            "page-1": SimpleNamespace(
+                uid="page-1",
+                name="First Page",
+                sheet_no="A1",
+                sequence=1,
+                scale_factor1=1.0,
+                scale_factor2=1.0,
+                width_pts=72.0,
+                height_pts=144.0,
+                effective_width_pts=72.0,
+                effective_height_pts=144.0,
+                rotation=0,
+                flip_x=False,
+                flip_y=False,
+                image_path="",
+                page_index=1,
+                layer_visible=False,
+            ),
+            "page-2": SimpleNamespace(
+                uid="page-2",
+                name="Second Page",
+                sheet_no="A2",
+                sequence=2,
+                scale_factor1=1.0,
+                scale_factor2=2.0,
+                width_pts=144.0,
+                height_pts=72.0,
+                effective_width_pts=144.0,
+                effective_height_pts=72.0,
+                rotation=90,
+                flip_x=True,
+                flip_y=False,
+                image_path="",
+                page_index=2,
+                layer_visible=True,
+            ),
+        }
+        self.last_selected_page_uid = "page-2"
         self.areas = [
             BidArea(
                 uid="area-1",
@@ -130,8 +159,8 @@ class _ProjectData:
 
     def collect_takeoffs_for_pages(self, page_uids, visible_only=True):
         self.visible_only_calls.append(visible_only)
-        return SimpleNamespace(
-            takeoffs=[
+        takeoffs_by_page = {
+            "page-1": [
                 Takeoff(
                     uid="takeoff-visible",
                     condition_uid="visible",
@@ -142,6 +171,19 @@ class _ProjectData:
                     uid="takeoff-hidden", condition_uid="hidden", page_uid="page-1"
                 ),
             ],
+            "page-2": [
+                Takeoff(
+                    uid="takeoff-page-2",
+                    condition_uid="visible",
+                    page_uid="page-2",
+                )
+            ],
+        }
+        takeoffs = []
+        for page_uid in page_uids:
+            takeoffs.extend(takeoffs_by_page.get(page_uid, []))
+        return SimpleNamespace(
+            takeoffs=takeoffs,
             valid_page_uids=list(page_uids),
             page_count=len(page_uids),
             is_empty=lambda: False,
@@ -170,8 +212,11 @@ class _ProjectData:
     def get_bid_area_snapshot(self, _takeoffs=None):
         return list(self.areas)
 
-    def get_page(self, _page_uid):
-        return self.page
+    def get_page(self, page_uid):
+        return self.pages.get(page_uid)
+
+    def get_last_selected_page_uid(self):
+        return self.last_selected_page_uid
 
     def get_image_layer_uid(self):
         return "image"
@@ -246,7 +291,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
         service = ExportService(_Provider(strategy), project_data)
         result = service.export(
             SimpleNamespace(),
-            ExportRequestDto(["page-1"], "html", "out.html"),
+            ExportRequestDto(["page-1"], "html", "out.html", active_page_uid="page-1"),
         )
         self.assertTrue(result.success)
         self.assertEqual(project_data.visible_only_calls, [False])
@@ -259,13 +304,55 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertEqual(kwargs["areas"][0].uid, "area-1")
         self.assertEqual(kwargs["page_image_layer"]["uid"], "image")
         self.assertFalse(kwargs["page_image_layer"]["visible"])
-        self.assertEqual(kwargs["page_uid"], "page-1")
-        self.assertEqual(kwargs["page_width_2d"], 72.0)
-        self.assertEqual(kwargs["page_height_2d"], 144.0)
-        self.assertEqual(kwargs["page_scale_ratio"], 1.0)
-        self.assertEqual(kwargs["page_rotation"], 0)
-        self.assertFalse(kwargs["page_flip_x"])
-        self.assertFalse(kwargs["page_flip_y"])
+        self.assertEqual(kwargs["active_page_uid"], "page-1")
+        self.assertEqual(len(kwargs["pages"]), 1)
+        page = kwargs["pages"][0]
+        self.assertEqual(page["uid"], "page-1")
+        self.assertEqual(page["label"], "1 - A1 - First Page")
+        self.assertEqual(page["width"], 72.0)
+        self.assertEqual(page["height"], 144.0)
+        self.assertEqual(page["scale_ratio"], 1.0)
+        self.assertEqual(page["rotation"], 0)
+        self.assertFalse(page["flip_x"])
+        self.assertFalse(page["flip_y"])
+
+    def test_html_export_passes_all_pages_and_resolves_active_page(self):
+        strategy = _ExportStrategy("html")
+        project_data = _ProjectData()
+        service = ExportService(_Provider(strategy), project_data)
+        result = service.export(
+            SimpleNamespace(),
+            ExportRequestDto(["page-1", "page-2"], "html", "out.html"),
+        )
+        self.assertTrue(result.success)
+        _conditions, takeoffs, _output_path, kwargs = strategy.calls[0]
+        self.assertEqual(
+            [takeoff.uid for takeoff in takeoffs],
+            ["takeoff-visible", "takeoff-hidden", "takeoff-page-2"],
+        )
+        self.assertEqual(kwargs["active_page_uid"], "page-2")
+        self.assertEqual(
+            [page["uid"] for page in kwargs["pages"]], ["page-1", "page-2"]
+        )
+        self.assertEqual(kwargs["pages"][1]["label"], "2 - A2 - Second Page")
+        self.assertEqual(kwargs["pages"][1]["scale_ratio"], 2.0)
+        self.assertEqual(kwargs["pages"][1]["rotation"], 90)
+        self.assertTrue(kwargs["page_image_layer"]["visible"])
+
+    def test_html_export_active_page_falls_back_to_first_exported_page(self):
+        strategy = _ExportStrategy("html")
+        project_data = _ProjectData()
+        project_data.last_selected_page_uid = "missing-page"
+        service = ExportService(_Provider(strategy), project_data)
+        result = service.export(
+            SimpleNamespace(),
+            ExportRequestDto(
+                ["page-1", "page-2"], "html", "out.html", active_page_uid="not-exported"
+            ),
+        )
+        self.assertTrue(result.success)
+        _conditions, _takeoffs, _output_path, kwargs = strategy.calls[0]
+        self.assertEqual(kwargs["active_page_uid"], "page-1")
 
     def test_non_html_export_keeps_visible_only_collection(self):
         strategy = _ExportStrategy("obj")
@@ -294,6 +381,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                         "opacity": 1.0,
                         "name": "Condition",
                         "takeoff_uid": "takeoff-1",
+                        "page_uid": "page-1",
                         "condition_uid": "condition-1",
                         "area_uid": "area-1",
                         "area_name": "Area One",
@@ -330,6 +418,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
         )
         geometry = scene["geometries"][0]
         self.assertEqual(geometry["takeoff_uid"], "takeoff-1")
+        self.assertEqual(geometry["page_uid"], "page-1")
         self.assertEqual(geometry["condition_uid"], "condition-1")
         self.assertEqual(geometry["area_uid"], "area-1")
         self.assertEqual(geometry["layer_uid"], "layer-1")
@@ -373,6 +462,40 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertEqual(scene["geometries"][0]["area_uid"], "")
         self.assertNotIn("areas", scene)
 
+    def test_threejs_adapter_preserves_visibility_metadata_for_transparent_meshes(self):
+        adapter = ThreejsMeshAdapter(ColorService())
+        mesh = MeshData(
+            vertices=[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
+            faces=[(0, 1, 2)],
+        )
+        scene = adapter.build_scene_data(
+            [
+                (
+                    mesh,
+                    {
+                        "color": "#336699",
+                        "opacity": 0.5,
+                        "name": "Transparent Condition",
+                        "takeoff_uid": "takeoff-1",
+                        "page_uid": "page-1",
+                        "condition_uid": "condition-1",
+                        "area_uid": "area-1",
+                        "layer_uid": "layer-1",
+                        "visible": False,
+                    },
+                )
+            ],
+            (0.0, 1.0, 0.0, 1.0, 0.0, 1.0),
+            "Transparent Scene",
+        )
+        geometry = scene["geometries"][0]
+        self.assertEqual(geometry["opacity"], 0.5)
+        self.assertFalse(geometry["visible"])
+        self.assertEqual(geometry["page_uid"], "page-1")
+        self.assertEqual(geometry["layer_uid"], "layer-1")
+        self.assertEqual(geometry["condition_uid"], "condition-1")
+        self.assertEqual(geometry["area_uid"], "area-1")
+
     def test_two_d_takeoff_export_includes_visibility_metadata_and_rings(self):
         condition = Condition(
             uid="condition-1",
@@ -408,6 +531,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         entry = entries[0]
         self.assertEqual(entry["takeoff_uid"], "takeoff-1")
+        self.assertEqual(entry["page_uid"], "page-1")
         self.assertEqual(entry["condition_uid"], "condition-1")
         self.assertEqual(entry["area_uid"], "area-1")
         self.assertEqual(entry["layer_uid"], "layer-1")
@@ -446,6 +570,65 @@ class ThreejsExportLayerTests(unittest.TestCase):
             },
         )
         self.assertEqual(entries[0]["area_uid"], "")
+
+    def test_multi_page_renderer_data_deduplicates_pdf_documents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = Path(tmpdir) / "pages.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4\n")
+            pages = [
+                {
+                    "uid": "page-1",
+                    "label": "1 - A1",
+                    "name": "First",
+                    "sheet_no": "A1",
+                    "sequence": 1,
+                    "width": 72.0,
+                    "height": 72.0,
+                    "page_width": 1.0,
+                    "page_height": 1.0,
+                    "image_layer_uid": "image",
+                    "pdf_path": str(pdf_path),
+                    "pdf_page_index": 0,
+                    "scale_ratio": 1.0,
+                    "rotation": 0,
+                    "flip_x": False,
+                    "flip_y": False,
+                },
+                {
+                    "uid": "page-2",
+                    "label": "2 - A2",
+                    "name": "Second",
+                    "sheet_no": "A2",
+                    "sequence": 2,
+                    "width": 72.0,
+                    "height": 72.0,
+                    "page_width": 1.0,
+                    "page_height": 1.0,
+                    "image_layer_uid": "image",
+                    "pdf_path": str(pdf_path),
+                    "pdf_page_index": 1,
+                    "scale_ratio": 1.0,
+                    "rotation": 0,
+                    "flip_x": False,
+                    "flip_y": False,
+                },
+            ]
+            page_entries, pdf_documents, takeoffs_2d = _build_multi_page_data(
+                pages,
+                {},
+                [],
+                ColorService(),
+                _TakeoffService(),
+                "Solid",
+                True,
+                {},
+            )
+        self.assertEqual(len(pdf_documents), 1)
+        self.assertEqual(page_entries[0]["pdf_document_uid"], "pdf-1")
+        self.assertEqual(page_entries[1]["pdf_document_uid"], "pdf-1")
+        self.assertEqual([page["uid"] for page in page_entries], ["page-1", "page-2"])
+        self.assertNotIn("image_visible", page_entries[0])
+        self.assertEqual(takeoffs_2d, [])
 
 
 if __name__ == "__main__":

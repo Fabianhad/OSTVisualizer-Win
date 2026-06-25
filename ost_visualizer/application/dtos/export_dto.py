@@ -16,6 +16,7 @@ class ExportRequestDto:
     page_uids: List[str]
     format_key: str
     filename: str
+    active_page_uid: Optional[str] = None
 
 
 @dataclass

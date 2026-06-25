@@ -50,7 +50,7 @@
 - Changed the Summary tab to show only conditions with placed takeoffs, hiding unused conditions along with empty folders and groups.
 - Matched the Summary tab condition tree indentation, icon sizing, and row height behavior to the Conditions sidebar.
 - Tightened the exported HTML 3D viewer camera clipping range while zooming, including PDF/background sheet bounds in the padded checks to reduce depth flicker without clipping meshes or page corners at oblique angles.
-- Updated exported HTML views to preserve layer, condition, and area metadata, group condition controls by condition type with condition-only color swatches, add a Plan/3D mode switch with 2D page takeoff overlays, and let hidden-layer geometry be revealed in the standalone viewer.
+- Updated exported HTML views to preserve layer, condition, area, and page metadata, group condition controls by condition type with condition-only color swatches, add a Plan/3D mode switch with multi-page 2D takeoff overlays, and let exported geometry be toggled by page or hidden layer in the standalone viewer.
 
 ### Fixed
 - Preserved exact Takeoff tab sidebar splitter widths when hiding/showing Layers or Conditions, including when both sidebars are hidden together; refreshed project tree/Takeoff tab state after deleting or moving the selected bid/project; and selected the nearest remaining sibling bid after bid deletion when one is available.

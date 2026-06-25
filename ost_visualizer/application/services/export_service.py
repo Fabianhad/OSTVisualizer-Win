@@ -1,6 +1,7 @@
-from typing import List
+from typing import List, Optional
 from ...domain.entities.layer import IMAGE_LAYER_NAME
 from ...domain.entities.file_extensions import is_pdf_suffix
+from ..dtos.html_export_page_dto import HtmlExportPageDto
 from ...domain.services.project_data_service import ProjectDataService
 from ..dtos.export_dialog_dto import ExportDialogDto
 from ..dtos.export_dto import ExportErrorCode, ExportRequestDto, ExportResultDto
@@ -95,41 +96,29 @@ class ExportService:
             if strategy.extension == HTML_EXTENSION:
                 layers = self.project_data.get_bid_layer_snapshot()
                 areas = self.project_data.get_bid_area_snapshot(result.takeoffs)
+                pages = self._build_html_export_pages(result.valid_page_uids)
+                active_page_uid = self._resolve_active_export_page(
+                    result.valid_page_uids, request.active_page_uid
+                )
                 kwargs.update(
                     {
                         "title": metadata.get("title", "3D View"),
                         "bid_name": bid_name,
                         "layers": layers,
                         "areas": areas,
+                        "pages": pages,
+                        "active_page_uid": active_page_uid,
                     }
                 )
-                if result.valid_page_uids:
-                    page = self.project_data.get_page(result.valid_page_uids[0])
-                    if page:
-                        image_layer_uid = self.project_data.get_image_layer_uid()
-                        kwargs["page_image_layer"] = {
-                            "uid": image_layer_uid or IMAGE_LAYER_NAME,
-                            "name": IMAGE_LAYER_NAME.title(),
-                            "visible": bool(page.layer_visible),
-                        }
-                        sf1 = page.scale_factor1 or 1.0
-                        sf2 = page.scale_factor2 or 1.0
-                        ratio = sf2 / sf1 if sf1 > 0 else 1.0
-                        kwargs["page_width_inches"] = (page.width_pts / 72.0) * ratio
-                        kwargs["page_height_inches"] = (page.height_pts / 72.0) * ratio
-                        kwargs["page_uid"] = page.uid
-                        kwargs["page_width_2d"] = page.effective_width_pts
-                        kwargs["page_height_2d"] = page.effective_height_pts
-                        kwargs["page_scale_ratio"] = ratio
-                        kwargs["page_rotation"] = page.rotation
-                        kwargs["page_flip_x"] = page.flip_x
-                        kwargs["page_flip_y"] = page.flip_y
-                        if page.image_path:
-                            if is_pdf_suffix(page.image_path):
-                                kwargs["pdf_path"] = page.image_path
-                                kwargs["pdf_page_index"] = max(
-                                    (page.page_index or 1) - 1, 0
-                                )
+                if pages:
+                    image_layer_uid = self.project_data.get_image_layer_uid()
+                    kwargs["page_image_layer"] = {
+                        "uid": image_layer_uid or IMAGE_LAYER_NAME,
+                        "name": IMAGE_LAYER_NAME.title(),
+                        "visible": self._html_image_layer_visible(
+                            result.valid_page_uids
+                        ),
+                    }
             success = strategy.execute_export(
                 self.project_data.get_bid_conditions(),
                 result.takeoffs,
@@ -160,3 +149,69 @@ class ExportService:
         return self.project_data.collect_takeoffs_for_pages(
             page_uids, visible_only=strategy.extension != HTML_EXTENSION
         )
+
+    def _build_html_export_pages(self, page_uids: List[str]) -> List[HtmlExportPageDto]:
+        image_layer_uid = self.project_data.get_image_layer_uid() or IMAGE_LAYER_NAME
+        pages: List[HtmlExportPageDto] = []
+        for page_uid in page_uids:
+            page = self.project_data.get_page(page_uid)
+            if not page:
+                continue
+            sf1 = page.scale_factor1 or 1.0
+            sf2 = page.scale_factor2 or 1.0
+            ratio = sf2 / sf1 if sf1 > 0 else 1.0
+            pdf_path: Optional[str] = None
+            if page.image_path and is_pdf_suffix(page.image_path):
+                pdf_path = page.image_path
+            pages.append(
+                {
+                    "uid": page.uid,
+                    "label": self._format_page_label(page),
+                    "name": page.name or "",
+                    "sheet_no": page.sheet_no or "",
+                    "sequence": int(page.sequence or 0),
+                    "width": float(page.effective_width_pts or 0.0),
+                    "height": float(page.effective_height_pts or 0.0),
+                    "page_width": float((page.width_pts / 72.0) * ratio),
+                    "page_height": float((page.height_pts / 72.0) * ratio),
+                    "image_layer_uid": image_layer_uid,
+                    "pdf_path": pdf_path,
+                    "pdf_page_index": max((page.page_index or 1) - 1, 0),
+                    "scale_ratio": ratio,
+                    "rotation": int(page.rotation or 0),
+                    "flip_x": bool(page.flip_x),
+                    "flip_y": bool(page.flip_y),
+                }
+            )
+        return pages
+
+    def _html_image_layer_visible(self, page_uids: List[str]) -> bool:
+        pages = [self.project_data.get_page(page_uid) for page_uid in page_uids]
+        valid_pages = [page for page in pages if page]
+        return (
+            any(bool(page.layer_visible) for page in valid_pages)
+            if valid_pages
+            else True
+        )
+
+    def _resolve_active_export_page(
+        self, page_uids: List[str], requested_uid: Optional[str]
+    ) -> str:
+        exported = {str(uid) for uid in page_uids}
+        if requested_uid and requested_uid in exported:
+            return requested_uid
+        last_selected = self.project_data.get_last_selected_page_uid()
+        if last_selected and last_selected in exported:
+            return last_selected
+        return page_uids[0] if page_uids else ""
+
+    @staticmethod
+    def _format_page_label(page) -> str:
+        parts = []
+        if page.sequence > 0:
+            parts.append(str(page.sequence))
+        if page.sheet_no:
+            parts.append(str(page.sheet_no))
+        if page.name:
+            parts.append(page.name)
+        return " - ".join(parts) if parts else str(page.uid)

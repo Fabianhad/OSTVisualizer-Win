@@ -1,1303 +1,1857 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{{TITLE}}</title>
     <style>
-        :root {
-            --viewer-surface: rgba(15, 15, 21, 0.92);
-            --viewer-border: rgba(255, 255, 255, 0.08);
-            --viewer-divider: rgba(255, 255, 255, 0.06);
-            --viewer-control-border: rgba(255, 255, 255, 0.1);
-            --viewer-swatch-border: rgba(255, 255, 255, 0.16);
-            --viewer-scrollbar: rgba(255, 255, 255, 0.1);
-            --viewer-control-bg: rgba(255, 255, 255, 0.03);
-            --viewer-hover-bg: rgba(255, 255, 255, 0.06);
-            --viewer-text: #e2e8f0;
-            --viewer-muted: #8892b0;
-            --viewer-accent: #4a9eff;
-            --viewer-disabled: #555;
-            --viewer-radius: 10px;
-            --viewer-radius-sm: 6px;
-            --viewer-safe-top: env(safe-area-inset-top, 0px);
-            --viewer-safe-right: env(safe-area-inset-right, 0px);
-            --viewer-safe-bottom: env(safe-area-inset-bottom, 0px);
-            --viewer-safe-left: env(safe-area-inset-left, 0px);
-        }
+      :root {
+        --viewer-surface: rgba(15, 15, 21, 0.92);
+        --viewer-border: rgba(255, 255, 255, 0.08);
+        --viewer-divider: rgba(255, 255, 255, 0.06);
+        --viewer-control-border: rgba(255, 255, 255, 0.1);
+        --viewer-swatch-border: rgba(255, 255, 255, 0.16);
+        --viewer-scrollbar: rgba(255, 255, 255, 0.1);
+        --viewer-control-bg: rgba(255, 255, 255, 0.03);
+        --viewer-hover-bg: rgba(255, 255, 255, 0.06);
+        --viewer-text: #e2e8f0;
+        --viewer-muted: #8892b0;
+        --viewer-accent: #4a9eff;
+        --viewer-disabled: #555;
+        --viewer-radius: 10px;
+        --viewer-radius-sm: 6px;
+        --viewer-safe-top: env(safe-area-inset-top, 0px);
+        --viewer-safe-right: env(safe-area-inset-right, 0px);
+        --viewer-safe-bottom: env(safe-area-inset-bottom, 0px);
+        --viewer-safe-left: env(safe-area-inset-left, 0px);
+      }
 
-        html[data-theme="light"] {
-            --viewer-surface: rgba(255, 255, 255, 0.92);
-            --viewer-border: rgba(15, 23, 42, 0.12);
-            --viewer-divider: rgba(15, 23, 42, 0.08);
-            --viewer-control-border: rgba(15, 23, 42, 0.14);
-            --viewer-swatch-border: rgba(15, 23, 42, 0.2);
-            --viewer-scrollbar: rgba(15, 23, 42, 0.18);
-            --viewer-control-bg: rgba(15, 23, 42, 0.04);
-            --viewer-hover-bg: rgba(15, 23, 42, 0.07);
-            --viewer-text: #121826;
-            --viewer-muted: #5f6f86;
-            --viewer-accent: #2563eb;
-            --viewer-disabled: #94a3b8;
-        }
+      html[data-theme="light"] {
+        --viewer-surface: rgba(255, 255, 255, 0.92);
+        --viewer-border: rgba(15, 23, 42, 0.12);
+        --viewer-divider: rgba(15, 23, 42, 0.08);
+        --viewer-control-border: rgba(15, 23, 42, 0.14);
+        --viewer-swatch-border: rgba(15, 23, 42, 0.2);
+        --viewer-scrollbar: rgba(15, 23, 42, 0.18);
+        --viewer-control-bg: rgba(15, 23, 42, 0.04);
+        --viewer-hover-bg: rgba(15, 23, 42, 0.07);
+        --viewer-text: #121826;
+        --viewer-muted: #5f6f86;
+        --viewer-accent: #2563eb;
+        --viewer-disabled: #94a3b8;
+      }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
 
-        html,
-        body {
-            height: 100%;
-            min-height: 100dvh;
-            overflow: hidden;
-            background: #1a1a1a;
-            font-family: system-ui, -apple-system, sans-serif;
-        }
+      html,
+      body {
+        height: 100%;
+        min-height: 100dvh;
+        overflow: hidden;
+        background: #1a1a1a;
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+      }
 
-        #canvas {
-            width: 100vw;
-            height: 100vh;
-            height: 100dvh;
-            display: block;
-        }
+      #canvas {
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        display: block;
+      }
 
-        body.plan-mode #canvas {
-            display: none;
-        }
+      body.plan-mode #canvas {
+        display: none;
+      }
 
-        #view-mode-switch {
-            position: fixed;
-            top: calc(12px + var(--viewer-safe-top));
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 12;
-            display: flex;
-            padding: 3px;
-            gap: 2px;
-            background: var(--viewer-surface);
-            backdrop-filter: blur(12px);
-            border: 1px solid var(--viewer-border);
-            border-radius: 999px;
-            user-select: none;
+      #top-controls {
+        position: fixed;
+        top: calc(12px + var(--viewer-safe-top));
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 12;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        user-select: none;
+      }
+
+      #view-mode-switch {
+        display: flex;
+        padding: 3px;
+        gap: 2px;
+        background: var(--viewer-surface);
+        backdrop-filter: blur(12px);
+        border: 1px solid var(--viewer-border);
+        border-radius: 999px;
+      }
+
+      #page-combo {
+        position: relative;
+        max-width: min(360px, calc(100vw - 32px));
+      }
+
+      #page-combo.disabled {
+        display: none;
+      }
+
+      #page-combo-button {
+        max-width: min(360px, calc(100vw - 32px));
+        min-width: 180px;
+        padding: 7px 14px;
+        border: 1px solid var(--viewer-border);
+        border-radius: 999px;
+        background: var(--viewer-surface);
+        color: var(--viewer-text);
+        backdrop-filter: blur(12px);
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #page-combo-menu {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 50%;
+        transform: translateX(-50%);
+        min-width: min(360px, calc(100vw - 32px));
+        max-width: min(420px, calc(100vw - 24px));
+        max-height: min(
+          320px,
+          calc(
+            100dvh - 96px - var(--viewer-safe-top) - var(--viewer-safe-bottom)
+          )
+        );
+        overflow-y: auto;
+        padding: 6px;
+        border: 1px solid var(--viewer-border);
+        border-radius: var(--viewer-radius);
+        background: var(--viewer-surface);
+        backdrop-filter: blur(12px);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+        display: none;
+      }
+
+      #page-combo.open #page-combo-menu {
+        display: block;
+      }
+
+      .page-combo-row {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: var(--viewer-radius-sm);
+      }
+
+      .page-combo-row:hover {
+        background: var(--viewer-hover-bg);
+      }
+
+      .page-combo-row.active .page-combo-name {
+        color: var(--viewer-accent);
+        font-weight: 700;
+      }
+
+      .page-combo-row input[type="checkbox"] {
+        accent-color: var(--viewer-accent);
+        width: 14px;
+        height: 14px;
+        cursor: pointer;
+      }
+
+      .page-combo-name {
+        border: none;
+        background: transparent;
+        color: var(--viewer-text);
+        font: inherit;
+        font-size: 12px;
+        text-align: left;
+        cursor: pointer;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .view-mode-button {
+        min-width: 58px;
+        padding: 6px 14px;
+        border: none;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--viewer-muted);
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .view-mode-button.active {
+        background: var(--viewer-accent);
+        color: white;
+      }
+
+      .view-mode-button:disabled {
+        cursor: default;
+        color: var(--viewer-disabled);
+      }
+
+      #plan-view {
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+        background: #202020;
+        touch-action: none;
+        cursor: grab;
+      }
+
+      body:not(.plan-mode) #plan-view {
+        display: none;
+      }
+
+      #plan-view.panning {
+        cursor: grabbing;
+      }
+
+      #plan-content {
+        position: absolute;
+        left: 0;
+        top: 0;
+        transform-origin: 0 0;
+        background: white;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+      }
+
+      #plan-pdf-canvas,
+      #plan-overlay {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      #plan-overlay {
+        pointer-events: none;
+      }
+
+      #layer-panel {
+        position: fixed;
+        top: calc(12px + var(--viewer-safe-top));
+        left: calc(12px + var(--viewer-safe-left));
+        z-index: 10;
+        background: var(--viewer-surface);
+        backdrop-filter: blur(12px);
+        border: 1px solid var(--viewer-border);
+        border-radius: var(--viewer-radius);
+        color: var(--viewer-text);
+        font-size: 13px;
+        min-width: 200px;
+        max-width: 280px;
+        max-height: calc(
+          100dvh - 24px - var(--viewer-safe-top) - var(--viewer-safe-bottom)
+        );
+        display: none;
+        flex-direction: column;
+        user-select: none;
+      }
+
+      #layer-panel.visible {
+        display: flex;
+      }
+
+      #layer-panel.collapsed #layer-list,
+      #layer-panel.collapsed #layer-actions {
+        display: none;
+      }
+
+      #layer-panel.collapsed {
+        min-width: 0;
+      }
+
+      #layer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        cursor: pointer;
+        font-weight: 600;
+        border-bottom: 1px solid var(--viewer-divider);
+      }
+
+      #layer-panel.collapsed #layer-header {
+        border-bottom: none;
+        border-radius: var(--viewer-radius);
+      }
+
+      #layer-count {
+        font-size: 11px;
+        color: var(--viewer-muted);
+      }
+
+      #layer-actions {
+        display: flex;
+        gap: 6px;
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--viewer-divider);
+      }
+
+      #layer-actions button {
+        flex: 1;
+        padding: 5px 8px;
+        border: 1px solid var(--viewer-control-border);
+        border-radius: var(--viewer-radius-sm);
+        background: var(--viewer-control-bg);
+        color: var(--viewer-muted);
+        font-size: 11px;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      #layer-actions button:hover {
+        background: var(--viewer-hover-bg);
+        color: var(--viewer-text);
+      }
+
+      #layer-list {
+        overflow-y: auto;
+        padding: 4px 0;
+        scrollbar-width: thin;
+        scrollbar-color: var(--viewer-scrollbar) transparent;
+      }
+
+      .visibility-section {
+        padding: 4px 0;
+      }
+
+      .visibility-section + .visibility-section {
+        border-top: 1px solid var(--viewer-divider);
+      }
+
+      .visibility-section-title {
+        padding: 8px 14px 4px;
+        color: var(--viewer-muted);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      .condition-type-title {
+        padding: 7px 14px 3px;
+        color: var(--viewer-muted);
+        font-size: 11px;
+        font-weight: 600;
+      }
+
+      .visibility-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px;
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+
+      .visibility-row:hover {
+        background: var(--viewer-hover-bg);
+      }
+
+      .visibility-row input[type="checkbox"] {
+        accent-color: var(--viewer-accent);
+        width: 14px;
+        height: 14px;
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+
+      .condition-color-swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        flex-shrink: 0;
+        border: 1px solid var(--viewer-swatch-border);
+        background: var(--viewer-muted);
+      }
+
+      .visibility-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .visibility-row.disabled .visibility-name {
+        color: var(--viewer-disabled);
+        text-decoration: line-through;
+      }
+
+      @media (max-width: 480px) {
+        #top-controls {
+          top: calc(8px + var(--viewer-safe-top));
         }
 
         .view-mode-button {
-            min-width: 58px;
-            padding: 6px 14px;
-            border: none;
-            border-radius: 999px;
-            background: transparent;
-            color: var(--viewer-muted);
-            font-size: 12px;
-            font-weight: 600;
-            cursor: pointer;
-        }
-
-        .view-mode-button.active {
-            background: var(--viewer-accent);
-            color: white;
-        }
-
-        .view-mode-button:disabled {
-            cursor: default;
-            color: var(--viewer-disabled);
-        }
-
-        #plan-view {
-            position: fixed;
-            inset: 0;
-            overflow: hidden;
-            background: #202020;
-            touch-action: none;
-            cursor: grab;
-        }
-
-        body:not(.plan-mode) #plan-view {
-            display: none;
-        }
-
-        #plan-view.panning {
-            cursor: grabbing;
-        }
-
-        #plan-content {
-            position: absolute;
-            left: 0;
-            top: 0;
-            transform-origin: 0 0;
-            background: white;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
-        }
-
-        #plan-pdf-canvas,
-        #plan-overlay {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-        }
-
-        #plan-overlay {
-            pointer-events: none;
+          min-width: 54px;
+          padding: 7px 12px;
         }
 
         #layer-panel {
-            position: fixed;
-            top: calc(12px + var(--viewer-safe-top));
-            left: calc(12px + var(--viewer-safe-left));
-            z-index: 10;
-            background: var(--viewer-surface);
-            backdrop-filter: blur(12px);
-            border: 1px solid var(--viewer-border);
-            border-radius: var(--viewer-radius);
-            color: var(--viewer-text);
-            font-size: 13px;
-            min-width: 200px;
-            max-width: 280px;
-            max-height: calc(100dvh - 24px - var(--viewer-safe-top) - var(--viewer-safe-bottom));
-            display: none;
-            flex-direction: column;
-            user-select: none;
-        }
-
-        #layer-panel.visible {
-            display: flex;
-        }
-
-        #layer-panel.collapsed #layer-list,
-        #layer-panel.collapsed #layer-actions {
-            display: none;
-        }
-
-        #layer-panel.collapsed {
-            min-width: 0;
+          top: calc(52px + var(--viewer-safe-top));
+          left: calc(8px + var(--viewer-safe-left));
+          right: calc(8px + var(--viewer-safe-right));
+          min-width: 0;
+          max-width: none;
+          font-size: 12px;
+          max-height: min(
+            50dvh,
+            calc(
+              100dvh - 16px - var(--viewer-safe-top) - var(--viewer-safe-bottom)
+            )
+          );
         }
 
         #layer-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 14px;
-            cursor: pointer;
-            font-weight: 600;
-            border-bottom: 1px solid var(--viewer-divider);
-        }
-
-        #layer-panel.collapsed #layer-header {
-            border-bottom: none;
-            border-radius: var(--viewer-radius);
-        }
-
-        #layer-count {
-            font-size: 11px;
-            color: var(--viewer-muted);
+          padding: 10px 12px;
         }
 
         #layer-actions {
-            display: flex;
-            gap: 6px;
-            padding: 8px 14px;
-            border-bottom: 1px solid var(--viewer-divider);
+          padding: 6px 12px;
         }
 
         #layer-actions button {
-            flex: 1;
-            padding: 5px 8px;
-            border: 1px solid var(--viewer-control-border);
-            border-radius: var(--viewer-radius-sm);
-            background: var(--viewer-control-bg);
-            color: var(--viewer-muted);
-            font-size: 11px;
-            cursor: pointer;
-            transition: all 0.15s;
-        }
-
-        #layer-actions button:hover {
-            background: var(--viewer-hover-bg);
-            color: var(--viewer-text);
-        }
-
-        #layer-list {
-            overflow-y: auto;
-            padding: 4px 0;
-            scrollbar-width: thin;
-            scrollbar-color: var(--viewer-scrollbar) transparent;
-        }
-
-        .visibility-section {
-            padding: 4px 0;
-        }
-
-        .visibility-section+.visibility-section {
-            border-top: 1px solid var(--viewer-divider);
+          padding: 8px 6px;
+          font-size: 12px;
+          min-height: 36px;
         }
 
         .visibility-section-title {
-            padding: 8px 14px 4px;
-            color: var(--viewer-muted);
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0;
-            text-transform: uppercase;
+          padding: 8px 12px 4px;
         }
 
         .condition-type-title {
-            padding: 7px 14px 3px;
-            color: var(--viewer-muted);
-            font-size: 11px;
-            font-weight: 600;
+          padding: 8px 12px 4px;
         }
 
         .visibility-row {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 14px;
-            cursor: pointer;
-            transition: background 0.1s;
-        }
-
-        .visibility-row:hover {
-            background: var(--viewer-hover-bg);
+          padding: 8px 12px;
+          gap: 10px;
+          min-height: 40px;
         }
 
         .visibility-row input[type="checkbox"] {
-            accent-color: var(--viewer-accent);
-            width: 14px;
-            height: 14px;
-            cursor: pointer;
-            flex-shrink: 0;
+          width: 18px;
+          height: 18px;
         }
 
         .condition-color-swatch {
-            width: 12px;
-            height: 12px;
-            border-radius: 3px;
-            flex-shrink: 0;
-            border: 1px solid var(--viewer-swatch-border);
-            background: var(--viewer-muted);
+          width: 14px;
+          height: 14px;
         }
-
-        .visibility-name {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .visibility-row.disabled .visibility-name {
-            color: var(--viewer-disabled);
-            text-decoration: line-through;
-        }
-
-        @media (max-width: 480px) {
-            #view-mode-switch {
-                top: calc(8px + var(--viewer-safe-top));
-            }
-
-            .view-mode-button {
-                min-width: 54px;
-                padding: 7px 12px;
-            }
-
-            #layer-panel {
-                top: calc(52px + var(--viewer-safe-top));
-                left: calc(8px + var(--viewer-safe-left));
-                right: calc(8px + var(--viewer-safe-right));
-                min-width: 0;
-                max-width: none;
-                font-size: 12px;
-                max-height: min(50dvh, calc(100dvh - 16px - var(--viewer-safe-top) - var(--viewer-safe-bottom)));
-            }
-
-            #layer-header {
-                padding: 10px 12px;
-            }
-
-            #layer-actions {
-                padding: 6px 12px;
-            }
-
-            #layer-actions button {
-                padding: 8px 6px;
-                font-size: 12px;
-                min-height: 36px;
-            }
-
-            .visibility-section-title {
-                padding: 8px 12px 4px;
-            }
-
-            .condition-type-title {
-                padding: 8px 12px 4px;
-            }
-
-            .visibility-row {
-                padding: 8px 12px;
-                gap: 10px;
-                min-height: 40px;
-            }
-
-            .visibility-row input[type="checkbox"] {
-                width: 18px;
-                height: 18px;
-            }
-
-            .condition-color-swatch {
-                width: 14px;
-                height: 14px;
-            }
-        }
+      }
     </style>
-</head>
+  </head>
 
-<body>
-    <div id="view-mode-switch" role="group" aria-label="View mode">
-        <button type="button" id="view-mode-plan" class="view-mode-button">Plan</button>
-        <button type="button" id="view-mode-3d" class="view-mode-button active">3D</button>
+  <body>
+    <div id="top-controls">
+      <div id="view-mode-switch" role="group" aria-label="View mode">
+        <button type="button" id="view-mode-plan" class="view-mode-button">
+          Plan
+        </button>
+        <button type="button" id="view-mode-3d" class="view-mode-button active">
+          3D
+        </button>
+      </div>
+      <div id="page-combo" class="disabled">
+        <button
+          type="button"
+          id="page-combo-button"
+          aria-haspopup="listbox"
+          aria-expanded="false"
+        ></button>
+        <div id="page-combo-menu" role="listbox" aria-label="Pages"></div>
+      </div>
     </div>
     <div id="layer-panel" class="collapsed">
-        <div id="layer-header">
-            <span>Visibility</span>
-            <span id="layer-count"></span>
-        </div>
-        <div id="layer-actions">
-            <button type="button" id="layer-show-all">Show All</button>
-            <button type="button" id="layer-hide-all">Hide All</button>
-        </div>
-        <div id="layer-list"></div>
+      <div id="layer-header">
+        <span>Visibility</span>
+        <span id="layer-count"></span>
+      </div>
+      <div id="layer-actions">
+        <button type="button" id="layer-show-all">Show All</button>
+        <button type="button" id="layer-hide-all">Hide All</button>
+      </div>
+      <div id="layer-list"></div>
     </div>
     <div id="plan-view" aria-label="2D plan view">
-        <div id="plan-content">
-            <canvas id="plan-pdf-canvas"></canvas>
-            <svg id="plan-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
-        </div>
+      <div id="plan-content">
+        <canvas id="plan-pdf-canvas"></canvas>
+        <svg id="plan-overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
     </div>
     <canvas id="canvas"></canvas>
     <script type="application/json" id="scene-data">
-{{SCENE_DATA}}
+      {{SCENE_DATA}}
     </script>
     <script>
-        (function () {
-            var theme = window.matchMedia
-                && window.matchMedia('(prefers-color-scheme: light)').matches
-                ? 'light'
-                : 'dark';
-            try {
-                var storedTheme = localStorage.getItem('fabian-theme');
-                if (storedTheme === 'light' || storedTheme === 'dark') theme = storedTheme;
-            } catch (_) { }
-            document.documentElement.dataset.theme = theme;
-        })();
+      (function () {
+        var theme =
+          window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark";
+        try {
+          var storedTheme = localStorage.getItem("fabian-theme");
+          if (storedTheme === "light" || storedTheme === "dark")
+            theme = storedTheme;
+        } catch (_) {}
+        document.documentElement.dataset.theme = theme;
+      })();
     </script>
     <script type="importmap">
-    {
+      {
         "imports": {
-            "three": "https://unpkg.com/three@0.150.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.150.0/examples/jsm/",
-            "three-wboit": "https://unpkg.com/three-wboit@1.0.8/src/index.js",
-            "three-wboit/": "https://unpkg.com/three-wboit@1.0.8/src/"
+          "three": "https://unpkg.com/three@0.150.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.150.0/examples/jsm/",
+          "three-wboit": "https://unpkg.com/three-wboit@1.0.8/src/index.js",
+          "three-wboit/": "https://unpkg.com/three-wboit@1.0.8/src/"
         }
-    }
+      }
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script type="module">
-        import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        import { WboitPass } from 'three-wboit';
-        import { MeshWboitMaterial } from 'three-wboit';
+      import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+      import { WboitPass } from "three-wboit";
+      import { MeshWboitMaterial } from "three-wboit";
 
-        const sceneData = JSON.parse(document.getElementById('scene-data').textContent);
-        const canvas = document.getElementById('canvas');
-        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setClearColor(0x1a1a1a);
-        renderer.outputColorSpace = THREE.SRGBColorSpace;
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 0.5;
+      const sceneData = JSON.parse(
+        document.getElementById("scene-data").textContent,
+      );
+      const canvas = document.getElementById("canvas");
+      const renderer = new THREE.WebGLRenderer({
+        canvas,
+        antialias: true,
+        alpha: false,
+      });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setClearColor(0x1a1a1a);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 0.5;
 
-        const scene = new THREE.Scene();
-        const pdfBase64 = sceneData.pdf_base64 || null;
-        const pdfPageIndex = sceneData.pdf_page_index || 0;
-        const pageW = Number(sceneData.page_width || 0);
-        const pageH = Number(sceneData.page_height || 0);
-        const layerPanel = document.getElementById('layer-panel');
-        const layerList = document.getElementById('layer-list');
-        const layerCount = document.getElementById('layer-count');
-        const layerHeader = document.getElementById('layer-header');
-        const layerShowAll = document.getElementById('layer-show-all');
-        const layerHideAll = document.getElementById('layer-hide-all');
-        const planView = document.getElementById('plan-view');
-        const planContent = document.getElementById('plan-content');
-        const planPdfCanvas = document.getElementById('plan-pdf-canvas');
-        const planOverlay = document.getElementById('plan-overlay');
-        const planModeButton = document.getElementById('view-mode-plan');
-        const threeModeButton = document.getElementById('view-mode-3d');
-        const layerVisibility = new Map();
-        const conditionVisibility = new Map();
-        const areaVisibility = new Map();
-        const layerRows = new Map();
-        const conditionRows = new Map();
-        const areaRows = new Map();
-        const visibilityObjects = [];
-        const UNLAYERED_UID = '__unlayered__';
-        const IMAGE_LAYER_DISPLAY_NAME = 'Image';
-        const UNLAYERED_LAYER_NAME = 'Unlayered';
-        const FALLBACK_VISIBILITY_NAME = 'Unassigned';
-        const FALLBACK_CONDITION_NAME = 'Condition';
-        const FALLBACK_AREA_NAME = 'Area';
-        const UNASSIGNED_CDN_TYPE_UID = '__unassigned_cdn_type__';
-        const UNASSIGNED_CDN_TYPE_NAME = '(unassigned)';
-        const UNKNOWN_CDN_TYPE_NAME = 'Unknown';
-        const FALLBACK_HEX_COLOR = '#808080';
-        const NEGATIVE_TAKEOFF_STROKE = '#dc2626';
-        const PLAN_FIT_MARGIN = 0.95;
-        const PLAN_MIN_SCALE = 0.05;
-        const PLAN_MAX_SCALE = 50.0;
-        const PLAN_WHEEL_SENSITIVITY = 0.001;
+      const scene = new THREE.Scene();
+      const layerPanel = document.getElementById("layer-panel");
+      const layerList = document.getElementById("layer-list");
+      const layerCount = document.getElementById("layer-count");
+      const layerHeader = document.getElementById("layer-header");
+      const layerShowAll = document.getElementById("layer-show-all");
+      const layerHideAll = document.getElementById("layer-hide-all");
+      const planView = document.getElementById("plan-view");
+      const planContent = document.getElementById("plan-content");
+      const planPdfCanvas = document.getElementById("plan-pdf-canvas");
+      const planOverlay = document.getElementById("plan-overlay");
+      const planModeButton = document.getElementById("view-mode-plan");
+      const threeModeButton = document.getElementById("view-mode-3d");
+      const pageCombo = document.getElementById("page-combo");
+      const pageComboButton = document.getElementById("page-combo-button");
+      const pageComboMenu = document.getElementById("page-combo-menu");
+      const layerVisibility = new Map();
+      const conditionVisibility = new Map();
+      const areaVisibility = new Map();
+      const page3dVisibility = new Map();
+      const layerRows = new Map();
+      const conditionRows = new Map();
+      const areaRows = new Map();
+      const visibilityObjects = [];
+      const planVisibilityObjects = [];
+      const UNLAYERED_UID = "__unlayered__";
+      const IMAGE_LAYER_DISPLAY_NAME = "Image";
+      const UNLAYERED_LAYER_NAME = "Unlayered";
+      const FALLBACK_VISIBILITY_NAME = "Unassigned";
+      const FALLBACK_CONDITION_NAME = "Condition";
+      const FALLBACK_AREA_NAME = "Area";
+      const UNASSIGNED_CDN_TYPE_UID = "__unassigned_cdn_type__";
+      const UNASSIGNED_CDN_TYPE_NAME = "(unassigned)";
+      const UNKNOWN_CDN_TYPE_NAME = "Unknown";
+      const FALLBACK_HEX_COLOR = "#808080";
+      const NEGATIVE_TAKEOFF_STROKE = "#dc2626";
+      const PLAN_FIT_MARGIN = 0.95;
+      const PLAN_MIN_SCALE = 0.05;
+      const PLAN_MAX_SCALE = 50.0;
+      const PLAN_WHEEL_SENSITIVITY = 0.001;
 
-        function normalizeLayerUid(layerUid) {
-            const uid = layerUid === undefined || layerUid === null ? '' : String(layerUid);
-            return uid || UNLAYERED_UID;
+      function normalizeLayerUid(layerUid) {
+        const uid =
+          layerUid === undefined || layerUid === null ? "" : String(layerUid);
+        return uid || UNLAYERED_UID;
+      }
+
+      function normalizeOptionalUid(uid) {
+        if (uid === undefined || uid === null) return "";
+        const normalized = String(uid);
+        return normalized === "0" ? "" : normalized;
+      }
+
+      function normalizeScenePage(page) {
+        const uid = normalizeOptionalUid(page.uid);
+        if (!uid) return null;
+        const label =
+          page.label ||
+          [page.sequence, page.sheet_no, page.name]
+            .filter(
+              (value) =>
+                value !== undefined &&
+                value !== null &&
+                String(value).trim() !== "" &&
+                String(value) !== "0",
+            )
+            .join(" - ") ||
+          uid;
+        return {
+          uid: uid,
+          label: label,
+          name: page.name || "",
+          sheetNo: page.sheet_no || "",
+          sequence: Number(page.sequence || 0),
+          width: Number(page.width || 0),
+          height: Number(page.height || 0),
+          pageWidth: Number(page.page_width || 0),
+          pageHeight: Number(page.page_height || 0),
+          imageLayerUid: normalizeLayerUid(page.image_layer_uid),
+          visible: page.visible !== false,
+          pdfDocumentUid: normalizeOptionalUid(page.pdf_document_uid),
+          pdfPageIndex: Number(page.pdf_page_index || 0),
+        };
+      }
+
+      function normalizeScenePages() {
+        const pages = Array.isArray(sceneData.pages)
+          ? sceneData.pages.map(normalizeScenePage).filter(Boolean)
+          : [];
+        return pages;
+      }
+
+      function buildPdfDocumentMap() {
+        const documents = new Map();
+        const entries = Array.isArray(sceneData.pdf_documents)
+          ? sceneData.pdf_documents
+          : [];
+        entries.forEach((document) => {
+          const uid = normalizeOptionalUid(document.uid);
+          if (uid && document.data_base64)
+            documents.set(uid, document.data_base64);
+        });
+        return documents;
+      }
+
+      function resolveActivePageUid(pages) {
+        const exported = new Set(pages.map((page) => page.uid));
+        const requested = normalizeOptionalUid(sceneData.active_page_uid);
+        if (requested && exported.has(requested)) return requested;
+        const selected = Array.isArray(sceneData.selected_page_uids)
+          ? sceneData.selected_page_uids.map(normalizeOptionalUid)
+          : [];
+        const selectedMatch = selected.find((uid) => exported.has(uid));
+        return selectedMatch || (pages[0] ? pages[0].uid : "");
+      }
+
+      const runtimePages = normalizeScenePages();
+      const pdfDocuments = buildPdfDocumentMap();
+      let activePageUid = resolveActivePageUid(runtimePages);
+      const maxPageW = runtimePages.reduce(
+        (value, page) => Math.max(value, page.pageWidth || 0),
+        0,
+      );
+      const maxPageH = runtimePages.reduce(
+        (value, page) => Math.max(value, page.pageHeight || 0),
+        0,
+      );
+
+      function getActivePage() {
+        return (
+          runtimePages.find((page) => page.uid === activePageUid) ||
+          runtimePages[0] ||
+          null
+        );
+      }
+
+      function ensureVisibilityEntry(
+        registry,
+        uid,
+        name,
+        visible = true,
+        fallbackName = FALLBACK_VISIBILITY_NAME,
+      ) {
+        if (!uid) return null;
+        if (!registry.has(uid)) {
+          registry.set(uid, {
+            uid: uid,
+            name: name || fallbackName || uid,
+            visible: visible !== false,
+          });
+        } else {
+          const entry = registry.get(uid);
+          if (name && entry.name === uid) entry.name = name;
         }
+        return registry.get(uid);
+      }
 
-        function normalizeOptionalUid(uid) {
-            if (uid === undefined || uid === null) return '';
-            const normalized = String(uid);
-            return normalized === '0' ? '' : normalized;
+      function normalizeHexColor(color) {
+        if (typeof color !== "string") return "";
+        const normalized = color.trim();
+        return /^#[0-9a-fA-F]{6}$/.test(normalized) ? normalized : "";
+      }
+
+      function getConditionTypeUid(condition) {
+        return (
+          normalizeOptionalUid(condition.cdn_type_uid) ||
+          UNASSIGNED_CDN_TYPE_UID
+        );
+      }
+
+      function getConditionTypeName(condition) {
+        const cdnTypeUid = normalizeOptionalUid(condition.cdn_type_uid);
+        if (!cdnTypeUid) return UNASSIGNED_CDN_TYPE_NAME;
+        return condition.cdn_type_name || UNKNOWN_CDN_TYPE_NAME;
+      }
+
+      function compareByName(a, b) {
+        return a.name.localeCompare(b.name);
+      }
+
+      function compareConditionEntries(a, b) {
+        return a.refNo - b.refNo || compareByName(a, b);
+      }
+
+      function buildVisibilityRegistries() {
+        const layers = Array.isArray(sceneData.layers) ? sceneData.layers : [];
+        layers.forEach((layer) => {
+          ensureVisibilityEntry(
+            layerVisibility,
+            normalizeLayerUid(layer.uid),
+            layer.name,
+            layer.visible,
+            UNLAYERED_LAYER_NAME,
+          );
+        });
+        if (sceneData.page_image_layer) {
+          const layer = sceneData.page_image_layer;
+          const pageEntry = ensureVisibilityEntry(
+            layerVisibility,
+            normalizeLayerUid(layer.uid),
+            layer.name || IMAGE_LAYER_DISPLAY_NAME,
+            layer.visible,
+            IMAGE_LAYER_DISPLAY_NAME,
+          );
+          pageEntry.visible = layer.visible !== false;
         }
+        const conditions = Array.isArray(sceneData.conditions)
+          ? sceneData.conditions
+          : [];
+        conditions.forEach((condition) => {
+          const entry = ensureVisibilityEntry(
+            conditionVisibility,
+            normalizeOptionalUid(condition.uid),
+            condition.name,
+            condition.visible,
+            FALLBACK_CONDITION_NAME,
+          );
+          if (entry) {
+            entry.cdnTypeUid = getConditionTypeUid(condition);
+            entry.cdnTypeName = getConditionTypeName(condition);
+            entry.color = normalizeHexColor(condition.color);
+            entry.refNo = Number.isFinite(Number(condition.ref_no))
+              ? Number(condition.ref_no)
+              : 0;
+          }
+        });
+        const areas = Array.isArray(sceneData.areas) ? sceneData.areas : [];
+        areas.forEach((area) => {
+          ensureVisibilityEntry(
+            areaVisibility,
+            normalizeOptionalUid(area.uid),
+            area.name,
+            area.visible,
+            FALLBACK_AREA_NAME,
+          );
+        });
+        runtimePages.forEach((page) => {
+          ensureVisibilityEntry(
+            page3dVisibility,
+            page.uid,
+            page.label,
+            page.visible,
+            "Page",
+          );
+        });
+      }
 
-        function ensureVisibilityEntry(registry, uid, name, visible = true, fallbackName = FALLBACK_VISIBILITY_NAME) {
-            if (!uid) return null;
-            if (!registry.has(uid)) {
-                registry.set(uid, {
-                    uid: uid,
-                    name: name || fallbackName || uid,
-                    visible: visible !== false,
-                });
-            } else {
-                const entry = registry.get(uid);
-                if (name && entry.name === uid) entry.name = name;
+      function isGroupVisible(registry, uid) {
+        if (!uid) return true;
+        const entry = registry.get(uid);
+        return entry ? entry.visible !== false : true;
+      }
+
+      function isObjectVisible(object) {
+        return (
+          object.userData.baseVisible !== false &&
+          (object.userData.usesPage3dVisibility !== true ||
+            isGroupVisible(page3dVisibility, object.userData.pageUid)) &&
+          isGroupVisible(layerVisibility, object.userData.layerUid) &&
+          isGroupVisible(conditionVisibility, object.userData.conditionUid) &&
+          isGroupVisible(areaVisibility, object.userData.areaUid)
+        );
+      }
+
+      function setRenderedObjectVisible(object, visible) {
+        if (object && object.isObject3D) {
+          object.visible = visible;
+        } else if (object && object.style) {
+          object.style.display = visible ? "" : "none";
+        }
+      }
+
+      function registerVisibilityObject(keys, object, baseVisible = true) {
+        const layerUid = normalizeLayerUid(keys.layerUid);
+        const pageUid = normalizeOptionalUid(keys.pageUid);
+        const conditionUid = normalizeOptionalUid(keys.conditionUid);
+        const areaUid = normalizeOptionalUid(keys.areaUid);
+        const usesPage3dVisibility = keys.usesPage3dVisibility === true;
+        ensureVisibilityEntry(
+          layerVisibility,
+          layerUid,
+          keys.layerName,
+          true,
+          UNLAYERED_LAYER_NAME,
+        );
+        if (usesPage3dVisibility && pageUid) {
+          ensureVisibilityEntry(
+            page3dVisibility,
+            pageUid,
+            keys.pageName,
+            true,
+            "Page",
+          );
+        }
+        if (conditionUid) {
+          ensureVisibilityEntry(
+            conditionVisibility,
+            conditionUid,
+            keys.conditionName,
+            true,
+            FALLBACK_CONDITION_NAME,
+          );
+        }
+        if (areaUid) {
+          ensureVisibilityEntry(
+            areaVisibility,
+            areaUid,
+            keys.areaName,
+            true,
+            FALLBACK_AREA_NAME,
+          );
+        }
+        if (!object.userData) object.userData = {};
+        object.userData.pageUid = pageUid;
+        object.userData.layerUid = layerUid;
+        object.userData.conditionUid = conditionUid;
+        object.userData.areaUid = areaUid;
+        object.userData.usesPage3dVisibility = usesPage3dVisibility;
+        object.userData.baseVisible = baseVisible !== false;
+        visibilityObjects.push(object);
+        setRenderedObjectVisible(object, isObjectVisible(object));
+      }
+
+      function updateVisibilityRows(registry, rows) {
+        for (const [uid, row] of rows) {
+          const entry = registry.get(uid);
+          const visible = entry ? entry.visible !== false : true;
+          row.classList.toggle("disabled", !visible);
+          const checkbox = row.querySelector('input[type="checkbox"]');
+          if (checkbox) checkbox.checked = visible;
+        }
+      }
+
+      function applyObjectVisibility() {
+        visibilityObjects.forEach((object) => {
+          setRenderedObjectVisible(object, isObjectVisible(object));
+        });
+        updateVisibilityRows(layerVisibility, layerRows);
+        updateVisibilityRows(conditionVisibility, conditionRows);
+        updateVisibilityRows(areaVisibility, areaRows);
+        updatePageComboRows();
+      }
+
+      function renderWboitPassWithVisibility() {
+        const hiddenMaterials = [];
+        scene.traverse((object) => {
+          if (object.material && object.visible === false) {
+            hiddenMaterials.push({ object: object, material: object.material });
+            object.material = null;
+          }
+        });
+        try {
+          wboitPass.render(renderer);
+        } finally {
+          hiddenMaterials.forEach((entry) => {
+            entry.object.material = entry.material;
+          });
+        }
+      }
+
+      function setGroupVisible(registry, uid, visible) {
+        const entry = registry.get(uid);
+        if (!entry) return;
+        entry.visible = Boolean(visible);
+        applyObjectVisibility();
+      }
+
+      function setAllGroupsVisible(visible) {
+        [layerVisibility, conditionVisibility, areaVisibility].forEach(
+          (registry) => {
+            for (const entry of registry.values()) {
+              entry.visible = Boolean(visible);
             }
-            return registry.get(uid);
+          },
+        );
+        applyObjectVisibility();
+      }
+
+      function createVisibilityRow(entry, registry, rows, options = {}) {
+        const row = document.createElement("label");
+        row.className = options.rowClass
+          ? `visibility-row ${options.rowClass}`
+          : "visibility-row";
+        row.title = entry.name;
+        row.classList.toggle("disabled", !entry.visible);
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = entry.visible;
+        checkbox.addEventListener("change", () => {
+          setGroupVisible(registry, entry.uid, checkbox.checked);
+        });
+
+        const name = document.createElement("span");
+        name.className = "visibility-name";
+        name.textContent = entry.name;
+
+        if (options.swatchClass) {
+          const swatch = document.createElement("div");
+          swatch.className = options.swatchClass;
+          if (entry.color) swatch.style.background = entry.color;
+          row.append(checkbox, swatch, name);
+        } else {
+          row.append(checkbox, name);
         }
 
-        function normalizeHexColor(color) {
-            if (typeof color !== 'string') return '';
-            const normalized = color.trim();
-            return /^#[0-9a-fA-F]{6}$/.test(normalized) ? normalized : '';
-        }
+        rows.set(entry.uid, row);
+        return row;
+      }
 
-        function getConditionTypeUid(condition) {
-            return normalizeOptionalUid(condition.cdn_type_uid) || UNASSIGNED_CDN_TYPE_UID;
-        }
+      function renderVisibilitySection(title, registry, rows) {
+        const entries = Array.from(registry.values());
+        if (!entries.length) return 0;
+        const section = document.createElement("div");
+        section.className = "visibility-section";
 
-        function getConditionTypeName(condition) {
-            const cdnTypeUid = normalizeOptionalUid(condition.cdn_type_uid);
-            if (!cdnTypeUid) return UNASSIGNED_CDN_TYPE_NAME;
-            return condition.cdn_type_name || UNKNOWN_CDN_TYPE_NAME;
-        }
+        const heading = document.createElement("div");
+        heading.className = "visibility-section-title";
+        heading.textContent = title;
+        section.appendChild(heading);
 
-        function compareByName(a, b) {
-            return a.name.localeCompare(b.name);
-        }
+        entries.forEach((entry) => {
+          section.appendChild(createVisibilityRow(entry, registry, rows));
+        });
 
-        function compareConditionEntries(a, b) {
-            return (a.refNo - b.refNo) || compareByName(a, b);
-        }
+        layerList.appendChild(section);
+        return entries.length;
+      }
 
-        function buildVisibilityRegistries() {
-            const layers = Array.isArray(sceneData.layers) ? sceneData.layers : [];
-            layers.forEach(layer => {
-                ensureVisibilityEntry(
-                    layerVisibility,
-                    normalizeLayerUid(layer.uid),
-                    layer.name,
-                    layer.visible,
-                    UNLAYERED_LAYER_NAME
-                );
+      function renderConditionSection() {
+        const entries = Array.from(conditionVisibility.values());
+        if (!entries.length) return 0;
+        const section = document.createElement("div");
+        section.className = "visibility-section";
+
+        const heading = document.createElement("div");
+        heading.className = "visibility-section-title";
+        heading.textContent = "Conditions";
+        section.appendChild(heading);
+
+        const groups = new Map();
+        entries.forEach((entry) => {
+          const groupUid = entry.cdnTypeUid || UNASSIGNED_CDN_TYPE_UID;
+          if (!groups.has(groupUid)) {
+            groups.set(groupUid, {
+              uid: groupUid,
+              name: entry.cdnTypeName || UNASSIGNED_CDN_TYPE_NAME,
+              entries: [],
             });
-            if (sceneData.page_image_layer) {
-                const layer = sceneData.page_image_layer;
-                const pageEntry = ensureVisibilityEntry(
-                    layerVisibility,
-                    normalizeLayerUid(layer.uid),
-                    layer.name || IMAGE_LAYER_DISPLAY_NAME,
-                    layer.visible,
-                    IMAGE_LAYER_DISPLAY_NAME
-                );
-                pageEntry.visible = layer.visible !== false;
-            }
-            const conditions = Array.isArray(sceneData.conditions) ? sceneData.conditions : [];
-            conditions.forEach(condition => {
-                const entry = ensureVisibilityEntry(
-                    conditionVisibility,
-                    normalizeOptionalUid(condition.uid),
-                    condition.name,
-                    condition.visible,
-                    FALLBACK_CONDITION_NAME
-                );
-                if (entry) {
-                    entry.cdnTypeUid = getConditionTypeUid(condition);
-                    entry.cdnTypeName = getConditionTypeName(condition);
-                    entry.color = normalizeHexColor(condition.color);
-                    entry.refNo = Number.isFinite(Number(condition.ref_no))
-                        ? Number(condition.ref_no)
-                        : 0;
-                }
-            });
-            const areas = Array.isArray(sceneData.areas) ? sceneData.areas : [];
-            areas.forEach(area => {
-                ensureVisibilityEntry(
-                    areaVisibility,
-                    normalizeOptionalUid(area.uid),
-                    area.name,
-                    area.visible,
-                    FALLBACK_AREA_NAME
-                );
-            });
-        }
+          }
+          groups.get(groupUid).entries.push(entry);
+        });
 
-        function isGroupVisible(registry, uid) {
-            if (!uid) return true;
-            const entry = registry.get(uid);
-            return entry ? entry.visible !== false : true;
-        }
+        const sortedGroups = Array.from(groups.values()).sort(compareByName);
+        sortedGroups.forEach((group) => {
+          const groupHeader = document.createElement("div");
+          groupHeader.className = "condition-type-title";
+          groupHeader.textContent = group.name;
+          section.appendChild(groupHeader);
 
-        function isObjectVisible(object) {
-            return (
-                object.userData.baseVisible !== false
-                && isGroupVisible(layerVisibility, object.userData.layerUid)
-                && isGroupVisible(conditionVisibility, object.userData.conditionUid)
-                && isGroupVisible(areaVisibility, object.userData.areaUid)
+          group.entries.sort(compareConditionEntries).forEach((entry) => {
+            section.appendChild(
+              createVisibilityRow(entry, conditionVisibility, conditionRows, {
+                rowClass: "condition-row",
+                swatchClass: "condition-color-swatch",
+              }),
             );
+          });
+        });
+
+        layerList.appendChild(section);
+        return entries.length;
+      }
+
+      function buildLayerPanel() {
+        layerList.innerHTML = "";
+        layerRows.clear();
+        conditionRows.clear();
+        areaRows.clear();
+        const entryCount =
+          renderVisibilitySection("Layers", layerVisibility, layerRows) +
+          renderConditionSection() +
+          renderVisibilitySection("Areas", areaVisibility, areaRows);
+
+        if (!entryCount) {
+          layerPanel.classList.remove("visible");
+          return;
+        }
+        layerCount.textContent = String(entryCount);
+        layerPanel.classList.add("visible");
+        applyObjectVisibility();
+      }
+
+      buildVisibilityRegistries();
+      layerHeader.addEventListener("click", () =>
+        layerPanel.classList.toggle("collapsed"),
+      );
+      layerShowAll.addEventListener("click", () => setAllGroupsVisible(true));
+      layerHideAll.addEventListener("click", () => setAllGroupsVisible(false));
+      window.toggleAll = setAllGroupsVisible;
+
+      const takeoffs2D = Array.isArray(sceneData.takeoffs_2d)
+        ? sceneData.takeoffs_2d
+        : [];
+      const hasPlanData = runtimePages.some(
+        (page) => Number(page.width) > 0 && Number(page.height) > 0,
+      );
+      let planPageRegistered = false;
+      let pdfPlane = null;
+      const pdfPageCanvasCache = new Map();
+      const pdfDocumentPromises = new Map();
+      const planState = {
+        scale: 1.0,
+        offsetX: 0.0,
+        offsetY: 0.0,
+        initialized: false,
+        userInteracted: false,
+        isPanning: false,
+        panStartX: 0.0,
+        panStartY: 0.0,
+        startOffsetX: 0.0,
+        startOffsetY: 0.0,
+      };
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function setPlanTransform() {
+        planContent.style.transform = `translate(${planState.offsetX}px, ${planState.offsetY}px) scale(${planState.scale})`;
+      }
+
+      function fitPlanToViewport(force = false) {
+        const page = getActivePage();
+        if (
+          !page ||
+          !hasPlanData ||
+          (!force && planState.initialized && planState.userInteracted)
+        )
+          return;
+        const pageWidth = Number(page.width);
+        const pageHeight = Number(page.height);
+        const viewWidth = planView.clientWidth || window.innerWidth;
+        const viewHeight = planView.clientHeight || window.innerHeight;
+        const fitScale =
+          Math.min(viewWidth / pageWidth, viewHeight / pageHeight) *
+          PLAN_FIT_MARGIN;
+        planState.scale = clamp(fitScale, PLAN_MIN_SCALE, PLAN_MAX_SCALE);
+        planState.offsetX = (viewWidth - pageWidth * planState.scale) / 2.0;
+        planState.offsetY = (viewHeight - pageHeight * planState.scale) / 2.0;
+        planState.initialized = true;
+        setPlanTransform();
+      }
+
+      function ringToPath(ring) {
+        if (!Array.isArray(ring) || ring.length < 3) return "";
+        return (
+          ring
+            .map((point, index) => {
+              const x = Number(point[0]);
+              const y = Number(point[1]);
+              return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+            })
+            .join(" ") + " Z"
+        );
+      }
+
+      function renderPlanTakeoffs() {
+        planVisibilityObjects.forEach((object) => {
+          const index = visibilityObjects.indexOf(object);
+          if (index >= 0) visibilityObjects.splice(index, 1);
+        });
+        planVisibilityObjects.length = 0;
+        planOverlay.innerHTML = "";
+        const page = getActivePage();
+        if (!page) return;
+        takeoffs2D.forEach((takeoff) => {
+          const takeoffPageUid =
+            normalizeOptionalUid(takeoff.page_uid) || page.uid;
+          if (takeoffPageUid !== page.uid) return;
+          if (!Array.isArray(takeoff.rings) || !takeoff.rings.length) return;
+          const pathData = takeoff.rings
+            .map(ringToPath)
+            .filter(Boolean)
+            .join(" ");
+          if (!pathData) return;
+          const path = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "path",
+          );
+          const color = normalizeHexColor(takeoff.color) || FALLBACK_HEX_COLOR;
+          const opacity = clamp(Number(takeoff.opacity || 0.5), 0.0, 1.0);
+          path.setAttribute("d", pathData);
+          path.setAttribute("fill-rule", "evenodd");
+          path.setAttribute("fill", color);
+          path.setAttribute("fill-opacity", String(Math.min(opacity, 0.45)));
+          path.setAttribute(
+            "stroke",
+            takeoff.is_negative ? NEGATIVE_TAKEOFF_STROKE : color,
+          );
+          path.setAttribute("stroke-opacity", String(Math.max(opacity, 0.75)));
+          path.setAttribute("stroke-width", "1.5");
+          path.setAttribute("vector-effect", "non-scaling-stroke");
+          if (takeoff.is_negative) {
+            path.setAttribute("stroke-dasharray", "8 6");
+            path.setAttribute("fill-opacity", "0.08");
+          }
+          planOverlay.appendChild(path);
+          registerVisibilityObject(
+            {
+              pageUid: takeoffPageUid,
+              pageName: page.label,
+              usesPage3dVisibility: false,
+              layerUid: takeoff.layer_uid,
+              conditionUid: takeoff.condition_uid,
+              conditionName: takeoff.name,
+              areaUid: takeoff.area_uid,
+            },
+            path,
+            takeoff.visible !== false,
+          );
+          planVisibilityObjects.push(path);
+        });
+      }
+
+      function setupBlankPlanPage(page) {
+        if (!page || !hasPlanData) return;
+        const pageWidth = Number(page.width);
+        const pageHeight = Number(page.height);
+        const dpr = Math.max(window.devicePixelRatio || 1, 1);
+        planPdfCanvas.width = Math.max(1, Math.round(pageWidth * dpr));
+        planPdfCanvas.height = Math.max(1, Math.round(pageHeight * dpr));
+        const ctx = planPdfCanvas.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, pageWidth, pageHeight);
+      }
+
+      function setupPlanView(pdfCanvas = null, forceFit = true) {
+        if (!hasPlanData) {
+          planModeButton.disabled = true;
+          return;
+        }
+        const page = getActivePage();
+        if (!page) return;
+        const pageWidth = Number(page.width);
+        const pageHeight = Number(page.height);
+        planContent.style.width = `${pageWidth}px`;
+        planContent.style.height = `${pageHeight}px`;
+        planPdfCanvas.style.width = `${pageWidth}px`;
+        planPdfCanvas.style.height = `${pageHeight}px`;
+        planOverlay.setAttribute("viewBox", `0 0 ${pageWidth} ${pageHeight}`);
+        planOverlay.setAttribute("width", String(pageWidth));
+        planOverlay.setAttribute("height", String(pageHeight));
+        if (pdfCanvas) {
+          planPdfCanvas.width = pdfCanvas.width;
+          planPdfCanvas.height = pdfCanvas.height;
+          const ctx = planPdfCanvas.getContext("2d");
+          ctx.clearRect(0, 0, planPdfCanvas.width, planPdfCanvas.height);
+          ctx.drawImage(pdfCanvas, 0, 0);
+        } else {
+          setupBlankPlanPage(page);
+        }
+        renderPlanTakeoffs();
+        const pageLayer = sceneData.page_image_layer || {};
+        if (!planPageRegistered) {
+          registerVisibilityObject(
+            {
+              layerUid: pageLayer.uid || page.imageLayerUid,
+              layerName: pageLayer.name || IMAGE_LAYER_DISPLAY_NAME,
+            },
+            planPdfCanvas,
+            true,
+          );
+          planPageRegistered = true;
+        } else {
+          planPdfCanvas.userData.layerUid = normalizeLayerUid(
+            pageLayer.uid || page.imageLayerUid,
+          );
+          planPdfCanvas.userData.conditionUid = "";
+          planPdfCanvas.userData.areaUid = "";
+          planPdfCanvas.userData.usesPage3dVisibility = false;
+          planPdfCanvas.userData.baseVisible = true;
+          setRenderedObjectVisible(
+            planPdfCanvas,
+            isObjectVisible(planPdfCanvas),
+          );
+        }
+        fitPlanToViewport(forceFit);
+        buildLayerPanel();
+      }
+
+      function getPdfPageCacheKey(page) {
+        return `${page.pdfDocumentUid || ""}:${page.pdfPageIndex || 0}`;
+      }
+
+      function loadPdfDocument(documentUid) {
+        const uid = normalizeOptionalUid(documentUid);
+        if (!uid || !pdfDocuments.has(uid) || typeof pdfjsLib === "undefined") {
+          return Promise.resolve(null);
+        }
+        if (!pdfDocumentPromises.has(uid)) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc =
+            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+          const pdfData = atob(pdfDocuments.get(uid));
+          const pdfArray = new Uint8Array(pdfData.length);
+          for (let i = 0; i < pdfData.length; i++)
+            pdfArray[i] = pdfData.charCodeAt(i);
+          pdfDocumentPromises.set(
+            uid,
+            pdfjsLib.getDocument({ data: pdfArray }).promise,
+          );
+        }
+        return pdfDocumentPromises.get(uid);
+      }
+
+      function renderPdfPageCanvas(page) {
+        if (!page || !page.pdfDocumentUid) return Promise.resolve(null);
+        const cacheKey = getPdfPageCacheKey(page);
+        if (pdfPageCanvasCache.has(cacheKey)) {
+          return Promise.resolve(pdfPageCanvasCache.get(cacheKey));
+        }
+        return loadPdfDocument(page.pdfDocumentUid)
+          .then((doc) => {
+            if (!doc) return null;
+            return doc.getPage(Math.min(page.pdfPageIndex + 1, doc.numPages));
+          })
+          .then((pdfPage) => {
+            if (!pdfPage) return null;
+            const vp = pdfPage.getViewport({ scale: 3.0 });
+            const off = document.createElement("canvas");
+            off.width = vp.width;
+            off.height = vp.height;
+            const ctx = off.getContext("2d");
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, vp.width, vp.height);
+            return pdfPage
+              .render({ canvasContext: ctx, viewport: vp })
+              .promise.then(() => {
+                pdfPageCanvasCache.set(cacheKey, off);
+                return off;
+              });
+          })
+          .catch((error) => {
+            console.warn("PDF page render failed:", error);
+            return null;
+          });
+      }
+
+      function renderActivePlanPage(forceFit = true) {
+        const page = getActivePage();
+        if (!page) {
+          planModeButton.disabled = true;
+          pageCombo.classList.add("disabled");
+          return;
+        }
+        renderPdfPageCanvas(page).then((pdfCanvas) => {
+          if (page.uid !== activePageUid) return;
+          setupPlanView(pdfCanvas, forceFit);
+        });
+      }
+
+      function updatePageComboRows() {
+        if (!pageComboMenu) return;
+        pageComboMenu.querySelectorAll(".page-combo-row").forEach((row) => {
+          const pageUid = row.dataset.pageUid || "";
+          const entry = page3dVisibility.get(pageUid);
+          const visible = entry ? entry.visible !== false : true;
+          const checkbox = row.querySelector('input[type="checkbox"]');
+          if (checkbox) checkbox.checked = visible;
+          row.classList.toggle("disabled", !visible);
+          row.classList.toggle("active", pageUid === activePageUid);
+        });
+        const activePage = getActivePage();
+        pageComboButton.textContent = activePage ? activePage.label : "Page";
+      }
+
+      function setPage3dVisible(pageUid, visible) {
+        const uid = normalizeOptionalUid(pageUid);
+        const entry = page3dVisibility.get(uid);
+        if (!entry) return;
+        entry.visible = Boolean(visible);
+        applyObjectVisibility();
+      }
+
+      function buildPageCombo() {
+        pageComboMenu.innerHTML = "";
+        runtimePages.forEach((page) => {
+          const row = document.createElement("div");
+          row.className = "page-combo-row";
+          row.dataset.pageUid = page.uid;
+          row.setAttribute("role", "option");
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.setAttribute("aria-label", `Show ${page.label} in 3D`);
+          checkbox.addEventListener("click", (event) =>
+            event.stopPropagation(),
+          );
+          checkbox.addEventListener("change", (event) => {
+            event.stopPropagation();
+            setPage3dVisible(page.uid, checkbox.checked);
+          });
+
+          const name = document.createElement("button");
+          name.type = "button";
+          name.className = "page-combo-name";
+          name.textContent = page.label;
+          name.title = page.label;
+          name.addEventListener("click", (event) => {
+            event.stopPropagation();
+            setActivePlanPage(page.uid);
+            pageCombo.classList.remove("open");
+            pageComboButton.setAttribute("aria-expanded", "false");
+          });
+
+          row.append(checkbox, name);
+          pageComboMenu.appendChild(row);
+        });
+        pageCombo.classList.toggle("disabled", runtimePages.length === 0);
+        updatePageComboRows();
+      }
+
+      function setActivePlanPage(pageUid) {
+        const target = normalizeOptionalUid(pageUid);
+        if (!runtimePages.some((page) => page.uid === target)) return;
+        activePageUid = target;
+        updatePageComboRows();
+        planState.userInteracted = false;
+        renderActivePlanPage(true);
+        updatePdfPlaneForActivePage();
+        applyObjectVisibility();
+      }
+
+      pageComboButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const open = !pageCombo.classList.contains("open");
+        pageCombo.classList.toggle("open", open);
+        pageComboButton.setAttribute("aria-expanded", String(open));
+      });
+      document.addEventListener("click", (event) => {
+        if (!pageCombo.contains(event.target)) {
+          pageCombo.classList.remove("open");
+          pageComboButton.setAttribute("aria-expanded", "false");
+        }
+      });
+
+      planView.addEventListener(
+        "wheel",
+        (event) => {
+          if (!hasPlanData) return;
+          event.preventDefault();
+          planState.userInteracted = true;
+          const rect = planView.getBoundingClientRect();
+          const pointerX = event.clientX - rect.left;
+          const pointerY = event.clientY - rect.top;
+          const worldX = (pointerX - planState.offsetX) / planState.scale;
+          const worldY = (pointerY - planState.offsetY) / planState.scale;
+          const nextScale = clamp(
+            planState.scale * Math.exp(-event.deltaY * PLAN_WHEEL_SENSITIVITY),
+            PLAN_MIN_SCALE,
+            PLAN_MAX_SCALE,
+          );
+          planState.scale = nextScale;
+          planState.offsetX = pointerX - worldX * nextScale;
+          planState.offsetY = pointerY - worldY * nextScale;
+          setPlanTransform();
+        },
+        { passive: false },
+      );
+
+      planView.addEventListener("pointerdown", (event) => {
+        if (!hasPlanData || event.button !== 0) return;
+        planState.userInteracted = true;
+        planState.isPanning = true;
+        planState.panStartX = event.clientX;
+        planState.panStartY = event.clientY;
+        planState.startOffsetX = planState.offsetX;
+        planState.startOffsetY = planState.offsetY;
+        planView.classList.add("panning");
+        planView.setPointerCapture(event.pointerId);
+      });
+
+      planView.addEventListener("pointermove", (event) => {
+        if (!planState.isPanning) return;
+        planState.offsetX =
+          planState.startOffsetX + event.clientX - planState.panStartX;
+        planState.offsetY =
+          planState.startOffsetY + event.clientY - planState.panStartY;
+        setPlanTransform();
+      });
+
+      function endPlanPan(event) {
+        if (!planState.isPanning) return;
+        planState.isPanning = false;
+        planView.classList.remove("panning");
+        if (event && planView.hasPointerCapture(event.pointerId)) {
+          planView.releasePointerCapture(event.pointerId);
+        }
+      }
+
+      planView.addEventListener("pointerup", endPlanPan);
+      planView.addEventListener("pointercancel", endPlanPan);
+
+      function readVector3(values, fallback) {
+        if (Array.isArray(values) && values.length >= 3) {
+          const x = Number(values[0]);
+          const y = Number(values[1]);
+          const z = Number(values[2]);
+          if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+            return new THREE.Vector3(x, y, z);
+          }
+        }
+        return fallback.clone();
+      }
+
+      function getBoxCorners(box) {
+        const min = box.min;
+        const max = box.max;
+        return [
+          new THREE.Vector3(min.x, min.y, min.z),
+          new THREE.Vector3(min.x, min.y, max.z),
+          new THREE.Vector3(min.x, max.y, min.z),
+          new THREE.Vector3(min.x, max.y, max.z),
+          new THREE.Vector3(max.x, min.y, min.z),
+          new THREE.Vector3(max.x, min.y, max.z),
+          new THREE.Vector3(max.x, max.y, min.z),
+          new THREE.Vector3(max.x, max.y, max.z),
+        ];
+      }
+
+      function buildClippingBounds(center, radius, box) {
+        const depthPadding = Math.max(radius * 0.05, 1.0);
+        const nearBoxPadding = Math.max(radius * 0.02, 0.5);
+        const depthBox = box.clone().expandByScalar(depthPadding);
+        const nearBox = box.clone().expandByScalar(nearBoxPadding);
+        return {
+          center: center,
+          radius: radius,
+          minNear: Math.max(radius / 10000.0, 0.01),
+          box: box,
+          depthPadding: depthPadding,
+          nearBox: nearBox,
+          depthCorners: getBoxCorners(depthBox),
+        };
+      }
+
+      function getPagePlaneBox(pageWidth, pageHeight, modelBox) {
+        if (!(pageWidth > 0.0 && pageHeight > 0.0)) {
+          return null;
         }
 
-        function setRenderedObjectVisible(object, visible) {
-            if (object && object.isObject3D) {
-                object.visible = visible;
-            } else if (object && object.style) {
-                object.style.display = visible ? '' : 'none';
-            }
-        }
+        const pagePadding = Math.max(
+          Math.max(pageWidth, pageHeight) * 0.001,
+          0.05,
+        );
+        const floorY = modelBox ? modelBox.min.y - 0.01 : -0.01;
+        return new THREE.Box3(
+          new THREE.Vector3(-pageWidth, floorY - pagePadding, -pageHeight),
+          new THREE.Vector3(0.0, floorY + pagePadding, 0.0),
+        );
+      }
 
-        function registerVisibilityObject(keys, object, baseVisible = true) {
-            const layerUid = normalizeLayerUid(keys.layerUid);
-            const conditionUid = normalizeOptionalUid(keys.conditionUid);
-            const areaUid = normalizeOptionalUid(keys.areaUid);
-            ensureVisibilityEntry(layerVisibility, layerUid, keys.layerName, true, UNLAYERED_LAYER_NAME);
-            if (conditionUid) {
-                ensureVisibilityEntry(conditionVisibility, conditionUid, keys.conditionName, true, FALLBACK_CONDITION_NAME);
-            }
-            if (areaUid) {
-                ensureVisibilityEntry(areaVisibility, areaUid, keys.areaName, true, FALLBACK_AREA_NAME);
-            }
-            if (!object.userData) object.userData = {};
-            object.userData.layerUid = layerUid;
-            object.userData.conditionUid = conditionUid;
-            object.userData.areaUid = areaUid;
-            object.userData.baseVisible = baseVisible !== false;
-            visibilityObjects.push(object);
-            setRenderedObjectVisible(object, isObjectVisible(object));
-        }
-
-        function updateVisibilityRows(registry, rows) {
-            for (const [uid, row] of rows) {
-                const entry = registry.get(uid);
-                const visible = entry ? entry.visible !== false : true;
-                row.classList.toggle('disabled', !visible);
-                const checkbox = row.querySelector('input[type="checkbox"]');
-                if (checkbox) checkbox.checked = visible;
-            }
-        }
-
-        function applyObjectVisibility() {
-            visibilityObjects.forEach(object => {
-                setRenderedObjectVisible(object, isObjectVisible(object));
-            });
-            updateVisibilityRows(layerVisibility, layerRows);
-            updateVisibilityRows(conditionVisibility, conditionRows);
-            updateVisibilityRows(areaVisibility, areaRows);
-        }
-
-        function setGroupVisible(registry, uid, visible) {
-            const entry = registry.get(uid);
-            if (!entry) return;
-            entry.visible = Boolean(visible);
-            applyObjectVisibility();
-        }
-
-        function setAllGroupsVisible(visible) {
-            [layerVisibility, conditionVisibility, areaVisibility].forEach(registry => {
-                for (const entry of registry.values()) {
-                    entry.visible = Boolean(visible);
-                }
-            });
-            applyObjectVisibility();
-        }
-
-        function createVisibilityRow(entry, registry, rows, options = {}) {
-            const row = document.createElement('label');
-            row.className = options.rowClass ? `visibility-row ${options.rowClass}` : 'visibility-row';
-            row.title = entry.name;
-            row.classList.toggle('disabled', !entry.visible);
-
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.checked = entry.visible;
-            checkbox.addEventListener('change', () => {
-                setGroupVisible(registry, entry.uid, checkbox.checked);
-            });
-
-            const name = document.createElement('span');
-            name.className = 'visibility-name';
-            name.textContent = entry.name;
-
-            if (options.swatchClass) {
-                const swatch = document.createElement('div');
-                swatch.className = options.swatchClass;
-                if (entry.color) swatch.style.background = entry.color;
-                row.append(checkbox, swatch, name);
-            } else {
-                row.append(checkbox, name);
-            }
-
-            rows.set(entry.uid, row);
-            return row;
-        }
-
-        function renderVisibilitySection(title, registry, rows) {
-            const entries = Array.from(registry.values());
-            if (!entries.length) return 0;
-            const section = document.createElement('div');
-            section.className = 'visibility-section';
-
-            const heading = document.createElement('div');
-            heading.className = 'visibility-section-title';
-            heading.textContent = title;
-            section.appendChild(heading);
-
-            entries.forEach(entry => {
-                section.appendChild(createVisibilityRow(entry, registry, rows));
-            });
-
-            layerList.appendChild(section);
-            return entries.length;
-        }
-
-        function renderConditionSection() {
-            const entries = Array.from(conditionVisibility.values());
-            if (!entries.length) return 0;
-            const section = document.createElement('div');
-            section.className = 'visibility-section';
-
-            const heading = document.createElement('div');
-            heading.className = 'visibility-section-title';
-            heading.textContent = 'Conditions';
-            section.appendChild(heading);
-
-            const groups = new Map();
-            entries.forEach(entry => {
-                const groupUid = entry.cdnTypeUid || UNASSIGNED_CDN_TYPE_UID;
-                if (!groups.has(groupUid)) {
-                    groups.set(groupUid, {
-                        uid: groupUid,
-                        name: entry.cdnTypeName || UNASSIGNED_CDN_TYPE_NAME,
-                        entries: [],
-                    });
-                }
-                groups.get(groupUid).entries.push(entry);
-            });
-
-            const sortedGroups = Array.from(groups.values()).sort(compareByName);
-            sortedGroups.forEach(group => {
-                const groupHeader = document.createElement('div');
-                groupHeader.className = 'condition-type-title';
-                groupHeader.textContent = group.name;
-                section.appendChild(groupHeader);
-
-                group.entries
-                    .sort(compareConditionEntries)
-                    .forEach(entry => {
-                        section.appendChild(createVisibilityRow(
-                            entry,
-                            conditionVisibility,
-                            conditionRows,
-                            {
-                                rowClass: 'condition-row',
-                                swatchClass: 'condition-color-swatch',
-                            }
-                        ));
-                    });
-            });
-
-            layerList.appendChild(section);
-            return entries.length;
-        }
-
-        function buildLayerPanel() {
-            layerList.innerHTML = '';
-            layerRows.clear();
-            conditionRows.clear();
-            areaRows.clear();
-            const entryCount =
-                renderVisibilitySection('Layers', layerVisibility, layerRows)
-                + renderConditionSection()
-                + renderVisibilitySection('Areas', areaVisibility, areaRows);
-
-            if (!entryCount) {
-                layerPanel.classList.remove('visible');
-                return;
-            }
-            layerCount.textContent = String(entryCount);
-            layerPanel.classList.add('visible');
-            applyObjectVisibility();
-        }
-
-        buildVisibilityRegistries();
-        layerHeader.addEventListener('click', () => layerPanel.classList.toggle('collapsed'));
-        layerShowAll.addEventListener('click', () => setAllGroupsVisible(true));
-        layerHideAll.addEventListener('click', () => setAllGroupsVisible(false));
-        window.toggleAll = setAllGroupsVisible;
-
-        const page2D = sceneData.page_2d || null;
-        const takeoffs2D = Array.isArray(sceneData.takeoffs_2d) ? sceneData.takeoffs_2d : [];
-        const hasPlanData = Boolean(page2D && Number(page2D.width) > 0 && Number(page2D.height) > 0);
-        let planPageRegistered = false;
-        const planState = {
-            scale: 1.0,
-            offsetX: 0.0,
-            offsetY: 0.0,
-            initialized: false,
-            userInteracted: false,
-            isPanning: false,
-            panStartX: 0.0,
-            panStartY: 0.0,
-            startOffsetX: 0.0,
-            startOffsetY: 0.0,
+      function getSceneClippingBounds(bounds, pageWidth, pageHeight) {
+        const fallbackCenter = readVector3(
+          sceneData.camera && sceneData.camera.target,
+          new THREE.Vector3(),
+        );
+        const fallbackRadius = 1000.0;
+        const fallbackBox = new THREE.Box3(
+          new THREE.Vector3(
+            fallbackCenter.x - fallbackRadius,
+            fallbackCenter.y - fallbackRadius,
+            fallbackCenter.z - fallbackRadius,
+          ),
+          new THREE.Vector3(
+            fallbackCenter.x + fallbackRadius,
+            fallbackCenter.y + fallbackRadius,
+            fallbackCenter.z + fallbackRadius,
+          ),
+        );
+        const buildFromBox = (box) => {
+          const pageBox = getPagePlaneBox(pageWidth, pageHeight, box);
+          const clippingBox = pageBox ? box.clone().union(pageBox) : box;
+          const sphere = new THREE.Sphere();
+          clippingBox.getBoundingSphere(sphere);
+          const radius = Math.max(sphere.radius, 1.0);
+          return buildClippingBounds(sphere.center, radius, clippingBox);
         };
 
-        function clamp(value, min, max) {
-            return Math.max(min, Math.min(max, value));
+        if (!bounds || !bounds.min || !bounds.max) {
+          return buildFromBox(fallbackBox);
         }
 
-        function setPlanTransform() {
-            planContent.style.transform =
-                `translate(${planState.offsetX}px, ${planState.offsetY}px) scale(${planState.scale})`;
+        const min = readVector3(bounds.min, fallbackCenter);
+        const max = readVector3(bounds.max, fallbackCenter);
+        if (min.x > max.x || min.y > max.y || min.z > max.z) {
+          return buildFromBox(fallbackBox);
         }
 
-        function fitPlanToViewport(force = false) {
-            if (!hasPlanData || (!force && planState.initialized && planState.userInteracted)) return;
-            const pageWidth = Number(page2D.width);
-            const pageHeight = Number(page2D.height);
-            const viewWidth = planView.clientWidth || window.innerWidth;
-            const viewHeight = planView.clientHeight || window.innerHeight;
-            const fitScale = Math.min(viewWidth / pageWidth, viewHeight / pageHeight) * PLAN_FIT_MARGIN;
-            planState.scale = clamp(fitScale, PLAN_MIN_SCALE, PLAN_MAX_SCALE);
-            planState.offsetX = (viewWidth - pageWidth * planState.scale) / 2.0;
-            planState.offsetY = (viewHeight - pageHeight * planState.scale) / 2.0;
-            planState.initialized = true;
-            setPlanTransform();
+        const box = new THREE.Box3(min, max);
+        return buildFromBox(box);
+      }
+
+      const sceneClippingBounds = getSceneClippingBounds(
+        sceneData.bounds,
+        maxPageW,
+        maxPageH,
+      );
+      const camera = new THREE.PerspectiveCamera(
+        45,
+        window.innerWidth / window.innerHeight,
+        sceneClippingBounds.minNear,
+        sceneClippingBounds.radius * 10.0,
+      );
+      camera.position.set(
+        sceneData.camera.position[0],
+        sceneData.camera.position[1],
+        sceneData.camera.position[2],
+      );
+
+      const controls = new OrbitControls(camera, canvas);
+      controls.target.set(
+        sceneData.camera.target[0],
+        sceneData.camera.target[1],
+        sceneData.camera.target[2],
+      );
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.maxDistance = Math.max(sceneClippingBounds.radius * 100.0, 1.0);
+      controls.update();
+
+      function setViewMode(mode) {
+        const usePlan = mode === "plan" && hasPlanData;
+        document.body.classList.toggle("plan-mode", usePlan);
+        controls.enabled = !usePlan;
+        planModeButton.classList.toggle("active", usePlan);
+        threeModeButton.classList.toggle("active", !usePlan);
+        if (usePlan) fitPlanToViewport(false);
+      }
+
+      if (!hasPlanData) planModeButton.disabled = true;
+      planModeButton.addEventListener("click", () => setViewMode("plan"));
+      threeModeButton.addEventListener("click", () => setViewMode("3d"));
+      setViewMode("3d");
+
+      function getSceneDepthRange() {
+        if (sceneClippingBounds.nearBox.containsPoint(camera.position)) {
+          return null;
         }
 
-        function ringToPath(ring) {
-            if (!Array.isArray(ring) || ring.length < 3) return '';
-            return ring.map((point, index) => {
-                const x = Number(point[0]);
-                const y = Number(point[1]);
-                return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
-            }).join(' ') + ' Z';
+        const viewDirection = new THREE.Vector3();
+        camera.getWorldDirection(viewDirection);
+        let nearest = Infinity;
+        let farthest = 0.0;
+        let cornersBehindCamera = 0;
+
+        for (const corner of sceneClippingBounds.depthCorners) {
+          const depth = corner.clone().sub(camera.position).dot(viewDirection);
+          if (depth <= sceneClippingBounds.minNear) {
+            cornersBehindCamera += 1;
+          } else {
+            nearest = Math.min(nearest, depth);
+            farthest = Math.max(farthest, depth);
+          }
         }
 
-        function renderPlanTakeoffs() {
-            planOverlay.innerHTML = '';
-            takeoffs2D.forEach(takeoff => {
-                if (!Array.isArray(takeoff.rings) || !takeoff.rings.length) return;
-                const pathData = takeoff.rings.map(ringToPath).filter(Boolean).join(' ');
-                if (!pathData) return;
-                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                const color = normalizeHexColor(takeoff.color) || FALLBACK_HEX_COLOR;
-                const opacity = clamp(Number(takeoff.opacity || 0.5), 0.0, 1.0);
-                path.setAttribute('d', pathData);
-                path.setAttribute('fill-rule', 'evenodd');
-                path.setAttribute('fill', color);
-                path.setAttribute('fill-opacity', String(Math.min(opacity, 0.45)));
-                path.setAttribute('stroke', takeoff.is_negative ? NEGATIVE_TAKEOFF_STROKE : color);
-                path.setAttribute('stroke-opacity', String(Math.max(opacity, 0.75)));
-                path.setAttribute('stroke-width', '1.5');
-                path.setAttribute('vector-effect', 'non-scaling-stroke');
-                if (takeoff.is_negative) {
-                    path.setAttribute('stroke-dasharray', '8 6');
-                    path.setAttribute('fill-opacity', '0.08');
-                }
-                planOverlay.appendChild(path);
-                registerVisibilityObject(
-                    {
-                        layerUid: takeoff.layer_uid,
-                        conditionUid: takeoff.condition_uid,
-                        conditionName: takeoff.name,
-                        areaUid: takeoff.area_uid,
-                    },
-                    path,
-                    takeoff.visible !== false
-                );
-            });
+        if (
+          cornersBehindCamera > 0 ||
+          !Number.isFinite(nearest) ||
+          farthest <= 0.0 ||
+          nearest <= sceneClippingBounds.depthPadding
+        ) {
+          return null;
         }
+        return { nearest: nearest, farthest: farthest };
+      }
 
-        function setupBlankPlanPage() {
-            if (!hasPlanData) return;
-            const pageWidth = Number(page2D.width);
-            const pageHeight = Number(page2D.height);
-            const dpr = Math.max(window.devicePixelRatio || 1, 1);
-            planPdfCanvas.width = Math.max(1, Math.round(pageWidth * dpr));
-            planPdfCanvas.height = Math.max(1, Math.round(pageHeight * dpr));
-            const ctx = planPdfCanvas.getContext('2d');
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, pageWidth, pageHeight);
-        }
+      function updateCameraClipping(force = false) {
+        const baseNear = sceneClippingBounds.minNear;
+        const depthRange = getSceneDepthRange();
+        let nextNear;
+        let nextFar;
 
-        function setupPlanView(pdfCanvas = null) {
-            if (!hasPlanData) {
-                planModeButton.disabled = true;
-                return;
-            }
-            const pageWidth = Number(page2D.width);
-            const pageHeight = Number(page2D.height);
-            planContent.style.width = `${pageWidth}px`;
-            planContent.style.height = `${pageHeight}px`;
-            planPdfCanvas.style.width = `${pageWidth}px`;
-            planPdfCanvas.style.height = `${pageHeight}px`;
-            planOverlay.setAttribute('viewBox', `0 0 ${pageWidth} ${pageHeight}`);
-            planOverlay.setAttribute('width', String(pageWidth));
-            planOverlay.setAttribute('height', String(pageHeight));
-            if (pdfCanvas) {
-                planPdfCanvas.width = pdfCanvas.width;
-                planPdfCanvas.height = pdfCanvas.height;
-                const ctx = planPdfCanvas.getContext('2d');
-                ctx.clearRect(0, 0, planPdfCanvas.width, planPdfCanvas.height);
-                ctx.drawImage(pdfCanvas, 0, 0);
-            } else {
-                setupBlankPlanPage();
-            }
-            if (!planOverlay.childElementCount) renderPlanTakeoffs();
-            if (!planPageRegistered) {
-                const pageLayer = sceneData.page_image_layer || {};
-                registerVisibilityObject(
-                    {
-                        layerUid: pageLayer.uid || page2D.image_layer_uid,
-                        layerName: pageLayer.name || IMAGE_LAYER_DISPLAY_NAME,
-                    },
-                    planPdfCanvas,
-                    page2D.visible !== false
-                );
-                planPageRegistered = true;
-            }
-            fitPlanToViewport(true);
-            buildLayerPanel();
-        }
-
-        planView.addEventListener('wheel', event => {
-            if (!hasPlanData) return;
-            event.preventDefault();
-            planState.userInteracted = true;
-            const rect = planView.getBoundingClientRect();
-            const pointerX = event.clientX - rect.left;
-            const pointerY = event.clientY - rect.top;
-            const worldX = (pointerX - planState.offsetX) / planState.scale;
-            const worldY = (pointerY - planState.offsetY) / planState.scale;
-            const nextScale = clamp(
-                planState.scale * Math.exp(-event.deltaY * PLAN_WHEEL_SENSITIVITY),
-                PLAN_MIN_SCALE,
-                PLAN_MAX_SCALE
-            );
-            planState.scale = nextScale;
-            planState.offsetX = pointerX - worldX * nextScale;
-            planState.offsetY = pointerY - worldY * nextScale;
-            setPlanTransform();
-        }, { passive: false });
-
-        planView.addEventListener('pointerdown', event => {
-            if (!hasPlanData || event.button !== 0) return;
-            planState.userInteracted = true;
-            planState.isPanning = true;
-            planState.panStartX = event.clientX;
-            planState.panStartY = event.clientY;
-            planState.startOffsetX = planState.offsetX;
-            planState.startOffsetY = planState.offsetY;
-            planView.classList.add('panning');
-            planView.setPointerCapture(event.pointerId);
-        });
-
-        planView.addEventListener('pointermove', event => {
-            if (!planState.isPanning) return;
-            planState.offsetX = planState.startOffsetX + event.clientX - planState.panStartX;
-            planState.offsetY = planState.startOffsetY + event.clientY - planState.panStartY;
-            setPlanTransform();
-        });
-
-        function endPlanPan(event) {
-            if (!planState.isPanning) return;
-            planState.isPanning = false;
-            planView.classList.remove('panning');
-            if (event && planView.hasPointerCapture(event.pointerId)) {
-                planView.releasePointerCapture(event.pointerId);
-            }
-        }
-
-        planView.addEventListener('pointerup', endPlanPan);
-        planView.addEventListener('pointercancel', endPlanPan);
-
-        function readVector3(values, fallback) {
-            if (Array.isArray(values) && values.length >= 3) {
-                const x = Number(values[0]);
-                const y = Number(values[1]);
-                const z = Number(values[2]);
-                if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-                    return new THREE.Vector3(x, y, z);
-                }
-            }
-            return fallback.clone();
-        }
-
-        function getBoxCorners(box) {
-            const min = box.min;
-            const max = box.max;
-            return [
-                new THREE.Vector3(min.x, min.y, min.z),
-                new THREE.Vector3(min.x, min.y, max.z),
-                new THREE.Vector3(min.x, max.y, min.z),
-                new THREE.Vector3(min.x, max.y, max.z),
-                new THREE.Vector3(max.x, min.y, min.z),
-                new THREE.Vector3(max.x, min.y, max.z),
-                new THREE.Vector3(max.x, max.y, min.z),
-                new THREE.Vector3(max.x, max.y, max.z),
-            ];
-        }
-
-        function buildClippingBounds(center, radius, box) {
-            const depthPadding = Math.max(radius * 0.05, 1.0);
-            const nearBoxPadding = Math.max(radius * 0.02, 0.5);
-            const depthBox = box.clone().expandByScalar(depthPadding);
-            const nearBox = box.clone().expandByScalar(nearBoxPadding);
-            return {
-                center: center,
-                radius: radius,
-                minNear: Math.max(radius / 10000.0, 0.01),
-                box: box,
-                depthPadding: depthPadding,
-                nearBox: nearBox,
-                depthCorners: getBoxCorners(depthBox),
-            };
-        }
-
-        function getPagePlaneBox(pageWidth, pageHeight, modelBox) {
-            if (!(pageWidth > 0.0 && pageHeight > 0.0)) {
-                return null;
-            }
-
-            const pagePadding = Math.max(Math.max(pageWidth, pageHeight) * 0.001, 0.05);
-            const floorY = modelBox ? modelBox.min.y - 0.01 : -0.01;
-            return new THREE.Box3(
-                new THREE.Vector3(-pageWidth, floorY - pagePadding, -pageHeight),
-                new THREE.Vector3(0.0, floorY + pagePadding, 0.0)
-            );
-        }
-
-        function getSceneClippingBounds(bounds, pageWidth, pageHeight) {
-            const fallbackCenter = readVector3(sceneData.camera && sceneData.camera.target, new THREE.Vector3());
-            const fallbackRadius = 1000.0;
-            const fallbackBox = new THREE.Box3(
-                new THREE.Vector3(
-                    fallbackCenter.x - fallbackRadius,
-                    fallbackCenter.y - fallbackRadius,
-                    fallbackCenter.z - fallbackRadius
-                ),
-                new THREE.Vector3(
-                    fallbackCenter.x + fallbackRadius,
-                    fallbackCenter.y + fallbackRadius,
-                    fallbackCenter.z + fallbackRadius
-                )
-            );
-            const buildFromBox = (box) => {
-                const pageBox = getPagePlaneBox(pageWidth, pageHeight, box);
-                const clippingBox = pageBox ? box.clone().union(pageBox) : box;
-                const sphere = new THREE.Sphere();
-                clippingBox.getBoundingSphere(sphere);
-                const radius = Math.max(sphere.radius, 1.0);
-                return buildClippingBounds(sphere.center, radius, clippingBox);
-            };
-
-            if (!bounds || !bounds.min || !bounds.max) {
-                return buildFromBox(fallbackBox);
-            }
-
-            const min = readVector3(bounds.min, fallbackCenter);
-            const max = readVector3(bounds.max, fallbackCenter);
-            if (min.x > max.x || min.y > max.y || min.z > max.z) {
-                return buildFromBox(fallbackBox);
-            }
-
-            const box = new THREE.Box3(min, max);
-            return buildFromBox(box);
-        }
-
-        const sceneClippingBounds = getSceneClippingBounds(sceneData.bounds, pageW, pageH);
-        const camera = new THREE.PerspectiveCamera(
-            45,
-            window.innerWidth / window.innerHeight,
-            sceneClippingBounds.minNear,
-            sceneClippingBounds.radius * 10.0
-        );
-        camera.position.set(
-            sceneData.camera.position[0],
-            sceneData.camera.position[1],
-            sceneData.camera.position[2]
-        );
-
-        const controls = new OrbitControls(camera, canvas);
-        controls.target.set(
-            sceneData.camera.target[0],
-            sceneData.camera.target[1],
-            sceneData.camera.target[2]
-        );
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.05;
-        controls.maxDistance = Math.max(sceneClippingBounds.radius * 100.0, 1.0);
-        controls.update();
-
-        function setViewMode(mode) {
-            const usePlan = mode === 'plan' && hasPlanData;
-            document.body.classList.toggle('plan-mode', usePlan);
-            controls.enabled = !usePlan;
-            planModeButton.classList.toggle('active', usePlan);
-            threeModeButton.classList.toggle('active', !usePlan);
-            if (usePlan) fitPlanToViewport(false);
-        }
-
-        if (!hasPlanData) planModeButton.disabled = true;
-        planModeButton.addEventListener('click', () => setViewMode('plan'));
-        threeModeButton.addEventListener('click', () => setViewMode('3d'));
-        setViewMode('3d');
-
-        function getSceneDepthRange() {
-            if (sceneClippingBounds.nearBox.containsPoint(camera.position)) {
-                return null;
-            }
-
-            const viewDirection = new THREE.Vector3();
-            camera.getWorldDirection(viewDirection);
-            let nearest = Infinity;
-            let farthest = 0.0;
-            let cornersBehindCamera = 0;
-
-            for (const corner of sceneClippingBounds.depthCorners) {
-                const depth = corner.clone().sub(camera.position).dot(viewDirection);
-                if (depth <= sceneClippingBounds.minNear) {
-                    cornersBehindCamera += 1;
-                } else {
-                    nearest = Math.min(nearest, depth);
-                    farthest = Math.max(farthest, depth);
-                }
-            }
-
-            if (
-                cornersBehindCamera > 0
-                || !Number.isFinite(nearest)
-                || farthest <= 0.0
-                || nearest <= sceneClippingBounds.depthPadding
-            ) {
-                return null;
-            }
-            return { nearest: nearest, farthest: farthest };
-        }
-
-        function updateCameraClipping(force = false) {
-            const baseNear = sceneClippingBounds.minNear;
-            const depthRange = getSceneDepthRange();
-            let nextNear;
-            let nextFar;
-
-            if (depthRange) {
-                nextNear = Math.max(baseNear, depthRange.nearest - sceneClippingBounds.depthPadding);
-                nextFar = Math.max(
-                    nextNear + sceneClippingBounds.radius * 0.25,
-                    depthRange.farthest + sceneClippingBounds.depthPadding,
-                    nextNear + 1.0
-                );
-            } else {
-                const distanceToCenter = camera.position.distanceTo(sceneClippingBounds.center);
-                const outsideNear = distanceToCenter - sceneClippingBounds.radius * 1.5;
-                nextNear = Math.max(baseNear, outsideNear);
-                nextFar = Math.max(
-                    nextNear + sceneClippingBounds.radius * 3.0,
-                    distanceToCenter + sceneClippingBounds.radius * 1.5
-                );
-            }
-
-            const nearDelta = Math.abs(camera.near - nextNear);
-            const farDelta = Math.abs(camera.far - nextFar);
-            const nearThreshold = Math.max(nextNear * 0.001, 0.001);
-            const farThreshold = Math.max(nextFar * 0.001, 0.01);
-
-            if (force || nearDelta > nearThreshold || farDelta > farThreshold) {
-                camera.near = nextNear;
-                camera.far = nextFar;
-                camera.updateProjectionMatrix();
-            }
-        }
-
-        updateCameraClipping(true);
-
-        scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-        const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
-        keyLight.position.set(500, 500, -500);
-        scene.add(keyLight);
-        const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
-        fillLight.position.set(-500, 500, 500);
-        scene.add(fillLight);
-        const rimLight = new THREE.DirectionalLight(0xffffff, 0.4);
-        rimLight.position.set(0, -500, -500);
-        scene.add(rimLight);
-
-        let hasTransparent = false;
-
-        sceneData.geometries.forEach(geomData => {
-            if (geomData.opacity < 1.0) hasTransparent = true;
-        });
-
-        const wboitPass = hasTransparent
-            ? new WboitPass(renderer, scene, camera, new THREE.Color(0x1a1a1a), 1.0)
-            : null;
-
-        sceneData.geometries.forEach(geomData => {
-            const geometry = new THREE.BufferGeometry();
-            geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(geomData.vertices), 3));
-            if (geomData.normals && geomData.normals.length > 0) {
-                geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(geomData.normals), 3));
-            }
-            geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(geomData.indices), 1));
-            const color = new THREE.Color(geomData.color[0], geomData.color[1], geomData.color[2]);
-            const isTransparent = geomData.opacity < 1.0;
-            const layerUid = normalizeLayerUid(geomData.layer_uid);
-            let mesh;
-
-            if (isTransparent && wboitPass) {
-                const material = new MeshWboitMaterial({
-                    color: color,
-                    opacity: geomData.opacity,
-                    transparent: true,
-                    side: THREE.DoubleSide,
-                    depthWrite: false,
-                    weight: 1.0,
-                });
-                mesh = new THREE.Mesh(geometry, material);
-                scene.add(mesh);
-            } else {
-                const material = new THREE.MeshPhongMaterial({
-                    color: color,
-                    opacity: geomData.opacity,
-                    transparent: isTransparent,
-                    side: THREE.DoubleSide,
-                    depthWrite: !isTransparent,
-                });
-                mesh = new THREE.Mesh(geometry, material);
-                mesh.renderOrder = isTransparent ? 1 : 0;
-                scene.add(mesh);
-            }
-            mesh.userData.takeoffUid = geomData.takeoff_uid || '';
-            registerVisibilityObject(
-                {
-                    layerUid: layerUid,
-                    conditionUid: geomData.condition_uid,
-                    conditionName: geomData.name,
-                    areaUid: geomData.area_uid,
-                },
-                mesh,
-                geomData.visible !== false
-            );
-        });
-
-        let pdfPlane = null;
-        buildLayerPanel();
-
-        if (pdfBase64 && pageW > 0 && pageH > 0 && typeof pdfjsLib !== 'undefined') {
-            pdfjsLib.GlobalWorkerOptions.workerSrc =
-                'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-            const pdfData = atob(pdfBase64);
-            const pdfArray = new Uint8Array(pdfData.length);
-            for (let i = 0; i < pdfData.length; i++) pdfArray[i] = pdfData.charCodeAt(i);
-
-            pdfjsLib.getDocument({ data: pdfArray }).promise.then(doc => {
-                return doc.getPage(Math.min(pdfPageIndex + 1, doc.numPages));
-            }).then(page => {
-                const vp = page.getViewport({ scale: 3.0 });
-                const off = document.createElement('canvas');
-                off.width = vp.width; off.height = vp.height;
-                const ctx = off.getContext('2d');
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, vp.width, vp.height);
-                return page.render({ canvasContext: ctx, viewport: vp }).promise.then(() => off);
-            }).then(off => {
-                const tex = new THREE.CanvasTexture(off);
-                tex.colorSpace = THREE.SRGBColorSpace;
-                tex.minFilter = THREE.LinearFilter;
-                tex.magFilter = THREE.LinearFilter;
-                const geo = new THREE.PlaneGeometry(pageW, pageH);
-                pdfPlane = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
-                pdfPlane.rotation.x = -Math.PI / 2;
-                const floorY = sceneData.bounds ? sceneData.bounds.min[1] - 0.01 : -0.01;
-                pdfPlane.position.set(-pageW / 2, floorY, -pageH / 2);
-                const uv = geo.attributes.uv;
-                for (let i = 0; i < uv.count; i++) { uv.setX(i, 1 - uv.getX(i)); uv.setY(i, 1 - uv.getY(i)); }
-                uv.needsUpdate = true;
-                pdfPlane.renderOrder = -1;
-                pdfPlane.userData.takeoffUid = '';
-                scene.add(pdfPlane);
-                const pageLayer = sceneData.page_image_layer || {};
-                registerVisibilityObject(
-                    {
-                        layerUid: pageLayer.uid,
-                        layerName: pageLayer.name || IMAGE_LAYER_DISPLAY_NAME,
-                    },
-                    pdfPlane,
-                    true
-                );
-                setupPlanView(off);
-                buildLayerPanel();
-            }).catch(e => {
-                console.warn('PDF floor failed:', e);
-                setupPlanView();
-            });
+        if (depthRange) {
+          nextNear = Math.max(
+            baseNear,
+            depthRange.nearest - sceneClippingBounds.depthPadding,
+          );
+          nextFar = Math.max(
+            nextNear + sceneClippingBounds.radius * 0.25,
+            depthRange.farthest + sceneClippingBounds.depthPadding,
+            nextNear + 1.0,
+          );
         } else {
-            setupPlanView();
+          const distanceToCenter = camera.position.distanceTo(
+            sceneClippingBounds.center,
+          );
+          const outsideNear =
+            distanceToCenter - sceneClippingBounds.radius * 1.5;
+          nextNear = Math.max(baseNear, outsideNear);
+          nextFar = Math.max(
+            nextNear + sceneClippingBounds.radius * 3.0,
+            distanceToCenter + sceneClippingBounds.radius * 1.5,
+          );
         }
 
-        function animate() {
-            requestAnimationFrame(animate);
-            controls.update();
-            updateCameraClipping();
-            if (wboitPass) {
-                wboitPass.render(renderer);
-            } else {
-                renderer.render(scene, camera);
+        const nearDelta = Math.abs(camera.near - nextNear);
+        const farDelta = Math.abs(camera.far - nextFar);
+        const nearThreshold = Math.max(nextNear * 0.001, 0.001);
+        const farThreshold = Math.max(nextFar * 0.001, 0.01);
+
+        if (force || nearDelta > nearThreshold || farDelta > farThreshold) {
+          camera.near = nextNear;
+          camera.far = nextFar;
+          camera.updateProjectionMatrix();
+        }
+      }
+
+      updateCameraClipping(true);
+
+      scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+      const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      keyLight.position.set(500, 500, -500);
+      scene.add(keyLight);
+      const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
+      fillLight.position.set(-500, 500, 500);
+      scene.add(fillLight);
+      const rimLight = new THREE.DirectionalLight(0xffffff, 0.4);
+      rimLight.position.set(0, -500, -500);
+      scene.add(rimLight);
+
+      let hasTransparent = false;
+
+      sceneData.geometries.forEach((geomData) => {
+        if (geomData.opacity < 1.0) hasTransparent = true;
+      });
+
+      const wboitPass = hasTransparent
+        ? new WboitPass(renderer, scene, camera, new THREE.Color(0x1a1a1a), 1.0)
+        : null;
+
+      sceneData.geometries.forEach((geomData) => {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute(
+          "position",
+          new THREE.BufferAttribute(new Float32Array(geomData.vertices), 3),
+        );
+        if (geomData.normals && geomData.normals.length > 0) {
+          geometry.setAttribute(
+            "normal",
+            new THREE.BufferAttribute(new Float32Array(geomData.normals), 3),
+          );
+        }
+        geometry.setIndex(
+          new THREE.BufferAttribute(new Uint32Array(geomData.indices), 1),
+        );
+        const color = new THREE.Color(
+          geomData.color[0],
+          geomData.color[1],
+          geomData.color[2],
+        );
+        const isTransparent = geomData.opacity < 1.0;
+        const layerUid = normalizeLayerUid(geomData.layer_uid);
+        let mesh;
+
+        if (isTransparent && wboitPass) {
+          const material = new MeshWboitMaterial({
+            color: color,
+            opacity: geomData.opacity,
+            transparent: true,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            weight: 1.0,
+          });
+          mesh = new THREE.Mesh(geometry, material);
+          scene.add(mesh);
+        } else {
+          const material = new THREE.MeshPhongMaterial({
+            color: color,
+            opacity: geomData.opacity,
+            transparent: isTransparent,
+            side: THREE.DoubleSide,
+            depthWrite: !isTransparent,
+          });
+          mesh = new THREE.Mesh(geometry, material);
+          mesh.renderOrder = isTransparent ? 1 : 0;
+          scene.add(mesh);
+        }
+        mesh.userData.takeoffUid = geomData.takeoff_uid || "";
+        registerVisibilityObject(
+          {
+            pageUid: geomData.page_uid,
+            pageName: (
+              page3dVisibility.get(normalizeOptionalUid(geomData.page_uid)) ||
+              {}
+            ).name,
+            usesPage3dVisibility: true,
+            layerUid: layerUid,
+            conditionUid: geomData.condition_uid,
+            conditionName: geomData.name,
+            areaUid: geomData.area_uid,
+          },
+          mesh,
+          geomData.visible !== false,
+        );
+      });
+
+      function updatePdfPlaneForActivePage() {
+        const page = getActivePage();
+        if (!page) return;
+        renderPdfPageCanvas(page).then((off) => {
+          if (page.uid !== activePageUid) return;
+          if (!off || !(page.pageWidth > 0) || !(page.pageHeight > 0)) {
+            if (pdfPlane) {
+              pdfPlane.userData.baseVisible = false;
+              setRenderedObjectVisible(pdfPlane, false);
             }
-        }
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            updateCameraClipping(true);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            if (wboitPass) wboitPass.setSize(window.innerWidth, window.innerHeight);
-            fitPlanToViewport(false);
+            return;
+          }
+          const tex = new THREE.CanvasTexture(off);
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.minFilter = THREE.LinearFilter;
+          tex.magFilter = THREE.LinearFilter;
+          const geo = new THREE.PlaneGeometry(page.pageWidth, page.pageHeight);
+          if (!pdfPlane) {
+            pdfPlane = new THREE.Mesh(
+              geo,
+              new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }),
+            );
+            pdfPlane.rotation.x = -Math.PI / 2;
+            pdfPlane.renderOrder = -1;
+            pdfPlane.userData.takeoffUid = "";
+            scene.add(pdfPlane);
+            const pageLayer = sceneData.page_image_layer || {};
+            registerVisibilityObject(
+              {
+                layerUid: pageLayer.uid || page.imageLayerUid,
+                layerName: pageLayer.name || IMAGE_LAYER_DISPLAY_NAME,
+              },
+              pdfPlane,
+              true,
+            );
+          } else {
+            if (pdfPlane.geometry) pdfPlane.geometry.dispose();
+            if (pdfPlane.material && pdfPlane.material.map)
+              pdfPlane.material.map.dispose();
+            pdfPlane.geometry = geo;
+            pdfPlane.material.map = tex;
+            pdfPlane.material.needsUpdate = true;
+            const pageLayer = sceneData.page_image_layer || {};
+            pdfPlane.userData.layerUid = normalizeLayerUid(
+              pageLayer.uid || page.imageLayerUid,
+            );
+            pdfPlane.userData.conditionUid = "";
+            pdfPlane.userData.areaUid = "";
+            pdfPlane.userData.usesPage3dVisibility = false;
+            pdfPlane.userData.baseVisible = true;
+          }
+          const floorY = sceneData.bounds
+            ? sceneData.bounds.min[1] - 0.01
+            : -0.01;
+          pdfPlane.position.set(
+            -page.pageWidth / 2,
+            floorY,
+            -page.pageHeight / 2,
+          );
+          const uv = geo.attributes.uv;
+          for (let i = 0; i < uv.count; i++) {
+            uv.setX(i, 1 - uv.getX(i));
+            uv.setY(i, 1 - uv.getY(i));
+          }
+          uv.needsUpdate = true;
+          setRenderedObjectVisible(pdfPlane, isObjectVisible(pdfPlane));
         });
+      }
 
-        animate();
+      buildLayerPanel();
+      buildPageCombo();
+      renderActivePlanPage(true);
+      updatePdfPlaneForActivePage();
+
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        updateCameraClipping();
+        if (wboitPass) {
+          renderWboitPassWithVisibility();
+        } else {
+          renderer.render(scene, camera);
+        }
+      }
+
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        updateCameraClipping(true);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        if (wboitPass) wboitPass.setSize(window.innerWidth, window.innerHeight);
+        fitPlanToViewport(false);
+      });
+
+      animate();
     </script>
-</body>
-
+  </body>
 </html>

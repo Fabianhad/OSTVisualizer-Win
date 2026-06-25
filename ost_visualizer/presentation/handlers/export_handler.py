@@ -55,7 +55,10 @@ class ExportHandler:
         return bool(self._deferred_persistence.flush())
 
     def export_format(
-        self, format_key: str, page_uids: Optional[List[str]] = None
+        self,
+        format_key: str,
+        page_uids: Optional[List[str]] = None,
+        active_page_uid: Optional[str] = None,
     ) -> None:
         if not self._flush_deferred_persistence():
             return
@@ -69,7 +72,10 @@ class ExportHandler:
         if not filename:
             return
         request = ExportRequestDto(
-            page_uids=page_uids, format_key=format_key, filename=filename
+            page_uids=page_uids,
+            format_key=format_key,
+            filename=filename,
+            active_page_uid=active_page_uid,
         )
         self._execute_export(request)
 

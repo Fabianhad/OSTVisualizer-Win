@@ -196,7 +196,9 @@ class MenuController:
         for fmt in self._export_formats:
             callbacks[f"export_as_{fmt}"] = (
                 lambda checked=False, f=fmt: self.handlers.export.export_format(
-                    f, self.project_data.get_selected_page_uids()
+                    f,
+                    self.project_data.get_selected_page_uids(),
+                    self.ui_state_manager.active_page_uid,
                 )
             )
         return callbacks

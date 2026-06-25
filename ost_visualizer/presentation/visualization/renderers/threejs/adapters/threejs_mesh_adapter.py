@@ -186,6 +186,7 @@ class ThreejsMeshAdapter:
             "name": metadata.get("name", "Mesh"),
             "visible": bool(metadata.get("visible", True)),
             "takeoff_uid": str(metadata.get("takeoff_uid", "") or ""),
+            "page_uid": str(metadata.get("page_uid", "") or ""),
             "condition_uid": str(metadata.get("condition_uid", "") or ""),
             "area_uid": str(metadata.get("area_uid", "") or ""),
             "layer_uid": str(metadata.get("layer_uid", "") or ""),

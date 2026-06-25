@@ -17,16 +17,31 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
                 "min": [-50.0, -5.0, -50.0],
                 "max": [50.0, 75.0, 50.0],
             },
-            "pdf_base64": "JVBERi0xLjQ=",
-            "page_width": 400.0,
-            "page_height": 300.0,
+            "pages": [
+                {
+                    "uid": "page-1",
+                    "label": "1 - A1",
+                    "width": 72.0,
+                    "height": 144.0,
+                    "page_width": 400.0,
+                    "page_height": 300.0,
+                    "image_layer_uid": "image",
+                    "visible": True,
+                    "pdf_document_uid": "pdf-1",
+                    "pdf_page_index": 0,
+                }
+            ],
+            "active_page_uid": "page-1",
+            "selected_page_uids": ["page-1"],
+            "pdf_documents": [{"uid": "pdf-1", "data_base64": "JVBERi0xLjQ="}],
             "layers": [
                 {"uid": "layer-a", "name": "Layer A", "visible": True, "sequence": 1}
             ],
             "page_image_layer": {"uid": "image", "name": "Image", "visible": True},
         }
         html = _generate_html(scene_data, "Depth Test")
-        self.assertIn("const pageW = Number(sceneData.page_width || 0)", html)
+        self.assertIn("const maxPageW = runtimePages.reduce", html)
+        self.assertIn("const maxPageH = runtimePages.reduce", html)
         self.assertIn("function getPagePlaneBox(pageWidth, pageHeight, modelBox)", html)
         self.assertIn(
             "function getSceneClippingBounds(bounds, pageWidth, pageHeight)", html
@@ -36,7 +51,7 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         )
         self.assertIn("box.clone().union(pageBox)", html)
         self.assertIn(
-            "const sceneClippingBounds = getSceneClippingBounds(sceneData.bounds, pageW, pageH)",
+            "const sceneClippingBounds = getSceneClippingBounds(sceneData.bounds, maxPageW, maxPageH)",
             html,
         )
         self.assertIn("function getSceneDepthRange()", html)
@@ -100,16 +115,38 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
                 {"uid": "area-a", "name": "Area A", "visible": True, "sequence": 1},
             ],
             "page_image_layer": {"uid": "image", "name": "Image", "visible": False},
-            "page_2d": {
-                "uid": "page-1",
-                "width": 72.0,
-                "height": 144.0,
-                "image_layer_uid": "image",
-                "visible": False,
-            },
+            "pages": [
+                {
+                    "uid": "page-1",
+                    "label": "1 - A1",
+                    "width": 72.0,
+                    "height": 144.0,
+                    "page_width": 1.0,
+                    "page_height": 2.0,
+                    "image_layer_uid": "image",
+                    "visible": True,
+                    "pdf_document_uid": "",
+                    "pdf_page_index": 0,
+                },
+                {
+                    "uid": "page-2",
+                    "label": "2 - A2",
+                    "width": 72.0,
+                    "height": 144.0,
+                    "page_width": 1.0,
+                    "page_height": 2.0,
+                    "image_layer_uid": "image",
+                    "visible": True,
+                    "pdf_document_uid": "",
+                    "pdf_page_index": 0,
+                },
+            ],
+            "active_page_uid": "page-1",
+            "selected_page_uids": ["page-1", "page-2"],
             "takeoffs_2d": [
                 {
                     "takeoff_uid": "takeoff-a",
+                    "page_uid": "page-1",
                     "condition_uid": "condition-a",
                     "area_uid": "area-a",
                     "layer_uid": "layer-a",
@@ -127,6 +164,9 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn('id="view-mode-switch"', html)
         self.assertIn('id="view-mode-plan"', html)
         self.assertIn('id="view-mode-3d"', html)
+        self.assertIn('id="page-combo"', html)
+        self.assertIn('id="page-combo-button"', html)
+        self.assertIn('id="page-combo-menu"', html)
         self.assertIn('id="plan-view"', html)
         self.assertIn('id="plan-content"', html)
         self.assertIn('id="plan-pdf-canvas"', html)
@@ -137,11 +177,22 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("const layerVisibility = new Map()", html)
         self.assertIn("const conditionVisibility = new Map()", html)
         self.assertIn("const areaVisibility = new Map()", html)
+        self.assertIn("const page3dVisibility = new Map()", html)
+        self.assertIn("function normalizeScenePages()", html)
+        self.assertIn("function buildPdfDocumentMap()", html)
+        self.assertIn("const runtimePages = normalizeScenePages()", html)
+        self.assertIn("let activePageUid = resolveActivePageUid(runtimePages)", html)
         self.assertIn("function registerVisibilityObject(keys, object", html)
+        self.assertIn("object.userData.usesPage3dVisibility", html)
         self.assertIn("function setGroupVisible(registry, uid, visible)", html)
         self.assertIn("function setAllGroupsVisible(visible)", html)
         self.assertIn("function setRenderedObjectVisible(object, visible)", html)
         self.assertIn("function createVisibilityRow(entry, registry, rows", html)
+        self.assertIn("function buildPageCombo()", html)
+        self.assertIn("function setPage3dVisible(pageUid, visible)", html)
+        self.assertIn("checkbox.addEventListener('change'", html)
+        self.assertIn("name.addEventListener('click'", html)
+        self.assertNotIn("renderVisibilitySection('Pages'", html)
         self.assertIn("renderVisibilitySection('Layers'", html)
         self.assertIn("function renderConditionSection()", html)
         self.assertIn("getConditionTypeUid(condition)", html)
@@ -153,14 +204,19 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("function compareConditionEntries(a, b)", html)
         self.assertIn(".sort(compareConditionEntries)", html)
         self.assertIn("mesh.userData.takeoffUid = geomData.takeoff_uid", html)
+        self.assertIn("object.userData.pageUid = pageUid", html)
         self.assertIn("object.userData.conditionUid = conditionUid", html)
         self.assertIn("object.userData.areaUid = areaUid", html)
         self.assertIn("registerVisibilityObject(", html)
-        self.assertIn("const page2D = sceneData.page_2d || null", html)
+        self.assertNotIn("const legacyPage = sceneData.page_2d || null", html)
+        self.assertNotIn("sceneData.pdf_base64", html)
         self.assertIn("const takeoffs2D = Array.isArray(sceneData.takeoffs_2d)", html)
         self.assertIn("function fitPlanToViewport(force = false)", html)
         self.assertIn("function renderPlanTakeoffs()", html)
-        self.assertIn("function setupPlanView(pdfCanvas = null)", html)
+        self.assertIn("function setupPlanView(pdfCanvas = null, forceFit = true)", html)
+        self.assertIn("function setActivePlanPage(pageUid)", html)
+        self.assertIn("function updatePdfPlaneForActivePage()", html)
+        self.assertIn("pageComboButton.addEventListener('click'", html)
         self.assertIn("planView.addEventListener('wheel'", html)
         self.assertIn("planView.addEventListener('pointerdown'", html)
         self.assertIn("setViewMode('plan')", html)
@@ -169,10 +225,16 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
             "document.createElementNS('http://www.w3.org/2000/svg', 'path')", html
         )
         self.assertIn("layerUid: takeoff.layer_uid", html)
+        self.assertIn("pageUid: takeoffPageUid", html)
+        self.assertIn("usesPage3dVisibility: false", html)
         self.assertIn("conditionUid: takeoff.condition_uid", html)
         self.assertIn("areaUid: takeoff.area_uid", html)
         self.assertIn("sceneData.page_image_layer", html)
         self.assertIn("pageEntry.visible = layer.visible !== false", html)
+        self.assertIn("usesPage3dVisibility: true", html)
+        self.assertIn("pdfPlane.userData.usesPage3dVisibility = false", html)
+        self.assertIn("pdfPlane.userData.baseVisible = true", html)
+        self.assertIn("planPdfCanvas.userData.usesPage3dVisibility = false", html)
         self.assertNotIn("pdf-toggle", html)
         self.assertNotIn("layer-swatch", html)
         self.assertIn("condition-color-swatch", html)
@@ -198,6 +260,8 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
             "Visibility Test",
         )
         self.assertIn("function isObjectVisible(object)", html)
+        self.assertIn("object.userData.usesPage3dVisibility !== true", html)
+        self.assertIn("isGroupVisible(page3dVisibility, object.userData.pageUid)", html)
         self.assertIn("isGroupVisible(layerVisibility, object.userData.layerUid)", html)
         self.assertIn(
             "isGroupVisible(conditionVisibility, object.userData.conditionUid)",
@@ -205,6 +269,46 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         )
         self.assertIn("isGroupVisible(areaVisibility, object.userData.areaUid)", html)
         self.assertIn("if (!uid) return true", html)
+
+    def test_wboit_transparent_mesh_render_respects_visibility_filters(self):
+        html = _generate_html(
+            {
+                "title": "Transparent Visibility Test",
+                "geometries": [
+                    {
+                        "vertices": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+                        "normals": [0, 1, 0, 0, 1, 0, 0, 1, 0],
+                        "indices": [0, 1, 2],
+                        "color": [0.3, 0.4, 0.5],
+                        "opacity": 0.5,
+                        "name": "Transparent Mesh",
+                        "visible": True,
+                        "takeoff_uid": "takeoff-1",
+                        "page_uid": "page-1",
+                        "condition_uid": "condition-1",
+                        "area_uid": "area-1",
+                        "layer_uid": "layer-1",
+                    }
+                ],
+                "camera": {
+                    "position": [0.0, 150.0, -100.0],
+                    "target": [0.0, 0.0, 0.0],
+                },
+                "bounds": {
+                    "min": [-50.0, -5.0, -50.0],
+                    "max": [50.0, 75.0, 50.0],
+                },
+            },
+            "Transparent Visibility Test",
+        )
+        self.assertIn("const wboitPass = hasTransparent", html)
+        self.assertIn("function renderWboitPassWithVisibility()", html)
+        self.assertIn("if (object.material && object.visible === false)", html)
+        self.assertIn("object.material = null", html)
+        self.assertIn("wboitPass.render(renderer)", html)
+        self.assertIn("entry.object.material = entry.material", html)
+        self.assertIn("renderWboitPassWithVisibility()", html)
+        self.assertIn("usesPage3dVisibility: true", html)
 
 
 if __name__ == "__main__":
