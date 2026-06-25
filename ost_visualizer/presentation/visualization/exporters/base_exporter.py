@@ -44,7 +44,7 @@ class BaseExporter(ABC):
         bid_conditions: Dict[str, Condition],
         bid_takeoffs: List[Takeoff],
         output_path: str,
-        color_mode: str = Config.COLOR_MODE_SOLID,
+        display_mode: str = Config.DISPLAY_MODE_SOLID,
         grayscale_enabled: bool = True,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         **kwargs,
@@ -67,7 +67,7 @@ class BaseExporter(ABC):
                 )
             )
             hierarchy_map, color_map = self._color_service.get_color_mapping(
-                bid_conditions, exportable_takeoffs, color_mode, grayscale_enabled
+                bid_conditions, exportable_takeoffs, display_mode, grayscale_enabled
             )
             takeoffs_by_group, materials_info = self._prepare_hierarchical_export(
                 exportable_takeoffs, bid_conditions, color_map, page_area_selections
@@ -78,7 +78,7 @@ class BaseExporter(ABC):
                 takeoffs_by_group,
                 materials_info,
                 bid_conditions,
-                color_mode,
+                display_mode,
                 **kwargs,
             )
             return True
@@ -224,7 +224,7 @@ class BaseExporter(ABC):
         takeoffs_by_group: Dict,
         materials_info: Dict,
         bid_conditions: Dict,
-        color_mode: str,
+        display_mode: str,
         **kwargs,
     ):
         pass

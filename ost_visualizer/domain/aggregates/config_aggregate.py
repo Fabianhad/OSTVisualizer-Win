@@ -6,11 +6,11 @@ from ..repositories.i_config_repository import IConfigRepository
 
 
 class ConfigAggregate:
-    VALID_COLOR_MODES = frozenset(
+    VALID_DISPLAY_MODES = frozenset(
         {
-            Config.COLOR_MODE_SOLID,
-            Config.COLOR_MODE_ORIGINAL,
-            Config.COLOR_MODE_TRANSPARENT,
+            Config.DISPLAY_MODE_SOLID,
+            Config.DISPLAY_MODE_ORIGINAL,
+            Config.DISPLAY_MODE_TRANSPARENT,
         }
     )
     VALID_ROPING_SELECTION_METHODS = frozenset(
@@ -42,8 +42,16 @@ class ConfigAggregate:
         self._load_config()
 
     @property
-    def color_mode(self) -> str:
-        return self._config.color_mode
+    def display_modes_synced(self) -> bool:
+        return self._config.display_modes_synced
+
+    @property
+    def display_mode_3d(self) -> str:
+        return self._config.display_mode_3d
+
+    @property
+    def display_mode_2d(self) -> str:
+        return self._config.display_mode_2d
 
     @property
     def grayscale_enabled(self) -> bool:
@@ -158,15 +166,19 @@ class ConfigAggregate:
             self._reset_to_defaults(save=False)
 
     def _apply_config(self, config: Config) -> None:
-        color_mode = config.color_mode
-        config_changed = color_mode not in self.VALID_COLOR_MODES
-        if config_changed:
-            self.logger.warning(
-                "Invalid color_mode '%s' in config; using default '%s'",
-                config.color_mode,
-                Config.DEFAULT_COLOR_MODE,
-            )
-            color_mode = Config.DEFAULT_COLOR_MODE
+        display_mode_3d, mode_3d_changed = self._validated_display_mode(
+            config.display_mode_3d,
+            "display_mode_3d",
+        )
+        display_mode_2d, mode_2d_changed = self._validated_display_mode(
+            config.display_mode_2d,
+            "display_mode_2d",
+        )
+        display_modes_synced = bool(config.display_modes_synced)
+        config_changed = mode_3d_changed or mode_2d_changed
+        if display_modes_synced and display_mode_2d != display_mode_3d:
+            display_mode_2d = display_mode_3d
+            config_changed = True
         roping_selection_method = config.roping_selection_method
         if roping_selection_method not in self.VALID_ROPING_SELECTION_METHODS:
             self.logger.warning(
@@ -220,7 +232,9 @@ class ConfigAggregate:
         if snap_thresholds_changed:
             config_changed = True
         validated = Config(
-            color_mode=color_mode,
+            display_modes_synced=display_modes_synced,
+            display_mode_3d=display_mode_3d,
+            display_mode_2d=display_mode_2d,
             grayscale_enabled=bool(config.grayscale_enabled),
             roping_selection_method=roping_selection_method,
             display_page_index_with_sheet_name=bool(
@@ -303,6 +317,18 @@ class ConfigAggregate:
             default,
         )
         return default
+
+    def _validated_display_mode(self, value: str, field_name: str) -> tuple[str, bool]:
+        display_mode = str(value)
+        if display_mode in self.VALID_DISPLAY_MODES:
+            return display_mode, False
+        self.logger.warning(
+            "Invalid %s '%s' in config; using default '%s'",
+            field_name,
+            value,
+            Config.DEFAULT_DISPLAY_MODE,
+        )
+        return Config.DEFAULT_DISPLAY_MODE, True
 
     def _validated_snap_threshold_px(
         self, value: int, default: int, field_name: str

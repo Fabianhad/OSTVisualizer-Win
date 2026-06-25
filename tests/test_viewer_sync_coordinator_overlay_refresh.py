@@ -66,7 +66,16 @@ from ost_visualizer.presentation.windows.view_window import _VIEW_WINDOW_CONFIG
 
 class FakeUiState:
     active_page_uid = "page-1"
-    state = type("State", (), {"color_mode": "condition", "grayscale_enabled": False})()
+    state = type(
+        "State",
+        (),
+        {
+            "display_mode_2d": "condition",
+            "display_mode_3d": "condition",
+            "display_modes_synced": True,
+            "grayscale_enabled": False,
+        },
+    )()
     place_condition_uid = None
 
     def get_selected_bid_ref(self):

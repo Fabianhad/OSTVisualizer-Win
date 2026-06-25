@@ -11,6 +11,12 @@ class SceneBoundsConfig(TypedDict):
     max: List[float]
 
 
+class SceneDisplayModesConfig(TypedDict):
+    synced: bool
+    mode_3d: str
+    mode_2d: str
+
+
 class SceneGeometryEntry(TypedDict):
     vertices: List[float]
     normals: List[float]
@@ -109,3 +115,4 @@ class SceneData(TypedDict, total=False):
     selected_page_uids: List[str]
     pdf_documents: List[ScenePdfDocumentEntry]
     takeoffs_2d: List[SceneTakeoff2DEntry]
+    display_modes: SceneDisplayModesConfig

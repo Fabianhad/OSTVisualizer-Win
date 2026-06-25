@@ -5,7 +5,9 @@ from ...application.dtos.snap_preferences_dto import SnapPreferencesDto
 class AppConfigPresentationManager:
     _CONDITION_DISPLAY_REFRESH_KEYS = frozenset(
         {
-            "color_mode",
+            "display_modes_synced",
+            "display_mode_3d",
+            "display_mode_2d",
             "grayscale_enabled",
         }
     )

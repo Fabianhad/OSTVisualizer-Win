@@ -56,14 +56,14 @@ class ViewerSyncCoordinator:
         page_takeoffs = self._project_data.get_page_takeoffs(page_uid)
         page_annotations = self._project_data.get_page_annotations(page_uid)
         visible_annotations = [a for a in page_annotations if a.visible]
-        color_mode = self._ui_state.state.color_mode
+        display_mode = self._ui_state.state.display_mode_2d
         grayscale_enabled = self._ui_state.state.grayscale_enabled
         place_uid = self._ui_state.place_condition_uid
         extra = {place_uid} if place_uid else None
         _, color_map = self._color_service.get_color_mapping(
             conditions,
             page_takeoffs,
-            color_mode,
+            display_mode,
             grayscale_enabled,
             extra,
         )

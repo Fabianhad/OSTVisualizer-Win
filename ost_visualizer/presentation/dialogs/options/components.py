@@ -18,9 +18,9 @@ from ...config import (
     OPTIONS_LABEL_ADVANCED_MOUSE_CONTROLS,
     OPTIONS_LABEL_ALLOW_ADD_PAGE_FROM_TAKEOFF,
     OPTIONS_LABEL_AUTO_ZOOM_OFF,
-    OPTIONS_LABEL_COLOR_ORIGINAL,
-    OPTIONS_LABEL_COLOR_SOLID,
-    OPTIONS_LABEL_COLOR_TRANSPARENT,
+    OPTIONS_LABEL_DISPLAY_MODE_ORIGINAL,
+    OPTIONS_LABEL_DISPLAY_MODE_SOLID,
+    OPTIONS_LABEL_DISPLAY_MODE_TRANSPARENT,
     OPTIONS_LABEL_CROSSHAIR_COLOR,
     OPTIONS_LABEL_CROSSHAIR_LINE_THICKNESS,
     OPTIONS_LABEL_DISABLE_HIGH_RESOLUTION_IMAGES,
@@ -42,7 +42,9 @@ from ...config import (
     OPTIONS_LABEL_SNAP_TO_PDF_LINES,
     OPTIONS_LABEL_SNAP_TO_RIGHT_ANGLE,
     OPTIONS_LABEL_SNAP_TO_TAKEOFFS,
-    OPTIONS_LABEL_TAKEOFF_COLOR_MODE,
+    OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_2D,
+    OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_3D,
+    OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_SYNC,
     OPTIONS_MOUSE_SNAP_ANGLE_LABELS,
     OPTIONS_MOUSE_SNAP_ANGLE_VALUES,
     OPTIONS_SNAP_THRESHOLD_MAX,
@@ -147,22 +149,52 @@ class OptionsTab(QtWidgets.QWidget):
         layout.addLayout(right_column, 1)
         self.toolbar_text_check = QtWidgets.QCheckBox(OPTIONS_LABEL_SHOW_TOOLBAR_TEXT)
         left_column.addWidget(self.toolbar_text_check)
-        self.color_transparent_radio = QtWidgets.QRadioButton(
-            OPTIONS_LABEL_COLOR_TRANSPARENT
+        self.display_modes_sync_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_SYNC
         )
-        self.color_solid_radio = QtWidgets.QRadioButton(OPTIONS_LABEL_COLOR_SOLID)
-        self.color_original_radio = QtWidgets.QRadioButton(OPTIONS_LABEL_COLOR_ORIGINAL)
-        self.color_mode_group = QtWidgets.QButtonGroup(self)
-        self.color_mode_group.addButton(self.color_transparent_radio)
-        self.color_mode_group.addButton(self.color_solid_radio)
-        self.color_mode_group.addButton(self.color_original_radio)
+        left_column.addWidget(self.display_modes_sync_check)
+        self.display_mode_3d_transparent_radio = QtWidgets.QRadioButton(
+            OPTIONS_LABEL_DISPLAY_MODE_TRANSPARENT
+        )
+        self.display_mode_3d_solid_radio = QtWidgets.QRadioButton(
+            OPTIONS_LABEL_DISPLAY_MODE_SOLID
+        )
+        self.display_mode_3d_original_radio = QtWidgets.QRadioButton(
+            OPTIONS_LABEL_DISPLAY_MODE_ORIGINAL
+        )
+        self.display_mode_3d_group = QtWidgets.QButtonGroup(self)
+        self.display_mode_3d_group.addButton(self.display_mode_3d_transparent_radio)
+        self.display_mode_3d_group.addButton(self.display_mode_3d_solid_radio)
+        self.display_mode_3d_group.addButton(self.display_mode_3d_original_radio)
         self._add_labeled_radio_row(
             left_column,
-            OPTIONS_LABEL_TAKEOFF_COLOR_MODE,
+            OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_3D,
             (
-                self.color_transparent_radio,
-                self.color_solid_radio,
-                self.color_original_radio,
+                self.display_mode_3d_transparent_radio,
+                self.display_mode_3d_solid_radio,
+                self.display_mode_3d_original_radio,
+            ),
+        )
+        self.display_mode_2d_transparent_radio = QtWidgets.QRadioButton(
+            OPTIONS_LABEL_DISPLAY_MODE_TRANSPARENT
+        )
+        self.display_mode_2d_solid_radio = QtWidgets.QRadioButton(
+            OPTIONS_LABEL_DISPLAY_MODE_SOLID
+        )
+        self.display_mode_2d_original_radio = QtWidgets.QRadioButton(
+            OPTIONS_LABEL_DISPLAY_MODE_ORIGINAL
+        )
+        self.display_mode_2d_group = QtWidgets.QButtonGroup(self)
+        self.display_mode_2d_group.addButton(self.display_mode_2d_transparent_radio)
+        self.display_mode_2d_group.addButton(self.display_mode_2d_solid_radio)
+        self.display_mode_2d_group.addButton(self.display_mode_2d_original_radio)
+        self._add_labeled_radio_row(
+            left_column,
+            OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_2D,
+            (
+                self.display_mode_2d_transparent_radio,
+                self.display_mode_2d_solid_radio,
+                self.display_mode_2d_original_radio,
             ),
         )
         self.grayscale_check = QtWidgets.QCheckBox(OPTIONS_LABEL_GRAYSCALE)
@@ -199,11 +231,11 @@ class OptionsTab(QtWidgets.QWidget):
                 self.hotlink_main_radio,
             ),
         )
-        self.page_index_check = QtWidgets.QCheckBox(OPTIONS_LABEL_PAGE_INDEX)
-        left_column.addWidget(self.page_index_check)
-        self.sheet_number_check = QtWidgets.QCheckBox(OPTIONS_LABEL_SHEET_NUMBER)
-        left_column.addWidget(self.sheet_number_check)
         left_column.addStretch()
+        self.page_index_check = QtWidgets.QCheckBox(OPTIONS_LABEL_PAGE_INDEX)
+        right_column.addWidget(self.page_index_check)
+        self.sheet_number_check = QtWidgets.QCheckBox(OPTIONS_LABEL_SHEET_NUMBER)
+        right_column.addWidget(self.sheet_number_check)
         self.disable_high_res_check = QtWidgets.QCheckBox(
             OPTIONS_LABEL_DISABLE_HIGH_RESOLUTION_IMAGES
         )

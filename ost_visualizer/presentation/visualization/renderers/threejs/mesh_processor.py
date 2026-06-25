@@ -22,7 +22,7 @@ def process_meshes_for_threejs(
     coord_system: ICoordinateTransformer,
     color_service: IColorService,
     takeoff_service: ITakeoffDomainService,
-    color_mode: str = Config.COLOR_MODE_SOLID,
+    display_mode: str = Config.DISPLAY_MODE_SOLID,
     grayscale_enabled: bool = True,
     page_area_selections: Optional[Dict] = None,
     areas: Optional[List[BidArea]] = None,
@@ -31,7 +31,7 @@ def process_meshes_for_threejs(
         str(area.uid): str(area.name or area.uid) for area in (areas or []) if area.uid
     }
     hierarchy_map, color_map = color_service.get_color_mapping(
-        bid_conditions, bid_takeoffs, color_mode, grayscale_enabled
+        bid_conditions, bid_takeoffs, display_mode, grayscale_enabled
     )
     exportable_takeoffs, area_holes_map = (
         takeoff_service.group_area_takeoffs_with_holes(bid_takeoffs, bid_conditions)
@@ -52,7 +52,7 @@ def process_meshes_for_threejs(
             mesh_data = mesh_factory.create_mesh_for_takeoff(takeoff, condition, holes)
             if mesh_data and mesh_data.vertices and mesh_data.faces:
                 color_hex, opacity = color_service.get_color_for_takeoff(
-                    takeoff, condition, color_map, color_mode, page_area_selections
+                    takeoff, condition, color_map, display_mode, page_area_selections
                 )
                 takeoff_area_uid = area_group_uid(takeoff.area_uid)
                 metadata: MeshMetadata = {

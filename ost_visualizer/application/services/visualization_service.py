@@ -71,7 +71,7 @@ class VisualizationService:
             return
         conditions = self.project_data.get_bid_conditions()
         page_area_selections = self.project_data.get_page_area_selections()
-        color_mode = self.config_model.color_mode
+        display_mode = self.config_model.display_mode_3d
         grayscale_enabled = self.config_model.grayscale_enabled
         with self._mesh_generation_lock:
             self._mesh_generation_id += 1
@@ -80,7 +80,7 @@ class VisualizationService:
                 takeoffs,
                 conditions,
                 page_area_selections,
-                color_mode,
+                display_mode,
                 grayscale_enabled,
                 gen_id,
             )
@@ -101,7 +101,7 @@ class VisualizationService:
                 takeoffs,
                 conditions,
                 page_area_selections,
-                color_mode,
+                display_mode,
                 grayscale_enabled,
                 gen_id,
             ) = task
@@ -113,7 +113,7 @@ class VisualizationService:
                     conditions,
                     takeoffs,
                     page_area_selections=page_area_selections,
-                    color_mode=color_mode,
+                    display_mode=display_mode,
                     grayscale_enabled=grayscale_enabled,
                 )
                 with self._mesh_generation_lock:

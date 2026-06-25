@@ -8,7 +8,7 @@ class IPDFExporter(Protocol):
         self,
         pages_data: List[PageExportData],
         output_path: str,
-        color_mode: str,
+        display_mode: str,
         grayscale_enabled: bool,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         bid_annotations: Optional[List[BidAnnotation]] = None,

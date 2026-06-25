@@ -15,6 +15,7 @@ from ..application.interfaces.i_visualization_provider import (
     IVisualizationProvider,
 )
 from ..domain.entities.area import BidArea
+from ..domain.entities.config import Config
 from ..domain.entities.layer import BidLayer
 from ..presentation.visualization.exporters.dxf_exporter import DXFExporter
 from ..presentation.visualization.exporters.fbx_exporter import FBXExporter
@@ -47,7 +48,7 @@ class _MeshGeneratorAdapter(IMeshGenerator):
         bid_conditions: Dict,
         bid_takeoffs: List,
         page_area_selections: Optional[Dict] = None,
-        color_mode: str = "Solid",
+        display_mode: str = Config.DISPLAY_MODE_SOLID,
         grayscale_enabled: bool = True,
     ):
         coord_system = self._coord_factory.create()
@@ -58,7 +59,7 @@ class _MeshGeneratorAdapter(IMeshGenerator):
             color_service=self._color_service,
             takeoff_service=self._takeoff_service,
             page_area_selections=page_area_selections,
-            color_mode=color_mode,
+            display_mode=display_mode,
             grayscale_enabled=grayscale_enabled,
         )
         return meshes, mesh_colors, bounds
@@ -82,7 +83,9 @@ class _HtmlRendererAdapter(IHtmlRenderer):
         output_path: str,
         title: str = "3D Visualization",
         bid_name: str = "Bid",
-        color_mode: str = "Solid",
+        display_mode_3d: str = Config.DISPLAY_MODE_SOLID,
+        display_mode_2d: str = Config.DISPLAY_MODE_SOLID,
+        display_modes_synced: bool = True,
         grayscale_enabled: bool = True,
         page_area_selections: Optional[Dict] = None,
         auto_open: bool = False,
@@ -104,7 +107,9 @@ class _HtmlRendererAdapter(IHtmlRenderer):
                 output_path=output_path,
                 auto_open=auto_open,
                 bid_name=bid_name,
-                color_mode=color_mode,
+                display_mode_3d=display_mode_3d,
+                display_mode_2d=display_mode_2d,
+                display_modes_synced=display_modes_synced,
                 grayscale_enabled=grayscale_enabled,
                 page_area_selections=page_area_selections,
                 pages=pages,
@@ -182,8 +187,13 @@ class _ExportStrategyAdapter(IExportStrategy):
         return None
 
     def get_kwargs(self, config_model, page_area_selections=None):
+        display_mode = (
+            config_model.display_mode_2d
+            if self._extension == "dxf"
+            else config_model.display_mode_3d
+        )
         kwargs = {
-            "color_mode": config_model.color_mode,
+            "display_mode": display_mode,
             "grayscale_enabled": config_model.grayscale_enabled,
         }
         if page_area_selections is not None:
@@ -259,7 +269,9 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
 
     def get_kwargs(self, config_model, page_area_selections=None):
         kwargs = {
-            "color_mode": config_model.color_mode,
+            "display_mode_3d": config_model.display_mode_3d,
+            "display_mode_2d": config_model.display_mode_2d,
+            "display_modes_synced": config_model.display_modes_synced,
             "grayscale_enabled": config_model.grayscale_enabled,
         }
         if page_area_selections is not None:
@@ -293,7 +305,9 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             output_path,
             title=kwargs.get("title", "3D View"),
             bid_name=kwargs.get("bid_name", "Bid"),
-            color_mode=kwargs.get("color_mode", "Solid"),
+            display_mode_3d=kwargs["display_mode_3d"],
+            display_mode_2d=kwargs["display_mode_2d"],
+            display_modes_synced=kwargs["display_modes_synced"],
             grayscale_enabled=kwargs.get("grayscale_enabled", True),
             page_area_selections=kwargs.get("page_area_selections"),
             auto_open=False,

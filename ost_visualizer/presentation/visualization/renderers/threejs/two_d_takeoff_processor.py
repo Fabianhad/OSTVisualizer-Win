@@ -30,12 +30,12 @@ def process_takeoffs_2d_for_threejs(
     color_service: IColorService,
     takeoff_service: ITakeoffDomainService,
     page_info: PageRenderInfo,
-    color_mode: str = Config.COLOR_MODE_SOLID,
+    display_mode: str = Config.DISPLAY_MODE_SOLID,
     grayscale_enabled: bool = True,
     page_area_selections: Optional[Dict[str, Optional[str]]] = None,
 ) -> List[SceneTakeoff2DEntry]:
     _hierarchy_map, color_map = color_service.get_color_mapping(
-        bid_conditions, bid_takeoffs, color_mode, grayscale_enabled
+        bid_conditions, bid_takeoffs, display_mode, grayscale_enabled
     )
     coord_system = OSTCoordinateSystem(page_info)
     exportable_takeoffs, area_holes_map = (
@@ -49,8 +49,8 @@ def process_takeoffs_2d_for_threejs(
         rings = _build_takeoff_rings(takeoff, condition, area_holes_map, coord_system)
         if not rings:
             continue
-        color_hex, opacity = color_service.get_color_for_takeoff(
-            takeoff, condition, color_map, color_mode, page_area_selections
+        color_hex, opacity = color_service.get_2d_color_for_takeoff(
+            takeoff, condition, color_map, page_area_selections
         )
         entries.append(
             {

@@ -552,10 +552,10 @@ class DetachedPageViewManager(IShutdownAware):
                     named_view = nv
                     break
         conditions = self.project_data.get_bid_conditions()
-        color_mode = self.config_model.color_mode
+        display_mode = self.config_model.display_mode_2d
         grayscale_enabled = self.config_model.grayscale_enabled
         _, color_map = self._color_service.get_color_mapping(
-            conditions, page_takeoffs, color_mode, grayscale_enabled
+            conditions, page_takeoffs, display_mode, grayscale_enabled
         )
         return PageViewDto(
             page=page,

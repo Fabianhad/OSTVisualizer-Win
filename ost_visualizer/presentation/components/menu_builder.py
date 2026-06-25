@@ -22,16 +22,19 @@ from ..actions.action_ids import (
     ACTION_ROTATE_IMAGE_LEFT,
     ACTION_ROTATE_IMAGE_RIGHT,
     ACTION_SELECT_OVERLAY_IMAGE,
-    ACTION_SET_TAKEOFF_COLOR_MODE,
+    ACTION_SET_TAKEOFF_DISPLAY_MODE_2D,
+    ACTION_SET_TAKEOFF_DISPLAY_MODE_3D,
     ACTION_SHOW_ORIGINAL_IMAGE,
     ACTION_SHOW_OVERLAY_IMAGE,
     ACTION_STATUS_BAR,
     ACTION_TOGGLE_MAIN_TOOLBAR,
     ACTION_TOGGLE_PLAN_TOOLS_TOOLBAR,
+    ACTION_TOGGLE_TAKEOFF_DISPLAY_MODES_SYNC,
     ACTION_TOGGLE_VIEW_TOOLBAR,
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
 )
+from ...domain.entities.config import Config
 from ..config import MAIN_TOOLBAR_LABEL, PLAN_TOOLS_TOOLBAR_LABEL, VIEW_TOOLBAR_LABEL
 from ..managers.icon_manager import IconManager
 from ..managers.shortcut_manager import ShortcutManager
@@ -174,25 +177,65 @@ class MenuBuilder:
                     "Takeoff",
                     [
                         (
-                            "radio",
-                            "Transparent",
-                            "color_mode",
-                            "Transparent",
-                            ACTION_SET_TAKEOFF_COLOR_MODE,
+                            "check",
+                            "Sync 2D/3D Display Modes",
+                            "display_modes_synced",
+                            ACTION_TOGGLE_TAKEOFF_DISPLAY_MODES_SYNC,
+                        ),
+                        ("sep",),
+                        (
+                            "cascade",
+                            "3D Display Mode",
+                            [
+                                (
+                                    "radio",
+                                    "Transparent",
+                                    "display_mode_3d",
+                                    Config.DISPLAY_MODE_TRANSPARENT,
+                                    ACTION_SET_TAKEOFF_DISPLAY_MODE_3D,
+                                ),
+                                (
+                                    "radio",
+                                    "Solid",
+                                    "display_mode_3d",
+                                    Config.DISPLAY_MODE_SOLID,
+                                    ACTION_SET_TAKEOFF_DISPLAY_MODE_3D,
+                                ),
+                                (
+                                    "radio",
+                                    "Original",
+                                    "display_mode_3d",
+                                    Config.DISPLAY_MODE_ORIGINAL,
+                                    ACTION_SET_TAKEOFF_DISPLAY_MODE_3D,
+                                ),
+                            ],
                         ),
                         (
-                            "radio",
-                            "Solid",
-                            "color_mode",
-                            "Solid",
-                            ACTION_SET_TAKEOFF_COLOR_MODE,
-                        ),
-                        (
-                            "radio",
-                            "Original",
-                            "color_mode",
-                            "Original",
-                            ACTION_SET_TAKEOFF_COLOR_MODE,
+                            "cascade",
+                            "2D Display Mode",
+                            [
+                                (
+                                    "radio",
+                                    "Transparent",
+                                    "display_mode_2d",
+                                    Config.DISPLAY_MODE_TRANSPARENT,
+                                    ACTION_SET_TAKEOFF_DISPLAY_MODE_2D,
+                                ),
+                                (
+                                    "radio",
+                                    "Solid",
+                                    "display_mode_2d",
+                                    Config.DISPLAY_MODE_SOLID,
+                                    ACTION_SET_TAKEOFF_DISPLAY_MODE_2D,
+                                ),
+                                (
+                                    "radio",
+                                    "Original",
+                                    "display_mode_2d",
+                                    Config.DISPLAY_MODE_ORIGINAL,
+                                    ACTION_SET_TAKEOFF_DISPLAY_MODE_2D,
+                                ),
+                            ],
                         ),
                         ("sep",),
                         ("check", "Grayscale", "grayscale", "toggle_takeoff_grayscale"),

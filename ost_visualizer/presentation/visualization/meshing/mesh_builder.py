@@ -78,10 +78,10 @@ def process_takeoffs_to_meshes(
     if not bid_takeoffs:
         return [], {}, calculate_mesh_bounds([])
     mesh_factory = MeshFactory(coord_system)
-    color_mode = config_options.get("color_mode", Config.COLOR_MODE_SOLID)
+    display_mode = config_options.get("display_mode", Config.DISPLAY_MODE_SOLID)
     grayscale_enabled = config_options.get("grayscale_enabled", True)
     hierarchy_map, color_map = color_service.get_color_mapping(
-        bid_conditions, bid_takeoffs, color_mode, grayscale_enabled
+        bid_conditions, bid_takeoffs, display_mode, grayscale_enabled
     )
     exportable_takeoffs, area_holes_map = (
         takeoff_service.group_area_takeoffs_with_holes(bid_takeoffs, bid_conditions)
@@ -107,7 +107,7 @@ def process_takeoffs_to_meshes(
             condition_uid = takeoff.condition_uid
             condition = bid_conditions[condition_uid]
             color_hex, opacity = color_service.get_color_for_takeoff(
-                takeoff, condition, color_map, color_mode, page_area_selections
+                takeoff, condition, color_map, display_mode, page_area_selections
             )
             mesh = _create_mesh(takeoff, condition, area_holes_map, mesh_factory)
             if mesh and mesh.vertices and mesh.faces:

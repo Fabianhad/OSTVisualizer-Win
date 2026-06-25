@@ -27,12 +27,14 @@ from ..actions.action_ids import (
     ACTION_ROTATE_IMAGE_LEFT,
     ACTION_ROTATE_IMAGE_RIGHT,
     ACTION_SELECT_OVERLAY_IMAGE,
-    ACTION_SET_TAKEOFF_COLOR_MODE,
+    ACTION_SET_TAKEOFF_DISPLAY_MODE_2D,
+    ACTION_SET_TAKEOFF_DISPLAY_MODE_3D,
     ACTION_SHOW_COVER_SHEET,
     ACTION_SHOW_ORIGINAL_IMAGE,
     ACTION_SHOW_OVERLAY_IMAGE,
     ACTION_TOGGLE_MAIN_TOOLBAR,
     ACTION_TOGGLE_PLAN_TOOLS_TOOLBAR,
+    ACTION_TOGGLE_TAKEOFF_DISPLAY_MODES_SYNC,
     ACTION_TOGGLE_VIEW_TOOLBAR,
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
@@ -50,7 +52,9 @@ from ..utils.windows import remove_minimize_maximize
 
 _ANNOTATION_TOOL_ACTION_KEYS = {spec.action_key for spec in PLAN_ANNOTATION_TOOL_SPECS}
 _TAKEOFF_SCOPED_VARIABLE_KEYS = {
-    "color_mode",
+    "display_modes_synced",
+    "display_mode_3d",
+    "display_mode_2d",
     "grayscale",
     "page_invert",
     "page_bitonal",
@@ -148,7 +152,11 @@ class MenuController:
             "export_summary_csv": lambda: self.handlers.export.export_summary_csv(),
             "export_as_ost": lambda: self.handlers.export.export_as_ost(),
             "export_as_osp": lambda: self.handlers.export.export_as_osp(),
-            ACTION_SET_TAKEOFF_COLOR_MODE: self._set_takeoff_color_mode,
+            ACTION_SET_TAKEOFF_DISPLAY_MODE_3D: self._set_takeoff_display_mode_3d,
+            ACTION_SET_TAKEOFF_DISPLAY_MODE_2D: self._set_takeoff_display_mode_2d,
+            ACTION_TOGGLE_TAKEOFF_DISPLAY_MODES_SYNC: (
+                self._toggle_takeoff_display_modes_sync
+            ),
             "toggle_takeoff_grayscale": self._toggle_takeoff_grayscale,
             ACTION_TOGGLE_MAIN_TOOLBAR: self._set_main_toolbar_visible,
             ACTION_TOGGLE_VIEW_TOOLBAR: self._set_view_toolbar_visible,
@@ -205,7 +213,11 @@ class MenuController:
 
     def _get_state_getters(self) -> Dict[str, Callable[[], object]]:
         return {
-            "color_mode": lambda: self.ui_state_manager.state.color_mode,
+            "display_modes_synced": (
+                lambda: self.ui_state_manager.state.display_modes_synced
+            ),
+            "display_mode_3d": lambda: self.ui_state_manager.state.display_mode_3d,
+            "display_mode_2d": lambda: self.ui_state_manager.state.display_mode_2d,
             "grayscale": lambda: self.ui_state_manager.state.grayscale_enabled,
             "main_toolbar_visible": lambda: self._workspace_toolbar_visible(
                 self.window.MAIN_TOOLBAR_KEY
@@ -224,8 +236,28 @@ class MenuController:
             "takeoff_3d_tab_visible": self.window.is_takeoff_3d_tab_visible,
         }
 
-    def _set_takeoff_color_mode(self, color_mode: str) -> None:
-        self.config_service.update_app_options({"color_mode": color_mode})
+    def _set_takeoff_display_mode_3d(self, display_mode: str) -> None:
+        config = self.config_service.get_config_snapshot()
+        update = {"display_mode_3d": display_mode}
+        if config.display_modes_synced:
+            update["display_mode_2d"] = display_mode
+        self.config_service.update_app_options(update)
+
+    def _set_takeoff_display_mode_2d(self, display_mode: str) -> None:
+        config = self.config_service.get_config_snapshot()
+        update = {"display_mode_2d": display_mode}
+        if config.display_modes_synced:
+            update["display_mode_3d"] = display_mode
+        self.config_service.update_app_options(update)
+
+    def _toggle_takeoff_display_modes_sync(self, _checked=False) -> bool:
+        config = self.config_service.get_config_snapshot()
+        next_synced = not config.display_modes_synced
+        update = {"display_modes_synced": next_synced}
+        if next_synced:
+            update["display_mode_2d"] = config.display_mode_3d
+        self.config_service.update_app_options(update)
+        return self.config_service.get_config_snapshot().display_modes_synced
 
     def _toggle_takeoff_grayscale(self, _checked=False) -> bool:
         config = self.config_service.get_config_snapshot()
@@ -336,7 +368,9 @@ class MenuController:
             action = self._actions.get(action_key)
             if action:
                 action.setEnabled(takeoff_active)
-        self._set_variable_actions_enabled("color_mode", takeoff_active)
+        self._set_variable_actions_enabled("display_modes_synced", takeoff_active)
+        self._set_variable_actions_enabled("display_mode_3d", takeoff_active)
+        self._set_variable_actions_enabled("display_mode_2d", takeoff_active)
         self._set_variable_actions_enabled("grayscale", takeoff_active)
         previous_page_action = self._actions.get(ACTION_PREVIOUS_PAGE)
         if previous_page_action:
@@ -567,8 +601,12 @@ class MenuController:
                 group.setExclusive(was_exclusive)
 
     def _current_state_value(self, key: str):
-        if key == "color_mode":
-            return self.ui_state_manager.state.color_mode
+        if key == "display_modes_synced":
+            return self.ui_state_manager.state.display_modes_synced
+        if key == "display_mode_3d":
+            return self.ui_state_manager.state.display_mode_3d
+        if key == "display_mode_2d":
+            return self.ui_state_manager.state.display_mode_2d
         if key == "grayscale":
             return self.ui_state_manager.state.grayscale_enabled
         if key in (

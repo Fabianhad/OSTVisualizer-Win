@@ -10,6 +10,7 @@ from ost_visualizer.application.dtos.export_dto import (
     ExportResultDto,
 )
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.handlers import export_handler as export_handler_module
 from ost_visualizer.presentation.handlers.export_handler import ExportHandler
@@ -40,6 +41,12 @@ class _FakeProjectData:
 
     def get_current_bid(self):
         return SimpleNamespace(name="25-051 Marriott Element, Capel Hill, NC")
+
+    def get_page_area_selections(self):
+        return {}
+
+    def get_all_annotations(self):
+        return []
 
 
 class _FakeDeferredPersistence:
@@ -144,6 +151,66 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertEqual(
             filename, "25-051 Marriott Element, Capel Hill, NC - 2 Pages.pdf"
         )
+
+    def test_pdf_export_uses_2d_display_mode(self):
+        calls = []
+        original_get_save = export_handler_module.QtWidgets.QFileDialog.getSaveFileName
+        original_progress_dialog = export_handler_module.ProgressDialog
+        original_show_info = export_handler_module.show_info
+
+        class FakeProgressDialog:
+            def __init__(self, _filename, export_fn, parent=None, reporter=None):
+                self.result = None
+                self.error = None
+                self._export_fn = export_fn
+
+            def exec(self):
+                self.result = self._export_fn()
+                return export_handler_module.QtWidgets.QDialog.DialogCode.Accepted
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        def fake_get_save_file_name(_window, _title, _default_filename, _filter):
+            return r"C:\tmp\out.pdf", ""
+
+        def fake_export(
+            pages_data,
+            filename,
+            display_mode,
+            grayscale_enabled,
+            page_area_selections,
+            bid_annotations,
+            on_progress=None,
+        ):
+            calls.append((display_mode, grayscale_enabled, len(pages_data)))
+            return ExportResultDto(success=True, format_name="PDF", page_count=1)
+
+        export_handler_module.QtWidgets.QFileDialog.getSaveFileName = (
+            fake_get_save_file_name
+        )
+        export_handler_module.ProgressDialog = FakeProgressDialog
+        export_handler_module.show_info = lambda *_args: None
+        try:
+            handler = _make_export_handler(
+                config_model=SimpleNamespace(
+                    display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
+                    grayscale_enabled=False,
+                ),
+                project_data_service=_FakeProjectData(["A1"]),
+                pdf_exporter=SimpleNamespace(export=fake_export),
+            )
+            handler.export_as_pdf(["page-1"])
+        finally:
+            export_handler_module.QtWidgets.QFileDialog.getSaveFileName = (
+                original_get_save
+            )
+            export_handler_module.ProgressDialog = original_progress_dialog
+            export_handler_module.show_info = original_show_info
+        self.assertEqual(calls, [(Config.DISPLAY_MODE_TRANSPARENT, False, 1)])
 
     def test_summary_csv_export_uses_current_grouping_and_appends_extension(self):
         grouping = ConditionSummaryGrouping(by_type=True, by_area=True)

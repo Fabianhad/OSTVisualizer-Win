@@ -4,7 +4,7 @@
 
 ### Added
 - Added a first-pass OST-style Options dialog with persisted roping, page label, hotlink target, and Cover Sheet toolbar text preferences.
-- Added takeoff color mode and grayscale controls to the Options dialog while keeping menu quick actions on the shared app-config path.
+- Added synced/custom 2D and 3D takeoff display mode controls to the Options dialog and View menu, with HTML and PDF exports using the matching view mode.
 - Added an optional read-only local MCP server for project, bid, page, condition, takeoff, quantity, selected-context, and scope-review context.
 - Added a local read-only MCP bridge for live desktop context such as active view, selected pages, highlighted conditions, and selected takeoffs.
 - Added MCP setup controls to the Options dialog for copying Claude Desktop/Cursor config and Codex setup commands.

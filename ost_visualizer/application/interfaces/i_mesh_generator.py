@@ -27,7 +27,7 @@ class IMeshGenerator(Protocol):
         bid_conditions: Dict[str, Condition],
         bid_takeoffs: List[Takeoff],
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
-        color_mode: str = Config.COLOR_MODE_SOLID,
+        display_mode: str = Config.DISPLAY_MODE_SOLID,
         grayscale_enabled: bool = True,
     ) -> Tuple[
         List[MeshData],

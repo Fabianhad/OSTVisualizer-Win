@@ -24,7 +24,7 @@ class IColorService(Protocol):
         self,
         bid_conditions,
         bid_takeoffs,
-        color_mode: str = Config.COLOR_MODE_SOLID,
+        display_mode: str = Config.DISPLAY_MODE_SOLID,
         grayscale_enabled: bool = True,
         extra_condition_uids: Optional[Set[str]] = None,
     ) -> ColorMappingResult: ...
@@ -33,7 +33,14 @@ class IColorService(Protocol):
         takeoff: Takeoff,
         condition: Condition,
         color_map: Dict,
-        color_mode: str,
+        display_mode: str,
+        page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+    ) -> ColorWithOpacity: ...
+    def get_2d_color_for_takeoff(
+        self,
+        takeoff: Takeoff,
+        condition: Condition,
+        color_map: Dict,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
     ) -> ColorWithOpacity: ...
     def int_to_hex(self, color_fill: int) -> str: ...

@@ -5,7 +5,9 @@ from ...domain.entities.identity_refs import BidRef
 
 @dataclass
 class UIState:
-    color_mode: str
+    display_modes_synced: bool
+    display_mode_3d: str
+    display_mode_2d: str
     grayscale_enabled: bool
 
 
@@ -13,7 +15,9 @@ class UIStateManager:
     def __init__(self, config_model):
         self.config_model = config_model
         self.state = UIState(
-            color_mode=config_model.color_mode,
+            display_modes_synced=config_model.display_modes_synced,
+            display_mode_3d=config_model.display_mode_3d,
+            display_mode_2d=config_model.display_mode_2d,
             grayscale_enabled=config_model.grayscale_enabled,
         )
         self._selected_bid_ref: Optional[BidRef] = None
@@ -95,7 +99,9 @@ class UIStateManager:
         self._place_condition_uid = None
 
     def sync_from_config(self) -> None:
-        self.state.color_mode = self.config_model.color_mode
+        self.state.display_modes_synced = self.config_model.display_modes_synced
+        self.state.display_mode_3d = self.config_model.display_mode_3d
+        self.state.display_mode_2d = self.config_model.display_mode_2d
         self.state.grayscale_enabled = self.config_model.grayscale_enabled
 
     def reset_selections(self) -> None:

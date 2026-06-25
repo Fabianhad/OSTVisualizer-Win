@@ -99,9 +99,13 @@ class OptionsDialog(QtWidgets.QDialog):
     def _bind_options_tab_widgets(self) -> None:
         tab = self._options_tab
         self._toolbar_text_check = tab.toolbar_text_check
-        self._color_transparent_radio = tab.color_transparent_radio
-        self._color_solid_radio = tab.color_solid_radio
-        self._color_original_radio = tab.color_original_radio
+        self._display_modes_sync_check = tab.display_modes_sync_check
+        self._display_mode_3d_transparent_radio = tab.display_mode_3d_transparent_radio
+        self._display_mode_3d_solid_radio = tab.display_mode_3d_solid_radio
+        self._display_mode_3d_original_radio = tab.display_mode_3d_original_radio
+        self._display_mode_2d_transparent_radio = tab.display_mode_2d_transparent_radio
+        self._display_mode_2d_solid_radio = tab.display_mode_2d_solid_radio
+        self._display_mode_2d_original_radio = tab.display_mode_2d_original_radio
         self._grayscale_check = tab.grayscale_check
         self._roping_touching_radio = tab.roping_touching_radio
         self._roping_inclusive_radio = tab.roping_inclusive_radio
@@ -141,15 +145,12 @@ class OptionsDialog(QtWidgets.QDialog):
 
     def _load_config(self) -> None:
         self._toolbar_text_check.setChecked(self._applied_config.show_toolbar_text)
-        self._color_transparent_radio.setChecked(
-            self._applied_config.color_mode == Config.COLOR_MODE_TRANSPARENT
+        self._display_modes_sync_check.setChecked(
+            self._applied_config.display_modes_synced
         )
-        self._color_solid_radio.setChecked(
-            self._applied_config.color_mode == Config.COLOR_MODE_SOLID
-        )
-        self._color_original_radio.setChecked(
-            self._applied_config.color_mode == Config.COLOR_MODE_ORIGINAL
-        )
+        self._set_display_mode_radios("3d", self._applied_config.display_mode_3d)
+        self._set_display_mode_radios("2d", self._applied_config.display_mode_2d)
+        self._sync_display_modes_when_enabled()
         self._grayscale_check.setChecked(self._applied_config.grayscale_enabled)
         self._roping_inclusive_radio.setChecked(
             self._applied_config.roping_selection_method
@@ -228,9 +229,13 @@ class OptionsDialog(QtWidgets.QDialog):
     def _connect_change_signals(self) -> None:
         buttons = (
             self._toolbar_text_check,
-            self._color_transparent_radio,
-            self._color_solid_radio,
-            self._color_original_radio,
+            self._display_modes_sync_check,
+            self._display_mode_3d_transparent_radio,
+            self._display_mode_3d_solid_radio,
+            self._display_mode_3d_original_radio,
+            self._display_mode_2d_transparent_radio,
+            self._display_mode_2d_solid_radio,
+            self._display_mode_2d_original_radio,
             self._grayscale_check,
             self._roping_touching_radio,
             self._roping_inclusive_radio,
@@ -251,6 +256,21 @@ class OptionsDialog(QtWidgets.QDialog):
         )
         for button in buttons:
             button.toggled.connect(self._update_apply_enabled)
+        self._display_modes_sync_check.toggled.connect(
+            self._sync_display_modes_when_enabled
+        )
+        for button in (
+            self._display_mode_3d_transparent_radio,
+            self._display_mode_3d_solid_radio,
+            self._display_mode_3d_original_radio,
+        ):
+            button.toggled.connect(self._sync_2d_display_mode_when_synced)
+        for button in (
+            self._display_mode_2d_transparent_radio,
+            self._display_mode_2d_solid_radio,
+            self._display_mode_2d_original_radio,
+        ):
+            button.toggled.connect(self._sync_3d_display_mode_when_synced)
         self._crosshair_color_button.colorChanged.connect(self._update_apply_enabled)
         self._crosshair_line_thickness_spin.valueChanged.connect(
             self._update_apply_enabled
@@ -276,14 +296,16 @@ class OptionsDialog(QtWidgets.QDialog):
         self._auto_zoom_spin.valueChanged.connect(self._update_apply_enabled)
 
     def _collect_widget_config(self) -> Config:
-        color_mode = Config.COLOR_MODE_SOLID
-        if self._color_transparent_radio.isChecked():
-            color_mode = Config.COLOR_MODE_TRANSPARENT
-        elif self._color_original_radio.isChecked():
-            color_mode = Config.COLOR_MODE_ORIGINAL
+        display_mode_3d = self._selected_display_mode("3d")
+        display_mode_2d = self._selected_display_mode("2d")
+        display_modes_synced = self._display_modes_sync_check.isChecked()
+        if display_modes_synced:
+            display_mode_2d = display_mode_3d
         return replace(
             self._applied_config,
-            color_mode=color_mode,
+            display_modes_synced=display_modes_synced,
+            display_mode_3d=display_mode_3d,
+            display_mode_2d=display_mode_2d,
             grayscale_enabled=self._grayscale_check.isChecked(),
             show_toolbar_text=self._toolbar_text_check.isChecked(),
             roping_selection_method=(
@@ -325,6 +347,45 @@ class OptionsDialog(QtWidgets.QDialog):
                 self._snap_to_right_angle_threshold_spin.value()
             ),
         )
+
+    def _selected_display_mode(self, target: str) -> str:
+        if target == "3d":
+            if self._display_mode_3d_transparent_radio.isChecked():
+                return Config.DISPLAY_MODE_TRANSPARENT
+            if self._display_mode_3d_original_radio.isChecked():
+                return Config.DISPLAY_MODE_ORIGINAL
+            return Config.DISPLAY_MODE_SOLID
+        if self._display_mode_2d_transparent_radio.isChecked():
+            return Config.DISPLAY_MODE_TRANSPARENT
+        if self._display_mode_2d_original_radio.isChecked():
+            return Config.DISPLAY_MODE_ORIGINAL
+        return Config.DISPLAY_MODE_SOLID
+
+    def _set_display_mode_radios(self, target: str, display_mode: str) -> None:
+        transparent = display_mode == Config.DISPLAY_MODE_TRANSPARENT
+        original = display_mode == Config.DISPLAY_MODE_ORIGINAL
+        if target == "3d":
+            self._display_mode_3d_transparent_radio.setChecked(transparent)
+            self._display_mode_3d_original_radio.setChecked(original)
+            self._display_mode_3d_solid_radio.setChecked(
+                not transparent and not original
+            )
+            return
+        self._display_mode_2d_transparent_radio.setChecked(transparent)
+        self._display_mode_2d_original_radio.setChecked(original)
+        self._display_mode_2d_solid_radio.setChecked(not transparent and not original)
+
+    def _sync_display_modes_when_enabled(self, *_args) -> None:
+        if self._display_modes_sync_check.isChecked():
+            self._set_display_mode_radios("2d", self._selected_display_mode("3d"))
+
+    def _sync_2d_display_mode_when_synced(self, checked: bool = False) -> None:
+        if checked and self._display_modes_sync_check.isChecked():
+            self._set_display_mode_radios("2d", self._selected_display_mode("3d"))
+
+    def _sync_3d_display_mode_when_synced(self, checked: bool = False) -> None:
+        if checked and self._display_modes_sync_check.isChecked():
+            self._set_display_mode_radios("3d", self._selected_display_mode("2d"))
 
     def _selected_hotlink_target(self) -> str:
         if self._hotlink_view_radio.isChecked():

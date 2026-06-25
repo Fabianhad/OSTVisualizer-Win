@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from ost_visualizer.application.services.export_service import ExportService
 from ost_visualizer.application.dtos.export_dto import ExportRequestDto
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.layer import BidLayer
@@ -74,8 +75,14 @@ class _ExportStrategy:
     def prepare_title(self, bid_name, page_names):
         return "Export"
 
-    def get_kwargs(self, _config_model, _page_area_selections=None):
-        return {}
+    def get_kwargs(self, config_model, _page_area_selections=None):
+        if self.extension != "html":
+            return {}
+        return {
+            "display_modes_synced": config_model.display_modes_synced,
+            "display_mode_3d": config_model.display_mode_3d,
+            "display_mode_2d": config_model.display_mode_2d,
+        }
 
     def execute_export(self, bid_conditions, takeoffs, output_path, **kwargs):
         self.calls.append((bid_conditions, takeoffs, output_path, kwargs))
@@ -91,6 +98,12 @@ class _Provider:
 
     def get_export_strategy(self, _format_key):
         return self.strategy
+
+
+class _ConfigModel:
+    display_modes_synced = True
+    display_mode_3d = Config.DEFAULT_DISPLAY_MODE
+    display_mode_2d = Config.DEFAULT_DISPLAY_MODE
 
 
 class _TakeoffService:
@@ -290,7 +303,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
         project_data = _ProjectData()
         service = ExportService(_Provider(strategy), project_data)
         result = service.export(
-            SimpleNamespace(),
+            _ConfigModel(),
             ExportRequestDto(["page-1"], "html", "out.html", active_page_uid="page-1"),
         )
         self.assertTrue(result.success)
@@ -321,7 +334,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
         project_data = _ProjectData()
         service = ExportService(_Provider(strategy), project_data)
         result = service.export(
-            SimpleNamespace(),
+            _ConfigModel(),
             ExportRequestDto(["page-1", "page-2"], "html", "out.html"),
         )
         self.assertTrue(result.success)
@@ -345,7 +358,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
         project_data.last_selected_page_uid = "missing-page"
         service = ExportService(_Provider(strategy), project_data)
         result = service.export(
-            SimpleNamespace(),
+            _ConfigModel(),
             ExportRequestDto(
                 ["page-1", "page-2"], "html", "out.html", active_page_uid="not-exported"
             ),
@@ -354,13 +367,31 @@ class ThreejsExportLayerTests(unittest.TestCase):
         _conditions, _takeoffs, _output_path, kwargs = strategy.calls[0]
         self.assertEqual(kwargs["active_page_uid"], "page-1")
 
+    def test_html_export_passes_split_display_modes(self):
+        strategy = _ExportStrategy("html")
+        project_data = _ProjectData()
+        service = ExportService(_Provider(strategy), project_data)
+        result = service.export(
+            SimpleNamespace(
+                display_modes_synced=False,
+                display_mode_3d=Config.DISPLAY_MODE_SOLID,
+                display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
+            ),
+            ExportRequestDto(["page-1"], "html", "out.html"),
+        )
+        self.assertTrue(result.success)
+        _conditions, _takeoffs, _output_path, kwargs = strategy.calls[0]
+        self.assertFalse(kwargs["display_modes_synced"])
+        self.assertEqual(kwargs["display_mode_3d"], Config.DISPLAY_MODE_SOLID)
+        self.assertEqual(kwargs["display_mode_2d"], Config.DISPLAY_MODE_TRANSPARENT)
+
     def test_non_html_export_keeps_visible_only_collection(self):
         strategy = _ExportStrategy("obj")
         strategy.name = "OBJ"
         project_data = _ProjectData()
         service = ExportService(_Provider(strategy), project_data)
         result = service.export(
-            SimpleNamespace(),
+            _ConfigModel(),
             ExportRequestDto(["page-1"], "obj", "out.obj"),
         )
         self.assertTrue(result.success)
@@ -571,6 +602,86 @@ class ThreejsExportLayerTests(unittest.TestCase):
         )
         self.assertEqual(entries[0]["area_uid"], "")
 
+    def test_split_display_modes_control_3d_and_2d_opacity_independently(self):
+        condition = Condition(
+            uid="condition-1",
+            name="Slab",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0x336699,
+            pattern=1,
+        )
+        takeoff = Takeoff(
+            uid="takeoff-1",
+            condition_uid="condition-1",
+            page_uid="page-1",
+            position=[0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
+        )
+        color_service = ColorService()
+        takeoff_service = _TakeoffService()
+        _, solid_color_map = color_service.get_color_mapping(
+            {"condition-1": condition}, [takeoff], Config.DISPLAY_MODE_SOLID, False
+        )
+        _, transparent_color_map = color_service.get_color_mapping(
+            {"condition-1": condition},
+            [takeoff],
+            Config.DISPLAY_MODE_TRANSPARENT,
+            False,
+        )
+        _solid_hex, solid_opacity = color_service.get_color_for_takeoff(
+            takeoff, condition, solid_color_map, Config.DISPLAY_MODE_SOLID
+        )
+        _transparent_hex, transparent_2d_opacity = (
+            color_service.get_2d_color_for_takeoff(
+                takeoff, condition, transparent_color_map
+            )
+        )
+        self.assertEqual(solid_opacity, 1.0)
+        self.assertEqual(transparent_2d_opacity, 0.5)
+        entries = process_takeoffs_2d_for_threejs(
+            {"condition-1": condition},
+            [takeoff],
+            color_service,
+            takeoff_service,
+            {
+                "scale_factor1": 1.0,
+                "scale_factor2": 1.0,
+                "width": 72.0,
+                "height": 72.0,
+            },
+            display_mode=Config.DISPLAY_MODE_TRANSPARENT,
+            grayscale_enabled=False,
+        )
+        self.assertEqual(entries[0]["opacity"], 0.5)
+
+    def test_original_2d_display_mode_uses_2d_pattern_opacity(self):
+        condition = Condition(
+            uid="condition-1",
+            condition_type=Condition.TYPE_AREA,
+            color_fill=0x336699,
+            pattern=2,
+        )
+        takeoff = Takeoff(
+            uid="takeoff-1",
+            condition_uid="condition-1",
+            page_uid="page-1",
+            position=[0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
+        )
+        entries = process_takeoffs_2d_for_threejs(
+            {"condition-1": condition},
+            [takeoff],
+            ColorService(),
+            _TakeoffService(),
+            {
+                "scale_factor1": 1.0,
+                "scale_factor2": 1.0,
+                "width": 72.0,
+                "height": 72.0,
+            },
+            display_mode=Config.DISPLAY_MODE_ORIGINAL,
+            grayscale_enabled=False,
+        )
+        self.assertEqual(entries[0]["opacity"], 0.0)
+
     def test_multi_page_renderer_data_deduplicates_pdf_documents(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pdf_path = Path(tmpdir) / "pages.pdf"
@@ -619,7 +730,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 [],
                 ColorService(),
                 _TakeoffService(),
-                "Solid",
+                Config.DISPLAY_MODE_SOLID,
                 True,
                 {},
             )

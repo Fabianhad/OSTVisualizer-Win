@@ -5,15 +5,15 @@ from typing import ClassVar
 
 @dataclass
 class Config:
-    COLOR_MODE_SOLID: ClassVar[str] = "Solid"
-    COLOR_MODE_ORIGINAL: ClassVar[str] = "Original"
-    COLOR_MODE_TRANSPARENT: ClassVar[str] = "Transparent"
+    DISPLAY_MODE_SOLID: ClassVar[str] = "Solid"
+    DISPLAY_MODE_ORIGINAL: ClassVar[str] = "Original"
+    DISPLAY_MODE_TRANSPARENT: ClassVar[str] = "Transparent"
     ROPING_SELECTION_TOUCHING: ClassVar[str] = "touching"
     ROPING_SELECTION_INCLUSIVE: ClassVar[str] = "inclusive"
     HOTLINK_TARGET_ANNOTATION: ClassVar[str] = "annotation"
     HOTLINK_TARGET_VIEW: ClassVar[str] = "view"
     HOTLINK_TARGET_MAIN: ClassVar[str] = "main"
-    DEFAULT_COLOR_MODE: ClassVar[str] = COLOR_MODE_ORIGINAL
+    DEFAULT_DISPLAY_MODE: ClassVar[str] = DISPLAY_MODE_ORIGINAL
     DEFAULT_ROPING_SELECTION_METHOD: ClassVar[str] = ROPING_SELECTION_TOUCHING
     DEFAULT_HOTLINK_TARGET: ClassVar[str] = HOTLINK_TARGET_ANNOTATION
     DEFAULT_AUTO_ZOOM_LEVEL: ClassVar[int] = 0
@@ -22,7 +22,9 @@ class Config:
     DEFAULT_MOUSE_UNPRESSED_SNAP_ANGLE: ClassVar[int] = 15
     DEFAULT_MOUSE_PRESSED_SNAP_ANGLE: ClassVar[int] = 0
     DEFAULT_SNAP_THRESHOLD_PX: ClassVar[int] = 8
-    color_mode: str = DEFAULT_COLOR_MODE
+    display_modes_synced: bool = True
+    display_mode_3d: str = DEFAULT_DISPLAY_MODE
+    display_mode_2d: str = DEFAULT_DISPLAY_MODE
     grayscale_enabled: bool = False
     roping_selection_method: str = DEFAULT_ROPING_SELECTION_METHOD
     display_page_index_with_sheet_name: bool = False
@@ -50,7 +52,9 @@ class Config:
 
     def to_dict(self) -> dict:
         return {
-            "color_mode": self.color_mode,
+            "display_modes_synced": self.display_modes_synced,
+            "display_mode_3d": self.display_mode_3d,
+            "display_mode_2d": self.display_mode_2d,
             "grayscale_enabled": self.grayscale_enabled,
             "roping_selection_method": self.roping_selection_method,
             "display_page_index_with_sheet_name": (
@@ -86,8 +90,12 @@ class Config:
         config = cls()
         if not data:
             return config
-        if "color_mode" in data:
-            config.color_mode = str(data["color_mode"])
+        if "display_modes_synced" in data:
+            config.display_modes_synced = bool(data["display_modes_synced"])
+        if "display_mode_3d" in data:
+            config.display_mode_3d = str(data["display_mode_3d"])
+        if "display_mode_2d" in data:
+            config.display_mode_2d = str(data["display_mode_2d"])
         if "grayscale_enabled" in data:
             config.grayscale_enabled = bool(data["grayscale_enabled"])
         if "roping_selection_method" in data:

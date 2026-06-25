@@ -38,7 +38,7 @@ class _FakeWriter:
 
 
 class _ColorService:
-    def get_color_mapping(self, _conditions, _takeoffs, _color_mode, _grayscale):
+    def get_color_mapping(self, _conditions, _takeoffs, _display_mode, _grayscale):
         return {}, {}
 
     def hex_to_rgb_int(self, color):
@@ -103,7 +103,7 @@ def _export_single_page(exporter, page):
         return exporter.export(
             [PageExportDto(page=page)],
             output_path,
-            color_mode="color",
+            display_mode="color",
             grayscale_enabled=False,
         )
 
@@ -446,7 +446,7 @@ class PDFOverlayExportTests(unittest.TestCase):
             result = exporter.export(
                 [PageExportDto(page=_page())],
                 os.path.join(temp_dir, "out.pdf"),
-                color_mode="color",
+                display_mode="color",
                 grayscale_enabled=False,
                 on_progress=lambda current, total, name: progress_calls.append(
                     (current, total, name)

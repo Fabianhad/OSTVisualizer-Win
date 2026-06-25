@@ -148,7 +148,12 @@ class NavigationStateMachineTests(unittest.TestCase):
             place_condition_uid=None,
             set_place_condition_uids=lambda _uids: None,
             clear_place_condition=lambda: None,
-            state=SimpleNamespace(color_mode="condition", grayscale_enabled=False),
+            state=SimpleNamespace(
+                display_mode_2d="condition",
+                display_mode_3d="condition",
+                display_modes_synced=True,
+                grayscale_enabled=False,
+            ),
         )
         plan_view = SimpleNamespace(
             activate_place_for_condition=lambda _condition_uid, _condition_uids: True,

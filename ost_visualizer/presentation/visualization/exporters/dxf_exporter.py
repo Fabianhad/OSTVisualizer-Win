@@ -15,7 +15,7 @@ class DXFExporter(BaseExporter):
         takeoffs_by_group: Dict,
         materials_info: Dict,
         bid_conditions: Dict,
-        color_mode: str,
+        display_mode: str,
         **kwargs,
     ):
         self.native_writer.clear()

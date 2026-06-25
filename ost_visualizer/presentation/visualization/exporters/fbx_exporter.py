@@ -18,7 +18,7 @@ class FBXExporter(BaseExporter):
         takeoffs_by_group: Dict,
         materials_info: Dict,
         bid_conditions: Dict,
-        color_mode: str,
+        display_mode: str,
         **kwargs,
     ):
         meshes_with_materials = []
@@ -39,7 +39,7 @@ class FBXExporter(BaseExporter):
                         }
                     )
         self.fbx_writer.write_fbx_file(
-            output_path, meshes_with_materials, materials_info, color_mode
+            output_path, meshes_with_materials, materials_info, display_mode
         )
         for mesh_dict in meshes_with_materials:
             mesh_data = mesh_dict.get("mesh_data")

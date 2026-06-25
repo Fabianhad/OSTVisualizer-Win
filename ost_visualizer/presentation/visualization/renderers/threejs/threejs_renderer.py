@@ -31,7 +31,9 @@ def visualize_with_threejs(
     output_path: Optional[str] = None,
     auto_open: bool = True,
     bid_name: Optional[str] = None,
-    color_mode: str = Config.COLOR_MODE_SOLID,
+    display_mode_3d: str = Config.DISPLAY_MODE_SOLID,
+    display_mode_2d: str = Config.DISPLAY_MODE_SOLID,
+    display_modes_synced: bool = True,
     grayscale_enabled: bool = True,
     page_area_selections: Optional[Dict] = None,
     pages: Optional[List[HtmlExportPageDto]] = None,
@@ -49,7 +51,7 @@ def visualize_with_threejs(
         coord_system,
         color_service=color_service,
         takeoff_service=takeoff_service,
-        color_mode=color_mode,
+        display_mode=display_mode_3d,
         grayscale_enabled=grayscale_enabled,
         page_area_selections=page_area_selections,
         areas=areas,
@@ -65,13 +67,18 @@ def visualize_with_threejs(
         areas=areas,
         page_image_layer=page_image_layer,
     )
+    scene_data["display_modes"] = {
+        "synced": bool(display_modes_synced),
+        "mode_3d": display_mode_3d,
+        "mode_2d": display_mode_2d,
+    }
     page_entries, pdf_documents, takeoffs_2d = _build_multi_page_data(
         pages or [],
         bid_conditions,
         bid_takeoffs,
         color_service,
         takeoff_service,
-        color_mode,
+        display_mode_2d,
         grayscale_enabled,
         page_area_selections,
     )
@@ -106,7 +113,7 @@ def _build_multi_page_data(
     bid_takeoffs: List[Takeoff],
     color_service: IColorService,
     takeoff_service: ITakeoffDomainService,
-    color_mode: str,
+    display_mode: str,
     grayscale_enabled: bool,
     page_area_selections: Optional[Dict],
 ):
@@ -171,7 +178,7 @@ def _build_multi_page_data(
                     color_service,
                     takeoff_service,
                     page_info,
-                    color_mode=color_mode,
+                    display_mode=display_mode,
                     grayscale_enabled=grayscale_enabled,
                     page_area_selections=page_area_selections,
                 )

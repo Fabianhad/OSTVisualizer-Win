@@ -128,12 +128,12 @@ class PlacementCoordinator:
         if not page_uid:
             return
         page_takeoffs = self._project_data.get_page_takeoffs(page_uid)
-        color_mode = self._ui_state.state.color_mode
+        display_mode = self._ui_state.state.display_mode_2d
         grayscale_enabled = self._ui_state.state.grayscale_enabled
         _, color_map = self._color_service.get_color_mapping(
             conditions,
             page_takeoffs,
-            color_mode,
+            display_mode,
             grayscale_enabled,
             extra_condition_uids={condition_uid},
         )

@@ -713,7 +713,9 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_options_dialog_loads_persisted_preferences(self):
         dialog = OptionsDialog(
             Config(
-                color_mode="Original",
+                display_modes_synced=False,
+                display_mode_3d=Config.DISPLAY_MODE_ORIGINAL,
+                display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
                 grayscale_enabled=False,
                 roping_selection_method="inclusive",
                 display_page_index_with_sheet_name=True,
@@ -740,7 +742,9 @@ class OptionsPreferencesTests(unittest.TestCase):
                 default_auto_zoom_level=150,
             )
         )
-        self.assertTrue(dialog._color_original_radio.isChecked())
+        self.assertFalse(dialog._display_modes_sync_check.isChecked())
+        self.assertTrue(dialog._display_mode_3d_original_radio.isChecked())
+        self.assertTrue(dialog._display_mode_2d_transparent_radio.isChecked())
         self.assertFalse(dialog._grayscale_check.isChecked())
         self.assertTrue(dialog._roping_inclusive_radio.isChecked())
         self.assertTrue(dialog._page_index_check.isChecked())
@@ -920,7 +924,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog = OptionsDialog(
             Config(
                 show_toolbar_text=False,
-                color_mode="Solid",
+                display_mode_3d=Config.DISPLAY_MODE_SOLID,
+                display_mode_2d=Config.DISPLAY_MODE_SOLID,
                 grayscale_enabled=True,
                 disable_high_resolution_images=True,
                 default_auto_zoom_level=125,
@@ -951,7 +956,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(dialog.get_config(), Config())
         self.assertFalse(_apply_button(dialog).isEnabled())
         self.assertTrue(dialog._toolbar_text_check.isChecked())
-        self.assertTrue(dialog._color_original_radio.isChecked())
+        self.assertTrue(dialog._display_modes_sync_check.isChecked())
+        self.assertTrue(dialog._display_mode_3d_original_radio.isChecked())
+        self.assertTrue(dialog._display_mode_2d_original_radio.isChecked())
         self.assertFalse(dialog._grayscale_check.isChecked())
         self.assertTrue(dialog._snap_to_right_angle_check.isChecked())
         self.assertFalse(dialog._disable_high_res_check.isChecked())
@@ -1648,18 +1655,42 @@ class OptionsPreferencesTests(unittest.TestCase):
         finally:
             parent.deleteLater()
 
-    def test_update_app_options_updates_color_mode_and_publishes_changed_payload(self):
+    def test_update_app_options_updates_split_display_modes_and_publishes_changed_payload(
+        self,
+    ):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)
         event_bus = FakeEventBus()
         service = ConfigService(aggregate, event_bus)
-        changed = service.update_app_options({"color_mode": "Transparent"})
-        self.assertEqual(changed, ["color_mode"])
-        self.assertEqual(aggregate.color_mode, "Transparent")
-        self.assertEqual(repo.saved[-1]["color_mode"], "Transparent")
+        changed = service.update_app_options(
+            {
+                "display_modes_synced": False,
+                "display_mode_3d": Config.DISPLAY_MODE_SOLID,
+                "display_mode_2d": Config.DISPLAY_MODE_TRANSPARENT,
+            }
+        )
+        self.assertEqual(
+            changed,
+            ["display_modes_synced", "display_mode_3d", "display_mode_2d"],
+        )
+        self.assertFalse(aggregate.display_modes_synced)
+        self.assertEqual(aggregate.display_mode_3d, Config.DISPLAY_MODE_SOLID)
+        self.assertEqual(aggregate.display_mode_2d, Config.DISPLAY_MODE_TRANSPARENT)
+        self.assertEqual(repo.saved[-1]["display_mode_3d"], Config.DISPLAY_MODE_SOLID)
+        self.assertEqual(
+            repo.saved[-1]["display_mode_2d"], Config.DISPLAY_MODE_TRANSPARENT
+        )
         self.assertEqual(
             event_bus.events,
-            [_app_config_event({"color_mode": "Transparent"})],
+            [
+                _app_config_event(
+                    {
+                        "display_modes_synced": False,
+                        "display_mode_3d": Config.DISPLAY_MODE_SOLID,
+                        "display_mode_2d": Config.DISPLAY_MODE_TRANSPARENT,
+                    }
+                )
+            ],
         )
 
     def test_update_app_options_updates_grayscale_and_publishes_changed_payload(self):
@@ -1756,18 +1787,26 @@ class OptionsPreferencesTests(unittest.TestCase):
             [_app_config_event({"hotlink_target": "main"})],
         )
 
-    def test_menu_color_mode_uses_general_app_config_update_path(self):
+    def test_menu_display_modes_use_general_app_config_update_path(self):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)
         event_bus = FakeEventBus()
         service = ConfigService(aggregate, event_bus)
         controller = MenuController.__new__(MenuController)
         controller.config_service = service
-        controller._set_takeoff_color_mode("Transparent")
-        self.assertEqual(aggregate.color_mode, "Transparent")
+        controller._set_takeoff_display_mode_3d(Config.DISPLAY_MODE_TRANSPARENT)
+        self.assertEqual(aggregate.display_mode_3d, Config.DISPLAY_MODE_TRANSPARENT)
+        self.assertEqual(aggregate.display_mode_2d, Config.DISPLAY_MODE_TRANSPARENT)
         self.assertEqual(
             event_bus.events,
-            [_app_config_event({"color_mode": "Transparent"})],
+            [
+                _app_config_event(
+                    {
+                        "display_mode_3d": Config.DISPLAY_MODE_TRANSPARENT,
+                        "display_mode_2d": Config.DISPLAY_MODE_TRANSPARENT,
+                    }
+                )
+            ],
         )
 
     def test_summary_tab_disables_project_tree_creation_and_import_menu_paths(self):
@@ -1790,7 +1829,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         aggregate = ConfigAggregate(repo)
         event_bus = FakeEventBus()
         service = ConfigService(aggregate, event_bus)
-        changed = service.update_app_options({"color_mode": aggregate.color_mode})
+        changed = service.update_app_options(
+            {"display_mode_3d": aggregate.display_mode_3d}
+        )
         self.assertEqual(changed, [])
         self.assertEqual(event_bus.events, [])
 
@@ -1877,7 +1918,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             detached_window,
         )
 
-    def test_invalid_color_mode_uses_config_aggregate_validation_policy(self):
+    def test_invalid_display_mode_uses_config_aggregate_validation_policy(self):
         repo = FakeConfigRepository()
         aggregate = ConfigAggregate(repo)
         event_bus = FakeEventBus()
@@ -1886,9 +1927,9 @@ class OptionsPreferencesTests(unittest.TestCase):
             "ost_visualizer.domain.aggregates.config_aggregate",
             level="WARNING",
         ):
-            changed = service.update_app_options({"color_mode": "BadMode"})
+            changed = service.update_app_options({"display_mode_3d": "BadMode"})
         self.assertEqual(changed, [])
-        self.assertEqual(aggregate.color_mode, Config.DEFAULT_COLOR_MODE)
+        self.assertEqual(aggregate.display_mode_3d, Config.DEFAULT_DISPLAY_MODE)
         self.assertEqual(event_bus.events, [])
 
     def test_invalid_snap_threshold_uses_config_aggregate_validation_policy(self):
@@ -1930,7 +1971,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         event_bus = FakeEventBus()
         service = ConfigService(aggregate, event_bus)
         dialog = OptionsDialog(service.get_config_snapshot())
-        dialog._color_original_radio.setChecked(True)
+        dialog._display_mode_3d_original_radio.setChecked(True)
         dialog._grayscale_check.setChecked(False)
         dialog._roping_inclusive_radio.setChecked(True)
         dialog._page_index_check.setChecked(True)
@@ -1976,7 +2017,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog.accept()
         changed = service.update_app_options(dialog.get_config())
         self.assertIn("roping_selection_method", changed)
-        self.assertEqual(aggregate.color_mode, "Original")
+        self.assertEqual(aggregate.display_mode_3d, Config.DISPLAY_MODE_ORIGINAL)
+        self.assertEqual(aggregate.display_mode_2d, Config.DISPLAY_MODE_ORIGINAL)
         self.assertFalse(aggregate.grayscale_enabled)
         self.assertEqual(aggregate.roping_selection_method, "inclusive")
         self.assertTrue(aggregate.display_page_index_with_sheet_name)
@@ -2040,11 +2082,12 @@ class OptionsPreferencesTests(unittest.TestCase):
         aggregate = ConfigAggregate(repo)
         service = ConfigService(aggregate, FakeEventBus())
         dialog = OptionsDialog(service.get_config_snapshot())
-        dialog._color_transparent_radio.setChecked(True)
+        dialog._display_mode_3d_transparent_radio.setChecked(True)
         dialog._grayscale_check.setChecked(True)
         dialog._roping_inclusive_radio.setChecked(True)
         dialog.reject()
-        self.assertEqual(aggregate.color_mode, "Original")
+        self.assertEqual(aggregate.display_mode_3d, Config.DISPLAY_MODE_ORIGINAL)
+        self.assertEqual(aggregate.display_mode_2d, Config.DISPLAY_MODE_ORIGINAL)
         self.assertFalse(aggregate.grayscale_enabled)
         self.assertEqual(aggregate.roping_selection_method, "touching")
         self.assertEqual(repo.saved, [])
@@ -2085,17 +2128,21 @@ class OptionsPreferencesTests(unittest.TestCase):
         event_bus = FakeEventBus()
         service = ConfigService(aggregate, event_bus)
         dialog = OptionsDialog(service.get_config_snapshot())
-        dialog._color_transparent_radio.setChecked(True)
+        dialog._display_mode_3d_transparent_radio.setChecked(True)
         dialog._grayscale_check.setChecked(True)
         dialog.accept()
         changed = service.update_app_options(dialog.get_config())
-        self.assertEqual(changed, ["color_mode", "grayscale_enabled"])
+        self.assertEqual(
+            changed,
+            ["display_mode_3d", "display_mode_2d", "grayscale_enabled"],
+        )
         self.assertEqual(
             event_bus.events,
             [
                 _app_config_event(
                     {
-                        "color_mode": "Transparent",
+                        "display_mode_3d": Config.DISPLAY_MODE_TRANSPARENT,
+                        "display_mode_2d": Config.DISPLAY_MODE_TRANSPARENT,
                         "grayscale_enabled": True,
                     }
                 )
@@ -2119,7 +2166,9 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_config_defaults_preserve_existing_enabled_behaviors(self):
         config = Config()
         self.assertTrue(config.show_toolbar_text)
-        self.assertEqual(config.color_mode, "Original")
+        self.assertTrue(config.display_modes_synced)
+        self.assertEqual(config.display_mode_3d, Config.DISPLAY_MODE_ORIGINAL)
+        self.assertEqual(config.display_mode_2d, Config.DISPLAY_MODE_ORIGINAL)
         self.assertFalse(config.grayscale_enabled)
         self.assertFalse(config.disable_high_resolution_images)
         self.assertTrue(config.enable_intelligent_paste)
@@ -4415,7 +4464,9 @@ class OptionsPreferencesTests(unittest.TestCase):
             update_viewers=lambda page_uids: calls.append(("viewers", page_uids))
         )
         coordinator._update_plan_view_for_active = lambda: calls.append("plan_view")
-        coordinator._on_app_config_updated(value={"color_mode": "Original"})
+        coordinator._on_app_config_updated(
+            value={"display_mode_3d": Config.DISPLAY_MODE_ORIGINAL}
+        )
         self.assertEqual(
             calls,
             [

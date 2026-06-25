@@ -142,7 +142,7 @@ class ExportHandler:
                 lambda: self.pdf_exporter.export(
                     pages_data,
                     filename,
-                    self.config_model.color_mode,
+                    self.config_model.display_mode_2d,
                     self.config_model.grayscale_enabled,
                     self.project_data.get_page_area_selections(),
                     bid_annotations,

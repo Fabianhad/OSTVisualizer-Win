@@ -13,7 +13,7 @@ class FBXMeshWriter:
         output_path: str,
         meshes_with_materials: List[Dict[str, Any]],
         materials_info: Dict,
-        color_mode: str,
+        display_mode: str,
     ):
         material_ids = {}
         for key in materials_info.keys():
@@ -41,7 +41,9 @@ class FBXMeshWriter:
                 }
             )
         with open(output_path, "w") as f:
-            self._write_header(f, color_mode, len(geometry_models), len(materials_info))
+            self._write_header(
+                f, display_mode, len(geometry_models), len(materials_info)
+            )
             self._write_materials(f, materials_info, material_ids)
             self._write_geometries_and_models(f, geometry_models)
             self._write_connections(f, geometry_models)
@@ -51,11 +53,11 @@ class FBXMeshWriter:
         self.object_id_counter += 1
         return current_id
 
-    def _write_header(self, f, color_mode: str, num_models: int, num_materials: int):
+    def _write_header(self, f, display_mode: str, num_models: int, num_materials: int):
         timestamp = datetime.now()
         header = f"""; FBX 7.4.0 project file
 ; Created by OST Visualizer
-; Color Mode: {color_mode}
+; Display Mode: {display_mode}
 ; Creation time: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}
 FBXHeaderExtension: {{
 \tFBXHeaderVersion: 1003

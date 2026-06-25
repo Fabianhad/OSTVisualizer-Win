@@ -89,7 +89,7 @@ class PDFExporter:
         self,
         pages_data: List[PageExportData],
         output_path: str,
-        color_mode: str,
+        display_mode: str,
         grayscale_enabled: bool,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         bid_annotations: Optional[List[BidAnnotation]] = None,
@@ -107,7 +107,7 @@ class PDFExporter:
                     bid_conditions = page_data.bid_conditions
                     page_info = self._build_page_info(page)
                     _, color_map = self._color_service.get_color_mapping(
-                        bid_conditions, bid_takeoffs, color_mode, grayscale_enabled
+                        bid_conditions, bid_takeoffs, display_mode, grayscale_enabled
                     )
                     takeoff_data = self._collect_takeoffs(
                         bid_takeoffs,

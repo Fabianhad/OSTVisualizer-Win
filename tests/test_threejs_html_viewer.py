@@ -1,4 +1,5 @@
 import unittest
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.presentation.visualization.renderers.threejs.threejs_renderer import (
     _generate_html,
 )
@@ -50,10 +51,10 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
             "const pageBox = getPagePlaneBox(pageWidth, pageHeight, box)", html
         )
         self.assertIn("box.clone().union(pageBox)", html)
-        self.assertIn(
-            "const sceneClippingBounds = getSceneClippingBounds(sceneData.bounds, maxPageW, maxPageH)",
-            html,
-        )
+        self.assertIn("const sceneClippingBounds = getSceneClippingBounds(", html)
+        self.assertIn("sceneData.bounds,", html)
+        self.assertIn("maxPageW,", html)
+        self.assertIn("maxPageH,", html)
         self.assertIn("function getSceneDepthRange()", html)
         self.assertIn("function updateCameraClipping(force = false)", html)
         self.assertIn("nearBox: nearBox", html)
@@ -190,16 +191,16 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("function createVisibilityRow(entry, registry, rows", html)
         self.assertIn("function buildPageCombo()", html)
         self.assertIn("function setPage3dVisible(pageUid, visible)", html)
-        self.assertIn("checkbox.addEventListener('change'", html)
-        self.assertIn("name.addEventListener('click'", html)
-        self.assertNotIn("renderVisibilitySection('Pages'", html)
-        self.assertIn("renderVisibilitySection('Layers'", html)
+        self.assertIn('checkbox.addEventListener("change"', html)
+        self.assertIn('name.addEventListener("click"', html)
+        self.assertNotIn('renderVisibilitySection("Pages"', html)
+        self.assertIn('renderVisibilitySection("Layers"', html)
         self.assertIn("function renderConditionSection()", html)
         self.assertIn("getConditionTypeUid(condition)", html)
         self.assertIn("getConditionTypeName(condition)", html)
-        self.assertIn("const UNASSIGNED_CDN_TYPE_NAME = '(unassigned)'", html)
-        self.assertIn("const IMAGE_LAYER_DISPLAY_NAME = 'Image'", html)
-        self.assertIn("renderVisibilitySection('Areas'", html)
+        self.assertIn('const UNASSIGNED_CDN_TYPE_NAME = "(unassigned)"', html)
+        self.assertIn('const IMAGE_LAYER_DISPLAY_NAME = "Image"', html)
+        self.assertIn('renderVisibilitySection("Areas"', html)
         self.assertIn("setGroupVisible(registry, entry.uid", html)
         self.assertIn("function compareConditionEntries(a, b)", html)
         self.assertIn(".sort(compareConditionEntries)", html)
@@ -216,14 +217,15 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("function setupPlanView(pdfCanvas = null, forceFit = true)", html)
         self.assertIn("function setActivePlanPage(pageUid)", html)
         self.assertIn("function updatePdfPlaneForActivePage()", html)
-        self.assertIn("pageComboButton.addEventListener('click'", html)
-        self.assertIn("planView.addEventListener('wheel'", html)
-        self.assertIn("planView.addEventListener('pointerdown'", html)
-        self.assertIn("setViewMode('plan')", html)
+        self.assertIn('pageComboButton.addEventListener("click"', html)
+        self.assertIn("planView.addEventListener(", html)
+        self.assertIn('"wheel",', html)
+        self.assertIn('planView.addEventListener("pointerdown"', html)
+        self.assertIn('setViewMode("plan")', html)
         self.assertIn("controls.enabled = !usePlan", html)
-        self.assertIn(
-            "document.createElementNS('http://www.w3.org/2000/svg', 'path')", html
-        )
+        self.assertIn("document.createElementNS(", html)
+        self.assertIn('"http://www.w3.org/2000/svg"', html)
+        self.assertIn('"path"', html)
         self.assertIn("layerUid: takeoff.layer_uid", html)
         self.assertIn("pageUid: takeoffPageUid", html)
         self.assertIn("usesPage3dVisibility: false", html)
@@ -241,7 +243,7 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn(
             "section.appendChild(createVisibilityRow(entry, registry, rows))", html
         )
-        self.assertIn("swatchClass: 'condition-color-swatch'", html)
+        self.assertIn('swatchClass: "condition-color-swatch"', html)
 
     def test_viewer_combines_layer_condition_and_area_visibility(self):
         html = _generate_html(
@@ -309,6 +311,81 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("entry.object.material = entry.material", html)
         self.assertIn("renderWboitPassWithVisibility()", html)
         self.assertIn("usesPage3dVisibility: true", html)
+
+    def test_scene_json_includes_split_display_modes(self):
+        html = _generate_html(
+            {
+                "title": "Display Mode Test",
+                "geometries": [],
+                "camera": {
+                    "position": [0.0, 150.0, -100.0],
+                    "target": [0.0, 0.0, 0.0],
+                },
+                "bounds": {
+                    "min": [-50.0, -5.0, -50.0],
+                    "max": [50.0, 75.0, 50.0],
+                },
+                "display_modes": {
+                    "synced": False,
+                    "mode_3d": Config.DISPLAY_MODE_SOLID,
+                    "mode_2d": Config.DISPLAY_MODE_TRANSPARENT,
+                },
+            },
+            "Display Mode Test",
+        )
+        self.assertIn('"display_modes":', html)
+        self.assertIn(f'"mode_3d":"{Config.DISPLAY_MODE_SOLID}"', html)
+        self.assertIn(f'"mode_2d":"{Config.DISPLAY_MODE_TRANSPARENT}"', html)
+
+    def test_wboit_detection_uses_3d_geometry_opacity_only(self):
+        html = _generate_html(
+            {
+                "title": "2D Transparent Only Test",
+                "geometries": [
+                    {
+                        "vertices": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+                        "normals": [0, 1, 0, 0, 1, 0, 0, 1, 0],
+                        "indices": [0, 1, 2],
+                        "color": [0.3, 0.4, 0.5],
+                        "opacity": 1.0,
+                        "name": "Solid Mesh",
+                        "visible": True,
+                        "takeoff_uid": "takeoff-1",
+                        "page_uid": "page-1",
+                        "condition_uid": "condition-1",
+                        "area_uid": "area-1",
+                        "layer_uid": "layer-1",
+                    }
+                ],
+                "camera": {
+                    "position": [0.0, 150.0, -100.0],
+                    "target": [0.0, 0.0, 0.0],
+                },
+                "bounds": {
+                    "min": [-50.0, -5.0, -50.0],
+                    "max": [50.0, 75.0, 50.0],
+                },
+                "takeoffs_2d": [
+                    {
+                        "takeoff_uid": "takeoff-a",
+                        "page_uid": "page-1",
+                        "condition_uid": "condition-a",
+                        "area_uid": "area-a",
+                        "layer_uid": "layer-a",
+                        "name": "Condition A",
+                        "visible": True,
+                        "kind": "area",
+                        "color": "#336699",
+                        "opacity": 0.5,
+                        "rings": [[[0.0, 0.0], [72.0, 0.0], [72.0, 72.0]]],
+                        "is_negative": False,
+                    }
+                ],
+            },
+            "2D Transparent Only Test",
+        )
+        self.assertIn("sceneData.geometries.forEach((geomData) => {", html)
+        self.assertIn("if (geomData.opacity < 1.0) hasTransparent = true", html)
 
 
 if __name__ == "__main__":

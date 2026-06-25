@@ -21,22 +21,22 @@ class OBJExporter(BaseExporter):
         takeoffs_by_group: Dict,
         materials_info: Dict,
         bid_conditions: Dict,
-        color_mode: str,
+        display_mode: str,
         **kwargs,
     ):
         base_name = Path(output_path).stem
         output_dir = os.path.dirname(output_path) or "."
         mtl_filename = base_name + ".mtl"
         mtl_path = os.path.join(output_dir, mtl_filename)
-        self._write_mtl_file(mtl_path, materials_info, color_mode)
+        self._write_mtl_file(mtl_path, materials_info, display_mode)
         self._write_obj_file(
             output_path, takeoffs_by_group, materials_info, bid_conditions, mtl_filename
         )
 
-    def _write_mtl_file(self, mtl_path: str, materials_info: Dict, color_mode: str):
+    def _write_mtl_file(self, mtl_path: str, materials_info: Dict, display_mode: str):
         with open(mtl_path, "w") as mtl:
             mtl.write(f"# Created by OST Visualizer\n")
-            mtl.write(f"# Color Mode: {color_mode}\n")
+            mtl.write(f"# Display Mode: {display_mode}\n")
             mtl.write(f"# Materials: {len(materials_info)}\n\n")
             for key, (
                 material_name,

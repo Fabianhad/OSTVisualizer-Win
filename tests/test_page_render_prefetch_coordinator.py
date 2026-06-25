@@ -410,7 +410,14 @@ class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):
 
         class FakeUiState:
             state = type(
-                "State", (), {"color_mode": "condition", "grayscale_enabled": False}
+                "State",
+                (),
+                {
+                    "display_mode_2d": "condition",
+                    "display_mode_3d": "condition",
+                    "display_modes_synced": True,
+                    "grayscale_enabled": False,
+                },
             )()
             place_condition_uid = None
 
