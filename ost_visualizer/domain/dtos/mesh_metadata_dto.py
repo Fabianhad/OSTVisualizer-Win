@@ -9,6 +9,8 @@ class MeshMetadata(TypedDict, total=False):
     cdn_type: str
     cdn_type_uid: str
     cdn_type_name: str
+    condition_color: str
+    condition_ref_no: int
     takeoff_uid: str
     area_uid: str
     area_name: str

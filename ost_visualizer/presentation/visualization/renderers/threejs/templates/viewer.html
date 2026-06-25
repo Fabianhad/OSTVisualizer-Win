@@ -11,6 +11,7 @@
             --viewer-border: rgba(255, 255, 255, 0.08);
             --viewer-divider: rgba(255, 255, 255, 0.06);
             --viewer-control-border: rgba(255, 255, 255, 0.1);
+            --viewer-swatch-border: rgba(255, 255, 255, 0.16);
             --viewer-scrollbar: rgba(255, 255, 255, 0.1);
             --viewer-control-bg: rgba(255, 255, 255, 0.03);
             --viewer-hover-bg: rgba(255, 255, 255, 0.06);
@@ -31,6 +32,7 @@
             --viewer-border: rgba(15, 23, 42, 0.12);
             --viewer-divider: rgba(15, 23, 42, 0.08);
             --viewer-control-border: rgba(15, 23, 42, 0.14);
+            --viewer-swatch-border: rgba(15, 23, 42, 0.2);
             --viewer-scrollbar: rgba(15, 23, 42, 0.18);
             --viewer-control-bg: rgba(15, 23, 42, 0.04);
             --viewer-hover-bg: rgba(15, 23, 42, 0.07);
@@ -162,6 +164,13 @@
             text-transform: uppercase;
         }
 
+        .condition-type-title {
+            padding: 7px 14px 3px;
+            color: var(--viewer-muted);
+            font-size: 11px;
+            font-weight: 600;
+        }
+
         .visibility-row {
             display: flex;
             align-items: center;
@@ -181,6 +190,15 @@
             height: 14px;
             cursor: pointer;
             flex-shrink: 0;
+        }
+
+        .condition-color-swatch {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+            flex-shrink: 0;
+            border: 1px solid var(--viewer-swatch-border);
+            background: var(--viewer-muted);
         }
 
         .visibility-name {
@@ -223,6 +241,10 @@
                 padding: 8px 12px 4px;
             }
 
+            .condition-type-title {
+                padding: 8px 12px 4px;
+            }
+
             .visibility-row {
                 padding: 8px 12px;
                 gap: 10px;
@@ -232,6 +254,11 @@
             .visibility-row input[type="checkbox"] {
                 width: 18px;
                 height: 18px;
+            }
+
+            .condition-color-swatch {
+                width: 14px;
+                height: 14px;
             }
         }
     </style>
@@ -312,6 +339,8 @@
         const areaRows = new Map();
         const visibilityObjects = [];
         const UNLAYERED_UID = '__unlayered__';
+        const UNASSIGNED_CDN_TYPE_UID = '__unassigned_cdn_type__';
+        const UNASSIGNED_CDN_TYPE_NAME = '(unassigned)';
 
         function normalizeLayerUid(layerUid) {
             const uid = layerUid === undefined || layerUid === null ? '' : String(layerUid);
@@ -339,6 +368,30 @@
             return registry.get(uid);
         }
 
+        function normalizeHexColor(color) {
+            if (typeof color !== 'string') return '';
+            const normalized = color.trim();
+            return /^#[0-9a-fA-F]{6}$/.test(normalized) ? normalized : '';
+        }
+
+        function getConditionTypeUid(condition) {
+            return normalizeOptionalUid(condition.cdn_type_uid) || UNASSIGNED_CDN_TYPE_UID;
+        }
+
+        function getConditionTypeName(condition) {
+            const cdnTypeUid = normalizeOptionalUid(condition.cdn_type_uid);
+            if (!cdnTypeUid) return UNASSIGNED_CDN_TYPE_NAME;
+            return condition.cdn_type_name || 'Unknown';
+        }
+
+        function compareByName(a, b) {
+            return a.name.localeCompare(b.name);
+        }
+
+        function compareConditionEntries(a, b) {
+            return (a.refNo - b.refNo) || compareByName(a, b);
+        }
+
         function buildVisibilityRegistries() {
             const layers = Array.isArray(sceneData.layers) ? sceneData.layers : [];
             layers.forEach(layer => {
@@ -363,13 +416,21 @@
             }
             const conditions = Array.isArray(sceneData.conditions) ? sceneData.conditions : [];
             conditions.forEach(condition => {
-                ensureVisibilityEntry(
+                const entry = ensureVisibilityEntry(
                     conditionVisibility,
                     normalizeOptionalUid(condition.uid),
                     condition.name,
                     condition.visible,
                     'Condition'
                 );
+                if (entry) {
+                    entry.cdnTypeUid = getConditionTypeUid(condition);
+                    entry.cdnTypeName = getConditionTypeName(condition);
+                    entry.color = normalizeHexColor(condition.color);
+                    entry.refNo = Number.isFinite(Number(condition.ref_no))
+                        ? Number(condition.ref_no)
+                        : 0;
+                }
             });
             const areas = Array.isArray(sceneData.areas) ? sceneData.areas : [];
             areas.forEach(area => {
@@ -489,6 +550,70 @@
             return entries.length;
         }
 
+        function renderConditionSection() {
+            const entries = Array.from(conditionVisibility.values());
+            if (!entries.length) return 0;
+            const section = document.createElement('div');
+            section.className = 'visibility-section';
+
+            const heading = document.createElement('div');
+            heading.className = 'visibility-section-title';
+            heading.textContent = 'Conditions';
+            section.appendChild(heading);
+
+            const groups = new Map();
+            entries.forEach(entry => {
+                const groupUid = entry.cdnTypeUid || UNASSIGNED_CDN_TYPE_UID;
+                if (!groups.has(groupUid)) {
+                    groups.set(groupUid, {
+                        uid: groupUid,
+                        name: entry.cdnTypeName || UNASSIGNED_CDN_TYPE_NAME,
+                        entries: [],
+                    });
+                }
+                groups.get(groupUid).entries.push(entry);
+            });
+
+            const sortedGroups = Array.from(groups.values()).sort(compareByName);
+            sortedGroups.forEach(group => {
+                const groupHeader = document.createElement('div');
+                groupHeader.className = 'condition-type-title';
+                groupHeader.textContent = group.name;
+                section.appendChild(groupHeader);
+
+                group.entries
+                    .sort(compareConditionEntries)
+                    .forEach(entry => {
+                        const row = document.createElement('label');
+                        row.className = 'visibility-row condition-row';
+                        row.title = entry.name;
+                        row.classList.toggle('disabled', !entry.visible);
+
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.checked = entry.visible;
+                        checkbox.addEventListener('change', () => {
+                            setGroupVisible(conditionVisibility, entry.uid, checkbox.checked);
+                        });
+
+                        const swatch = document.createElement('div');
+                        swatch.className = 'condition-color-swatch';
+                        if (entry.color) swatch.style.background = entry.color;
+
+                        const name = document.createElement('span');
+                        name.className = 'visibility-name';
+                        name.textContent = entry.name;
+
+                        row.append(checkbox, swatch, name);
+                        section.appendChild(row);
+                        conditionRows.set(entry.uid, row);
+                    });
+            });
+
+            layerList.appendChild(section);
+            return entries.length;
+        }
+
         function buildLayerPanel() {
             layerList.innerHTML = '';
             layerRows.clear();
@@ -496,7 +621,7 @@
             areaRows.clear();
             const entryCount =
                 renderVisibilitySection('Layers', layerVisibility, layerRows)
-                + renderVisibilitySection('Conditions', conditionVisibility, conditionRows)
+                + renderConditionSection()
                 + renderVisibilitySection('Areas', areaVisibility, areaRows);
 
             if (!entryCount) {

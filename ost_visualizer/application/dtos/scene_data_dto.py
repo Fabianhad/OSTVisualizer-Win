@@ -41,6 +41,8 @@ class SceneConditionEntry(TypedDict):
     visible: bool
     cdn_type_uid: str
     cdn_type_name: str
+    color: str
+    ref_no: int
 
 
 class SceneAreaEntry(TypedDict):

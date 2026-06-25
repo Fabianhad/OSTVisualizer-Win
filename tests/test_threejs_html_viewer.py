@@ -77,7 +77,24 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
                 },
             ],
             "conditions": [
-                {"uid": "condition-a", "name": "Condition A", "visible": True},
+                {
+                    "uid": "condition-a",
+                    "name": "Condition A",
+                    "visible": True,
+                    "cdn_type_uid": "type-a",
+                    "cdn_type_name": "Concrete",
+                    "color": "#336699",
+                    "ref_no": 2,
+                },
+                {
+                    "uid": "condition-b",
+                    "name": "Condition B",
+                    "visible": True,
+                    "cdn_type_uid": "",
+                    "cdn_type_name": "",
+                    "color": "",
+                    "ref_no": 1,
+                },
             ],
             "areas": [
                 {"uid": "area-a", "name": "Area A", "visible": True, "sequence": 1},
@@ -95,8 +112,14 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("function setGroupVisible(registry, uid, visible)", html)
         self.assertIn("function setAllGroupsVisible(visible)", html)
         self.assertIn("renderVisibilitySection('Layers'", html)
-        self.assertIn("renderVisibilitySection('Conditions'", html)
+        self.assertIn("function renderConditionSection()", html)
+        self.assertIn("getConditionTypeUid(condition)", html)
+        self.assertIn("getConditionTypeName(condition)", html)
+        self.assertIn("const UNASSIGNED_CDN_TYPE_NAME = '(unassigned)'", html)
         self.assertIn("renderVisibilitySection('Areas'", html)
+        self.assertIn("setGroupVisible(conditionVisibility, entry.uid", html)
+        self.assertIn("function compareConditionEntries(a, b)", html)
+        self.assertIn(".sort(compareConditionEntries)", html)
         self.assertIn("mesh.userData.takeoffUid = geomData.takeoff_uid", html)
         self.assertIn("object.userData.conditionUid = conditionUid", html)
         self.assertIn("object.userData.areaUid = areaUid", html)
@@ -105,6 +128,9 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("pageEntry.visible = layer.visible !== false", html)
         self.assertNotIn("pdf-toggle", html)
         self.assertNotIn("layer-swatch", html)
+        self.assertIn("condition-color-swatch", html)
+        self.assertIn("row.append(checkbox, name)", html)
+        self.assertIn("row.append(checkbox, swatch, name)", html)
 
     def test_viewer_combines_layer_condition_and_area_visibility(self):
         html = _generate_html(

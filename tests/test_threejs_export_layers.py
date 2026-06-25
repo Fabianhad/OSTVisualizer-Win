@@ -275,6 +275,8 @@ class ThreejsExportLayerTests(unittest.TestCase):
                         "visible": True,
                         "cdn_type_uid": "type-1",
                         "cdn_type_name": "Concrete",
+                        "condition_color": "#336699",
+                        "condition_ref_no": 12,
                     },
                 )
             ],
@@ -308,6 +310,10 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertTrue(geometry["visible"])
         self.assertEqual(scene["conditions"][0]["layer_uid"], "layer-1")
         self.assertTrue(scene["conditions"][0]["visible"])
+        self.assertEqual(scene["conditions"][0]["cdn_type_uid"], "type-1")
+        self.assertEqual(scene["conditions"][0]["cdn_type_name"], "Concrete")
+        self.assertEqual(scene["conditions"][0]["color"], "#336699")
+        self.assertEqual(scene["conditions"][0]["ref_no"], 12)
         self.assertEqual(scene["areas"][0]["uid"], "area-1")
         self.assertEqual(scene["areas"][0]["name"], "Area One")
         self.assertEqual(scene["layers"][0]["uid"], "layer-1")

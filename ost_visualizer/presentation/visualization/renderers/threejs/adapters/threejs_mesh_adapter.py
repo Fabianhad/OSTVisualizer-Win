@@ -52,6 +52,8 @@ class ThreejsMeshAdapter:
                         or metadata.get("cdn_type")
                         or "Unknown"
                     ),
+                    "color": str(metadata.get("condition_color", "") or ""),
+                    "ref_no": int(metadata.get("condition_ref_no", 0) or 0),
                 }
             area_uid = str(metadata.get("area_uid", "") or "")
             if area_uid and area_uid not in areas_by_uid:

@@ -11,6 +11,7 @@ from ...core.boolean_operations import apply_boolean_operations
 from ...core.mesh_generator import MeshData
 from ...meshing.mesh_builder import calculate_mesh_bounds, get_holes_for_takeoff
 from ...meshing.mesh_factory import MeshFactory
+from ...services.color_service import int_to_hex
 
 Bounds = Tuple[float, float, float, float, float, float]
 
@@ -77,6 +78,8 @@ def process_meshes_for_threejs(
                         if condition.cdn_type_name
                         else "Unknown"
                     ),
+                    "condition_color": int_to_hex(condition.color_fill or 0),
+                    "condition_ref_no": condition.ref_no,
                     "cdn_type": (
                         condition.cdn_type_name
                         if condition.cdn_type_name
