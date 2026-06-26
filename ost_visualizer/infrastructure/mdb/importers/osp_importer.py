@@ -12,6 +12,9 @@ from .ost_importer import OstImporter
 
 logger = logging.getLogger(__name__)
 
+_OSP_TEMP_PREFIX = "ostv_osp_"
+_LEGACY_WINDOWS_PATH_LIMIT = 240
+
 
 def _cab_extract_output_dir(path: Path) -> str:
     resolved = str(path.resolve())
@@ -22,6 +25,60 @@ def _cab_extract_output_dir(path: Path) -> str:
     if resolved.startswith("\\\\"):
         return "\\\\?\\UNC\\" + resolved[2:]
     return "\\\\?\\" + resolved
+
+
+def _extract_temp_parent_candidates() -> list[Path]:
+    default_parent = Path(tempfile.gettempdir())
+    if os.name != "nt":
+        return [default_parent]
+
+    candidates = [default_parent]
+    drive_root = default_parent.anchor or f"{os.environ.get('SystemDrive', 'C:')}\\"
+    short_parent = Path(drive_root) / "OSTVTemp"
+    if short_parent != default_parent:
+        candidates.append(short_parent)
+    return candidates
+
+
+def _is_safe_legacy_extract_root(root: Path, member_names: list[str]) -> bool:
+    if os.name != "nt":
+        return True
+    return all(
+        len(str(root / member_name)) < _LEGACY_WINDOWS_PATH_LIMIT
+        for member_name in member_names
+    )
+
+
+def _create_extract_temp_dir(member_names: list[str]) -> Path:
+    fallback_error: Optional[OSError] = None
+    candidates = _extract_temp_parent_candidates()
+    default_parent = candidates[0]
+    for parent in candidates:
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = Path(tempfile.mkdtemp(prefix=_OSP_TEMP_PREFIX, dir=str(parent)))
+        except OSError as exc:
+            fallback_error = exc
+            continue
+
+        if (
+            _is_safe_legacy_extract_root(tmp_path, member_names)
+            or parent != default_parent
+        ):
+            return tmp_path
+        _remove_temp_tree(tmp_path)
+
+    try:
+        return Path(tempfile.mkdtemp(prefix=_OSP_TEMP_PREFIX))
+    except OSError:
+        if fallback_error is not None:
+            raise fallback_error
+        raise
+
+
+def _create_cab_member_parent_dir(tmp_path: Path, member_name: str) -> None:
+    subdir = (tmp_path / member_name).parent
+    Path(_cab_extract_output_dir(subdir)).mkdir(parents=True, exist_ok=True)
 
 
 def _remove_temp_tree(path: Path) -> None:
@@ -49,11 +106,10 @@ class OspImporter:
     ) -> bool:
         tmp_path: Optional[Path] = None
         try:
-            tmp_path = Path(tempfile.mkdtemp(prefix="ostv_osp_"))
-            names = ost_cab.list_cab(osp_file_path)
+            names = list(ost_cab.list_cab(osp_file_path))
+            tmp_path = _create_extract_temp_dir(names)
             for name in names:
-                subdir = (tmp_path / name).parent
-                subdir.mkdir(parents=True, exist_ok=True)
+                _create_cab_member_parent_dir(tmp_path, name)
             if not ost_cab.extract_cab(
                 osp_file_path, _cab_extract_output_dir(tmp_path)
             ):

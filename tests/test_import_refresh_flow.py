@@ -1,4 +1,5 @@
 import unittest
+import tempfile
 from pathlib import Path
 from PySide6 import QtWidgets
 from ost_visualizer.application.services.import_service import ImportService
@@ -29,16 +30,17 @@ class FakeImporter:
 
 
 class FakeOspCab:
-    def __init__(self):
+    def __init__(self, names=None):
         self.extract_calls = []
         self.nested_dir_precreated = False
         self.root = None
-
-    def list_cab(self, _source_path):
-        return [
+        self.names = names or [
             "Project.ost",
             "TempImages!.tmp\\deep\\sheet.pdf",
         ]
+
+    def list_cab(self, _source_path):
+        return list(self.names)
 
     def extract_cab(self, _source_path, output_dir):
         self.extract_calls.append(output_dir)
@@ -189,6 +191,40 @@ class ImportRefreshFlowTests(unittest.TestCase):
                 original_rmtree(fake_cab.root)
         self.assertEqual(len(importer.calls), 1)
         self.assertEqual(importer.calls[0][0], "ost")
+
+    def test_osp_import_uses_short_temp_root_for_long_archive_paths(self):
+        if osp_importer_module.os.name != "nt":
+            self.skipTest("Windows path length behavior only applies on Windows")
+        base_dir = Path(tempfile.mkdtemp(prefix="ostv_test_osp_"))
+        long_parent = base_dir / ("long_parent_" * 10)
+        short_parent = base_dir / "s"
+        long_member = (
+            "TempImages!.tmp\\"
+            + "\\".join(["very long drawing folder"] * 8)
+            + "\\sheet.pdf"
+        )
+        fake_cab = FakeOspCab(names=["Project.ost", long_member])
+        importer = FakeImporter()
+        original_cab = osp_importer_module.ost_cab
+        original_candidates = osp_importer_module._extract_temp_parent_candidates
+        try:
+            osp_importer_module.ost_cab = fake_cab
+            osp_importer_module._extract_temp_parent_candidates = lambda: [
+                long_parent,
+                short_parent,
+            ]
+            self.assertTrue(
+                OspImporter(importer).import_osp(
+                    "source.osp", "target.mdb", "project-1"
+                )
+            )
+        finally:
+            osp_importer_module.ost_cab = original_cab
+            osp_importer_module._extract_temp_parent_candidates = original_candidates
+            if base_dir.exists():
+                osp_importer_module.shutil.rmtree(base_dir)
+        self.assertEqual(len(importer.calls), 1)
+        self.assertTrue(str(fake_cab.root).startswith(str(short_parent)))
 
     def test_loaded_databases_have_path_tiebreaker_when_file_times_match(self):
         repository = FileProjectRepository.__new__(FileProjectRepository)

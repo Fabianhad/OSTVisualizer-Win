@@ -76,7 +76,7 @@
 - Fixed newly placed annotations so they immediately follow layer visibility without needing a bid switch or reload.
 - Fixed PDF export default filenames so page names that already end in `.pdf` do not produce `.pdf.pdf`.
 - Treated imported OST condition `DisplaySize=0` values as the default 100% display size when reading bids, matching OST behavior.
-- Fixed OSP imports with deeply nested image/PDF paths failing during CAB extraction on Windows systems without long-path support enabled.
+- Fixed OSP imports with deeply nested image/PDF paths failing while preparing or extracting CAB contents on Windows systems without long-path support enabled.
 - Let progress dialogs paint before starting background work, and kept OSP export responsive while image files are collected and packaged.
 - Cleared stale detached page-window, PDF renderer, export background, and MCP bridge references during cleanup, and bounded PDF metadata caches across page/file switches.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.
