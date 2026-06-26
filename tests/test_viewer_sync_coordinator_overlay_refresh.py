@@ -5477,7 +5477,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
     def _text_annotation(self, uid="ann-1", text="old", page_uid="page-1"):
         return BidAnnotation(
             uid=uid,
-            annotation_type="text",
+            annotation_type=ANNOTATION_TYPE_TEXT,
             page_uid=page_uid,
             position=[20.0, 20.0, 80.0, 24.0],
             properties={"Text": text, "FontSize": 12},
@@ -5746,6 +5746,202 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             changed_annotation_types=[],
         )
         self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [])
+        self.assertIn("refresh_overlays", calls)
+
+    def test_active_inline_annotation_target_uses_full_refresh(self):
+        def editing_text(view):
+            view._editing_text_annotation_uid = "ann-1"
+
+        def draft_text(view):
+            view._draft_text_annotation_uid = "ann-1"
+
+        def editing_named_view(view):
+            view._editing_named_view_uid = "ann-1"
+
+        def draft_named_view(view):
+            view._draft_named_view_uid = "ann-1"
+
+        editing_states = [
+            ("editing text annotation", editing_text),
+            ("draft text annotation", draft_text),
+            ("editing named view", editing_named_view),
+            ("draft named view", draft_named_view),
+        ]
+        for label, mark_active in editing_states:
+            with self.subTest(label=label):
+                renderer = RecordingPathTakeoffRenderer()
+                view, page, bid_ref, calls = self._make_incremental_refresh_view(
+                    renderer
+                )
+                old_item = self._install_annotation_item(
+                    view, self._text_annotation(text="old")
+                )
+                mark_active(view)
+                view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+                refreshed = view.refresh_current_page_overlays(
+                    page=page,
+                    takeoffs=[view._current_takeoffs["1"]],
+                    conditions=view._current_conditions,
+                    color_map=view._current_color_map,
+                    bid_ref=bid_ref,
+                    annotations=[self._text_annotation(text="new")],
+                    page_area_selections={},
+                    hidden_layer_uids=set(),
+                    changed_annotation_uids=["ann-1"],
+                    changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+                )
+                self.assertTrue(refreshed)
+                self.assertIs(old_item.scene(), view._scene)
+                self.assertEqual(renderer.calls, [])
+                self.assertIn("refresh_overlays", calls)
+
+    def test_annotation_change_with_hidden_layer_mismatch_uses_full_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        old_item = self._install_annotation_item(
+            view, self._text_annotation(text="old")
+        )
+        view._hidden_layer_uids = {"notes-layer"}
+        view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[self._text_annotation(text="new")],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["ann-1"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertTrue(refreshed)
+        self.assertIs(old_item.scene(), view._scene)
+        self.assertEqual(renderer.calls, [])
+        self.assertIn("refresh_overlays", calls)
+
+    def test_duplicate_same_page_annotation_identity_uses_full_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        first_item = self._install_annotation_item(
+            view, self._text_annotation(uid="dup", text="first")
+        )
+        second_item = self._install_annotation_item(
+            view,
+            self._text_annotation(uid="dup", text="second"),
+            key="dup_text",
+        )
+        view._ann_db_uid_map["dup_text"] = "dup"
+        view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[self._text_annotation(uid="dup", text="new")],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["dup"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertTrue(refreshed)
+        self.assertIs(first_item.scene(), view._scene)
+        self.assertIs(second_item.scene(), view._scene)
+        self.assertEqual(renderer.calls, [])
+        self.assertIn("refresh_overlays", calls)
+
+    def test_same_annotation_uid_with_different_types_can_refresh_targeted_item(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        text_item = self._install_annotation_item(
+            view, self._text_annotation(uid="shared", text="old")
+        )
+        hotlink = self._hotlink_annotation(uid="shared")
+        hotlink_item = self._install_annotation_item(
+            view,
+            hotlink,
+            key="shared_hotlink",
+            hotlink=True,
+        )
+        view._ann_db_uid_map["shared_hotlink"] = "shared"
+        view._refresh_overlays = lambda *_args: self.fail(
+            "same UID with different annotation types should not force full refresh"
+        )
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[
+                self._text_annotation(uid="shared", text="new"),
+                hotlink,
+            ],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["shared"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertTrue(refreshed)
+        self.assertIsNone(text_item.scene())
+        self.assertIs(hotlink_item.scene(), view._scene)
+        self.assertEqual(renderer.calls, [])
+        self.assertNotIn("refresh_overlays", calls)
+
+    def test_multi_page_annotation_metadata_uses_full_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        old_item = self._install_annotation_item(
+            view, self._text_annotation(text="old")
+        )
+        view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[self._text_annotation(text="new")],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["ann-1", "off-page-ann"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT, ANNOTATION_TYPE_TEXT],
+        )
+        self.assertTrue(refreshed)
+        self.assertIs(old_item.scene(), view._scene)
+        self.assertEqual(renderer.calls, [])
+        self.assertIn("refresh_overlays", calls)
+
+    def test_unreported_same_page_annotation_change_uses_full_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        first_item = self._install_annotation_item(
+            view, self._text_annotation(uid="ann-1", text="old-1")
+        )
+        second_item = self._install_annotation_item(
+            view, self._text_annotation(uid="ann-2", text="old-2")
+        )
+        view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[
+                self._text_annotation(uid="ann-1", text="new-1"),
+                self._text_annotation(uid="ann-2", text="new-2"),
+            ],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["ann-1"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertTrue(refreshed)
+        self.assertIs(first_item.scene(), view._scene)
+        self.assertIs(second_item.scene(), view._scene)
         self.assertEqual(renderer.calls, [])
         self.assertIn("refresh_overlays", calls)
 

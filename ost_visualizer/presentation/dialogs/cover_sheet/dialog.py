@@ -289,6 +289,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         plan_tab = QtWidgets.QWidget()
         plan_layout = QtWidgets.QVBoxLayout(plan_tab)
         plan_layout.setContentsMargins(*NO_MARGINS)
+        plan_layout.setSpacing(COMPACT_SPACING)
         self.plan_tree = PlanTreeWidget()
         self.plan_tree.setColumnCount(8)
         self.plan_tree.setHeaderLabels(
@@ -364,7 +365,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._delete_selected)
         bottom_bar = QtWidgets.QHBoxLayout()
-        bottom_bar.setContentsMargins(*NO_MARGINS)
+        bottom_bar.setContentsMargins(4, 0, 0, COMPACT_SPACING / 2)
+        bottom_bar.setSpacing(4)
         bottom_bar.addWidget(self._add_btn)
         bottom_bar.addWidget(self._import_btn)
         bottom_bar.addWidget(self._new_folder_btn)
