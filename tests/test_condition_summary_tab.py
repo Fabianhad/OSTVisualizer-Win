@@ -1036,6 +1036,16 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         )
         coordinator.plan_view = None
         coordinator._viewer = SimpleNamespace(update_viewers=lambda *_args: None)
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
+        coordinator._mesh_scene_dirty = False
+        coordinator._dirty_mesh_page_uids = set()
+        coordinator._pending_dirty_mesh_refresh = False
+        coordinator._last_mesh_args = None
+        coordinator._last_mesh_kwargs = None
+        coordinator.visualization_service = SimpleNamespace(
+            refresh_mesh_view=lambda *_args: None
+        )
         coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
         coordinator._suspend_active_layer_tool = lambda *_args: None
         coordinator._restore_suspended_layer_tool = lambda *_args: None

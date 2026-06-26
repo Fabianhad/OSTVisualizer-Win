@@ -21,6 +21,7 @@ from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
 )
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.dialogs.cover_sheet.context import CoverSheetContext
+from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
@@ -535,7 +536,32 @@ class RecordingPlanView:
         return True
 
 
+class FakeIndexWidget:
+    def __init__(self, index):
+        self.index = index
+
+    def currentIndex(self):
+        return self.index
+
+
 class DeferredPersistenceCoordinatorTests(unittest.TestCase):
+    def _install_hidden_2d_mesh_state(self, coordinator):
+        mesh_refresh_calls = []
+        coordinator._tab_widget = FakeIndexWidget(TAB_INDEX_TAKEOFF)
+        coordinator._view_stack = FakeIndexWidget(1)
+        coordinator._mesh_window = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_scene_dirty = False
+        coordinator._dirty_mesh_page_uids = set()
+        coordinator._pending_dirty_mesh_refresh = False
+        coordinator.visualization_service = SimpleNamespace(
+            refresh_mesh_view=lambda page_uids: mesh_refresh_calls.append(
+                list(page_uids)
+            )
+        )
+        coordinator.mesh_refresh_calls = mesh_refresh_calls
+        return mesh_refresh_calls
+
     def _make_view_state_coordinator(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = SimpleNamespace(
@@ -769,6 +795,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._suspended_layer_tool = None
         coordinator.plan_view = RecordingPlanView()
         coordinator._deferred_persistence = RecordingDeferredPersistence()
+        self._install_hidden_2d_mesh_state(coordinator)
         return coordinator
 
     def _install_conditions_sidebar_recorder(self, coordinator):
@@ -819,10 +846,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.condition_summary_tab = None
         coordinator.event_bus = SimpleNamespace(publish=lambda *_args, **_kwargs: None)
         coordinator.plan_view = None
-        mesh_calls = []
-        coordinator._viewer = SimpleNamespace(
-            update_viewers=lambda page_uids: mesh_calls.append(list(page_uids))
-        )
+        self._install_hidden_2d_mesh_state(coordinator)
+        coordinator._viewer = SimpleNamespace(update_viewers=lambda _page_uids: None)
         coordinator._update_plan_view = lambda _page_uid: None
         coordinator._update_export_menu_state = lambda: None
         coordinator.ui_access_manager = SimpleNamespace(
@@ -849,7 +874,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                 ("a.mdb", "l2", False),
             ],
         )
-        self.assertEqual(mesh_calls, [["p1"]])
+        self.assertEqual(coordinator.mesh_refresh_calls, [])
+        self.assertTrue(coordinator._mesh_scene_dirty)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, {"p1"})
         self.assertEqual(quantity_calls, [])
 
     def test_image_layer_disable_queues_write_and_does_not_reload_pages(self):
@@ -873,14 +900,12 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
     def test_condition_layer_visibility_uses_loaded_item_path(self):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
-        mesh_calls = []
-        coordinator._viewer = SimpleNamespace(
-            update_viewers=lambda page_uids: mesh_calls.append(list(page_uids))
-        )
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
         self.assertEqual(coordinator._update_plan_view_calls, [])
         self.assertEqual(len(coordinator.plan_view.layer_visibility_calls), 1)
-        self.assertEqual(mesh_calls, [["p1"]])
+        self.assertEqual(coordinator.mesh_refresh_calls, [])
+        self.assertTrue(coordinator._mesh_scene_dirty)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, {"p1"})
         self.assertEqual(coordinator.quantity_update_calls, [])
 
     def test_layer_visibility_updates_conditions_sidebar_without_full_reload(self):
@@ -897,15 +922,11 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
                     condition_layer_uid="other-layer",
                 )
                 calls = self._install_conditions_sidebar_recorder(coordinator)
-                mesh_calls = []
-                coordinator._viewer = SimpleNamespace(
-                    update_viewers=lambda page_uids: mesh_calls.append(list(page_uids))
-                )
                 self.assertTrue(
                     coordinator.update_layer_visibility_deferred("l1", False)
                 )
                 self.assertEqual(calls, [])
-                self.assertEqual(mesh_calls, [])
+                self.assertEqual(coordinator.mesh_refresh_calls, [])
                 self.assertEqual(coordinator.quantity_update_calls, [])
 
     def test_layer_visibility_uses_same_deferred_path_for_all_layer_names(self):
@@ -965,15 +986,13 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
     def test_repeated_layer_toggles_refresh_view_immediately(self):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
-        mesh_calls = []
-        coordinator._viewer = SimpleNamespace(
-            update_viewers=lambda page_uids: mesh_calls.append(list(page_uids))
-        )
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", True))
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", False))
         self.assertEqual(coordinator.quantity_update_calls, [])
-        self.assertEqual(mesh_calls, [["p1"], ["p1"], ["p1"]])
+        self.assertEqual(coordinator.mesh_refresh_calls, [])
+        self.assertTrue(coordinator._mesh_scene_dirty)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, {"p1"})
 
     def test_hiding_annotation_layer_temporarily_selects_then_restores_tool(self):
         coordinator = self._make_visibility_coordinator(
@@ -1167,10 +1186,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             save_page_area=lambda *_args, **_kwargs: direct_writes.append(_args)
         )
         plan_updates = []
-        mesh_updates = []
+        self._install_hidden_2d_mesh_state(coordinator)
         coordinator._viewer = SimpleNamespace(
             update_plan_view=lambda page_uid: plan_updates.append(page_uid),
-            update_viewers=lambda page_uids: mesh_updates.append(list(page_uids)),
+            update_viewers=lambda _page_uids: None,
         )
         hotlink_updates = []
         coordinator._apply_pending_hotlink_named_view_focus = (
@@ -1187,7 +1206,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [("a.mdb", "p1", "2")],
         )
         self.assertEqual(plan_updates, ["p1"])
-        self.assertEqual(mesh_updates, [["p1"]])
+        self.assertEqual(coordinator.mesh_refresh_calls, [])
+        self.assertTrue(coordinator._mesh_scene_dirty)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, {"p1"})
         self.assertEqual(selected_page_reads, ["2"])
         self.assertEqual(hotlink_updates, [True])
         self.assertEqual(direct_writes, [])
@@ -1201,10 +1222,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         coordinator.ui_state_manager = SimpleNamespace(active_page_uid="p1")
         coordinator._deferred_persistence = RecordingDeferredPersistence()
-        mesh_updates = []
+        self._install_hidden_2d_mesh_state(coordinator)
         coordinator._viewer = SimpleNamespace(
             update_plan_view=lambda _page_uid: None,
-            update_viewers=lambda page_uids: mesh_updates.append(list(page_uids)),
+            update_viewers=lambda _page_uids: None,
         )
         coordinator._apply_pending_hotlink_named_view_focus = (
             lambda require_stable: None
@@ -1217,7 +1238,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             coordinator._deferred_persistence.page_area_calls,
             [("a.mdb", "p1", "")],
         )
-        self.assertEqual(mesh_updates, [["p1"]])
+        self.assertEqual(coordinator.mesh_refresh_calls, [])
+        self.assertTrue(coordinator._mesh_scene_dirty)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, {"p1"})
 
 
 class DeferredPersistenceBoundaryTests(unittest.TestCase):

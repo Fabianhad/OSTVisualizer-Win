@@ -4460,9 +4460,19 @@ class OptionsPreferencesTests(unittest.TestCase):
         coordinator.project_data = SimpleNamespace(
             get_selected_page_uids=lambda: ["page-1"]
         )
-        coordinator._viewer = SimpleNamespace(
-            update_viewers=lambda page_uids: calls.append(("viewers", page_uids))
+        coordinator._tab_widget = SimpleNamespace(
+            currentIndex=lambda: TAB_INDEX_TAKEOFF
         )
+        coordinator._view_stack = SimpleNamespace(currentIndex=lambda: 0)
+        coordinator._mesh_window = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_scene_dirty = False
+        coordinator._dirty_mesh_page_uids = set()
+        coordinator._pending_dirty_mesh_refresh = False
+        coordinator.visualization_service = SimpleNamespace(
+            refresh_mesh_view=lambda page_uids: calls.append(("viewers", page_uids))
+        )
+        coordinator._viewer = SimpleNamespace()
         coordinator._update_plan_view_for_active = lambda: calls.append("plan_view")
         coordinator._on_app_config_updated(
             value={"display_mode_3d": Config.DISPLAY_MODE_ORIGINAL}
