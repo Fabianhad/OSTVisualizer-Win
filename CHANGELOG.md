@@ -1,13 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.2.4 - 2026-06-26
 
 ### Added
 - A fixed-position red plan-view status bar for selected page image/PDF load failures.
-
-## 1.2.4 - 2026-06-24
-
-### Added
 - Added a first-pass OST-style Options dialog with persisted roping, page label, hotlink target, and Cover Sheet toolbar text preferences.
 - Added synced/custom 2D and 3D takeoff display mode controls to the Options dialog and View menu, with HTML and PDF exports using the matching view mode.
 - Added an optional read-only local MCP server for project, bid, page, condition, takeoff, quantity, selected-context, and scope-review context.
