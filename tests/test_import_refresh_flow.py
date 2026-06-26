@@ -1,7 +1,12 @@
 import unittest
+from pathlib import Path
 from PySide6 import QtWidgets
 from ost_visualizer.application.services.import_service import ImportService
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
+from ost_visualizer.infrastructure.mdb.importers import (
+    osp_importer as osp_importer_module,
+)
+from ost_visualizer.infrastructure.mdb.importers.osp_importer import OspImporter
 from ost_visualizer.infrastructure.persistence.repositories.file_project_repository import (
     FileProjectRepository,
     _LoadedFileCache,
@@ -21,6 +26,33 @@ class FakeImporter:
     def import_osp(self, source_path, target_path, project_uid=None):
         self.calls.append(("osp", source_path, target_path, project_uid))
         return True
+
+
+class FakeOspCab:
+    def __init__(self):
+        self.extract_calls = []
+        self.nested_dir_precreated = False
+
+    def list_cab(self, _source_path):
+        return [
+            "Project.ost",
+            "TempImages!.tmp\\deep\\sheet.pdf",
+        ]
+
+    def extract_cab(self, _source_path, output_dir):
+        self.extract_calls.append(output_dir)
+        normal_output = self._normal_windows_path(output_dir)
+        root = Path(normal_output)
+        self.nested_dir_precreated = (root / "TempImages!.tmp" / "deep").is_dir()
+        (root / "Project.ost").write_text("<XML_ROOT />", encoding="utf-8")
+        return True
+
+    def _normal_windows_path(self, value):
+        if value.startswith("\\\\?\\UNC\\"):
+            return "\\\\" + value[8:]
+        if value.startswith("\\\\?\\"):
+            return value[4:]
+        return value
 
 
 class FakeEventBus:
@@ -107,6 +139,27 @@ class ImportRefreshFlowTests(unittest.TestCase):
         )
         self.assertEqual(reloads, [])
         self.assertEqual(event_bus.events, [])
+
+    def test_osp_import_extracts_cab_with_windows_extended_output_path(self):
+        fake_cab = FakeOspCab()
+        importer = FakeImporter()
+        original_cab = osp_importer_module.ost_cab
+        try:
+            osp_importer_module.ost_cab = fake_cab
+            self.assertTrue(
+                OspImporter(importer).import_osp(
+                    "source.osp", "target.mdb", "project-1"
+                )
+            )
+        finally:
+            osp_importer_module.ost_cab = original_cab
+        self.assertEqual(len(fake_cab.extract_calls), 1)
+        self.assertTrue(fake_cab.nested_dir_precreated)
+        if osp_importer_module.os.name == "nt":
+            self.assertTrue(fake_cab.extract_calls[0].startswith("\\\\?\\"))
+        self.assertEqual(len(importer.calls), 1)
+        self.assertEqual(importer.calls[0][0], "ost")
+        self.assertEqual(importer.calls[0][2:], ("target.mdb", "project-1"))
 
     def test_loaded_databases_have_path_tiebreaker_when_file_times_match(self):
         repository = FileProjectRepository.__new__(FileProjectRepository)

@@ -1,4 +1,5 @@
 import logging
+import os
 import shutil
 import tempfile
 import xml.etree.ElementTree as ET
@@ -10,6 +11,17 @@ from ...app_paths import get_default_working_dir
 from .ost_importer import OstImporter
 
 logger = logging.getLogger(__name__)
+
+
+def _cab_extract_output_dir(path: Path) -> str:
+    resolved = str(path.resolve())
+    if os.name != "nt":
+        return resolved
+    if resolved.startswith("\\\\?\\"):
+        return resolved
+    if resolved.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + resolved[2:]
+    return "\\\\?\\" + resolved
 
 
 class OspImporter:
@@ -29,7 +41,9 @@ class OspImporter:
                 for name in names:
                     subdir = (tmp_path / name).parent
                     subdir.mkdir(parents=True, exist_ok=True)
-                if not ost_cab.extract_cab(osp_file_path, str(tmp_path)):
+                if not ost_cab.extract_cab(
+                    osp_file_path, _cab_extract_output_dir(tmp_path)
+                ):
                     logger.error("Failed to extract .osp archive: %s", osp_file_path)
                     return False
                 ost_files = list(tmp_path.glob("*.ost"))
