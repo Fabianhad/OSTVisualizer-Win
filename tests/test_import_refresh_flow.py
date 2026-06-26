@@ -32,6 +32,7 @@ class FakeOspCab:
     def __init__(self):
         self.extract_calls = []
         self.nested_dir_precreated = False
+        self.root = None
 
     def list_cab(self, _source_path):
         return [
@@ -43,6 +44,7 @@ class FakeOspCab:
         self.extract_calls.append(output_dir)
         normal_output = self._normal_windows_path(output_dir)
         root = Path(normal_output)
+        self.root = root
         self.nested_dir_precreated = (root / "TempImages!.tmp" / "deep").is_dir()
         (root / "Project.ost").write_text("<XML_ROOT />", encoding="utf-8")
         return True
@@ -160,6 +162,33 @@ class ImportRefreshFlowTests(unittest.TestCase):
         self.assertEqual(len(importer.calls), 1)
         self.assertEqual(importer.calls[0][0], "ost")
         self.assertEqual(importer.calls[0][2:], ("target.mdb", "project-1"))
+        self.assertFalse(fake_cab.root.exists())
+
+    def test_osp_import_cleanup_failure_does_not_fail_successful_import(self):
+        fake_cab = FakeOspCab()
+        importer = FakeImporter()
+        original_cab = osp_importer_module.ost_cab
+        original_rmtree = osp_importer_module.shutil.rmtree
+
+        def failing_rmtree(_path):
+            raise OSError("cleanup blocked")
+
+        try:
+            osp_importer_module.ost_cab = fake_cab
+            osp_importer_module.shutil.rmtree = failing_rmtree
+            with self.assertLogs(osp_importer_module.logger, level="WARNING"):
+                self.assertTrue(
+                    OspImporter(importer).import_osp(
+                        "source.osp", "target.mdb", "project-1"
+                    )
+                )
+        finally:
+            osp_importer_module.ost_cab = original_cab
+            osp_importer_module.shutil.rmtree = original_rmtree
+            if fake_cab.root and fake_cab.root.exists():
+                original_rmtree(fake_cab.root)
+        self.assertEqual(len(importer.calls), 1)
+        self.assertEqual(importer.calls[0][0], "ost")
 
     def test_loaded_databases_have_path_tiebreaker_when_file_times_match(self):
         repository = FileProjectRepository.__new__(FileProjectRepository)

@@ -24,6 +24,19 @@ def _cab_extract_output_dir(path: Path) -> str:
     return "\\\\?\\" + resolved
 
 
+def _remove_temp_tree(path: Path) -> None:
+    try:
+        shutil.rmtree(_cab_extract_output_dir(path))
+    except FileNotFoundError:
+        return
+    except Exception:
+        logger.warning(
+            "Failed to remove temporary OSP extraction directory %s",
+            path,
+            exc_info=True,
+        )
+
+
 class OspImporter:
     def __init__(self, ost_importer: OstImporter):
         self._ost_importer = ost_importer
@@ -34,34 +47,35 @@ class OspImporter:
         target_db_path: str,
         target_project_uid: Optional[str] = None,
     ) -> bool:
+        tmp_path: Optional[Path] = None
         try:
-            with tempfile.TemporaryDirectory() as tmp:
-                tmp_path = Path(tmp)
-                names = ost_cab.list_cab(osp_file_path)
-                for name in names:
-                    subdir = (tmp_path / name).parent
-                    subdir.mkdir(parents=True, exist_ok=True)
-                if not ost_cab.extract_cab(
-                    osp_file_path, _cab_extract_output_dir(tmp_path)
-                ):
-                    logger.error("Failed to extract .osp archive: %s", osp_file_path)
-                    return False
-                ost_files = list(tmp_path.glob("*.ost"))
-                if not ost_files:
-                    logger.error(
-                        "No .ost file found in .osp archive: %s", osp_file_path
-                    )
-                    return False
-                ost_path = ost_files[0]
-                bid_name = ost_path.stem
-                dest_dir = get_default_working_dir() / bid_name
-                self._extract_images(tmp_path, ost_path, dest_dir)
-                return self._ost_importer.import_ost(
-                    str(ost_path), target_db_path, target_project_uid
-                )
+            tmp_path = Path(tempfile.mkdtemp(prefix="ostv_osp_"))
+            names = ost_cab.list_cab(osp_file_path)
+            for name in names:
+                subdir = (tmp_path / name).parent
+                subdir.mkdir(parents=True, exist_ok=True)
+            if not ost_cab.extract_cab(
+                osp_file_path, _cab_extract_output_dir(tmp_path)
+            ):
+                logger.error("Failed to extract .osp archive: %s", osp_file_path)
+                return False
+            ost_files = list(tmp_path.glob("*.ost"))
+            if not ost_files:
+                logger.error("No .ost file found in .osp archive: %s", osp_file_path)
+                return False
+            ost_path = ost_files[0]
+            bid_name = ost_path.stem
+            dest_dir = get_default_working_dir() / bid_name
+            self._extract_images(tmp_path, ost_path, dest_dir)
+            return self._ost_importer.import_ost(
+                str(ost_path), target_db_path, target_project_uid
+            )
         except Exception:
             logger.exception("OSP import failed: %s", osp_file_path)
             return False
+        finally:
+            if tmp_path is not None:
+                _remove_temp_tree(tmp_path)
 
     def _extract_images(self, tmp_path: Path, ost_path: Path, dest_dir: Path) -> None:
         main_names, overlay_names = self._collect_image_names(ost_path)
