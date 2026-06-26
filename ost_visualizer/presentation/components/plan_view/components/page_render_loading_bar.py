@@ -3,9 +3,7 @@ from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QWidget
 
 
-class PageRenderLoadingBar(QWidget):
-    _REVEAL_DELAY_MS = 120
-    _ANIMATION_INTERVAL_MS = 80
+class _ViewportOverlayBar(QWidget):
     _HEIGHT = 3
 
     def __init__(self, parent=None) -> None:
@@ -14,6 +12,68 @@ class PageRenderLoadingBar(QWidget):
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.hide()
+
+
+class PageMissingFileBar(_ViewportOverlayBar):
+    _HEIGHT = 24
+    _BACKGROUND = QColor(180, 35, 24)
+    _TEXT = QColor(255, 255, 255)
+    _MARGIN_X = 8
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._message = ""
+
+    @property
+    def is_active(self) -> bool:
+        return bool(self._message)
+
+    def show_message(self, message: str, tooltip: str = "") -> None:
+        self._message = message.strip()
+        self.setToolTip(tooltip or self._message)
+        if self._message:
+            self.show()
+            self.raise_()
+        else:
+            self.hide()
+        self.update()
+
+    def clear(self) -> None:
+        self._message = ""
+        self.setToolTip("")
+        self.hide()
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        del event
+        if not self._message:
+            return
+        painter = QPainter(self)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(self._BACKGROUND)
+        painter.drawRect(0, 0, self.width(), self.height())
+        painter.setPen(self._TEXT)
+        text_rect = self.rect().adjusted(self._MARGIN_X, 0, -self._MARGIN_X, 0)
+        message = painter.fontMetrics().elidedText(
+            self._message,
+            QtCore.Qt.TextElideMode.ElideRight,
+            max(0, text_rect.width()),
+        )
+        painter.drawText(
+            text_rect,
+            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter,
+            message,
+        )
+
+
+class PageRenderLoadingBar(_ViewportOverlayBar):
+    _REVEAL_DELAY_MS = 120
+    _ANIMATION_INTERVAL_MS = 80
+    _HEIGHT = 3
+    _BAR_COLOR = QColor(78, 138, 190)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
         self._active_token: str | None = None
         self._progress = 0.0
         self._reveal_timer = QtCore.QTimer(self)
@@ -73,6 +133,6 @@ class PageRenderLoadingBar(QWidget):
             return
         painter = QPainter(self)
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(78, 138, 190))
+        painter.setBrush(self._BAR_COLOR)
         width = max(1, int(self.width() * self._progress))
         painter.drawRect(0, 0, width, self.height())

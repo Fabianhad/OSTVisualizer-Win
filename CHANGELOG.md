@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- A fixed-position red plan-view status bar for selected page image/PDF load failures.
+
 ## 1.2.4 - 2026-06-24
 
 ### Added

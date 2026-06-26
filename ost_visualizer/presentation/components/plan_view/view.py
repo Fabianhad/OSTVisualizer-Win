@@ -98,7 +98,7 @@ from .components.page_loader import (
     VISUAL_KIND_PAGE,
     PageLoaderMixin,
 )
-from .components.page_render_loading_bar import PageRenderLoadingBar
+from .components.page_render_loading_bar import PageMissingFileBar, PageRenderLoadingBar
 from .components.pdf_text import PdfTextChar, PdfTextRect, PdfTextRun, PdfTextSelection
 from .components.placement_mode import (
     PDF_INTELLIGENCE_SOURCE_MAIN,
@@ -224,6 +224,7 @@ class TakeoffPlanView(
     ZOOM_FACTOR = 1.15
     _FRAME_ACTIVATE_RATIO: float = 1.1
     _render_loading_bar: Optional[PageRenderLoadingBar] = None
+    _missing_file_bar: Optional[PageMissingFileBar] = None
     _current_page_loading_token: Optional[str] = None
     _visible_frame_loading_token: Optional[str] = None
 
@@ -256,6 +257,7 @@ class TakeoffPlanView(
         self._defer_page_visual_reveal: bool = False
         self._deferred_page_visual_result: Optional[Tuple[str, Dict, object]] = None
         self._render_loading_bar = PageRenderLoadingBar(self)
+        self._missing_file_bar = PageMissingFileBar(self)
         self.viewport().installEventFilter(self)
         self._current_page_loading_token: Optional[str] = None
         self._visible_frame_loading_token: Optional[str] = None
@@ -493,7 +495,7 @@ class TakeoffPlanView(
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self._set_palette_background()
-        self._position_render_loading_bar()
+        self._position_viewport_overlay_bars()
 
     def _build_condition_text_toolbar(self) -> QFrame:
         toolbar = QFrame(self)
@@ -603,8 +605,7 @@ class TakeoffPlanView(
         if toolbar is not None:
             toolbar.move(8, 8)
 
-    def _position_render_loading_bar(self) -> None:
-        bar = self._render_loading_bar
+    def _position_viewport_overlay_bar(self, bar) -> None:
         if bar is None:
             return
         viewport = self.viewport()
@@ -617,13 +618,67 @@ class TakeoffPlanView(
         )
         bar.raise_()
 
+    def _position_viewport_overlay_bars(self) -> None:
+        self._position_viewport_overlay_bar(self._missing_file_bar)
+        self._position_viewport_overlay_bar(self._render_loading_bar)
+
+    def _position_render_loading_bar(self) -> None:
+        self._position_viewport_overlay_bar(self._render_loading_bar)
+
+    def _clear_missing_page_file_status(self) -> None:
+        bar = self._missing_file_bar
+        if bar is not None:
+            bar.clear()
+
+    def _show_missing_page_file_status(self, message: str, tooltip: str = "") -> None:
+        if self._current_page_loading_token is not None:
+            return
+        bar = self._missing_file_bar
+        if bar is not None:
+            bar.show_message(message, tooltip)
+        self._position_viewport_overlay_bars()
+
+    def _page_render_failure_paths(self, data: dict, render_type: str) -> List[str]:
+        page = data.get("page")
+        if not isinstance(page, Page):
+            return []
+        if render_type == VISUAL_KIND_PAGE:
+            return [page.image_path or ""]
+        if render_type == VISUAL_KIND_OVERLAY:
+            return [page.overlay_image_path or ""]
+        if render_type == VISUAL_KIND_COMPOSITE:
+            return [page.image_path or "", page.overlay_image_path or ""]
+        return []
+
+    def _missing_page_file_status_text(
+        self, data: dict, render_type: str, error: object
+    ) -> Tuple[str, str]:
+        paths = [
+            path for path in self._page_render_failure_paths(data, render_type) if path
+        ]
+        if render_type == VISUAL_KIND_OVERLAY:
+            label = "Overlay image"
+        elif render_type == VISUAL_KIND_COMPOSITE:
+            label = "Page image/PDF or overlay image"
+        else:
+            label = "Page image/PDF"
+        filename = os.path.basename(paths[0]) if len(paths) == 1 else ""
+        suffix = f": {filename}" if filename else ""
+        message = f"{label} was not found or could not be loaded{suffix}."
+        tooltip_lines = [message]
+        if paths:
+            tooltip_lines.extend(paths)
+        if error:
+            tooltip_lines.append(str(error))
+        return message, "\n".join(tooltip_lines)
+
     def _start_current_page_render_loading(self) -> str:
         token = uuid.uuid4().hex
         self._current_page_loading_token = token
         bar = self._render_loading_bar
         if bar is not None:
             bar.start(token)
-        self._position_render_loading_bar()
+        self._position_viewport_overlay_bars()
         return token
 
     def _complete_current_page_render_loading(self) -> None:
@@ -648,7 +703,7 @@ class TakeoffPlanView(
         bar = self._render_loading_bar
         if bar is not None:
             bar.start(token)
-        self._position_render_loading_bar()
+        self._position_viewport_overlay_bars()
         return token
 
     def _complete_visible_frame_render_loading(self, token: Optional[str]) -> None:
@@ -677,7 +732,7 @@ class TakeoffPlanView(
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._position_condition_text_toolbar()
-        self._position_render_loading_bar()
+        self._position_viewport_overlay_bars()
 
     def eventFilter(self, watched, event):
         if watched is self.viewport() and event.type() in (
@@ -685,7 +740,7 @@ class TakeoffPlanView(
             QtCore.QEvent.Type.Resize,
             QtCore.QEvent.Type.Show,
         ):
-            self._position_render_loading_bar()
+            self._position_viewport_overlay_bars()
         return super().eventFilter(watched, event)
 
     def _condition_text_label_at(
@@ -2379,6 +2434,7 @@ class TakeoffPlanView(
         self._saved_scroll_state = None
 
     def _begin_load_cycle(self, page: Page, preserve_current_view: bool) -> None:
+        self._clear_missing_page_file_status()
         self._saved_scroll_state = None
         self._current_load_token = uuid.uuid4().hex
         if preserve_current_view:
@@ -4868,6 +4924,7 @@ class TakeoffPlanView(
         if self._prefetch_coordinator is not None:
             self._prefetch_coordinator.cancel_pending()
         self._reset_render_loading()
+        self._clear_missing_page_file_status()
         self.cancel_overlay_move_mode(restore_preview=True)
         self.finish_intelligent_paste_placement()
         if self._place_session_uid is not None and not preserve_place_session:

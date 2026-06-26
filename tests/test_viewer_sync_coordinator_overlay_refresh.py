@@ -588,6 +588,125 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(bar.geometry().width(), expected.width())
         view.cleanup()
 
+    def test_missing_page_file_bar_is_fixed_viewport_overlay(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="missing.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self._install_page_canvas(view, page)
+        bar = view._missing_file_bar
+        self.assertIs(bar.parent(), view)
+        self.assertIsNot(bar.parent(), view.viewport())
+        view._show_missing_page_file_status(
+            "Page image/PDF was not found or could not be loaded: missing.pdf."
+        )
+        expected = view.viewport().geometry()
+        self.assertEqual(bar.geometry().x(), expected.x())
+        self.assertEqual(bar.geometry().y(), expected.y())
+        self.assertEqual(bar.geometry().width(), expected.width())
+        initial_pos = bar.pos()
+        view.horizontalScrollBar().setValue(view.horizontalScrollBar().maximum())
+        view.verticalScrollBar().setValue(view.verticalScrollBar().maximum())
+        QApplication.processEvents()
+        self.assertEqual(bar.pos(), initial_pos)
+        view.resize(360, 260)
+        QApplication.processEvents()
+        expected = view.viewport().geometry()
+        self.assertEqual(bar.geometry().x(), expected.x())
+        self.assertEqual(bar.geometry().y(), expected.y())
+        self.assertEqual(bar.geometry().width(), expected.width())
+        view.cleanup()
+
+    def test_missing_page_file_bar_appears_after_current_page_render_failure(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="missing.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        self.assertTrue(view._render_loading_bar.is_loading)
+        self.assertFalse(view._missing_file_bar.is_active)
+        request_id, request = view._rendering_service.page_requests[-1]
+        request["callback"](RenderResult(request_id, False, None, "missing"))
+        QApplication.processEvents()
+        self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertTrue(view._missing_file_bar.is_active)
+        self.assertFalse(view._missing_file_bar.isHidden())
+        self.assertIn("Page image/PDF", view._missing_file_bar.toolTip())
+        self.assertIn("missing.pdf", view._missing_file_bar.toolTip())
+        view.cleanup()
+
+    def test_missing_page_file_bar_hides_when_switching_to_valid_page(self):
+        view = self._make_plan_view()
+        missing = Page(
+            uid="p1",
+            name="P1",
+            image_path="missing.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        valid = Page(
+            uid="p2",
+            name="P2",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(missing, [], {}, {}))
+        request_id, request = view._rendering_service.page_requests[-1]
+        request["callback"](RenderResult(request_id, False, None, "missing"))
+        QApplication.processEvents()
+        self.assertTrue(view._missing_file_bar.is_active)
+        self.assertTrue(view.load_page(valid, [], {}, {}))
+        self.assertFalse(view._missing_file_bar.is_active)
+        valid_request_id, valid_request = view._rendering_service.page_requests[-1]
+        valid_request["callback"](
+            RenderResult(
+                valid_request_id,
+                True,
+                QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        QApplication.processEvents()
+        self.assertFalse(view._missing_file_bar.is_active)
+        self.assertTrue(view._missing_file_bar.isHidden())
+        view.cleanup()
+
+    def test_stale_page_render_failure_does_not_show_missing_file_bar(self):
+        view = self._make_plan_view()
+        first = Page(
+            uid="p1",
+            name="P1",
+            image_path="missing.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        second = Page(
+            uid="p2",
+            name="P2",
+            image_path="second.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self.assertTrue(view.load_page(first, [], {}, {}))
+        first_request_id, first_request = view._rendering_service.page_requests[-1]
+        self.assertTrue(view.load_page(second, [], {}, {}))
+        first_request["callback"](
+            RenderResult(first_request_id, False, None, "missing")
+        )
+        QApplication.processEvents()
+        self.assertFalse(view._missing_file_bar.is_active)
+        self.assertTrue(view._render_loading_bar.is_loading)
+        view.cleanup()
+
     def test_composite_and_overlay_only_renders_start_loading_bar(self):
         view = self._make_plan_view()
         composite_page = Page(

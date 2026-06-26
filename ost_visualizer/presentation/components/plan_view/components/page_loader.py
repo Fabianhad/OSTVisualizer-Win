@@ -27,6 +27,11 @@ VISUAL_KIND_BASE = "base"
 VISUAL_KIND_COMPOSITE = "composite"
 VISUAL_KIND_OVERLAY = "overlay"
 VISUAL_KIND_PAGE = "page"
+_VISUAL_KIND_LOG_LABELS = {
+    VISUAL_KIND_COMPOSITE: "Composite",
+    VISUAL_KIND_OVERLAY: "Overlay",
+    VISUAL_KIND_PAGE: "Page",
+}
 
 
 class PageLoaderMixin:
@@ -145,12 +150,20 @@ class PageLoaderMixin:
             return None
         data = self._pending_page_data
         if not result.success or not result.image:
-            logger.warning("%s render failed: %s", render_type, result.error)
+            logger.warning(
+                "%s render failed: %s",
+                _VISUAL_KIND_LOG_LABELS.get(render_type, render_type),
+                result.error,
+            )
             if data and self._is_current_async_result(
                 data.get("load_token"), data.get("render_identity")
             ):
                 self._pending_page_data = None
                 self._mark_load_geometry_ready()
+                message, tooltip = self._missing_page_file_status_text(
+                    data, render_type, result.error
+                )
+                self._show_missing_page_file_status(message, tooltip)
             return None
         if not data:
             return None
@@ -357,7 +370,7 @@ class PageLoaderMixin:
         self._white_canvas_item = None
 
     def _on_composite_loaded(self, result: RenderResult):
-        data = self._resolve_pending_render(result, "Composite")
+        data = self._resolve_pending_render(result, VISUAL_KIND_COMPOSITE)
         if data is None:
             return
         if self._defer_page_visual_result(VISUAL_KIND_COMPOSITE, data, result):
@@ -365,6 +378,7 @@ class PageLoaderMixin:
         self._apply_composite_result(data, result)
 
     def _apply_composite_result(self, data: dict, result: RenderResult) -> None:
+        self._clear_missing_page_file_status()
         self._remove_white_canvas_item()
         self._clear_overlay_items()
         scene_width, scene_height = self._logical_page_scene_dimensions(data, result)
@@ -382,7 +396,7 @@ class PageLoaderMixin:
         self._sync_overlay_move_hidden_normal_visuals()
 
     def _on_page_loaded(self, result: RenderResult):
-        data = self._resolve_pending_render(result, "Page")
+        data = self._resolve_pending_render(result, VISUAL_KIND_PAGE)
         if data is None:
             return
         if self._defer_page_visual_result(VISUAL_KIND_PAGE, data, result):
@@ -390,6 +404,7 @@ class PageLoaderMixin:
         self._apply_page_result(data, result)
 
     def _apply_page_result(self, data: dict, result: RenderResult) -> None:
+        self._clear_missing_page_file_status()
         view_scale = data.get("view_scale", 1.0)
         self._clear_overlay_items()
         scene_width, scene_height = self._logical_page_scene_dimensions(data, result)
@@ -419,7 +434,7 @@ class PageLoaderMixin:
         self._sync_overlay_move_hidden_normal_visuals()
 
     def _on_overlay_loaded(self, result: RenderResult):
-        data = self._resolve_pending_render(result, "Overlay")
+        data = self._resolve_pending_render(result, VISUAL_KIND_OVERLAY)
         if data is None:
             return
         if self._defer_page_visual_result(VISUAL_KIND_OVERLAY, data, result):
@@ -427,6 +442,7 @@ class PageLoaderMixin:
         self._apply_overlay_result(data, result)
 
     def _apply_overlay_result(self, data: dict, result: RenderResult) -> None:
+        self._clear_missing_page_file_status()
         page = data["page"]
         view_scale = data["view_scale"]
         show_mode = data["show_mode"]
