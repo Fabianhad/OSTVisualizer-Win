@@ -1505,10 +1505,14 @@ class UIEventCoordinator:
     def _on_annotations_changed(
         self,
         page_uid: str = "",
-        annotation_uids: list | None = None,
-        annotation_types: list | None = None,
+        annotation_uids: Optional[List[str]] = None,
+        annotation_types: Optional[List[str]] = None,
     ) -> None:
-        self._update_plan_view(page_uid)
+        self._update_plan_view_annotations(
+            page_uid,
+            annotation_uids=annotation_uids,
+            annotation_types=annotation_types,
+        )
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
 
@@ -2056,6 +2060,19 @@ class UIEventCoordinator:
             self._sidebar.update_conditions_quantities()
         else:
             self._sidebar.update_conditions_quantities(condition_uids=condition_uids)
+
+    def _update_plan_view_annotations(
+        self,
+        page_uid: Optional[str],
+        annotation_uids: Optional[List[str]] = None,
+        annotation_types: Optional[List[str]] = None,
+    ) -> None:
+        self._viewer.update_plan_view(
+            page_uid,
+            changed_annotation_uids=annotation_uids,
+            changed_annotation_types=annotation_types,
+        )
+        self._apply_pending_hotlink_named_view_focus(require_stable=True)
 
     def _on_condition_selected(self, condition_uid: str) -> None:
         if not condition_uid:

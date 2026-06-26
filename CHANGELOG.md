@@ -51,6 +51,7 @@
 - Changed the Summary tab to show only conditions with placed takeoffs, hiding unused conditions along with empty folders and groups.
 - Matched the Summary tab condition tree indentation, icon sizing, and row height behavior to the Conditions sidebar.
 - Reduced lag when placing takeoffs on dense 2D pages by appending newly placed primary takeoff graphics instead of rebuilding every takeoff on the page, while deferring inactive Summary tab rebuilds.
+- Reduced lag when editing annotations on dense 2D pages by refreshing changed annotation graphics without rebuilding takeoff graphics when the page state is otherwise unchanged.
 - Tightened the exported HTML 3D viewer camera clipping range while zooming, including PDF/background sheet bounds in the padded checks to reduce depth flicker without clipping meshes or page corners at oblique angles.
 - Updated exported HTML views to preserve layer, condition, area, and page metadata, group condition controls by condition type with condition-only color swatches, add a Plan/3D mode switch with multi-page 2D takeoff overlays, and let exported geometry be toggled by page or hidden layer in the standalone viewer.
 

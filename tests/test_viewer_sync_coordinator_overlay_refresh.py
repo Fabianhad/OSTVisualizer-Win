@@ -30,7 +30,12 @@ from PySide6.QtWidgets import (
     QGraphicsTextItem,
     QStyleOptionGraphicsItem,
 )
-from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
@@ -210,6 +215,25 @@ class FakeAnnotationRenderer:
         results = []
         uid_to_items = {}
         for uid, annotation in annotations:
+            if annotation.is_hotlink:
+                position = annotation.position or []
+                item = QGraphicsPathItem()
+                item.setData(0, uid)
+                item.setPos(
+                    position[0] if position else 0.0,
+                    position[1] if len(position) > 1 else 0.0,
+                )
+                hotlink = HotlinkDto(
+                    uid=annotation.uid,
+                    bid_page_uid=annotation.page_uid,
+                    target_view_uid=annotation.properties.get("BidPageViewUID"),
+                    center_x=item.pos().x(),
+                    center_y=item.pos().y(),
+                    radius=10.0,
+                )
+                results.append((item, hotlink))
+                uid_to_items[uid] = [item]
+                continue
             if annotation.is_dimension:
                 item = QGraphicsTextItem("21' - 3\"")
                 item.setData(0, uid)
@@ -376,14 +400,62 @@ class FakePlanView:
         self.clear_calls += 1
         self.current_page_uid = None
 
-    def refresh_current_page_overlays(self, **kwargs):
+    def refresh_current_page_overlays(
+        self,
+        page,
+        takeoffs,
+        conditions,
+        color_map,
+        bid_ref=None,
+        annotations=None,
+        page_area_selections=None,
+        hidden_layer_uids=None,
+        changed_takeoff_uids=None,
+        changed_annotation_uids=None,
+        changed_annotation_types=None,
+    ):
         self.overlay_calls += 1
-        self.overlay_kwargs.append(kwargs)
+        self.overlay_kwargs.append(
+            {
+                "page": page,
+                "takeoffs": takeoffs,
+                "conditions": conditions,
+                "color_map": color_map,
+                "bid_ref": bid_ref,
+                "annotations": annotations,
+                "page_area_selections": page_area_selections,
+                "hidden_layer_uids": hidden_layer_uids,
+                "changed_takeoff_uids": changed_takeoff_uids,
+                "changed_annotation_uids": changed_annotation_uids,
+                "changed_annotation_types": changed_annotation_types,
+            }
+        )
         return self.overlay_result
 
-    def load_page(self, **kwargs):
+    def load_page(
+        self,
+        page,
+        takeoffs,
+        conditions,
+        color_map,
+        bid_ref=None,
+        annotations=None,
+        page_area_selections=None,
+        hidden_layer_uids=None,
+    ):
         self.load_calls += 1
-        self.load_kwargs.append(kwargs)
+        self.load_kwargs.append(
+            {
+                "page": page,
+                "takeoffs": takeoffs,
+                "conditions": conditions,
+                "color_map": color_map,
+                "bid_ref": bid_ref,
+                "annotations": annotations,
+                "page_area_selections": page_area_selections,
+                "hidden_layer_uids": hidden_layer_uids,
+            }
+        )
         return True
 
     def set_snap_settings(self, increments, measure_base):
@@ -417,6 +489,24 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         )
         self.assertEqual(plan_view.snap_settings, [(2.0, 0)])
 
+    def test_same_loaded_page_passes_annotation_change_metadata(self):
+        plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
+        coordinator, _visualization_service = self._make_coordinator(plan_view)
+        coordinator.update_plan_view(
+            "page-1",
+            changed_annotation_uids=["ann-1"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertEqual(plan_view.overlay_calls, 1)
+        self.assertEqual(plan_view.load_calls, 0)
+        self.assertEqual(
+            plan_view.overlay_kwargs[0]["changed_annotation_uids"], ["ann-1"]
+        )
+        self.assertEqual(
+            plan_view.overlay_kwargs[0]["changed_annotation_types"],
+            [ANNOTATION_TYPE_TEXT],
+        )
+
     def test_different_current_page_uses_full_load_page(self):
         plan_view = FakePlanView(current_page_uid="page-2", overlay_result=True)
         coordinator, _visualization_service = self._make_coordinator(plan_view)
@@ -426,6 +516,17 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(
             plan_view.load_kwargs[0]["hidden_layer_uids"], {"annotation-layer"}
         )
+
+    def test_annotation_change_on_different_current_page_uses_full_load_page(self):
+        plan_view = FakePlanView(current_page_uid="page-2", overlay_result=True)
+        coordinator, _visualization_service = self._make_coordinator(plan_view)
+        coordinator.update_plan_view(
+            "page-1",
+            changed_annotation_uids=["ann-1"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertEqual(plan_view.overlay_calls, 0)
+        self.assertEqual(plan_view.load_calls, 1)
 
     def test_same_page_render_identity_mismatch_falls_back_to_load_page(self):
         plan_view = FakePlanView(current_page_uid="page-1", overlay_result=False)
@@ -2995,7 +3096,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view = self._make_plan_view()
         annotation = BidAnnotation(
             uid="a1",
-            annotation_type="text",
+            annotation_type=ANNOTATION_TYPE_TEXT,
             properties={
                 "Text": "Note",
                 "FontName": "Arial",
@@ -5332,8 +5433,11 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._takeoff_items = []
         view._hotlink_items = []
         view._uid_to_items = {}
+        view._selected_uids = set()
+        view._selected_text_annotation_uid = None
         view._selection_items = []
         view._pdf_text_highlight_items = []
+        view._dirty_ann_positions = {}
         view._pdf_width_pts = 100.0
         view._pdf_height_pts = 100.0
         view._scene_scale = 1.0
@@ -5348,11 +5452,71 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._current_page_transform = lambda: None
         view._invalidate_snap_index = lambda: None
         view._update_cursor = lambda: None
+        view._editing_text_annotation_uid = None
+        view._draft_text_annotation_uid = None
+        view._editing_named_view_uid = None
+        view._draft_named_view_uid = None
         calls = []
         view._sync_page_image_layer_visibility = lambda: calls.append("sync")
         view._update_scene_rect = lambda: calls.append("scene_rect")
+        view.update_selection_visuals = lambda: calls.append("selection")
+        view._selected_dimension_text_label_target = lambda: None
+        view._selected_condition_text_label_target = lambda: None
+        view._restore_selected_text_annotation_toolbar = lambda _uid: calls.append(
+            "restore_text"
+        )
+        view._restore_selected_dimension_text_label_toolbar = (
+            lambda _target: calls.append("restore_dimension")
+        )
+        view._restore_selected_condition_text_label_toolbar = (
+            lambda _target: calls.append("restore_condition")
+        )
         view.viewport = lambda: FakeViewport(calls)
         return view, page, bid_ref, calls
+
+    def _text_annotation(self, uid="ann-1", text="old", page_uid="page-1"):
+        return BidAnnotation(
+            uid=uid,
+            annotation_type="text",
+            page_uid=page_uid,
+            position=[20.0, 20.0, 80.0, 24.0],
+            properties={"Text": text, "FontSize": 12},
+            visible=True,
+        )
+
+    def _hotlink_annotation(self, uid="hot-1", page_uid="page-1"):
+        return BidAnnotation(
+            uid=uid,
+            annotation_type=ANNOTATION_TYPE_HOTLINK,
+            page_uid=page_uid,
+            position=[20.0, 20.0],
+            properties={"BidPageViewUID": "view-1"},
+            visible=True,
+        )
+
+    def _install_annotation_item(self, view, annotation, key=None, hotlink=False):
+        key = key or annotation.uid
+        item = QGraphicsPathItem()
+        item.setData(0, key)
+        view._scene.addItem(item)
+        view._current_annotations[key] = annotation
+        view._uid_to_items[key] = [item]
+        view._takeoff_items.append(item)
+        if hotlink:
+            view._hotlink_items.append(
+                (
+                    item,
+                    HotlinkDto(
+                        uid=annotation.uid,
+                        bid_page_uid=annotation.page_uid,
+                        target_view_uid=annotation.properties.get("BidPageViewUID"),
+                        center_x=20.0,
+                        center_y=20.0,
+                        radius=10.0,
+                    ),
+                )
+            )
+        return item
 
     def test_overlay_refresh_does_not_enter_load_view_state_path(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -5450,6 +5614,161 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(refreshed)
         self.assertEqual(renderer.calls, [])
         self.assertIn("refresh_overlays", calls)
+
+    def test_annotation_insert_refreshes_only_annotation_graphics(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        view._refresh_overlays = lambda *_args: self.fail(
+            "safe annotation insert should not rebuild all overlays"
+        )
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[self._text_annotation(text="new")],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["ann-1"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [])
+        self.assertIn("ann-1", view._current_annotations)
+        self.assertIn("ann-1", view._uid_to_items)
+        self.assertNotIn("refresh_overlays", calls)
+        self.assertIn("sync", calls)
+        self.assertIn("scene_rect", calls)
+        self.assertIn("viewport.update", calls)
+
+    def test_annotation_update_replaces_only_changed_annotation_item(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        old_item = self._install_annotation_item(
+            view, self._text_annotation(text="old")
+        )
+        view._selected_uids = {"ann-1"}
+        view._refresh_overlays = lambda *_args: self.fail(
+            "safe annotation update should not rebuild all overlays"
+        )
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[self._text_annotation(text="new")],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["ann-1"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertTrue(refreshed)
+        self.assertIsNone(old_item.scene())
+        self.assertEqual(renderer.calls, [])
+        self.assertEqual(view._selected_uids, {"ann-1"})
+        self.assertIn("selection", calls)
+
+    def test_annotation_delete_removes_only_annotation_item_and_selection(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        old_item = self._install_annotation_item(
+            view, self._text_annotation(text="old")
+        )
+        view._selected_uids = {"ann-1"}
+        view._refresh_overlays = lambda *_args: self.fail(
+            "safe annotation delete should not rebuild all overlays"
+        )
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["ann-1"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertTrue(refreshed)
+        self.assertIsNone(old_item.scene())
+        self.assertEqual(renderer.calls, [])
+        self.assertNotIn("ann-1", view._current_annotations)
+        self.assertNotIn("ann-1", view._uid_to_items)
+        self.assertEqual(view._selected_uids, set())
+        self.assertIn("selection", calls)
+
+    def test_hotlink_annotation_update_replaces_hotlink_target(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, _calls = self._make_incremental_refresh_view(renderer)
+        old_item = self._install_annotation_item(
+            view, self._hotlink_annotation(), hotlink=True
+        )
+        old_hotlink_item = view._hotlink_items[0][0]
+        view._refresh_overlays = lambda *_args: self.fail(
+            "safe hotlink update should not rebuild all overlays"
+        )
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[self._hotlink_annotation()],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["hot-1"],
+            changed_annotation_types=[ANNOTATION_TYPE_HOTLINK],
+        )
+        self.assertTrue(refreshed)
+        self.assertIsNone(old_item.scene())
+        self.assertEqual(renderer.calls, [])
+        self.assertEqual(len(view._hotlink_items), 1)
+        self.assertIsNot(view._hotlink_items[0][0], old_hotlink_item)
+        self.assertEqual(view._hotlink_items[0][1].uid, "hot-1")
+
+    def test_annotation_change_without_aligned_metadata_uses_full_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[self._text_annotation(text="new")],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["ann-1"],
+            changed_annotation_types=[],
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [])
+        self.assertIn("refresh_overlays", calls)
+
+    def test_annotation_change_with_render_identity_mismatch_rejects_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, _calls = self._make_incremental_refresh_view(renderer)
+        page.rotation = 90
+        view._refresh_overlays = lambda *_args: self.fail(
+            "render identity mismatch should not refresh overlays"
+        )
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[self._text_annotation(text="new")],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["ann-1"],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertFalse(refreshed)
 
     def test_overlay_refresh_rejects_render_identity_change(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)

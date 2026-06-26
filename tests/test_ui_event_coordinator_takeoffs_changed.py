@@ -1,6 +1,7 @@
 import unittest
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
 from ost_visualizer.application.services.project_write_service import WriteReloadResult
+from ost_visualizer.domain.entities.annotation import ANNOTATION_TYPE_TEXT
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
@@ -67,18 +68,43 @@ class FakeViewer:
     def __init__(self):
         self.plan_pages = []
         self.changed_takeoff_uids = []
+        self.changed_annotation_uids = []
+        self.changed_annotation_types = []
         self.viewer_pages = []
 
-    def update_plan_view(self, page_uid, changed_takeoff_uids=None):
+    def update_plan_view(
+        self,
+        page_uid,
+        changed_takeoff_uids=None,
+        changed_annotation_uids=None,
+        changed_annotation_types=None,
+    ):
         self.plan_pages.append(page_uid)
         self.changed_takeoff_uids.append(
             None if changed_takeoff_uids is None else list(changed_takeoff_uids)
         )
+        self.changed_annotation_uids.append(
+            None if changed_annotation_uids is None else list(changed_annotation_uids)
+        )
+        self.changed_annotation_types.append(
+            None if changed_annotation_types is None else list(changed_annotation_types)
+        )
 
-    def update_plan_view_for_active(self, changed_takeoff_uids=None):
+    def update_plan_view_for_active(
+        self,
+        changed_takeoff_uids=None,
+        changed_annotation_uids=None,
+        changed_annotation_types=None,
+    ):
         self.plan_pages.append("active")
         self.changed_takeoff_uids.append(
             None if changed_takeoff_uids is None else list(changed_takeoff_uids)
+        )
+        self.changed_annotation_uids.append(
+            None if changed_annotation_uids is None else list(changed_annotation_uids)
+        )
+        self.changed_annotation_types.append(
+            None if changed_annotation_types is None else list(changed_annotation_types)
         )
 
     def update_viewers(self, page_uids):
@@ -470,6 +496,31 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             page_uid="page-1", takeoff_uids=["t-1"], condition_uids=["c1"]
         )
         self.assertEqual(coordinator._sidebar.condition_summary_loads, 1)
+
+    def test_annotations_changed_passes_metadata_without_quantity_refresh(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.project_data = FakeProjectData()
+        coordinator._viewer = FakeViewer()
+        coordinator._sidebar = FakeSidebar()
+        coordinator._toolbar = FakeToolbar()
+        coordinator.main_window = FakeMainWindow()
+        coordinator._pending_hotlink_page_uid = None
+        coordinator._pending_hotlink_named_view = None
+        coordinator._on_annotations_changed(
+            page_uid="page-1",
+            annotation_uids=["ann-1"],
+            annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertEqual(coordinator._viewer.plan_pages, ["page-1"])
+        self.assertEqual(coordinator._viewer.changed_takeoff_uids, [None])
+        self.assertEqual(coordinator._viewer.changed_annotation_uids, [["ann-1"]])
+        self.assertEqual(
+            coordinator._viewer.changed_annotation_types,
+            [[ANNOTATION_TYPE_TEXT]],
+        )
+        self.assertEqual(coordinator._sidebar.quantity_updates, 0)
+        self.assertEqual(coordinator.main_window.menu_controller.updates, 1)
 
     def test_takeoffs_changed_keeps_empty_model_selection_for_mesh_refresh(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

@@ -4895,6 +4895,8 @@ class TakeoffPlanView(
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         hidden_layer_uids: Optional[Set[str]] = None,
         changed_takeoff_uids: Optional[List[str]] = None,
+        changed_annotation_uids: Optional[List[str]] = None,
+        changed_annotation_types: Optional[List[str]] = None,
     ) -> bool:
         if self._current_bid_page_uid != page.uid:
             return False
@@ -4910,6 +4912,22 @@ class TakeoffPlanView(
             next_hidden = {str(uid) for uid in hidden_layer_uids}
             hidden_layers_changed = next_hidden != self._hidden_layer_uids
             self._hidden_layer_uids = next_hidden
+        if not hidden_layers_changed and self._try_refresh_changed_annotation_overlays(
+            page=page,
+            takeoffs=takeoffs,
+            conditions=conditions,
+            color_map=color_map,
+            annotations=annotations,
+            page_area_selections=page_area_selections,
+            bid_ref=bid_ref,
+            changed_takeoff_uids=changed_takeoff_uids,
+            changed_annotation_uids=changed_annotation_uids,
+            changed_annotation_types=changed_annotation_types,
+        ):
+            self._sync_page_image_layer_visibility()
+            self._update_scene_rect()
+            self.viewport().update()
+            return True
         if not hidden_layers_changed and self._try_append_inserted_takeoff_overlays(
             page=page,
             takeoffs=takeoffs,
@@ -4936,6 +4954,215 @@ class TakeoffPlanView(
         self._sync_page_image_layer_visibility()
         self._update_scene_rect()
         self.viewport().update()
+        return True
+
+    def _annotation_event_identities(
+        self,
+        annotation_uids: Optional[List[str]],
+        annotation_types: Optional[List[str]],
+    ) -> Optional[Set[Tuple[str, str]]]:
+        if not annotation_uids or not annotation_types:
+            return None
+        if len(annotation_uids) != len(annotation_types):
+            return None
+        identities: Set[Tuple[str, str]] = set()
+        for uid, annotation_type in zip(annotation_uids, annotation_types):
+            uid_key = str(uid or "")
+            type_key = str(annotation_type or "")
+            if not uid_key or not type_key:
+                return None
+            identities.add((uid_key, type_key))
+        return identities if identities else None
+
+    def _annotation_identity(
+        self,
+        key: str,
+        annotation: BidAnnotation,
+        db_uid_map: Dict[str, str],
+    ) -> Tuple[str, str]:
+        return (
+            str(db_uid_map.get(key, annotation.uid)),
+            str(annotation.annotation_type),
+        )
+
+    def _annotation_keys_by_identity(
+        self,
+        annotations: Dict[str, BidAnnotation],
+        db_uid_map: Dict[str, str],
+    ) -> Optional[Dict[Tuple[str, str], str]]:
+        result: Dict[Tuple[str, str], str] = {}
+        for key, annotation in annotations.items():
+            identity = self._annotation_identity(key, annotation, db_uid_map)
+            if identity in result:
+                return None
+            result[identity] = key
+        return result
+
+    def _editing_annotation_uids(self) -> Set[str]:
+        return {
+            uid
+            for uid in (
+                self._editing_text_annotation_uid,
+                self._draft_text_annotation_uid,
+                self._editing_named_view_uid,
+                self._draft_named_view_uid,
+            )
+            if uid
+        }
+
+    def _remove_annotation_overlay_items(self, keys: Set[str]) -> None:
+        removed_items = set()
+        for key in keys:
+            for item in self._uid_to_items.pop(key, []):
+                removed_items.add(item)
+        if not removed_items:
+            return
+        for item in removed_items:
+            if item.scene() is self._scene:
+                self._scene.removeItem(item)
+        self._takeoff_items = [
+            item for item in self._takeoff_items if item not in removed_items
+        ]
+        self._hotlink_items = [
+            (item, target)
+            for item, target in self._hotlink_items
+            if item not in removed_items
+        ]
+
+    def _try_refresh_changed_annotation_overlays(
+        self,
+        page: Page,
+        takeoffs: List[Takeoff],
+        conditions: Dict[str, Condition],
+        color_map: Dict[str, str],
+        annotations: Optional[List[BidAnnotation]],
+        page_area_selections: Optional[Dict[str, Optional[str]]],
+        bid_ref: Optional[BidRef],
+        changed_takeoff_uids: Optional[List[str]],
+        changed_annotation_uids: Optional[List[str]],
+        changed_annotation_types: Optional[List[str]],
+    ) -> bool:
+        if changed_takeoff_uids:
+            return False
+        changed_identities = self._annotation_event_identities(
+            changed_annotation_uids, changed_annotation_types
+        )
+        if changed_identities is None:
+            return False
+        incoming_takeoffs = {str(takeoff.uid): takeoff for takeoff in takeoffs}
+        if incoming_takeoffs != self._current_takeoffs:
+            return False
+        if conditions != self._current_conditions:
+            return False
+        if color_map != self._current_color_map:
+            return False
+        if page_area_selections != self._current_page_area_selections:
+            return False
+        incoming_annotations = self._annotations_with_dirty_positions(annotations or [])
+        annotation_dict, db_uid_map = _build_annotation_dict(
+            incoming_annotations or [],
+            takeoff_uids=set(self._current_takeoffs.keys()),
+        )
+        current_by_identity = self._annotation_keys_by_identity(
+            self._current_annotations, self._ann_db_uid_map
+        )
+        incoming_by_identity = self._annotation_keys_by_identity(
+            annotation_dict, db_uid_map
+        )
+        if current_by_identity is None or incoming_by_identity is None:
+            return False
+        current_identities = set(current_by_identity)
+        incoming_identities = set(incoming_by_identity)
+        if not changed_identities.issubset(current_identities | incoming_identities):
+            return False
+        affected_current = current_identities & changed_identities
+        affected_incoming = incoming_identities & changed_identities
+        if not affected_current and not affected_incoming:
+            return False
+        if (current_identities - changed_identities) != (
+            incoming_identities - changed_identities
+        ):
+            return False
+        for identity in current_identities - changed_identities:
+            current_key = current_by_identity[identity]
+            incoming_key = incoming_by_identity[identity]
+            if current_key != incoming_key:
+                return False
+            if self._current_annotations[current_key] != annotation_dict[incoming_key]:
+                return False
+        affected_current_keys = {
+            current_by_identity[identity] for identity in affected_current
+        }
+        affected_incoming_keys = {
+            incoming_by_identity[identity] for identity in affected_incoming
+        }
+        editing_uids = self._editing_annotation_uids()
+        if editing_uids and (
+            editing_uids & affected_current_keys
+            or editing_uids & affected_incoming_keys
+            or editing_uids & {identity[0] for identity in changed_identities}
+        ):
+            return False
+        saved_text_annotation_uid = self._selected_text_annotation_uid
+        saved_dimension_label_uid = self._selected_dimension_text_label_target()
+        saved_condition_label_target = self._selected_condition_text_label_target()
+        saved_selection = set(self._selected_uids)
+        self._remove_annotation_overlay_items(affected_current_keys)
+        page_info = self._scene_builder.build_page_info(
+            page,
+            self._pdf_width_pts,
+            self._pdf_height_pts,
+            self._scene_scale,
+            page.rotation,
+        )
+        annotations_to_render = [
+            (key, annotation)
+            for key, annotation in annotation_dict.items()
+            if key in affected_incoming_keys
+        ]
+        new_items: List[QGraphicsItem] = []
+        hotlinks: List[Tuple[QGraphicsItem, HotlinkDto]] = []
+        ann_uid_to_items: Dict[str, List[QGraphicsItem]] = {}
+        if annotations_to_render:
+            new_items, hotlinks, ann_uid_to_items = (
+                self._scene_builder.add_annotation_overlays(
+                    self._scene,
+                    annotations_to_render,
+                    page_info,
+                    self._current_bid_page_uid,
+                )
+            )
+        self._takeoff_items.extend(new_items)
+        self._hotlink_items.extend(hotlinks)
+        self._current_page = page
+        self._current_bid_page_uid = page.uid
+        self._current_bid_ref = bid_ref
+        self._current_render_identity = self._build_render_identity(page, bid_ref)
+        self._current_conditions = conditions
+        self._current_color_map = color_map
+        self._current_page_area_selections = page_area_selections
+        self._current_annotations = annotation_dict
+        self._ann_db_uid_map = db_uid_map
+        for key in affected_incoming_keys:
+            self._register_uid_items(key, ann_uid_to_items.get(key, []))
+        page_transform = self._current_page_transform()
+        if page_transform is not None:
+            for item in new_items:
+                item.setTransform(page_transform)
+        if self._defer_page_visual_reveal:
+            for item in new_items:
+                item.setVisible(False)
+        valid_selection = set(self._current_takeoffs) | set(self._current_annotations)
+        self._selected_uids = saved_selection & valid_selection
+        affected_keys = affected_current_keys | affected_incoming_keys
+        if self._selected_uids != saved_selection or saved_selection & affected_keys:
+            self.update_selection_visuals()
+        self._restore_selected_text_annotation_toolbar(saved_text_annotation_uid)
+        self._restore_selected_dimension_text_label_toolbar(saved_dimension_label_uid)
+        self._restore_selected_condition_text_label_toolbar(
+            saved_condition_label_target
+        )
+        self._update_cursor()
         return True
 
     def _try_append_inserted_takeoff_overlays(

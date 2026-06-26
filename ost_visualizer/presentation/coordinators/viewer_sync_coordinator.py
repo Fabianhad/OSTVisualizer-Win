@@ -35,14 +35,22 @@ class ViewerSyncCoordinator:
         self.plan_view.prefetch_nearby_pages(page, self._ordered_pages(), bid_ref)
 
     def update_plan_view_for_active(
-        self, changed_takeoff_uids: Optional[List[str]] = None
+        self,
+        changed_takeoff_uids: Optional[List[str]] = None,
+        changed_annotation_uids: Optional[List[str]] = None,
+        changed_annotation_types: Optional[List[str]] = None,
     ) -> None:
         uid = self._ui_state.active_page_uid
         if not uid:
             pages = self._project_data.get_selected_page_uids()
             uid = pages[0] if pages else None
         if uid:
-            self.update_plan_view(uid, changed_takeoff_uids=changed_takeoff_uids)
+            self.update_plan_view(
+                uid,
+                changed_takeoff_uids=changed_takeoff_uids,
+                changed_annotation_uids=changed_annotation_uids,
+                changed_annotation_types=changed_annotation_types,
+            )
         else:
             self._clear_plan_view()
 
@@ -50,6 +58,8 @@ class ViewerSyncCoordinator:
         self,
         page_uid: Optional[str],
         changed_takeoff_uids: Optional[List[str]] = None,
+        changed_annotation_uids: Optional[List[str]] = None,
+        changed_annotation_types: Optional[List[str]] = None,
     ) -> None:
         if not self.plan_view or not page_uid:
             self._clear_plan_view()
@@ -88,6 +98,8 @@ class ViewerSyncCoordinator:
                 page_area_selections=page_area_selections,
                 hidden_layer_uids=hidden_layer_uids,
                 changed_takeoff_uids=changed_takeoff_uids,
+                changed_annotation_uids=changed_annotation_uids,
+                changed_annotation_types=changed_annotation_types,
             )
         ):
             if bid_ref:
