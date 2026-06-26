@@ -5437,6 +5437,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._selected_text_annotation_uid = None
         view._selection_items = []
         view._pdf_text_highlight_items = []
+        view._dirty_positions = {}
         view._dirty_ann_positions = {}
         view._pdf_width_pts = 100.0
         view._pdf_height_pts = 100.0
@@ -5585,6 +5586,133 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIn("2", view._current_takeoffs)
         self.assertIn("2", view._uid_to_items)
         self.assertEqual(calls, ["sync", "scene_rect", "viewport.update"])
+
+    def test_metadata_less_same_page_unchanged_state_skips_full_overlay_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        view._refresh_overlays = lambda *_args: self.fail(
+            "unchanged metadata-less refresh should be a no-op"
+        )
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [])
+        self.assertEqual(calls, [])
+
+    def test_metadata_less_same_page_changed_takeoffs_uses_full_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[
+                view._current_takeoffs["1"],
+                Takeoff(
+                    uid="2",
+                    condition_uid="c1",
+                    page_uid=page.uid,
+                    position=[3.0, 4.0],
+                ),
+            ],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+        )
+        self.assertTrue(refreshed)
+        self.assertIn("refresh_overlays", calls)
+
+    def test_metadata_less_same_page_changed_annotations_uses_full_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        self._install_annotation_item(view, self._text_annotation(text="old"))
+        view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[self._text_annotation(text="new")],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+        )
+        self.assertTrue(refreshed)
+        self.assertIn("refresh_overlays", calls)
+
+    def test_metadata_less_same_page_hidden_layer_change_uses_full_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        view._hidden_layer_uids = {"hidden-layer"}
+        view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+        )
+        self.assertTrue(refreshed)
+        self.assertIn("refresh_overlays", calls)
+
+    def test_native_scene_generic_refresh_after_fast_append_is_noop(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        view._refresh_overlays = lambda *_args: self.fail(
+            "native-scene generic refresh should not rebuild unchanged overlays"
+        )
+        incoming = [
+            view._current_takeoffs["1"],
+            Takeoff(
+                uid="2",
+                condition_uid="c1",
+                page_uid=page.uid,
+                position=[3.0, 4.0],
+            ),
+        ]
+        self.assertTrue(
+            view.refresh_current_page_overlays(
+                page=page,
+                takeoffs=incoming,
+                conditions=view._current_conditions,
+                color_map=view._current_color_map,
+                bid_ref=bid_ref,
+                annotations=[],
+                page_area_selections={},
+                hidden_layer_uids=set(),
+                changed_takeoff_uids=["2"],
+            )
+        )
+        self.assertEqual(renderer.calls, [["2"]])
+        calls.clear()
+        renderer.calls.clear()
+        self.assertTrue(
+            view.refresh_current_page_overlays(
+                page=page,
+                takeoffs=incoming,
+                conditions=view._current_conditions,
+                color_map=view._current_color_map,
+                bid_ref=bid_ref,
+                annotations=[],
+                page_area_selections={},
+                hidden_layer_uids=set(),
+            )
+        )
+        self.assertEqual(renderer.calls, [])
+        self.assertEqual(calls, [])
 
     def test_hole_insert_keeps_full_overlay_refresh(self):
         renderer = RecordingPathTakeoffRenderer()

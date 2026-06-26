@@ -4912,6 +4912,20 @@ class TakeoffPlanView(
             next_hidden = {str(uid) for uid in hidden_layer_uids}
             hidden_layers_changed = next_hidden != self._hidden_layer_uids
             self._hidden_layer_uids = next_hidden
+        if not hidden_layers_changed and self._can_skip_unchanged_overlay_refresh(
+            page=page,
+            takeoffs=takeoffs,
+            conditions=conditions,
+            color_map=color_map,
+            annotations=annotations,
+            page_area_selections=page_area_selections,
+            bid_ref=bid_ref,
+            hidden_layer_uids=hidden_layer_uids,
+            changed_takeoff_uids=changed_takeoff_uids,
+            changed_annotation_uids=changed_annotation_uids,
+            changed_annotation_types=changed_annotation_types,
+        ):
+            return True
         if not hidden_layers_changed and self._try_refresh_changed_annotation_overlays(
             page=page,
             takeoffs=takeoffs,
@@ -4954,6 +4968,62 @@ class TakeoffPlanView(
         self._sync_page_image_layer_visibility()
         self._update_scene_rect()
         self.viewport().update()
+        return True
+
+    def _can_skip_unchanged_overlay_refresh(
+        self,
+        page: Page,
+        takeoffs: List[Takeoff],
+        conditions: Dict[str, Condition],
+        color_map: Dict[str, str],
+        annotations: Optional[List[BidAnnotation]],
+        page_area_selections: Optional[Dict[str, Optional[str]]],
+        bid_ref: Optional[BidRef],
+        hidden_layer_uids: Optional[Set[str]],
+        changed_takeoff_uids: Optional[List[str]],
+        changed_annotation_uids: Optional[List[str]],
+        changed_annotation_types: Optional[List[str]],
+    ) -> bool:
+        if changed_takeoff_uids or changed_annotation_uids or changed_annotation_types:
+            return False
+        if hidden_layer_uids is None:
+            return False
+        if self._defer_page_visual_reveal:
+            return False
+        if self._editing_annotation_uids():
+            return False
+        if self._dirty_positions or self._dirty_ann_positions:
+            return False
+        if page != self._current_page:
+            return False
+        if bid_ref != self._current_bid_ref:
+            return False
+        incoming_takeoffs = {str(takeoff.uid): takeoff for takeoff in takeoffs}
+        if incoming_takeoffs != self._current_takeoffs:
+            return False
+        if conditions != self._current_conditions:
+            return False
+        if color_map != self._current_color_map:
+            return False
+        if page_area_selections != self._current_page_area_selections:
+            return False
+        annotation_dict, db_uid_map = _build_annotation_dict(
+            annotations or [],
+            takeoff_uids=set(self._current_takeoffs.keys()),
+        )
+        if annotation_dict != self._current_annotations:
+            return False
+        if db_uid_map != self._ann_db_uid_map:
+            return False
+        if (
+            self._annotation_keys_by_identity(
+                self._current_annotations, self._ann_db_uid_map
+            )
+            is None
+        ):
+            return False
+        if self._annotation_keys_by_identity(annotation_dict, db_uid_map) is None:
+            return False
         return True
 
     def _annotation_event_identities(
