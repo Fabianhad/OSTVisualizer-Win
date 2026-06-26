@@ -26,7 +26,10 @@ from ..config import COMPACT_SPACING, NO_MARGINS
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..utils.condition_icon import make_condition_color_icon
-from ..utils.condition_tree_style import apply_condition_tree_style
+from ..utils.condition_tree_style import (
+    apply_condition_tree_style,
+    set_condition_tree_item_row_height,
+)
 from ..utils.quantity_display import format_quantity_number
 
 _NODE_ROLE = QtCore.Qt.ItemDataRole.UserRole
@@ -285,6 +288,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
 
     def _create_item(self, node: ConditionSummaryNode) -> QtWidgets.QTreeWidgetItem:
         item = QtWidgets.QTreeWidgetItem([""] * len(self._column_keys))
+        set_condition_tree_item_row_height(item, len(self._column_keys))
         item.setData(_COL_NUMBER, _NODE_ROLE, node)
         if node.condition_uid:
             self._condition_items.setdefault(node.condition_uid, []).append(item)

@@ -52,6 +52,7 @@ from ost_visualizer.presentation.managers.icon_manager import IconId, IconManage
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.utils.condition_tree_style import (
     CONDITION_TREE_INDENTATION,
+    CONDITION_TREE_ROW_HEIGHT,
 )
 
 
@@ -547,7 +548,7 @@ class ConditionSummaryTabTests(unittest.TestCase):
         finally:
             sidebar.deleteLater()
 
-    def test_summary_items_do_not_add_custom_row_size_hints(self):
+    def test_summary_items_use_condition_sidebar_row_size_hints(self):
         self._load(ConditionSummaryGrouping(by_area=True))
         sidebar = ConditionsSidebar(None, uom_label_fn=lambda _code: "")
         try:
@@ -566,7 +567,9 @@ class ConditionSummaryTabTests(unittest.TestCase):
             summary_item = self._item_for_kind(SUMMARY_NODE_CONDITION)
             sidebar_item = sidebar._condition_items["c1"]
             self.assertEqual(summary_item.sizeHint(0), sidebar_item.sizeHint(0))
-            self.assertFalse(summary_item.sizeHint(0).isValid())
+            self.assertEqual(
+                summary_item.sizeHint(0).height(), CONDITION_TREE_ROW_HEIGHT
+            )
         finally:
             sidebar.deleteLater()
 

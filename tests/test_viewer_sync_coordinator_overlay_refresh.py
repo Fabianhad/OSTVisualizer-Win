@@ -556,6 +556,38 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view._render_loading_bar.is_loading)
         view.cleanup()
 
+    def test_render_loading_bar_is_fixed_viewport_overlay(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self._install_page_canvas(view, page)
+        bar = view._render_loading_bar
+        self.assertIs(bar.parent(), view)
+        self.assertIsNot(bar.parent(), view.viewport())
+        view._start_current_page_render_loading()
+        view._position_render_loading_bar()
+        expected = view.viewport().geometry()
+        self.assertEqual(bar.geometry().x(), expected.x())
+        self.assertEqual(bar.geometry().y(), expected.y())
+        self.assertEqual(bar.geometry().width(), expected.width())
+        initial_pos = bar.pos()
+        view.horizontalScrollBar().setValue(view.horizontalScrollBar().maximum())
+        view.verticalScrollBar().setValue(view.verticalScrollBar().maximum())
+        QApplication.processEvents()
+        self.assertEqual(bar.pos(), initial_pos)
+        view.resize(360, 260)
+        QApplication.processEvents()
+        expected = view.viewport().geometry()
+        self.assertEqual(bar.geometry().x(), expected.x())
+        self.assertEqual(bar.geometry().y(), expected.y())
+        self.assertEqual(bar.geometry().width(), expected.width())
+        view.cleanup()
+
     def test_composite_and_overlay_only_renders_start_loading_bar(self):
         view = self._make_plan_view()
         composite_page = Page(

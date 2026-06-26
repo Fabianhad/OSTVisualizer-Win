@@ -255,7 +255,8 @@ class TakeoffPlanView(
         self._pending_page_data: Optional[Dict] = None
         self._defer_page_visual_reveal: bool = False
         self._deferred_page_visual_result: Optional[Tuple[str, Dict, object]] = None
-        self._render_loading_bar = PageRenderLoadingBar(self.viewport())
+        self._render_loading_bar = PageRenderLoadingBar(self)
+        self.viewport().installEventFilter(self)
         self._current_page_loading_token: Optional[str] = None
         self._visible_frame_loading_token: Optional[str] = None
         self._background_item: Optional[ImageBackgroundItem] = None
@@ -607,7 +608,13 @@ class TakeoffPlanView(
         if bar is None:
             return
         viewport = self.viewport()
-        bar.setGeometry(0, 0, viewport.width(), bar.height())
+        viewport_rect = viewport.geometry()
+        bar.setGeometry(
+            viewport_rect.x(),
+            viewport_rect.y(),
+            viewport_rect.width(),
+            bar.height(),
+        )
         bar.raise_()
 
     def _start_current_page_render_loading(self) -> str:
@@ -671,6 +678,15 @@ class TakeoffPlanView(
         super().resizeEvent(event)
         self._position_condition_text_toolbar()
         self._position_render_loading_bar()
+
+    def eventFilter(self, watched, event):
+        if watched is self.viewport() and event.type() in (
+            QtCore.QEvent.Type.Move,
+            QtCore.QEvent.Type.Resize,
+            QtCore.QEvent.Type.Show,
+        ):
+            self._position_render_loading_bar()
+        return super().eventFilter(watched, event)
 
     def _condition_text_label_at(
         self, viewport_pos: QtCore.QPoint

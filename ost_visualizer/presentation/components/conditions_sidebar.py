@@ -12,7 +12,10 @@ from ..managers.context_menu_manager import ContextMenuManager
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..utils.condition_icon import make_condition_color_icon
-from ..utils.condition_tree_style import apply_condition_tree_style
+from ..utils.condition_tree_style import (
+    apply_condition_tree_style,
+    set_condition_tree_item_row_height,
+)
 from ..utils.messagebox import show_warning
 from ..utils.quantity_display import format_quantity_with_uom
 
@@ -384,6 +387,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._selected_condition_uids = []
         self._selected_folder_uids = []
         root = _SortableItem([f"Conditions - {self._project_name}"])
+        set_condition_tree_item_row_height(root, self.tree.columnCount())
         root.setData(_COL_NO, _ITEM_ROLE, (_TYPE_ROOT, ""))
         root.setFlags(
             QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
@@ -489,6 +493,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
     ) -> None:
         for folder in children_by_parent.get(parent_uid, []):
             folder_item = _SortableItem([folder.name])
+            set_condition_tree_item_row_height(folder_item, self.tree.columnCount())
             folder_item.setData(_COL_NO, _ITEM_ROLE, (_TYPE_FOLDER, folder.uid))
             folder_item.setData(_COL_NO, _SORT_ROLE, folder.name)
             folder_item.setFlags(
@@ -547,6 +552,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
             group_conds = by_cdn[cdn_uid]
             group_name = cdn_name_map.get(cdn_uid, "(unassigned)")
             group_item = _SortableItem([group_name])
+            set_condition_tree_item_row_height(group_item, self.tree.columnCount())
             group_item.setData(_COL_NO, _ITEM_ROLE, (_TYPE_CDN_TYPE, cdn_uid or ""))
             group_item.setData(_COL_NO, _SORT_ROLE, group_name)
             group_item.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
@@ -563,6 +569,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
     ) -> QtWidgets.QTreeWidgetItem:
         display_name = cond.name
         item = _SortableItem([str(cond.ref_no), display_name, "", "", ""])
+        set_condition_tree_item_row_height(item, self.tree.columnCount())
         item.setData(_COL_NO, _ITEM_ROLE, (_TYPE_CONDITION, cond.uid))
         item.setData(_COL_NO, _SORT_ROLE, cond.ref_no)
         item.setData(_COL_NAME, _SORT_ROLE, display_name)
