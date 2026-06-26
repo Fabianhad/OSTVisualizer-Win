@@ -4894,6 +4894,7 @@ class TakeoffPlanView(
         annotations: Optional[List[BidAnnotation]] = None,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         hidden_layer_uids: Optional[Set[str]] = None,
+        changed_takeoff_uids: Optional[List[str]] = None,
     ) -> bool:
         if self._current_bid_page_uid != page.uid:
             return False
@@ -4904,8 +4905,25 @@ class TakeoffPlanView(
             strategy = self._load_coordinator.determine_load_strategy(page)
             if strategy.needs_async_loading:
                 return False
+        hidden_layers_changed = False
         if hidden_layer_uids is not None:
-            self._hidden_layer_uids = {str(uid) for uid in hidden_layer_uids}
+            next_hidden = {str(uid) for uid in hidden_layer_uids}
+            hidden_layers_changed = next_hidden != self._hidden_layer_uids
+            self._hidden_layer_uids = next_hidden
+        if not hidden_layers_changed and self._try_append_inserted_takeoff_overlays(
+            page=page,
+            takeoffs=takeoffs,
+            conditions=conditions,
+            color_map=color_map,
+            annotations=annotations,
+            page_area_selections=page_area_selections,
+            bid_ref=bid_ref,
+            changed_takeoff_uids=changed_takeoff_uids,
+        ):
+            self._sync_page_image_layer_visibility()
+            self._update_scene_rect()
+            self.viewport().update()
+            return True
         self._refresh_overlays(
             page,
             takeoffs,
@@ -4918,6 +4936,88 @@ class TakeoffPlanView(
         self._sync_page_image_layer_visibility()
         self._update_scene_rect()
         self.viewport().update()
+        return True
+
+    def _try_append_inserted_takeoff_overlays(
+        self,
+        page: Page,
+        takeoffs: List[Takeoff],
+        conditions: Dict[str, Condition],
+        color_map: Dict[str, str],
+        annotations: Optional[List[BidAnnotation]],
+        page_area_selections: Optional[Dict[str, Optional[str]]],
+        bid_ref: Optional[BidRef],
+        changed_takeoff_uids: Optional[List[str]],
+    ) -> bool:
+        if not changed_takeoff_uids:
+            return False
+        current_uids = {str(uid) for uid in self._current_takeoffs}
+        incoming_by_uid = {str(takeoff.uid): takeoff for takeoff in takeoffs}
+        incoming_uids = set(incoming_by_uid)
+        if not current_uids.issubset(incoming_uids):
+            return False
+        added_uids = incoming_uids - current_uids
+        changed_uids = {str(uid) for uid in changed_takeoff_uids if uid}
+        if not added_uids or changed_uids != added_uids:
+            return False
+        annotation_dict, db_uid_map = _build_annotation_dict(
+            annotations or [],
+            takeoff_uids=incoming_uids,
+        )
+        if set(annotation_dict) != set(self._current_annotations):
+            return False
+        if any(uid in self._current_annotations for uid in added_uids):
+            return False
+        added_takeoffs = [incoming_by_uid[uid] for uid in added_uids]
+        for takeoff in added_takeoffs:
+            if takeoff.is_hole:
+                return False
+        try:
+            page_info = self._scene_builder.build_page_info(
+                page,
+                self._pdf_width_pts,
+                self._pdf_height_pts,
+                self._scene_scale,
+                page.rotation,
+            )
+            new_items, uid_to_items = self._scene_builder.add_takeoff_overlays_subset(
+                self._scene,
+                takeoffs,
+                added_takeoffs,
+                conditions,
+                color_map,
+                page_info,
+                page_area_selections,
+            )
+        except ValueError:
+            return False
+        if set(uid_to_items) != added_uids:
+            for item in new_items:
+                if item.scene() is self._scene:
+                    self._scene.removeItem(item)
+            return False
+        self._current_page = page
+        self._current_bid_page_uid = page.uid
+        self._current_bid_ref = bid_ref
+        self._current_render_identity = self._build_render_identity(page, bid_ref)
+        self._current_conditions = conditions
+        self._current_color_map = color_map
+        self._current_page_area_selections = page_area_selections
+        self._current_annotations = annotation_dict
+        self._ann_db_uid_map = db_uid_map
+        for uid in sorted(added_uids, key=int):
+            self._current_takeoffs[uid] = incoming_by_uid[uid]
+            self._register_uid_items(uid, uid_to_items[uid])
+        self._takeoff_items.extend(new_items)
+        page_transform = self._current_page_transform()
+        if page_transform is not None:
+            for item in new_items:
+                item.setTransform(page_transform)
+        if self._defer_page_visual_reveal:
+            for item in new_items:
+                item.setVisible(False)
+        self._invalidate_snap_index()
+        self._update_cursor()
         return True
 
     def clear(self, preserve_place_session: bool = False):

@@ -66,10 +66,20 @@ class FakeDeferredPersistence:
 class FakeViewer:
     def __init__(self):
         self.plan_pages = []
+        self.changed_takeoff_uids = []
         self.viewer_pages = []
 
-    def update_plan_view(self, page_uid):
+    def update_plan_view(self, page_uid, changed_takeoff_uids=None):
         self.plan_pages.append(page_uid)
+        self.changed_takeoff_uids.append(
+            None if changed_takeoff_uids is None else list(changed_takeoff_uids)
+        )
+
+    def update_plan_view_for_active(self, changed_takeoff_uids=None):
+        self.plan_pages.append("active")
+        self.changed_takeoff_uids.append(
+            None if changed_takeoff_uids is None else list(changed_takeoff_uids)
+        )
 
     def update_viewers(self, page_uids):
         self.viewer_pages.append(list(page_uids))
@@ -422,6 +432,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._sidebar = FakeSidebar()
         coordinator._toolbar = FakeToolbar()
         coordinator.main_window = FakeMainWindow()
+        coordinator._tab_widget = None
         coordinator._pending_hotlink_page_uid = None
         coordinator._pending_hotlink_named_view = None
         coordinator._on_takeoffs_changed(
@@ -433,12 +444,32 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             [({"0", "area-1"}, {"area-1"})],
         )
         self.assertEqual(coordinator._viewer.plan_pages, ["page-1"])
+        self.assertEqual(coordinator._viewer.changed_takeoff_uids, [["t-1"]])
         self.assertEqual(coordinator._viewer.viewer_pages, [["page-1"]])
         self.assertEqual(coordinator._sidebar.quantity_updates, 1)
         self.assertEqual(coordinator._sidebar.condition_quantity_updates, [["c1"]])
         self.assertEqual(coordinator._sidebar.condition_refreshes, 0)
+        self.assertEqual(coordinator._sidebar.condition_summary_loads, 0)
         self.assertEqual(coordinator.main_window.menu_controller.updates, 1)
         self.assertEqual(coordinator._toolbar.refreshes, 1)
+
+    def test_takeoffs_changed_loads_summary_when_summary_tab_is_active(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.project_data = FakeProjectData()
+        coordinator.takeoff_sidebar = FakeTakeoffSidebar()
+        coordinator._page_settings_bar = FakePageSettingsBar()
+        coordinator._viewer = FakeViewer()
+        coordinator._sidebar = FakeSidebar()
+        coordinator._toolbar = FakeToolbar()
+        coordinator.main_window = FakeMainWindow()
+        coordinator._tab_widget = FakeTabWidget(index=2)
+        coordinator._pending_hotlink_page_uid = None
+        coordinator._pending_hotlink_named_view = None
+        coordinator._on_takeoffs_changed(
+            page_uid="page-1", takeoff_uids=["t-1"], condition_uids=["c1"]
+        )
+        self.assertEqual(coordinator._sidebar.condition_summary_loads, 1)
 
     def test_takeoffs_changed_keeps_empty_model_selection_for_mesh_refresh(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -451,6 +482,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._sidebar = FakeSidebar()
         coordinator._toolbar = FakeToolbar()
         coordinator.main_window = FakeMainWindow()
+        coordinator._tab_widget = None
         coordinator._pending_hotlink_page_uid = None
         coordinator._pending_hotlink_named_view = None
         coordinator._on_takeoffs_changed(page_uid="page-1", takeoff_uids=["t-1"])

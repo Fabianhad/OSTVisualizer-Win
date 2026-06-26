@@ -1,5 +1,6 @@
 import unittest
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.workspace_state import (
     TakeoffWorkspaceState,
     WORKSPACE_VALID_ACTIVE_VIEWS,
@@ -19,6 +20,12 @@ class DomainLifecycleTests(unittest.TestCase):
         self.assertEqual(
             TakeoffWorkspaceState.VALID_ACTIVE_VIEWS, WORKSPACE_VALID_ACTIVE_VIEWS
         )
+
+    def test_takeoff_none_parent_sentinel_is_primary(self):
+        self.assertFalse(
+            Takeoff(uid="1", condition_uid="c1", parent_uid="None").is_hole
+        )
+        self.assertTrue(Takeoff(uid="2", condition_uid="c1", parent_uid="1").is_hole)
 
     def test_workspace_annotation_styles_round_trip_and_clamp_values(self):
         state = WorkspaceState.from_dict(

@@ -1469,6 +1469,13 @@ class UIEventCoordinator:
         finally:
             self._finish_refresh()
 
+    def _is_summary_tab_active(self) -> bool:
+        return bool(
+            self._tab_widget
+            and self._tab_widget.count() > TAB_INDEX_SUMMARY
+            and self._tab_widget.currentIndex() == TAB_INDEX_SUMMARY
+        )
+
     def _on_takeoffs_changed(
         self,
         page_uid: str = "",
@@ -1479,11 +1486,19 @@ class UIEventCoordinator:
         if page_uid:
             self._refresh_takeoff_dependent_page_controls(page_uid)
         if page_uid:
-            self._update_plan_view(page_uid, condition_uids=condition_uids)
+            self._update_plan_view(
+                page_uid,
+                condition_uids=condition_uids,
+                takeoff_uids=takeoff_uids,
+            )
         else:
-            self._update_plan_view_for_active(condition_uids=condition_uids)
+            self._update_plan_view_for_active(
+                condition_uids=condition_uids,
+                takeoff_uids=takeoff_uids,
+            )
         self._viewer.update_viewers(self.project_data.get_selected_page_uids())
-        self._load_condition_summary()
+        if self._is_summary_tab_active():
+            self._load_condition_summary()
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
 
@@ -2022,16 +2037,20 @@ class UIEventCoordinator:
     def _load_takeoff_sidebar(self, bid_ref: BidRef) -> None:
         self._sidebar.load_takeoff_sidebar(bid_ref, self._bid_data_cache)
 
-    def _update_plan_view_for_active(self, condition_uids=None) -> None:
-        self._viewer.update_plan_view_for_active()
+    def _update_plan_view_for_active(
+        self, condition_uids=None, takeoff_uids=None
+    ) -> None:
+        self._viewer.update_plan_view_for_active(changed_takeoff_uids=takeoff_uids)
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
         if condition_uids is None:
             self._sidebar.update_conditions_quantities()
         else:
             self._sidebar.update_conditions_quantities(condition_uids=condition_uids)
 
-    def _update_plan_view(self, page_uid: Optional[str], condition_uids=None) -> None:
-        self._viewer.update_plan_view(page_uid)
+    def _update_plan_view(
+        self, page_uid: Optional[str], condition_uids=None, takeoff_uids=None
+    ) -> None:
+        self._viewer.update_plan_view(page_uid, changed_takeoff_uids=takeoff_uids)
         self._apply_pending_hotlink_named_view_focus(require_stable=True)
         if condition_uids is None:
             self._sidebar.update_conditions_quantities()

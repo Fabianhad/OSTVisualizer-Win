@@ -87,7 +87,8 @@ class FakeHotlinkViewer:
         self.plan_view = plan_view
         self.updated_pages = []
 
-    def update_plan_view(self, page_uid):
+    def update_plan_view(self, page_uid, changed_takeoff_uids=None):
+        _ = changed_takeoff_uids
         self.updated_pages.append(page_uid)
         self.plan_view.current_page_uid = page_uid
 

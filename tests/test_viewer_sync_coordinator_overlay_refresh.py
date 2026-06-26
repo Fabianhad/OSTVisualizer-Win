@@ -4,7 +4,7 @@ from dataclasses import replace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore
+from PySide6 import QtCore, QtWidgets
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -58,6 +58,7 @@ from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanVie
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
     ViewerSyncCoordinator,
 )
+from ost_visualizer.presentation.scene.scene_builder import SceneBuilder
 from ost_visualizer.presentation.windows.annotation_view_window import (
     _ANNOTATION_WINDOW_CONFIG,
 )
@@ -172,6 +173,34 @@ class FakeTakeoffRenderer:
     ):
         _ = (color_map, opacity, page_area_selections)
         return []
+
+
+class RecordingPathTakeoffRenderer:
+    coordinate_system = FakeCoordinateSystem()
+
+    def __init__(self):
+        self.calls = []
+
+    def create_all_path_items(
+        self,
+        takeoffs,
+        conditions,
+        color_map,
+        opacity,
+        page_info,
+        page_area_selections=None,
+    ):
+        _ = (conditions, color_map, opacity, page_info, page_area_selections)
+        self.calls.append([takeoff.uid for takeoff in takeoffs])
+        results = []
+        for takeoff in takeoffs:
+            path = QPainterPath()
+            path.addRect(0.0, 0.0, 10.0, 10.0)
+            item = QGraphicsPathItem(path)
+            item.setData(0, takeoff.uid)
+            item.setData(1, takeoff.condition_uid)
+            results.append((takeoff.uid, item))
+        return results
 
 
 class FakeAnnotationRenderer:
@@ -5272,6 +5301,59 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             if isinstance(item, QGraphicsPolygonItem)
         )
 
+    def _make_incremental_refresh_view(self, renderer):
+        page = Page(uid="page-1", name="Page 1", width_pts=100.0, height_pts=100.0)
+        bid_ref = BidRef(file_path="bid.mdb", bid_uid="bid-1")
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._scene = QtWidgets.QGraphicsScene()
+        view._scene_builder = SceneBuilder(renderer, FakeAnnotationRenderer())
+        view._current_bid_page_uid = page.uid
+        view._current_page = page
+        view._current_bid_ref = bid_ref
+        view._current_render_identity = TakeoffPlanView._build_render_identity(
+            view, page, bid_ref
+        )
+        view._current_takeoffs = {
+            "1": Takeoff(
+                uid="1",
+                condition_uid="c1",
+                page_uid=page.uid,
+                position=[1.0, 2.0],
+            )
+        }
+        view._current_annotations = {}
+        view._ann_db_uid_map = {}
+        view._current_conditions = {
+            "c1": Condition(uid="c1", condition_type=Condition.TYPE_COUNT)
+        }
+        view._current_color_map = {"c1": "#000000"}
+        view._current_page_area_selections = {}
+        view._hidden_layer_uids = set()
+        view._takeoff_items = []
+        view._hotlink_items = []
+        view._uid_to_items = {}
+        view._selection_items = []
+        view._pdf_text_highlight_items = []
+        view._pdf_width_pts = 100.0
+        view._pdf_height_pts = 100.0
+        view._scene_scale = 1.0
+        view._background_item = None
+        view._visible_frame_item = None
+        view._visible_frame_kind = None
+        view._white_canvas_item = QGraphicsRectItem(0.0, 0.0, 100.0, 100.0)
+        view._scene.addItem(view._white_canvas_item)
+        view._defer_page_visual_reveal = False
+        view._load_coordinator = FakeLoadCoordinator()
+        view._has_loaded_page_visual_items = lambda: True
+        view._current_page_transform = lambda: None
+        view._invalidate_snap_index = lambda: None
+        view._update_cursor = lambda: None
+        calls = []
+        view._sync_page_image_layer_visibility = lambda: calls.append("sync")
+        view._update_scene_rect = lambda: calls.append("scene_rect")
+        view.viewport = lambda: FakeViewport(calls)
+        return view, page, bid_ref, calls
+
     def test_overlay_refresh_does_not_enter_load_view_state_path(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         page = Page(uid="page-1", name="Page 1")
@@ -5307,6 +5389,67 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             calls,
             ["refresh_overlays", "update_scene_rect", "viewport.update"],
         )
+
+    def test_takeoff_insert_appends_new_primary_without_full_overlay_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        view._refresh_overlays = lambda *_args: self.fail(
+            "primary insert should append without full refresh"
+        )
+        incoming = [
+            view._current_takeoffs["1"],
+            Takeoff(
+                uid="2",
+                condition_uid="c1",
+                page_uid=page.uid,
+                position=[3.0, 4.0],
+            ),
+        ]
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=incoming,
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_takeoff_uids=["2"],
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [["2"]])
+        self.assertIn("2", view._current_takeoffs)
+        self.assertIn("2", view._uid_to_items)
+        self.assertEqual(calls, ["sync", "scene_rect", "viewport.update"])
+
+    def test_hole_insert_keeps_full_overlay_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
+        incoming = [
+            view._current_takeoffs["1"],
+            Takeoff(
+                uid="2",
+                condition_uid="c1",
+                page_uid=page.uid,
+                position=[3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+                parent_uid="1",
+            ),
+        ]
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=incoming,
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_takeoff_uids=["2"],
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [])
+        self.assertIn("refresh_overlays", calls)
 
     def test_overlay_refresh_rejects_render_identity_change(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)

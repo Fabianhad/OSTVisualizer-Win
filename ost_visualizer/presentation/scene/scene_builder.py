@@ -110,15 +110,39 @@ class SceneBuilder:
         page_info: Dict,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
     ) -> Tuple[List[Any], Dict[str, List[Any]]]:
+        return self.add_takeoff_overlays_subset(
+            scene=scene,
+            all_takeoffs=takeoffs,
+            render_takeoffs=takeoffs,
+            conditions=conditions,
+            color_map=color_map,
+            page_info=page_info,
+            page_area_selections=page_area_selections,
+        )
+
+    def add_takeoff_overlays_subset(
+        self,
+        scene: QGraphicsScene,
+        all_takeoffs: List[Takeoff],
+        render_takeoffs: List[Takeoff],
+        conditions: Dict[str, Condition],
+        color_map: Dict[str, str],
+        page_info: Dict,
+        page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+    ) -> Tuple[List[Any], Dict[str, List[Any]]]:
         takeoff_items = []
         uid_to_items: Dict[str, List[Any]] = {}
-        ordered_takeoffs = _takeoffs_in_draw_order(takeoffs)
+        ordered_takeoffs = _takeoffs_in_draw_order(all_takeoffs)
         uid_to_draw_index = {
             str(takeoff.uid): draw_index
             for draw_index, takeoff in enumerate(ordered_takeoffs)
         }
+        render_uids = {str(render.uid) for render in render_takeoffs}
+        ordered_render_takeoffs = [
+            takeoff for takeoff in ordered_takeoffs if str(takeoff.uid) in render_uids
+        ]
         items = self._takeoff_renderer.create_all_path_items(
-            takeoffs=ordered_takeoffs,
+            takeoffs=ordered_render_takeoffs,
             conditions=conditions,
             color_map=color_map,
             opacity=0.5,
@@ -126,18 +150,19 @@ class SceneBuilder:
             page_area_selections=page_area_selections,
         )
         for uid, item_or_items in items:
+            uid_key = str(uid)
             items_to_add = (
                 item_or_items if isinstance(item_or_items, list) else [item_or_items]
             )
             for item in items_to_add:
-                draw_index = uid_to_draw_index[str(uid)]
+                draw_index = uid_to_draw_index[uid_key]
                 if item.data(2) == "condition_label":
                     item.setZValue(_takeoff_z_value(_TAKEOFF_LABEL_Z, draw_index))
                 else:
                     item.setZValue(_takeoff_z_value(_TAKEOFF_BODY_Z, draw_index))
                 scene.addItem(item)
                 takeoff_items.append(item)
-            uid_to_items[uid] = items_to_add
+            uid_to_items[uid_key] = items_to_add
         return takeoff_items, uid_to_items
 
     def add_annotation_overlays(

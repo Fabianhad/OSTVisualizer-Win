@@ -130,6 +130,31 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
         self.assertGreater(newer_label.zValue(), older_label.zValue())
         self.assertGreater(older_label.zValue(), newer_body.zValue())
 
+    def test_subset_draw_order_uses_full_takeoff_order_for_z_values(self):
+        renderer = RecordingTakeoffRenderer()
+        builder = SceneBuilder(renderer, EmptyAnnotationRenderer())
+        scene = QGraphicsScene()
+        _items, uid_to_items = builder.add_takeoff_overlays_subset(
+            scene=scene,
+            all_takeoffs=[
+                Takeoff(uid="10", condition_uid="c1"),
+                Takeoff(uid="2", condition_uid="c1"),
+                Takeoff(uid="1", condition_uid="c1"),
+            ],
+            render_takeoffs=[
+                Takeoff(uid="10", condition_uid="c1"),
+                Takeoff(uid="2", condition_uid="c1"),
+            ],
+            conditions={"c1": Condition(uid="c1", condition_type=Condition.TYPE_AREA)},
+            color_map={"c1": "#000000"},
+            page_info={},
+        )
+        self.assertEqual(renderer.rendered_uid_order, ["2", "10"])
+        older_body, older_label = uid_to_items["2"]
+        newer_body, newer_label = uid_to_items["10"]
+        self.assertGreater(newer_body.zValue(), older_body.zValue())
+        self.assertGreater(newer_label.zValue(), older_label.zValue())
+
 
 if __name__ == "__main__":
     unittest.main()

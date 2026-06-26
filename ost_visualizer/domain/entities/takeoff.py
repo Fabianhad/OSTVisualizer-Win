@@ -43,7 +43,7 @@ class Takeoff:
 
     @property
     def is_hole(self) -> bool:
-        return self.parent_uid not in ("0", "", None)
+        return self.parent_uid not in ("0", "", "None", None)
 
     @property
     def has_valid_position(self) -> bool:

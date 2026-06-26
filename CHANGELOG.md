@@ -50,6 +50,7 @@
 - Deferred visual/session state persistence for page zoom/pan, selected page, active page area, layer visibility, page image flags, and overlay placement, with 2D zoom/pan/reset, active page area, and layer visibility changes updating in-memory view state immediately while still flushing before close, exports, refreshes, unloads, and structural edits.
 - Changed the Summary tab to show only conditions with placed takeoffs, hiding unused conditions along with empty folders and groups.
 - Matched the Summary tab condition tree indentation, icon sizing, and row height behavior to the Conditions sidebar.
+- Reduced lag when placing takeoffs on dense 2D pages by appending newly placed primary takeoff graphics instead of rebuilding every takeoff on the page, while deferring inactive Summary tab rebuilds.
 - Tightened the exported HTML 3D viewer camera clipping range while zooming, including PDF/background sheet bounds in the padded checks to reduce depth flicker without clipping meshes or page corners at oblique angles.
 - Updated exported HTML views to preserve layer, condition, area, and page metadata, group condition controls by condition type with condition-only color swatches, add a Plan/3D mode switch with multi-page 2D takeoff overlays, and let exported geometry be toggled by page or hidden layer in the standalone viewer.
 

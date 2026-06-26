@@ -34,17 +34,23 @@ class ViewerSyncCoordinator:
     def _prefetch_nearby_pages(self, page, bid_ref) -> None:
         self.plan_view.prefetch_nearby_pages(page, self._ordered_pages(), bid_ref)
 
-    def update_plan_view_for_active(self) -> None:
+    def update_plan_view_for_active(
+        self, changed_takeoff_uids: Optional[List[str]] = None
+    ) -> None:
         uid = self._ui_state.active_page_uid
         if not uid:
             pages = self._project_data.get_selected_page_uids()
             uid = pages[0] if pages else None
         if uid:
-            self.update_plan_view(uid)
+            self.update_plan_view(uid, changed_takeoff_uids=changed_takeoff_uids)
         else:
             self._clear_plan_view()
 
-    def update_plan_view(self, page_uid: Optional[str]) -> None:
+    def update_plan_view(
+        self,
+        page_uid: Optional[str],
+        changed_takeoff_uids: Optional[List[str]] = None,
+    ) -> None:
         if not self.plan_view or not page_uid:
             self._clear_plan_view()
             return
@@ -81,6 +87,7 @@ class ViewerSyncCoordinator:
                 annotations=visible_annotations,
                 page_area_selections=page_area_selections,
                 hidden_layer_uids=hidden_layer_uids,
+                changed_takeoff_uids=changed_takeoff_uids,
             )
         ):
             if bid_ref:
