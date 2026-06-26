@@ -484,6 +484,7 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         coordinator.update_plan_view("page-1")
         self.assertEqual(plan_view.overlay_calls, 1)
         self.assertEqual(plan_view.load_calls, 0)
+        self.assertEqual(plan_view.prefetch_calls, [])
         self.assertEqual(
             plan_view.overlay_kwargs[0]["hidden_layer_uids"], {"annotation-layer"}
         )
@@ -513,6 +514,8 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         coordinator.update_plan_view("page-1")
         self.assertEqual(plan_view.overlay_calls, 0)
         self.assertEqual(plan_view.load_calls, 1)
+        self.assertEqual(len(plan_view.prefetch_calls), 1)
+        self.assertEqual(plan_view.prefetch_calls[0][0].uid, "page-1")
         self.assertEqual(
             plan_view.load_kwargs[0]["hidden_layer_uids"], {"annotation-layer"}
         )
@@ -534,6 +537,8 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         coordinator.update_plan_view("page-1")
         self.assertEqual(plan_view.overlay_calls, 1)
         self.assertEqual(plan_view.load_calls, 1)
+        self.assertEqual(len(plan_view.prefetch_calls), 1)
+        self.assertEqual(plan_view.prefetch_calls[0][0].uid, "page-1")
         self.assertEqual(
             plan_view.overlay_kwargs[0]["hidden_layer_uids"], {"annotation-layer"}
         )

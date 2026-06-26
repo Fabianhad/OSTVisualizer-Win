@@ -50,7 +50,7 @@
 - Deferred visual/session state persistence for page zoom/pan, selected page, active page area, layer visibility, page image flags, and overlay placement, with 2D zoom/pan/reset, active page area, and layer visibility changes updating in-memory view state immediately while still flushing before close, exports, refreshes, unloads, and structural edits.
 - Changed the Summary tab to show only conditions with placed takeoffs, hiding unused conditions along with empty folders and groups.
 - Matched the Summary tab condition tree indentation, icon sizing, and row height behavior to the Conditions sidebar.
-- Reduced lag when placing takeoffs on dense 2D pages by appending newly placed primary takeoff graphics, skipping redundant unchanged same-page overlay refreshes, deferring inactive Summary tab rebuilds, and deferring hidden 3D mesh refreshes until a 3D view is visible.
+- Reduced lag when placing takeoffs on dense 2D pages by appending newly placed primary takeoff graphics, skipping redundant unchanged same-page overlay refreshes, avoiding nearby-page PDF/composite prefetch restarts after same-page takeoff refreshes, deferring inactive Summary tab rebuilds, and deferring hidden 3D mesh refreshes until a 3D view is visible.
 - Reduced lag when editing annotations on dense 2D pages by refreshing changed annotation graphics without rebuilding takeoff graphics when the page state is otherwise unchanged.
 - Tightened the exported HTML 3D viewer camera clipping range while zooming, including PDF/background sheet bounds in the padded checks to reduce depth flicker without clipping meshes or page corners at oblique angles.
 - Updated exported HTML views to preserve layer, condition, area, and page metadata, group condition controls by condition type with condition-only color swatches, add a Plan/3D mode switch with multi-page 2D takeoff overlays, and let exported geometry be toggled by page or hidden layer in the standalone viewer.
@@ -75,6 +75,7 @@
 - Fixed plan-view Ctrl+A so hidden-layer takeoffs and hidden annotations are not selected internally.
 - Fixed newly placed annotations so they immediately follow layer visibility without needing a bid switch or reload.
 - Fixed PDF export default filenames so page names that already end in `.pdf` do not produce `.pdf.pdf`.
+- Treated imported OST condition `DisplaySize=0` values as the default 100% display size when reading bids, matching OST behavior.
 - Let progress dialogs paint before starting background work, and kept OSP export responsive while image files are collected and packaged.
 - Cleared stale detached page-window, PDF renderer, export background, and MCP bridge references during cleanup, and bounded PDF metadata caches across page/file switches.
 - Routed text-annotation inline-edit keyboard shortcuts and arrow keys to the active text editor instead of plan-view selection/move commands.

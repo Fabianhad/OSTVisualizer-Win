@@ -109,7 +109,6 @@ class ViewerSyncCoordinator:
                         bid.takeoff_increments,
                         bid.measure_base,
                     )
-            self._prefetch_nearby_pages(page, bid_ref)
             return
         self.plan_view.load_page(
             page=page,

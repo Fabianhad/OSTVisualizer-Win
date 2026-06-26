@@ -32,6 +32,15 @@ BidConditionFolders = Dict[str, BidConditionFolder]
 
 
 class BidDataReaderMixin:
+    @staticmethod
+    def _normalize_display_size(value: Any) -> float:
+        if value is None:
+            return 100.0
+        display_size = float(value)
+        if display_size <= 0:
+            return 100.0
+        return display_size
+
     def get_bid_data(self, file_path: str, bid_uid: str) -> Tuple[
         BidConditions,
         BidTakeoffs,
@@ -470,14 +479,12 @@ class BidDataReaderMixin:
                 else "[UID]"
             )
             with connection.cursor() as cursor:
-                cursor.execute(
-                    f"""
+                cursor.execute(f"""
                     SELECT {layer_select}
                     FROM [BidLayers]
                     WHERE [IsTemplate] <> 0
                     ORDER BY {order_expr}
-                    """
-                )
+                    """)
                 return [self._bid_layer_from_row(row) for row in cursor.fetchall()]
 
     @staticmethod
@@ -712,9 +719,7 @@ class BidDataReaderMixin:
                 qty2 = int(row.Quantity2) if row.Quantity2 is not None else 0
                 qty3 = int(row.Quantity3) if row.Quantity3 is not None else 0
                 ref_no = int(row.RefNo) if row.RefNo is not None else 0
-                display_size = (
-                    float(row.DisplaySize) if row.DisplaySize is not None else 100.0
-                )
+                display_size = self._normalize_display_size(row.DisplaySize)
                 drop_run = int(row.DropRun) if row.DropRun is not None else 0
                 drop_value = float(row.DropValue) if row.DropValue is not None else 0.0
                 bid_layer_uid = str(row.BidLayerUID)
