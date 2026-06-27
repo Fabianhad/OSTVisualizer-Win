@@ -1,8 +1,9 @@
 # Changelog
 
-## 1.2.4 - 2026-06-26
+## 1.2.4 - 2026-06-27
 
 ### Added
+- Fixed Cover Sheet multi-page deletion so declining the warning for a page with takeoffs or annotations skips only that page and continues deleting the other selected pages.
 - A fixed-position red plan-view status bar for selected page image/PDF load failures.
 - Added a first-pass OST-style Options dialog with persisted roping, page label, hotlink target, and Cover Sheet toolbar text preferences.
 - Added synced/custom 2D and 3D takeoff display mode controls to the Options dialog and View menu, with HTML and PDF exports using the matching view mode.

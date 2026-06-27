@@ -1162,17 +1162,21 @@ class CoverSheetDialog(QtWidgets.QDialog):
                     "Please remove all pages from a folder before attempting to delete it.",
                 )
                 return
+        items_to_delete = []
         for item in selected:
             data = item.data(0, self._ITEM_ROLE) or ()
-            if not data or data[0] != "page":
+            if not data:
+                continue
+            if data[0] != "page":
+                items_to_delete.append(item)
                 continue
             uid = str(data[1])
-            if uid not in self._pages_requiring_delete_confirmation:
-                continue
-            page_name = item.text(1) or item.text(0) or uid
-            if not confirm_delete_page_with_contents(self, page_name):
-                return
-        for item in selected:
+            if uid in self._pages_requiring_delete_confirmation:
+                page_name = item.text(1) or item.text(0) or uid
+                if not confirm_delete_page_with_contents(self, page_name):
+                    continue
+            items_to_delete.append(item)
+        for item in items_to_delete:
             data = item.data(0, self._ITEM_ROLE) or ()
             if not data:
                 continue

@@ -366,6 +366,64 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_cover_sheet_page_delete_decline_skips_page_and_continues(self):
+        data = _cover_sheet_data()
+        data.pages_without_folder.extend(
+            [
+                CoverSheetPage(
+                    uid="p2",
+                    sheet_no="A102",
+                    name="Level 2",
+                    width=42.0,
+                    height=30.0,
+                    scale_factor1=0.125,
+                    scale_factor2=12.0,
+                    image_path="",
+                    overlay_image_path="",
+                    index=2,
+                    show_mode=0,
+                ),
+                CoverSheetPage(
+                    uid="p3",
+                    sheet_no="A103",
+                    name="Level 3",
+                    width=42.0,
+                    height=30.0,
+                    scale_factor1=0.125,
+                    scale_factor2=12.0,
+                    image_path="",
+                    overlay_image_path="",
+                    index=3,
+                    show_mode=0,
+                ),
+            ]
+        )
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            data,
+            pages_requiring_delete_confirmation={"p2"},
+        )
+        try:
+            for idx in range(3):
+                dialog.plan_tree.topLevelItem(idx).setSelected(True)
+            with mock.patch(
+                "ost_visualizer.presentation.dialogs.cover_sheet.dialog."
+                "confirm_delete_page_with_contents",
+                return_value=False,
+            ) as confirm:
+                dialog._delete_selected()
+            self.assertEqual(confirm.call_count, 1)
+            self.assertEqual(dialog._deleted_page_uids, ["p1", "p3"])
+            remaining = [
+                dialog.plan_tree.topLevelItem(idx).data(0, dialog._ITEM_ROLE)[1]
+                for idx in range(dialog.plan_tree.topLevelItemCount())
+            ]
+            self.assertEqual(remaining, ["p2"])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
     def test_cover_sheet_path_cell_double_click_edits_full_path(self):
         image_path = r"C:\Plans\A101.pdf"
         dialog = CoverSheetDialog(
