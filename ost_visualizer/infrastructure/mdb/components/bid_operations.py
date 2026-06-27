@@ -137,6 +137,18 @@ class BidOperationsMixin:
                         f"(SELECT [UID] FROM [BidTakeoffs] WHERE BidUID IN ({placeholders_sql}))",
                         *uids,
                     )
+                if (
+                    not schema.optional_table_missing("BidSettings")
+                    and not schema.optional_table_missing("BidPages")
+                    and schema.column_exists("BidSettings", "BidPageSelectedUID")
+                    and schema.column_exists("BidPages", "UID")
+                    and schema.column_exists("BidPages", "BidUID")
+                ):
+                    cursor.execute(
+                        "UPDATE [BidSettings] SET [BidPageSelectedUID]=NULL "
+                        f"WHERE [BidPageSelectedUID] IN {page_subquery}",
+                        *uids,
+                    )
                 for table in TAKEOFF_REFERENCE_TABLES:
                     _del_takeoff_link(table)
                 for table in _PAGE_SCOPED:

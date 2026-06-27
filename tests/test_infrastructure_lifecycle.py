@@ -54,6 +54,10 @@ class _SqliteCursorWrapper:
         columns = [description[0] for description in self._cursor.description]
         return _SqliteRow(columns, row)
 
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount if self._cursor is not None else -1
+
 
 class _SqliteRow:
     def __init__(self, columns, values):
@@ -308,67 +312,52 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidPages (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER REFERENCES Bids(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidTakeoffs (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER REFERENCES Bids(UID),
                 BidPageUID INTEGER REFERENCES BidPages(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidDimensions (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER REFERENCES Bids(UID),
                 BidPageUID INTEGER REFERENCES BidPages(UID),
                 BidTakeoffFromUID INTEGER REFERENCES BidTakeoffs(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidAreas (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER REFERENCES Bids(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidTypAreas (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER REFERENCES Bids(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidLaborCostCodes (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER REFERENCES Bids(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidTimeCardStates (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER REFERENCES Bids(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidTimeCards (
                 UID INTEGER PRIMARY KEY,
                 BidTimeCardStateUID INTEGER REFERENCES BidTimeCardStates(UID),
@@ -377,37 +366,30 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 BidTypicalAreaUID INTEGER REFERENCES BidTypAreas(UID),
                 BidLaborCostCodeUID INTEGER REFERENCES BidLaborCostCodes(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidPercents (
                 UID INTEGER PRIMARY KEY,
                 BidTakeoffUID INTEGER REFERENCES BidTakeoffs(UID),
                 BidLaborCostCodeUID INTEGER REFERENCES BidLaborCostCodes(UID),
                 BidTimeCardStateUID INTEGER REFERENCES BidTimeCardStates(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidTypAreaCounts (
                 UID INTEGER PRIMARY KEY,
                 BidAreaUID INTEGER REFERENCES BidAreas(UID),
                 BidTypAreaUID INTEGER REFERENCES BidTypAreas(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidPageSettings (
                 UID INTEGER PRIMARY KEY,
                 BidPageUID INTEGER REFERENCES BidPages(UID),
                 BidAreaUID INTEGER REFERENCES BidAreas(UID),
                 BidTypAreaUID INTEGER REFERENCES BidTypAreas(UID)
             )
-            """
-        )
+            """)
         conn.execute("INSERT INTO Bids (UID) VALUES (1)")
         conn.execute("INSERT INTO BidAreas (UID, BidUID) VALUES (30, 1)")
         conn.execute("INSERT INTO BidTypAreas (UID, BidUID) VALUES (40, 1)")
@@ -464,14 +446,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidSettings (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER REFERENCES Bids(UID)
             )
-            """
-        )
+            """)
         conn.execute("INSERT INTO Bids (UID) VALUES (1)")
         conn.execute("INSERT INTO BidSettings (UID, BidUID) VALUES (2, 1)")
         self.assertTrue(_SqliteMdbOps(conn).delete_bids("bid.mdb", ["1"]))
@@ -480,27 +460,92 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0)
 
-    def test_delete_page_clears_bid_settings_selected_page_before_page_delete(self):
+    def test_delete_bid_clears_cross_bid_selected_page_before_page_delete(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidPages (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER REFERENCES Bids(UID)
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidSettings (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER REFERENCES Bids(UID),
                 BidPageSelectedUID INTEGER REFERENCES BidPages(UID)
             )
-            """
+            """)
+        conn.execute("INSERT INTO Bids (UID) VALUES (1)")
+        conn.execute("INSERT INTO Bids (UID) VALUES (2)")
+        conn.execute("INSERT INTO BidPages (UID, BidUID) VALUES (10, 1)")
+        conn.execute(
+            "INSERT INTO BidSettings (UID, BidUID, BidPageSelectedUID) "
+            "VALUES (20, 2, 10)"
         )
+        self.assertTrue(_SqliteMdbOps(conn).delete_bids("bid.mdb", ["1"]))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM BidPages").fetchone()[0], 0)
+        self.assertEqual(
+            conn.execute("SELECT BidUID FROM BidSettings WHERE UID = 20").fetchone()[0],
+            2,
+        )
+        self.assertIsNone(
+            conn.execute(
+                "SELECT BidPageSelectedUID FROM BidSettings WHERE UID = 20"
+            ).fetchone()[0]
+        )
+
+    def test_save_bid_selected_page_rejects_page_from_another_bid(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        conn.execute("""
+            CREATE TABLE BidPages (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER
+            )
+            """)
+        conn.execute("""
+            CREATE TABLE BidSettings (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageSelectedUID INTEGER
+            )
+            """)
+        conn.execute("INSERT INTO Bids (UID) VALUES (1)")
+        conn.execute("INSERT INTO Bids (UID) VALUES (2)")
+        conn.execute("INSERT INTO BidPages (UID, BidUID) VALUES (10, 1)")
+        conn.execute(
+            "INSERT INTO BidSettings (UID, BidUID, BidPageSelectedUID) "
+            "VALUES (20, 2, NULL)"
+        )
+        self.assertFalse(
+            _SqliteMdbOps(conn).save_bid_selected_page("bid.mdb", "2", "10")
+        )
+        self.assertIsNone(
+            conn.execute(
+                "SELECT BidPageSelectedUID FROM BidSettings WHERE UID = 20"
+            ).fetchone()[0]
+        )
+
+    def test_delete_page_clears_bid_settings_selected_page_before_page_delete(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("CREATE TABLE Bids (UID INTEGER PRIMARY KEY)")
+        conn.execute("""
+            CREATE TABLE BidPages (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER REFERENCES Bids(UID)
+            )
+            """)
+        conn.execute("""
+            CREATE TABLE BidSettings (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER REFERENCES Bids(UID),
+                BidPageSelectedUID INTEGER REFERENCES BidPages(UID)
+            )
+            """)
         conn.execute("INSERT INTO Bids (UID) VALUES (1)")
         conn.execute("INSERT INTO BidPages (UID, BidUID) VALUES (10, 1)")
         conn.execute(
@@ -519,15 +564,13 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("CREATE TABLE BidPages (UID INTEGER PRIMARY KEY)")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidAnnotationRects (
                 UID INTEGER PRIMARY KEY,
                 BidPageUID INTEGER,
                 BidLayerUID INTEGER
             )
-            """
-        )
+            """)
         conn.execute("INSERT INTO BidPages (UID) VALUES (10)")
         conn.execute(
             "INSERT INTO BidAnnotationRects (UID, BidPageUID, BidLayerUID) "
@@ -543,8 +586,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
     def test_delete_layer_clears_indexed_annotation_shape_layer_refs(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidLayers (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER,
@@ -552,16 +594,13 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 IsTemplate INTEGER,
                 IsLocked INTEGER
             )
-            """
-        )
-        conn.execute(
-            """
+            """)
+        conn.execute("""
             CREATE TABLE BidAnnotationRects (
                 UID INTEGER PRIMARY KEY,
                 BidLayerUID INTEGER
             )
-            """
-        )
+            """)
         conn.execute(
             "INSERT INTO BidLayers "
             "(UID, BidUID, Sequence, IsTemplate, IsLocked) VALUES (30, 1, 1, 0, 0)"
@@ -589,14 +628,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute(
             "CREATE TABLE BidConditionFolders (UID INTEGER PRIMARY KEY, Name TEXT)"
         )
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidConditions (
                 UID INTEGER PRIMARY KEY,
                 BidConditionFolderUID INTEGER REFERENCES BidConditionFolders(UID)
             )
-            """
-        )
+            """)
         conn.execute("INSERT INTO BidConditionFolders (UID, Name) VALUES (1, 'Used')")
         conn.execute(
             "INSERT INTO BidConditions (UID, BidConditionFolderUID) VALUES (10, 1)"
@@ -616,14 +653,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute(
             "CREATE TABLE BidConditionFolders (UID INTEGER PRIMARY KEY, Name TEXT)"
         )
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidConditions (
                 UID INTEGER PRIMARY KEY,
                 BidConditionFolderUID INTEGER REFERENCES BidConditionFolders(UID)
             )
-            """
-        )
+            """)
         conn.execute("INSERT INTO BidConditionFolders (UID, Name) VALUES (1, 'Unused')")
         self.assertTrue(_SqliteMdbOps(conn).delete_condition_folders("bid.mdb", ["1"]))
         self.assertEqual(
@@ -635,14 +670,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("CREATE TABLE CdnTypes (UID INTEGER PRIMARY KEY, Name TEXT)")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidConditions (
                 UID INTEGER PRIMARY KEY,
                 CdnTypeUID INTEGER REFERENCES CdnTypes(UID)
             )
-            """
-        )
+            """)
         conn.execute("INSERT INTO CdnTypes (UID, Name) VALUES (1, 'Used')")
         conn.execute("INSERT INTO BidConditions (UID, CdnTypeUID) VALUES (10, 1)")
         with self.assertLogs("test", level="WARNING"):
@@ -656,14 +689,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("CREATE TABLE CdnTypes (UID INTEGER PRIMARY KEY, Name TEXT)")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidConditions (
                 UID INTEGER PRIMARY KEY,
                 CdnTypeUID INTEGER REFERENCES CdnTypes(UID)
             )
-            """
-        )
+            """)
         conn.execute("INSERT INTO CdnTypes (UID, Name) VALUES (1, 'Unused')")
         result = _SqliteMdbOps(conn).save_condition_types(
             "bid.mdb", {"deleted_uids": ["1"]}
@@ -690,8 +721,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 )
 
         conn = sqlite3.connect(":memory:")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE Employees (
                 UID INTEGER PRIMARY KEY,
                 EmployeeNo TEXT,
@@ -707,8 +737,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 EMail TEXT,
                 PayClassUID INTEGER
             )
-            """
-        )
+            """)
         conn.execute(
             "INSERT INTO Employees (UID, EmployeeNo, FirstName, LastName) "
             "VALUES (7, 'E1', 'Ava', 'Lee')"
@@ -740,14 +769,12 @@ class InfrastructureLifecycleTests(unittest.TestCase):
     def test_delete_parent_takeoff_clears_child_parent_uid(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE BidTakeoffs (
                 UID INTEGER PRIMARY KEY,
                 ParentUID INTEGER
             )
-            """
-        )
+            """)
         conn.execute("INSERT INTO BidTakeoffs (UID, ParentUID) VALUES (1, NULL)")
         conn.execute("INSERT INTO BidTakeoffs (UID, ParentUID) VALUES (2, 1)")
         self.assertTrue(_SqliteMdbOps(conn).delete_takeoffs("bid.mdb", ["1"]))

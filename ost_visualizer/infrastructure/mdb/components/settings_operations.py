@@ -894,8 +894,12 @@ class SettingsOperationsMixin:
                 )
                 cursor = conn.cursor()
                 if page_val is not None:
-                    self._require_write_columns(schema, "BidPages", ("UID",))
-                    cursor.execute("SELECT UID FROM [BidPages] WHERE UID=?", page_val)
+                    self._require_write_columns(schema, "BidPages", ("UID", "BidUID"))
+                    cursor.execute(
+                        "SELECT UID FROM [BidPages] WHERE UID=? AND BidUID=?",
+                        page_val,
+                        int(bid_uid),
+                    )
                     if cursor.fetchone() is None:
                         return False
                 cursor.execute(
