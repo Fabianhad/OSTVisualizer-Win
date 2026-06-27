@@ -3,7 +3,6 @@
 ## 1.2.4 - 2026-06-27
 
 ### Added
-- Fixed Cover Sheet multi-page deletion so declining the warning for a page with takeoffs or annotations skips only that page and continues deleting the other selected pages.
 - A fixed-position red plan-view status bar for selected page image/PDF load failures.
 - Added a first-pass OST-style Options dialog with persisted roping, page label, hotlink target, and Cover Sheet toolbar text preferences.
 - Added synced/custom 2D and 3D takeoff display mode controls to the Options dialog and View menu, with HTML and PDF exports using the matching view mode.
@@ -57,6 +56,7 @@
 - Updated exported HTML views to preserve layer, condition, area, and page metadata, group condition controls by condition type with condition-only color swatches, add a Plan/3D mode switch with multi-page 2D takeoff overlays, and let exported geometry be toggled by page or hidden layer in the standalone viewer.
 
 ### Fixed
+- Fixed Cover Sheet page deletion so automatic empty legend rows no longer trigger the takeoff/annotation/comment warning on otherwise empty pages, and declining the warning for one selected page skips only that page while continuing to delete the others.
 - Fixed OSP/OST export so named views and hotlinks that reference pages outside the exported bid are not written into new archives.
 - Preserved exact Takeoff tab sidebar splitter widths when hiding/showing Layers or Conditions, including when both sidebars are hidden together; refreshed project tree/Takeoff tab state after deleting or moving the selected bid/project; and selected the nearest remaining sibling bid after bid deletion when one is available.
 - Fixed several stale UI state and failed-write rollback paths, including 2D placement staying active in 3D, failed bid switches clearing the current workspace/undo owner, stale condition and area selections after rebuilds, detached page windows showing deleted or failed-load content, page/layer/overlay controls drifting after save failures, layer dialog checkboxes lagging behind deferred visibility changes, and batched condition/curve updates refreshing once instead of reentering mid-command.

@@ -86,6 +86,9 @@ PAGE_CONTENT_TABLES = (
         "BidHotLinks",
     )
 )
+PAGE_DELETE_CONFIRMATION_TABLES = tuple(
+    table for table in PAGE_CONTENT_TABLES if table != "BidLegends"
+)
 LAYER_REFERENCE_TABLES = (
     "BidConditions",
     "BidZones",
