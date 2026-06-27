@@ -86,9 +86,19 @@ class FakeHotlinkViewer:
     def __init__(self, plan_view):
         self.plan_view = plan_view
         self.updated_pages = []
+        self.annotation_updates = []
 
-    def update_plan_view(self, page_uid, changed_takeoff_uids=None):
+    def update_plan_view(
+        self,
+        page_uid,
+        changed_takeoff_uids=None,
+        changed_annotation_uids=None,
+        changed_annotation_types=None,
+    ):
         _ = changed_takeoff_uids
+        self.annotation_updates.append(
+            (page_uid, changed_annotation_uids, changed_annotation_types)
+        )
         self.updated_pages.append(page_uid)
         self.plan_view.current_page_uid = page_uid
 
@@ -2937,7 +2947,43 @@ class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):
         coordinator._pending_takeoff_place_condition_uids = []
         coordinator._pending_hotlink_page_uid = None
         coordinator._pending_hotlink_named_view = None
+        coordinator._update_export_menu_state = lambda: None
         return coordinator
+
+    def test_annotation_change_for_detached_page_does_not_move_main_plan_view(self):
+        plan_view = FakeHotlinkPlanView()
+        plan_view.current_page_uid = "page-43"
+        coordinator = self._make_main_hotlink_coordinator(plan_view)
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="page-43",
+            get_selected_bid_ref=lambda: None,
+        )
+        coordinator._on_annotations_changed(
+            page_uid="page-21",
+            annotation_uids=["ann-21"],
+            annotation_types=["text"],
+        )
+        self.assertEqual(coordinator._viewer.updated_pages, [])
+        self.assertEqual(plan_view.current_page_uid, "page-43")
+
+    def test_annotation_change_for_active_page_refreshes_main_plan_view(self):
+        plan_view = FakeHotlinkPlanView()
+        plan_view.current_page_uid = "page-43"
+        coordinator = self._make_main_hotlink_coordinator(plan_view)
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="page-43",
+            get_selected_bid_ref=lambda: None,
+        )
+        coordinator._on_annotations_changed(
+            page_uid="page-43",
+            annotation_uids=["ann-43"],
+            annotation_types=["text"],
+        )
+        self.assertEqual(coordinator._viewer.updated_pages, ["page-43"])
+        self.assertEqual(
+            coordinator._viewer.annotation_updates,
+            [("page-43", ["ann-43"], ["text"])],
+        )
 
     def test_main_hotlink_focus_uses_named_view_rectangle_after_page_update(self):
         plan_view = FakeHotlinkPlanView()

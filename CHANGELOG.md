@@ -56,6 +56,7 @@
 - Updated exported HTML views to preserve layer, condition, area, and page metadata, group condition controls by condition type with condition-only color swatches, add a Plan/3D mode switch with multi-page 2D takeoff overlays, and let exported geometry be toggled by page or hidden layer in the standalone viewer.
 
 ### Fixed
+- Fixed Annotation/View window annotation edits so they refresh detached windows without switching the main Takeoff tab to the edited page.
 - Fixed bid deletion when stale selected-page state in another bid points to a page in the bid being deleted, and now reject saving selected-page state for pages outside the active bid.
 - Fixed Cover Sheet page deletion so automatic empty legend rows no longer trigger the takeoff/annotation/comment warning on otherwise empty pages, and declining the warning for one selected page skips only that page while continuing to delete the others.
 - Fixed OSP/OST export so named views and hotlinks that reference pages outside the exported bid are not written into new archives.

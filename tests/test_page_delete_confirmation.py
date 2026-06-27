@@ -1,5 +1,4 @@
 import unittest
-
 from ost_visualizer.infrastructure.mdb.components.constants import (
     PAGE_CONTENT_TABLES,
     PAGE_DELETE_CONFIRMATION_TABLES,

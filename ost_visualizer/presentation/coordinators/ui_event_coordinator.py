@@ -2150,8 +2150,11 @@ class UIEventCoordinator:
         annotation_uids: Optional[List[str]] = None,
         annotation_types: Optional[List[str]] = None,
     ) -> None:
+        active_page_uid = self.ui_state_manager.active_page_uid
+        if page_uid and page_uid != active_page_uid:
+            return
         self._viewer.update_plan_view(
-            page_uid,
+            page_uid or active_page_uid,
             changed_annotation_uids=annotation_uids,
             changed_annotation_types=annotation_types,
         )

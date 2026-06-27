@@ -11,7 +11,6 @@ from ...app_paths import get_default_working_dir
 from .ost_importer import OstImporter
 
 logger = logging.getLogger(__name__)
-
 _OSP_TEMP_PREFIX = "ostv_osp_"
 _LEGACY_WINDOWS_PATH_LIMIT = 240
 
@@ -31,7 +30,6 @@ def _extract_temp_parent_candidates() -> list[Path]:
     default_parent = Path(tempfile.gettempdir())
     if os.name != "nt":
         return [default_parent]
-
     candidates = [default_parent]
     drive_root = default_parent.anchor or f"{os.environ.get('SystemDrive', 'C:')}\\"
     short_parent = Path(drive_root) / "OSTVTemp"
@@ -60,14 +58,12 @@ def _create_extract_temp_dir(member_names: list[str]) -> Path:
         except OSError as exc:
             fallback_error = exc
             continue
-
         if (
             _is_safe_legacy_extract_root(tmp_path, member_names)
             or parent != default_parent
         ):
             return tmp_path
         _remove_temp_tree(tmp_path)
-
     try:
         return Path(tempfile.mkdtemp(prefix=_OSP_TEMP_PREFIX))
     except OSError:

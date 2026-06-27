@@ -202,7 +202,8 @@ class _SqliteMdbWriter(ImportOperationsMixin, PageOperationsMixin):
 def _create_import_schema(connection, *, unique_page_selected=False):
     connection.execute("CREATE TABLE Settings (NextBidNo INTEGER)")
     connection.execute("INSERT INTO Settings (NextBidNo) VALUES (1)")
-    connection.execute("""
+    connection.execute(
+        """
         CREATE TABLE Bids (
             UID INTEGER PRIMARY KEY,
             BidProjectUID INTEGER,
@@ -210,8 +211,10 @@ def _create_import_schema(connection, *, unique_page_selected=False):
             JobName TEXT,
             BidNo INTEGER
         )
-        """)
-    connection.execute("""
+        """
+    )
+    connection.execute(
+        """
         CREATE TABLE Employees (
             UID INTEGER PRIMARY KEY,
             EmployeeNo TEXT,
@@ -219,21 +222,25 @@ def _create_import_schema(connection, *, unique_page_selected=False):
             LastName TEXT,
             PayClassUID INTEGER
         )
-        """)
+        """
+    )
     connection.execute("CREATE TABLE PayClasses (UID INTEGER PRIMARY KEY, Name TEXT)")
     connection.execute("CREATE TABLE AccessLevels (UID INTEGER PRIMARY KEY, Name TEXT)")
     connection.execute(
         "CREATE TABLE CdnTypes (UID INTEGER PRIMARY KEY, Name TEXT, ExpandState INTEGER)"
     )
-    connection.execute("""
+    connection.execute(
+        """
         CREATE TABLE JobStatuses (
             UID INTEGER PRIMARY KEY,
             Name TEXT,
             Locked INTEGER,
             Sequence INTEGER
         )
-        """)
-    connection.execute("""
+        """
+    )
+    connection.execute(
+        """
         CREATE TABLE BidAreas (
             UID INTEGER PRIMARY KEY,
             BidUID INTEGER,
@@ -242,23 +249,29 @@ def _create_import_schema(connection, *, unique_page_selected=False):
             Sequence INTEGER,
             GUID TEXT
         )
-        """)
-    connection.execute("""
+        """
+    )
+    connection.execute(
+        """
         CREATE TABLE BidPages (
             UID INTEGER PRIMARY KEY,
             BidUID INTEGER,
             Name TEXT,
             Sequence INTEGER
         )
-        """)
-    connection.execute("""
+        """
+    )
+    connection.execute(
+        """
         CREATE TABLE BidSettings (
             UID INTEGER PRIMARY KEY,
             BidUID INTEGER,
             BidPageSelectedUID INTEGER
         )
-        """)
-    connection.execute("""
+        """
+    )
+    connection.execute(
+        """
         CREATE TABLE BidPageSettings (
             UID INTEGER PRIMARY KEY,
             BidPageUID INTEGER,
@@ -266,7 +279,8 @@ def _create_import_schema(connection, *, unique_page_selected=False):
             BidTypAreaUID INTEGER,
             BidAreaSelected INTEGER
         )
-        """)
+        """
+    )
     if unique_page_selected:
         connection.execute(
             "CREATE UNIQUE INDEX ux_page_selected "
@@ -684,13 +698,11 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             finally:
                 cursor.close()
                 conn.close()
-
             writer = MdbWriter()
             try:
                 self.assertTrue(writer.delete_bids(str(db_path), ["100"]))
             finally:
                 writer._conn_manager.close()
-
             conn = _connect_access_or_skip(self, db_path)
             cursor = conn.cursor()
             try:
@@ -745,15 +757,18 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         connection = sqlite3.connect(":memory:")
         connection.execute("PRAGMA foreign_keys=ON")
         _create_import_schema(connection)
-        connection.execute("""
+        connection.execute(
+            """
             CREATE TABLE BidNamedViews (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER,
                 BidPageUID INTEGER REFERENCES BidPages(UID),
                 Name TEXT
             )
-            """)
-        connection.execute("""
+            """
+        )
+        connection.execute(
+            """
             CREATE TABLE BidHotLinks (
                 UID INTEGER PRIMARY KEY,
                 BidUID INTEGER,
@@ -761,7 +776,8 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 BidPageViewUID INTEGER REFERENCES BidNamedViews(UID),
                 Name TEXT
             )
-            """)
+            """
+        )
         writer = _SqliteMdbWriter(connection)
         with tempfile.TemporaryDirectory() as temp_dir:
             ost_path = Path(temp_dir) / "import.ost"

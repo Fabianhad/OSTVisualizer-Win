@@ -479,12 +479,14 @@ class BidDataReaderMixin:
                 else "[UID]"
             )
             with connection.cursor() as cursor:
-                cursor.execute(f"""
+                cursor.execute(
+                    f"""
                     SELECT {layer_select}
                     FROM [BidLayers]
                     WHERE [IsTemplate] <> 0
                     ORDER BY {order_expr}
-                    """)
+                    """
+                )
                 return [self._bid_layer_from_row(row) for row in cursor.fetchall()]
 
     @staticmethod

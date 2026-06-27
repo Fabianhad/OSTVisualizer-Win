@@ -1,5 +1,4 @@
 import unittest
-
 from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
     BidDataReaderMixin,
 )
