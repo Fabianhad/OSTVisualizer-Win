@@ -5460,6 +5460,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._update_cursor = lambda: None
         view._editing_text_annotation_uid = None
         view._draft_text_annotation_uid = None
+        view._finishing_text_annotation_edit = False
         view._editing_named_view_uid = None
         view._draft_named_view_uid = None
         calls = []
@@ -5611,6 +5612,31 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(refreshed)
         self.assertEqual(renderer.calls, [])
         self.assertEqual(calls, [])
+
+    def test_same_page_active_area_change_refreshes_mutated_selection_snapshot(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        selections = {"page-1": "area-1"}
+        view._current_page_area_selections = (
+            TakeoffPlanView._snapshot_page_area_selections(selections)
+        )
+        self.assertIsNot(view._current_page_area_selections, selections)
+        selections["page-1"] = "area-2"
+        view._refresh_overlays = lambda *args: calls.append(
+            ("refresh_overlays", args[5])
+        )
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections=selections,
+            hidden_layer_uids={"layer-change"},
+        )
+        self.assertTrue(refreshed)
+        self.assertIn(("refresh_overlays", {"page-1": "area-2"}), calls)
 
     def test_metadata_less_same_page_changed_takeoffs_uses_full_refresh(self):
         renderer = RecordingPathTakeoffRenderer()
@@ -6156,6 +6182,25 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
                 page_area_selections={},
             )
         )
+
+    def test_image_layer_show_without_loaded_visual_items_requests_full_reload(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        hidden_page = Page(
+            uid="page-1",
+            name="Page 1",
+            image_path="base.pdf",
+            layer_visible=False,
+        )
+        shown_page = replace(hidden_page, layer_visible=True)
+        view._current_bid_page_uid = hidden_page.uid
+        view._current_page = hidden_page
+        view._background_item = None
+        view._visible_frame_item = None
+        view._overlay_items = []
+        view._white_canvas_item = None
+        view._update_scene_rect = lambda: None
+        view.viewport = lambda: FakeViewport([])
+        self.assertFalse(view.apply_page_image_layer_visibility(shown_page))
 
     def test_image_layer_toggle_refresh_preserves_page_visual_geometry(self):
         view = self._make_plan_view()

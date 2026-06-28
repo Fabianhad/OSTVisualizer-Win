@@ -343,6 +343,20 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         combo.set_current_area_uid("deleted")
         self.assertEqual(combo.get_current_area_uid(), "")
 
+    def test_area_combo_display_font_does_not_keep_bold_unassigned_style(self):
+        combo = AreaComboBox(None)
+        combo.load_areas(
+            [BidArea(uid="a1", bid_uid="b1", parent_uid="", name="Area 1", sequence=1)],
+            areas_with_takeoff={"0"},
+            selected_uid="0",
+        )
+        self.assertTrue(combo._area_items["0"].font().bold())
+        combo.lineEdit().setFont(combo._area_items["0"].font())
+        self.assertTrue(combo.lineEdit().font().bold())
+        combo.set_current_area_uid("")
+        self.assertEqual(combo.lineEdit().text(), "(All Areas)")
+        self.assertFalse(combo.lineEdit().font().bold())
+
     @classmethod
     def setUpClass(cls):
         cls.app = _app()

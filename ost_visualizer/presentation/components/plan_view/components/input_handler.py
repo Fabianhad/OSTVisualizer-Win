@@ -2006,6 +2006,8 @@ class InputHandlerMixin:
                 and self._selection_enabled
                 and self._selected_uids
             ):
+                if self._cursor_mode == CURSOR_MODE_PLACE:
+                    self._exit_place_mode()
                 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                     if self._cursor_mode == CURSOR_MODE_SLOPE_ROTATE:
                         self._remove_rotate_handle()

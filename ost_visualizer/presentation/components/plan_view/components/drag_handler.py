@@ -128,16 +128,13 @@ class DragHandlerMixin:
                 DIMENSION_FONT_SIZE_ADJUSTMENT,
             )
 
-    def _drag_preview_color_for_condition(self, condition):
-        color_entry = self._current_color_map.get(condition.uid)
-        if color_entry is not None:
-            return self._color_service.as_hex_with_opacity(color_entry)
-        color_hex = (
-            self._color_service.int_to_hex(condition.color_fill)
-            if condition.color_fill
-            else "#808080"
+    def _drag_preview_color_for_takeoff(self, takeoff, condition):
+        return self._color_service.get_2d_color_for_takeoff(
+            takeoff,
+            condition,
+            self._current_color_map,
+            self._current_page_area_selections,
         )
-        return color_hex, 1.0
 
     def _refresh_takeoff_pattern_preview(
         self,
@@ -147,7 +144,9 @@ class DragHandlerMixin:
         condition,
         pattern_angle: float | None = None,
     ) -> None:
-        color_hex, opacity = self._drag_preview_color_for_condition(condition)
+        color_hex, opacity = self._drag_preview_color_for_takeoff(
+            self._current_takeoffs[uid], condition
+        )
         qcolor = QColor(color_hex)
         pattern_type = condition.pattern if condition.pattern else 1
         spacing = condition.spacing if condition.spacing else 4.0

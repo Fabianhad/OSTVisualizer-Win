@@ -2186,6 +2186,12 @@ class TakeoffPlanView(
     def apply_page_image_layer_visibility(self, page: Page) -> bool:
         if self._current_bid_page_uid != page.uid or self._current_page is None:
             return False
+        if (
+            page.layer_visible
+            and page.has_image
+            and not self._has_loaded_page_visual_items()
+        ):
+            return False
         self._current_page.layer_visible = bool(page.layer_visible)
         self._sync_page_image_layer_visibility()
         self._update_scene_rect()
@@ -4473,6 +4479,12 @@ class TakeoffPlanView(
             self._current_annotations = {}
             self._ann_db_uid_map = {}
 
+    @staticmethod
+    def _snapshot_page_area_selections(
+        page_area_selections: Optional[Dict[str, Optional[str]]],
+    ) -> Optional[Dict[str, Optional[str]]]:
+        return dict(page_area_selections) if page_area_selections is not None else None
+
     def load_page(
         self,
         page: Page,
@@ -4521,6 +4533,7 @@ class TakeoffPlanView(
         hidden_layer_uids: Optional[Set[str]] = None,
         force_visual_reload: bool = False,
     ) -> bool:
+        page_area_selections = self._snapshot_page_area_selections(page_area_selections)
         if self._overlay_move_suppresses_normal_tiles():
             self.cancel_overlay_move_mode(restore_preview=True)
         resolved_bid_ref = bid_ref
@@ -4898,6 +4911,7 @@ class TakeoffPlanView(
         changed_annotation_uids: Optional[List[str]] = None,
         changed_annotation_types: Optional[List[str]] = None,
     ) -> bool:
+        page_area_selections = self._snapshot_page_area_selections(page_area_selections)
         if self._current_bid_page_uid != page.uid:
             return False
         next_render_identity = self._build_render_identity(page, bid_ref)

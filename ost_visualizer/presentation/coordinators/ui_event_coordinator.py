@@ -1966,11 +1966,17 @@ class UIEventCoordinator:
             if self.plan_view:
                 self.plan_view.clear()
             self._sidebar.update_conditions_quantities()
-        if self._placement.is_active and self.plan_view is not None:
-            assert self.plan_view._cursor_mode == CURSOR_MODE_PLACE, (
-                "placement is active but plan view cursor is "
-                f"{self.plan_view._cursor_mode!r} after page change"
+        if (
+            self._placement.is_active
+            and self.plan_view is not None
+            and self.plan_view.cursor_mode != CURSOR_MODE_PLACE
+        ):
+            logger.warning(
+                "Resetting stale placement state after page change because plan "
+                "view cursor is %r",
+                self.plan_view.cursor_mode,
             )
+            self._placement.force_exit()
         self._update_page_info_status()
         self._update_export_menu_state()
 

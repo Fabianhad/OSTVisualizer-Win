@@ -634,6 +634,34 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p2")
 
+    def test_active_page_switch_recovers_stale_placement_cursor_mismatch(self):
+        coordinator, _pages = self._make_view_state_coordinator()
+        coordinator.plan_view.cursor_mode = "rotate"
+        coordinator._update_page_settings_bar = lambda _page_uid: None
+        coordinator._sync_overlay_display_mode = lambda _page_uid: None
+        coordinator._update_plan_view = lambda _page_uid: None
+        coordinator._sidebar = SimpleNamespace(
+            update_conditions_quantities=lambda: None
+        )
+        force_exit_calls = []
+        coordinator._placement = SimpleNamespace(
+            is_active=True,
+            force_exit=lambda: force_exit_calls.append("force_exit"),
+        )
+        coordinator._update_page_info_status = lambda: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
+        with self.assertLogs(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator",
+            level="WARNING",
+        ) as logs:
+            coordinator.handle_active_page_changed("p2")
+        self.assertEqual(force_exit_calls, ["force_exit"])
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p2")
+        self.assertIn("stale placement state", logs.output[0])
+
     def test_overlay_display_mode_captures_current_camera_before_reload(self):
         coordinator, pages = self._make_view_state_coordinator()
         calls = []

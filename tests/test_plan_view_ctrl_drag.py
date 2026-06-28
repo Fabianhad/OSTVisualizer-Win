@@ -475,6 +475,18 @@ class FakeColorService:
     def as_hex_with_opacity(self, _entry):
         return "#123456", 1.0
 
+    def get_2d_color_for_takeoff(
+        self, takeoff, _condition, color_map, page_area_selections=None
+    ):
+        color = color_map.get(takeoff.condition_uid, "#123456")
+        if (
+            page_area_selections
+            and page_area_selections.get(takeoff.page_uid) is not None
+            and takeoff.area_uid != page_area_selections[takeoff.page_uid]
+        ):
+            color = "#808080"
+        return color, 1.0
+
 
 class FakeSceneBuilder:
     def __init__(self):
@@ -1201,6 +1213,51 @@ class CtrlDragTests(unittest.TestCase):
         self.assertIs(selection_item.scene(), scene)
         self.assertEqual(view.cursor_mode_change_requested.emitted, [("rotate",)])
 
+    def test_ctrl_r_from_place_mode_exits_placement_before_rotate(self):
+        view = self._make_view({"t1"})
+        view._cursor_mode = "place"
+        view._rotate_handle_uid = None
+        view.cursor_mode_change_requested = FakeSignal()
+        calls = []
+
+        def exit_place_mode():
+            calls.append("exit_place")
+            view._cursor_mode = "select"
+            view.place_exited.emit()
+
+        def apply_cursor_mode(mode):
+            calls.append(("mode", mode))
+            view._cursor_mode = mode
+
+        view.place_exited = FakeSignal()
+        view._exit_place_mode = exit_place_mode
+        view._create_rotate_handle = (
+            lambda uids: calls.append(("create", set(uids))) or True
+        )
+        view.clear_place_preview = lambda: None
+        view._apply_cursor_mode = apply_cursor_mode
+        view.copy_selected_pdf_text = lambda: False
+        event = FakeKeyEvent(
+            Qt.Key.Key_R,
+            Qt.KeyboardModifier.ControlModifier,
+        )
+        InputHandlerMixin.keyPressEvent(view, event)
+        self.assertTrue(event.accepted)
+        self.assertEqual(
+            calls,
+            [
+                "exit_place",
+                ("create", {"t1"}),
+                ("mode", "rotate"),
+            ],
+        )
+        self.assertEqual(view._cursor_mode, "rotate")
+        self.assertEqual(view.place_exited.emitted, [()])
+        self.assertEqual(
+            view.cursor_mode_change_requested.emitted,
+            [("rotate",)],
+        )
+
     def test_ctrl_shift_r_clears_snap_preview_before_slope_rotate(self):
         view = self._make_view({"t1"})
         scene = QGraphicsScene()
@@ -1402,6 +1459,8 @@ class CtrlDragTests(unittest.TestCase):
         )
         takeoff = SimpleNamespace(
             condition_uid="c1",
+            page_uid="page-1",
+            area_uid="area-1",
             position=list(position),
             is_hole=False,
             parent_uid=None,
@@ -1416,6 +1475,7 @@ class CtrlDragTests(unittest.TestCase):
         view._current_annotations = {}
         view._current_conditions = {"c1": condition}
         view._current_color_map = {}
+        view._current_page_area_selections = {}
         view._uid_to_items = {"t1": [main_item, old_pattern]}
         view._takeoff_items = [main_item, old_pattern]
         view._handle_infos = [SimpleNamespace(item=FakeItem()) for _ in range(8)]
@@ -1658,6 +1718,17 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(
             view._uid_to_items["t1"][1].path().boundingRect().right(), 20.0
         )
+
+    def test_inactive_area_resize_preview_stays_grayed_out(self):
+        view, main_item, _old_pattern = self._make_pattern_resize_view(
+            Condition.TYPE_AREA
+        )
+        view._current_color_map = {"c1": "#00aa00"}
+        view._current_page_area_selections = {"page-1": "area-2"}
+        view.update_drag_handle_positions(
+            [0.0, 0.0, 20.0, 0.0, 20.0, 12.0, 0.0, 12.0], "t1"
+        )
+        self.assertEqual(main_item.pen().color().name(), "#808080")
 
     def test_area_resize_preview_recenters_condition_labels(self):
         view, main_item, _old_pattern = self._make_pattern_resize_view(
