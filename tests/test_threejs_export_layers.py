@@ -1,3 +1,4 @@
+import base64
 import unittest
 import tempfile
 from pathlib import Path
@@ -20,6 +21,7 @@ from ost_visualizer.presentation.visualization.renderers.threejs.two_d_takeoff_p
 from ost_visualizer.presentation.visualization.renderers.threejs.threejs_renderer import (
     _build_multi_page_data,
 )
+from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
 )
@@ -112,6 +114,104 @@ class _TakeoffService:
 
     def group_takeoffs_by_type(self, _conditions, takeoffs):
         return {1: list(takeoffs)}
+
+
+def _write_minimal_pdf(path: Path, page_sizes):
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+    ]
+    page_refs = []
+    content_object_number = 3 + len(page_sizes)
+    for index, _page_size in enumerate(page_sizes):
+        page_refs.append(f"{3 + index} 0 R")
+    objects.append(
+        f"<< /Type /Pages /Kids [{' '.join(page_refs)}] /Count {len(page_sizes)} >>".encode(
+            "ascii"
+        )
+    )
+    for index, (width, height) in enumerate(page_sizes):
+        objects.append(
+            (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] "
+                f"/Resources << >> /Contents {content_object_number + index} 0 R >>"
+            ).encode("ascii")
+        )
+    for index, _page_size in enumerate(page_sizes):
+        marker = (f"% OSTV_PAGE_{index}\n").encode("ascii")
+        if index == 0:
+            marker += b"% UNSELECTED_PADDING\n" * 1000
+        stream = b"q\nQ\n" + marker
+        objects.append(
+            b"<< /Length "
+            + str(len(stream)).encode("ascii")
+            + b" >>\nstream\n"
+            + stream
+            + b"endstream"
+        )
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for object_number, body in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{object_number} 0 obj\n".encode("ascii"))
+        pdf.extend(body)
+        pdf.extend(b"\nendobj\n")
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n"
+        ).encode("ascii")
+    )
+    path.write_bytes(bytes(pdf))
+
+
+def _page_template(pdf_path: Path, uid: str, page_index: int):
+    return {
+        "uid": uid,
+        "label": uid,
+        "name": uid,
+        "sheet_no": uid,
+        "sequence": page_index + 1,
+        "width": 72.0,
+        "height": 72.0,
+        "page_width": 1.0,
+        "page_height": 1.0,
+        "image_layer_uid": "image",
+        "pdf_path": str(pdf_path),
+        "pdf_page_index": page_index,
+        "scale_ratio": 1.0,
+        "rotation": 0,
+        "flip_x": False,
+        "flip_y": False,
+    }
+
+
+def _build_pages_without_takeoffs(pages):
+    return _build_multi_page_data(
+        pages,
+        {},
+        [],
+        ColorService(),
+        _TakeoffService(),
+        Config.DISPLAY_MODE_SOLID,
+        True,
+        {},
+    )
+
+
+def _decode_pdf_document(pdf_document):
+    return base64.b64decode(pdf_document["data_base64"])
+
+
+def _pdf_page_sizes(pdf_bytes: bytes):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pdf_path = Path(tmpdir) / "embedded.pdf"
+        pdf_path.write_bytes(pdf_bytes)
+        return ost_pdf_writer.PDFWriter().get_page_sizes(str(pdf_path))
 
 
 class _ProjectData:
@@ -732,68 +832,95 @@ class ThreejsExportLayerTests(unittest.TestCase):
         )
         self.assertEqual(entries[0]["opacity"], 0.0)
 
-    def test_multi_page_renderer_data_deduplicates_pdf_documents(self):
+    def test_multi_page_renderer_data_embeds_only_selected_pdf_page(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             pdf_path = Path(tmpdir) / "pages.pdf"
-            pdf_path.write_bytes(b"%PDF-1.4\n")
-            pages = [
-                {
-                    "uid": "page-1",
-                    "label": "1 - A1",
-                    "name": "First",
-                    "sheet_no": "A1",
-                    "sequence": 1,
-                    "width": 72.0,
-                    "height": 72.0,
-                    "page_width": 1.0,
-                    "page_height": 1.0,
-                    "image_layer_uid": "image",
-                    "pdf_path": str(pdf_path),
-                    "pdf_page_index": 0,
-                    "scale_ratio": 1.0,
-                    "rotation": 0,
-                    "flip_x": False,
-                    "flip_y": False,
-                },
-                {
-                    "uid": "page-2",
-                    "label": "2 - A2",
-                    "name": "Second",
-                    "sheet_no": "A2",
-                    "sequence": 2,
-                    "width": 72.0,
-                    "height": 72.0,
-                    "page_width": 1.0,
-                    "page_height": 1.0,
-                    "image_layer_uid": "image",
-                    "pdf_path": str(pdf_path),
-                    "pdf_page_index": 1,
-                    "scale_ratio": 1.0,
-                    "rotation": 0,
-                    "flip_x": False,
-                    "flip_y": False,
-                },
-            ]
-            page_entries, pdf_documents, takeoffs_2d = _build_multi_page_data(
-                pages,
-                {},
-                [],
-                ColorService(),
-                _TakeoffService(),
-                Config.DISPLAY_MODE_SOLID,
-                True,
-                {},
+            _write_minimal_pdf(pdf_path, [(612, 792), (300, 400), (500, 600)])
+            source_size = pdf_path.stat().st_size
+            page_entries, pdf_documents, takeoffs_2d = _build_pages_without_takeoffs(
+                [_page_template(pdf_path, "page-2", 1)]
             )
         self.assertEqual(len(pdf_documents), 1)
+        embedded_pdf = _decode_pdf_document(pdf_documents[0])
+        self.assertLess(len(embedded_pdf), source_size)
+        self.assertEqual(_pdf_page_sizes(embedded_pdf), [[300.0, 400.0, 0.0, 0.0]])
         self.assertEqual(page_entries[0]["pdf_document_uid"], "pdf-1")
-        self.assertEqual(page_entries[1]["pdf_document_uid"], "pdf-1")
-        self.assertEqual([page["uid"] for page in page_entries], ["page-1", "page-2"])
-        self.assertEqual(
-            [page["pdf_page_index"] for page in page_entries],
-            [0, 1],
-        )
+        self.assertEqual(page_entries[0]["pdf_page_index"], 1)
         self.assertNotIn("image_visible", page_entries[0])
         self.assertEqual(takeoffs_2d, [])
+
+    def test_multi_page_renderer_data_embeds_only_selected_pages_from_source_pdf(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = Path(tmpdir) / "pages.pdf"
+            _write_minimal_pdf(pdf_path, [(612, 792), (300, 400), (500, 600)])
+            page_entries, pdf_documents, takeoffs_2d = _build_pages_without_takeoffs(
+                [
+                    _page_template(pdf_path, "page-1", 0),
+                    _page_template(pdf_path, "page-3", 2),
+                ]
+            )
+        self.assertEqual(len(pdf_documents), 2)
+        self.assertEqual(
+            [
+                _pdf_page_sizes(_decode_pdf_document(document))
+                for document in pdf_documents
+            ],
+            [
+                [[612.0, 792.0, 0.0, 0.0]],
+                [[500.0, 600.0, 0.0, 0.0]],
+            ],
+        )
+        self.assertEqual(
+            [page["pdf_document_uid"] for page in page_entries],
+            ["pdf-1", "pdf-2"],
+        )
+        self.assertEqual([page["pdf_page_index"] for page in page_entries], [0, 2])
+        self.assertEqual(takeoffs_2d, [])
+
+    def test_multi_page_renderer_data_deduplicates_same_source_pdf_page(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = Path(tmpdir) / "pages.pdf"
+            _write_minimal_pdf(pdf_path, [(612, 792), (300, 400)])
+            page_entries, pdf_documents, _takeoffs_2d = _build_pages_without_takeoffs(
+                [
+                    _page_template(pdf_path, "page-2-a", 1),
+                    _page_template(pdf_path, "page-2-b", 1),
+                ]
+            )
+        self.assertEqual(len(pdf_documents), 1)
+        self.assertEqual(
+            [page["pdf_document_uid"] for page in page_entries],
+            ["pdf-1", "pdf-1"],
+        )
+        self.assertEqual(
+            _pdf_page_sizes(_decode_pdf_document(pdf_documents[0])),
+            [[300.0, 400.0, 0.0, 0.0]],
+        )
+
+    def test_multi_page_renderer_data_keeps_separate_single_page_pdf_assets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first_pdf_path = Path(tmpdir) / "first.pdf"
+            second_pdf_path = Path(tmpdir) / "second.pdf"
+            _write_minimal_pdf(first_pdf_path, [(612, 792)])
+            _write_minimal_pdf(second_pdf_path, [(300, 400)])
+            page_entries, pdf_documents, _takeoffs_2d = _build_pages_without_takeoffs(
+                [
+                    _page_template(first_pdf_path, "page-1", 0),
+                    _page_template(second_pdf_path, "page-2", 0),
+                ]
+            )
+        self.assertEqual(len(pdf_documents), 2)
+        self.assertEqual(
+            [
+                _pdf_page_sizes(_decode_pdf_document(document))
+                for document in pdf_documents
+            ],
+            [
+                [[612.0, 792.0, 0.0, 0.0]],
+                [[300.0, 400.0, 0.0, 0.0]],
+            ],
+        )
+        self.assertEqual([page["pdf_page_index"] for page in page_entries], [0, 0])
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import tempfile
 import time
 import webbrowser
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from .....application.dtos.html_export_page_dto import HtmlExportPageDto
 from .....application.dtos.scene_data_dto import SceneData, ScenePageImageLayer
 from .....application.interfaces.i_color_service import IColorService
@@ -16,6 +16,7 @@ from .....domain.entities.condition import Condition
 from .....domain.entities.area import BidArea
 from .....domain.entities.layer import BidLayer
 from .....domain.entities.takeoff import Takeoff
+from ...exporters import ost_pdf_writer
 from .adapters.threejs_mesh_adapter import ThreejsMeshAdapter
 from .mesh_processor import process_meshes_for_threejs
 from .two_d_takeoff_processor import process_takeoffs_2d_for_threejs
@@ -119,7 +120,7 @@ def _build_multi_page_data(
 ):
     page_entries = []
     takeoffs_2d = []
-    pdf_documents_by_path: Dict[str, str] = {}
+    pdf_documents_by_source_page: Dict[Tuple[str, int], str] = {}
     pdf_documents = []
     takeoffs_by_page: Dict[str, List[Takeoff]] = {}
     for takeoff in bid_takeoffs:
@@ -128,18 +129,18 @@ def _build_multi_page_data(
         page_uid = str(page["uid"])
         pdf_document_uid = ""
         pdf_path = page.get("pdf_path")
+        pdf_page_index = int(page["pdf_page_index"] or 0)
         if pdf_path and os.path.isfile(pdf_path):
             normalized_pdf_path = os.path.abspath(pdf_path)
-            pdf_document_uid = pdf_documents_by_path.get(normalized_pdf_path, "")
+            source_page_key = (normalized_pdf_path, pdf_page_index)
+            pdf_document_uid = pdf_documents_by_source_page.get(source_page_key, "")
             if not pdf_document_uid:
-                try:
-                    with open(normalized_pdf_path, "rb") as pf:
-                        data_base64 = base64.b64encode(pf.read()).decode("ascii")
-                except OSError:
-                    data_base64 = ""
+                data_base64 = _extract_pdf_page_base64(
+                    normalized_pdf_path, pdf_page_index
+                )
                 if data_base64:
                     pdf_document_uid = f"pdf-{len(pdf_documents) + 1}"
-                    pdf_documents_by_path[normalized_pdf_path] = pdf_document_uid
+                    pdf_documents_by_source_page[source_page_key] = pdf_document_uid
                     pdf_documents.append(
                         {"uid": pdf_document_uid, "data_base64": data_base64}
                     )
@@ -157,7 +158,7 @@ def _build_multi_page_data(
                 "image_layer_uid": str(page["image_layer_uid"] or ""),
                 "visible": True,
                 "pdf_document_uid": pdf_document_uid,
-                "pdf_page_index": int(page["pdf_page_index"] or 0),
+                "pdf_page_index": pdf_page_index,
             }
         )
         if page["width"] > 0 and page["height"] > 0:
@@ -184,6 +185,26 @@ def _build_multi_page_data(
                 )
             )
     return page_entries, pdf_documents, takeoffs_2d
+
+
+def _extract_pdf_page_base64(pdf_path: str, page_index: int) -> str:
+    output_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
+            output_path = temp_pdf.name
+        writer = ost_pdf_writer.PDFWriter()
+        if not writer.copy_page(pdf_path, page_index, output_path):
+            return ""
+        with open(output_path, "rb") as extracted_pdf:
+            return base64.b64encode(extracted_pdf.read()).decode("ascii")
+    except OSError:
+        return ""
+    finally:
+        if output_path:
+            try:
+                os.unlink(output_path)
+            except OSError:
+                pass
 
 
 def _generate_html(scene_data: SceneData, title: str) -> str:
