@@ -176,7 +176,7 @@ class ExportService:
                     "page_height": float((page.height_pts / 72.0) * ratio),
                     "image_layer_uid": image_layer_uid,
                     "pdf_path": pdf_path,
-                    "pdf_page_index": max((page.page_index or 1) - 1, 0),
+                    "pdf_page_index": page.page_index,
                     "scale_ratio": ratio,
                     "rotation": int(page.rotation or 0),
                     "flip_x": bool(page.flip_x),

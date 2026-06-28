@@ -376,7 +376,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._sync_button_states()
 
     def _rebuild_tree(self) -> None:
-        saved = self._save_scroll()
         self.tree.setSortingEnabled(False)
         self.tree.setUpdatesEnabled(False)
         self._block_item_changed = True
@@ -421,7 +420,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self.tree.expandAll()
         self.tree.setUpdatesEnabled(True)
         self._block_item_changed = False
-        self._restore_scroll(saved)
         pending_condition = self._pending_condition_select_uid
         self._pending_condition_select_uid = None
         if pending_condition:
@@ -613,7 +611,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
         quantities: Dict[str, Tuple[float, float, float]],
         partial: bool = False,
     ) -> None:
-        saved = self._save_scroll()
         self.tree.setUpdatesEnabled(False)
         self._block_item_changed = True
         try:
@@ -643,7 +640,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
         finally:
             self.tree.setUpdatesEnabled(True)
             self._block_item_changed = False
-            self._restore_scroll(saved)
 
     def highlight_conditions(self, condition_uids: Set[str]) -> None:
         self._block_selection_signal = True
@@ -663,19 +659,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
         finally:
             self._block_selection_signal = False
         self._sync_button_states()
-
-    def _save_scroll(self) -> tuple:
-        h = self.tree.horizontalScrollBar()
-        v = self.tree.verticalScrollBar()
-        return (h.value() if h else 0, v.value() if v else 0)
-
-    def _restore_scroll(self, pos: tuple) -> None:
-        h = self.tree.horizontalScrollBar()
-        v = self.tree.verticalScrollBar()
-        if h:
-            h.setValue(pos[0])
-        if v:
-            v.setValue(pos[1])
 
     def set_create_enabled(self, enabled: bool) -> None:
         self._create_allowed = enabled

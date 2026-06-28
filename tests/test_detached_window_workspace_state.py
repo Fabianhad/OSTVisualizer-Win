@@ -1936,6 +1936,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         calls = []
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._window = None
+        manager._opening = False
         manager._saved_window_state_provider = saved_state_provider
 
         def create_view(bid_ref, target_page_uid, target_named_view_uid=None):
@@ -1956,6 +1957,113 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._create_window = create_window
         manager._notify_visibility_changed = lambda: calls.append("notify")
         return manager, calls
+
+    def test_open_view_blocks_reentrant_duplicate_window_creation_while_opening(self):
+        calls = []
+        active_view = None
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = None
+        manager._opening = False
+        manager._saved_window_state_provider = None
+
+        def create_view(bid_ref, target_page_uid, target_named_view_uid=None):
+            nonlocal active_view
+            view_number = len([call for call in calls if call == "create_view"]) + 1
+            active_view = SimpleNamespace(
+                uid=f"view-{view_number}",
+                bid_ref=bid_ref,
+                target_page_uid=target_page_uid,
+                target_named_view_uid=target_named_view_uid,
+            )
+            calls.append("create_view")
+            return active_view
+
+        def create_window(view, geometry, is_maximized, is_fullscreen, source):
+            calls.append(("create_window", view.uid, source))
+            duplicate_result = manager.open_view(
+                BidRef("job.ost", "bid-1"), "page-2", "view-1"
+            )
+            calls.append(("duplicate_result", duplicate_result))
+            manager._window = SimpleNamespace()
+
+        manager.repository = SimpleNamespace(
+            create_view=create_view,
+            get_active_view=lambda: active_view,
+        )
+        manager._create_window = create_window
+        manager._notify_visibility_changed = lambda: calls.append("notify")
+        result = manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
+        self.assertEqual(result, "view-1")
+        self.assertEqual(
+            calls,
+            [
+                "create_view",
+                ("create_window", "view-1", "unknown"),
+                ("duplicate_result", "view-1"),
+                "notify",
+            ],
+        )
+        self.assertFalse(manager._opening)
+
+    def test_open_view_can_reopen_after_close(self):
+        calls = []
+        active_view = None
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = None
+        manager._opening = False
+        manager._saved_window_state_provider = None
+
+        def create_view(bid_ref, target_page_uid, target_named_view_uid=None):
+            nonlocal active_view
+            view_number = len([call for call in calls if call == "create_view"]) + 1
+            active_view = SimpleNamespace(
+                uid=f"view-{view_number}",
+                bid_ref=bid_ref,
+                target_page_uid=target_page_uid,
+                target_named_view_uid=target_named_view_uid,
+            )
+            calls.append("create_view")
+            return active_view
+
+        def create_window(view, geometry, is_maximized, is_fullscreen, source):
+            calls.append(("create_window", view.uid))
+            manager._window = SimpleNamespace(close=lambda: calls.append("close"))
+
+        manager.repository = SimpleNamespace(
+            create_view=create_view,
+            get_active_view=lambda: active_view,
+        )
+        manager._create_window = create_window
+        manager._notify_visibility_changed = lambda: calls.append("notify")
+        first_result = manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
+        manager.close_view()
+        second_result = manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
+        self.assertEqual((first_result, second_result), ("view-1", "view-2"))
+        self.assertEqual(
+            calls,
+            [
+                "create_view",
+                ("create_window", "view-1"),
+                "notify",
+                "close",
+                "notify",
+                "create_view",
+                ("create_window", "view-2"),
+                "notify",
+            ],
+        )
+        self.assertFalse(manager._opening)
+
+    def test_open_view_clears_opening_guard_when_window_creation_fails(self):
+        manager, _calls = self._manager_for_initial_state_tests()
+
+        def fail_create_window(*_args):
+            raise RuntimeError("boom")
+
+        manager._create_window = fail_create_window
+        with self.assertRaises(RuntimeError):
+            manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
+        self.assertFalse(manager._opening)
 
     def test_hotlink_open_uses_saved_normal_annotation_window_state(self):
         state = WorkspaceState().detached_windows.annotation_view
@@ -2158,6 +2266,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             ),
         )
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._opening = False
         manager._window = SimpleNamespace(
             load_view=lambda view, data, navigation_source="unknown": calls.append(
                 ("load", view.bid_uid, view.file_path, data, navigation_source)

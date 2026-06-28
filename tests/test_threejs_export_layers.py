@@ -137,7 +137,7 @@ class _ProjectData:
                 flip_x=False,
                 flip_y=False,
                 image_path="",
-                page_index=1,
+                page_index=0,
                 layer_visible=False,
             ),
             "page-2": SimpleNamespace(
@@ -155,7 +155,7 @@ class _ProjectData:
                 flip_x=True,
                 flip_y=False,
                 image_path="",
-                page_index=2,
+                page_index=1,
                 layer_visible=True,
             ),
         }
@@ -351,6 +351,56 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertEqual(kwargs["pages"][1]["scale_ratio"], 2.0)
         self.assertEqual(kwargs["pages"][1]["rotation"], 90)
         self.assertTrue(kwargs["page_image_layer"]["visible"])
+
+    def test_html_export_preserves_multi_page_pdf_source_page_index(self):
+        strategy = _ExportStrategy("html")
+        project_data = _ProjectData()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = str(Path(tmpdir) / "combined.pdf")
+            project_data.pages["page-1"].image_path = pdf_path
+            project_data.pages["page-1"].page_index = 0
+            project_data.pages["page-2"].image_path = pdf_path
+            project_data.pages["page-2"].page_index = 1
+            service = ExportService(_Provider(strategy), project_data)
+            result = service.export(
+                _ConfigModel(),
+                ExportRequestDto(
+                    ["page-2"], "html", "out.html", active_page_uid="page-2"
+                ),
+            )
+        self.assertTrue(result.success)
+        _conditions, _takeoffs, _output_path, kwargs = strategy.calls[0]
+        self.assertEqual(len(kwargs["pages"]), 1)
+        page = kwargs["pages"][0]
+        self.assertEqual(page["uid"], "page-2")
+        self.assertEqual(page["pdf_path"], pdf_path)
+        self.assertEqual(page["pdf_page_index"], 1)
+
+    def test_html_export_keeps_separate_single_page_pdf_indexes_at_zero(self):
+        strategy = _ExportStrategy("html")
+        project_data = _ProjectData()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first_pdf_path = str(Path(tmpdir) / "first.pdf")
+            second_pdf_path = str(Path(tmpdir) / "second.pdf")
+            project_data.pages["page-1"].image_path = first_pdf_path
+            project_data.pages["page-1"].page_index = 0
+            project_data.pages["page-2"].image_path = second_pdf_path
+            project_data.pages["page-2"].page_index = 0
+            service = ExportService(_Provider(strategy), project_data)
+            result = service.export(
+                _ConfigModel(),
+                ExportRequestDto(["page-1", "page-2"], "html", "out.html"),
+            )
+        self.assertTrue(result.success)
+        _conditions, _takeoffs, _output_path, kwargs = strategy.calls[0]
+        self.assertEqual(
+            [page["pdf_path"] for page in kwargs["pages"]],
+            [first_pdf_path, second_pdf_path],
+        )
+        self.assertEqual(
+            [page["pdf_page_index"] for page in kwargs["pages"]],
+            [0, 0],
+        )
 
     def test_html_export_active_page_falls_back_to_first_exported_page(self):
         strategy = _ExportStrategy("html")
@@ -738,6 +788,10 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertEqual(page_entries[0]["pdf_document_uid"], "pdf-1")
         self.assertEqual(page_entries[1]["pdf_document_uid"], "pdf-1")
         self.assertEqual([page["uid"] for page in page_entries], ["page-1", "page-2"])
+        self.assertEqual(
+            [page["pdf_page_index"] for page in page_entries],
+            [0, 1],
+        )
         self.assertNotIn("image_visible", page_entries[0])
         self.assertEqual(takeoffs_2d, [])
 

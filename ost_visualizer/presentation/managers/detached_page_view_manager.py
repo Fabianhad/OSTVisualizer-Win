@@ -96,6 +96,7 @@ class DetachedPageViewManager(IShutdownAware):
         self._saved_window_state_provider = saved_window_state_provider
         self._ui_access_manager = None
         self._window: Optional[QtWidgets.QMainWindow] = None
+        self._opening = False
         self._visibility_changed_callback = None
         self._refresh_signaler = _RefreshSignaler(self._refresh_window, parent_window)
         self.event_bus.subscribe(
@@ -144,6 +145,7 @@ class DetachedPageViewManager(IShutdownAware):
         if self._window is not None:
             self._window.close()
             self._window = None
+            self._opening = False
             self._notify_visibility_changed()
         self._visibility_changed_callback = None
         self._ui_access_manager = None
@@ -163,6 +165,7 @@ class DetachedPageViewManager(IShutdownAware):
 
     def _on_window_destroyed(self, _: QObject) -> None:
         self._window = None
+        self._opening = False
         self._notify_visibility_changed()
 
     def _on_native_scene_updated(
@@ -278,6 +281,9 @@ class DetachedPageViewManager(IShutdownAware):
         initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
     ) -> str:
+        if self._opening:
+            existing_view = self.repository.get_active_view()
+            return existing_view.uid if existing_view else ""
         if self.is_view_open():
             existing_view = self.repository.get_active_view()
             if existing_view:
@@ -298,25 +304,31 @@ class DetachedPageViewManager(IShutdownAware):
                 self._notify_visibility_changed()
                 return existing_view.uid
         navigation_source = "hotlink" if target_named_view_uid else "unknown"
-        view = self.repository.create_view(
-            bid_ref=bid_ref,
-            target_page_uid=target_page_uid,
-            target_named_view_uid=target_named_view_uid,
-        )
-        initial_geometry, initial_is_maximized, initial_is_fullscreen = (
-            self._resolve_initial_window_state(
+        self._opening = True
+        try:
+            view = self.repository.create_view(
+                bid_ref=bid_ref,
+                target_page_uid=target_page_uid,
+                target_named_view_uid=target_named_view_uid,
+            )
+            initial_geometry, initial_is_maximized, initial_is_fullscreen = (
+                self._resolve_initial_window_state(
+                    initial_geometry,
+                    initial_is_maximized,
+                    initial_is_fullscreen,
+                )
+            )
+            self._create_window(
+                view,
                 initial_geometry,
                 initial_is_maximized,
                 initial_is_fullscreen,
+                navigation_source,
             )
-        )
-        self._create_window(
-            view,
-            initial_geometry,
-            initial_is_maximized,
-            initial_is_fullscreen,
-            navigation_source,
-        )
+        except Exception:
+            self._opening = False
+            raise
+        self._opening = False
         self._notify_visibility_changed()
         return view.uid
 
@@ -354,7 +366,10 @@ class DetachedPageViewManager(IShutdownAware):
         if self._window is not None:
             self._window.close()
             self._window = None
+            self._opening = False
             self._notify_visibility_changed()
+        else:
+            self._opening = False
 
     def navigate_to_view(self, page_uid: str, named_view_uid: str) -> None:
         if not self.is_view_open():

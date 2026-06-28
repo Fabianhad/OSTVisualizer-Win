@@ -4,7 +4,7 @@ from ...domain.entities.version_info import ChangelogSections, VersionInfo
 
 
 class UpdateCheckService:
-    CURRENT_VERSION = "1.2.4"
+    CURRENT_VERSION = "1.2.4.1"
 
     def __init__(
         self,

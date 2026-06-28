@@ -82,6 +82,21 @@ class FakeColorService:
 
 
 class ConditionUiBehaviorTests(unittest.TestCase):
+    def _make_conditions(self, count: int, prefix: str = "c"):
+        return {
+            f"{prefix}{index}": Condition(
+                uid=f"{prefix}{index}",
+                name=f"Condition {index}",
+                ref_no=index,
+            )
+            for index in range(1, count + 1)
+        }
+
+    def _show_compact_sidebar(self, sidebar: ConditionsSidebar) -> None:
+        sidebar.resize(260, 180)
+        sidebar.show()
+        self.app.processEvents()
+
     def _path_line_angle(self, item):
         path = item.path()
         first = path.elementAt(0)
@@ -168,6 +183,32 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             "Project",
         )
         self.assertEqual(sidebar.get_selected_condition_uids(), [])
+
+    def test_condition_sidebar_passive_reload_does_not_reapply_stale_scroll(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        self._show_compact_sidebar(sidebar)
+        sidebar.load_conditions(self._make_conditions(80, "a"), {}, "Project A")
+        self.app.processEvents()
+        scrollbar = sidebar.tree.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        self.assertGreater(scrollbar.value(), 0)
+        sidebar.load_conditions(self._make_conditions(80, "b"), {}, "Project B")
+        self.app.processEvents()
+        self.assertEqual(scrollbar.value(), 0)
+
+    def test_condition_sidebar_highlight_scrolls_to_revealed_condition(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        self._show_compact_sidebar(sidebar)
+        sidebar.load_conditions(self._make_conditions(80), {}, "Project")
+        self.app.processEvents()
+        scrollbar = sidebar.tree.verticalScrollBar()
+        scrollbar.setValue(0)
+        sidebar.highlight_conditions({"c80"})
+        self.app.processEvents()
+        self.assertGreater(scrollbar.value(), 0)
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c80"])
 
     def test_condition_sidebar_layer_visibility_update_preserves_quantities(self):
         sidebar = ConditionsSidebar(None)
