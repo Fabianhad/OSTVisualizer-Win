@@ -1,5 +1,6 @@
 import logging
 from PySide6 import QtCore, QtWidgets
+from ...utils.condition_tree_style import apply_tree_indentation
 
 logger = logging.getLogger(__name__)
 PAGE_SIZES = [
@@ -73,6 +74,7 @@ class PlanTreeWidget(QtWidgets.QTreeWidget):
         self._drag_items: list = []
         self.on_items_about_to_move = None
         self.on_items_moved = None
+        apply_tree_indentation(self)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)

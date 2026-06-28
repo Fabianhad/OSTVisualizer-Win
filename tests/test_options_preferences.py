@@ -301,7 +301,7 @@ class FakeFrameCacheAdapter:
         frame_h_pts,
         rotation,
     ):
-        return self.render_frame_uncached(
+        return self.render_frame_direct(
             file_path,
             page_index,
             scale,
@@ -318,7 +318,7 @@ class FakeCompositeFramePageCache(FakeFrameCacheAdapter):
         self.calls = []
         self.source_size = source_size
 
-    def render_frame_uncached(
+    def render_frame_direct(
         self,
         file_path,
         page_index,
@@ -385,7 +385,7 @@ class FakeOverlayMovementPageCache(FakeFrameCacheAdapter):
     def get_page_size(self, _file_path, _page_index):
         return (100.0, 100.0)
 
-    def render_frame_uncached(
+    def render_frame_direct(
         self,
         file_path,
         page_index,
@@ -442,7 +442,7 @@ class FakeShiftedSourceMarkerTifPageCache(FakeFrameCacheAdapter):
     def get_page_size(self, _file_path, _page_index):
         return (100.0, 100.0)
 
-    def render_frame_uncached(
+    def render_frame_direct(
         self,
         file_path,
         page_index,
@@ -1523,10 +1523,10 @@ class OptionsPreferencesTests(unittest.TestCase):
             )
             size_action.trigger()
             self.assertEqual(selected[-1].font_size, 18)
-            for action_text, attr in (
-                ("Bold", "font_bold"),
-                ("Italic", "font_italic"),
-                ("Underline", "font_underline"),
+            for action_text, selected_state in (
+                ("Bold", lambda style: style.font_bold),
+                ("Italic", lambda style: style.font_italic),
+                ("Underline", lambda style: style.font_underline),
             ):
                 with self.subTest(action_text=action_text):
                     action = next(
@@ -1536,7 +1536,7 @@ class OptionsPreferencesTests(unittest.TestCase):
                     )
                     self.assertFalse(action.icon().isNull())
                     action.trigger()
-                    self.assertTrue(getattr(selected[-1], attr))
+                    self.assertTrue(selected_state(selected[-1]))
         finally:
             parent.deleteLater()
 
@@ -3350,8 +3350,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         renderer = FakeRenderer()
         cache = PageCache()
         cache._get_renderer = lambda: renderer
-        cache.render_uncached("page.pdf", 0, 1.23456, 0)
-        cache.render_frame_uncached("page.pdf", 0, 1.23456, 1.0, 2.0, 3.0, 4.0, 0)
+        cache.get_page("page.pdf", 0, 1.23456, 0)
+        cache.get_frame("page.pdf", 0, 1.23456, 1.0, 2.0, 3.0, 4.0, 0)
         self.assertEqual(
             renderer.calls,
             [

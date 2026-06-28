@@ -11,6 +11,7 @@ from ..config import (
 )
 from ..dtos.employee_edit_dtos import EmployeeRecord, PayClassRecord
 from ..dtos.picker_dialog_result_dto import PickerDialogResult
+from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.dialog import save_result_mapping, save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
@@ -79,6 +80,7 @@ class EmployeesDialog(QtWidgets.QDialog):
         header.resizeSection(2, 110)
         header.resizeSection(3, 110)
         self.tree.setRootIsDecorated(False)
+        apply_tree_indentation(self.tree)
         self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection

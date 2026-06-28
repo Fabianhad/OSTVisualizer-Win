@@ -10,6 +10,7 @@ from ..config import (
     RELAXED_SPACING,
 )
 from ..utils.dialog import save_result_succeeded
+from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize, set_initial_window_size
@@ -70,6 +71,7 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self.tree.setColumnCount(1)
         self.tree.setHeaderLabels(["Condition Type"])
         self.tree.setRootIsDecorated(False)
+        apply_tree_indentation(self.tree)
         self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection

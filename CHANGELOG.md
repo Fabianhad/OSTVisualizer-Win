@@ -11,3 +11,5 @@
 - Switching pages after entering rotate mode from placement no longer raises an unhandled placement cursor assertion.
 - Re-enabling the Image layer now reloads the current page image when the visual layer was hidden across project switches or app restarts.
 - Takeoff edit previews now keep inactive-area styling instead of temporarily showing grayed-out items in full condition color.
+- PDF page rendering now retains a useful working set of large plan sheets instead of evicting most cached pages after only a few renders.
+- Tree views now use the same indentation as the Conditions sidebar throughout the app.

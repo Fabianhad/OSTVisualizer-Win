@@ -4,8 +4,12 @@ CONDITION_TREE_INDENTATION = 10
 CONDITION_TREE_ROW_HEIGHT = 20
 
 
-def apply_condition_tree_style(tree: QtWidgets.QTreeWidget) -> None:
+def apply_tree_indentation(tree: QtWidgets.QTreeView) -> None:
     tree.setIndentation(CONDITION_TREE_INDENTATION)
+
+
+def apply_condition_tree_style(tree: QtWidgets.QTreeWidget) -> None:
+    apply_tree_indentation(tree)
     tree.setUniformRowHeights(True)
 
 

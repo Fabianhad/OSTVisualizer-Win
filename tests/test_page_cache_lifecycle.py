@@ -1,5 +1,6 @@
 import unittest
 import threading
+import tempfile
 from PySide6.QtGui import QImage
 from ost_visualizer.presentation.visualization.pdf.page_cache import (
     PageCache,
@@ -70,6 +71,19 @@ class _BlockingPageRenderer:
         if len(self.calls) == 1:
             self.first_render_started.set()
             self.release_first_render.wait(timeout=2.0)
+        return QImage(16, 16, QImage.Format.Format_ARGB32)
+
+
+class _RecordingPageRenderer:
+    def __init__(self, page_count=3):
+        self.page_count = page_count
+        self.render_calls = []
+
+    def get_page_count(self, file_path):
+        return self.page_count
+
+    def render(self, file_path, page_index, scale, rotation, native_cancel_token=None):
+        self.render_calls.append((file_path, page_index, scale, rotation))
         return QImage(16, 16, QImage.Format.Format_ARGB32)
 
 
@@ -160,14 +174,6 @@ class PageCacheLifecycleTests(unittest.TestCase):
             renderer.text_run_calls,
             [("a.pdf", 0), ("b.pdf", 0), ("c.pdf", 0), ("b.pdf", 0)],
         )
-        cache.get_page_count("a.pdf")
-        cache.get_page_count("b.pdf")
-        cache.get_page_count("a.pdf")
-        cache.get_page_count("c.pdf")
-        self.assertEqual(
-            list(cache._page_count_cache.keys()),
-            [("a.pdf", None), ("c.pdf", None)],
-        )
         cache.get_page_size("a.pdf", 0)
         cache.get_page_size("b.pdf", 0)
         cache.get_page_size("a.pdf", 0)
@@ -176,6 +182,53 @@ class PageCacheLifecycleTests(unittest.TestCase):
             list(cache._page_size_cache.keys()),
             [("a.pdf", None, 0), ("c.pdf", None, 0)],
         )
+
+    def test_large_plan_sheet_cache_retains_target_entry_count(self):
+        renderer = _RecordingPageRenderer()
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        cache._image_size_bytes = (
+            lambda _image: PageCache.REPRESENTATIVE_PLAN_SHEET_BYTES
+        )
+        for index in range(PageCache.MAX_ENTRIES):
+            cache.get_page(f"page-{index}.pdf", 0, 2.0, 0)
+        self.assertEqual(len(cache._cache), PageCache.MAX_ENTRIES)
+        self.assertEqual(
+            cache._cache_size_bytes(cache._cache),
+            PageCache.MAX_ENTRIES * PageCache.REPRESENTATIVE_PLAN_SHEET_BYTES,
+        )
+        cache.get_page("page-overflow.pdf", 0, 2.0, 0)
+        self.assertEqual(len(cache._cache), PageCache.MAX_ENTRIES)
+        self.assertNotIn("page-0.pdf", {key.file_path for key in cache._cache})
+
+    def test_prefetch_pressure_accounts_for_frame_and_tinted_caches(self):
+        cache = PageCache()
+        cache._image_size_bytes = lambda value: int(value)
+        cache._frame_cache["frame"] = PageCache.PREFETCH_SHARED_CACHE_MAX_BYTES // 2
+        cache._tinted_cache["tinted"] = (
+            PageCache.PREFETCH_SHARED_CACHE_MAX_BYTES - cache._frame_cache["frame"]
+        )
+        self.assertFalse(cache.can_accept_prefetch_render(612.0, 792.0, 1.0))
+
+    def test_invalid_pdf_page_index_is_normalized_before_cache_key(self):
+        renderer = _RecordingPageRenderer(page_count=3)
+        cache = PageCache()
+        cache._get_renderer = lambda: renderer
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as pdf_file:
+            first = cache.get_page(pdf_file.name, 99, 1.0, 0)
+            second = cache.get_page(pdf_file.name, 2, 1.0, 0)
+            third = cache.get_page(pdf_file.name, -5, 1.0, 0)
+            fourth = cache.get_page(pdf_file.name, 0, 1.0, 0)
+        self.assertIs(first, second)
+        self.assertIs(third, fourth)
+        self.assertEqual(
+            renderer.render_calls,
+            [
+                (pdf_file.name, 2, 1.0, 0),
+                (pdf_file.name, 0, 1.0, 0),
+            ],
+        )
+        self.assertEqual({key.page_index for key in cache._cache}, {0, 2})
 
     def test_visible_frame_render_is_cached_by_frame_key(self):
         renderer = _FakeRenderer()

@@ -1,5 +1,6 @@
 from PySide6 import QtCore, QtGui, QtWidgets
 from .popup_frame import PopupFrame
+from ..utils.condition_tree_style import apply_tree_indentation
 
 
 class TreePopupComboBoxBase(QtWidgets.QComboBox):
@@ -15,6 +16,7 @@ class TreePopupComboBoxBase(QtWidgets.QComboBox):
         self._tree = QtWidgets.QTreeView()
         self._tree.setHeaderHidden(True)
         self._tree.setRootIsDecorated(True)
+        apply_tree_indentation(self._tree)
         self._tree.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.NoSelection
         )

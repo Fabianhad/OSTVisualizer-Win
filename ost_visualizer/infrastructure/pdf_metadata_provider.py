@@ -1,16 +1,23 @@
 import importlib
 import logging
+import os
 import threading
+from collections import OrderedDict
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, List, Optional
 from ..application.dtos.pdf_metadata_dtos import (
     PdfPageInfoDto,
     PdfTextRunDto,
     PdfVectorSegmentDto,
 )
 
+_FileSignature = Optional[tuple[int, int]]
+_MetadataCacheKey = tuple[str, _FileSignature, int]
+
 
 class NativePdfMetadataProvider:
+    MAX_CACHE_ENTRIES = 512
+
     def __init__(
         self,
         logger: logging.Logger | None = None,
@@ -19,9 +26,15 @@ class NativePdfMetadataProvider:
         self._logger = logger or logging.getLogger(__name__)
         self._renderer_factory = renderer_factory or self._load_renderer_factory()
         self._lock = threading.Lock()
-        self._page_info_cache: Dict[Tuple[str, int], PdfPageInfoDto] = {}
-        self._text_runs_cache: Dict[Tuple[str, int], List[PdfTextRunDto]] = {}
-        self._segments_cache: Dict[Tuple[str, int], List[PdfVectorSegmentDto]] = {}
+        self._page_info_cache: OrderedDict[_MetadataCacheKey, PdfPageInfoDto] = (
+            OrderedDict()
+        )
+        self._text_runs_cache: OrderedDict[_MetadataCacheKey, List[PdfTextRunDto]] = (
+            OrderedDict()
+        )
+        self._segments_cache: OrderedDict[
+            _MetadataCacheKey, List[PdfVectorSegmentDto]
+        ] = OrderedDict()
 
     @staticmethod
     def _load_renderer_factory() -> Callable:
@@ -30,39 +43,68 @@ class NativePdfMetadataProvider:
         )
         return module.PDFRenderer
 
+    @staticmethod
+    def _file_signature(file_path: str) -> _FileSignature:
+        try:
+            stat = os.stat(file_path)
+        except OSError:
+            return None
+        return int(stat.st_mtime_ns), int(stat.st_size)
+
+    def _cache_key(self, file_path: str, page_index: int) -> _MetadataCacheKey:
+        clean_path = str(file_path or "")
+        clean_page_index = max(0, int(page_index or 0))
+        return (
+            clean_path,
+            self._file_signature(clean_path),
+            clean_page_index,
+        )
+
+    def _store_lru(self, cache: OrderedDict, key, value) -> None:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > self.MAX_CACHE_ENTRIES:
+            cache.popitem(last=False)
+
     def get_page_info(self, file_path: str, page_index: int) -> PdfPageInfoDto:
-        key = (str(file_path or ""), int(page_index or 0))
+        key = self._cache_key(file_path, page_index)
+        clean_path, _file_signature, clean_page_index = key
         with self._lock:
             cached = self._page_info_cache.get(key)
             if cached is not None:
+                self._page_info_cache.move_to_end(key)
                 return cached
-        info = self._read_page_info(key[0], key[1])
+        info = self._read_page_info(clean_path, clean_page_index)
         with self._lock:
-            self._page_info_cache[key] = info
+            self._store_lru(self._page_info_cache, key, info)
         return info
 
     def get_text_runs(self, file_path: str, page_index: int) -> List[PdfTextRunDto]:
-        key = (str(file_path or ""), int(page_index or 0))
+        key = self._cache_key(file_path, page_index)
+        clean_path, _file_signature, clean_page_index = key
         with self._lock:
             cached = self._text_runs_cache.get(key)
             if cached is not None:
+                self._text_runs_cache.move_to_end(key)
                 return list(cached)
-        runs = self._read_text_runs(key[0], key[1])
+        runs = self._read_text_runs(clean_path, clean_page_index)
         with self._lock:
-            self._text_runs_cache[key] = list(runs)
+            self._store_lru(self._text_runs_cache, key, list(runs))
         return list(runs)
 
     def get_vector_segments(
         self, file_path: str, page_index: int
     ) -> List[PdfVectorSegmentDto]:
-        key = (str(file_path or ""), int(page_index or 0))
+        key = self._cache_key(file_path, page_index)
+        clean_path, _file_signature, clean_page_index = key
         with self._lock:
             cached = self._segments_cache.get(key)
             if cached is not None:
+                self._segments_cache.move_to_end(key)
                 return list(cached)
-        segments = self._read_vector_segments(key[0], key[1])
+        segments = self._read_vector_segments(clean_path, clean_page_index)
         with self._lock:
-            self._segments_cache[key] = list(segments)
+            self._store_lru(self._segments_cache, key, list(segments))
         return list(segments)
 
     def _read_page_info(self, file_path: str, page_index: int) -> PdfPageInfoDto:

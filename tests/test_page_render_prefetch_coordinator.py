@@ -300,7 +300,7 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
             ],
         )
 
-    def test_required_and_visible_frame_renders_do_not_wait_on_prefetch_cache_keys(
+    def test_required_and_visible_frame_renders_reuse_matching_in_flight_cache_keys(
         self,
     ):
         service = PDFRenderingService(PageCache(), num_workers=0)
@@ -333,8 +333,8 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
                 callback=lambda _result: None,
                 priority=RenderPriority.NEARBY_PREFETCH,
             )
-            self.assertFalse(service._active_requests[required_id].wait_for_in_flight)
-            self.assertFalse(
+            self.assertTrue(service._active_requests[required_id].wait_for_in_flight)
+            self.assertTrue(
                 service._active_requests[visible_frame_id].wait_for_in_flight
             )
             self.assertTrue(service._active_requests[prefetch_id].wait_for_in_flight)

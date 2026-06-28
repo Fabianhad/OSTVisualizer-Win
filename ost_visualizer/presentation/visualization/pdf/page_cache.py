@@ -5,20 +5,30 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional
 from PySide6.QtGui import QImage
+from ....domain.entities.file_extensions import is_pdf_suffix
 from ..utils.image_effects import tint_image
 from .renderers.page_renderer import PageRenderer
 
-_PAGE_CACHE_MAX_BYTES = 160 * 1024 * 1024
-_PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES = 96 * 1024 * 1024
-_FRAME_CACHE_MAX_BYTES = 160 * 1024 * 1024
-_FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES = 96 * 1024 * 1024
-_TINTED_CACHE_MAX_BYTES = 64 * 1024 * 1024
-_TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES = 32 * 1024 * 1024
+_MIB = 1024 * 1024
+_RENDERED_PLAN_PAGE_TARGET_ENTRIES = 20
+_REPRESENTATIVE_PLAN_SHEET_BYTES = 80 * _MIB
+_PAGE_CACHE_MAX_BYTES = (
+    _RENDERED_PLAN_PAGE_TARGET_ENTRIES * _REPRESENTATIVE_PLAN_SHEET_BYTES
+)
+_PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES = 96 * _MIB
+_FRAME_CACHE_MAX_BYTES = 8 * _REPRESENTATIVE_PLAN_SHEET_BYTES
+_FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES = 96 * _MIB
+_TINTED_CACHE_MAX_BYTES = 8 * _REPRESENTATIVE_PLAN_SHEET_BYTES
+_TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES = _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
+_PREFETCH_SHARED_CACHE_MAX_BYTES = _PAGE_CACHE_MAX_BYTES
 _BASE_RASTER_MAX_PIXELS = 20_000_000
 _IMAGE_BYTES_PER_PIXEL = 4
 _CACHEABLE_RENDER_HEADROOM = 0.95
 _CANCEL_TOKEN_KEY = "native_cancel_token"
 _render_context = threading.local()
+_FileSignature = Optional[tuple[int, int]]
+_PageMetadataCacheKey = tuple[str, _FileSignature, int]
+_PageCountCacheKey = tuple[str, _FileSignature]
 
 
 @contextmanager
@@ -43,7 +53,7 @@ def _current_pdf_render_cancel_token():
 @dataclass(frozen=True)
 class CacheKey:
     file_path: str
-    file_signature: Optional[tuple[int, int]]
+    file_signature: _FileSignature
     page_index: int
     scale: float
     rotation: int
@@ -52,7 +62,7 @@ class CacheKey:
 @dataclass(frozen=True)
 class FrameCacheKey:
     file_path: str
-    file_signature: Optional[tuple[int, int]]
+    file_signature: _FileSignature
     page_index: int
     scale: float
     rotation: int
@@ -65,7 +75,7 @@ class FrameCacheKey:
 @dataclass(frozen=True)
 class TintedCacheKey:
     file_path: str
-    file_signature: Optional[tuple[int, int]]
+    file_signature: _FileSignature
     page_index: int
     scale: float
     rotation: int
@@ -75,20 +85,26 @@ class TintedCacheKey:
 
 
 class PageCache:
-    MAX_ENTRIES = 20
+    MAX_ENTRIES = _RENDERED_PLAN_PAGE_TARGET_ENTRIES
     MAX_METADATA_ENTRIES = 512
+    REPRESENTATIVE_PLAN_SHEET_BYTES = _REPRESENTATIVE_PLAN_SHEET_BYTES
+    PAGE_CACHE_MAX_BYTES = _PAGE_CACHE_MAX_BYTES
     BASE_RASTER_MAX_PIXELS = _BASE_RASTER_MAX_PIXELS
     PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES = _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
+    FRAME_CACHE_MAX_BYTES = _FRAME_CACHE_MAX_BYTES
     FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES = _FRAME_CACHE_MAX_SINGLE_IMAGE_BYTES
+    TINTED_CACHE_MAX_BYTES = _TINTED_CACHE_MAX_BYTES
+    TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES = _TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES
+    PREFETCH_SHARED_CACHE_MAX_BYTES = _PREFETCH_SHARED_CACHE_MAX_BYTES
 
     def __init__(self):
         self._cache: OrderedDict[CacheKey, QImage] = OrderedDict()
         self._frame_cache: OrderedDict[FrameCacheKey, QImage] = OrderedDict()
         self._tinted_cache: OrderedDict[TintedCacheKey, QImage] = OrderedDict()
-        self._page_info_cache: OrderedDict[str, Dict] = OrderedDict()
-        self._page_count_cache: OrderedDict[str, int] = OrderedDict()
-        self._page_size_cache: OrderedDict[str, tuple] = OrderedDict()
-        self._text_runs_cache: OrderedDict[str, list] = OrderedDict()
+        self._page_info_cache: OrderedDict[_PageMetadataCacheKey, Dict] = OrderedDict()
+        self._page_count_cache: OrderedDict[_PageCountCacheKey, int] = OrderedDict()
+        self._page_size_cache: OrderedDict[_PageMetadataCacheKey, tuple] = OrderedDict()
+        self._text_runs_cache: OrderedDict[_PageMetadataCacheKey, list] = OrderedDict()
         self._lock = threading.Lock()
         self._local = threading.local()
         self._renderers: List[PageRenderer] = []
@@ -111,6 +127,28 @@ class PageCache:
         return max(0.1, round(scale, 3))
 
     @staticmethod
+    def _clean_page_index(page_index: int) -> int:
+        return max(0, int(page_index or 0))
+
+    def _normalize_page_index(
+        self,
+        file_path: str,
+        page_index: int,
+        file_signature: _FileSignature,
+    ) -> int:
+        requested_index = self._clean_page_index(page_index)
+        if requested_index == 0:
+            return 0
+        if not is_pdf_suffix(file_path):
+            return 0
+        if file_signature is None:
+            return requested_index
+        page_count = self._get_page_count(file_path, file_signature)
+        if page_count <= 0:
+            return 0
+        return min(requested_index, page_count - 1)
+
+    @staticmethod
     def _quantize_frame_coord(value: float) -> float:
         return round(float(value), 3)
 
@@ -125,10 +163,14 @@ class PageCache:
         frame_h_pts: float,
         rotation: int,
     ) -> FrameCacheKey:
+        file_signature = self._file_signature(file_path)
+        normalized_page_index = self._normalize_page_index(
+            file_path, page_index, file_signature
+        )
         return FrameCacheKey(
             file_path=file_path,
-            file_signature=self._file_signature(file_path),
-            page_index=page_index,
+            file_signature=file_signature,
+            page_index=normalized_page_index,
             scale=self._quantize_scale(scale),
             rotation=rotation,
             frame_x_pts=self._quantize_frame_coord(frame_x_pts),
@@ -138,7 +180,7 @@ class PageCache:
         )
 
     @staticmethod
-    def _file_signature(file_path: str) -> Optional[tuple[int, int]]:
+    def _file_signature(file_path: str) -> _FileSignature:
         try:
             stat = os.stat(file_path)
         except OSError:
@@ -157,7 +199,12 @@ class PageCache:
             return None
         quantized_scale = self._quantize_scale(scale)
         file_signature = self._file_signature(file_path)
-        key = CacheKey(file_path, file_signature, page_index, quantized_scale, rotation)
+        normalized_page_index = self._normalize_page_index(
+            file_path, page_index, file_signature
+        )
+        key = CacheKey(
+            file_path, file_signature, normalized_page_index, quantized_scale, rotation
+        )
         track_in_flight = True
         with self._in_flight_condition:
             if key in self._cache:
@@ -178,7 +225,7 @@ class PageCache:
             renderer = self._get_renderer()
             image = renderer.render(
                 file_path,
-                page_index,
+                normalized_page_index,
                 quantized_scale,
                 rotation,
                 native_cancel_token=_current_pdf_render_cancel_token(),
@@ -200,10 +247,23 @@ class PageCache:
 
     def can_accept_prefetch(self) -> bool:
         with self._lock:
-            return (
-                len(self._cache) < self.MAX_ENTRIES
-                and self._cache_size_bytes(self._cache) < _PAGE_CACHE_MAX_BYTES
-            )
+            return self._can_accept_prefetch_locked(0)
+
+    def _can_accept_prefetch_locked(self, estimated_bytes: int) -> bool:
+        return (
+            len(self._cache) < self.MAX_ENTRIES
+            and self._cache_size_bytes(self._cache) + estimated_bytes
+            <= _PAGE_CACHE_MAX_BYTES
+            and self._combined_image_cache_size_bytes() + estimated_bytes
+            <= _PREFETCH_SHARED_CACHE_MAX_BYTES
+        )
+
+    def _combined_image_cache_size_bytes(self) -> int:
+        return (
+            self._cache_size_bytes(self._cache)
+            + self._cache_size_bytes(self._frame_cache)
+            + self._cache_size_bytes(self._tinted_cache)
+        )
 
     def can_accept_prefetch_render(
         self,
@@ -218,9 +278,11 @@ class PageCache:
             if tinted
             else _PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
         )
-        if self.estimated_render_bytes(width_pts, height_pts, scale) > max_single_bytes:
+        estimated_bytes = self.estimated_render_bytes(width_pts, height_pts, scale)
+        if estimated_bytes > max_single_bytes:
             return False
-        return self.can_accept_prefetch()
+        with self._lock:
+            return self._can_accept_prefetch_locked(estimated_bytes)
 
     @classmethod
     def cacheable_base_render_scale(
@@ -292,8 +354,18 @@ class PageCache:
         quantized_scale = self._quantize_scale(scale)
         r, g, b = tint_rgb
         file_signature = self._file_signature(file_path)
+        normalized_page_index = self._normalize_page_index(
+            file_path, page_index, file_signature
+        )
         key = TintedCacheKey(
-            file_path, file_signature, page_index, quantized_scale, rotation, r, g, b
+            file_path,
+            file_signature,
+            normalized_page_index,
+            quantized_scale,
+            rotation,
+            r,
+            g,
+            b,
         )
         with self._lock:
             if key in self._tinted_cache:
@@ -301,7 +373,7 @@ class PageCache:
                 return self._tinted_cache[key]
         base_image = self.get_page(
             file_path,
-            page_index,
+            normalized_page_index,
             scale,
             rotation,
             wait_for_in_flight=wait_for_in_flight,
@@ -318,50 +390,6 @@ class PageCache:
                 _TINTED_CACHE_MAX_SINGLE_IMAGE_BYTES,
             )
         return tinted
-
-    def render_uncached(
-        self,
-        file_path: str,
-        page_index: int = 0,
-        scale: float = 1.0,
-        rotation: int = 0,
-    ) -> Optional[QImage]:
-        if not file_path:
-            return None
-        quantized_scale = self._quantize_scale(scale)
-        return self._get_renderer().render(
-            file_path,
-            page_index,
-            quantized_scale,
-            rotation,
-            native_cancel_token=_current_pdf_render_cancel_token(),
-        )
-
-    def render_frame_uncached(
-        self,
-        file_path: str,
-        page_index: int,
-        scale: float,
-        frame_x_pts: float,
-        frame_y_pts: float,
-        frame_w_pts: float,
-        frame_h_pts: float,
-        rotation: int = 0,
-    ) -> Optional[QImage]:
-        if not file_path:
-            return None
-        quantized_scale = self._quantize_scale(scale)
-        return self._get_renderer().render_frame(
-            file_path,
-            page_index,
-            quantized_scale,
-            frame_x_pts,
-            frame_y_pts,
-            frame_w_pts,
-            frame_h_pts,
-            rotation,
-            native_cancel_token=_current_pdf_render_cancel_token(),
-        )
 
     def get_frame(
         self,
@@ -432,13 +460,17 @@ class PageCache:
         return image
 
     def get_page_info(self, file_path: str, page_index: int = 0) -> Dict:
-        cache_key = (file_path, self._file_signature(file_path), page_index)
+        file_signature = self._file_signature(file_path)
+        normalized_page_index = self._normalize_page_index(
+            file_path, page_index, file_signature
+        )
+        cache_key = (file_path, file_signature, normalized_page_index)
         with self._lock:
             if cache_key in self._page_info_cache:
                 self._page_info_cache.move_to_end(cache_key)
                 return self._page_info_cache[cache_key]
         renderer = self._get_renderer()
-        info = renderer.get_page_info(file_path, page_index)
+        info = renderer.get_page_info(file_path, normalized_page_index)
         with self._lock:
             self._store_lru(self._page_info_cache, cache_key, info)
         return info
@@ -463,9 +495,8 @@ class PageCache:
             len(cache) > self.MAX_ENTRIES or self._cache_size_bytes(cache) > max_bytes
         )
 
-    @staticmethod
-    def _cache_size_bytes(cache: OrderedDict) -> int:
-        return sum(PageCache._image_size_bytes(image) for image in cache.values())
+    def _cache_size_bytes(self, cache: OrderedDict) -> int:
+        return sum(self._image_size_bytes(image) for image in cache.values())
 
     @staticmethod
     def _image_size_bytes(image: QImage) -> int:
@@ -479,8 +510,8 @@ class PageCache:
         while len(cache) > self.MAX_METADATA_ENTRIES:
             cache.popitem(last=False)
 
-    def get_page_count(self, file_path: str) -> int:
-        cache_key = (file_path, self._file_signature(file_path))
+    def _get_page_count(self, file_path: str, file_signature: _FileSignature) -> int:
+        cache_key = (file_path, file_signature)
         with self._lock:
             if cache_key in self._page_count_cache:
                 self._page_count_cache.move_to_end(cache_key)
@@ -492,25 +523,33 @@ class PageCache:
         return count
 
     def get_page_size(self, file_path: str, page_index: int = 0) -> tuple:
-        cache_key = (file_path, self._file_signature(file_path), page_index)
+        file_signature = self._file_signature(file_path)
+        normalized_page_index = self._normalize_page_index(
+            file_path, page_index, file_signature
+        )
+        cache_key = (file_path, file_signature, normalized_page_index)
         with self._lock:
             if cache_key in self._page_size_cache:
                 self._page_size_cache.move_to_end(cache_key)
                 return self._page_size_cache[cache_key]
         renderer = self._get_renderer()
-        size = renderer.get_page_size(file_path, page_index)
+        size = renderer.get_page_size(file_path, normalized_page_index)
         with self._lock:
             self._store_lru(self._page_size_cache, cache_key, size)
         return size
 
     def get_text_runs(self, file_path: str, page_index: int = 0) -> list:
-        cache_key = (file_path, self._file_signature(file_path), page_index)
+        file_signature = self._file_signature(file_path)
+        normalized_page_index = self._normalize_page_index(
+            file_path, page_index, file_signature
+        )
+        cache_key = (file_path, file_signature, normalized_page_index)
         with self._lock:
             if cache_key in self._text_runs_cache:
                 self._text_runs_cache.move_to_end(cache_key)
                 return list(self._text_runs_cache[cache_key])
         renderer = self._get_renderer()
-        text_runs = renderer.extract_text_runs(file_path, page_index)
+        text_runs = renderer.extract_text_runs(file_path, normalized_page_index)
         with self._lock:
             self._store_lru(self._text_runs_cache, cache_key, list(text_runs))
         return list(text_runs)

@@ -9,8 +9,8 @@ from .....domain.entities.page import Page
 from ...utils.image_effects import tint_image
 from ..page_cache import PageCache
 
-_COMPOSITE_CACHE_MAX_BYTES = 96 * 1024 * 1024
-_COMPOSITE_CACHE_MAX_SINGLE_IMAGE_BYTES = 48 * 1024 * 1024
+_COMPOSITE_CACHE_MAX_BYTES = 8 * PageCache.REPRESENTATIVE_PLAN_SHEET_BYTES
+_COMPOSITE_CACHE_MAX_SINGLE_IMAGE_BYTES = PageCache.PAGE_CACHE_MAX_SINGLE_IMAGE_BYTES
 
 
 def _quantize_render_scale(scale: float) -> float:

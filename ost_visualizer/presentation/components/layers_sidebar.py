@@ -4,6 +4,7 @@ from PySide6.QtCore import Signal
 from ...domain.entities.layer import BidLayer
 from ..config import COMPACT_SPACING, NO_MARGINS
 from ..managers.icon_manager import IconId, IconManager
+from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
 
@@ -74,7 +75,7 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self._table.setColumnCount(2)
         self._table.setHeaderLabels(["Show", "Layer"])
         self._table.setRootIsDecorated(False)
-        self._table.setIndentation(0)
+        apply_tree_indentation(self._table)
         self._table.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
         )

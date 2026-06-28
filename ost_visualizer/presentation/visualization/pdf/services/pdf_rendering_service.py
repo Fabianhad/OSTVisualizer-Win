@@ -12,7 +12,6 @@ from .....domain.entities.page import Page
 from ...utils.image_effects import apply_page_image_effects, tint_image
 from .. import ost_pdf
 from ..page_cache import PageCache, scoped_pdf_render_cancellation_token
-from ..render_priority import RenderPriority
 from .composite_renderer import CompositeRenderer
 
 logger = logging.getLogger(__name__)
@@ -47,7 +46,6 @@ class RenderRequest:
     native_cancel_token: ost_pdf.RenderCancelToken = field(
         default_factory=ost_pdf.RenderCancelToken
     )
-    use_cache: bool = True
     apply_invert_effect: bool = True
     apply_bitonal_effect: bool = True
     frame_x_pts: float = 0.0
@@ -109,7 +107,6 @@ class PDFRenderingService:
         rotation: int,
         callback: Callable[[RenderResult], None],
         priority: int = 0,
-        use_cache: bool = True,
         invert: bool = False,
         bitonal: bool = False,
         tint_rgb: Optional[tuple[int, int, int]] = None,
@@ -132,10 +129,8 @@ class PDFRenderingService:
             view_scale=None,
             show_mode=None,
             callback=callback,
-            use_cache=use_cache,
             apply_invert_effect=apply_invert_effect,
             apply_bitonal_effect=apply_bitonal_effect,
-            wait_for_in_flight=self._should_wait_for_in_flight(priority),
         )
         return self._enqueue_request(request)
 
@@ -175,7 +170,6 @@ class PDFRenderingService:
             frame_y_pts=frame_y_pts,
             frame_w_pts=frame_w_pts,
             frame_h_pts=frame_h_pts,
-            wait_for_in_flight=self._should_wait_for_in_flight(priority),
         )
         return self._enqueue_request(request)
 
@@ -205,7 +199,6 @@ class PDFRenderingService:
             view_scale=None,
             show_mode=None,
             callback=callback,
-            wait_for_in_flight=self._should_wait_for_in_flight(priority),
         )
         return self._enqueue_request(request)
 
@@ -243,7 +236,6 @@ class PDFRenderingService:
             callback=callback,
             apply_invert_effect=apply_invert_effect,
             apply_bitonal_effect=apply_bitonal_effect,
-            wait_for_in_flight=self._should_wait_for_in_flight(priority),
         )
         return self._enqueue_request(request)
 
@@ -281,7 +273,6 @@ class PDFRenderingService:
             frame_y_pts=frame_y_pts,
             frame_w_pts=frame_w_pts,
             frame_h_pts=frame_h_pts,
-            wait_for_in_flight=self._should_wait_for_in_flight(priority),
         )
         return self._enqueue_request(request)
 
@@ -310,12 +301,6 @@ class PDFRenderingService:
             callback=callback,
         )
         return self._enqueue_request(request)
-
-    def _should_wait_for_in_flight(self, priority: int) -> bool:
-        return priority not in (
-            RenderPriority.REQUIRED_PAGE,
-            RenderPriority.VISIBLE_FRAME,
-        )
 
     def cancel_request(self, request_id: str) -> None:
         with self._lock:
@@ -379,18 +364,13 @@ class PDFRenderingService:
             return RenderResult(request.request_id, False, None, str(exc))
 
     def _execute_page_render(self, request: RenderRequest) -> RenderResult:
-        if request.use_cache:
-            image = self._page_cache.get_page(
-                request.file_path,
-                request.page_index,
-                request.scale,
-                request.rotation,
-                wait_for_in_flight=request.wait_for_in_flight,
-            )
-        else:
-            image = self._page_cache.render_uncached(
-                request.file_path, request.page_index, request.scale, request.rotation
-            )
+        image = self._page_cache.get_page(
+            request.file_path,
+            request.page_index,
+            request.scale,
+            request.rotation,
+            wait_for_in_flight=request.wait_for_in_flight,
+        )
         if request.cancelled.is_set():
             return RenderResult(request.request_id, False, None, "Cancelled")
         if not image:

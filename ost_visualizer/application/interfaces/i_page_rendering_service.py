@@ -13,7 +13,6 @@ class IPageRenderingService(Protocol):
         rotation: int,
         callback: Callable[[RenderResult], None],
         priority: int = 0,
-        use_cache: bool = True,
         invert: bool = False,
         bitonal: bool = False,
         tint_rgb: tuple[int, int, int] | None = None,

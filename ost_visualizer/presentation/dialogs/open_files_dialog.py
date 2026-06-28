@@ -13,6 +13,7 @@ from ..config import (
     RELAXED_MARGINS,
     RELAXED_SPACING,
 )
+from ..utils.condition_tree_style import apply_tree_indentation
 from ..utils.messagebox import confirm, show_info
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize
@@ -48,6 +49,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self.table.setColumnCount(4)
         self.table.setHeaderLabels(["Open", "File Name", "Date Modified", "Size"])
         self.table.setRootIsDecorated(False)
+        apply_tree_indentation(self.table)
         self.table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )

@@ -1,6 +1,7 @@
 from typing import Any, Callable, Dict, List, Optional, Set, TypedDict
 from PySide6 import QtCore, QtWidgets
 from ..config import COMPACT_SPACING, RELAXED_MARGINS, RELAXED_SPACING
+from .condition_tree_style import apply_tree_indentation
 from .messagebox import confirm_multi_delete
 from .windows import remove_minimize, set_initial_window_size
 
@@ -135,6 +136,7 @@ class BasePickerDialog(BaseListDialog):
         content_row.setSpacing(RELAXED_SPACING)
         self.tree = QtWidgets.QTreeWidget()
         self.tree.setRootIsDecorated(False)
+        apply_tree_indentation(self.tree)
         self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection

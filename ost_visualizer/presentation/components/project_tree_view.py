@@ -24,6 +24,7 @@ from ..managers.context_menu_manager import ContextActionId, ContextMenuManager
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..managers.ui_access_manager import Feature
+from ..utils.condition_tree_style import apply_tree_indentation
 
 SortValue = Union[int, float, datetime, str, None]
 _DELETED_PROJECT_UID = "1"
@@ -293,6 +294,7 @@ class ProjectView(QtWidgets.QWidget):
         layout.setContentsMargins(*NO_MARGINS)
         layout.setSpacing(NO_SPACING)
         self.top_tree = _BidTreeWidget(self)
+        apply_tree_indentation(self.top_tree)
         headers = [
             "No.",
             "Name",
