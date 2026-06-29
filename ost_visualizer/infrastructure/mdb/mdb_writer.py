@@ -4,6 +4,7 @@ from typing import Generator, Optional
 import pyodbc
 from .components.annotation_operations import AnnotationOperationsMixin
 from .components.bid_operations import BidOperationsMixin
+from .components.bulk_write_helpers import AccessBulkWriteMixin
 from .components.condition_folder_operations import ConditionFolderOperationsMixin
 from .components.condition_operations import ConditionOperationsMixin
 from .components.connection_wrapper import ConnWrapper
@@ -18,6 +19,7 @@ from .schema_compatibility import MdbSchemaInspector, UnsupportedMdbSchemaError
 
 
 class MdbWriter(
+    AccessBulkWriteMixin,
     BidOperationsMixin,
     ConditionOperationsMixin,
     ConditionFolderOperationsMixin,

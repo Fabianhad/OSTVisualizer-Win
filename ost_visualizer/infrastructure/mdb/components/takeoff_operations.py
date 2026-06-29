@@ -2,6 +2,7 @@ import uuid
 from typing import List
 from ....application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ....domain.entities.area import is_unassigned_area_uid
+from .bulk_write_helpers import ACCESS_BULK_CHUNK_SIZE
 from .constants import TAKEOFF_REFERENCE_TABLES, encode_position
 
 
@@ -44,6 +45,13 @@ class TakeoffOperationsMixin:
         "name_font_italic": "NameFontItalic",
         "name_font_underline": "NameFontUnderline",
     }
+    _SELECTED_TAKEOFF_UPDATE_COLUMNS = frozenset(
+        {
+            "BidAreaUID",
+            "BidConditionUID",
+            "IsNegativeQuantity",
+        }
+    )
 
     def save_takeoffs_area(
         self, db_path: str, takeoff_uids: List[str], area_uid: str
@@ -55,7 +63,7 @@ class TakeoffOperationsMixin:
                 "Invalid area uid for takeoff assignment: %s", area_uid
             )
             return False
-        return self._save_takeoffs_value(
+        return self._update_selected_takeoffs_value(
             db_path,
             takeoff_uids,
             "BidAreaUID",
@@ -73,7 +81,7 @@ class TakeoffOperationsMixin:
                 "Invalid condition uid for takeoff assignment: %s", condition_uid
             )
             return False
-        return self._save_takeoffs_value(
+        return self._update_selected_takeoffs_value(
             db_path,
             takeoff_uids,
             "BidConditionUID",
@@ -81,7 +89,7 @@ class TakeoffOperationsMixin:
             "takeoffs condition",
         )
 
-    def _save_takeoffs_value(
+    def _update_selected_takeoffs_value(
         self,
         db_path: str,
         takeoff_uids: List[str],
@@ -89,49 +97,84 @@ class TakeoffOperationsMixin:
         value,
         label: str,
     ) -> bool:
-        if not takeoff_uids:
+        if column not in self._SELECTED_TAKEOFF_UPDATE_COLUMNS:
+            self.logger.error("Unsupported selected takeoff update column: %s", column)
+            return False
+        try:
+            uid_ints = self._normalize_int_uids(takeoff_uids, "takeoff")
+        except ValueError:
+            self.logger.exception(
+                "Invalid takeoff uids passed to %s: %s", label, takeoff_uids
+            )
+            return False
+        if not uid_ints:
             return True
         try:
-            with self._connection(db_path) as conn:
-                schema = self._schema(conn)
-                self._require_write_columns(schema, "BidTakeoffs", ("UID", column))
-                cursor = conn.cursor()
-                placeholders = ",".join("?" * len(takeoff_uids))
-                uid_ints = [int(u) for u in takeoff_uids]
-                cursor.execute(
-                    f"UPDATE [BidTakeoffs] SET [{column}]=? "
-                    f"WHERE [UID] IN ({placeholders})",
-                    [value] + uid_ints,
+            self._run_selected_takeoffs_value_update(
+                db_path,
+                uid_ints,
+                column,
+                value,
+                ACCESS_BULK_CHUNK_SIZE,
+            )
+            return True
+        except Exception as exc:
+            if self._is_access_resource_exceeded(exc):
+                self.logger.warning(
+                    "Access resource limit while saving %s for %d takeoffs "
+                    "with chunk size %d; retrying row-by-row in a fresh transaction.",
+                    label,
+                    len(uid_ints),
+                    ACCESS_BULK_CHUNK_SIZE,
                 )
-                return True
-        except Exception:
+                try:
+                    self._run_selected_takeoffs_value_update(
+                        db_path,
+                        uid_ints,
+                        column,
+                        value,
+                        1,
+                    )
+                    return True
+                except Exception:
+                    self.logger.exception(
+                        "Failed to save %s row-by-row in %s", label, db_path
+                    )
+                    return False
             self.logger.exception("Failed to save %s in %s", label, db_path)
             return False
+
+    def _run_selected_takeoffs_value_update(
+        self,
+        db_path: str,
+        uid_ints: list[int],
+        column: str,
+        value,
+        chunk_size: int,
+    ) -> None:
+        with self._connection(db_path) as conn:
+            schema = self._schema(conn)
+            self._require_write_columns(schema, "BidTakeoffs", ("UID", column))
+            cursor = conn.cursor()
+            self._execute_uid_in_update_chunks(
+                cursor,
+                "BidTakeoffs",
+                "UID",
+                {column: value},
+                uid_ints,
+                chunk_size,
+            )
 
     def set_takeoffs_negative(
         self, db_path: str, takeoff_uids: List[str], is_negative: bool
     ) -> bool:
-        if not takeoff_uids:
-            return True
-        try:
-            with self._connection(db_path) as conn:
-                schema = self._schema(conn)
-                self._require_write_columns(
-                    schema, "BidTakeoffs", ("UID", "IsNegativeQuantity")
-                )
-                cursor = conn.cursor()
-                placeholders = ",".join("?" * len(takeoff_uids))
-                uid_ints = [int(u) for u in takeoff_uids]
-                cursor.execute(
-                    f"UPDATE [BidTakeoffs] SET [IsNegativeQuantity]=? WHERE [UID] IN ({placeholders})",
-                    [is_negative] + uid_ints,
-                )
-                return True
-        except Exception:
-            self.logger.exception(
-                "Failed to save takeoffs negative flag in %s", db_path
-            )
-            return False
+        return self._update_selected_takeoffs_value(
+            db_path,
+            takeoff_uids,
+            "IsNegativeQuantity",
+            is_negative,
+            "takeoffs negative flag",
+        )
 
     def set_takeoff_curve(
         self,
@@ -232,53 +275,82 @@ class TakeoffOperationsMixin:
             return False
 
     def delete_takeoffs(self, db_path: str, takeoff_uids: List[str]) -> bool:
-        if not takeoff_uids:
-            return True
         try:
-            uids = [int(u) for u in takeoff_uids]
-        except (TypeError, ValueError):
+            uids = self._normalize_int_uids(takeoff_uids, "takeoff")
+        except ValueError:
             self.logger.exception(
                 "Invalid takeoff uids passed to delete_takeoffs: %s", takeoff_uids
             )
             return False
-        placeholders = ",".join("?" * len(uids))
+        if not uids:
+            return True
         try:
-            with self._connection(db_path) as conn:
-                schema = self._schema(conn)
-                self._require_write_columns(schema, "BidTakeoffs", ("UID",))
-                cursor = conn.cursor()
-                for child in TAKEOFF_REFERENCE_TABLES:
-                    if schema.optional_table_missing(child) or not schema.column_exists(
-                        child, "BidTakeoffFromUID"
-                    ):
-                        continue
-                    cursor.execute(
-                        f"DELETE FROM [{child}] WHERE [BidTakeoffFromUID] IN "
-                        f"({placeholders})",
-                        *uids,
-                    )
-                if not schema.optional_table_missing(
-                    "BidPercents"
-                ) and schema.column_exists("BidPercents", "BidTakeoffUID"):
-                    cursor.execute(
-                        f"DELETE FROM [BidPercents] WHERE [BidTakeoffUID] IN "
-                        f"({placeholders})",
-                        *uids,
-                    )
-                if schema.column_exists("BidTakeoffs", "ParentUID"):
-                    cursor.execute(
-                        f"UPDATE [BidTakeoffs] SET [ParentUID]=NULL "
-                        f"WHERE [ParentUID] IN ({placeholders})",
-                        *uids,
-                    )
-                cursor.execute(
-                    f"DELETE FROM [BidTakeoffs] WHERE [UID] IN ({placeholders})",
-                    *uids,
+            self._run_delete_takeoffs(db_path, uids, ACCESS_BULK_CHUNK_SIZE)
+            return True
+        except Exception as exc:
+            if self._is_access_resource_exceeded(exc):
+                self.logger.warning(
+                    "Access resource limit while deleting %d takeoffs with chunk "
+                    "size %d; retrying row-by-row in a fresh transaction.",
+                    len(uids),
+                    ACCESS_BULK_CHUNK_SIZE,
                 )
-                return True
-        except Exception:
+                try:
+                    self._run_delete_takeoffs(db_path, uids, 1)
+                    return True
+                except Exception:
+                    self.logger.exception(
+                        "Failed to delete takeoffs row-by-row in %s", db_path
+                    )
+                    return False
             self.logger.exception("Failed to delete takeoffs in %s", db_path)
             return False
+
+    def _run_delete_takeoffs(
+        self, db_path: str, uids: list[int], chunk_size: int
+    ) -> None:
+        with self._connection(db_path) as conn:
+            schema = self._schema(conn)
+            self._require_write_columns(schema, "BidTakeoffs", ("UID",))
+            cursor = conn.cursor()
+            for child in TAKEOFF_REFERENCE_TABLES:
+                if schema.optional_table_missing(child) or not schema.column_exists(
+                    child, "BidTakeoffFromUID"
+                ):
+                    continue
+                self._execute_uid_in_delete_chunks(
+                    cursor,
+                    child,
+                    "BidTakeoffFromUID",
+                    uids,
+                    chunk_size,
+                )
+            if not schema.optional_table_missing(
+                "BidPercents"
+            ) and schema.column_exists("BidPercents", "BidTakeoffUID"):
+                self._execute_uid_in_delete_chunks(
+                    cursor,
+                    "BidPercents",
+                    "BidTakeoffUID",
+                    uids,
+                    chunk_size,
+                )
+            if schema.column_exists("BidTakeoffs", "ParentUID"):
+                self._execute_uid_in_update_chunks(
+                    cursor,
+                    "BidTakeoffs",
+                    "ParentUID",
+                    {"ParentUID": None},
+                    uids,
+                    chunk_size,
+                )
+            self._execute_uid_in_delete_chunks(
+                cursor,
+                "BidTakeoffs",
+                "UID",
+                uids,
+                chunk_size,
+            )
 
     def insert_takeoffs(
         self,

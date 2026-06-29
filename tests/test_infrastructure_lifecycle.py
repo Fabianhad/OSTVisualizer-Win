@@ -5,6 +5,7 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
+import pyodbc
 from ost_visualizer.infrastructure import providers
 from ost_visualizer.infrastructure.mdb import database_creator
 from ost_visualizer.infrastructure.mdb.schema_contract import DEFAULT_LAYER_ROWS
@@ -13,6 +14,9 @@ from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
 )
 from ost_visualizer.infrastructure.mdb.components.bid_operations import (
     BidOperationsMixin,
+)
+from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
+    AccessBulkWriteMixin,
 )
 from ost_visualizer.infrastructure.mdb.components.condition_operations import (
     ConditionOperationsMixin,
@@ -110,6 +114,7 @@ class _SqliteSchema:
 
 
 class _SqliteMdbOps(
+    AccessBulkWriteMixin,
     BidOperationsMixin,
     ConditionFolderOperationsMixin,
     LayerOperationsMixin,
@@ -130,6 +135,94 @@ class _SqliteMdbOps(
 
     def _require_write_columns(self, _schema, _table, _columns):
         pass
+
+
+class _RecordingSchema:
+    def __init__(self, columns_by_table=None):
+        self.columns_by_table = columns_by_table or {
+            "BidTakeoffs": {
+                "UID",
+                "BidAreaUID",
+                "BidConditionUID",
+                "IsNegativeQuantity",
+            }
+        }
+
+    def require_column(self, table, column):
+        if not self.column_exists(table, column):
+            raise RuntimeError(f"Missing {table}.{column}")
+
+    def optional_table_missing(self, table):
+        return table not in self.columns_by_table
+
+    def column_exists(self, table, column):
+        return column in self.columns_by_table.get(table, set())
+
+
+class _RecordingCursor:
+    def __init__(self, ops):
+        self.ops = ops
+
+    def execute(self, query, *params):
+        self.ops.executions.append((query, tuple(params)))
+        self.ops.execute_count += 1
+        if (
+            self.ops.fail_on_execute is not None
+            and self.ops.execute_count == self.ops.fail_on_execute
+        ):
+            raise RuntimeError("forced chunk failure")
+        if self.ops.fail_once_hy001 and not self.ops.failed_hy001:
+            self.ops.failed_hy001 = True
+            raise pyodbc.OperationalError(
+                "HY001",
+                "[HY001] [Microsoft][ODBC Microsoft Access Driver] "
+                "System resource exceeded.",
+            )
+
+
+class _RecordingConnection:
+    def __init__(self, ops):
+        self.ops = ops
+
+    def cursor(self):
+        return _RecordingCursor(self.ops)
+
+
+class _RecordingTakeoffOps(AccessBulkWriteMixin, TakeoffOperationsMixin):
+    def __init__(
+        self,
+        schema=None,
+        fail_on_execute=None,
+        fail_once_hy001=False,
+    ):
+        self.schema = schema or _RecordingSchema()
+        self.fail_on_execute = fail_on_execute
+        self.fail_once_hy001 = fail_once_hy001
+        self.failed_hy001 = False
+        self.execute_count = 0
+        self.executions = []
+        self.connection_count = 0
+        self.commits = 0
+        self.rollbacks = 0
+        self.logger = logging.getLogger("tests.recording_takeoff_ops")
+
+    @contextmanager
+    def _connection(self, _db_path):
+        self.connection_count += 1
+        try:
+            yield _RecordingConnection(self)
+        except Exception:
+            self.rollbacks += 1
+            raise
+        else:
+            self.commits += 1
+
+    def _schema(self, _connection):
+        return self.schema
+
+    def _require_write_columns(self, schema, table, columns):
+        for column in columns:
+            schema.require_column(table, column)
 
 
 class InfrastructureLifecycleTests(unittest.TestCase):
@@ -836,6 +929,158 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             "SELECT ParentUID FROM BidTakeoffs WHERE UID = 2"
         ).fetchone()
         self.assertIsNone(child[0])
+
+    def test_takeoff_bulk_uid_normalization_deduplicates_in_order(self):
+        ops = _RecordingTakeoffOps()
+        self.assertEqual(
+            ops._normalize_int_uids(["2", 1, "2", "003"], "takeoff"),
+            [2, 1, 3],
+        )
+        with self.assertRaises(ValueError):
+            ops._normalize_int_uids(["1", "bad"], "takeoff")
+        with self.assertRaises(ValueError):
+            ops._normalize_int_uids("123", "takeoff")
+
+    def test_empty_takeoff_area_assignment_does_not_open_connection(self):
+        ops = _RecordingTakeoffOps()
+        self.assertTrue(ops.save_takeoffs_area("bid.mdb", [], "1"))
+        self.assertEqual(ops.connection_count, 0)
+        self.assertEqual(ops.executions, [])
+
+    def test_unassigned_area_assignment_writes_null_for_single_takeoff(self):
+        ops = _RecordingTakeoffOps()
+        self.assertTrue(ops.save_takeoffs_area("bid.mdb", ["1"], "0"))
+        self.assertEqual(ops.commits, 1)
+        self.assertEqual(ops.rollbacks, 0)
+        self.assertEqual(len(ops.executions), 1)
+        query, params = ops.executions[0]
+        self.assertEqual(
+            query,
+            "UPDATE [BidTakeoffs] SET [BidAreaUID]=? WHERE [UID]=?",
+        )
+        self.assertEqual(params, (None, 1))
+
+    def test_small_takeoff_area_assignment_uses_one_chunked_statement(self):
+        ops = _RecordingTakeoffOps()
+        self.assertTrue(ops.save_takeoffs_area("bid.mdb", ["1", "2", "3"], "7"))
+        self.assertEqual(ops.connection_count, 1)
+        self.assertEqual(ops.commits, 1)
+        self.assertEqual(len(ops.executions), 1)
+        query, params = ops.executions[0]
+        self.assertEqual(
+            query,
+            "UPDATE [BidTakeoffs] SET [BidAreaUID]=? " "WHERE [UID] IN (?,?,?)",
+        )
+        self.assertEqual(params, (7, 1, 2, 3))
+
+    def test_large_takeoff_area_assignment_uses_access_safe_chunks(self):
+        ops = _RecordingTakeoffOps()
+        takeoff_uids = [str(uid) for uid in range(1, 302)]
+        self.assertTrue(ops.save_takeoffs_area("bid.mdb", takeoff_uids, "7"))
+        self.assertEqual(ops.connection_count, 1)
+        self.assertEqual(ops.commits, 1)
+        self.assertEqual(ops.rollbacks, 0)
+        self.assertEqual(len(ops.executions), 7)
+        self.assertTrue(
+            all(
+                query.startswith("UPDATE [BidTakeoffs] SET [BidAreaUID]=?")
+                for query, _params in ops.executions
+            )
+        )
+        self.assertTrue(all(len(params) <= 51 for _query, params in ops.executions))
+        self.assertEqual(ops.executions[0][1], tuple([7] + list(range(1, 51))))
+
+    def test_condition_and_negative_updates_share_chunked_takeoff_path(self):
+        condition_ops = _RecordingTakeoffOps()
+        negative_ops = _RecordingTakeoffOps()
+        takeoff_uids = [str(uid) for uid in range(1, 102)]
+        self.assertTrue(
+            condition_ops.save_takeoffs_condition("bid.mdb", takeoff_uids, "22")
+        )
+        self.assertTrue(
+            negative_ops.set_takeoffs_negative("bid.mdb", takeoff_uids, True)
+        )
+        self.assertEqual(len(condition_ops.executions), 3)
+        self.assertEqual(len(negative_ops.executions), 3)
+        self.assertTrue(
+            all(
+                query.startswith("UPDATE [BidTakeoffs] SET [BidConditionUID]=?")
+                for query, _params in condition_ops.executions
+            )
+        )
+        self.assertTrue(
+            all(
+                query.startswith("UPDATE [BidTakeoffs] SET [IsNegativeQuantity]=?")
+                for query, _params in negative_ops.executions
+            )
+        )
+
+    def test_takeoff_bulk_update_failure_rolls_back_all_chunks(self):
+        ops = _RecordingTakeoffOps(fail_on_execute=2)
+        with self.assertLogs("tests.recording_takeoff_ops", level="ERROR"):
+            self.assertFalse(
+                ops.save_takeoffs_area(
+                    "bid.mdb", [str(uid) for uid in range(1, 102)], "3"
+                )
+            )
+        self.assertEqual(ops.commits, 0)
+        self.assertEqual(ops.rollbacks, 1)
+        self.assertEqual(ops.connection_count, 1)
+
+    def test_takeoff_bulk_update_hy001_retries_row_by_row_fresh_transaction(self):
+        ops = _RecordingTakeoffOps(fail_once_hy001=True)
+        with self.assertLogs("tests.recording_takeoff_ops", level="WARNING"):
+            self.assertTrue(ops.save_takeoffs_area("bid.mdb", ["1", "2", "3"], "9"))
+        self.assertEqual(ops.connection_count, 2)
+        self.assertEqual(ops.rollbacks, 1)
+        self.assertEqual(ops.commits, 1)
+        retry_queries = [query for query, _params in ops.executions[1:]]
+        self.assertEqual(
+            retry_queries,
+            [
+                "UPDATE [BidTakeoffs] SET [BidAreaUID]=? WHERE [UID]=?",
+                "UPDATE [BidTakeoffs] SET [BidAreaUID]=? WHERE [UID]=?",
+                "UPDATE [BidTakeoffs] SET [BidAreaUID]=? WHERE [UID]=?",
+            ],
+        )
+
+    def test_delete_takeoffs_chunks_references_parent_cleanup_and_final_delete(self):
+        schema = _RecordingSchema(
+            {
+                "BidTakeoffs": {"UID", "ParentUID"},
+                "BidDimensions": {"BidTakeoffFromUID"},
+                "BidPercents": {"BidTakeoffUID"},
+            }
+        )
+        ops = _RecordingTakeoffOps(schema=schema)
+        self.assertTrue(
+            ops.delete_takeoffs("bid.mdb", [str(uid) for uid in range(1, 102)])
+        )
+        self.assertEqual(ops.connection_count, 1)
+        self.assertEqual(ops.commits, 1)
+        self.assertEqual(ops.rollbacks, 0)
+        self.assertEqual(len(ops.executions), 12)
+        self.assertEqual(
+            [len(params) for _query, params in ops.executions],
+            [50, 50, 1, 50, 50, 1, 51, 51, 2, 50, 50, 1],
+        )
+        self.assertEqual(
+            [query.split(" WHERE ")[0] for query, _params in ops.executions],
+            [
+                "DELETE FROM [BidDimensions]",
+                "DELETE FROM [BidDimensions]",
+                "DELETE FROM [BidDimensions]",
+                "DELETE FROM [BidPercents]",
+                "DELETE FROM [BidPercents]",
+                "DELETE FROM [BidPercents]",
+                "UPDATE [BidTakeoffs] SET [ParentUID]=?",
+                "UPDATE [BidTakeoffs] SET [ParentUID]=?",
+                "UPDATE [BidTakeoffs] SET [ParentUID]=?",
+                "DELETE FROM [BidTakeoffs]",
+                "DELETE FROM [BidTakeoffs]",
+                "DELETE FROM [BidTakeoffs]",
+            ],
+        )
 
     def test_static_mdb_lookup_tables_are_immutable(self):
         self.assertIsInstance(
