@@ -6,6 +6,9 @@
     <title>{{TITLE}}</title>
     <style>
       :root {
+        --viewer-background: #1a1a1a;
+        --viewer-plan-background: #202020;
+        --viewer-plan-shadow: rgba(0, 0, 0, 0.35);
         --viewer-surface: rgba(15, 15, 21, 0.92);
         --viewer-border: rgba(255, 255, 255, 0.08);
         --viewer-divider: rgba(255, 255, 255, 0.06);
@@ -27,6 +30,9 @@
       }
 
       html[data-theme="light"] {
+        --viewer-background: #ffffff;
+        --viewer-plan-background: #f3f6fb;
+        --viewer-plan-shadow: rgba(15, 23, 42, 0.16);
         --viewer-surface: rgba(255, 255, 255, 0.92);
         --viewer-border: rgba(15, 23, 42, 0.12);
         --viewer-divider: rgba(15, 23, 42, 0.08);
@@ -52,7 +58,7 @@
         height: 100%;
         min-height: 100dvh;
         overflow: hidden;
-        background: #1a1a1a;
+        background: var(--viewer-background);
         font-family:
           system-ui,
           -apple-system,
@@ -206,11 +212,58 @@
         color: var(--viewer-disabled);
       }
 
+      .theme-toggle {
+        position: fixed;
+        top: calc(12px + var(--viewer-safe-top));
+        right: calc(12px + var(--viewer-safe-right));
+        z-index: 13;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-height: 34px;
+        padding: 7px 12px;
+        border: 1px solid var(--viewer-border);
+        border-radius: var(--viewer-radius-sm);
+        background: var(--viewer-surface);
+        color: var(--viewer-muted);
+        backdrop-filter: blur(12px);
+        font: inherit;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1;
+        white-space: nowrap;
+        cursor: pointer;
+        transition:
+          background 0.2s,
+          color 0.2s,
+          border-color 0.2s,
+          box-shadow 0.2s;
+      }
+
+      .theme-toggle:hover,
+      .theme-toggle:focus-visible {
+        color: var(--viewer-text);
+        border-color: var(--viewer-accent);
+      }
+
+      .theme-toggle:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.25);
+      }
+
+      .theme-toggle [data-theme-icon] {
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 11px;
+      }
+
       #plan-view {
         position: fixed;
         inset: 0;
         overflow: hidden;
-        background: #202020;
+        background: var(--viewer-plan-background);
         touch-action: none;
         cursor: grab;
       }
@@ -229,7 +282,7 @@
         top: 0;
         transform-origin: 0 0;
         background: white;
-        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+        box-shadow: 0 12px 40px var(--viewer-plan-shadow);
       }
 
       #plan-pdf-canvas,
@@ -400,6 +453,11 @@
           top: calc(8px + var(--viewer-safe-top));
         }
 
+        .theme-toggle {
+          top: calc(8px + var(--viewer-safe-top));
+          right: calc(8px + var(--viewer-safe-right));
+        }
+
         .view-mode-button {
           min-width: 54px;
           padding: 7px 12px;
@@ -481,6 +539,16 @@
         <div id="page-combo-menu" role="listbox" aria-label="Pages"></div>
       </div>
     </div>
+    <button
+      type="button"
+      id="theme-toggle"
+      class="theme-toggle"
+      aria-label="Switch to light mode"
+      title="Switch to light mode"
+    >
+      <span data-theme-icon aria-hidden="true">L</span>
+      <span data-theme-label>Light</span>
+    </button>
     <div id="layer-panel" class="collapsed">
       <div id="layer-header">
         <span>Visibility</span>
@@ -534,6 +602,30 @@
       import { WboitPass } from "three-wboit";
       import { MeshWboitMaterial } from "three-wboit";
 
+      const THEME_STORAGE_KEY = "fabian-theme";
+
+      function isViewerTheme(value) {
+        return value === "light" || value === "dark";
+      }
+
+      function getSystemViewerTheme() {
+        return window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: light)").matches
+          ? "light"
+          : "dark";
+      }
+
+      function getViewerTheme() {
+        const theme = document.documentElement.dataset.theme;
+        return isViewerTheme(theme) ? theme : getSystemViewerTheme();
+      }
+
+      function getViewerBackgroundColor() {
+        return getComputedStyle(document.documentElement)
+          .getPropertyValue("--viewer-background")
+          .trim();
+      }
+
       const sceneData = JSON.parse(
         document.getElementById("scene-data").textContent,
       );
@@ -545,10 +637,10 @@
       });
       renderer.setPixelRatio(window.devicePixelRatio);
       renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setClearColor(0x1a1a1a);
+      renderer.setClearColor(getViewerBackgroundColor());
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 0.5;
+      renderer.toneMappingExposure = 0.75;
 
       const scene = new THREE.Scene();
       const layerPanel = document.getElementById("layer-panel");
@@ -563,6 +655,7 @@
       const planOverlay = document.getElementById("plan-overlay");
       const planModeButton = document.getElementById("view-mode-plan");
       const threeModeButton = document.getElementById("view-mode-3d");
+      const themeToggle = document.getElementById("theme-toggle");
       const pageCombo = document.getElementById("page-combo");
       const pageComboButton = document.getElementById("page-combo-button");
       const pageComboMenu = document.getElementById("page-combo-menu");
@@ -590,6 +683,40 @@
       const PLAN_MIN_SCALE = 0.05;
       const PLAN_MAX_SCALE = 50.0;
       const PLAN_WHEEL_SENSITIVITY = 0.001;
+
+      function updateThemeToggle(theme) {
+        const nextTheme = theme === "light" ? "dark" : "light";
+        const label = nextTheme === "light" ? "Light" : "Dark";
+        const title = `Switch to ${nextTheme} mode`;
+        themeToggle.setAttribute("aria-label", title);
+        themeToggle.setAttribute("title", title);
+        themeToggle.setAttribute(
+          "aria-pressed",
+          theme === "light" ? "true" : "false",
+        );
+
+        const icon = themeToggle.querySelector("[data-theme-icon]");
+        if (icon) icon.textContent = nextTheme === "light" ? "L" : "D";
+
+        const text = themeToggle.querySelector("[data-theme-label]");
+        if (text) text.textContent = label;
+      }
+
+      function applyViewerTheme(theme, persist = false) {
+        const nextTheme = isViewerTheme(theme) ? theme : getSystemViewerTheme();
+        document.documentElement.dataset.theme = nextTheme;
+        const background = getViewerBackgroundColor();
+        renderer.setClearColor(background);
+        if (wboitPass && wboitPass.clearColor) {
+          wboitPass.clearColor.set(background);
+        }
+        if (persist) {
+          try {
+            localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+          } catch (_) {}
+        }
+        updateThemeToggle(nextTheme);
+      }
 
       function normalizeLayerUid(layerUid) {
         const uid =
@@ -1671,14 +1798,14 @@
 
       updateCameraClipping(true);
 
-      scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-      const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+      const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
       keyLight.position.set(500, 500, -500);
       scene.add(keyLight);
       const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
       fillLight.position.set(-500, 500, 500);
       scene.add(fillLight);
-      const rimLight = new THREE.DirectionalLight(0xffffff, 0.4);
+      const rimLight = new THREE.DirectionalLight(0xffffff, 0.3);
       rimLight.position.set(0, -500, -500);
       scene.add(rimLight);
 
@@ -1689,8 +1816,29 @@
       });
 
       const wboitPass = hasTransparent
-        ? new WboitPass(renderer, scene, camera, new THREE.Color(0x1a1a1a), 1.0)
+        ? new WboitPass(
+            renderer,
+            scene,
+            camera,
+            new THREE.Color(getViewerBackgroundColor()),
+            1.0,
+          )
         : null;
+      applyViewerTheme(getViewerTheme());
+
+      themeToggle.addEventListener("click", () => {
+        applyViewerTheme(getViewerTheme() === "light" ? "dark" : "light", true);
+      });
+
+      window.addEventListener("storage", (event) => {
+        if (event.key === THEME_STORAGE_KEY) {
+          applyViewerTheme(
+            isViewerTheme(event.newValue)
+              ? event.newValue
+              : getSystemViewerTheme(),
+          );
+        }
+      });
 
       sceneData.geometries.forEach((geomData) => {
         const geometry = new THREE.BufferGeometry();
@@ -1778,7 +1926,11 @@
           if (!pdfPlane) {
             pdfPlane = new THREE.Mesh(
               geo,
-              new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }),
+              new THREE.MeshBasicMaterial({
+                map: tex,
+                side: THREE.DoubleSide,
+                toneMapped: false,
+              }),
             );
             pdfPlane.rotation.x = -Math.PI / 2;
             pdfPlane.renderOrder = -1;
@@ -1799,6 +1951,7 @@
               pdfPlane.material.map.dispose();
             pdfPlane.geometry = geo;
             pdfPlane.material.map = tex;
+            pdfPlane.material.toneMapped = false;
             pdfPlane.material.needsUpdate = true;
             const pageLayer = sceneData.page_image_layer || {};
             pdfPlane.userData.layerUid = normalizeLayerUid(

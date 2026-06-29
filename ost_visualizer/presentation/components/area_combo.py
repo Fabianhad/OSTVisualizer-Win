@@ -92,11 +92,6 @@ class AreaComboBox(TreePopupComboBoxBase):
             self.area_activated.emit(self._selected_uid)
 
     def _update_display_text(self) -> None:
-        line_edit = self.lineEdit()
-        font = line_edit.font()
-        if font.bold():
-            font.setBold(False)
-            line_edit.setFont(font)
         item = self._area_items.get(self._selected_uid)
         if item:
             self.setEditText(item.text())
