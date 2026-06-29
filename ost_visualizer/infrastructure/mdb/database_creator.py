@@ -1072,7 +1072,6 @@ class DatabaseCreator:
     ) -> bool:
         db_path = Path(db_path)
         if db_path.exists():
-            self._logger.info("Database already exists: %s", db_path)
             return False
         try:
             db_path.parent.mkdir(parents=True, exist_ok=True)
