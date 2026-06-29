@@ -338,7 +338,7 @@ class SettingsReaderMixin:
                         "SELECT EstimatorUID FROM Bids WHERE EstimatorUID IS NOT NULL"
                     )
                     return {str(row.EstimatorUID) for row in cursor.fetchall()}
-        except Exception as e:
+        except (pyodbc.Error, TypeError, ValueError) as e:
             self.logger.warning("Could not query estimator UIDs in use: %s", e)
             return set()
 
@@ -356,7 +356,7 @@ class SettingsReaderMixin:
                         "WHERE [CdnTypeUID] IS NOT NULL"
                     )
                     return {str(row.CdnTypeUID) for row in cursor.fetchall()}
-        except Exception as e:
+        except (pyodbc.Error, TypeError, ValueError) as e:
             self.logger.warning("Could not query condition type UIDs in use: %s", e)
             return set()
 
@@ -388,6 +388,6 @@ class SettingsReaderMixin:
                             if row.BidLayerUID is not None
                         )
                 return used_uids
-        except Exception as e:
+        except (pyodbc.Error, TypeError, ValueError) as e:
             self.logger.warning("Could not query layer UIDs in use: %s", e)
             return set()

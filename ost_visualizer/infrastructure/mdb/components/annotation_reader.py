@@ -52,7 +52,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -79,7 +79,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -106,7 +106,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -133,7 +133,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -160,7 +160,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -194,7 +194,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -238,7 +238,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -272,7 +272,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -318,7 +318,7 @@ class AnnotationReaderMixin:
                             visible=visible,
                         )
                         bid_annotations.append(annotation)
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -345,7 +345,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 color_column = schema.optional_column("BidNamedViews", "Color", "NULL")
@@ -375,7 +375,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -409,7 +409,7 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
             try:
                 cursor.execute(
@@ -455,6 +455,6 @@ class AnnotationReaderMixin:
                             visible=visible,
                         )
                         bid_annotations.append(annotation)
-            except pyodbc.Error as e:
+            except pyodbc.Error:
                 pass
         return bid_annotations
