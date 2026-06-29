@@ -452,11 +452,11 @@ in vec4 vertexColor;
 in vec3 normal;
 in vec3 worldPos;
 out vec4 FragColor;
-uniform float ambientIntensity = 0.2;
+uniform float ambientIntensity = 0.55;
 uniform vec3 keyLightDir = normalize(vec3(500.0, -500.0, 500.0));
-uniform float keyLightIntensity = 0.6;
+uniform float keyLightIntensity = 0.45;
 uniform vec3 fillLightDir = normalize(vec3(-500.0, 500.0, 500.0));
-uniform float fillLightIntensity = 0.3;
+uniform float fillLightIntensity = 0.35;
 uniform vec3 rimLightDir = normalize(vec3(0.0, 500.0, -500.0));
 uniform float rimLightIntensity = 0.2;
 void main() {
@@ -480,11 +480,11 @@ in vec3 normal;
 in vec3 worldPos;
 layout(location = 0) out vec4 accumColor;
 layout(location = 1) out float revealage;
-uniform float ambientIntensity = 0.2;
+uniform float ambientIntensity = 0.55;
 uniform vec3 keyLightDir = normalize(vec3(500.0, -500.0, 500.0));
-uniform float keyLightIntensity = 0.6;
+uniform float keyLightIntensity = 0.45;
 uniform vec3 fillLightDir = normalize(vec3(-500.0, 500.0, 500.0));
-uniform float fillLightIntensity = 0.3;
+uniform float fillLightIntensity = 0.35;
 uniform vec3 rimLightDir = normalize(vec3(0.0, 500.0, -500.0));
 uniform float rimLightIntensity = 0.2;
 float weight(float alpha, float z) {
@@ -765,11 +765,11 @@ void main() {
     void Renderer::Impl::set_lighting_uniforms(GLuint shader)
     {
         glUseProgram(shader);
-        glUniform1f(glGetUniformLocation(shader, "ambientIntensity"), 0.2f);
+        glUniform1f(glGetUniformLocation(shader, "ambientIntensity"), 0.55f);
         glUniform3f(glGetUniformLocation(shader, "keyLightDir"), 500.0f, -500.0f, 500.0f);
-        glUniform1f(glGetUniformLocation(shader, "keyLightIntensity"), 0.6f);
+        glUniform1f(glGetUniformLocation(shader, "keyLightIntensity"), 0.45f);
         glUniform3f(glGetUniformLocation(shader, "fillLightDir"), -500.0f, 500.0f, 500.0f);
-        glUniform1f(glGetUniformLocation(shader, "fillLightIntensity"), 0.3f);
+        glUniform1f(glGetUniformLocation(shader, "fillLightIntensity"), 0.35f);
         glUniform3f(glGetUniformLocation(shader, "rimLightDir"), 0.0f, 500.0f, -500.0f);
         glUniform1f(glGetUniformLocation(shader, "rimLightIntensity"), 0.2f);
     }
