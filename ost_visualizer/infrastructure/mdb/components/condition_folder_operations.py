@@ -60,7 +60,7 @@ class ConditionFolderOperationsMixin:
         try:
             uids = [int(u) for u in folder_uids]
         except (TypeError, ValueError):
-            self.logger.exception(
+            self.logger.warning(
                 "Invalid folder uids passed to delete_condition_folders: %s",
                 folder_uids,
             )

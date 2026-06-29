@@ -54,7 +54,7 @@ class WorkingDirectoryService:
         file_name = f"{name}.mdb"
         db_path = self._working_dir / file_name
         if db_path.exists():
-            self._logger.warning("Database already exists: %s", db_path)
+            self._logger.info("Database already exists: %s", db_path)
             return None
         success = self._database_creator.create_database(
             db_path,

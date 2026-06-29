@@ -285,7 +285,11 @@ class ImportOperationsMixin:
                     self._insert_raw_row(connection, table, row, table_info)
                 except Exception as exc:
                     self.logger.error(
-                        "Failed inserting into [%s], row=%s, error=%s", table, row, exc
+                        "Failed inserting into [%s], row_uid=%s, columns=%s, error=%s",
+                        table,
+                        row.get("UID", ""),
+                        sorted(row.keys()),
+                        exc,
                     )
                     raise
         for table in PAGE_SECTIONS:
@@ -298,7 +302,11 @@ class ImportOperationsMixin:
                     self._insert_raw_row(connection, table, row, table_info)
                 except Exception as exc:
                     self.logger.error(
-                        "Failed inserting into [%s], row=%s, error=%s", table, row, exc
+                        "Failed inserting into [%s], row_uid=%s, columns=%s, error=%s",
+                        table,
+                        row.get("UID", ""),
+                        sorted(row.keys()),
+                        exc,
                     )
                     raise
 

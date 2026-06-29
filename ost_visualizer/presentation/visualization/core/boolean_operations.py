@@ -49,8 +49,9 @@ def apply_boolean_operations(
             results.append((mesh, metadata))
         return results
     except Exception as e:
-        logger.error("Boolean operations failed: %s", e)
-        logger.warning("Returning positive meshes unchanged due to error")
+        logger.error(
+            "Boolean operations failed; returning positive meshes unchanged: %s", e
+        )
         return [
             (mesh, meta)
             for mesh, meta in meshes_with_metadata

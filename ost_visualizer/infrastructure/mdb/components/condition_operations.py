@@ -257,7 +257,7 @@ class ConditionOperationsMixin:
             cond_ints = [int(u) for u in condition_uids]
             bid_int = int(bid_uid)
         except (TypeError, ValueError):
-            self.logger.exception(
+            self.logger.warning(
                 "Invalid uids passed to delete_conditions: bid=%s conds=%s",
                 bid_uid,
                 condition_uids,
@@ -440,7 +440,7 @@ class ConditionOperationsMixin:
             bid_int = int(bid_uid)
             uid_ints = [int(uid) for uid in ordered_condition_uids]
         except (TypeError, ValueError):
-            self.logger.exception(
+            self.logger.warning(
                 "Invalid uids passed to renumber_conditions: bid=%s conds=%s",
                 bid_uid,
                 ordered_condition_uids,

@@ -59,7 +59,7 @@ class BaseExporter(ABC):
                 bid_takeoffs, bid_conditions
             )
             if not exportable_takeoffs:
-                logger.warning("No exportable elements found for exporter")
+                logger.info("No exportable elements found for exporter")
                 return False
             exportable_takeoffs, self.area_holes_map = (
                 self._takeoff_service.group_area_takeoffs_with_holes(
@@ -170,7 +170,7 @@ class BaseExporter(ABC):
                     takeoff_to_index[takeoff_uid] = index
                     index += 1
         if not meshes_with_metadata:
-            logger.warning("No meshes generated for boolean operations")
+            logger.info("No meshes generated for boolean operations")
             return
         processed_meshes = apply_boolean_operations(meshes_with_metadata)
         for mesh, metadata in processed_meshes:

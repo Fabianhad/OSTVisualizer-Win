@@ -51,7 +51,7 @@ class SplashScreen(QtWidgets.QSplashScreen):
     def cleanup(self) -> None:
         try:
             self.close()
-        except RuntimeError:
-            logger.exception("Error closing SplashScreen")
+        except RuntimeError as exc:
+            logger.warning("Error closing SplashScreen: %s", exc)
         self._title = None
         self._message = None

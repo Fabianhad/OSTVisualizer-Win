@@ -136,8 +136,8 @@ class OpenFilesDialog(QtWidgets.QDialog):
             mtime = path.stat().st_mtime
             dt = datetime.fromtimestamp(mtime)
             return dt.strftime("%m/%d/%Y %I:%M:%S %p")
-        except Exception as e:
-            logger.warning(f"Error getting file date for {file_path}: {e}")
+        except Exception as exc:
+            logger.warning("Error getting file date for %s: %s", file_path, exc)
             return "N/A"
 
     def _get_file_size(self, file_path: str) -> str:
@@ -149,8 +149,8 @@ class OpenFilesDialog(QtWidgets.QDialog):
                 return f"{int(size_kb):,} KB"
             else:
                 return f"{size_kb:,.2f} KB"
-        except Exception as e:
-            logger.warning(f"Error getting file size for {file_path}: {e}")
+        except Exception as exc:
+            logger.warning("Error getting file size for %s: %s", file_path, exc)
             return "N/A"
 
     def _make_check_handler(self, row: int):

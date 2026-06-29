@@ -20,10 +20,6 @@ class FileManager:
         result = self.project_repository.load_file(file_path)
         if result.success:
             self.current_file_path = file_path
-        else:
-            self.logger.error(
-                "Failed to load file %s: %s", file_path, result.error_message
-            )
         return result
 
     def unload_file(self, file_path: Optional[str] = None) -> bool:

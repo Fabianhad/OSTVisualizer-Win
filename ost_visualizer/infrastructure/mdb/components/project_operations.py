@@ -15,7 +15,7 @@ class ProjectOperationsMixin:
         try:
             uids = [int(u) for u in bid_uids]
         except (TypeError, ValueError):
-            self.logger.exception(
+            self.logger.warning(
                 "Invalid bid uids passed to move_bids_to_project: %s", bid_uids
             )
             return False
@@ -62,9 +62,7 @@ class ProjectOperationsMixin:
         try:
             uids = [int(u) for u in bid_uids]
         except (TypeError, ValueError):
-            self.logger.exception(
-                "Invalid bid uids passed to orphan_bids: %s", bid_uids
-            )
+            self.logger.warning("Invalid bid uids passed to orphan_bids: %s", bid_uids)
             return False
         placeholders_sql = placeholders(uids)
         try:
@@ -122,7 +120,7 @@ class ProjectOperationsMixin:
         try:
             uids = [int(u) for u in project_uids]
         except (TypeError, ValueError):
-            self.logger.exception(
+            self.logger.warning(
                 "Invalid project uids passed to delete_projects: %s", project_uids
             )
             return False

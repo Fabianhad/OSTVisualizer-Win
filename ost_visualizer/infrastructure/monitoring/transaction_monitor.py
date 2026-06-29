@@ -138,7 +138,7 @@ class TransactionMonitor:
 
     def start_monitoring(self, callback: Callable[[], None]) -> bool:
         if self._is_monitoring:
-            logger.warning("Already monitoring transactions")
+            logger.info("Already monitoring transactions")
             return False
         self._callback = callback
         self._stop_flag.clear()

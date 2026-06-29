@@ -49,13 +49,16 @@ class PageRenderer:
             path_obj = Path(file_path)
             pdfium_error = renderer.get_last_error()
             if not path_obj.exists():
-                logger.error(f"Failed to open PDF (file not found): {file_path}")
+                logger.error("Failed to open PDF (file not found): %s", file_path)
             elif not path_obj.is_file():
-                logger.error(f"Failed to open PDF (not a file): {file_path}")
+                logger.error("Failed to open PDF (not a file): %s", file_path)
             else:
                 file_size = path_obj.stat().st_size
                 logger.error(
-                    f"Failed to open PDF ({pdfium_error}, size={file_size}): {file_path}"
+                    "Failed to open PDF (%s, size=%s): %s",
+                    pdfium_error,
+                    file_size,
+                    file_path,
                 )
             return None
         self._current_pdf_path = file_path
@@ -79,7 +82,7 @@ class PageRenderer:
             return None
         path = Path(file_path)
         if not path.exists():
-            logger.warning(f"File not found: {file_path}")
+            logger.warning("File not found: %s", file_path)
             return None
         ext = path.suffix.lower()
         if is_pdf_suffix(ext):
@@ -93,7 +96,7 @@ class PageRenderer:
         elif ext in self.IMAGE_EXTENSIONS:
             return self._render_image(file_path, scale)
         else:
-            logger.warning(f"Unsupported file type: {ext}")
+            logger.warning("Unsupported file type: %s", ext)
             return None
 
     def _render_pdf(
@@ -123,7 +126,7 @@ class PageRenderer:
         if not result:
             if native_cancel_token is not None and native_cancel_token.is_cancelled():
                 return None
-            logger.error(f"Failed to render PDF page {page_index}")
+            logger.error("Failed to render PDF page %s", page_index)
             return None
         data = result.to_bytes()
         qimage = QImage(
@@ -144,7 +147,9 @@ class PageRenderer:
         reader = QImageReader(file_path)
         image = reader.read()
         if image.isNull():
-            logger.error(f"Failed to load image: {file_path} - {reader.errorString()}")
+            logger.error(
+                "Failed to load image: %s - %s", file_path, reader.errorString()
+            )
             return None
         if scale != 1.0:
             new_width = int(image.width() * scale)
@@ -224,7 +229,7 @@ class PageRenderer:
     def get_page_size(self, file_path: str, page_index: int = 0) -> tuple:
         path = Path(file_path)
         if not path.exists():
-            logger.warning(f"get_page_size: File not found: {file_path}")
+            logger.warning("get_page_size: File not found: %s", file_path)
             return (0.0, 0.0)
         if is_pdf_suffix(path.suffix):
             with self._pdfium_lock:

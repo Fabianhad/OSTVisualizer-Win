@@ -43,7 +43,6 @@ class LoadFilesFromConfigUseCase:
                 if success:
                     successfully_loaded.append(file_path)
                 else:
-                    self.logger.warning("Failed to load file: %s", file_path)
                     failed_files.append(file_path)
             except Exception as exc:
                 self.logger.exception("Error loading file %s: %s", file_path, exc)

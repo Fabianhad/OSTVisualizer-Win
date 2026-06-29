@@ -57,6 +57,6 @@ def parse_overlay_rect(
         width = values[2] if len(values) > 2 else 0.0
         height = values[3] if len(values) > 3 else 0.0
         return (x, y, width, height)
-    except (ValueError, IndexError) as e:
-        logger.warning(f"Failed to parse OverlayRect '{overlay_rect_str}': {e}")
+    except (ValueError, IndexError) as exc:
+        logger.warning("Failed to parse OverlayRect %r: %s", overlay_rect_str, exc)
         return (0.0, 0.0, 0.0, 0.0)

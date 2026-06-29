@@ -141,13 +141,15 @@ class DatabaseRegistry:
         try:
             path = Path(raw_path).expanduser().resolve()
         except (OSError, RuntimeError):
-            self._logger.warning("Ignoring invalid database path: %s", raw_path)
+            self._logger.warning("Ignoring invalid configured database path")
             return None
         if path.suffix.lower() != ".mdb":
-            self._logger.warning("Ignoring non-MDB path: %s", path)
+            self._logger.warning(
+                "Ignoring configured database path with non-MDB suffix"
+            )
             return None
         if not path.exists() or not path.is_file():
-            self._logger.warning("Ignoring missing database path: %s", path)
+            self._logger.warning("Ignoring configured database path that is missing")
             return None
         return path
 

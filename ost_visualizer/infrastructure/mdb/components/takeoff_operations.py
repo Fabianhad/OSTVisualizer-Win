@@ -59,9 +59,7 @@ class TakeoffOperationsMixin:
         try:
             area_val = None if is_unassigned_area_uid(area_uid) else int(area_uid)
         except (TypeError, ValueError):
-            self.logger.exception(
-                "Invalid area uid for takeoff assignment: %s", area_uid
-            )
+            self.logger.warning("Invalid area uid for takeoff assignment: %s", area_uid)
             return False
         return self._update_selected_takeoffs_value(
             db_path,
@@ -77,7 +75,7 @@ class TakeoffOperationsMixin:
         try:
             condition_val = int(condition_uid)
         except (TypeError, ValueError):
-            self.logger.exception(
+            self.logger.warning(
                 "Invalid condition uid for takeoff assignment: %s", condition_uid
             )
             return False
@@ -103,7 +101,7 @@ class TakeoffOperationsMixin:
         try:
             uid_ints = self._normalize_int_uids(takeoff_uids, "takeoff")
         except ValueError:
-            self.logger.exception(
+            self.logger.warning(
                 "Invalid takeoff uids passed to %s: %s", label, takeoff_uids
             )
             return False
@@ -278,7 +276,7 @@ class TakeoffOperationsMixin:
         try:
             uids = self._normalize_int_uids(takeoff_uids, "takeoff")
         except ValueError:
-            self.logger.exception(
+            self.logger.warning(
                 "Invalid takeoff uids passed to delete_takeoffs: %s", takeoff_uids
             )
             return False

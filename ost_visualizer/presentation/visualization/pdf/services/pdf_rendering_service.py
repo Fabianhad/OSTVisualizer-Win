@@ -75,7 +75,7 @@ class RenderBridge(QObject):
             try:
                 callback(result)
             except Exception as exc:
-                logger.exception(f"Callback error: {exc}")
+                logger.exception("Callback error: %s", exc)
 
 
 class PDFRenderingService:
@@ -360,7 +360,7 @@ class PDFRenderingService:
                     f"Unknown request type: {request.request_type}",
                 )
         except Exception as exc:
-            logger.exception(f"Render error: {exc}")
+            logger.exception("Render error: %s", exc)
             return RenderResult(request.request_id, False, None, str(exc))
 
     def _execute_page_render(self, request: RenderRequest) -> RenderResult:
