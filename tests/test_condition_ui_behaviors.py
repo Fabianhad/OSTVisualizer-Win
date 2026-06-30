@@ -14,6 +14,7 @@ from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
@@ -26,7 +27,11 @@ from ost_visualizer.presentation.components.area_combo import AreaComboBox
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
 )
+from ost_visualizer.presentation.handlers.condition_action_handler import (
+    ConditionActionHandler,
+)
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
+from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.utils.view_context_menu import (
     build_selected_takeoff_context_state,
 )
@@ -91,6 +96,17 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             )
             for index in range(1, count + 1)
         }
+
+    def _foldered_conditions(self):
+        conditions = {
+            "c1": Condition(uid="c1", name="Condition 1", ref_no=1, folder_uid="f1"),
+            "c2": Condition(uid="c2", name="Condition 2", ref_no=2, folder_uid="f2"),
+        }
+        folders = {
+            "f1": BidConditionFolder(uid="f1", name="Folder 1"),
+            "f2": BidConditionFolder(uid="f2", name="Folder 2"),
+        }
+        return conditions, folders
 
     def _show_compact_sidebar(self, sidebar: ConditionsSidebar) -> None:
         sidebar.resize(260, 180)
@@ -209,6 +225,117 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.app.processEvents()
         self.assertGreater(scrollbar.value(), 0)
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c80"])
+
+    def test_condition_sidebar_passive_reload_preserves_scroll_for_same_project(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        self._show_compact_sidebar(sidebar)
+        sidebar.load_conditions(self._make_conditions(80), {}, "Project")
+        self.app.processEvents()
+        scrollbar = sidebar.tree.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum() // 2)
+        expected = scrollbar.value()
+        sidebar.load_conditions(self._make_conditions(80), {}, "Project")
+        self.app.processEvents()
+        self.assertEqual(scrollbar.value(), expected)
+
+    def test_condition_sidebar_highlight_visible_condition_does_not_scroll(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        self._show_compact_sidebar(sidebar)
+        sidebar.load_conditions(self._make_conditions(80), {}, "Project")
+        self.app.processEvents()
+        scrollbar = sidebar.tree.verticalScrollBar()
+        scrollbar.setValue(0)
+        sidebar.highlight_conditions({"c1"})
+        self.app.processEvents()
+        self.assertEqual(scrollbar.value(), 0)
+
+    def test_condition_sidebar_reveal_above_viewport_positions_near_top(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        self._show_compact_sidebar(sidebar)
+        sidebar.load_conditions(self._make_conditions(80), {}, "Project")
+        self.app.processEvents()
+        sidebar.tree.verticalScrollBar().setValue(
+            sidebar.tree.verticalScrollBar().maximum()
+        )
+        sidebar.highlight_conditions({"c1"})
+        self.app.processEvents()
+        rect = sidebar.tree.visualItemRect(sidebar._condition_items["c1"])
+        self.assertLess(rect.center().y(), sidebar.tree.viewport().rect().center().y())
+
+    def test_condition_sidebar_reveal_below_viewport_positions_near_bottom(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        self._show_compact_sidebar(sidebar)
+        sidebar.load_conditions(self._make_conditions(80), {}, "Project")
+        self.app.processEvents()
+        sidebar.tree.verticalScrollBar().setValue(0)
+        sidebar.highlight_conditions({"c80"})
+        self.app.processEvents()
+        rect = sidebar.tree.visualItemRect(sidebar._condition_items["c80"])
+        self.assertGreater(
+            rect.center().y(), sidebar.tree.viewport().rect().center().y()
+        )
+
+    def test_condition_sidebar_reload_preserves_expanded_state(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions, folders = self._foldered_conditions()
+        sidebar.load_conditions(conditions, folders, "Project")
+        sidebar._folder_items["f1"].setExpanded(False)
+        sidebar._folder_items["f2"].setExpanded(True)
+        sidebar.load_conditions(dict(conditions), folders, "Project")
+        self.assertFalse(sidebar._folder_items["f1"].isExpanded())
+        self.assertTrue(sidebar._folder_items["f2"].isExpanded())
+
+    def test_condition_sidebar_delete_refresh_preserves_expanded_state(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions, folders = self._foldered_conditions()
+        sidebar.load_conditions(conditions, folders, "Project")
+        sidebar._folder_items["f1"].setExpanded(False)
+        sidebar.stage_selection_after_condition_delete(["c2"])
+        remaining = {"c1": conditions["c1"]}
+        sidebar.load_conditions(remaining, folders, "Project")
+        self.assertFalse(sidebar._folder_items["f1"].isExpanded())
+
+    def test_condition_sidebar_duplicate_refresh_preserves_expanded_state(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions, folders = self._foldered_conditions()
+        sidebar.load_conditions(conditions, folders, "Project")
+        sidebar._folder_items["f1"].setExpanded(False)
+        duplicated = dict(conditions)
+        duplicated["c3"] = Condition(
+            uid="c3", name="Condition 3", ref_no=3, folder_uid="f2"
+        )
+        sidebar.load_conditions(duplicated, folders, "Project")
+        sidebar.highlight_conditions({"c3"})
+        self.assertFalse(sidebar._folder_items["f1"].isExpanded())
+
+    def test_condition_sidebar_delete_replacement_selects_previous_logical_condition(
+        self,
+    ):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(4)
+        sidebar.load_conditions(conditions, {}, "Project")
+        sidebar.stage_selection_after_condition_delete(["c3"])
+        remaining = {uid: cond for uid, cond in conditions.items() if uid != "c3"}
+        sidebar.load_conditions(remaining, {}, "Project")
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
+
+    def test_condition_sidebar_delete_replacement_uses_next_when_no_previous(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(3)
+        sidebar.load_conditions(conditions, {}, "Project")
+        sidebar.stage_selection_after_condition_delete(["c1"])
+        remaining = {uid: cond for uid, cond in conditions.items() if uid != "c1"}
+        sidebar.load_conditions(remaining, {}, "Project")
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
 
     def test_condition_sidebar_layer_visibility_update_preserves_quantities(self):
         sidebar = ConditionsSidebar(None)
@@ -506,6 +633,85 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             "Condition style cannot be changed after takeoffs have been placed.",
         )
         dialog.close()
+
+    def test_condition_properties_cancel_does_not_refresh_or_highlight_sidebar(self):
+        condition = Condition(uid="c1", name="Condition 1", ref_no=1)
+        refreshes = []
+        highlights = []
+
+        class Access:
+            def is_allowed(self, feature):
+                return feature == Feature.EDIT_CONDITION
+
+            def has_license(self):
+                return True
+
+        class Sidebar:
+            def window(self):
+                return None
+
+            def collect_ordered_condition_uids(self):
+                return ["c1"]
+
+        class ProjectData:
+            def is_current_bid_locked(self):
+                return False
+
+            def get_bid_conditions(self):
+                return {"c1": condition}
+
+            def get_all_takeoffs(self):
+                return []
+
+            def get_current_bid(self):
+                return SimpleNamespace(measure_base=0)
+
+        class ReadService:
+            def get_cdn_types(self, _file_path):
+                return {}
+
+            def get_merged_bid_layers(self, _file_path, _bid_uid):
+                return []
+
+        class Dialog:
+            condition_navigated = SimpleNamespace(connect=lambda _callback: None)
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=Access(),
+            conditions_sidebar=Sidebar(),
+            main_window=SimpleNamespace(icon_provider=None),
+            event_bus=object(),
+            refresh_conditions_ui=lambda: refreshes.append(True),
+            highlight_sidebar=lambda uids: highlights.append(set(uids)),
+            placement=SimpleNamespace(is_active=False),
+            _is_takeoff_2d_view_active=lambda: True,
+            flush_deferred_for_file=lambda _file_path: True,
+        )
+        handler = ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=SimpleNamespace(),
+            project_read_service=ReadService(),
+            project_data=ProjectData(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1")
+            ),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler.EditConditionDialog",
+            Dialog,
+        ), patch(
+            "ost_visualizer.presentation.handlers.condition_action_handler.exec_with_ost_blocking",
+            lambda _dialog, _event_bus: QtWidgets.QDialog.DialogCode.Rejected,
+        ):
+            handler.on_edit_requested(["c1"])
+        self.assertEqual(refreshes, [])
+        self.assertEqual(highlights, [])
 
     def test_count_attachment_advanced_properties_show_only_display_name(self):
         condition = Condition(

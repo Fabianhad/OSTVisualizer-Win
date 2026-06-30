@@ -1356,6 +1356,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             def get_condition_name(self, uid):
                 return conditions[uid].name
 
+            def stage_selection_after_condition_delete(self, _condition_uids):
+                pass
+
         refreshes = []
         coordinator = type(
             "FakeCoordinator",

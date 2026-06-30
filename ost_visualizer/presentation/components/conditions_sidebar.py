@@ -1,6 +1,6 @@
 from __future__ import annotations
 from collections import defaultdict
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterator, List, Optional, Set, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
 from ...domain.entities.cdn_type import CdnType
@@ -308,18 +308,19 @@ class ConditionsSidebar(QtWidgets.QWidget):
 
     def collect_ordered_condition_uids(self) -> List[str]:
         ordered: List[str] = []
-        self._collect_condition_uids(self.tree.invisibleRootItem(), ordered)
+        for item in self._iter_child_items(self.tree.invisibleRootItem()):
+            data = item.data(_COL_NO, _ITEM_ROLE)
+            if data and data[0] == _TYPE_CONDITION:
+                ordered.append(data[1])
         return ordered
 
-    def _collect_condition_uids(
-        self, item: QtWidgets.QTreeWidgetItem, result: List[str]
-    ) -> None:
-        for i in range(item.childCount()):
-            child = item.child(i)
-            data = child.data(_COL_NO, _ITEM_ROLE)
-            if data and data[0] == _TYPE_CONDITION:
-                result.append(data[1])
-            self._collect_condition_uids(child, result)
+    def _iter_child_items(
+        self, parent: QtWidgets.QTreeWidgetItem
+    ) -> Iterator[QtWidgets.QTreeWidgetItem]:
+        for index in range(parent.childCount()):
+            child = parent.child(index)
+            yield child
+            yield from self._iter_child_items(child)
 
     def get_condition_name(self, condition_uid: str) -> str:
         cond = self._conditions.get(condition_uid)
@@ -332,11 +333,12 @@ class ConditionsSidebar(QtWidgets.QWidget):
         project_name: str,
         grayscale: bool = False,
     ) -> None:
+        same_project = self._project_name == project_name
         self._conditions = conditions
         self._folders = folders
         self._project_name = project_name
         self._grayscale = grayscale
-        self._rebuild_tree()
+        self._rebuild_tree(preserve_scroll=same_project)
 
     def apply_layer_visibility_state(
         self,
@@ -375,7 +377,11 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self._block_item_changed = False
         self._sync_button_states()
 
-    def _rebuild_tree(self) -> None:
+    def _rebuild_tree(self, preserve_scroll: bool = True) -> None:
+        had_tree = self.tree.topLevelItemCount() > 0
+        preserve_tree_state = preserve_scroll and had_tree
+        expanded_keys = self._expanded_item_keys() if preserve_tree_state else set()
+        scroll_value = self.tree.verticalScrollBar().value() if preserve_scroll else 0
         self.tree.setSortingEnabled(False)
         self.tree.setUpdatesEnabled(False)
         self._block_item_changed = True
@@ -417,18 +423,50 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self._add_condition_group(root, no_folder_conds, self._grayscale)
         self.tree.blockSignals(False)
         self.tree.setSortingEnabled(True)
-        self.tree.expandAll()
+        if preserve_tree_state:
+            self._restore_expanded_item_keys(expanded_keys)
+        else:
+            self.tree.expandAll()
         self.tree.setUpdatesEnabled(True)
+        self.tree.doItemsLayout()
         self._block_item_changed = False
         pending_condition = self._pending_condition_select_uid
         self._pending_condition_select_uid = None
         if pending_condition:
             self.highlight_conditions({pending_condition})
+        elif preserve_scroll:
+            self.tree.verticalScrollBar().setValue(scroll_value)
         pending = self._pending_folder_edit_uid
         self._pending_folder_edit_uid = None
         if pending and pending in self._folder_items:
             self.start_folder_edit(pending)
         self._sync_button_states()
+
+    def _expanded_item_keys(self) -> Set[Tuple[Tuple[str, str], ...]]:
+        keys: Set[Tuple[Tuple[str, str], ...]] = set()
+        for item in self._iter_child_items(self.tree.invisibleRootItem()):
+            if item.isExpanded():
+                keys.add(self._item_path_key(item))
+        return keys
+
+    def _restore_expanded_item_keys(
+        self, keys: Set[Tuple[Tuple[str, str], ...]]
+    ) -> None:
+        for item in self._iter_child_items(self.tree.invisibleRootItem()):
+            kind, _uid = self._item_kind_uid(item)
+            item.setExpanded(kind == _TYPE_ROOT or self._item_path_key(item) in keys)
+
+    def _item_path_key(
+        self, item: QtWidgets.QTreeWidgetItem
+    ) -> Tuple[Tuple[str, str], ...]:
+        parts: List[Tuple[str, str]] = []
+        current = item
+        while current is not None:
+            kind, uid = self._item_kind_uid(current)
+            if kind:
+                parts.append((kind, uid or current.text(_COL_NO)))
+            current = current.parent()
+        return tuple(reversed(parts))
 
     def set_available_layers(self, layers: List[BidLayer]) -> None:
         self._available_layers = list(layers or [])
@@ -471,12 +509,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 if item:
                     item.setSelected(True)
                     first_item = first_item or item
-            if first_item:
+            if first_item and not self._item_has_collapsed_parent(first_item):
                 self.tree.setCurrentItem(first_item)
-                self.tree.scrollToItem(
-                    first_item,
-                    QtWidgets.QAbstractItemView.ScrollHint.EnsureVisible,
-                )
         finally:
             self._block_selection_signal = False
         self._sync_button_states()
@@ -641,7 +675,35 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self.tree.setUpdatesEnabled(True)
             self._block_item_changed = False
 
-    def highlight_conditions(self, condition_uids: Set[str]) -> None:
+    def _reveal_item_if_needed(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        if self._item_has_collapsed_parent(item):
+            return
+        rect = self.tree.visualItemRect(item)
+        viewport_rect = self.tree.viewport().rect()
+        if rect.isValid() and viewport_rect.contains(rect):
+            return
+        if rect.isValid() and rect.top() < viewport_rect.top():
+            self.tree.scrollToItem(
+                item,
+                QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop,
+            )
+            return
+        self.tree.scrollToItem(
+            item,
+            QtWidgets.QAbstractItemView.ScrollHint.PositionAtBottom,
+        )
+
+    def _item_has_collapsed_parent(self, item: QtWidgets.QTreeWidgetItem) -> bool:
+        parent = item.parent()
+        while parent is not None:
+            if not parent.isExpanded():
+                return True
+            parent = parent.parent()
+        return False
+
+    def highlight_conditions(
+        self, condition_uids: Set[str], reveal: bool = True
+    ) -> None:
         self._block_selection_signal = True
         try:
             self.tree.clearSelection()
@@ -651,10 +713,10 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 if item:
                     item.setSelected(True)
                     if first:
-                        self.tree.scrollToItem(
-                            item,
-                            QtWidgets.QAbstractItemView.ScrollHint.EnsureVisible,
-                        )
+                        if not self._item_has_collapsed_parent(item):
+                            self.tree.setCurrentItem(item)
+                        if reveal:
+                            self._reveal_item_if_needed(item)
                         first = False
         finally:
             self._block_selection_signal = False
@@ -1056,19 +1118,10 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._set_items_expanded_by_kind(_TYPE_FOLDER, False)
 
     def _set_items_expanded_by_kind(self, kind: str, expanded: bool) -> None:
-        self._set_child_items_expanded_by_kind(
-            self.tree.invisibleRootItem(), kind, expanded
-        )
-
-    def _set_child_items_expanded_by_kind(
-        self, parent: QtWidgets.QTreeWidgetItem, kind: str, expanded: bool
-    ) -> None:
-        for index in range(parent.childCount()):
-            child = parent.child(index)
+        for child in self._iter_child_items(self.tree.invisibleRootItem()):
             data = child.data(_COL_NO, _ITEM_ROLE)
             if data and data[0] == kind:
                 child.setExpanded(expanded)
-            self._set_child_items_expanded_by_kind(child, kind, expanded)
 
     def _restore_condition_item_name(
         self, item: QtWidgets.QTreeWidgetItem, name: str
@@ -1335,6 +1388,31 @@ class ConditionsSidebar(QtWidgets.QWidget):
             return
         if self._selected_condition_uids:
             self.delete_requested.emit(self._selected_condition_uids[:])
+
+    def stage_selection_after_condition_delete(self, condition_uids: List[str]) -> None:
+        self._pending_condition_select_uid = self._delete_replacement_condition_uid(
+            condition_uids
+        )
+
+    def _delete_replacement_condition_uid(
+        self, condition_uids: List[str]
+    ) -> Optional[str]:
+        deleting = {str(uid) for uid in condition_uids if uid}
+        if not deleting:
+            return None
+        ordered = self.collect_ordered_condition_uids()
+        delete_indexes = [index for index, uid in enumerate(ordered) if uid in deleting]
+        if not delete_indexes:
+            return None
+        first_delete_index = delete_indexes[0]
+        for index in range(first_delete_index - 1, -1, -1):
+            uid = ordered[index]
+            if uid not in deleting:
+                return uid
+        for uid in ordered[first_delete_index + 1 :]:
+            if uid not in deleting:
+                return uid
+        return None
 
     def _request_folder_delete(self) -> None:
         if not self._delete_allowed:

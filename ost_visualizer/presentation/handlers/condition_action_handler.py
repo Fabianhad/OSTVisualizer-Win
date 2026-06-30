@@ -482,6 +482,7 @@ class ConditionActionHandler:
         if not success:
             logger.warning("Failed to delete conditions %s", confirmed_uids)
             return
+        sidebar.stage_selection_after_condition_delete(confirmed_uids)
         self._coordinator.placement.force_exit()
         remaining = self._ui_state.highlighted_condition_uids - set(confirmed_uids)
         self._coordinator.highlight_sidebar(remaining)
@@ -799,10 +800,8 @@ class ConditionActionHandler:
             read_only=bid_locked,
             metric=self._is_metric(),
         )
-        _current_uid = [condition_uids[0]]
 
         def _on_navigated(uid):
-            _current_uid[0] = uid
             self._coordinator.highlight_sidebar({uid})
             if (
                 self._coordinator.placement.is_active
@@ -815,5 +814,3 @@ class ConditionActionHandler:
             exec_with_ost_blocking(dialog, self._coordinator.event_bus)
         finally:
             dialog.deleteLater()
-        self._coordinator.refresh_conditions_ui()
-        self._coordinator.highlight_sidebar({_current_uid[0]})
