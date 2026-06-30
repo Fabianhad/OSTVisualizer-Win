@@ -790,7 +790,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         class Dialog:
             condition_navigated = SimpleNamespace(connect=lambda _callback: None)
 
-            def __init__(self, *args, **kwargs):
+            def __init__(self, *args, **_dialog_options):
                 pass
 
             def deleteLater(self):

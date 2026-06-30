@@ -21,7 +21,7 @@ def _app():
 
 
 class _EventBus:
-    def publish(self, *_args, **_kwargs):
+    def publish(self, *_args, **_call_options):
         pass
 
 

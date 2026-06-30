@@ -1410,7 +1410,9 @@ class OptionsPreferencesTests(unittest.TestCase):
                 font_size=style_updates.get("font_size", current.font_size),
                 font_bold=style_updates.get("font_bold", current.font_bold),
                 font_italic=style_updates.get("font_italic", current.font_italic),
-                font_underline=style_updates.get("font_underline", current.font_underline),
+                font_underline=style_updates.get(
+                    "font_underline", current.font_underline
+                ),
                 text_align=style_updates.get("text_align", current.text_align),
             )
             selected.append(current)
@@ -1496,7 +1498,9 @@ class OptionsPreferencesTests(unittest.TestCase):
                 font_size=style_updates.get("font_size", current.font_size),
                 font_bold=style_updates.get("font_bold", current.font_bold),
                 font_italic=style_updates.get("font_italic", current.font_italic),
-                font_underline=style_updates.get("font_underline", current.font_underline),
+                font_underline=style_updates.get(
+                    "font_underline", current.font_underline
+                ),
                 text_align=current.text_align,
             )
             selected.append(current)
@@ -3666,7 +3670,9 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._viewport_scene_rect = QtCore.QRectF(80.0, 0.0, 50.0, 50.0)
         view._update_tile_coverage(4.0)
         request_id, frame_options = view._rendering_service.frame_calls[-1]
-        frame_options["callback"](RenderResult(request_id, False, None, "render failed"))
+        frame_options["callback"](
+            RenderResult(request_id, False, None, "render failed")
+        )
         self.assertIs(view._visible_frame_item, old_item)
         self.assertEqual(view._visible_frame_key, old_key)
         self.assertIsNone(view._visible_frame_request_id)

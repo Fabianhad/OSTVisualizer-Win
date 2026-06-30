@@ -63,8 +63,8 @@ class FakeEventBus:
     def __init__(self):
         self.events = []
 
-    def publish(self, event_type, **kwargs):
-        self.events.append((event_type, kwargs))
+    def publish(self, event_type, **event_payload):
+        self.events.append((event_type, event_payload))
 
 
 class FakeImportService:
@@ -272,9 +272,9 @@ class ImportRefreshFlowTests(unittest.TestCase):
         try:
             import_handler_module.ProgressDialog = FakeProgressDialog
             import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
-                lambda *_args, **_kwargs: ("source.ost", "")
+                lambda *_args, **_call_options: ("source.ost", "")
             )
-            import_handler_module.show_info = lambda *_args, **_kwargs: None
+            import_handler_module.show_info = lambda *_args, **_call_options: None
             handler.import_ost()
         finally:
             import_handler_module.ProgressDialog = original_dialog
@@ -301,7 +301,7 @@ class ImportRefreshFlowTests(unittest.TestCase):
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
         try:
             import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
-                lambda *_args, **_kwargs: ("source.ost", "")
+                lambda *_args, **_call_options: ("source.ost", "")
             )
             handler.import_ost()
         finally:
@@ -328,9 +328,9 @@ class ImportRefreshFlowTests(unittest.TestCase):
             FakeProgressDialog.result_code = QtWidgets.QDialog.DialogCode.Rejected
             import_handler_module.ProgressDialog = FakeProgressDialog
             import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
-                lambda *_args, **_kwargs: ("source.ost", "")
+                lambda *_args, **_call_options: ("source.ost", "")
             )
-            import_handler_module.show_critical = lambda *_args, **_kwargs: None
+            import_handler_module.show_critical = lambda *_args, **_call_options: None
             handler.import_ost()
         finally:
             FakeProgressDialog.result_code = QtWidgets.QDialog.DialogCode.Accepted

@@ -653,8 +653,8 @@ class FakeEventBus:
     def __init__(self):
         self.events = []
 
-    def publish(self, event_name, **kwargs):
-        self.events.append((event_name, kwargs))
+    def publish(self, event_name, **event_payload):
+        self.events.append((event_name, event_payload))
 
 
 class FakeAccess:
@@ -1709,7 +1709,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
     def test_failed_condition_label_text_property_save_restores_plan_view(self):
         plan_view = FakePlanView()
         write = FakeWriteService()
-        write.save_takeoff_text_properties = lambda *args, **kwargs: False
+        write.save_takeoff_text_properties = lambda *args, **_call_options: False
         handler = PlanViewActionHandler(
             plan_view=plan_view,
             ui_state_manager=FakeUiState(),
@@ -1869,7 +1869,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual([call[3] for call in write.calls], [False, False])
         self.assertEqual(data.takeoffs["redo-hole"].parent_uid, "parent")
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
@@ -1914,7 +1914,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual([call[3] for call in write.calls], [False, False])
         self.assertEqual(data.takeoffs["redo-hole"].parent_uid, "parent")
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
@@ -1958,10 +1958,10 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 super().__init__()
                 self._on_takeoffs_changed = on_takeoffs_changed
 
-            def publish(self, event_name, **kwargs):
-                super().publish(event_name, **kwargs)
+            def publish(self, event_name, **event_payload):
+                super().publish(event_name, **event_payload)
                 if event_name == AppEvents.TAKEOFFS_CHANGED:
-                    self._on_takeoffs_changed(**kwargs)
+                    self._on_takeoffs_changed(**event_payload)
 
         data = FakeProjectData()
         data.selected_page_uids = []
@@ -1977,7 +1977,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         viewer.plan_view = plan_view
         viewer.opengl_viewer = OpenGLViewer()
 
-        def on_takeoffs_changed(page_uid, **_kwargs):
+        def on_takeoffs_changed(page_uid, **_call_options):
             plan_view.current_page_uid = page_uid
             plan_view._current_takeoffs = {
                 uid: takeoff
@@ -2311,14 +2311,14 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         self.assertEqual(data.takeoffs["t1"].position, [5.0, 6.0])
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
     def test_failed_takeoff_position_save_restores_plan_view(self):
         plan_view = FakePlanView()
         write = FakeWriteService()
-        write.save_takeoff_positions = lambda *args, **kwargs: False
+        write.save_takeoff_positions = lambda *args, **_call_options: False
         handler = self._paste_handler(plan_view=plan_view, write=write)
         changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
         handler.on_positions_flushed(changes, [])
@@ -2360,7 +2360,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.takeoffs["t1"].position, [5.0, 6.0])
         self.assertEqual(data.annotations[0].position, [2.0, 2.0])
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED, AppEvents.ANNOTATIONS_CHANGED],
         )
 
@@ -2368,7 +2368,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         plan_view = FakePlanView()
         write = FakeWriteService()
         ann_write = FakeAnnotationWriteService()
-        ann_write.save_annotation_positions = lambda *args, **kwargs: False
+        ann_write.save_annotation_positions = lambda *args, **_call_options: False
         handler = self._paste_handler(
             plan_view=plan_view, write=write, ann_write=ann_write
         )
@@ -2385,7 +2385,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         plan_view = FakePlanView(data)
         write = FakeWriteService()
         ann_write = FakeAnnotationWriteService()
-        ann_write.save_annotation_positions = lambda *args, **kwargs: False
+        ann_write.save_annotation_positions = lambda *args, **_call_options: False
         undo = FakeUndoService()
         handler = PlanViewActionHandler(
             plan_view=plan_view,
@@ -2476,7 +2476,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
     def test_failed_annotation_text_property_save_restores_plan_view(self):
         plan_view = FakePlanView()
         ann_write = FakeAnnotationWriteService()
-        ann_write.save_annotation_text_properties = lambda *args, **kwargs: False
+        ann_write.save_annotation_text_properties = lambda *args, **_call_options: False
         handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
         changes = [
             (
@@ -2597,7 +2597,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         plan_view = FakePlanView()
         ann_write = FakeAnnotationWriteService()
         ann_write.save_annotation_text_properties_and_positions = (
-            lambda *args, **kwargs: False
+            lambda *args, **_call_options: False
         )
         handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
         text_changes = [
@@ -2644,7 +2644,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
     def test_failed_takeoff_rotation_save_restores_plan_view(self):
         plan_view = FakePlanView()
         write = FakeWriteService()
-        write.save_takeoff_rotations = lambda *args, **kwargs: False
+        write.save_takeoff_rotations = lambda *args, **_call_options: False
         handler = self._paste_handler(plan_view=plan_view, write=write)
         changes = [("t1", 0.0, 90.0)]
         handler.on_rotations_flushed(changes)
@@ -2695,7 +2695,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         plan_view = FakePlanView(data)
         write = FakeWriteService()
-        write.save_takeoff_rotations = lambda *args, **kwargs: False
+        write.save_takeoff_rotations = lambda *args, **_call_options: False
         event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=plan_view,
@@ -2727,7 +2727,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             rotation=0.0,
         )
         write = FakeWriteService()
-        write.save_takeoff_rotations = lambda *args, **kwargs: False
+        write.save_takeoff_rotations = lambda *args, **_call_options: False
         undo = FakeUndoService()
         event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
@@ -2760,7 +2760,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.takeoffs["t1"].position, [3.0, 4.0])
         self.assertEqual(data.takeoffs["t1"].rotation, 0.0)
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
@@ -2822,7 +2822,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual([call[3] for call in write.calls], [False])
         self.assertNotIn("t2", data.takeoffs)
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
@@ -2872,7 +2872,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertNotIn("new-hole", data.takeoffs)
         self.assertIn("parent", data.takeoffs)
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
@@ -2999,7 +2999,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertNotIn("t2", data.takeoffs)
         self.assertEqual(plan_view.clears, 1)
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
@@ -3089,7 +3089,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         self.assertEqual([call[4] for call in ann_write.insert_calls], [False])
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.ANNOTATIONS_CHANGED] * 3,
         )
         self.assertEqual(data.removed_annotation_uids, ["a1", "ann-1"])
@@ -3197,7 +3197,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         self.assertEqual(data.annotations, [])
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.ANNOTATIONS_CHANGED, AppEvents.NAMED_VIEW_DELETED],
         )
         self.assertEqual(undo.count, 1)
@@ -3372,7 +3372,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(pasted.name_font_name, "Arial")
         self.assertEqual(pasted.name_font_size, 12)
         self.assertEqual(
-            [event for event, _kwargs in event_bus.events],
+            [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 

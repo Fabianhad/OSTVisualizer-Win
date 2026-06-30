@@ -791,8 +791,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.condition_summary_tab = None
         coordinator.layer_events = []
         coordinator.event_bus = SimpleNamespace(
-            publish=lambda event, **kwargs: coordinator.layer_events.append(
-                (event, kwargs)
+            publish=lambda event, **event_payload: coordinator.layer_events.append(
+                (event, event_payload)
             )
         )
         coordinator._viewer = SimpleNamespace(update_viewers=lambda page_uids: None)
@@ -872,7 +872,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         coordinator.conditions_sidebar = None
         coordinator.condition_summary_tab = None
-        coordinator.event_bus = SimpleNamespace(publish=lambda *_args, **_kwargs: None)
+        coordinator.event_bus = SimpleNamespace(
+            publish=lambda *_args, **_call_options: None
+        )
         coordinator.plan_view = None
         self._install_hidden_2d_mesh_state(coordinator)
         coordinator._viewer = SimpleNamespace(update_viewers=lambda _page_uids: None)
@@ -1118,7 +1120,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             flush_for_file=lambda file_path: calls.append(("flush", file_path)) or True
         )
         coordinator._nav = SimpleNamespace(
-            start_refresh=lambda *_args, **_kwargs: calls.append("start") or True
+            start_refresh=lambda *_args, **_call_options: calls.append("start") or True
         )
         coordinator.ui_state_manager = SimpleNamespace(selected_area_uid="")
         coordinator._placement = SimpleNamespace()
@@ -1134,7 +1136,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             flush_for_file=lambda file_path: calls.append(("flush", file_path)) or False
         )
         coordinator._nav = SimpleNamespace(
-            start_refresh=lambda *_args, **_kwargs: calls.append("start") or True
+            start_refresh=lambda *_args, **_call_options: calls.append("start") or True
         )
         coordinator._do_file_refresh = lambda: calls.append("refresh")
         coordinator._finish_refresh = lambda: calls.append("finish")
@@ -1211,7 +1213,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.ui_state_manager = SimpleNamespace(active_page_uid="p1")
         coordinator._deferred_persistence = RecordingDeferredPersistence()
         coordinator._project_write_service = SimpleNamespace(
-            save_page_area=lambda *_args, **_kwargs: direct_writes.append(_args)
+            save_page_area=lambda *_args, **_call_options: direct_writes.append(_args)
         )
         plan_updates = []
         self._install_hidden_2d_mesh_state(coordinator)

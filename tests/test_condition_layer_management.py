@@ -57,7 +57,7 @@ class _FakeConnection:
 class _LayerUsageReader(SettingsReaderMixin):
     def __init__(self, connection):
         self._connection_obj = connection
-        self.logger = SimpleNamespace(warning=lambda *_args, **_kwargs: None)
+        self.logger = SimpleNamespace(warning=lambda *_args, **_call_options: None)
 
     @contextmanager
     def _connection(self, _file_path):

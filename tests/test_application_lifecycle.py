@@ -94,10 +94,10 @@ class FakeInfrastructureProvider:
     def get_osp_exporter(self, *_args):
         return object()
 
-    def get_ost_importer(self, **_kwargs):
+    def get_ost_importer(self, **_call_options):
         return object()
 
-    def get_osp_importer(self, **_kwargs):
+    def get_osp_importer(self, **_call_options):
         return object()
 
     def get_database_creator(self):
@@ -154,7 +154,7 @@ class ApplicationLifecycleTests(unittest.TestCase):
             file_state_model=object(),
             cleanup_hooks=[lambda: hook_calls.append("hook")],
         )
-        callback = lambda **_kwargs: None
+        callback = lambda **_call_options: None
         controller.subscribe_to_event(AppEvents.LICENSE_EXPIRED, callback)
         controller.cleanup()
         controller.cleanup()

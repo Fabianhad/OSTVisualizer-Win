@@ -375,8 +375,8 @@ class FakeDetachedLoadPlanView:
     def get_view_state(self):
         return self._view_state
 
-    def load_page(self, **kwargs):
-        self.load_calls.append(kwargs)
+    def load_page(self, **page_options):
+        self.load_calls.append(page_options)
         return True
 
     def prefetch_nearby_pages(self, *args):
@@ -548,8 +548,8 @@ class FakeEventBus:
     def __init__(self):
         self.events = []
 
-    def publish(self, event_type, **kwargs):
-        self.events.append((event_type, kwargs))
+    def publish(self, event_type, **event_payload):
+        self.events.append((event_type, event_payload))
 
 
 class FakeUndoService:
@@ -1889,7 +1889,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
 
     def test_create_window_defers_first_show_until_after_manager_setup(self):
         calls = []
-        factory_kwargs = []
+        factory_options = []
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager.icon_provider = object()
         manager.event_bus = object()
@@ -1905,8 +1905,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._infrastructure_provider = SimpleNamespace(
             create_plan_view_renderers=lambda _coord_system, _color_service: object()
         )
-        manager._window_factory = lambda **kwargs: factory_kwargs.append(
-            kwargs
+        manager._window_factory = lambda **window_options: factory_options.append(
+            window_options
         ) or FakeConstructedWindow(calls)
         manager._annotation_write_service = None
         manager._write_service = None
@@ -1921,8 +1921,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         view = SimpleNamespace(uid="view-1", bid_ref=None)
         geometry = QtCore.QByteArray(b"geometry")
         manager._create_window(view, geometry, False)
-        self.assertEqual(factory_kwargs[0]["initial_geometry"], geometry)
-        self.assertFalse(factory_kwargs[0]["initial_is_maximized"])
+        self.assertEqual(factory_options[0]["initial_geometry"], geometry)
+        self.assertFalse(factory_options[0]["initial_is_maximized"])
         self.assertEqual(
             calls,
             [
@@ -2249,7 +2249,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
         manager.project_data = SimpleNamespace(get_current_bid_file_path=lambda: None)
         manager._refresh_window = lambda: calls.append("refresh")
-        manager.logger = SimpleNamespace(exception=lambda *args, **kwargs: None)
+        manager.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
         manager._on_window_scale_changed("page-1", 0.25, 12.0)
         self.assertEqual(calls, [("save", "file.mdb", "page-1", 0.25, 12.0), "refresh"])
 
@@ -2544,7 +2544,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.plan_view = plan_view
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
         window._named_views = [("nv1", "p1", "Page 1", "Lobby")]
-        window.event_bus = SimpleNamespace(publish=lambda *args, **kwargs: None)
+        window.event_bus = SimpleNamespace(publish=lambda *args, **_event_payload: None)
         with patch(
             "ost_visualizer.presentation.utils.named_view_validation.show_warning"
         ) as warning:
@@ -2576,7 +2576,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
         window._named_views = [("nv1", "p1", "Page 1", "Existing")]
         window.event_bus = SimpleNamespace(
-            publish=lambda *args, **kwargs: events.append((args, kwargs))
+            publish=lambda *args, **event_payload: events.append((args, event_payload))
         )
         window._on_named_view_created(
             [1.0, 2.0, 3.0, 2.0, 3.0, 4.0, 1.0, 4.0],
@@ -2983,7 +2983,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._navigation_source = "refresh"
         window._scale_combo = None
         window._apply_named_view_focus_if_possible = lambda require_stable_view: False
-        window.logger = SimpleNamespace(exception=lambda *args, **kwargs: None)
+        window.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
         self.assertTrue(DetachedPageViewWindow._load_page_content(window))
         self.assertEqual(
             (page.zoom_fac, page.current_x, page.current_y),
@@ -3019,7 +3019,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._navigation_source = "hotlink"
         window._scale_combo = None
         window._apply_named_view_focus_if_possible = lambda require_stable_view: False
-        window.logger = SimpleNamespace(exception=lambda *args, **kwargs: None)
+        window.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
         self.assertTrue(DetachedPageViewWindow._load_page_content(window))
         self.assertEqual(
             (page.zoom_fac, page.current_x, page.current_y),
@@ -3149,7 +3149,7 @@ class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):
         calls = []
         view_manager = SimpleNamespace(
             is_view_open=lambda: False,
-            open_view=lambda **kwargs: calls.append(kwargs) or "view-id",
+            open_view=lambda **view_options: calls.append(view_options) or "view-id",
         )
         use_case = OpenAnnotationViewUseCase(view_manager, project_data)
         result = use_case.execute_from_hotlink(
@@ -3182,11 +3182,12 @@ class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):
         view_calls = []
         annotation_manager = SimpleNamespace(
             is_view_open=lambda: False,
-            open_view=lambda **kwargs: annotation_calls.append(kwargs) or "annotation",
+            open_view=lambda **view_options: annotation_calls.append(view_options)
+            or "annotation",
         )
         view_manager = SimpleNamespace(
             is_view_open=lambda: False,
-            open_view=lambda **kwargs: view_calls.append(kwargs) or "view",
+            open_view=lambda **view_options: view_calls.append(view_options) or "view",
         )
         use_case = OpenAnnotationViewUseCase(
             annotation_manager,
@@ -3222,11 +3223,12 @@ class OpenAnnotationViewUseCaseHotlinkTests(unittest.TestCase):
         main_calls = []
         annotation_manager = SimpleNamespace(
             is_view_open=lambda: False,
-            open_view=lambda **kwargs: annotation_calls.append(kwargs) or "annotation",
+            open_view=lambda **view_options: annotation_calls.append(view_options)
+            or "annotation",
         )
         view_manager = SimpleNamespace(
             is_view_open=lambda: False,
-            open_view=lambda **kwargs: view_calls.append(kwargs) or "view",
+            open_view=lambda **view_options: view_calls.append(view_options) or "view",
         )
         main_manager = SimpleNamespace(
             is_view_open=lambda: True,

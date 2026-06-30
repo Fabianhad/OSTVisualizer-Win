@@ -533,7 +533,9 @@ class ThreejsExportLayerTests(unittest.TestCase):
         _conditions, _takeoffs, _output_path, export_options = strategy.calls[0]
         self.assertFalse(export_options["display_modes_synced"])
         self.assertEqual(export_options["display_mode_3d"], Config.DISPLAY_MODE_SOLID)
-        self.assertEqual(export_options["display_mode_2d"], Config.DISPLAY_MODE_TRANSPARENT)
+        self.assertEqual(
+            export_options["display_mode_2d"], Config.DISPLAY_MODE_TRANSPARENT
+        )
 
     def test_non_html_export_keeps_visible_only_collection(self):
         strategy = _ExportStrategy("obj")

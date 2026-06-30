@@ -177,7 +177,7 @@ class NavigationStateMachineTests(unittest.TestCase):
                 set_area_placement_active=lambda _active: None,
             ),
             color_service=SimpleNamespace(
-                get_color_mapping=lambda *_args, **_kwargs: ({}, {})
+                get_color_mapping=lambda *_args, **_call_options: ({}, {})
             ),
             project_data=project_data,
         )

@@ -37,21 +37,21 @@ class FakeRenderingService:
         self.callbacks = {}
         self._counter = 0
 
-    def _record(self, request_type, kwargs):
+    def _record(self, request_type, render_options):
         self._counter += 1
         request_id = f"{request_type}-{self._counter}"
-        self.calls.append((request_type, request_id, kwargs))
-        self.callbacks[request_id] = kwargs["callback"]
+        self.calls.append((request_type, request_id, render_options))
+        self.callbacks[request_id] = render_options["callback"]
         return request_id
 
-    def render_page_async(self, **kwargs):
-        return self._record("page", kwargs)
+    def render_page_async(self, **render_options):
+        return self._record("page", render_options)
 
-    def render_overlay_async(self, **kwargs):
-        return self._record("overlay", kwargs)
+    def render_overlay_async(self, **render_options):
+        return self._record("overlay", render_options)
 
-    def render_composite_async(self, **kwargs):
-        return self._record("composite", kwargs)
+    def render_composite_async(self, **render_options):
+        return self._record("composite", render_options)
 
     def cancel_request(self, request_id):
         self.cancelled.append(request_id)
@@ -99,14 +99,14 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
             cache,
         )
 
-    def _page(self, uid, **kwargs):
+    def _page(self, uid, **overrides):
         values = {
             "uid": uid,
             "name": uid,
             "width_pts": 612.0,
             "height_pts": 792.0,
         }
-        values.update(kwargs)
+        values.update(overrides)
         return Page(**values)
 
     def test_pdf_load_strategy_uses_stored_dimensions_without_page_size_lookup(self):
@@ -260,14 +260,14 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         cache._get_renderer = lambda: renderer
 
         class CacheWarmingRenderingService(FakeRenderingService):
-            def render_page_async(self, **kwargs):
+            def render_page_async(self, **render_options):
                 cache.get_page(
-                    kwargs["file_path"],
-                    kwargs["page_index"],
-                    kwargs["scale"],
-                    kwargs["rotation"],
+                    render_options["file_path"],
+                    render_options["page_index"],
+                    render_options["scale"],
+                    render_options["rotation"],
                 )
-                return super().render_page_async(**kwargs)
+                return super().render_page_async(**render_options)
 
         rendering = CacheWarmingRenderingService()
         coordinator = PageRenderPrefetchCoordinator(
@@ -370,11 +370,11 @@ class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):
         class FakePlanView:
             current_page_uid = "p1"
 
-            def refresh_current_page_overlays(self, **_kwargs):
+            def refresh_current_page_overlays(self, **_call_options):
                 calls.append("refresh")
                 return False
 
-            def load_page(self, **_kwargs):
+            def load_page(self, **_call_options):
                 calls.append("load")
 
             def prefetch_nearby_pages(self, *_args):

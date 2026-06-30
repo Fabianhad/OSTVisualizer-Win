@@ -120,7 +120,7 @@ class _Schema:
 
 
 class _Logger:
-    def exception(self, *_args, **_kwargs):
+    def exception(self, *_args, **_call_options):
         pass
 
 

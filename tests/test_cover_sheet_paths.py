@@ -547,7 +547,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         ]
 
         class CancelEmployeesDialog:
-            def __init__(self, *_args, **_kwargs):
+            def __init__(self, *_args, **_call_options):
                 pass
 
             def exec(self):

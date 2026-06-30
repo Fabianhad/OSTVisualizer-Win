@@ -1025,7 +1025,9 @@ class OstImportExportRelationshipTests(unittest.TestCase):
 
         fake_connection = FakeConnection()
         original_connect = database_creator.pyodbc.connect
-        database_creator.pyodbc.connect = lambda *_args, **_kwargs: fake_connection
+        database_creator.pyodbc.connect = (
+            lambda *_args, **_call_options: fake_connection
+        )
         try:
             database_creator.DatabaseCreator()._create_schema(Path("test.mdb"))
         finally:

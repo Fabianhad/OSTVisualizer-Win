@@ -1030,7 +1030,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._sidebar = SimpleNamespace(bid_layers_sidebar=layers_sidebar)
         coordinator.conditions_sidebar = conditions_sidebar
         coordinator.condition_summary_tab = summary_tab
-        coordinator.event_bus = SimpleNamespace(publish=lambda *_args, **_kwargs: None)
+        coordinator.event_bus = SimpleNamespace(
+            publish=lambda *_args, **_call_options: None
+        )
         coordinator._deferred_persistence = SimpleNamespace(
             schedule_layer_show=lambda *_args: None
         )
@@ -1196,7 +1198,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._deferred_persistence = SimpleNamespace(
             flush_for_file=lambda _file_path: True
         )
-        coordinator._nav = SimpleNamespace(start_refresh=lambda *_args, **_kwargs: True)
+        coordinator._nav = SimpleNamespace(
+            start_refresh=lambda *_args, **_call_options: True
+        )
         coordinator.ui_state_manager = SimpleNamespace(selected_area_uid="")
         coordinator._placement = SimpleNamespace()
         coordinator._do_file_refresh = lambda: None
@@ -1278,7 +1282,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
                     selected_area_uid="",
                 )
 
-            def compute_state_for(self, **_kwargs):
+            def compute_state_for(self, **_call_options):
                 return NavState.BID_ACTIVE_PAGES_SELECTED
 
             def finish_refresh(self, _state):
@@ -1295,7 +1299,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._clear_staged_takeoff_restore = lambda: None
         coordinator._resolve_bid_lock_state = lambda _bid_ref: None
         coordinator._is_condition_placeable = lambda _condition_uid: True
-        coordinator._stage_takeoff_restore = lambda **_kwargs: None
+        coordinator._stage_takeoff_restore = lambda **_call_options: None
         coordinator._activate_takeoff_workspace = lambda: None
         coordinator._set_takeoff_tab_visible = lambda _visible: None
         coordinator._sync_undo_bid = lambda: None

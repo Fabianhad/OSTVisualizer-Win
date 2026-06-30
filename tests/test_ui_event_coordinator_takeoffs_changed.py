@@ -128,8 +128,8 @@ class FakeMeshReceiver:
         self.clear_calls = 0
         self.visible = visible
 
-    def apply_mesh_data(self, *args, **kwargs):
-        self.mesh_calls.append((args, kwargs))
+    def apply_mesh_data(self, *args, **mesh_options):
+        self.mesh_calls.append((args, mesh_options))
 
     def clear_scene(self):
         self.clear_calls += 1
@@ -147,7 +147,7 @@ class FakeSignal:
 
 
 class FakeConstructedMeshWindow:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **_window_options):
         self.mesh_calls = []
         self.visible = True
         self.destroyed = FakeSignal()
@@ -167,8 +167,8 @@ class FakeConstructedMeshWindow:
     def show_initial_window(self):
         self.visible = True
 
-    def apply_mesh_data(self, *args, **kwargs):
-        self.mesh_calls.append((args, kwargs))
+    def apply_mesh_data(self, *args, **mesh_options):
+        self.mesh_calls.append((args, mesh_options))
 
     def isVisible(self):
         return self.visible
@@ -784,13 +784,13 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         coordinator._on_native_scene_updated(geometries=[geometry])
         self.assertEqual(1, len(coordinator.opengl_viewer.mesh_calls))
-        args, kwargs = coordinator.opengl_viewer.mesh_calls[0]
+        args, mesh_options = coordinator.opengl_viewer.mesh_calls[0]
         self.assertEqual(([[0.0, 0.0, 0.0]], [[0.0, 1.0, 0.0]], [[0, 1, 2]]), args[:3])
         self.assertEqual([{"color": "#123456", "opacity": 0.75}], args[3])
-        self.assertEqual(["condition-1"], kwargs["condition_uids"])
-        self.assertEqual(["takeoff-1"], kwargs["takeoff_uids"])
+        self.assertEqual(["condition-1"], mesh_options["condition_uids"])
+        self.assertEqual(["takeoff-1"], mesh_options["takeoff_uids"])
         self.assertEqual(coordinator._last_mesh_args, args)
-        self.assertEqual(coordinator._last_mesh_options, kwargs)
+        self.assertEqual(coordinator._last_mesh_options, mesh_options)
         self.assertEqual(1, coordinator._plan_view_signaler.requests)
 
     def test_condition_selection_in_3d_does_not_enter_place_mode(self):
@@ -1174,7 +1174,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.ui_access_manager = FakeAccess()
         coordinator._update_export_menu_state = lambda: None
         coordinator._save_current_page_view_state = lambda: None
-        coordinator._clear_mesh_views_for_scene_update = lambda **_kwargs: None
+        coordinator._clear_mesh_views_for_scene_update = lambda **_call_options: None
         coordinator.handle_bid_selection(new_ref)
         self.assertIs(coordinator.ui_state_manager.get_selected_bid_ref(), old_ref)
         self.assertEqual(coordinator.ui_state_manager.page_selection, ["page-1"])
@@ -1222,7 +1222,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._nav = FakeNav()
         coordinator._update_export_menu_state = lambda: None
         coordinator._save_current_page_view_state = lambda: None
-        coordinator._clear_mesh_views_for_scene_update = lambda **_kwargs: None
+        coordinator._clear_mesh_views_for_scene_update = lambda **_call_options: None
         coordinator._reset_takeoff_workspace_state = lambda: None
         coordinator._set_takeoff_tab_visible = lambda _visible: None
         coordinator.handle_bid_selection(None)
@@ -1270,7 +1270,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._nav = FakeNav()
         coordinator._update_export_menu_state = lambda: None
         coordinator._save_current_page_view_state = lambda: None
-        coordinator._clear_mesh_views_for_scene_update = lambda **_kwargs: None
+        coordinator._clear_mesh_views_for_scene_update = lambda **_call_options: None
         coordinator._reset_takeoff_workspace_state = lambda: None
         coordinator._set_takeoff_tab_visible = lambda _visible: None
         coordinator._on_file_selected(file_path="new.mdb", is_database_root=True)
@@ -1323,7 +1323,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         from ost_visualizer.presentation.coordinators import ui_event_coordinator
 
         old_show_critical = ui_event_coordinator.show_critical
-        ui_event_coordinator.show_critical = lambda *_args, **_kwargs: None
+        ui_event_coordinator.show_critical = lambda *_args, **_call_options: None
         try:
             bid_ref = BidRef("bid.mdb", "bid-1")
 
@@ -1751,7 +1751,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.ensure_select_mode = lambda: None
         coordinator._resolve_bid_lock_state = lambda _bid_ref: None
         coordinator._reset_takeoff_workspace_state = lambda: None
-        coordinator._clear_mesh_views_for_scene_update = lambda **_kwargs: None
+        coordinator._clear_mesh_views_for_scene_update = lambda **_call_options: None
         coordinator._update_export_menu_state = lambda: None
         coordinator._finish_refresh()
         self.assertEqual(

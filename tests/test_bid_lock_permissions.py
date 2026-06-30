@@ -942,7 +942,7 @@ class BidLockPermissionTests(unittest.TestCase):
             deferred_persistence_manager=_FakeDeferredPersistence(),
         )
 
-        def run_progress(_label, task_fn, **_kwargs):
+        def run_progress(_label, task_fn, **_call_options):
             return QtWidgets.QDialog.DialogCode.Accepted, task_fn(), None
 
         handler._run_progress_dialog = run_progress

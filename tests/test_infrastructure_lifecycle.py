@@ -302,7 +302,9 @@ class InfrastructureLifecycleTests(unittest.TestCase):
 
         fake_connection = FakeConnection()
         original_connect = database_creator.pyodbc.connect
-        database_creator.pyodbc.connect = lambda *_args, **_kwargs: fake_connection
+        database_creator.pyodbc.connect = (
+            lambda *_args, **_call_options: fake_connection
+        )
         try:
             creator = database_creator.DatabaseCreator()
             with self.assertRaises(RuntimeError):
@@ -380,7 +382,9 @@ class InfrastructureLifecycleTests(unittest.TestCase):
 
         fake_connection = FakeConnection()
         original_connect = database_creator.pyodbc.connect
-        database_creator.pyodbc.connect = lambda *_args, **_kwargs: fake_connection
+        database_creator.pyodbc.connect = (
+            lambda *_args, **_call_options: fake_connection
+        )
         try:
             creator = database_creator.DatabaseCreator()
             creator._insert_seed_data("test.mdb", "Created")

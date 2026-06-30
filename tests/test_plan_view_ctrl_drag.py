@@ -591,10 +591,10 @@ class CtrlDragTests(unittest.TestCase):
         view.find_takeoff_at = lambda _scene_pos: "t1"
         view.find_takeoffs_at = lambda _scene_pos: ["t1"]
         view._flush_dirty_positions = lambda: None
-        view.update_selection_visuals = lambda *args, **kwargs: None
+        view.update_selection_visuals = lambda *args, **_call_options: None
         view._rubber_band_origin = None
         view._rubber_band = None
-        view._update_cursor = lambda *args, **kwargs: None
+        view._update_cursor = lambda *args, **_call_options: None
         return view
 
     def _make_selected_text_annotation_view(self):

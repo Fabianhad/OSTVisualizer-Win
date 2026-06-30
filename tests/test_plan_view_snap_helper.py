@@ -115,7 +115,9 @@ def _install_fake_native_modules():
     geometry_module.resize_cursor_for_edge = lambda *_args: None
     geometry_module.cursor_for_direction = lambda *_args: None
     geometry_module.polygon_centroid = lambda _pos, _n: (0.0, 0.0)
-    geometry_module.rotate_position_coords = lambda pos, *_args, **_kwargs: list(pos)
+    geometry_module.rotate_position_coords = lambda pos, *_args, **_call_options: list(
+        pos
+    )
     geometry_module.rotate_points_around = lambda pos, *_args: list(pos)
     sys.modules[GEOMETRY_MODULE_NAME] = geometry_module
     handle_style_module = types.ModuleType(HANDLE_STYLE_MODULE_NAME)
@@ -131,7 +133,9 @@ def _install_fake_native_modules():
         return QColor(0, 0, 0, 224), QColor(255, 255, 255)
 
     handle_style_module.handle_colors_for_background = handle_colors_for_background
-    handle_style_module.apply_takeoff_handle_style = lambda *_args, **_kwargs: None
+    handle_style_module.apply_takeoff_handle_style = (
+        lambda *_args, **_call_options: None
+    )
     sys.modules[HANDLE_STYLE_MODULE_NAME] = handle_style_module
     pdf_module = types.ModuleType(OST_PDF_MODULE_NAME)
     pdf_module.PDFRenderer = FakePDFRenderer
@@ -314,7 +318,7 @@ class PreviewHarness(PlacementHarness):
         self._place_preview_items.append(item)
         self.pattern_angles.append(pattern_angle)
 
-    def _add_secondary_condition_previews(self, *_args, **_kwargs):
+    def _add_secondary_condition_previews(self, *_args, **_call_options):
         pass
 
     def _request_place_preview_repaint(self):

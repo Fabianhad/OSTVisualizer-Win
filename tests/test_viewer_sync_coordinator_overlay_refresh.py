@@ -315,35 +315,35 @@ class FakeRenderingService:
         self._request_counter += 1
         return f"{prefix}-{self._request_counter}"
 
-    def render_page_async(self, **kwargs):
+    def render_page_async(self, **render_options):
         request_id = self._next_request_id("page")
-        self.page_requests.append((request_id, kwargs))
+        self.page_requests.append((request_id, render_options))
         return request_id
 
-    def render_overlay_async(self, **kwargs):
+    def render_overlay_async(self, **render_options):
         request_id = self._next_request_id("overlay")
-        self.overlay_requests.append((request_id, kwargs))
+        self.overlay_requests.append((request_id, render_options))
         return request_id
 
-    def render_composite_async(self, **kwargs):
+    def render_composite_async(self, **render_options):
         request_id = self._next_request_id("composite")
-        self.composite_requests.append((request_id, kwargs))
+        self.composite_requests.append((request_id, render_options))
         return request_id
 
-    def render_frame_async(self, **kwargs):
+    def render_frame_async(self, **render_options):
         request_id = self._next_request_id("frame")
-        self.frame_requests.append((request_id, kwargs))
+        self.frame_requests.append((request_id, render_options))
         return request_id
 
-    def render_composite_frame_async(self, **kwargs):
+    def render_composite_frame_async(self, **render_options):
         request_id = self._next_request_id("composite-frame")
-        self.composite_frame_requests.append((request_id, kwargs))
+        self.composite_frame_requests.append((request_id, render_options))
         return request_id
 
     def cancel_request(self, request_id):
         self.cancelled_requests.append(request_id)
 
-    def extract_pdf_text_async(self, **_kwargs):
+    def extract_pdf_text_async(self, **_call_options):
         return self._next_request_id("text")
 
     def shutdown(self):
@@ -392,8 +392,8 @@ class FakePlanView:
         self.load_calls = 0
         self.clear_calls = 0
         self.snap_settings = []
-        self.overlay_kwargs = []
-        self.load_kwargs = []
+        self.overlay_options = []
+        self.load_options = []
         self.prefetch_calls = []
 
     def clear(self):
@@ -415,7 +415,7 @@ class FakePlanView:
         changed_annotation_types=None,
     ):
         self.overlay_calls += 1
-        self.overlay_kwargs.append(
+        self.overlay_options.append(
             {
                 "page": page,
                 "takeoffs": takeoffs,
@@ -444,7 +444,7 @@ class FakePlanView:
         hidden_layer_uids=None,
     ):
         self.load_calls += 1
-        self.load_kwargs.append(
+        self.load_options.append(
             {
                 "page": page,
                 "takeoffs": takeoffs,
@@ -486,7 +486,7 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(plan_view.load_calls, 0)
         self.assertEqual(plan_view.prefetch_calls, [])
         self.assertEqual(
-            plan_view.overlay_kwargs[0]["hidden_layer_uids"], {"annotation-layer"}
+            plan_view.overlay_options[0]["hidden_layer_uids"], {"annotation-layer"}
         )
         self.assertEqual(plan_view.snap_settings, [(2.0, 0)])
 
@@ -501,10 +501,10 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(plan_view.overlay_calls, 1)
         self.assertEqual(plan_view.load_calls, 0)
         self.assertEqual(
-            plan_view.overlay_kwargs[0]["changed_annotation_uids"], ["ann-1"]
+            plan_view.overlay_options[0]["changed_annotation_uids"], ["ann-1"]
         )
         self.assertEqual(
-            plan_view.overlay_kwargs[0]["changed_annotation_types"],
+            plan_view.overlay_options[0]["changed_annotation_types"],
             [ANNOTATION_TYPE_TEXT],
         )
 
@@ -517,7 +517,7 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(len(plan_view.prefetch_calls), 1)
         self.assertEqual(plan_view.prefetch_calls[0][0].uid, "page-1")
         self.assertEqual(
-            plan_view.load_kwargs[0]["hidden_layer_uids"], {"annotation-layer"}
+            plan_view.load_options[0]["hidden_layer_uids"], {"annotation-layer"}
         )
 
     def test_annotation_change_on_different_current_page_uses_full_load_page(self):
@@ -540,10 +540,10 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(len(plan_view.prefetch_calls), 1)
         self.assertEqual(plan_view.prefetch_calls[0][0].uid, "page-1")
         self.assertEqual(
-            plan_view.overlay_kwargs[0]["hidden_layer_uids"], {"annotation-layer"}
+            plan_view.overlay_options[0]["hidden_layer_uids"], {"annotation-layer"}
         )
         self.assertEqual(
-            plan_view.load_kwargs[0]["hidden_layer_uids"], {"annotation-layer"}
+            plan_view.load_options[0]["hidden_layer_uids"], {"annotation-layer"}
         )
 
     def test_empty_mesh_refresh_does_not_clear_active_plan_view(self):
@@ -663,9 +663,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             ),
         }
         self.assertEqual(
-            view._secondary_place_condition_uids(
-                "c2", ["c1", "c1", "linear", "c2"]
-            ),
+            view._secondary_place_condition_uids("c2", ["c1", "c1", "linear", "c2"]),
             ["c1"],
         )
 
@@ -1200,15 +1198,15 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
                 self.page_calls = []
                 self.composite_calls = []
 
-            def render_page_async(self, **kwargs):
-                self.page_calls.append(kwargs)
+            def render_page_async(self, **render_options):
+                self.page_calls.append(render_options)
                 return "page-1"
 
-            def render_composite_async(self, **kwargs):
-                self.composite_calls.append(kwargs)
+            def render_composite_async(self, **render_options):
+                self.composite_calls.append(render_options)
                 return "composite-1"
 
-            def extract_pdf_text_async(self, **_kwargs):
+            def extract_pdf_text_async(self, **_call_options):
                 return "text-1"
 
             def cancel_request(self, _request_id):
@@ -1250,15 +1248,15 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
                 self.page_calls = []
                 self.composite_calls = []
 
-            def render_page_async(self, **kwargs):
-                self.page_calls.append(kwargs)
+            def render_page_async(self, **render_options):
+                self.page_calls.append(render_options)
                 return "page-1"
 
-            def render_composite_async(self, **kwargs):
-                self.composite_calls.append(kwargs)
+            def render_composite_async(self, **render_options):
+                self.composite_calls.append(render_options)
                 return "composite-1"
 
-            def extract_pdf_text_async(self, **_kwargs):
+            def extract_pdf_text_async(self, **_call_options):
                 return "text-1"
 
             def cancel_request(self, _request_id):
@@ -1300,8 +1298,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
 
-            def render_overlay_async(self, **kwargs):
-                self.calls.append(kwargs)
+            def render_overlay_async(self, **render_options):
+                self.calls.append(render_options)
                 return "overlay-base-1"
 
             def cancel_request(self, _request_id):
@@ -1493,10 +1491,10 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._base_raster_scale = 2.0
         self.assertTrue(view.show_overlay_move_handle())
         self.assertTrue(composite.isVisible())
-        request_id, kwargs = view._rendering_service.page_requests[-1]
+        request_id, render_options = view._rendering_service.page_requests[-1]
         image = QImage(20, 20, QImage.Format.Format_ARGB32)
         image.fill(QColor(255, 80, 80).rgba())
-        kwargs["callback"](RenderResult(request_id, True, image, None))
+        render_options["callback"](RenderResult(request_id, True, image, None))
         self.assertFalse(composite.isVisible())
         self.assertIsNotNone(view._white_canvas_item)
         self.assertIs(view._white_canvas_item.scene(), view._scene)
@@ -1643,25 +1641,25 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         self._install_page_canvas(view, page)
         self.assertTrue(view.show_overlay_move_handle())
-        base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
-        overlay_request_id, overlay_kwargs = view._rendering_service.overlay_requests[
+        base_request_id, base_options = view._rendering_service.page_requests[-1]
+        overlay_request_id, overlay_options = view._rendering_service.overlay_requests[
             -1
         ]
-        self.assertEqual(base_kwargs["tint_rgb"], (255, 80, 80))
-        self.assertTrue(base_kwargs["bitonal"])
-        self.assertTrue(base_kwargs["apply_invert_effect"])
-        self.assertFalse(base_kwargs["apply_bitonal_effect"])
-        self.assertEqual(overlay_kwargs["show_mode"], 2)
-        self.assertTrue(overlay_kwargs["apply_invert_effect"])
-        self.assertFalse(overlay_kwargs["apply_bitonal_effect"])
+        self.assertEqual(base_options["tint_rgb"], (255, 80, 80))
+        self.assertTrue(base_options["bitonal"])
+        self.assertTrue(base_options["apply_invert_effect"])
+        self.assertFalse(base_options["apply_bitonal_effect"])
+        self.assertEqual(overlay_options["show_mode"], 2)
+        self.assertTrue(overlay_options["apply_invert_effect"])
+        self.assertFalse(overlay_options["apply_bitonal_effect"])
         base_image = QImage(2, 2, QImage.Format.Format_ARGB32)
         base_image.fill(QtCore.Qt.GlobalColor.transparent)
         base_image.setPixelColor(1, 1, QColor(255, 80, 80, 255))
-        base_kwargs["callback"](RenderResult(base_request_id, True, base_image, None))
+        base_options["callback"](RenderResult(base_request_id, True, base_image, None))
         overlay_image = QImage(2, 2, QImage.Format.Format_ARGB32)
         overlay_image.fill(QtCore.Qt.GlobalColor.transparent)
         overlay_image.setPixelColor(1, 1, QColor(80, 80, 255, 255))
-        overlay_kwargs["callback"](
+        overlay_options["callback"](
             RenderResult(overlay_request_id, True, overlay_image, None)
         )
         base_item = view._overlay_move_preview_base_item
@@ -1694,24 +1692,24 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         self._install_page_canvas(view, page)
         self.assertTrue(view.show_overlay_move_handle())
-        base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
-        overlay_request_id, overlay_kwargs = view._rendering_service.overlay_requests[
+        base_request_id, base_options = view._rendering_service.page_requests[-1]
+        overlay_request_id, overlay_options = view._rendering_service.overlay_requests[
             -1
         ]
-        self.assertTrue(base_kwargs["invert"])
-        self.assertFalse(base_kwargs["bitonal"])
-        self.assertTrue(base_kwargs["apply_invert_effect"])
-        self.assertFalse(base_kwargs["apply_bitonal_effect"])
-        self.assertTrue(overlay_kwargs["apply_invert_effect"])
-        self.assertFalse(overlay_kwargs["apply_bitonal_effect"])
+        self.assertTrue(base_options["invert"])
+        self.assertFalse(base_options["bitonal"])
+        self.assertTrue(base_options["apply_invert_effect"])
+        self.assertFalse(base_options["apply_bitonal_effect"])
+        self.assertTrue(overlay_options["apply_invert_effect"])
+        self.assertFalse(overlay_options["apply_bitonal_effect"])
         base_image = QImage(2, 2, QImage.Format.Format_ARGB32)
         base_image.fill(QtCore.Qt.GlobalColor.transparent)
         base_image.setPixelColor(1, 1, QColor(0, 175, 175, 255))
-        base_kwargs["callback"](RenderResult(base_request_id, True, base_image, None))
+        base_options["callback"](RenderResult(base_request_id, True, base_image, None))
         overlay_image = QImage(2, 2, QImage.Format.Format_ARGB32)
         overlay_image.fill(QtCore.Qt.GlobalColor.transparent)
         overlay_image.setPixelColor(1, 1, QColor(175, 175, 0, 255))
-        overlay_kwargs["callback"](
+        overlay_options["callback"](
             RenderResult(overlay_request_id, True, overlay_image, None)
         )
         base_item = view._overlay_move_preview_base_item
@@ -1745,16 +1743,16 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         self._install_page_canvas(view, page)
         self.assertTrue(view.show_overlay_move_handle())
-        _base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
-        _overlay_request_id, overlay_kwargs = view._rendering_service.overlay_requests[
+        _base_request_id, base_options = view._rendering_service.page_requests[-1]
+        _overlay_request_id, overlay_options = view._rendering_service.overlay_requests[
             -1
         ]
-        self.assertTrue(base_kwargs["invert"])
-        self.assertTrue(base_kwargs["bitonal"])
-        self.assertTrue(base_kwargs["apply_invert_effect"])
-        self.assertFalse(base_kwargs["apply_bitonal_effect"])
-        self.assertTrue(overlay_kwargs["apply_invert_effect"])
-        self.assertFalse(overlay_kwargs["apply_bitonal_effect"])
+        self.assertTrue(base_options["invert"])
+        self.assertTrue(base_options["bitonal"])
+        self.assertTrue(base_options["apply_invert_effect"])
+        self.assertFalse(base_options["apply_bitonal_effect"])
+        self.assertTrue(overlay_options["apply_invert_effect"])
+        self.assertFalse(overlay_options["apply_bitonal_effect"])
         view.cleanup()
 
     def test_move_overlay_drag_keeps_preview_base_stable(self):
@@ -2333,8 +2331,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )()
         self._install_page_canvas(view, page)
         self.assertTrue(view.show_overlay_move_handle())
-        base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
-        overlay_request_id, overlay_kwargs = view._rendering_service.overlay_requests[
+        base_request_id, base_options = view._rendering_service.page_requests[-1]
+        overlay_request_id, overlay_options = view._rendering_service.overlay_requests[
             -1
         ]
         view.set_overlay_rect_save_handler(lambda _rect: result)
@@ -2353,8 +2351,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(view._overlay_move_preview_overlay_request_scale, 0.0)
         stale_image = QImage(8, 8, QImage.Format.Format_ARGB32)
         stale_image.fill(QColor(255, 255, 255).rgba())
-        base_kwargs["callback"](RenderResult(base_request_id, True, stale_image, None))
-        overlay_kwargs["callback"](
+        base_options["callback"](RenderResult(base_request_id, True, stale_image, None))
+        overlay_options["callback"](
             RenderResult(overlay_request_id, True, stale_image, None)
         )
         self.assertIsNone(view._overlay_move_preview_base_item)
@@ -2377,8 +2375,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         self._install_page_canvas(view, page)
         self.assertTrue(view.show_overlay_move_handle())
-        base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
-        overlay_request_id, overlay_kwargs = view._rendering_service.overlay_requests[
+        base_request_id, base_options = view._rendering_service.page_requests[-1]
+        overlay_request_id, overlay_options = view._rendering_service.overlay_requests[
             -1
         ]
         view.cancel_overlay_move_mode(restore_preview=True)
@@ -2391,8 +2389,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIsNone(view._overlay_move_handle_item)
         stale_image = QImage(8, 8, QImage.Format.Format_ARGB32)
         stale_image.fill(QColor(255, 255, 255).rgba())
-        base_kwargs["callback"](RenderResult(base_request_id, True, stale_image, None))
-        overlay_kwargs["callback"](
+        base_options["callback"](RenderResult(base_request_id, True, stale_image, None))
+        overlay_options["callback"](
             RenderResult(overlay_request_id, True, stale_image, None)
         )
         self.assertIsNone(view._overlay_move_preview_base_item)
@@ -2414,8 +2412,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         self._install_page_canvas(view, page)
         self.assertTrue(view.show_overlay_move_handle())
-        base_request_id, _base_kwargs = view._rendering_service.page_requests[-1]
-        overlay_request_id, _overlay_kwargs = view._rendering_service.overlay_requests[
+        base_request_id, _base_options = view._rendering_service.page_requests[-1]
+        overlay_request_id, _overlay_options = view._rendering_service.overlay_requests[
             -1
         ]
         base_item = ImageBackgroundItem(
@@ -2460,17 +2458,17 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self._install_page_canvas(view, page)
         for _ in range(2):
             self.assertTrue(view.show_overlay_move_handle())
-            base_request_id, base_kwargs = view._rendering_service.page_requests[-1]
-            overlay_request_id, overlay_kwargs = (
+            base_request_id, base_options = view._rendering_service.page_requests[-1]
+            overlay_request_id, overlay_options = (
                 view._rendering_service.overlay_requests[-1]
             )
             view.cancel_overlay_move_mode(restore_preview=True)
             stale_image = QImage(8, 8, QImage.Format.Format_ARGB32)
             stale_image.fill(QColor(255, 255, 255).rgba())
-            base_kwargs["callback"](
+            base_options["callback"](
                 RenderResult(base_request_id, True, stale_image, None)
             )
-            overlay_kwargs["callback"](
+            overlay_options["callback"](
                 RenderResult(overlay_request_id, True, stale_image, None)
             )
             self.assertIsNone(view._overlay_move_preview_base_item)
@@ -2499,21 +2497,21 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view.show_overlay_move_handle())
         view.set_overlay_rect_save_handler(lambda _rect: result)
         view._overlay_move_preview_rect = (96.0, 48.0, 816.0, 1056.0)
-        page_request_id, _page_kwargs = view._rendering_service.page_requests[-1]
-        overlay_request_id, _overlay_kwargs = view._rendering_service.overlay_requests[
+        page_request_id, _page_options = view._rendering_service.page_requests[-1]
+        overlay_request_id, _overlay_options = view._rendering_service.overlay_requests[
             -1
         ]
         view._commit_overlay_move()
         self.assertIn(page_request_id, view._rendering_service.cancelled_requests)
         self.assertIn(overlay_request_id, view._rendering_service.cancelled_requests)
         self.assertEqual(len(view._rendering_service.composite_requests), 1)
-        composite_request_id, composite_kwargs = (
+        composite_request_id, composite_options = (
             view._rendering_service.composite_requests[-1]
         )
-        self.assertEqual(composite_kwargs["page"].overlay_rect, page.overlay_rect)
+        self.assertEqual(composite_options["page"].overlay_rect, page.overlay_rect)
         image = QImage(20, 20, QImage.Format.Format_ARGB32)
         image.fill(QColor(255, 255, 255).rgba())
-        composite_kwargs["callback"](
+        composite_options["callback"](
             RenderResult(composite_request_id, True, image, None)
         )
         self.assertIsNotNone(view._background_item)
@@ -2594,19 +2592,21 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.set_overlay_rect_save_handler(lambda _rect: result)
         view._overlay_move_preview_rect = (96.0, 48.0, 816.0, 1056.0)
         view._commit_overlay_move()
-        composite_request_id, composite_kwargs = (
+        composite_request_id, composite_options = (
             view._rendering_service.composite_requests[-1]
         )
         image = QImage(200, 200, QImage.Format.Format_ARGB32)
         image.fill(QColor(255, 255, 255).rgba())
-        composite_kwargs["callback"](
+        composite_options["callback"](
             RenderResult(composite_request_id, True, image, None)
         )
         view._update_tile_coverage(4.0)
         self.assertEqual(len(view._rendering_service.composite_frame_requests), 1)
-        _request_id, frame_kwargs = view._rendering_service.composite_frame_requests[-1]
+        _request_id, frame_options = view._rendering_service.composite_frame_requests[
+            -1
+        ]
         self.assertEqual(
-            frame_kwargs["page"].overlay_rect,
+            frame_options["page"].overlay_rect,
             (96.0, 48.0, 816.0, 1056.0),
         )
         self.assertIn(
