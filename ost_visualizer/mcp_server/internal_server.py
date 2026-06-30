@@ -233,13 +233,13 @@ class OstMcpServer:
 
 def _invoke(fn: Callable, arguments: dict) -> Any:
     signature = inspect.signature(fn)
-    kwargs = {}
+    call_arguments = {}
     for name, parameter in signature.parameters.items():
         if name in arguments:
-            kwargs[name] = arguments[name]
+            call_arguments[name] = arguments[name]
         elif parameter.default is inspect.Parameter.empty:
             raise TypeError(f"Missing required argument: {name}")
-    return fn(**kwargs)
+    return fn(**call_arguments)
 
 
 def _input_schema_for(fn: Callable) -> dict:

@@ -72,18 +72,18 @@ def build_mcp_server(
     read_service = create_read_service(registry, log)
     mcp = OstMcpServer(name)
 
-    def run_read(fn, *args, **kwargs) -> dict:
+    def run_read(fn, *args, **call_options) -> dict:
         try:
-            return ok(fn(*args, **kwargs))
+            return ok(fn(*args, **call_options))
         except McpReadError as exc:
             return error(str(exc), code=_read_error_code(str(exc)))
         except Exception as exc:
             log.exception("MCP read failed")
             return error(str(exc), code="unexpected_error")
 
-    def run_limited_read(fn, limit: int, *args, **kwargs) -> dict:
+    def run_limited_read(fn, limit: int, *args, **call_options) -> dict:
         try:
-            result = fn(*args, limit=limit, **kwargs)
+            result = fn(*args, limit=limit, **call_options)
             meta = _result_meta(result, limit)
             status = _result_status(result, meta)
             return ok(result, status=status, meta=meta)

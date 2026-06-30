@@ -714,7 +714,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._mesh_window = None
         coordinator._mesh_window_action = None
         coordinator._last_mesh_args = ("stale",)
-        coordinator._last_mesh_kwargs = {"bid_ref": None}
+        coordinator._last_mesh_options = {"bid_ref": None}
         coordinator.ui_access_manager = FakeMeshAccess()
         coordinator.main_window = FakeMainWindow()
         configure_mesh_state(coordinator)
@@ -741,7 +741,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._mesh_window = None
         coordinator._mesh_window_action = None
         coordinator._last_mesh_args = ("vertices", "normals", "indices", "colors")
-        coordinator._last_mesh_kwargs = {"bid_ref": None}
+        coordinator._last_mesh_options = {"bid_ref": None}
         coordinator.ui_access_manager = FakeMeshAccess()
         coordinator.main_window = FakeMainWindow()
         configure_mesh_state(coordinator)
@@ -772,7 +772,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             mesh_window=mesh_window,
         )
         coordinator._last_mesh_args = None
-        coordinator._last_mesh_kwargs = None
+        coordinator._last_mesh_options = None
         geometry = MeshGeometry(
             vertices=[0.0, 0.0, 0.0],
             normals=[0.0, 1.0, 0.0],
@@ -790,7 +790,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(["condition-1"], kwargs["condition_uids"])
         self.assertEqual(["takeoff-1"], kwargs["takeoff_uids"])
         self.assertEqual(coordinator._last_mesh_args, args)
-        self.assertEqual(coordinator._last_mesh_kwargs, kwargs)
+        self.assertEqual(coordinator._last_mesh_options, kwargs)
         self.assertEqual(1, coordinator._plan_view_signaler.requests)
 
     def test_condition_selection_in_3d_does_not_enter_place_mode(self):

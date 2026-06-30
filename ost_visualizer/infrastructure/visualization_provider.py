@@ -186,29 +186,31 @@ class _ExportStrategyAdapter(IExportStrategy):
     def prepare_title(self, bid_name: str, page_names: List[str]) -> Optional[str]:
         return None
 
-    def get_kwargs(self, config_model, page_area_selections=None):
+    def get_export_options(self, config_model, page_area_selections=None):
         display_mode = (
             config_model.display_mode_2d
             if self._extension == "dxf"
             else config_model.display_mode_3d
         )
-        kwargs = {
+        export_options = {
             "display_mode": display_mode,
             "grayscale_enabled": config_model.grayscale_enabled,
         }
         if page_area_selections is not None:
-            kwargs["page_area_selections"] = page_area_selections
-        return kwargs
+            export_options["page_area_selections"] = page_area_selections
+        return export_options
 
     def execute_export(
-        self, bid_conditions: Dict, takeoffs: List, output_path: str, **kwargs
+        self, bid_conditions: Dict, takeoffs: List, output_path: str, **export_options
     ) -> bool:
         coord_system = self._coord_factory.create()
         exporter = self._exporter_class(
             coord_system, self._color_service, self._takeoff_service
         )
         try:
-            result = exporter.export(bid_conditions, takeoffs, output_path, **kwargs)
+            result = exporter.export(
+                bid_conditions, takeoffs, output_path, **export_options
+            )
             return result
         finally:
             del exporter
@@ -267,16 +269,16 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
                     filename = f"Export_{len(page_names)}_pages.{self._extension}"
         return filename
 
-    def get_kwargs(self, config_model, page_area_selections=None):
-        kwargs = {
+    def get_export_options(self, config_model, page_area_selections=None):
+        export_options = {
             "display_mode_3d": config_model.display_mode_3d,
             "display_mode_2d": config_model.display_mode_2d,
             "display_modes_synced": config_model.display_modes_synced,
             "grayscale_enabled": config_model.grayscale_enabled,
         }
         if page_area_selections is not None:
-            kwargs["page_area_selections"] = page_area_selections
-        return kwargs
+            export_options["page_area_selections"] = page_area_selections
+        return export_options
 
     def prepare_title(self, bid_name: str, page_names: List[str]) -> str:
         if len(page_names) == 1:
@@ -289,7 +291,7 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
         return f"{bid_name} - {first_page} + {second_page} + {remaining} more"
 
     def execute_export(
-        self, bid_conditions: Dict, takeoffs: List, output_path: str, **kwargs
+        self, bid_conditions: Dict, takeoffs: List, output_path: str, **export_options
     ) -> bool:
         exportable_takeoffs = [
             t
@@ -303,19 +305,19 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             bid_conditions,
             exportable_takeoffs,
             output_path,
-            title=kwargs.get("title", "3D View"),
-            bid_name=kwargs.get("bid_name", "Bid"),
-            display_mode_3d=kwargs["display_mode_3d"],
-            display_mode_2d=kwargs["display_mode_2d"],
-            display_modes_synced=kwargs["display_modes_synced"],
-            grayscale_enabled=kwargs.get("grayscale_enabled", True),
-            page_area_selections=kwargs.get("page_area_selections"),
+            title=export_options.get("title", "3D View"),
+            bid_name=export_options.get("bid_name", "Bid"),
+            display_mode_3d=export_options["display_mode_3d"],
+            display_mode_2d=export_options["display_mode_2d"],
+            display_modes_synced=export_options["display_modes_synced"],
+            grayscale_enabled=export_options.get("grayscale_enabled", True),
+            page_area_selections=export_options.get("page_area_selections"),
             auto_open=False,
-            pages=kwargs.get("pages"),
-            active_page_uid=kwargs.get("active_page_uid", ""),
-            layers=kwargs.get("layers"),
-            areas=kwargs.get("areas"),
-            page_image_layer=kwargs.get("page_image_layer"),
+            pages=export_options.get("pages"),
+            active_page_uid=export_options.get("active_page_uid", ""),
+            layers=export_options.get("layers"),
+            areas=export_options.get("areas"),
+            page_image_layer=export_options.get("page_image_layer"),
         )
 
 

@@ -3,11 +3,11 @@ class SingleCallRecorder:
         self.wrapped = wrapped
         self.calls = []
 
-    def __call__(self, *args, **kwargs):
-        self.calls.append((args, kwargs))
+    def __call__(self, *args, **call_options):
+        self.calls.append((args, call_options))
         if self.wrapped is None:
             return None
-        return self.wrapped(*args, **kwargs)
+        return self.wrapped(*args, **call_options)
 
     @property
     def call_count(self):

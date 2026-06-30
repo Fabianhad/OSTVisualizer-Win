@@ -11,7 +11,7 @@ class IExportStrategy(Protocol):
     def get_dialog_title(self, page_count: int) -> str: ...
     def prepare_filename(self, bid_name: str, page_names: List[str]) -> str: ...
     def prepare_title(self, bid_name: str, page_names: List[str]) -> Optional[str]: ...
-    def get_kwargs(
+    def get_export_options(
         self,
         config_model: Any,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
@@ -21,5 +21,5 @@ class IExportStrategy(Protocol):
         bid_conditions: Dict[str, Condition],
         takeoffs: List[Takeoff],
         output_path: str,
-        **kwargs
+        **export_options,
     ) -> bool: ...

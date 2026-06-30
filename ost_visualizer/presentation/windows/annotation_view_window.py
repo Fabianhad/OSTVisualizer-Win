@@ -15,5 +15,5 @@ _ANNOTATION_WINDOW_CONFIG = DetachedPageViewWindowConfig(
 
 
 class AnnotationViewWindow(DetachedPageViewWindow):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, config=_ANNOTATION_WINDOW_CONFIG, **kwargs)
+    def __init__(self, *args, **window_options):
+        super().__init__(*args, config=_ANNOTATION_WINDOW_CONFIG, **window_options)

@@ -1042,7 +1042,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._dirty_mesh_page_uids = set()
         coordinator._pending_dirty_mesh_refresh = False
         coordinator._last_mesh_args = None
-        coordinator._last_mesh_kwargs = None
+        coordinator._last_mesh_options = None
         coordinator.visualization_service = SimpleNamespace(
             refresh_mesh_view=lambda *_args: None
         )

@@ -77,7 +77,7 @@ class _ExportStrategy:
     def prepare_title(self, bid_name, page_names):
         return "Export"
 
-    def get_kwargs(self, config_model, _page_area_selections=None):
+    def get_export_options(self, config_model, _page_area_selections=None):
         if self.extension != "html":
             return {}
         return {
@@ -86,8 +86,8 @@ class _ExportStrategy:
             "display_mode_2d": config_model.display_mode_2d,
         }
 
-    def execute_export(self, bid_conditions, takeoffs, output_path, **kwargs):
-        self.calls.append((bid_conditions, takeoffs, output_path, kwargs))
+    def execute_export(self, bid_conditions, takeoffs, output_path, **export_options):
+        self.calls.append((bid_conditions, takeoffs, output_path, export_options))
         return True
 
 
@@ -409,17 +409,17 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(project_data.visible_only_calls, [False])
         self.assertEqual(len(strategy.calls), 1)
-        _conditions, takeoffs, _output_path, kwargs = strategy.calls[0]
+        _conditions, takeoffs, _output_path, export_options = strategy.calls[0]
         self.assertEqual(
             [takeoff.uid for takeoff in takeoffs], ["takeoff-visible", "takeoff-hidden"]
         )
-        self.assertEqual(kwargs["layers"][0].uid, "layer-hidden")
-        self.assertEqual(kwargs["areas"][0].uid, "area-1")
-        self.assertEqual(kwargs["page_image_layer"]["uid"], "image")
-        self.assertFalse(kwargs["page_image_layer"]["visible"])
-        self.assertEqual(kwargs["active_page_uid"], "page-1")
-        self.assertEqual(len(kwargs["pages"]), 1)
-        page = kwargs["pages"][0]
+        self.assertEqual(export_options["layers"][0].uid, "layer-hidden")
+        self.assertEqual(export_options["areas"][0].uid, "area-1")
+        self.assertEqual(export_options["page_image_layer"]["uid"], "image")
+        self.assertFalse(export_options["page_image_layer"]["visible"])
+        self.assertEqual(export_options["active_page_uid"], "page-1")
+        self.assertEqual(len(export_options["pages"]), 1)
+        page = export_options["pages"][0]
         self.assertEqual(page["uid"], "page-1")
         self.assertEqual(page["label"], "1 - A1 - First Page")
         self.assertEqual(page["width"], 72.0)
@@ -438,19 +438,19 @@ class ThreejsExportLayerTests(unittest.TestCase):
             ExportRequestDto(["page-1", "page-2"], "html", "out.html"),
         )
         self.assertTrue(result.success)
-        _conditions, takeoffs, _output_path, kwargs = strategy.calls[0]
+        _conditions, takeoffs, _output_path, export_options = strategy.calls[0]
         self.assertEqual(
             [takeoff.uid for takeoff in takeoffs],
             ["takeoff-visible", "takeoff-hidden", "takeoff-page-2"],
         )
-        self.assertEqual(kwargs["active_page_uid"], "page-2")
+        self.assertEqual(export_options["active_page_uid"], "page-2")
         self.assertEqual(
-            [page["uid"] for page in kwargs["pages"]], ["page-1", "page-2"]
+            [page["uid"] for page in export_options["pages"]], ["page-1", "page-2"]
         )
-        self.assertEqual(kwargs["pages"][1]["label"], "2 - A2 - Second Page")
-        self.assertEqual(kwargs["pages"][1]["scale_ratio"], 2.0)
-        self.assertEqual(kwargs["pages"][1]["rotation"], 90)
-        self.assertTrue(kwargs["page_image_layer"]["visible"])
+        self.assertEqual(export_options["pages"][1]["label"], "2 - A2 - Second Page")
+        self.assertEqual(export_options["pages"][1]["scale_ratio"], 2.0)
+        self.assertEqual(export_options["pages"][1]["rotation"], 90)
+        self.assertTrue(export_options["page_image_layer"]["visible"])
 
     def test_html_export_preserves_multi_page_pdf_source_page_index(self):
         strategy = _ExportStrategy("html")
@@ -469,9 +469,9 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 ),
             )
         self.assertTrue(result.success)
-        _conditions, _takeoffs, _output_path, kwargs = strategy.calls[0]
-        self.assertEqual(len(kwargs["pages"]), 1)
-        page = kwargs["pages"][0]
+        _conditions, _takeoffs, _output_path, export_options = strategy.calls[0]
+        self.assertEqual(len(export_options["pages"]), 1)
+        page = export_options["pages"][0]
         self.assertEqual(page["uid"], "page-2")
         self.assertEqual(page["pdf_path"], pdf_path)
         self.assertEqual(page["pdf_page_index"], 1)
@@ -492,13 +492,13 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 ExportRequestDto(["page-1", "page-2"], "html", "out.html"),
             )
         self.assertTrue(result.success)
-        _conditions, _takeoffs, _output_path, kwargs = strategy.calls[0]
+        _conditions, _takeoffs, _output_path, export_options = strategy.calls[0]
         self.assertEqual(
-            [page["pdf_path"] for page in kwargs["pages"]],
+            [page["pdf_path"] for page in export_options["pages"]],
             [first_pdf_path, second_pdf_path],
         )
         self.assertEqual(
-            [page["pdf_page_index"] for page in kwargs["pages"]],
+            [page["pdf_page_index"] for page in export_options["pages"]],
             [0, 0],
         )
 
@@ -514,8 +514,8 @@ class ThreejsExportLayerTests(unittest.TestCase):
             ),
         )
         self.assertTrue(result.success)
-        _conditions, _takeoffs, _output_path, kwargs = strategy.calls[0]
-        self.assertEqual(kwargs["active_page_uid"], "page-1")
+        _conditions, _takeoffs, _output_path, export_options = strategy.calls[0]
+        self.assertEqual(export_options["active_page_uid"], "page-1")
 
     def test_html_export_passes_split_display_modes(self):
         strategy = _ExportStrategy("html")
@@ -530,10 +530,10 @@ class ThreejsExportLayerTests(unittest.TestCase):
             ExportRequestDto(["page-1"], "html", "out.html"),
         )
         self.assertTrue(result.success)
-        _conditions, _takeoffs, _output_path, kwargs = strategy.calls[0]
-        self.assertFalse(kwargs["display_modes_synced"])
-        self.assertEqual(kwargs["display_mode_3d"], Config.DISPLAY_MODE_SOLID)
-        self.assertEqual(kwargs["display_mode_2d"], Config.DISPLAY_MODE_TRANSPARENT)
+        _conditions, _takeoffs, _output_path, export_options = strategy.calls[0]
+        self.assertFalse(export_options["display_modes_synced"])
+        self.assertEqual(export_options["display_mode_3d"], Config.DISPLAY_MODE_SOLID)
+        self.assertEqual(export_options["display_mode_2d"], Config.DISPLAY_MODE_TRANSPARENT)
 
     def test_non_html_export_keeps_visible_only_collection(self):
         strategy = _ExportStrategy("obj")

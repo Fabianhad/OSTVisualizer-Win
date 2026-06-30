@@ -16,7 +16,6 @@ class DXFExporter(BaseExporter):
         materials_info: Dict,
         bid_conditions: Dict,
         display_mode: str,
-        **kwargs,
     ):
         self.native_writer.clear()
         for key, (material_name, _, hex_color) in materials_info.items():

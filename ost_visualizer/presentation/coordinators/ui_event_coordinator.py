@@ -184,7 +184,7 @@ class UIEventCoordinator:
         self._mesh_window: Optional[MeshViewWindow] = None
         self._mesh_window_action: Optional[QtGui.QAction] = None
         self._last_mesh_args: Optional[tuple] = None
-        self._last_mesh_kwargs: Optional[dict] = None
+        self._last_mesh_options: Optional[dict] = None
         self._mesh_scene_dirty: bool = False
         self._dirty_mesh_page_uids: set[str] = set()
         self._pending_dirty_mesh_refresh: bool = False
@@ -398,10 +398,10 @@ class UIEventCoordinator:
                 and not self._pending_dirty_mesh_refresh
                 and self.opengl_viewer
                 and self._last_mesh_args
-                and self._last_mesh_kwargs
+                and self._last_mesh_options
             ):
                 self.opengl_viewer.apply_mesh_data(
-                    *self._last_mesh_args, **self._last_mesh_kwargs
+                    *self._last_mesh_args, **self._last_mesh_options
                 )
         self._update_page_info_status()
         self._toolbar.refresh()
@@ -498,10 +498,10 @@ class UIEventCoordinator:
         self._mesh_window.close()
 
     def _replay_mesh_if_current(self, window: MeshViewWindow) -> None:
-        if not self._last_mesh_args or not self._last_mesh_kwargs:
+        if not self._last_mesh_args or not self._last_mesh_options:
             return
         active_bid_ref = self.ui_state_manager.get_selected_bid_ref()
-        cached_bid_ref = self._last_mesh_kwargs.get("bid_ref")
+        cached_bid_ref = self._last_mesh_options.get("bid_ref")
         if cached_bid_ref != active_bid_ref:
             logger.warning(
                 "Discarding stale mesh replay: cached bid_ref=%s, active bid_ref=%s",
@@ -509,13 +509,13 @@ class UIEventCoordinator:
                 active_bid_ref,
             )
             self._last_mesh_args = None
-            self._last_mesh_kwargs = None
+            self._last_mesh_options = None
             return
-        window.apply_mesh_data(*self._last_mesh_args, **self._last_mesh_kwargs)
+        window.apply_mesh_data(*self._last_mesh_args, **self._last_mesh_options)
 
     def _clear_mesh_replay_buffer(self) -> None:
         self._last_mesh_args = None
-        self._last_mesh_kwargs = None
+        self._last_mesh_options = None
 
     def _clear_mesh_views_for_scene_update(self, clear_embedded: bool = True) -> None:
         self._clear_mesh_replay_buffer()
@@ -1857,7 +1857,7 @@ class UIEventCoordinator:
             return
         if not self.ui_access_manager.is_allowed(Feature.VIEW_3D):
             self._last_mesh_args = None
-            self._last_mesh_kwargs = None
+            self._last_mesh_options = None
             self._clear_mesh_dirty_state()
             if self.opengl_viewer:
                 self.opengl_viewer.clear_scene()
@@ -1874,21 +1874,21 @@ class UIEventCoordinator:
             takeoff_uids,
         ) = _mesh_geometries_to_render_buffers(geometries)
         mesh_args = (vertices, normals, indices, colors)
-        mesh_kwargs = {
+        mesh_options = {
             "bid_ref": bid_ref,
             "condition_uids": condition_uids,
             "takeoff_uids": takeoff_uids,
         }
         self._last_mesh_args = mesh_args
-        self._last_mesh_kwargs = mesh_kwargs
+        self._last_mesh_options = mesh_options
         if self._pending_dirty_mesh_refresh:
             self._clear_mesh_dirty_state()
         live_embedded = self._is_embedded_3d_active()
         live_detached = self._is_detached_mesh_visible()
         if live_embedded and self.opengl_viewer:
-            self.opengl_viewer.apply_mesh_data(*mesh_args, **mesh_kwargs)
+            self.opengl_viewer.apply_mesh_data(*mesh_args, **mesh_options)
         if live_detached and self._mesh_window:
-            self._mesh_window.apply_mesh_data(*mesh_args, **mesh_kwargs)
+            self._mesh_window.apply_mesh_data(*mesh_args, **mesh_options)
         selected_pages = self.project_data.get_selected_page_uids()
         if selected_pages and (live_embedded or live_detached):
             self._plan_view_signaler.request_update()

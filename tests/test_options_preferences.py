@@ -162,8 +162,8 @@ class FakeEventBus:
     def __init__(self):
         self.events = []
 
-    def publish(self, event_type, **kwargs):
-        self.events.append((event_type, kwargs))
+    def publish(self, event_type, **event_payload):
+        self.events.append((event_type, event_payload))
 
 
 class _FakePaintDevice:
@@ -199,7 +199,7 @@ SNAP_PREF_UPDATE = SnapPreferencesDto(
     snap_to_takeoffs_threshold_px=16,
     snap_to_right_angle_enabled=False,
     snap_to_right_angle_threshold_px=20,
-).to_kwargs()
+).to_options()
 SNAP_PREF_CHANGED_KEYS = list(SNAP_PREF_UPDATE)
 
 
@@ -520,14 +520,14 @@ class FakeVisibleFrameRenderingService:
         self._next_id += 1
         return request_id
 
-    def render_frame_async(self, **kwargs):
+    def render_frame_async(self, **render_options):
         request_id = self._request_id("frame")
-        self.frame_calls.append((request_id, kwargs))
+        self.frame_calls.append((request_id, render_options))
         return request_id
 
-    def render_composite_frame_async(self, **kwargs):
+    def render_composite_frame_async(self, **render_options):
         request_id = self._request_id("composite-frame")
-        self.composite_frame_calls.append((request_id, kwargs))
+        self.composite_frame_calls.append((request_id, render_options))
         return request_id
 
     def cancel_request(self, request_id):
@@ -610,10 +610,10 @@ def _visible_frame_lifecycle_view(kind="base"):
     return view
 
 
-def _visible_frame_result_image(frame_kwargs):
+def _visible_frame_result_image(frame_options):
     return QtGui.QImage(
-        max(1, math.ceil(frame_kwargs["frame_w_pts"] * frame_kwargs["scale"])),
-        max(1, math.ceil(frame_kwargs["frame_h_pts"] * frame_kwargs["scale"])),
+        max(1, math.ceil(frame_options["frame_w_pts"] * frame_options["scale"])),
+        max(1, math.ceil(frame_options["frame_h_pts"] * frame_options["scale"])),
         QtGui.QImage.Format.Format_ARGB32,
     )
 
@@ -1324,10 +1324,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         def get_style():
             return current
 
-        def set_style(**kwargs):
+        def set_style(**style_updates):
             nonlocal current
             current = AnnotationStyle(
-                color=kwargs.get("color", current.color),
+                color=style_updates.get("color", current.color),
                 line_width=current.line_width,
             )
             selected.append(current)
@@ -1359,11 +1359,11 @@ class OptionsPreferencesTests(unittest.TestCase):
         def get_style():
             return current
 
-        def set_style(**kwargs):
+        def set_style(**style_updates):
             nonlocal current
             current = AnnotationStyle(
-                kwargs.get("color", current.color),
-                kwargs.get("line_width", current.line_width),
+                style_updates.get("color", current.color),
+                style_updates.get("line_width", current.line_width),
             )
             selected.append(current)
             return current
@@ -1401,17 +1401,17 @@ class OptionsPreferencesTests(unittest.TestCase):
         def get_style():
             return current
 
-        def set_style(**kwargs):
+        def set_style(**style_updates):
             nonlocal current
             current = AnnotationStyle(
-                color=kwargs.get("color", current.color),
+                color=style_updates.get("color", current.color),
                 line_width=current.line_width,
-                font_name=kwargs.get("font_name", current.font_name),
-                font_size=kwargs.get("font_size", current.font_size),
-                font_bold=kwargs.get("font_bold", current.font_bold),
-                font_italic=kwargs.get("font_italic", current.font_italic),
-                font_underline=kwargs.get("font_underline", current.font_underline),
-                text_align=kwargs.get("text_align", current.text_align),
+                font_name=style_updates.get("font_name", current.font_name),
+                font_size=style_updates.get("font_size", current.font_size),
+                font_bold=style_updates.get("font_bold", current.font_bold),
+                font_italic=style_updates.get("font_italic", current.font_italic),
+                font_underline=style_updates.get("font_underline", current.font_underline),
+                text_align=style_updates.get("text_align", current.text_align),
             )
             selected.append(current)
             return current
@@ -1487,16 +1487,16 @@ class OptionsPreferencesTests(unittest.TestCase):
         def get_style():
             return current
 
-        def set_style(**kwargs):
+        def set_style(**style_updates):
             nonlocal current
             current = AnnotationStyle(
-                color=kwargs.get("color", current.color),
-                line_width=kwargs.get("line_width", current.line_width),
-                font_name=kwargs.get("font_name", current.font_name),
-                font_size=kwargs.get("font_size", current.font_size),
-                font_bold=kwargs.get("font_bold", current.font_bold),
-                font_italic=kwargs.get("font_italic", current.font_italic),
-                font_underline=kwargs.get("font_underline", current.font_underline),
+                color=style_updates.get("color", current.color),
+                line_width=style_updates.get("line_width", current.line_width),
+                font_name=style_updates.get("font_name", current.font_name),
+                font_size=style_updates.get("font_size", current.font_size),
+                font_bold=style_updates.get("font_bold", current.font_bold),
+                font_italic=style_updates.get("font_italic", current.font_italic),
+                font_underline=style_updates.get("font_underline", current.font_underline),
                 text_align=current.text_align,
             )
             selected.append(current)
@@ -1549,11 +1549,11 @@ class OptionsPreferencesTests(unittest.TestCase):
         def get_style():
             return current
 
-        def set_style(**kwargs):
+        def set_style(**style_updates):
             nonlocal current
             current = AnnotationStyle(
-                kwargs.get("color", current.color),
-                kwargs.get("line_width", current.line_width),
+                style_updates.get("color", current.color),
+                style_updates.get("line_width", current.line_width),
             )
             selected.append(current)
             return current
@@ -3530,12 +3530,12 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_visible_frame_keeps_low_res_background_visible_after_install(self):
         view = _visible_frame_lifecycle_view()
         view._update_tile_coverage(4.0)
-        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
-        frame_kwargs["callback"](
+        request_id, frame_options = view._rendering_service.frame_calls[-1]
+        frame_options["callback"](
             RenderResult(
                 request_id,
                 True,
-                _visible_frame_result_image(frame_kwargs),
+                _visible_frame_result_image(frame_options),
                 None,
             )
         )
@@ -3548,12 +3548,12 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_both_mode_visible_frame_keeps_low_res_composite_background_visible(self):
         view = _visible_frame_lifecycle_view(kind="composite")
         view._update_tile_coverage(4.0)
-        request_id, frame_kwargs = view._rendering_service.composite_frame_calls[-1]
-        frame_kwargs["callback"](
+        request_id, frame_options = view._rendering_service.composite_frame_calls[-1]
+        frame_options["callback"](
             RenderResult(
                 request_id,
                 True,
-                _visible_frame_result_image(frame_kwargs),
+                _visible_frame_result_image(frame_options),
                 None,
             )
         )
@@ -3566,12 +3566,12 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_overlay_only_visible_frame_stays_below_takeoff_body_band(self):
         view = _visible_frame_lifecycle_view(kind="overlay")
         view._update_tile_coverage(4.0)
-        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
-        frame_kwargs["callback"](
+        request_id, frame_options = view._rendering_service.frame_calls[-1]
+        frame_options["callback"](
             RenderResult(
                 request_id,
                 True,
-                _visible_frame_result_image(frame_kwargs),
+                _visible_frame_result_image(frame_options),
                 None,
             )
         )
@@ -3581,12 +3581,12 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_visible_frame_reuses_current_buffered_coverage_on_small_scroll(self):
         view = _visible_frame_lifecycle_view()
         view._update_tile_coverage(4.0)
-        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
-        frame_kwargs["callback"](
+        request_id, frame_options = view._rendering_service.frame_calls[-1]
+        frame_options["callback"](
             RenderResult(
                 request_id,
                 True,
-                _visible_frame_result_image(frame_kwargs),
+                _visible_frame_result_image(frame_options),
                 None,
             )
         )
@@ -3601,12 +3601,12 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_visible_frame_scroll_outside_coverage_replaces_only_after_success(self):
         view = _visible_frame_lifecycle_view()
         view._update_tile_coverage(4.0)
-        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
-        frame_kwargs["callback"](
+        request_id, frame_options = view._rendering_service.frame_calls[-1]
+        frame_options["callback"](
             RenderResult(
                 request_id,
                 True,
-                _visible_frame_result_image(frame_kwargs),
+                _visible_frame_result_image(frame_options),
                 None,
             )
         )
@@ -3616,12 +3616,12 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(len(view._rendering_service.frame_calls), 2)
         self.assertIs(view._visible_frame_item, old_item)
         self.assertIs(old_item.scene(), view._scene)
-        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
-        frame_kwargs["callback"](
+        request_id, frame_options = view._rendering_service.frame_calls[-1]
+        frame_options["callback"](
             RenderResult(
                 request_id,
                 True,
-                _visible_frame_result_image(frame_kwargs),
+                _visible_frame_result_image(frame_options),
                 None,
             )
         )
@@ -3632,12 +3632,12 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_visible_frame_pending_coverage_suppresses_duplicate_request(self):
         view = _visible_frame_lifecycle_view()
         view._update_tile_coverage(4.0)
-        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
-        frame_kwargs["callback"](
+        request_id, frame_options = view._rendering_service.frame_calls[-1]
+        frame_options["callback"](
             RenderResult(
                 request_id,
                 True,
-                _visible_frame_result_image(frame_kwargs),
+                _visible_frame_result_image(frame_options),
                 None,
             )
         )
@@ -3652,12 +3652,12 @@ class OptionsPreferencesTests(unittest.TestCase):
     def test_visible_frame_render_failure_keeps_old_frame_and_low_res_visible(self):
         view = _visible_frame_lifecycle_view()
         view._update_tile_coverage(4.0)
-        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
-        frame_kwargs["callback"](
+        request_id, frame_options = view._rendering_service.frame_calls[-1]
+        frame_options["callback"](
             RenderResult(
                 request_id,
                 True,
-                _visible_frame_result_image(frame_kwargs),
+                _visible_frame_result_image(frame_options),
                 None,
             )
         )
@@ -3665,8 +3665,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         old_key = view._visible_frame_key
         view._viewport_scene_rect = QtCore.QRectF(80.0, 0.0, 50.0, 50.0)
         view._update_tile_coverage(4.0)
-        request_id, frame_kwargs = view._rendering_service.frame_calls[-1]
-        frame_kwargs["callback"](RenderResult(request_id, False, None, "render failed"))
+        request_id, frame_options = view._rendering_service.frame_calls[-1]
+        frame_options["callback"](RenderResult(request_id, False, None, "render failed"))
         self.assertIs(view._visible_frame_item, old_item)
         self.assertEqual(view._visible_frame_key, old_key)
         self.assertIsNone(view._visible_frame_request_id)
@@ -3702,8 +3702,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             def __init__(self):
                 self.frame_calls = []
 
-            def render_frame_async(self, **kwargs):
-                self.frame_calls.append(kwargs)
+            def render_frame_async(self, **render_options):
+                self.frame_calls.append(render_options)
                 return "frame-request"
 
             def cancel_request(self, request_id):
@@ -3774,8 +3774,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             def __init__(self):
                 self.composite_frame_calls = []
 
-            def render_composite_frame_async(self, **kwargs):
-                self.composite_frame_calls.append(kwargs)
+            def render_composite_frame_async(self, **render_options):
+                self.composite_frame_calls.append(render_options)
                 return "composite-frame-request"
 
             def cancel_request(self, request_id):
@@ -4319,15 +4319,15 @@ class OptionsPreferencesTests(unittest.TestCase):
             def set_mouse_snap_angles(self, unpressed_angle, pressed_angle):
                 self.calls.append(("snap_angles", unpressed_angle, pressed_angle))
 
-            def set_snap_preferences(self, **kwargs):
-                self.calls.append(("snap_preferences", kwargs))
+            def set_snap_preferences(self, **snap_options):
+                self.calls.append(("snap_preferences", snap_options))
 
         class FakeDetachedWindow:
             def __init__(self):
                 self.calls = []
 
-            def apply_config_preferences(self, **kwargs):
-                self.calls.append(kwargs)
+            def apply_config_preferences(self, **config_options):
+                self.calls.append(config_options)
 
         window = MainWindow.__new__(MainWindow)
         window.get_workspace_toolbars = lambda: []

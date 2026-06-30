@@ -19,7 +19,6 @@ class FBXExporter(BaseExporter):
         materials_info: Dict,
         bid_conditions: Dict,
         display_mode: str,
-        **kwargs,
     ):
         meshes_with_materials = []
         for key, pairs in takeoffs_by_group.items():

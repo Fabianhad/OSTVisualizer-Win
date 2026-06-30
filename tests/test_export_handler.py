@@ -60,7 +60,7 @@ class _FakeDeferredPersistence:
 
 
 def _make_export_handler(**overrides):
-    kwargs = {
+    constructor_options = {
         "window": None,
         "config_model": SimpleNamespace(),
         "export_service": SimpleNamespace(),
@@ -72,8 +72,8 @@ def _make_export_handler(**overrides):
         "mdb_file_parser": SimpleNamespace(),
         "deferred_persistence_manager": _FakeDeferredPersistence(),
     }
-    kwargs.update(overrides)
-    return ExportHandler(**kwargs)
+    constructor_options.update(overrides)
+    return ExportHandler(**constructor_options)
 
 
 def _capture_pdf_default_filename(page_names):

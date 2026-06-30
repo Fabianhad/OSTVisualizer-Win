@@ -220,8 +220,8 @@ class NavigationStateMachineTests(unittest.TestCase):
 
         color_map_requests = []
 
-        def record_color_map_request(*_args, **kwargs):
-            color_map_requests.append(kwargs["extra_condition_uids"])
+        def record_color_map_request(*_args, **color_options):
+            color_map_requests.append(color_options["extra_condition_uids"])
             return {}, {}
 
         ui_state = UiState()

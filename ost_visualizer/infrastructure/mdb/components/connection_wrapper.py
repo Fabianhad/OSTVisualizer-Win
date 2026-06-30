@@ -6,8 +6,8 @@ class ConnWrapper:
         self._conn = conn
         self._open_cursors: list = []
 
-    def cursor(self, *args, **kwargs) -> pyodbc.Cursor:
-        cur = self._conn.cursor(*args, **kwargs)
+    def cursor(self, *args, **cursor_options) -> pyodbc.Cursor:
+        cur = self._conn.cursor(*args, **cursor_options)
         self._open_cursors.append(cur)
         return cur
 

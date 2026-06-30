@@ -13,5 +13,5 @@ _VIEW_WINDOW_CONFIG = DetachedPageViewWindowConfig(
 
 
 class ViewWindow(DetachedPageViewWindow):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, config=_VIEW_WINDOW_CONFIG, **kwargs)
+    def __init__(self, *args, **window_options):
+        super().__init__(*args, config=_VIEW_WINDOW_CONFIG, **window_options)

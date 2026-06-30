@@ -22,7 +22,6 @@ class OBJExporter(BaseExporter):
         materials_info: Dict,
         bid_conditions: Dict,
         display_mode: str,
-        **kwargs,
     ):
         base_name = Path(output_path).stem
         output_dir = os.path.dirname(output_path) or "."

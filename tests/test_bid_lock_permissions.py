@@ -54,7 +54,7 @@ class _EventBus:
     def unsubscribe(self, event_type, callback):
         self.subscriptions.remove((event_type, callback))
 
-    def publish(self, event_type, **kwargs):
+    def publish(self, event_type, **call_options):
         pass
 
 
@@ -204,8 +204,8 @@ class _UseCase:
         self.result = result
         self.calls = []
 
-    def execute(self, *args, **kwargs):
-        self.calls.append((args, kwargs))
+    def execute(self, *args, **call_options):
+        self.calls.append((args, call_options))
         return self.result
 
 
@@ -214,15 +214,15 @@ class _SequenceUseCase:
         self.results = list(results)
         self.calls = []
 
-    def execute(self, *args, **kwargs):
-        self.calls.append((args, kwargs))
+    def execute(self, *args, **call_options):
+        self.calls.append((args, call_options))
         if self.results:
             return self.results.pop(0)
         return False
 
 
 class _ForbiddenUseCase:
-    def execute(self, *args, **kwargs):
+    def execute(self, *args, **call_options):
         raise AssertionError("locked bid guard did not block the write")
 
 
@@ -244,7 +244,7 @@ class _ConditionStructureWriteService:
     def __init__(self):
         self.deleted_folders = []
         self.condition_updates = []
-        self.condition_update_kwargs = []
+        self.condition_update_options = []
         self.reloads = []
 
     def delete_condition_folders(self, file_path, folder_uids):
@@ -261,9 +261,9 @@ class _ConditionStructureWriteService:
         self.deleted_folders.append((file_path, list(folder_uids)))
         return WriteReloadResult(list(folder_uids), True, True)
 
-    def update_condition(self, file_path, bid_uid, condition_uid, dto, **kwargs):
+    def update_condition(self, file_path, bid_uid, condition_uid, dto, **call_options):
         self.condition_updates.append((file_path, bid_uid, condition_uid, dto))
-        self.condition_update_kwargs.append(dict(kwargs))
+        self.condition_update_options.append(dict(call_options))
         return SimpleNamespace(success=True)
 
     def reload_and_notify(self, file_path):
@@ -295,7 +295,7 @@ class _PartialPasteWriteService:
             return self.duplicate_results.pop(0)
         return None
 
-    def move_bids(self, *args, **kwargs):
+    def move_bids(self, *args, **call_options):
         raise AssertionError("same-project paste should not move copied bids")
 
     def reload_database(self, file_path):
@@ -626,7 +626,7 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(
             [
                 call.get("publish_database_refreshed_after_write")
-                for call in write_service.condition_update_kwargs
+                for call in write_service.condition_update_options
             ],
             [False, False],
         )
@@ -955,7 +955,7 @@ class BidLockPermissionTests(unittest.TestCase):
         old_logger_error = project_write_handler.logger.error
         project_write_handler.show_warning = lambda *args: warnings.append(args)
         project_write_handler.show_critical = lambda *args: criticals.append(args)
-        project_write_handler.logger.error = lambda *args, **kwargs: None
+        project_write_handler.logger.error = lambda *args, **call_options: None
         try:
             result = handler.paste_bids(
                 [

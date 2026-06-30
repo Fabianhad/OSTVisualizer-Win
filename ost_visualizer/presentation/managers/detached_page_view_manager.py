@@ -541,7 +541,7 @@ class DetachedPageViewManager(IShutdownAware):
                 else None
             ),
             linked_hotlink_resolver=self.project_data.find_hotlinks_targeting,
-            **snap_preferences.to_kwargs(),
+            **snap_preferences.to_options(),
             parent=self.parent_window,
         )
         self._window.set_read_only(self._is_read_only())

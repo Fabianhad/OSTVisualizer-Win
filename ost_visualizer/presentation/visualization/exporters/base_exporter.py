@@ -47,7 +47,6 @@ class BaseExporter(ABC):
         display_mode: str = Config.DISPLAY_MODE_SOLID,
         grayscale_enabled: bool = True,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
-        **kwargs,
     ) -> bool:
         exportable_takeoffs = None
         hierarchy_map = None
@@ -78,7 +77,6 @@ class BaseExporter(ABC):
                 materials_info,
                 bid_conditions,
                 display_mode,
-                **kwargs,
             )
             return True
         except Exception:
@@ -223,6 +221,5 @@ class BaseExporter(ABC):
         materials_info: Dict,
         bid_conditions: Dict,
         display_mode: str,
-        **kwargs,
     ):
         pass

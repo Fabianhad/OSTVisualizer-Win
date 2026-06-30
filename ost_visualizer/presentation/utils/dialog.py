@@ -12,29 +12,28 @@ class ItemRecord(TypedDict):
     is_new: bool
 
 
-def _write_reload_result_attr(result, attr: str):
-    if type(result).__name__ != "WriteReloadResult":
-        return None
-    return getattr(result, attr, None)
+def _is_write_reload_result(result) -> bool:
+    result_type = type(result)
+    return (
+        result_type.__name__ == "WriteReloadResult"
+        and result_type.__module__.endswith("project_write_service")
+    )
 
 
 def save_result_succeeded(result) -> bool:
-    write_success = _write_reload_result_attr(result, "write_success")
-    if write_success is not None:
-        return bool(write_success)
+    if _is_write_reload_result(result):
+        return bool(result.write_success)
     return result is not None and result is not False
 
 
 def save_result_mapping(result) -> Dict[str, Any]:
-    value = _write_reload_result_attr(result, "value")
-    if value is not None:
-        return value if isinstance(value, dict) else {}
+    if _is_write_reload_result(result):
+        return result.value if isinstance(result.value, dict) else {}
     return result if isinstance(result, dict) else {}
 
 
 def save_result_refresh_failed(result) -> bool:
-    refresh_failed = _write_reload_result_attr(result, "refresh_failed")
-    return bool(refresh_failed)
+    return _is_write_reload_result(result) and result.refresh_failed
 
 
 class BaseListDialog(QtWidgets.QDialog):

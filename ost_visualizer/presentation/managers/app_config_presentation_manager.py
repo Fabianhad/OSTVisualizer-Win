@@ -66,7 +66,7 @@ class AppConfigPresentationManager:
             config_model.mouse_pressed_snap_angle,
         )
         plan_view.set_snap_preferences(
-            **self._snap_preferences(config_model).to_kwargs()
+            **self._snap_preferences(config_model).to_options()
         )
 
     def _snap_preferences(self, config_model) -> SnapPreferencesDto:
@@ -86,5 +86,5 @@ class AppConfigPresentationManager:
             crosshair_line_thickness=config_model.crosshair_line_thickness,
             mouse_unpressed_snap_angle=config_model.mouse_unpressed_snap_angle,
             mouse_pressed_snap_angle=config_model.mouse_pressed_snap_angle,
-            **self._snap_preferences(config_model).to_kwargs(),
+            **self._snap_preferences(config_model).to_options(),
         )

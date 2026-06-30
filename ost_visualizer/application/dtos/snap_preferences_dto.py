@@ -37,7 +37,7 @@ class SnapPreferencesDto:
             snap_to_right_angle_threshold_px=config.snap_to_right_angle_threshold_px,
         )
 
-    def to_kwargs(self) -> dict[str, bool | int]:
+    def to_options(self) -> dict[str, bool | int]:
         return {
             "snap_to_grid_enabled": self.snap_to_grid_enabled,
             "snap_to_grid_threshold_px": self.snap_to_grid_threshold_px,

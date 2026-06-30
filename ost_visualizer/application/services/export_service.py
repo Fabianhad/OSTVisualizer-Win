@@ -90,7 +90,7 @@ class ExportService:
         if title:
             metadata["title"] = title
         try:
-            kwargs = strategy.get_kwargs(
+            export_options = strategy.get_export_options(
                 config_model, self.project_data.get_page_area_selections()
             )
             if strategy.extension == HTML_EXTENSION:
@@ -100,7 +100,7 @@ class ExportService:
                 active_page_uid = self._resolve_active_export_page(
                     result.valid_page_uids, request.active_page_uid
                 )
-                kwargs.update(
+                export_options.update(
                     {
                         "title": metadata.get("title", "3D View"),
                         "bid_name": bid_name,
@@ -112,7 +112,7 @@ class ExportService:
                 )
                 if pages:
                     image_layer_uid = self.project_data.get_image_layer_uid()
-                    kwargs["page_image_layer"] = {
+                    export_options["page_image_layer"] = {
                         "uid": image_layer_uid or IMAGE_LAYER_NAME,
                         "name": IMAGE_LAYER_NAME.title(),
                         "visible": self._html_image_layer_visible(
@@ -123,7 +123,7 @@ class ExportService:
                 self.project_data.get_bid_conditions(),
                 result.takeoffs,
                 request.filename,
-                **kwargs,
+                **export_options,
             )
             if success:
                 return ExportResultDto(
