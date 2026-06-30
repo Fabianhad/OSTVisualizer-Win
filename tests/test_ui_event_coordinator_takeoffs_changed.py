@@ -1132,10 +1132,14 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = UiState()
+        clear_bid_calls = []
         coordinator.project_data = type(
             "ProjectData",
             (),
-            {"deselect_pages": lambda _self: None},
+            {
+                "clear_bid": lambda _self: clear_bid_calls.append(True),
+                "deselect_pages": lambda _self: None,
+            },
         )()
         coordinator._undo_service = FakeUndo()
         coordinator._placement = FakePlacement()
@@ -1152,6 +1156,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.handle_bid_selection(None)
         self.assertIsNone(coordinator.ui_state_manager.get_selected_bid_ref())
         self.assertEqual(coordinator._undo_service.active, [None])
+        self.assertEqual(clear_bid_calls, [True])
 
     def test_file_selection_clears_undo_owner_after_resetting_selection(self):
         old_ref = BidRef("old.mdb", "old-bid")
@@ -1176,10 +1181,14 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = UiState()
+        clear_bid_calls = []
         coordinator.project_data = type(
             "ProjectData",
             (),
-            {"deselect_pages": lambda _self: None},
+            {
+                "clear_bid": lambda _self: clear_bid_calls.append(True),
+                "deselect_pages": lambda _self: None,
+            },
         )()
         coordinator._undo_service = FakeUndo()
         coordinator._placement = FakePlacement()
@@ -1195,6 +1204,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._on_file_selected(file_path="new.mdb", is_database_root=True)
         self.assertIsNone(coordinator.ui_state_manager.get_selected_bid_ref())
         self.assertEqual(coordinator._undo_service.active, [None])
+        self.assertEqual(clear_bid_calls, [True])
 
     def test_page_settings_bar_sync_stores_validated_area_uid(self):
         class UiState:

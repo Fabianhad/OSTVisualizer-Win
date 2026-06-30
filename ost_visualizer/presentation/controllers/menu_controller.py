@@ -298,7 +298,6 @@ class MenuController:
         takeoff_active = self.window.is_takeoff_tab_active()
         summary_active = self._is_summary_tab_active()
         self._sync_variable_actions(takeoff_active)
-        export_allowed = self.ui_access_manager.is_allowed(Feature.EXPORT)
         unload_enabled = self.ui_access_manager.is_allowed(Feature.UNLOAD_FILE)
         unload_action = self._actions.get("unload_file")
         if unload_action:
@@ -318,38 +317,29 @@ class MenuController:
         import_menu = self._menus.get("import")
         if import_menu:
             import_menu.setEnabled(not summary_active and self._should_enable_import())
-        export_enabled = export_allowed and self._should_enable_export()
-        bid_file_export_enabled = self.ui_access_manager.is_allowed(
-            Feature.EXPORT_BID_FILE
-        )
-        summary_csv_enabled = (
-            export_allowed and self._should_enable_summary_csv_export()
-        )
+        export_action_states = self._export_action_enabled_states()
         export_menu = self._menus.get("export")
         if export_menu:
-            export_menu.setEnabled(
-                export_enabled or summary_csv_enabled or bid_file_export_enabled
-            )
+            export_menu.setEnabled(any(export_action_states.values()))
         for fmt in self._export_formats:
             action = self._actions.get(f"export_as_{fmt}")
             if action:
-                action.setEnabled(export_enabled)
+                action.setEnabled(export_action_states.get(f"export_as_{fmt}", False))
         pdf_action = self._actions.get("export_as_pdf")
         if pdf_action:
-            pdf_enabled = export_allowed and self._should_enable_pdf_export()
-            pdf_action.setEnabled(pdf_enabled)
+            pdf_action.setEnabled(export_action_states["export_as_pdf"])
         summary_csv_action = self._actions.get("export_summary_csv")
         if summary_csv_action:
-            summary_csv_action.setEnabled(summary_csv_enabled)
+            summary_csv_action.setEnabled(export_action_states["export_summary_csv"])
         ost_action = self._actions.get("export_as_ost")
         if ost_action:
-            ost_action.setEnabled(bid_file_export_enabled)
+            ost_action.setEnabled(export_action_states["export_as_ost"])
         osp_action = self._actions.get("export_as_osp")
         if osp_action:
-            osp_action.setEnabled(bid_file_export_enabled)
+            osp_action.setEnabled(export_action_states["export_as_osp"])
         html_options = self._menus.get("html export options".lower())
         if html_options:
-            html_options.setEnabled(export_allowed)
+            html_options.setEnabled(export_action_states.get("export_as_html", False))
         takeoff_menu = self._menus.get("takeoff")
         if takeoff_menu:
             takeoff_menu.setEnabled(True)
@@ -489,6 +479,9 @@ class MenuController:
             return self._should_enable_import()
         if command_key == ACTION_DELETE_PAGE:
             return self.handlers.ui_event.can_delete_current_page()
+        export_enabled = self._export_command_enabled(command_key)
+        if export_enabled is not None:
+            return export_enabled
         self.update_menu_states()
         action = self._actions.get(command_key)
         if action:
@@ -532,6 +525,32 @@ class MenuController:
 
     def get_export_formats(self) -> List[str]:
         return list(self._export_formats)
+
+    def _export_action_enabled_states(self) -> Dict[str, bool]:
+        command_keys = [f"export_as_{fmt}" for fmt in self._export_formats]
+        command_keys.extend(
+            ["export_summary_csv", "export_as_pdf", "export_as_ost", "export_as_osp"]
+        )
+        return {
+            command_key: bool(self._export_command_enabled(command_key))
+            for command_key in command_keys
+        }
+
+    def _export_command_enabled(self, command_key: str) -> Optional[bool]:
+        export_allowed = self.ui_access_manager.is_allowed(Feature.EXPORT)
+        if command_key == "export_summary_csv":
+            return export_allowed and self._should_enable_summary_csv_export()
+        if command_key == "export_as_pdf":
+            return export_allowed and self._should_enable_pdf_export()
+        if command_key in ("export_as_ost", "export_as_osp"):
+            return self.ui_access_manager.is_allowed(Feature.EXPORT_BID_FILE) and bool(
+                self._active_selected_bid_ref()
+            )
+        if command_key.startswith("export_as_"):
+            format_key = command_key[len("export_as_") :]
+            if format_key in self._export_formats:
+                return export_allowed and self._should_enable_export()
+        return None
 
     def _is_menu_action_enabled(self, action_key: str, action) -> bool:
         if action_key in _ANNOTATION_TOOL_ACTION_KEYS:
@@ -651,17 +670,16 @@ class MenuController:
         )
 
     def _should_enable_export(self) -> bool:
+        if not self._active_selected_bid_ref():
+            return False
         selected_pages = self.project_data.get_selected_page_uids()
         if not selected_pages:
             return False
-        has_takeoffs = self.project_data.has_takeoffs_for_pages(selected_pages)
-        has_annotations = any(
-            self.project_data.get_page_annotations(page_uid)
-            for page_uid in selected_pages
-        )
-        return has_takeoffs or has_annotations
+        return self.project_data.has_takeoffs_for_pages(selected_pages)
 
     def _should_enable_pdf_export(self) -> bool:
+        if not self._active_selected_bid_ref():
+            return False
         selected_pages = self.project_data.get_selected_page_uids()
         if not selected_pages:
             return False
@@ -678,10 +696,19 @@ class MenuController:
 
     def _should_enable_summary_csv_export(self) -> bool:
         return bool(
-            self.project_data.get_current_bid_ref()
+            self._active_selected_bid_ref()
             and self.project_data.get_bid_conditions()
             and self.project_data.get_all_takeoffs()
         )
+
+    def _active_selected_bid_ref(self):
+        selected_bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if not selected_bid_ref:
+            return None
+        current_bid_ref = self.project_data.get_current_bid_ref()
+        if current_bid_ref != selected_bid_ref:
+            return None
+        return selected_bid_ref
 
     def _should_enable_import(self) -> bool:
         if self._is_summary_tab_active():

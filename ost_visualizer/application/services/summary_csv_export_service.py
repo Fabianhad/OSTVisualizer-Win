@@ -210,10 +210,12 @@ class SummaryCsvExportService:
     def _is_unassigned_area(area: str) -> bool:
         return not area or area == SUMMARY_UNASSIGNED_LABEL
 
-    def _display_name(self, value: str) -> str:
+    @staticmethod
+    def _display_name(value: str) -> str:
         return value.replace('"', "''")
 
-    def _area_column_value(self, row: _ExportRow) -> str:
+    @staticmethod
+    def _area_column_value(row: _ExportRow) -> str:
         if row.kind == SUMMARY_NODE_MULTI_AREA_TOTAL:
             return "Total"
         return SUMMARY_UNASSIGNED_LABEL
@@ -333,7 +335,7 @@ class SummaryCsvExportService:
         return f"{value:.5f}"
 
     @staticmethod
-    def _format_quantity(value: float, uom_code: int) -> str:
+    def _format_quantity(value: float, _uom_code: int) -> str:
         return str(int(round(value)))
 
     @staticmethod

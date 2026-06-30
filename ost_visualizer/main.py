@@ -155,7 +155,6 @@ def main():
     socket = QLocalSocket()
     socket.connectToServer(APP_INSTANCE_NAME)
     if socket.waitForConnected(200):
-        logger.info("Existing application instance detected")
         socket.close()
         sys.exit(0)
     server = QLocalServer()
