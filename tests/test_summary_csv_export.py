@@ -123,10 +123,11 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
         number,
         name,
         height,
-        area=None,
+        group_label="L1 FDN",
+        area="(unassigned)",
         notes,
     ):
-        cells = ["BLDG", page, "L1 FDN", type_name, number, name, height]
+        cells = ["BLDG", page, group_label, type_name, number, name, height]
         if area is not None:
             cells.append(area)
         cells.extend(["1", "EA", "0", "SF", "0", "CY", notes])
@@ -138,43 +139,47 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             [
                 self._row(
                     page="",
+                    group_label="Area Two",
                     type_name="Type B",
                     number="1",
                     name="Cond B",
                     height="0",
-                    area="Area Two",
                     notes="note b",
                 ),
                 self._row(
                     page="",
+                    group_label="Area One",
                     type_name="Type A",
                     number="2",
                     name="Cond A",
                     height="12.00000",
-                    area="Area One",
                     notes="note a",
                 ),
             ],
         )
 
-    def test_group_by_area_csv_omits_area_column_without_page_grouping(self):
+    def test_group_by_area_csv_puts_area_before_type_without_page_grouping(self):
         self.assertEqual(
             self._rows(ConditionSummaryGrouping(by_area=True)),
             [
                 self._row(
                     page="",
+                    group_label="Area One",
                     type_name="Type A",
                     number="2",
                     name="Cond A",
                     height="12.00000",
+                    area=None,
                     notes="note a",
                 ),
                 self._row(
                     page="",
+                    group_label="Area Two",
                     type_name="Type B",
                     number="1",
                     name="Cond B",
                     height="0",
+                    area=None,
                     notes="note b",
                 ),
             ],
@@ -186,20 +191,20 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             [
                 self._row(
                     page="",
+                    group_label="Area One",
                     type_name="Type A",
                     number="2",
                     name="Cond A",
                     height="12.00000",
-                    area="Area One",
                     notes="note a",
                 ),
                 self._row(
                     page="",
+                    group_label="Area Two",
                     type_name="Type B",
                     number="1",
                     name="Cond B",
                     height="0",
-                    area="Area Two",
                     notes="note b",
                 ),
             ],
@@ -211,20 +216,20 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             [
                 self._row(
                     page="Z-First.pdf",
+                    group_label="Area Two",
                     type_name="Type B",
                     number="1",
                     name="Cond B",
                     height="0",
-                    area="Area Two",
                     notes="note b",
                 ),
                 self._row(
                     page="A-Second.pdf",
+                    group_label="Area One",
                     type_name="Type A",
                     number="2",
                     name="Cond A",
                     height="12.00000",
-                    area="Area One",
                     notes="note a",
                 ),
             ],
@@ -236,18 +241,22 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             [
                 self._row(
                     page="",
+                    group_label="Area One",
                     type_name="Type A",
                     number="2",
                     name="Cond A",
                     height="12.00000",
+                    area=None,
                     notes="note a",
                 ),
                 self._row(
                     page="",
+                    group_label="Area Two",
                     type_name="Type B",
                     number="1",
                     name="Cond B",
                     height="0",
+                    area=None,
                     notes="note b",
                 ),
             ],
@@ -259,20 +268,20 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             [
                 self._row(
                     page="Z-First.pdf",
+                    group_label="Area Two",
                     type_name="Type B",
                     number="1",
                     name="Cond B",
                     height="0",
-                    area="Area Two",
                     notes="note b",
                 ),
                 self._row(
                     page="A-Second.pdf",
+                    group_label="Area One",
                     type_name="Type A",
                     number="2",
                     name="Cond A",
                     height="12.00000",
-                    area="Area One",
                     notes="note a",
                 ),
             ],
@@ -285,20 +294,20 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             [
                 self._row(
                     page="A-Second.pdf",
+                    group_label="Area One",
                     type_name="Type A",
                     number="2",
                     name="Cond A",
                     height="12.00000",
-                    area="Area One",
                     notes="note a",
                 ),
                 self._row(
                     page="Z-First.pdf",
+                    group_label="Area Two",
                     type_name="Type B",
                     number="1",
                     name="Cond B",
                     height="0",
-                    area="Area Two",
                     notes="note b",
                 ),
             ],
@@ -312,20 +321,20 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             [
                 self._row(
                     page="Z-First.pdf",
+                    group_label="Area Two",
                     type_name="Type B",
                     number="1",
                     name="Cond B",
                     height="0",
-                    area="Area Two",
                     notes="note b",
                 ),
                 self._row(
                     page="A-Second.pdf",
+                    group_label="Area One",
                     type_name="Type A",
                     number="2",
                     name="Cond A",
                     height="12.00000",
-                    area="Area One",
                     notes="note a",
                 ),
             ],
@@ -349,10 +358,34 @@ class SummaryCsvExportServiceTests(unittest.TestCase):
             grouping=ConditionSummaryGrouping(),
         )
         rows = self.csv_service.to_csv_rows(root, ConditionSummaryGrouping())
-        self.assertEqual(rows[0][7], "Multi-Area Total")
-        self.assertEqual(rows[0][8:10], ["2", "EA"])
-        self.assertEqual(rows[1][4:8], ["", "", "0", "Area One"])
-        self.assertEqual(rows[2][4:8], ["", "", "0", "Area Two"])
+        self.assertEqual(
+            rows[0][2:10],
+            [
+                "Area Two",
+                "Type A",
+                "2",
+                "Cond A",
+                "12.00000",
+                "(unassigned)",
+                "1",
+                "EA",
+            ],
+        )
+        self.assertEqual(
+            rows[1][2:10],
+            [
+                "Area One",
+                "Type A",
+                "2",
+                "Cond A",
+                "12.00000",
+                "(unassigned)",
+                "1",
+                "EA",
+            ],
+        )
+        self.assertEqual(rows[2][:8], ["", "", "", "", "", "", "", "Total"])
+        self.assertEqual(rows[2][8:10], ["2", "EA"])
 
     def test_quantity_cells_use_summary_plain_number_format(self):
         root = ConditionSummaryNode(

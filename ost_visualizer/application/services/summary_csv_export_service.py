@@ -15,18 +15,19 @@ from ..dtos.condition_summary_dtos import (
     SUMMARY_NODE_FOLDER,
     SUMMARY_NODE_GROUP,
     SUMMARY_NODE_MULTI_AREA_TOTAL,
+    SUMMARY_UNASSIGNED_LABEL,
     ConditionSummaryGrouping,
     ConditionSummaryNode,
     ConditionSummaryValues,
 )
 from ..dtos.export_dto import ExportErrorCode, ExportResultDto
-from ..utils.quantity_display import format_quantity_number
 from .project_read_service import ProjectReadService
 from ..use_cases.project.condition_summary_service import ConditionSummaryService
 
 
 @dataclass(frozen=True)
 class _ExportRow:
+    kind: str
     folder_path: Tuple[str, ...]
     page: str
     type_name: str
@@ -139,32 +140,83 @@ class SummaryCsvExportService:
         folder_path: Tuple[str, ...],
         groups: dict[str, str],
         rows: List[_ExportRow],
+        parent_values: ConditionSummaryValues | None = None,
     ) -> None:
         if node.kind == SUMMARY_NODE_FOLDER:
             folder_path = (*folder_path, node.label)
         elif node.kind == SUMMARY_NODE_GROUP:
             groups = dict(groups)
             groups[node.group_level] = node.label
-        elif node.kind in (
-            SUMMARY_NODE_CONDITION,
-            SUMMARY_NODE_MULTI_AREA_TOTAL,
-            SUMMARY_NODE_AREA_DETAIL,
-        ):
-            values = node.values
-            type_name = groups.get(SUMMARY_GROUP_TYPE) or values.type_name
-            area = groups.get(SUMMARY_GROUP_AREA) or values.area
-            rows.append(
-                _ExportRow(
-                    folder_path=folder_path,
-                    page=groups.get(SUMMARY_GROUP_PAGE, ""),
-                    type_name=type_name,
-                    area=area,
-                    values=values,
-                    sequence=len(rows),
-                )
-            )
+        elif node.kind == SUMMARY_NODE_MULTI_AREA_TOTAL:
+            for child in reversed(node.children):
+                self._collect_rows(child, folder_path, groups, rows, node.values)
+            self._append_row(node.kind, node.values, folder_path, groups, rows)
+            return
+        elif node.kind == SUMMARY_NODE_AREA_DETAIL:
+            values = self._area_detail_values(parent_values, node.values)
+            self._append_row(node.kind, values, folder_path, groups, rows)
+            return
+        elif node.kind == SUMMARY_NODE_CONDITION:
+            self._append_row(node.kind, node.values, folder_path, groups, rows)
         for child in node.children:
-            self._collect_rows(child, folder_path, groups, rows)
+            self._collect_rows(child, folder_path, groups, rows, parent_values)
+
+    def _append_row(
+        self,
+        kind: str,
+        values: ConditionSummaryValues,
+        folder_path: Tuple[str, ...],
+        groups: dict[str, str],
+        rows: List[_ExportRow],
+    ) -> None:
+        type_name = groups.get(SUMMARY_GROUP_TYPE) or values.type_name
+        area = groups.get(SUMMARY_GROUP_AREA) or values.area
+        rows.append(
+            _ExportRow(
+                kind=kind,
+                folder_path=folder_path,
+                page=groups.get(SUMMARY_GROUP_PAGE, ""),
+                type_name=type_name,
+                area=area,
+                values=values,
+                sequence=len(rows),
+            )
+        )
+
+    @staticmethod
+    def _area_detail_values(
+        parent_values: ConditionSummaryValues | None,
+        detail_values: ConditionSummaryValues,
+    ) -> ConditionSummaryValues:
+        if parent_values is None:
+            return detail_values
+        return ConditionSummaryValues(
+            number=parent_values.number,
+            name=parent_values.name,
+            type_name=parent_values.type_name,
+            height=parent_values.height,
+            height_inches=parent_values.height_inches,
+            area=detail_values.area,
+            quantity1=detail_values.quantity1,
+            uom1=detail_values.uom1,
+            quantity2=detail_values.quantity2,
+            uom2=detail_values.uom2,
+            quantity3=detail_values.quantity3,
+            uom3=detail_values.uom3,
+            notes=parent_values.notes,
+        )
+
+    @staticmethod
+    def _is_unassigned_area(area: str) -> bool:
+        return not area or area == SUMMARY_UNASSIGNED_LABEL
+
+    def _display_name(self, value: str) -> str:
+        return value.replace('"', "''")
+
+    def _area_column_value(self, row: _ExportRow) -> str:
+        if row.kind == SUMMARY_NODE_MULTI_AREA_TOTAL:
+            return "Total"
+        return SUMMARY_UNASSIGNED_LABEL
 
     def _sort_rows(
         self, rows: Sequence[_ExportRow], grouping: ConditionSummaryGrouping
@@ -186,6 +238,14 @@ class SummaryCsvExportService:
         def area_key(row: _ExportRow) -> Tuple:
             return (area_order[row.area], row.area.lower(), row.area)
 
+        def area_only_key(row: _ExportRow) -> Tuple:
+            return (
+                0 if self._is_unassigned_area(row.area) else 1,
+                area_order[row.area],
+                row.area.lower(),
+                row.area,
+            )
+
         if grouping.by_page and grouping.by_area:
             return sorted(
                 rows, key=lambda row: (page_key(row), area_key(row), natural(row))
@@ -203,7 +263,7 @@ class SummaryCsvExportService:
         if grouping.by_type:
             return sorted(rows, key=lambda row: (type_key(row), natural(row)))
         if grouping.by_area:
-            return sorted(rows, key=lambda row: (area_key(row), natural(row)))
+            return sorted(rows, key=lambda row: (area_only_key(row), natural(row)))
         return list(rows)
 
     @staticmethod
@@ -222,26 +282,41 @@ class SummaryCsvExportService:
     ) -> List[str]:
         values = row.values
         first_folder = row.folder_path[0] if row.folder_path else ""
-        remaining_folders = " / ".join(row.folder_path[1:])
+        pre_type_group = row.area
+        if row.kind == SUMMARY_NODE_MULTI_AREA_TOTAL:
+            first_folder = ""
+            pre_type_group = ""
         cells = [
             first_folder,
-            row.page if grouping.by_page else "",
-            remaining_folders,
-            row.type_name,
-            values.number,
-            values.name,
-            self._format_height(values.height_inches),
+            (
+                row.page
+                if grouping.by_page and row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL
+                else ""
+            ),
+            pre_type_group,
+            row.type_name if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL else "",
+            values.number if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL else "",
+            (
+                self._display_name(values.name)
+                if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL
+                else ""
+            ),
+            (
+                self._format_height(values.height_inches)
+                if row.kind != SUMMARY_NODE_MULTI_AREA_TOTAL
+                else ""
+            ),
         ]
         if self._include_area_column(grouping):
-            cells.append(row.area)
+            cells.append(self._area_column_value(row))
         cells.extend(
             [
                 self._format_quantity(values.quantity1, values.uom1),
-                get_uom_label(values.uom1),
+                self._format_uom(values.uom1),
                 self._format_quantity(values.quantity2, values.uom2),
-                get_uom_label(values.uom2),
+                self._format_uom(values.uom2),
                 self._format_quantity(values.quantity3, values.uom3),
-                get_uom_label(values.uom3),
+                self._format_uom(values.uom3),
                 values.notes,
             ]
         )
@@ -259,4 +334,10 @@ class SummaryCsvExportService:
 
     @staticmethod
     def _format_quantity(value: float, uom_code: int) -> str:
-        return format_quantity_number(value, uom_code, zero_text="0")
+        return str(int(round(value)))
+
+    @staticmethod
+    def _format_uom(uom_code: int) -> str:
+        if int(uom_code or 0) == -1:
+            return "IN"
+        return get_uom_label(uom_code)

@@ -825,9 +825,15 @@ class PlanViewActionHandler:
                 for cuid in target_uids
             ]
         else:
-            curve = (
-                Takeoff.CURVE_ENABLED if len(position) >= 6 else Takeoff.CURVE_DISABLED
-            )
+            condition = self._data_svc.get_bid_conditions().get(condition_uid)
+            curve = Takeoff.CURVE_DISABLED
+            if (
+                condition is not None
+                and condition.is_linear
+                and condition.is_curved_segment
+                and len(position) >= 6
+            ):
+                curve = Takeoff.CURVE_ENABLED
             specs = [
                 InsertTakeoffSpec(
                     condition_uid=condition_uid,

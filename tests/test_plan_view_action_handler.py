@@ -1762,6 +1762,55 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(event_bus.events[0][1]["takeoff_uids"], ["100"])
         self.assertEqual(plan_view.cancel_place_mode_calls, 0)
 
+    def test_new_area_takeoff_keeps_curve_disabled_for_polygon_position(self):
+        plan_view = FakePlanView()
+        data = FakeProjectData()
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        position = [0.0, 0.0, 10.0, 0.0, 10.0, 8.0, 0.0, 8.0]
+        handler.on_takeoff_created("42", position, "9")
+        spec = write.calls[0][2][0]
+        self.assertEqual(spec.position, position)
+        self.assertEqual(spec.curve, Takeoff.CURVE_DISABLED)
+        self.assertEqual(data.added_takeoffs[0].curve, Takeoff.CURVE_DISABLED)
+
+    def test_new_curved_linear_takeoff_enables_curve(self):
+        plan_view = FakePlanView()
+        data = FakeProjectData()
+        data.conditions["linear"] = Condition(
+            uid="linear",
+            layer_visible=True,
+            condition_type=Condition.TYPE_LINEAR,
+            is_curved_segment=True,
+        )
+        write = FakeWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        position = [0.0, 0.0, 10.0, 0.0, 5.0, 5.0]
+        handler.on_takeoff_created("linear", position, "9")
+        spec = write.calls[0][2][0]
+        self.assertEqual(spec.curve, Takeoff.CURVE_ENABLED)
+        self.assertEqual(data.added_takeoffs[0].curve, Takeoff.CURVE_ENABLED)
+
     def test_backout_create_undo_redo_uses_targeted_path(self):
         data = FakeProjectData()
         write = FakeWriteService()

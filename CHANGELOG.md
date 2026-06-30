@@ -13,3 +13,5 @@
 - Takeoff edit previews now keep inactive-area styling instead of temporarily showing grayed-out items in full condition color.
 - PDF page rendering now retains a useful working set of large plan sheets instead of evicting most cached pages after only a few renders.
 - Tree views now use the same indentation as the Conditions sidebar throughout the app.
+- Summary CSV exports now place area labels before condition type, expand multi-area details with trailing totals, and match expected whole-number quantity formatting.
+- New area takeoffs now keep the OST curve flag disabled so polygon and rectangle areas recalculate correctly in OST.
