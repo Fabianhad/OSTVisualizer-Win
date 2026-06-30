@@ -676,8 +676,6 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self._block_item_changed = False
 
     def _reveal_item_if_needed(self, item: QtWidgets.QTreeWidgetItem) -> None:
-        if self._item_has_collapsed_parent(item):
-            return
         rect = self.tree.visualItemRect(item)
         viewport_rect = self.tree.viewport().rect()
         if rect.isValid() and viewport_rect.contains(rect):
@@ -692,6 +690,15 @@ class ConditionsSidebar(QtWidgets.QWidget):
             item,
             QtWidgets.QAbstractItemView.ScrollHint.PositionAtBottom,
         )
+
+    def _expand_item_path(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        parents: List[QtWidgets.QTreeWidgetItem] = []
+        parent = item.parent()
+        while parent is not None:
+            parents.append(parent)
+            parent = parent.parent()
+        for parent in reversed(parents):
+            parent.setExpanded(True)
 
     def _item_has_collapsed_parent(self, item: QtWidgets.QTreeWidgetItem) -> bool:
         parent = item.parent()
@@ -713,10 +720,13 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 if item:
                     item.setSelected(True)
                     if first:
-                        if not self._item_has_collapsed_parent(item):
-                            self.tree.setCurrentItem(item)
                         if reveal:
+                            self._expand_item_path(item)
+                            self.tree.doItemsLayout()
+                            self.tree.setCurrentItem(item)
                             self._reveal_item_if_needed(item)
+                        elif not self._item_has_collapsed_parent(item):
+                            self.tree.setCurrentItem(item)
                         first = False
         finally:
             self._block_selection_signal = False
@@ -1389,10 +1399,10 @@ class ConditionsSidebar(QtWidgets.QWidget):
         if self._selected_condition_uids:
             self.delete_requested.emit(self._selected_condition_uids[:])
 
-    def stage_selection_after_condition_delete(self, condition_uids: List[str]) -> None:
-        self._pending_condition_select_uid = self._delete_replacement_condition_uid(
-            condition_uids
-        )
+    def condition_selection_after_delete(
+        self, condition_uids: List[str]
+    ) -> Optional[str]:
+        return self._delete_replacement_condition_uid(condition_uids)
 
     def _delete_replacement_condition_uid(
         self, condition_uids: List[str]

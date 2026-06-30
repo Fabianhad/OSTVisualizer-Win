@@ -652,12 +652,13 @@ class UIEventCoordinator:
         self._pending_takeoff_place_condition_uid = None
         self._pending_takeoff_place_condition_uids = []
 
-    def _reset_takeoff_workspace_state(self) -> None:
+    def _reset_takeoff_workspace_state(self, clear_sidebars: bool = True) -> None:
         self._takeoff_workspace_bid_ref = None
         self._clear_staged_takeoff_restore()
         self._last_takeoff_selection_context_by_source.clear()
-        self._sidebar.clear_sidebars()
-        if self._page_settings_bar:
+        if clear_sidebars:
+            self._sidebar.clear_sidebars()
+        if clear_sidebars and self._page_settings_bar:
             self._page_settings_bar.clear_bid()
 
     def _stage_takeoff_restore(
@@ -746,7 +747,7 @@ class UIEventCoordinator:
             highlighted = self._validate_condition_uids(
                 self.ui_state_manager.highlighted_condition_uids
             )
-            self.highlight_sidebar(highlighted)
+            self.highlight_sidebar(highlighted, reveal=False)
             self._takeoff_workspace_bid_ref = bid_ref
         should_restore_selection = (
             needs_hydration
@@ -886,12 +887,12 @@ class UIEventCoordinator:
         self.plan_view.reveal_deferred_page_visual()
         return True
 
-    def highlight_sidebar(self, uids: set) -> None:
+    def highlight_sidebar(self, uids: set, reveal: bool = True) -> None:
         if self._nav.is_refreshing:
             return
         self.ui_state_manager.set_highlighted_conditions(uids)
         if self.conditions_sidebar:
-            self.conditions_sidebar.highlight_conditions(uids)
+            self.conditions_sidebar.highlight_conditions(uids, reveal=reveal)
 
     def _is_takeoff_2d_view_active(self) -> bool:
         return self._toolbar.is_takeoff_2d_view_active()
@@ -1659,7 +1660,7 @@ class UIEventCoordinator:
                 self.handle_bid_selection(snap.bid_ref, force=True)
                 return
             self._resolve_bid_lock_state(snap.bid_ref)
-            self._reset_takeoff_workspace_state()
+            self._reset_takeoff_workspace_state(clear_sidebars=False)
             valid_highlighted = self._validate_condition_uids(
                 snap.highlighted_condition_uids
             )

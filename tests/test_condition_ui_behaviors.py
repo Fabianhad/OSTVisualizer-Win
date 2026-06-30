@@ -226,6 +226,31 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertGreater(scrollbar.value(), 0)
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c80"])
 
+    def test_condition_sidebar_explicit_highlight_expands_condition_path(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions, folders = self._foldered_conditions()
+        sidebar.load_conditions(conditions, folders, "Project")
+        folder = sidebar._folder_items["f1"]
+        cdn_type = folder.child(0)
+        folder.setExpanded(False)
+        cdn_type.setExpanded(False)
+        sidebar.highlight_conditions({"c1"})
+        self.assertTrue(folder.isExpanded())
+        self.assertTrue(cdn_type.isExpanded())
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+
+    def test_condition_sidebar_passive_restore_does_not_expand_condition_path(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions, folders = self._foldered_conditions()
+        sidebar.load_conditions(conditions, folders, "Project")
+        folder = sidebar._folder_items["f1"]
+        folder.setExpanded(False)
+        sidebar._restore_context_selection(["c1"], [])
+        self.assertFalse(folder.isExpanded())
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+
     def test_condition_sidebar_passive_reload_preserves_scroll_for_same_project(self):
         sidebar = ConditionsSidebar(None)
         self.addCleanup(sidebar.close)
@@ -296,10 +321,15 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         conditions, folders = self._foldered_conditions()
         sidebar.load_conditions(conditions, folders, "Project")
         sidebar._folder_items["f1"].setExpanded(False)
-        sidebar.stage_selection_after_condition_delete(["c2"])
+        sidebar._folder_items["f2"].setExpanded(False)
+        replacement_uid = sidebar.condition_selection_after_delete(["c2"])
         remaining = {"c1": conditions["c1"]}
         sidebar.load_conditions(remaining, folders, "Project")
+        if replacement_uid:
+            sidebar.highlight_conditions({replacement_uid}, reveal=False)
         self.assertFalse(sidebar._folder_items["f1"].isExpanded())
+        self.assertFalse(sidebar._folder_items["f2"].isExpanded())
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
 
     def test_condition_sidebar_duplicate_refresh_preserves_expanded_state(self):
         sidebar = ConditionsSidebar(None)
@@ -307,13 +337,16 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         conditions, folders = self._foldered_conditions()
         sidebar.load_conditions(conditions, folders, "Project")
         sidebar._folder_items["f1"].setExpanded(False)
+        sidebar._folder_items["f2"].setExpanded(False)
         duplicated = dict(conditions)
         duplicated["c3"] = Condition(
             uid="c3", name="Condition 3", ref_no=3, folder_uid="f2"
         )
         sidebar.load_conditions(duplicated, folders, "Project")
-        sidebar.highlight_conditions({"c3"})
+        sidebar.highlight_conditions({"c3"}, reveal=False)
         self.assertFalse(sidebar._folder_items["f1"].isExpanded())
+        self.assertFalse(sidebar._folder_items["f2"].isExpanded())
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c3"])
 
     def test_condition_sidebar_delete_replacement_selects_previous_logical_condition(
         self,
@@ -322,19 +355,100 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.addCleanup(sidebar.close)
         conditions = self._make_conditions(4)
         sidebar.load_conditions(conditions, {}, "Project")
-        sidebar.stage_selection_after_condition_delete(["c3"])
-        remaining = {uid: cond for uid, cond in conditions.items() if uid != "c3"}
-        sidebar.load_conditions(remaining, {}, "Project")
-        self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
+        self.assertEqual(sidebar.condition_selection_after_delete(["c3"]), "c2")
 
     def test_condition_sidebar_delete_replacement_uses_next_when_no_previous(self):
         sidebar = ConditionsSidebar(None)
         self.addCleanup(sidebar.close)
         conditions = self._make_conditions(3)
         sidebar.load_conditions(conditions, {}, "Project")
-        sidebar.stage_selection_after_condition_delete(["c1"])
-        remaining = {uid: cond for uid, cond in conditions.items() if uid != "c1"}
-        sidebar.load_conditions(remaining, {}, "Project")
+        self.assertEqual(sidebar.condition_selection_after_delete(["c1"]), "c2")
+
+    def test_condition_sidebar_delete_replacement_uses_previous_for_multi_delete(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(5)
+        sidebar.load_conditions(conditions, {}, "Project")
+        self.assertEqual(sidebar.condition_selection_after_delete(["c3", "c4"]), "c2")
+
+    def test_condition_sidebar_delete_replacement_clears_when_all_deleted(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(2)
+        sidebar.load_conditions(conditions, {}, "Project")
+        self.assertIsNone(sidebar.condition_selection_after_delete(["c1", "c2"]))
+
+    def _make_condition_delete_handler(self, sidebar, conditions, highlighted):
+        class Access:
+            def is_allowed(self, feature):
+                return feature == Feature.DELETE_CONDITION
+
+        class WriteService:
+            def delete_conditions(self, _file_path, _bid_uid, condition_uids):
+                for uid in condition_uids:
+                    conditions.pop(uid, None)
+                sidebar.load_conditions(conditions, {}, "Project")
+                return True
+
+        coordinator = SimpleNamespace(
+            ui_access_manager=Access(),
+            conditions_sidebar=sidebar,
+            placement=SimpleNamespace(force_exit=lambda: None),
+            flush_deferred_for_file=lambda _file_path: True,
+            highlight_sidebar=lambda uids, reveal=True: sidebar.highlight_conditions(
+                set(uids), reveal=reveal
+            ),
+            ensure_select_mode=lambda: None,
+            refresh_conditions_ui=lambda: sidebar.load_conditions(
+                conditions, {}, "Project"
+            ),
+        )
+        ui_state = SimpleNamespace(
+            highlighted_condition_uids=set(highlighted),
+            get_selected_bid_ref=lambda: BidRef("db.mdb", "bid-1"),
+        )
+        return ConditionActionHandler(
+            coordinator=coordinator,
+            project_write_service=WriteService(),
+            project_read_service=None,
+            project_data=SimpleNamespace(),
+            ui_state_manager=ui_state,
+        )
+
+    def test_condition_delete_handler_selects_previous_after_write_refresh(self):
+        from ost_visualizer.presentation.handlers import condition_action_handler
+
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(4)
+        sidebar.load_conditions(conditions, {}, "Project")
+        handler = self._make_condition_delete_handler(sidebar, conditions, {"c3"})
+        original_confirm = condition_action_handler.confirm_delete_conditions
+        condition_action_handler.confirm_delete_conditions = lambda _parent, names: [
+            uid for uid, _name in names
+        ]
+        try:
+            handler.on_delete_requested(["c3"])
+        finally:
+            condition_action_handler.confirm_delete_conditions = original_confirm
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
+
+    def test_condition_delete_handler_selects_previous_after_multi_write_refresh(self):
+        from ost_visualizer.presentation.handlers import condition_action_handler
+
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        conditions = self._make_conditions(5)
+        sidebar.load_conditions(conditions, {}, "Project")
+        handler = self._make_condition_delete_handler(sidebar, conditions, {"c3", "c4"})
+        original_confirm = condition_action_handler.confirm_delete_conditions
+        condition_action_handler.confirm_delete_conditions = lambda _parent, names: [
+            uid for uid, _name in names
+        ]
+        try:
+            handler.on_delete_requested(["c3", "c4"])
+        finally:
+            condition_action_handler.confirm_delete_conditions = original_confirm
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
 
     def test_condition_sidebar_layer_visibility_update_preserves_quantities(self):
@@ -688,7 +802,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             main_window=SimpleNamespace(icon_provider=None),
             event_bus=object(),
             refresh_conditions_ui=lambda: refreshes.append(True),
-            highlight_sidebar=lambda uids: highlights.append(set(uids)),
+            highlight_sidebar=lambda uids, reveal=True: highlights.append(set(uids)),
             placement=SimpleNamespace(is_active=False),
             _is_takeoff_2d_view_active=lambda: True,
             flush_deferred_for_file=lambda _file_path: True,

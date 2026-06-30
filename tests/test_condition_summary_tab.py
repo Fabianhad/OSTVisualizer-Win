@@ -1290,6 +1290,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._sidebar = fake_sidebar
         coordinator._tab_widget = FakeTabWidget()
         coordinator._page_settings_bar = None
+        coordinator._takeoff_workspace_bid_ref = bid_ref
         coordinator._last_takeoff_selection_context_by_source = {}
         coordinator._clear_staged_takeoff_restore = lambda: None
         coordinator._resolve_bid_lock_state = lambda _bid_ref: None
@@ -1356,8 +1357,8 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             def get_condition_name(self, uid):
                 return conditions[uid].name
 
-            def stage_selection_after_condition_delete(self, _condition_uids):
-                pass
+            def condition_selection_after_delete(self, _condition_uids):
+                return None
 
         refreshes = []
         coordinator = type(
@@ -1370,7 +1371,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
                     "FakePlacement", (), {"force_exit": lambda self: None}
                 )(),
                 "flush_deferred_for_file": lambda self, _file_path: True,
-                "highlight_sidebar": lambda self, _uids: None,
+                "highlight_sidebar": lambda self, _uids, reveal=True: None,
                 "ensure_select_mode": lambda self: None,
                 "refresh_conditions_ui": lambda self: (
                     refreshes.append("refresh"),

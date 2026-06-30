@@ -457,7 +457,7 @@ class ConditionActionHandler:
             self._coordinator.placement.enter(new_uids[-1], new_uids)
         self._coordinator.refresh_conditions_ui()
         if sidebar:
-            self._coordinator.highlight_sidebar(set(new_uids))
+            self._coordinator.highlight_sidebar(set(new_uids), reveal=False)
 
     def on_delete_requested(self, condition_uids: list) -> None:
         if not condition_uids:
@@ -474,6 +474,7 @@ class ConditionActionHandler:
         confirmed_uids = confirm_delete_conditions(sidebar.window(), names)
         if not confirmed_uids:
             return
+        replacement_uid = sidebar.condition_selection_after_delete(confirmed_uids)
         if not self._flush_deferred_for_bid(bid_ref):
             return
         success = write_service.delete_conditions(
@@ -482,12 +483,12 @@ class ConditionActionHandler:
         if not success:
             logger.warning("Failed to delete conditions %s", confirmed_uids)
             return
-        sidebar.stage_selection_after_condition_delete(confirmed_uids)
         self._coordinator.placement.force_exit()
-        remaining = self._ui_state.highlighted_condition_uids - set(confirmed_uids)
-        self._coordinator.highlight_sidebar(remaining)
         self._coordinator.ensure_select_mode()
         self._coordinator.refresh_conditions_ui()
+        self._coordinator.highlight_sidebar(
+            {replacement_uid} if replacement_uid else set(), reveal=False
+        )
 
     def can_renumber_conditions(self) -> bool:
         return bool(

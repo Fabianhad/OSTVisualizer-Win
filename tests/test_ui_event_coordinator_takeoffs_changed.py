@@ -856,7 +856,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             def __init__(self):
                 self.highlights = []
 
-            def highlight_conditions(self, uids):
+            def highlight_conditions(self, uids, reveal=True):
                 self.highlights.append(set(uids))
 
         coordinator.ui_state_manager = UiState()
@@ -895,7 +895,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             def __init__(self):
                 self.highlights = []
 
-            def highlight_conditions(self, uids):
+            def highlight_conditions(self, uids, reveal=True):
                 self.highlights.append(set(uids))
 
         coordinator.ui_state_manager = UiState()
@@ -938,7 +938,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             def __init__(self):
                 self.highlights = []
 
-            def highlight_conditions(self, uids):
+            def highlight_conditions(self, uids, reveal=True):
                 self.highlights.append(set(uids))
 
         coordinator.ui_state_manager = UiState()
@@ -961,6 +961,78 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(
             coordinator.conditions_sidebar.highlights, [{"c1"}, {"c2"}, {"c3"}]
         )
+
+    def test_takeoff_workspace_hydration_restores_sidebar_highlight_without_reveal(
+        self,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        bid_ref = BidRef("active.mdb", "bid-1")
+        reveal_args = []
+
+        class UiState:
+            highlighted_condition_uids = {"c1"}
+            selected_page_uids = []
+            active_page_uid = None
+            selected_area_uid = ""
+
+            def get_selected_bid_ref(self):
+                return bid_ref
+
+        class ProjectData:
+            def get_bid_conditions(self):
+                return {"c1": object()}
+
+            def get_area_uids_with_takeoff(self):
+                return []
+
+            def get_selected_page_uids(self):
+                return []
+
+            def get_page(self, _page_uid):
+                return None
+
+            def get_last_selected_page_uid(self):
+                return None
+
+        class TakeoffSidebar:
+            def get_first_page_uid(self):
+                return None
+
+            def restore_selection(self, _page_uids, _active_uid):
+                pass
+
+        class Sidebar:
+            def load_bid_layers_sidebar(self):
+                pass
+
+            def load_conditions_sidebar(self):
+                pass
+
+        class MainWindow:
+            def notify_takeoff_workspace_activated(self):
+                pass
+
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator.takeoff_sidebar = TakeoffSidebar()
+        coordinator._sidebar = Sidebar()
+        coordinator.main_window = MainWindow()
+        coordinator._page_settings_bar = None
+        coordinator._takeoff_workspace_bid_ref = None
+        coordinator._pending_takeoff_page_uids = None
+        coordinator._pending_takeoff_active_page_uid = None
+        coordinator._pending_takeoff_selected_area_uid = ""
+        coordinator._pending_takeoff_place_condition_uid = None
+        coordinator._pending_takeoff_place_condition_uids = []
+        coordinator._load_takeoff_sidebar = lambda _bid_ref: None
+        coordinator._load_condition_summary = lambda: None
+        coordinator._sync_embedded_renderer_exposure = lambda: None
+        coordinator._nav = type("Nav", (), {"is_refreshing": False})()
+        coordinator.highlight_sidebar = lambda _uids, reveal=True: reveal_args.append(
+            reveal
+        )
+        coordinator._activate_takeoff_workspace()
+        self.assertEqual(reveal_args, [False])
 
     def test_late_takeoff_selection_signal_after_cleanup_is_ignored(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -1442,6 +1514,89 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             coordinator.main_window.project_view.restored_project,
             ("project-1", "active.mdb"),
         )
+
+    def test_database_refresh_for_active_bid_preserves_sidebar_tree_state(self):
+        bid_ref = BidRef("active.mdb", "bid-1")
+
+        class Snapshot:
+            page_uids = ["page-1"]
+            active_page_uid = "page-1"
+            highlighted_condition_uids = {"c1"}
+            project_uid = None
+            database_selected = False
+            selected_file_path = "active.mdb"
+            place_condition_uid = None
+            place_condition_uids = []
+            selected_area_uid = ""
+
+            def __init__(self):
+                self.bid_ref = bid_ref
+
+        class UiState:
+            selected_page_uids = ["page-1"]
+            active_page_uid = "page-1"
+            selected_area_uid = ""
+            place_condition_uid = None
+            place_condition_uids = []
+            highlighted_condition_uids = {"c1"}
+
+            def get_selected_bid_ref(self):
+                return bid_ref
+
+            def set_highlighted_conditions(self, uids):
+                self.highlighted_condition_uids = set(uids)
+
+        class ProjectData:
+            def get_current_file_path(self):
+                return "active.mdb"
+
+            def get_bid(self, _bid_ref):
+                return object()
+
+            def get_current_bid_ref(self):
+                return bid_ref
+
+            def get_bid_conditions(self):
+                return {"c1": object()}
+
+            def get_page(self, page_uid):
+                return object() if page_uid == "page-1" else None
+
+        class Nav:
+            def __init__(self):
+                self.refresh_snapshot = Snapshot()
+                self.finished = []
+
+            def finish_refresh(self, state):
+                self.finished.append(state)
+
+            def compute_state_for(self, has_file, bid_ref, page_uids, placement_active):
+                return "BID_ACTIVE"
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = FakeUnloadMainWindow()
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator.ui_access_manager = FakeAccess()
+        coordinator._toolbar = FakeToolbar()
+        coordinator._tab_widget = FakeTabWidget(index=TAB_INDEX_TAKEOFF)
+        coordinator._sidebar = FakeSidebar()
+        coordinator._page_settings_bar = None
+        coordinator._takeoff_workspace_bid_ref = bid_ref
+        coordinator._pending_takeoff_page_uids = None
+        coordinator._pending_takeoff_active_page_uid = None
+        coordinator._pending_takeoff_selected_area_uid = ""
+        coordinator._pending_takeoff_place_condition_uid = None
+        coordinator._pending_takeoff_place_condition_uids = []
+        coordinator._last_takeoff_selection_context_by_source = {"2d": ["t1"]}
+        coordinator._resolve_bid_lock_state = lambda _bid_ref: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._activate_takeoff_workspace = lambda: None
+        coordinator._nav = Nav()
+        coordinator._finish_refresh()
+        self.assertEqual(coordinator._sidebar.clears, 0)
+        self.assertIsNone(coordinator._takeoff_workspace_bid_ref)
+        self.assertEqual(coordinator._last_takeoff_selection_context_by_source, {})
 
     def test_database_refresh_drops_deleted_project_selection_and_hides_takeoff(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
