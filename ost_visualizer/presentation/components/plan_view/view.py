@@ -5492,7 +5492,7 @@ class TakeoffPlanView(
         self._exit_annotation_place_mode()
         if not PlacementModeMixin.enter_place_mode_for_condition(self, condition_uid):
             return False
-        self._place_all_condition_uids = self._filter_place_conditions(
+        self._place_all_condition_uids = self._secondary_place_condition_uids(
             condition_uid, all_condition_uids or []
         )
         self._apply_cursor_mode(CURSOR_MODE_PLACE)
@@ -5520,20 +5520,23 @@ class TakeoffPlanView(
     def annotation_place_type(self) -> Optional[str]:
         return self._annotation_place_type
 
-    def _filter_place_conditions(self, active_uid: str, uids: list) -> list:
-        if len(uids) <= 1:
-            return []
+    def _secondary_place_condition_uids(self, active_uid: str, uids: list) -> list:
         active = self._current_conditions.get(active_uid)
         if not active:
             return []
-        same_type = [
-            uid
-            for uid in uids
-            if uid != active_uid
-            and uid in self._current_conditions
-            and self._current_conditions[uid].layer_visible
-            and self._current_conditions[uid].condition_type == active.condition_type
-        ]
+        same_type = []
+        seen = {active_uid}
+        for uid in uids or []:
+            if uid in seen:
+                continue
+            seen.add(uid)
+            condition = self._current_conditions.get(uid)
+            if (
+                condition
+                and condition.layer_visible
+                and condition.condition_type == active.condition_type
+            ):
+                same_type.append(uid)
         return same_type
 
     def enter_backout_mode(self, parent_uid: str) -> bool:

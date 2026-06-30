@@ -187,6 +187,75 @@ class NavigationStateMachineTests(unittest.TestCase):
             self.assertFalse(placement.enter("c1", ["c1"]))
         self.assertEqual(nav.current_state, NavState.BID_ACTIVE_NO_PAGES)
 
+    def test_placement_coordinator_keeps_active_condition_in_place_list(self):
+        class UiState:
+            active_page_uid = "p1"
+            selected_page_uids = ["p1"]
+            place_condition_uid = None
+            state = SimpleNamespace(
+                display_mode_2d="condition",
+                grayscale_enabled=False,
+            )
+
+            def __init__(self):
+                self.place_condition_uids = []
+
+            def set_place_condition_uids(self, uids):
+                self.place_condition_uids = list(uids)
+
+            def clear_place_condition(self):
+                self.place_condition_uid = None
+                self.place_condition_uids = []
+
+        class PlanView:
+            def __init__(self):
+                self.place_calls = []
+
+            def activate_place_for_condition(self, condition_uid, condition_uids):
+                self.place_calls.append((condition_uid, list(condition_uids)))
+                return True
+
+            def update_color_map(self, _color_map):
+                pass
+
+        color_map_requests = []
+
+        def record_color_map_request(*_args, **kwargs):
+            color_map_requests.append(kwargs["extra_condition_uids"])
+            return {}, {}
+
+        ui_state = UiState()
+        plan_view = PlanView()
+        conditions = {
+            "c1": Condition(
+                uid="c1", layer_visible=True, condition_type=Condition.TYPE_AREA
+            ),
+            "c2": Condition(
+                uid="c2", layer_visible=True, condition_type=Condition.TYPE_AREA
+            ),
+            "hidden": Condition(
+                uid="hidden", layer_visible=False, condition_type=Condition.TYPE_AREA
+            ),
+        }
+        placement = PlacementCoordinator(
+            ui_state_manager=ui_state,
+            ui_access_manager=SimpleNamespace(
+                is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
+                set_area_placement_active=lambda _active: None,
+            ),
+            color_service=SimpleNamespace(get_color_mapping=record_color_map_request),
+            project_data=SimpleNamespace(
+                get_bid_conditions=lambda: conditions,
+                get_page_takeoffs=lambda _page_uid: [],
+            ),
+        )
+        placement._plan_view = plan_view
+        self.assertTrue(placement.enter("c2", ["c1", "c1", "hidden"]))
+        self.assertEqual(ui_state.place_condition_uids, ["c1", "c2"])
+        self.assertEqual(plan_view.place_calls, [("c2", ["c1", "c2"])])
+        self.assertEqual(color_map_requests, [{"c1", "c2"}])
+        self.assertEqual(ui_state.place_condition_uid, "c2")
+
     def test_toolbar_disables_place_action_when_bid_has_no_active_page(self):
         class FakeAction:
             def __init__(self):

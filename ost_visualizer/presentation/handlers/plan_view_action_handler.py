@@ -813,7 +813,7 @@ class PlanViewActionHandler:
             return
         area_uid = self._page_settings_bar.get_current_area_uid()
         place_uids = self._ui_state.place_condition_uids
-        target_uids = self._filter_same_type(condition_uid, place_uids)
+        target_uids = self._target_place_condition_uids(condition_uid, place_uids)
         if len(target_uids) > 1:
             specs = [
                 InsertTakeoffSpec(
@@ -1716,17 +1716,22 @@ class PlanViewActionHandler:
         condition = self._data_svc.get_bid_conditions().get(condition_uid)
         return bool(condition and condition.layer_visible)
 
-    def _filter_same_type(self, active_uid: str, place_uids: list) -> list:
-        if len(place_uids) <= 1:
-            return [active_uid]
+    def _target_place_condition_uids(self, active_uid: str, place_uids: list) -> list:
         conditions = self._data_svc.get_bid_conditions()
         active = conditions.get(active_uid)
         if not active or not active.layer_visible:
             return [active_uid]
-        return [
-            uid
-            for uid in place_uids
-            if uid in conditions
-            and conditions[uid].layer_visible
-            and conditions[uid].condition_type == active.condition_type
-        ] or [active_uid]
+        target_uids = []
+        seen = set()
+        for uid in list(place_uids or []) + [active_uid]:
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            condition = conditions.get(uid)
+            if (
+                condition
+                and condition.layer_visible
+                and condition.condition_type == active.condition_type
+            ):
+                target_uids.append(uid)
+        return target_uids or [active_uid]

@@ -1811,6 +1811,37 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(spec.curve, Takeoff.CURVE_ENABLED)
         self.assertEqual(data.added_takeoffs[0].curve, Takeoff.CURVE_ENABLED)
 
+    def test_multi_condition_takeoff_includes_active_when_place_list_is_stale(self):
+        data = FakeProjectData()
+        data.conditions["c2"] = Condition(
+            uid="c2", layer_visible=True, condition_type=Condition.TYPE_AREA
+        )
+        data.conditions["linear"] = Condition(
+            uid="linear", layer_visible=True, condition_type=Condition.TYPE_LINEAR
+        )
+        ui_state = FakeUiState()
+        ui_state.place_condition_uids = ["c1", "c1", "linear"]
+        write = FakeWriteService()
+        write.next_uids = ["100", "101"]
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=ui_state,
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_takeoff_created("c2", [1.0, 2.0], "9")
+        specs = write.calls[0][2]
+        self.assertEqual([spec.condition_uid for spec in specs], ["c1", "c2"])
+        self.assertEqual(
+            [takeoff.condition_uid for takeoff in data.added_takeoffs],
+            ["c1", "c2"],
+        )
+
     def test_backout_create_undo_redo_uses_targeted_path(self):
         data = FakeProjectData()
         write = FakeWriteService()

@@ -647,6 +647,28 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view._condition_text_toolbar.isHidden())
         view.cleanup()
 
+    def test_place_preview_secondary_conditions_match_active_type(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._current_conditions = {
+            "c1": Condition(
+                uid="c1", layer_visible=True, condition_type=Condition.TYPE_AREA
+            ),
+            "c2": Condition(
+                uid="c2", layer_visible=True, condition_type=Condition.TYPE_AREA
+            ),
+            "linear": Condition(
+                uid="linear",
+                layer_visible=True,
+                condition_type=Condition.TYPE_LINEAR,
+            ),
+        }
+        self.assertEqual(
+            view._secondary_place_condition_uids(
+                "c2", ["c1", "c1", "linear", "c2"]
+            ),
+            ["c1"],
+        )
+
     def test_current_page_render_starts_and_completes_loading_bar(self):
         view = self._make_plan_view()
         page = Page(
