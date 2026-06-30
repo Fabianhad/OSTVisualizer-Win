@@ -382,15 +382,23 @@ class PageComboBox(TreePopupComboBoxBase):
         self._update_display_text()
 
     def cleanup(self) -> None:
-        self._model.itemChanged.disconnect(self._on_item_changed)
-        self._tree.viewport().removeEventFilter(self)
+        if self._page_items is None:
+            return
+        try:
+            self._model.itemChanged.disconnect(self._on_item_changed)
+        except (TypeError, RuntimeError):
+            pass
+        if self._tree is not None:
+            self._tree.viewport().removeEventFilter(self)
         self._model.clear()
+        self._page_items.clear()
+        self._pages_with_takeoffs.clear()
+        self.cleanup_popup()
         self._page_items = None
         self._pages_with_takeoffs = None
         self._selected_uids = None
         self._active_uid = None
         self._page_delegate = None
-        self.cleanup_popup()
 
 
 class SinglePageComboBox(TreePopupComboBoxBase):
@@ -562,12 +570,19 @@ class SinglePageComboBox(TreePopupComboBoxBase):
         self._update_display_text()
 
     def cleanup(self) -> None:
-        self._tree.clicked.disconnect(self._on_tree_clicked)
+        if self._page_items is None:
+            return
+        try:
+            self._tree.clicked.disconnect(self._on_tree_clicked)
+        except (TypeError, RuntimeError):
+            pass
         self._model.clear()
+        self._page_items.clear()
+        self._pages_with_takeoffs.clear()
+        self.cleanup_popup()
         self._page_items = None
         self._pages_with_takeoffs = None
         self._selected_uid = ""
         self._page_delegate = None
         self.lineEdit().mousePressEvent = self._line_edit_mouse_press_event
         self._line_edit_mouse_press_event = None
-        self.cleanup_popup()

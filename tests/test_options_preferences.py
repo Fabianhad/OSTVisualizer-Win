@@ -4213,6 +4213,26 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(combo._page_items["p2"].text(), "A102")
         combo.close()
 
+    def test_multi_page_combo_cleanup_releases_popup_after_state_clear(self):
+        combo = PageComboBox()
+        try:
+            combo.load_bid(
+                Bid(
+                    uid="bid-1",
+                    name="Bid",
+                    pages_without_folder=[Page(uid="p1", name="A101")],
+                )
+            )
+            combo.cleanup()
+            combo.cleanup()
+            self.assertIsNone(combo._page_items)
+            self.assertIsNone(combo._pages_with_takeoffs)
+            self.assertIsNone(combo._selected_uids)
+            self.assertIsNone(combo._popup)
+            self.assertIsNone(combo._tree)
+        finally:
+            combo.deleteLater()
+
     def test_single_page_combo_uses_shared_page_label_format(self):
         combo = SinglePageComboBox()
         bid = Bid(
@@ -4227,6 +4247,25 @@ class OptionsPreferencesTests(unittest.TestCase):
         combo.set_current_page_uid("p1")
         self.assertEqual(combo.lineEdit().text(), "3 - S1 - A101")
         combo.close()
+
+    def test_single_page_combo_cleanup_releases_popup_after_state_clear(self):
+        combo = SinglePageComboBox()
+        try:
+            combo.load_bid(
+                Bid(
+                    uid="bid-1",
+                    name="Bid",
+                    pages_without_folder=[Page(uid="p1", name="A101")],
+                )
+            )
+            combo.cleanup()
+            combo.cleanup()
+            self.assertIsNone(combo._page_items)
+            self.assertIsNone(combo._pages_with_takeoffs)
+            self.assertIsNone(combo._popup)
+            self.assertIsNone(combo._tree)
+        finally:
+            combo.deleteLater()
 
     def test_single_page_combo_clears_deleted_selected_page_on_reload(self):
         combo = SinglePageComboBox()

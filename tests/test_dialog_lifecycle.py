@@ -154,6 +154,23 @@ class DialogLifecycleTests(unittest.TestCase):
         self.assertIsNone(dialog._label)
         self.assertIsNone(dialog._progress)
 
+    def test_progress_dialog_ignores_worker_finish_after_cleanup(self):
+        dialog = ProgressDialog.__new__(ProgressDialog)
+        accepted = []
+        rejected = []
+        dialog._cleaned_up = True
+        dialog._result = None
+        dialog._error = None
+        dialog.accept = lambda: accepted.append(True)
+        dialog.reject = lambda: rejected.append(True)
+
+        ProgressDialog._on_finished(dialog, True, RuntimeError("late"))
+
+        self.assertIsNone(dialog._result)
+        self.assertIsNone(dialog._error)
+        self.assertEqual(accepted, [])
+        self.assertEqual(rejected, [])
+
     def test_progress_dialog_does_not_start_worker_before_show(self):
         _app()
         calls = []

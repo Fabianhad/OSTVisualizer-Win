@@ -13,6 +13,9 @@ from ost_visualizer.application.orchestrators.license_thread_manager import (
 from ost_visualizer.application.orchestrators.lifecycle_orchestrator import (
     LifecycleOrchestrator,
 )
+from ost_visualizer.application.orchestrators.visualization_orchestrator import (
+    VisualizationOrchestrator,
+)
 from ost_visualizer.application.service_container import ServiceContainer
 from ost_visualizer.application.services.annotation_view_event_handler import (
     AnnotationViewEventHandler,
@@ -263,6 +266,17 @@ class ApplicationLifecycleTests(unittest.TestCase):
         self.assertIsNone(service.project_data)
         self.assertIsNone(service.project_operations)
         self.assertIsNone(service.event_bus)
+
+    def test_visualization_orchestrator_cleanup_releases_service_reference(self):
+        service = FakeCleanupObject()
+        orchestrator = VisualizationOrchestrator()
+        orchestrator.set_visualization_service(service)
+
+        orchestrator.cleanup()
+        orchestrator.cleanup()
+
+        self.assertEqual(service.cleanup_calls, 1)
+        self.assertIsNone(orchestrator._visualization_service)
 
     def test_license_thread_manager_removes_thread_when_callback_dispatch_fails(self):
         class RaisingBridge:

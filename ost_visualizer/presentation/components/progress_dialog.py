@@ -104,6 +104,8 @@ class ProgressDialog(QtWidgets.QDialog):
         self._label.setText(f"{self._action_text} <b>{description}</b>...")
 
     def _on_finished(self, result: Any, error: Optional[Exception]) -> None:
+        if self._cleaned_up:
+            return
         self._result = result
         self._error = error
         if result:

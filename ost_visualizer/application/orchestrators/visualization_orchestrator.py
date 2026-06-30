@@ -12,3 +12,4 @@ class VisualizationOrchestrator:
     def cleanup(self) -> None:
         if self._visualization_service:
             self._visualization_service.cleanup()
+            self._visualization_service = None
