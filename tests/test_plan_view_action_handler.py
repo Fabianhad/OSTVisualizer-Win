@@ -53,6 +53,7 @@ class FakePlanView:
         self.restored_annotation_styles = []
         self.activated_annotations = []
         self.named_view_name_validator = None
+        self.placement_flow = []
 
     def set_selected_uids(self, uids):
         self.selected = set(uids)
@@ -97,9 +98,11 @@ class FakePlanView:
         self.restored_annotation_styles.append(list(changes))
 
     def cancel_place_mode(self):
+        self.placement_flow.append("cancel_place_mode")
         self.cancel_place_mode_calls += 1
 
     def activate_annotation_placement(self, annotation_type):
+        self.placement_flow.append(f"activate_annotation_placement:{annotation_type}")
         self.activated_annotations.append(annotation_type)
         return True
 
@@ -1389,6 +1392,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 FakeDialog.captured_named_views = list(named_views)
 
             def exec(self):
+                plan_view.placement_flow.append("dialog_exec")
                 return handler_module.QtWidgets.QDialog.DialogCode.Accepted
 
             def result_data(self):
@@ -1396,6 +1400,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
         with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
+        self.assertEqual(
+            plan_view.placement_flow[:2], ["cancel_place_mode", "dialog_exec"]
+        )
         self.assertEqual(
             FakeDialog.captured_named_views,
             [("nv1", "p2", "A101", "Lobby")],
@@ -1425,6 +1432,16 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 )
             ],
         )
+        self.assertEqual(plan_view.cancel_place_mode_calls, 1)
+        self.assertEqual(plan_view.activated_annotations, ["hotlink"])
+        self.assertEqual(
+            plan_view.placement_flow,
+            [
+                "cancel_place_mode",
+                "dialog_exec",
+                "activate_annotation_placement:hotlink",
+            ],
+        )
 
     def test_hotlink_create_new_switches_to_named_view_tool_without_write(self):
         ann_write = FakeAnnotationWriteService()
@@ -1447,6 +1464,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 pass
 
             def exec(self):
+                plan_view.placement_flow.append("dialog_exec")
                 return handler_module.QtWidgets.QDialog.DialogCode.Accepted
 
             def result_data(self):
@@ -1456,6 +1474,46 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
         self.assertEqual(ann_write.insert_calls, [])
         self.assertEqual(plan_view.activated_annotations, ["namedview"])
+        self.assertEqual(plan_view.cancel_place_mode_calls, 1)
+        self.assertEqual(
+            plan_view.placement_flow,
+            [
+                "cancel_place_mode",
+                "dialog_exec",
+                "activate_annotation_placement:namedview",
+            ],
+        )
+
+    def test_hotlink_dialog_cancel_exits_annotation_placement_without_write(self):
+        ann_write = FakeAnnotationWriteService()
+        plan_view = FakePlanView()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
+        )
+
+        class FakeDialog:
+            def __init__(self, named_views, parent=None):
+                pass
+
+            def exec(self):
+                plan_view.placement_flow.append("dialog_exec")
+                return handler_module.QtWidgets.QDialog.DialogCode.Rejected
+
+        with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
+            handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
+        self.assertEqual(ann_write.insert_calls, [])
+        self.assertEqual(plan_view.activated_annotations, [])
+        self.assertEqual(plan_view.cancel_place_mode_calls, 1)
+        self.assertEqual(plan_view.placement_flow, ["cancel_place_mode", "dialog_exec"])
 
     def test_denied_place_annotations_access_blocks_text_commit_write(self):
         ann_write = FakeAnnotationWriteService()

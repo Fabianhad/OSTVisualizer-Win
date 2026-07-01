@@ -5572,6 +5572,7 @@ class TakeoffPlanView(
         self._exit_place_mode()
         self._exit_annotation_place_mode()
         self._clear_backout_state()
+        self._apply_cursor_mode(CURSOR_MODE_SELECT)
         self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
 
     def cancel_backout_mode(self) -> None:

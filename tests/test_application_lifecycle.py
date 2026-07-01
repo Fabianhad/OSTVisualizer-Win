@@ -271,10 +271,8 @@ class ApplicationLifecycleTests(unittest.TestCase):
         service = FakeCleanupObject()
         orchestrator = VisualizationOrchestrator()
         orchestrator.set_visualization_service(service)
-
         orchestrator.cleanup()
         orchestrator.cleanup()
-
         self.assertEqual(service.cleanup_calls, 1)
         self.assertIsNone(orchestrator._visualization_service)
 

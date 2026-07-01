@@ -1632,6 +1632,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         bid_ref = self.view.bid_ref if self.view else None
         if bid_ref is None:
             return
+        self.plan_view.cancel_place_mode()
         dialog = SelectNamedViewDialog(self._named_views, parent=self)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return

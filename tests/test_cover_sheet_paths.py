@@ -187,7 +187,9 @@ class _FakeMouseEvent:
         self.accepted = True
 
 
-def _cover_sheet_data(*, image_path="", overlay_image_path=""):
+def _cover_sheet_data(
+    *, image_path="", overlay_image_path="", scale_factor1=0.125, scale_factor2=12.0
+):
     return CoverSheetData(
         bid_uid="7",
         job_status_uid="",
@@ -204,8 +206,8 @@ def _cover_sheet_data(*, image_path="", overlay_image_path=""):
                 name="Level 1",
                 width=42.0,
                 height=30.0,
-                scale_factor1=0.125,
-                scale_factor2=12.0,
+                scale_factor1=scale_factor1,
+                scale_factor2=scale_factor2,
                 image_path=image_path,
                 overlay_image_path=overlay_image_path,
                 index=1,
@@ -362,6 +364,21 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 folder_item.icon(0).cacheKey(),
                 IconManager.icon(IconId.FOLDER).cacheKey(),
             )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_page_scale_combo_includes_known_non_architectural_scales(self):
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(scale_factor1=1.0, scale_factor2=120.0),
+        )
+        try:
+            page_item = dialog.plan_tree.topLevelItem(0)
+            scale_combo = dialog.plan_tree.itemWidget(page_item, 3)
+            self.assertEqual(scale_combo.currentData(), (1.0, 120.0))
+            self.assertEqual(scale_combo.currentText(), '1" = 10\' 0"')
         finally:
             dialog.close()
             dialog.deleteLater()

@@ -31,7 +31,7 @@ from ...utils.messagebox import (
     show_warning,
 )
 from ...utils.overlay_context_menu import IMAGE_FILE_FILTER
-from ...utils.scales import ARCH_SCALES, SCALES_BY_STYLE
+from ...utils.scales import ALL_SCALES, ARCH_SCALES, SCALES_BY_STYLE
 from ...utils.windows import remove_minimize, set_initial_window_size
 from ..areas_dialog import BidAreasDialog
 from ..employees_dialog import EmployeesDialog
@@ -39,7 +39,6 @@ from ..job_statuses_dialog import JobStatusesDialog
 from .components import (
     PAGE_SIZES,
     PREF_PAGE_SIZES,
-    SCALE_LABELS,
     TIME_OPTIONS,
     PlanTreeWidget,
     format_scale,
@@ -1559,14 +1558,15 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
     def _build_scale_combo(self, sf1: float, sf2: float) -> QtWidgets.QComboBox:
         combo = QtWidgets.QComboBox()
-        for val, label in SCALE_LABELS:
-            combo.addItem(f"{label} = 1' 0\"", (val, 12.0))
         matched_idx = -1
-        if abs(sf2 - 12.0) < 0.01:
-            for i, (val, _) in enumerate(SCALE_LABELS):
-                if abs(sf1 - val) < 0.001:
-                    matched_idx = i
-                    break
+        for scale_sf1, scale_sf2, label in ALL_SCALES:
+            combo.addItem(label, (scale_sf1, scale_sf2))
+            if (
+                matched_idx == -1
+                and abs(sf1 - scale_sf1) < 0.001
+                and abs(sf2 - scale_sf2) < 0.01
+            ):
+                matched_idx = combo.count() - 1
         if matched_idx == -1:
             scale_str = format_scale(sf1, sf2) or f"{sf1:.4f}/{sf2:.4f}"
             combo.addItem(scale_str, (sf1, sf2))

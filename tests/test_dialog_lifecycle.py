@@ -163,9 +163,7 @@ class DialogLifecycleTests(unittest.TestCase):
         dialog._error = None
         dialog.accept = lambda: accepted.append(True)
         dialog.reject = lambda: rejected.append(True)
-
         ProgressDialog._on_finished(dialog, True, RuntimeError("late"))
-
         self.assertIsNone(dialog._result)
         self.assertIsNone(dialog._error)
         self.assertEqual(accepted, [])

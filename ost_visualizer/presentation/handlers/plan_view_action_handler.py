@@ -913,6 +913,7 @@ class PlanViewActionHandler:
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not page_uid or len(position) < 2:
             return
+        self._plan_view.cancel_place_mode()
         dialog = SelectNamedViewDialog(
             self._collect_named_view_choices(),
             parent=self._plan_view,

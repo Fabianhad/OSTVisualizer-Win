@@ -10,6 +10,8 @@
 - Conditions sidebar refreshes no longer reapply stale scroll positions from a previous project or rebuild.
 - Changing the active Area now immediately refreshes current-page takeoff overlay styling without requiring a page switch.
 - Switching pages after entering rotate mode from placement no longer raises an unhandled placement cursor assertion.
+- Hotlink placement now restores the normal cursor outside the plan canvas after choosing a named view while still allowing continuous hotlink placement.
+- Cover Sheet page scale selectors now include all known scale groups, so pages using civil or metric scales show the matching scale instead of a custom-looking value.
 - Re-enabling the Image layer now reloads the current page image when the visual layer was hidden across project switches or app restarts.
 - Takeoff edit previews now keep inactive-area styling instead of temporarily showing grayed-out items in full condition color.
 - PDF page rendering now retains a useful working set of large plan sheets instead of evicting most cached pages after only a few renders.
