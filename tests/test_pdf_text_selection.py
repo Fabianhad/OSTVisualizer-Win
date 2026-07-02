@@ -376,12 +376,12 @@ class PdfTextSelectionTests(unittest.TestCase):
         view._update_viewport_mouse_tracking()
         self.assertEqual(viewport.tracking, [True])
 
-    def test_select_mode_does_not_enable_mouse_tracking_without_pdf_text(self):
+    def test_select_mode_enables_passive_mouse_tracking_without_pdf_text(self):
         view = self._make_view()
         viewport = FakeTrackingViewport()
         view.viewport = lambda: viewport
         view._update_viewport_mouse_tracking()
-        self.assertEqual(viewport.tracking, [False])
+        self.assertEqual(viewport.tracking, [True])
 
     def test_takeoff_hover_priority_beats_pdf_text_cursor(self):
         view = self._make_view()

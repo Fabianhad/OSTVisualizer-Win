@@ -1574,6 +1574,52 @@ class InputHandlerMixin:
                 delta = preview_delta_by_uid.get(item.data(0), fallback_delta)
                 item.setPos(orig + delta)
 
+    def _move_selection_items_by_uid_delta(
+        self, delta_by_uid: dict, fallback_delta: QtCore.QPointF
+    ) -> None:
+        for item in self._selection_items:
+            delta = delta_by_uid.get(item.data(0), fallback_delta)
+            item.moveBy(delta.x(), delta.y())
+
+    def _apply_position_keyboard_move(self, ost_dx: float, ost_dy: float) -> bool:
+        fallback_sdx, fallback_sdy = self.ost_to_scene_delta(ost_dx, ost_dy)
+        fallback_delta = QtCore.QPointF(fallback_sdx, fallback_sdy)
+        delta_by_uid = {}
+        moved = False
+        for uid in self._selected_uids:
+            takeoff = self._current_takeoffs.get(uid)
+            ann = self._current_annotations.get(uid)
+            if takeoff is not None:
+                orig_pos = list(takeoff.position)
+            elif ann is not None and ann.is_interactive and ann.has_valid_position:
+                orig_pos = list(ann.position)
+            else:
+                continue
+            if not orig_pos:
+                continue
+            new_pos = self._compute_snapped_multi_drag_position(
+                uid, orig_pos, ost_dx, ost_dy
+            )
+            delta = self._snapped_multi_drag_scene_delta(
+                uid, orig_pos, new_pos, fallback_sdx, fallback_sdy
+            )
+            delta_by_uid[uid] = delta
+            for item in self._uid_to_items.get(uid, []):
+                item.moveBy(delta.x(), delta.y())
+            if uid not in self._position_before_edit:
+                self._position_before_edit[uid] = orig_pos
+            if takeoff is not None:
+                takeoff.position = new_pos
+                self._dirty_positions[uid] = new_pos
+            else:
+                ann.position = new_pos
+                self._dirty_ann_positions[uid] = (ann.annotation_type, new_pos)
+            moved = True
+        if moved:
+            self._move_selection_items_by_uid_delta(delta_by_uid, fallback_delta)
+            self._keyboard_move_dirty = True
+        return moved
+
     def _compute_ann_resize(
         self, ann, orig_pos, ost_dx, ost_dy, handle_idx, corner_count
     ):
@@ -2143,34 +2189,23 @@ class InputHandlerMixin:
                 if key == Qt.Key.Key_Up
                 else (step if key == Qt.Key.Key_Down else 0.0)
             )
-            cs = self._scene_builder.get_coordinate_system()
-            scene_dx = ost_dx * 72.0 * cs.view_scale / cs.scale_ratio
-            scene_dy = ost_dy * 72.0 * cs.view_scale / cs.scale_ratio
-            bulk = []
-            for uid in self._selected_uids:
-                takeoff = self._current_takeoffs.get(uid)
-                if not takeoff:
-                    continue
-                pos = list(takeoff.position)
-                if uid not in self._position_before_edit:
-                    self._position_before_edit[uid] = list(pos)
-                n = (len(pos) // 2) * 2
-                for i in range(0, n, 2):
-                    pos[i] += ost_dx
-                    pos[i + 1] += ost_dy
-                takeoff.position = pos
-                for item in self._uid_to_items.get(uid, []):
-                    item.moveBy(scene_dx, scene_dy)
-                bulk.append((uid, pos))
-            for item in self._selection_items:
-                item.moveBy(scene_dx, scene_dy)
-            for uid, pos in bulk:
-                self._dirty_positions[uid] = pos
-            event.accept()
-            return
+            if self._apply_position_keyboard_move(ost_dx, ost_dy):
+                event.accept()
+                return
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event) -> None:
+        if event.key() in {
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Up,
+            Qt.Key.Key_Down,
+        }:
+            if self._keyboard_move_dirty:
+                self._keyboard_move_dirty = False
+                self._flush_dirty_positions()
+                event.accept()
+                return
         if event.key() == Qt.Key.Key_Control and not event.isAutoRepeat():
             self._ctrl_held = False
             if self._zoom_press_ctrl:

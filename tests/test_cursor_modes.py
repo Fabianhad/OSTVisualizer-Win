@@ -29,10 +29,11 @@ class CursorModeConstantsTest(unittest.TestCase):
         self.assertEqual(CURSOR_MODE_MOVE_OVERLAY, "move_overlay")
         self.assertEqual(CURSOR_MODE_MOVE_OVERLAY_HANDLE, "move_overlay_handle")
 
-    def test_passive_mouse_tracking_modes_include_preview_modes(self):
+    def test_passive_mouse_tracking_modes_include_select_and_preview_modes(self):
         self.assertEqual(
             PASSIVE_MOUSE_TRACKING_CURSOR_MODES,
             {
+                CURSOR_MODE_SELECT,
                 CURSOR_MODE_PLACE,
                 CURSOR_MODE_ANNOTATION_PLACE,
                 CURSOR_MODE_PASTE_BACKOUT,

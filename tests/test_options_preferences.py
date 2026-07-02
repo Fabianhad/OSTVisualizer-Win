@@ -2211,7 +2211,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(viewport.updates, 1)
         TakeoffPlanView.set_full_window_crosshairs(view, False, "#654321", 2)
         self.assertFalse(view._use_full_window_crosshairs)
-        self.assertEqual(viewport.tracking, [True, False])
+        self.assertEqual(viewport.tracking, [True, True])
         self.assertEqual(viewport.updates, 2)
 
     def test_crosshair_disabled_keeps_mouse_tracking_on_during_placement(self):
@@ -2227,7 +2227,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         TakeoffPlanView._apply_cursor_mode(view, "paste_backout")
         TakeoffPlanView._apply_cursor_mode(view, "rotate")
         TakeoffPlanView._apply_cursor_mode(view, "select")
-        self.assertEqual(viewport.tracking, [True, True, True, False])
+        self.assertEqual(viewport.tracking, [True, True, True, True])
         self.assertEqual(viewport.updates, 4)
 
     def test_backout_action_state_matches_context_rules(self):

@@ -491,6 +491,9 @@ class FakeItem:
         else:
             self._pos = QtCore.QPointF(args[0], args[1])
 
+    def moveBy(self, dx, dy):
+        self._pos += QtCore.QPointF(float(dx), float(dy))
+
     def data(self, role):
         return self._uid if role == 0 else None
 
@@ -691,6 +694,7 @@ class CtrlDragTests(unittest.TestCase):
         view._drag_uid_orig_items = {}
         view._drag_multi_orig_positions = {}
         view._drag_last_valid_new_pos = []
+        view._keyboard_move_dirty = False
         view._selected_uids = set({"t1"} if selected_uids is None else selected_uids)
         view._handle_infos = []
         view._selection_items = []
@@ -712,6 +716,11 @@ class CtrlDragTests(unittest.TestCase):
         view._rubber_band_origin = None
         view._rubber_band = None
         view._update_cursor = lambda *args, **_call_options: None
+        view._snap_increments = 1.0
+        view._position_before_edit = {}
+        view._dirty_positions = {}
+        view._dirty_ann_positions = {}
+        view.ost_to_scene_delta = lambda dx, dy: (dx, dy)
         return view
 
     def _make_area_control_point_view(self, selected_uids=None, include_hole=False):
@@ -1878,6 +1887,89 @@ class CtrlDragTests(unittest.TestCase):
         )
         self.assertEqual(border1.pos(), QtCore.QPointF(307.0, 307.0))
         self.assertEqual(border2.pos(), QtCore.QPointF(408.0, 408.0))
+
+    def test_multi_hotlink_arrow_move_updates_graphics_and_dirty_positions(self):
+        view = self._make_view({"hot1", "hot2"})
+        hot1 = BidAnnotation(
+            uid="hot1",
+            annotation_type="hotlink",
+            position=[10.0, 20.0],
+        )
+        hot2 = BidAnnotation(
+            uid="hot2",
+            annotation_type="hotlink",
+            position=[30.0, 40.0],
+        )
+        view._current_takeoffs = {}
+        view._current_annotations = {"hot1": hot1, "hot2": hot2}
+        hot1_item = FakeItem(100.0, 200.0, uid="hot1")
+        hot2_item = FakeItem(300.0, 400.0, uid="hot2")
+        border1 = FakeItem(500.0, 600.0, uid="hot1")
+        border2 = FakeItem(700.0, 800.0, uid="hot2")
+        view._uid_to_items = {"hot1": [hot1_item], "hot2": [hot2_item]}
+        view._selection_items = [border1, border2]
+        event = FakeKeyEvent(Qt.Key.Key_Right)
+        InputHandlerMixin.keyPressEvent(view, event)
+        self.assertTrue(event.accepted)
+        self.assertEqual(hot1.position, [11.0, 20.0])
+        self.assertEqual(hot2.position, [31.0, 40.0])
+        self.assertEqual(hot1_item.pos(), QtCore.QPointF(101.0, 200.0))
+        self.assertEqual(hot2_item.pos(), QtCore.QPointF(301.0, 400.0))
+        self.assertEqual(border1.pos(), QtCore.QPointF(501.0, 600.0))
+        self.assertEqual(border2.pos(), QtCore.QPointF(701.0, 800.0))
+        self.assertEqual(
+            view._dirty_ann_positions,
+            {
+                "hot1": ("hotlink", [11.0, 20.0]),
+                "hot2": ("hotlink", [31.0, 40.0]),
+            },
+        )
+
+    def test_single_hotlink_arrow_move_flushes_on_key_release(self):
+        view = self._make_view({"hot1"})
+        hotlink = BidAnnotation(
+            uid="hot1",
+            annotation_type="hotlink",
+            position=[10.0, 20.0],
+        )
+        view._current_takeoffs = {}
+        view._current_annotations = {"hot1": hotlink}
+        view._uid_to_items = {"hot1": [FakeItem(100.0, 200.0, uid="hot1")]}
+        flushed = []
+
+        def flush_dirty_positions():
+            flushed.append(dict(view._dirty_ann_positions))
+            view._dirty_ann_positions.clear()
+            view._position_before_edit.clear()
+
+        view._flush_dirty_positions = flush_dirty_positions
+        InputHandlerMixin.keyPressEvent(view, FakeKeyEvent(Qt.Key.Key_Down))
+        release = FakeKeyEvent(Qt.Key.Key_Down)
+        InputHandlerMixin.keyReleaseEvent(view, release)
+        self.assertTrue(release.accepted)
+        self.assertEqual(hotlink.position, [10.0, 21.0])
+        self.assertEqual(flushed, [{"hot1": ("hotlink", [10.0, 21.0])}])
+        self.assertFalse(view._keyboard_move_dirty)
+
+    def test_takeoff_arrow_move_uses_same_key_release_flush_boundary(self):
+        view = self._make_view({"t1"})
+        flushed = []
+
+        def flush_dirty_positions():
+            flushed.append(dict(view._dirty_positions))
+            view._dirty_positions.clear()
+            view._position_before_edit.clear()
+
+        view._flush_dirty_positions = flush_dirty_positions
+        InputHandlerMixin.keyPressEvent(view, FakeKeyEvent(Qt.Key.Key_Right))
+        release = FakeKeyEvent(Qt.Key.Key_Right)
+        InputHandlerMixin.keyReleaseEvent(view, release)
+        self.assertTrue(release.accepted)
+        self.assertEqual(
+            view._current_takeoffs["t1"].position,
+            [1.0, 0.0, 11.0, 0.0],
+        )
+        self.assertEqual(flushed, [{"t1": [1.0, 0.0, 11.0, 0.0]}])
 
     def test_rotation_preview_does_not_rotate_condition_label_items(self):
         view = self._make_view({"t1"})

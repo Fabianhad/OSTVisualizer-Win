@@ -411,6 +411,7 @@ class TakeoffPlanView(
         self._dirty_ann_positions: Dict[str, Tuple[str, List[float]]] = {}
         self._refreshing_overlays: bool = False
         self._position_before_edit: Dict[str, List[float]] = {}
+        self._keyboard_move_dirty: bool = False
         self._ann_db_uid_map: Dict[str, str] = {}
         self._drag_plan_item_uid: Optional[str] = None
         self._drag_handle_index: int = -2
@@ -3441,9 +3442,7 @@ class TakeoffPlanView(
         self._update_viewport_mouse_tracking()
 
     def _cursor_mode_needs_passive_mouse_tracking(self) -> bool:
-        return self._cursor_mode in PASSIVE_MOUSE_TRACKING_CURSOR_MODES or (
-            self._cursor_mode == CURSOR_MODE_SELECT and bool(self._pdf_text_runs)
-        )
+        return self._cursor_mode in PASSIVE_MOUSE_TRACKING_CURSOR_MODES
 
     def _update_viewport_mouse_tracking(self) -> None:
         viewport = self.viewport()
@@ -3576,6 +3575,7 @@ class TakeoffPlanView(
         if self._refreshing_overlays:
             return
         if not self._dirty_positions and not self._dirty_ann_positions:
+            self._keyboard_move_dirty = False
             return
         if self._dirty_positions:
             self._invalidate_snap_index()
@@ -3585,6 +3585,7 @@ class TakeoffPlanView(
         self._dirty_positions.clear()
         self._dirty_ann_positions.clear()
         self._position_before_edit.clear()
+        self._keyboard_move_dirty = False
         takeoff_changes = [(uid, prev.get(uid, []), pos) for uid, pos in dirty.items()]
         ann_changes = [
             (self._ann_db_uid_map.get(uid, uid), ann_type, prev.get(uid, []), new_pos)
