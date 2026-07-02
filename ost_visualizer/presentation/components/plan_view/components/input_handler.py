@@ -2345,16 +2345,22 @@ class InputHandlerMixin:
         if not self._selection_enabled:
             return None
         takeoff = self._current_takeoffs.get(target.takeoff_uid)
-        if takeoff is None or takeoff.is_hole:
+        if takeoff is None:
             return None
         condition = self._current_conditions.get(takeoff.condition_uid)
         if condition is None or not condition.is_area:
             return None
-        if any(
-            child.uid != target.takeoff_uid and child.parent_uid == target.takeoff_uid
-            for child in self._current_takeoffs.values()
-        ):
-            return None
+        if takeoff.is_hole:
+            parent = self._current_takeoffs.get(takeoff.parent_uid)
+            parent_condition = (
+                self._current_conditions.get(parent.condition_uid) if parent else None
+            )
+            if (
+                parent is None
+                or parent.is_hole
+                or not (parent_condition and parent_condition.is_area)
+            ):
+                return None
         raw_pos = self._scene_builder.get_coordinate_system().parse_position(
             takeoff.position
         )
@@ -2381,11 +2387,19 @@ class InputHandlerMixin:
             new_pos = raw_pos[:remove_at] + raw_pos[remove_at + 2 :]
         else:
             return None
+        cs = self._scene_builder.get_coordinate_system()
+        tx_pos = cs.transform_vertices_to_2d(new_pos)
         area_pts = [
-            (new_pos[index], new_pos[index + 1]) for index in range(0, len(new_pos), 2)
+            (tx_pos[index], tx_pos[index + 1]) for index in range(0, len(tx_pos), 2)
         ]
         if len(area_pts) < 3 or not polygon_is_valid(area_pts):
             return None
+        if takeoff.is_hole:
+            if not self._validate_hole_position(takeoff, new_pos, area_pts):
+                return None
+        elif self._has_child_holes(target.takeoff_uid):
+            if not self._validate_parent_contains_holes(target.takeoff_uid, new_pos):
+                return None
         return new_pos
 
     def _add_area_control_point_context_action(self, menu: QMenu, target):

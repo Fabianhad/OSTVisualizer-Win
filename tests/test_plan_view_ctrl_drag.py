@@ -536,6 +536,36 @@ AREA_CP_SUBTRACTED_FIRST_VERTEX_POSITION = [
     0.0,
     100.0,
 ]
+AREA_CP_HOLE_ORIGINAL_POSITION = [
+    20.0,
+    20.0,
+    40.0,
+    20.0,
+    40.0,
+    40.0,
+    20.0,
+    40.0,
+]
+AREA_CP_HOLE_ADDED_POSITION = [
+    20.0,
+    20.0,
+    30.0,
+    20.0,
+    40.0,
+    20.0,
+    40.0,
+    40.0,
+    20.0,
+    40.0,
+]
+AREA_CP_HOLE_SUBTRACTED_SECOND_VERTEX_POSITION = [
+    20.0,
+    20.0,
+    40.0,
+    40.0,
+    20.0,
+    40.0,
+]
 
 
 class FakeCoordinateSystem:
@@ -684,7 +714,7 @@ class CtrlDragTests(unittest.TestCase):
         view._update_cursor = lambda *args, **_call_options: None
         return view
 
-    def _make_area_control_point_view(self, selected_uids=None):
+    def _make_area_control_point_view(self, selected_uids=None, include_hole=False):
         view = self._make_view(set() if selected_uids is None else selected_uids)
         view._scene = QGraphicsScene()
         view._scene_builder = FakeSceneBuilder()
@@ -717,6 +747,14 @@ class CtrlDragTests(unittest.TestCase):
                 position=[200.0, 0.0, 300.0, 0.0],
             ),
         }
+        if include_hole:
+            view._current_takeoffs["hole1"] = Takeoff(
+                uid="hole1",
+                condition_uid="area",
+                page_uid="page-1",
+                parent_uid="area1",
+                position=list(AREA_CP_HOLE_ORIGINAL_POSITION),
+            )
         area_path = QPainterPath()
         area_path.moveTo(0.0, 0.0)
         area_path.lineTo(100.0, 0.0)
@@ -726,6 +764,19 @@ class CtrlDragTests(unittest.TestCase):
         area_item = QGraphicsPathItem(area_path)
         area_item.setData(0, "area1")
         area_item.setZValue(0.5)
+        items_by_uid = {"area1": [area_item]}
+        if include_hole:
+            hole_path = QPainterPath()
+            hole_path.moveTo(20.0, 20.0)
+            hole_path.lineTo(40.0, 20.0)
+            hole_path.lineTo(40.0, 40.0)
+            hole_path.lineTo(20.0, 40.0)
+            hole_path.closeSubpath()
+            hole_item = QGraphicsPathItem(hole_path)
+            hole_item.setData(0, "hole1")
+            hole_item.setZValue(0.6)
+            view._scene.addItem(hole_item)
+            items_by_uid["hole1"] = [hole_item]
         linear_path = QPainterPath()
         linear_path.moveTo(200.0, 0.0)
         linear_path.lineTo(300.0, 0.0)
@@ -734,7 +785,8 @@ class CtrlDragTests(unittest.TestCase):
         linear_item.setZValue(0.5)
         view._scene.addItem(area_item)
         view._scene.addItem(linear_item)
-        view._uid_to_items = {"area1": [area_item], "linear1": [linear_item]}
+        items_by_uid["linear1"] = [linear_item]
+        view._uid_to_items = items_by_uid
         view._current_annotations = {}
         view._hotlink_items = []
         view._current_page_transform = lambda: None
@@ -850,19 +902,54 @@ class CtrlDragTests(unittest.TestCase):
         self.assertFalse(view._apply_area_control_point_target(target))
         self.assertEqual(view.positions_flushed.emitted, [])
 
-    def test_area_control_point_target_skips_holes_and_parents_with_holes(self):
-        view = self._make_area_control_point_view()
-        view._current_takeoffs["area1"].parent_uid = "parent-area"
-        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0)))
-        view = self._make_area_control_point_view()
-        view._current_takeoffs["hole1"] = Takeoff(
-            uid="hole1",
-            condition_uid="area",
+    def test_area_control_point_target_supports_parent_with_child_holes(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        target = view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0))
+        self.assertEqual(target.kind, "edge")
+        self.assertEqual(target.takeoff_uid, "area1")
+
+    def test_hole_control_point_target_returns_edge_near_boundary(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        target = view.area_control_point_target_at(QtCore.QPointF(30.0, 20.0))
+        self.assertEqual(target.kind, "edge")
+        self.assertEqual(target.takeoff_uid, "hole1")
+        self.assertEqual(target.edge_index, 0)
+        self.assertEqual(target.insert_point, (30.0, 20.0))
+
+    def test_hole_control_point_target_prefers_vertex_over_edge(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        target = view.area_control_point_target_at(QtCore.QPointF(20.0, 20.0))
+        self.assertEqual(target.kind, "vertex")
+        self.assertEqual(target.takeoff_uid, "hole1")
+        self.assertEqual(target.vertex_index, 0)
+
+    def test_hole_control_point_target_ignores_fill_click(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(30.0, 30.0)))
+
+    def test_hole_control_point_target_rejects_missing_parent(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        view._current_takeoffs["hole1"].parent_uid = "missing-parent"
+        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(30.0, 20.0)))
+
+    def test_hole_control_point_target_rejects_non_area_parent(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        view._current_takeoffs["parent-linear"] = Takeoff(
+            uid="parent-linear",
+            condition_uid="linear",
             page_uid="page-1",
-            parent_uid="area1",
-            position=[20.0, 20.0, 40.0, 20.0, 40.0, 40.0, 20.0, 40.0],
+            position=[200.0, 0.0, 300.0, 0.0],
         )
-        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0)))
+        view._current_takeoffs["hole1"].parent_uid = "parent-linear"
+        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(30.0, 20.0)))
+        target = AreaControlPointTarget(
+            takeoff_uid="hole1",
+            kind="edge",
+            edge_index=0,
+            insert_point=(30.0, 20.0),
+        )
+        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertEqual(view.positions_flushed.emitted, [])
 
     def test_add_area_control_point_flushes_old_and_new_position(self):
         view = self._make_area_control_point_view()
@@ -922,6 +1009,91 @@ class CtrlDragTests(unittest.TestCase):
             self.assertFalse(view._apply_area_control_point_target(target))
         self.assertEqual(view.positions_flushed.emitted, [])
 
+    def test_add_hole_control_point_flushes_old_and_new_position(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        old_pos = list(view._current_takeoffs["hole1"].position)
+        target = AreaControlPointTarget(
+            takeoff_uid="hole1",
+            kind="edge",
+            edge_index=0,
+            insert_point=(30.0, 20.0),
+        )
+        self.assertTrue(view._apply_area_control_point_target(target))
+        new_pos = list(AREA_CP_HOLE_ADDED_POSITION)
+        self.assertEqual(view._current_takeoffs["hole1"].position, new_pos)
+        self.assertEqual(
+            view.positions_flushed.emitted,
+            [([("hole1", old_pos, new_pos)], [])],
+        )
+
+    def test_subtract_hole_control_point_flushes_old_and_new_position(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        old_pos = list(view._current_takeoffs["hole1"].position)
+        target = AreaControlPointTarget(
+            takeoff_uid="hole1",
+            kind="vertex",
+            vertex_index=1,
+        )
+        self.assertTrue(view._apply_area_control_point_target(target))
+        new_pos = list(AREA_CP_HOLE_SUBTRACTED_SECOND_VERTEX_POSITION)
+        self.assertEqual(view._current_takeoffs["hole1"].position, new_pos)
+        self.assertEqual(
+            view.positions_flushed.emitted,
+            [([("hole1", old_pos, new_pos)], [])],
+        )
+
+    def test_subtract_hole_control_point_rejects_triangle(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        view._current_takeoffs["hole1"].position = [20.0, 20.0, 40.0, 20.0, 20.0, 40.0]
+        target = AreaControlPointTarget(
+            takeoff_uid="hole1",
+            kind="vertex",
+            vertex_index=1,
+        )
+        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertEqual(view.positions_flushed.emitted, [])
+
+    def test_hole_control_point_rejects_invalid_polygon_result(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        target = AreaControlPointTarget(
+            takeoff_uid="hole1",
+            kind="edge",
+            edge_index=0,
+            insert_point=(30.0, 20.0),
+        )
+        with patch.object(input_handler_module, "polygon_is_valid", return_value=False):
+            self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertEqual(view.positions_flushed.emitted, [])
+
+    def test_hole_control_point_rejects_position_outside_parent(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        target = AreaControlPointTarget(
+            takeoff_uid="hole1",
+            kind="edge",
+            edge_index=1,
+            insert_point=(150.0, 30.0),
+        )
+        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertEqual(view.positions_flushed.emitted, [])
+
+    def test_hole_control_point_rejects_sibling_overlap(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        view._current_takeoffs["hole2"] = Takeoff(
+            uid="hole2",
+            condition_uid="area",
+            page_uid="page-1",
+            parent_uid="area1",
+            position=[45.0, 20.0, 65.0, 20.0, 65.0, 40.0, 45.0, 40.0],
+        )
+        target = AreaControlPointTarget(
+            takeoff_uid="hole1",
+            kind="edge",
+            edge_index=1,
+            insert_point=(55.0, 30.0),
+        )
+        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertEqual(view.positions_flushed.emitted, [])
+
     def test_context_menu_shows_add_control_point_only_for_edge_target(self):
         view = self._make_area_control_point_view()
         texts = self._capture_context_menu(view, 50.0, 0.0)
@@ -934,11 +1106,33 @@ class CtrlDragTests(unittest.TestCase):
         self.assertIn("Subtract Control Point", texts)
         self.assertNotIn("Add Control Point", texts)
 
+    def test_context_menu_shows_add_control_point_for_hole_edge_target(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        texts = self._capture_context_menu(view, 30.0, 20.0)
+        self.assertIn("Add Control Point", texts)
+        self.assertNotIn("Subtract Control Point", texts)
+
+    def test_context_menu_shows_subtract_control_point_for_hole_vertex_target(self):
+        view = self._make_area_control_point_view(include_hole=True)
+        texts = self._capture_context_menu(view, 20.0, 20.0)
+        self.assertIn("Subtract Control Point", texts)
+        self.assertNotIn("Add Control Point", texts)
+
     def test_context_menu_uses_actual_hit_not_stale_selected_area(self):
         view = self._make_area_control_point_view({"area1"})
         texts = self._capture_context_menu(view, 50.0, 50.0)
         self.assertNotIn("Add Control Point", texts)
         self.assertNotIn("Subtract Control Point", texts)
+
+    def test_context_menu_uses_actual_hole_hit_not_parent_selection(self):
+        view = self._make_area_control_point_view({"area1"}, include_hole=True)
+        self._capture_context_menu(view, 30.0, 20.0, action_text="Add Control Point")
+        self.assertEqual(
+            view._current_takeoffs["hole1"].position, AREA_CP_HOLE_ADDED_POSITION
+        )
+        self.assertEqual(
+            view._current_takeoffs["area1"].position, AREA_CP_ORIGINAL_POSITION
+        )
 
     def test_context_menu_add_control_point_uses_existing_flush_path(self):
         view = self._make_area_control_point_view()

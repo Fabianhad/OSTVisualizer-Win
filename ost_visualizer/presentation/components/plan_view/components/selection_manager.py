@@ -394,20 +394,28 @@ class SelectionManagerMixin:
         if not self._selection_enabled or not self._is_selectable(uid):
             return False
         takeoff = self._current_takeoffs.get(uid)
-        if takeoff is None or takeoff.is_hole:
+        if takeoff is None:
             return False
         condition = self._current_conditions.get(takeoff.condition_uid)
         if condition is None or not condition.is_area:
             return False
+        if takeoff.is_hole:
+            parent = self._current_takeoffs.get(takeoff.parent_uid)
+            parent_condition = (
+                self._current_conditions.get(parent.condition_uid) if parent else None
+            )
+            if (
+                parent is None
+                or parent.is_hole
+                or not (parent_condition and parent_condition.is_area)
+            ):
+                return False
         raw_pos = self._scene_builder.get_coordinate_system().parse_position(
             takeoff.position
         )
         if not raw_pos or len(raw_pos) < 6 or len(raw_pos) % 2 != 0:
             return False
-        return not any(
-            child.uid != uid and child.parent_uid == uid
-            for child in self._current_takeoffs.values()
-        )
+        return True
 
     def _area_control_point_candidate_uids(
         self, scene_pos: QtCore.QPointF
