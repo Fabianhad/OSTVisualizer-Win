@@ -11,6 +11,7 @@
 - Changing the active Area now immediately refreshes current-page takeoff overlay styling without requiring a page switch.
 - Switching pages after entering rotate mode from placement no longer raises an unhandled placement cursor assertion.
 - Hotlink placement now restores the normal cursor outside the plan canvas after choosing a named view while still allowing continuous hotlink placement.
+- Bulk named-view deletion now skips only the named views declined during linked-hotlink confirmation instead of canceling the remaining selected deletes.
 - Cover Sheet page scale selectors now include all known scale groups, so pages using civil or metric scales show the matching scale instead of a custom-looking value.
 - Re-enabling the Image layer now reloads the current page image when the visual layer was hidden across project switches or app restarts.
 - Takeoff edit previews now keep inactive-area styling instead of temporarily showing grayed-out items in full condition color.

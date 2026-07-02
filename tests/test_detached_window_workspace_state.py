@@ -50,6 +50,35 @@ def _encoded_geometry(value: bytes = b"geometry") -> str:
     return bytes(QtCore.QByteArray(value).toBase64()).decode("ascii")
 
 
+def _named_view_annotation(uid: str, name: str) -> BidAnnotation:
+    return BidAnnotation(
+        uid=uid,
+        annotation_type="namedview",
+        page_uid="p1",
+        position=[13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+        properties={"Text": name},
+    )
+
+
+def _hotlink_annotation(uid: str, target_named_view_uid: str) -> BidAnnotation:
+    return BidAnnotation(
+        uid=uid,
+        annotation_type="hotlink",
+        page_uid="p1",
+        position=[5.0, 6.0],
+        properties={"BidPageViewUID": target_named_view_uid},
+    )
+
+
+def _rect_annotation(uid: str) -> BidAnnotation:
+    return BidAnnotation(
+        uid=uid,
+        annotation_type="rect",
+        page_uid="p1",
+        position=[1.0, 2.0, 3.0, 4.0],
+    )
+
+
 class WorkspaceStateDecodeTests(unittest.TestCase):
     def test_decode_byte_array_rejects_corrupted_non_string_state(self):
         decoded = WorkspaceStateCoordinator._decode_byte_array(123)
@@ -2777,6 +2806,63 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(plan_view.selected_uids, {"nv2_namedview", "hl2_hotlink"})
         redo()
         self.assertEqual(write_service.delete_reload_flags, [False, False])
+
+    def test_detached_bulk_named_view_delete_decline_skips_only_that_view(self):
+        skipped_view = _named_view_annotation("nv1", "Lobby")
+        skipped_hotlink = _hotlink_annotation("hl1", "nv1")
+        confirmed_view = _named_view_annotation("nv2", "Office")
+        confirmed_hotlink = _hotlink_annotation("hl2", "nv2")
+        rect = _rect_annotation("r1")
+        write_service = FakeAnnotationWriteService()
+        undo_service = FakeUndoService()
+        plan_view = FakeDetachedPlanView([skipped_view, confirmed_view, rect])
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = False
+        window.page_data = FakeDetachedPageData()
+        window._is_closing = False
+        window._ann_write_svc = write_service
+        project_data, event_bus = self._attach_annotation_write_coordinator(
+            window,
+            write_service,
+            [skipped_view, skipped_hotlink, confirmed_view, confirmed_hotlink, rect],
+        )
+        window._undo_svc = undo_service
+        window.plan_view = plan_view
+        window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
+        window._get_db_path = lambda: "bid.mdb"
+        hotlinks = [skipped_hotlink, confirmed_hotlink]
+        window._linked_hotlink_resolver = lambda uids: [
+            hotlink for hotlink in hotlinks if hotlink.hotlink_target_view_uid in uids
+        ]
+        with patch(
+            "ost_visualizer.presentation.windows.components.window.confirm",
+            side_effect=[False, True],
+        ):
+            window._on_elements_deleted(["nv1", "nv2", "r1"])
+        self.assertEqual(
+            write_service.delete_calls,
+            [
+                (
+                    "bid.mdb",
+                    [("hl2", "hotlink"), ("r1", "rect"), ("nv2", "namedview")],
+                )
+            ],
+        )
+        self.assertEqual(write_service.delete_reload_flags, [False])
+        self.assertEqual(
+            [
+                (annotation.uid, annotation.annotation_type)
+                for annotation in project_data.annotations
+            ],
+            [("nv1", "namedview"), ("hl1", "hotlink")],
+        )
+        self.assertEqual(plan_view.selected_uids, {"nv1"})
+        self.assertEqual(len(undo_service.pushes), 1)
+        self.assertEqual(
+            [event[0] for event in event_bus.events],
+            [AppEvents.ANNOTATIONS_CHANGED, AppEvents.NAMED_VIEW_DELETED],
+        )
 
     def test_detached_annotation_style_change_uses_style_write_path(self):
         annotation = BidAnnotation(

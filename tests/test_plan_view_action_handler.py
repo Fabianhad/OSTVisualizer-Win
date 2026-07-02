@@ -31,6 +31,35 @@ from ost_visualizer.presentation.utils.annotation_defaults import (
 )
 
 
+def _named_view_annotation(uid: str, name: str) -> BidAnnotation:
+    return BidAnnotation(
+        uid=uid,
+        annotation_type="namedview",
+        page_uid="p1",
+        position=[13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+        properties={"Text": name},
+    )
+
+
+def _hotlink_annotation(uid: str, target_named_view_uid: str) -> BidAnnotation:
+    return BidAnnotation(
+        uid=uid,
+        annotation_type="hotlink",
+        page_uid="p1",
+        position=[5.0, 6.0],
+        properties={"BidPageViewUID": target_named_view_uid},
+    )
+
+
+def _rect_annotation(uid: str) -> BidAnnotation:
+    return BidAnnotation(
+        uid=uid,
+        annotation_type="rect",
+        page_uid="p1",
+        position=[1.0, 2.0, 3.0, 4.0],
+    )
+
+
 class FakePlanView:
     def __init__(self, data=None):
         self.selected = set()
@@ -3259,6 +3288,104 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [AppEvents.ANNOTATIONS_CHANGED, AppEvents.NAMED_VIEW_DELETED],
         )
         self.assertEqual(undo.count, 1)
+
+    def test_bulk_named_view_delete_decline_skips_only_that_view(self):
+        data = FakeProjectData()
+        skipped_view = _named_view_annotation("nv1", "Lobby")
+        skipped_hotlink = _hotlink_annotation("hl1", "nv1")
+        confirmed_view = _named_view_annotation("nv2", "Office")
+        confirmed_hotlink = _hotlink_annotation("hl2", "nv2")
+        rect = _rect_annotation("r1")
+        data.annotations = [
+            skipped_view,
+            skipped_hotlink,
+            confirmed_view,
+            confirmed_hotlink,
+            rect,
+        ]
+        plan_view = FakePlanView(data)
+        plan_view.annotations = {
+            "nv1": skipped_view,
+            "nv2": confirmed_view,
+            "r1": rect,
+        }
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+        )
+        with patch.object(handler_module, "confirm", side_effect=[False, True]):
+            handler.on_elements_deleted(["nv1", "nv2", "r1"])
+        self.assertEqual(
+            ann_write.delete_calls,
+            [
+                (
+                    "bid.mdb",
+                    [("hl2", "hotlink"), ("r1", "rect"), ("nv2", "namedview")],
+                    False,
+                )
+            ],
+        )
+        self.assertEqual(
+            [(a.uid, a.annotation_type) for a in data.annotations],
+            [("nv1", "namedview"), ("hl1", "hotlink")],
+        )
+        self.assertEqual(plan_view.selected, {"nv1"})
+        self.assertEqual(undo.count, 1)
+        self.assertEqual(
+            [event for event, _event_payload in event_bus.events],
+            [AppEvents.ANNOTATIONS_CHANGED, AppEvents.NAMED_VIEW_DELETED],
+        )
+
+    def test_bulk_named_view_delete_all_skipped_does_not_write_or_refresh(self):
+        data = FakeProjectData()
+        first_view = _named_view_annotation("nv1", "Lobby")
+        first_hotlink = _hotlink_annotation("hl1", "nv1")
+        second_view = _named_view_annotation("nv2", "Office")
+        second_hotlink = _hotlink_annotation("hl2", "nv2")
+        data.annotations = [first_view, first_hotlink, second_view, second_hotlink]
+        plan_view = FakePlanView(data)
+        plan_view.annotations = {"nv1": first_view, "nv2": second_view}
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+        )
+        with patch.object(handler_module, "confirm", side_effect=[False, False]):
+            handler.on_elements_deleted(["nv1", "nv2"])
+        self.assertEqual(ann_write.delete_calls, [])
+        self.assertEqual(
+            [(a.uid, a.annotation_type) for a in data.annotations],
+            [
+                ("nv1", "namedview"),
+                ("hl1", "hotlink"),
+                ("nv2", "namedview"),
+                ("hl2", "hotlink"),
+            ],
+        )
+        self.assertEqual(plan_view.selected, {"nv1", "nv2"})
+        self.assertEqual(undo.count, 0)
+        self.assertEqual(event_bus.events, [])
 
     def test_paste_parent_child_undo_redo_preserves_parent_remap(self):
         parent = Takeoff(

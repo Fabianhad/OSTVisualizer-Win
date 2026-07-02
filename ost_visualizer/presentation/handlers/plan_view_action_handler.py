@@ -31,7 +31,8 @@ from ..services.selection_commands import (
 )
 from ..utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
-    order_annotations_for_delete,
+    plan_named_view_hotlink_delete,
+    skipped_named_view_selection_keys,
 )
 from ..utils.annotation_defaults import (
     build_placed_annotation_spec,
@@ -1202,6 +1203,7 @@ class PlanViewActionHandler:
         db_path = bid_ref.file_path
         saved_takeoffs = []
         saved_annotations = []
+        annotation_selection_keys = {}
         for uid in uids:
             t = self._resolver.resolve_takeoff(uid)
             if t:
@@ -1210,6 +1212,7 @@ class PlanViewActionHandler:
             a = self._plan_view.get_annotation(uid)
             if a and a.is_interactive:
                 saved_annotations.append(a)
+                annotation_selection_keys[(str(a.uid), str(a.annotation_type))] = uid
         takeoff_uids = set(t.uid for t in saved_takeoffs)
         all_takeoffs = self._data_svc.get_all_takeoffs()
         for t in list(saved_takeoffs):
@@ -1218,26 +1221,22 @@ class PlanViewActionHandler:
                     if child.parent_uid == t.uid and child.uid not in takeoff_uids:
                         takeoff_uids.add(child.uid)
                         saved_takeoffs.append(child)
-        deleted_namedview_uids = {
-            str(a.uid) for a in saved_annotations if a.is_namedview
-        }
-        if deleted_namedview_uids:
-            existing_ann_uids = {(a.uid, a.annotation_type) for a in saved_annotations}
-            linked_hotlinks = self._data_svc.find_hotlinks_targeting(
-                deleted_namedview_uids
+        skipped_namedview_uids: set[str] = set()
+        if any(a.is_namedview for a in saved_annotations):
+            delete_plan = plan_named_view_hotlink_delete(
+                saved_annotations,
+                self._data_svc.find_hotlinks_targeting,
+                lambda _annotation: confirm(
+                    self._plan_view,
+                    "Delete Named View",
+                    NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
+                ),
             )
-            if linked_hotlinks and not confirm(
-                self._plan_view,
-                "Delete Named View",
-                NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
-            ):
-                self._plan_view.set_selected_uids(set(uids))
-                return
-            for a in linked_hotlinks:
-                if (a.uid, a.annotation_type) not in existing_ann_uids:
-                    saved_annotations.append(a)
-                    existing_ann_uids.add((a.uid, a.annotation_type))
-            saved_annotations = order_annotations_for_delete(saved_annotations)
+            saved_annotations = delete_plan.annotations_to_delete
+            skipped_namedview_uids = delete_plan.skipped_named_view_uids
+        skipped_selection_keys = skipped_named_view_selection_keys(
+            annotation_selection_keys, skipped_namedview_uids
+        )
         takeoff_uids = list(takeoff_uids)
         takeoffs_deleted = False
         annotations_deleted = False
@@ -1280,6 +1279,7 @@ class PlanViewActionHandler:
                     self._plan_view.clear_selection()
 
             self._undo_svc.push(_undo_delete, _redo_delete)
+            self._select_skipped_named_views(skipped_selection_keys)
             return
         if saved_annotations and not takeoff_uids:
             current_annotations = list(saved_annotations)
@@ -1308,6 +1308,7 @@ class PlanViewActionHandler:
                     self._plan_view.clear_selection()
 
             self._undo_svc.push(_undo_annotation_delete, _redo_annotation_delete)
+            self._select_skipped_named_views(skipped_selection_keys)
             return
         if takeoff_uids:
             takeoffs_deleted = self._write_svc.delete_takeoffs(db_path, takeoff_uids)
@@ -1352,6 +1353,11 @@ class PlanViewActionHandler:
                 cmd.redo()
 
         self._undo_svc.push(_undo, _redo)
+        self._select_skipped_named_views(skipped_selection_keys)
+
+    def _select_skipped_named_views(self, skipped_selection_keys: set[str]) -> None:
+        if skipped_selection_keys:
+            self._plan_view.set_selected_uids(skipped_selection_keys)
 
     def on_copy_requested(self, uids: list) -> None:
         if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):

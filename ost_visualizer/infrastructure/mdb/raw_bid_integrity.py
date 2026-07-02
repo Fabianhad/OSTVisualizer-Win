@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Sequence, Set, Tuple
-
 from ...domain.dtos.raw_bid_data_dto import RawBidData, RawTable
 from .reference_validation import is_present_uid
 from .schema_contract import (
@@ -132,7 +131,6 @@ RAW_BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = (
     RawBidRelationship("Employees", "PayClassUID", "PayClasses"),
     RawBidRelationship("Employees", "AccessLevelUID", "AccessLevels"),
 )
-
 _RAW_TABLES = (
     ("Bids",)
     + tuple(BID_SECTIONS)

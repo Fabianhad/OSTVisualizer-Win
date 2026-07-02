@@ -61,7 +61,8 @@ from ...services.selection_commands import InsertAnnotationsCommand
 from ...services.selection_commands import PasteAnnotationsCommand
 from ...utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
-    order_annotations_for_delete,
+    plan_named_view_hotlink_delete,
+    skipped_named_view_selection_keys,
 )
 from ...utils.annotation_defaults import (
     build_placed_annotation_spec,
@@ -1750,43 +1751,41 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if not db_path:
             return
         saved_annotations = []
+        annotation_selection_keys = {}
         for uid in uids:
             ann = self.plan_view.get_annotation(uid)
             if ann and ann.is_interactive:
                 saved_annotations.append(ann)
+                annotation_selection_keys[(str(ann.uid), str(ann.annotation_type))] = (
+                    uid
+                )
         if not saved_annotations:
             return
-        deleted_namedview_uids = {
-            str(annotation.uid)
-            for annotation in saved_annotations
-            if annotation.is_namedview
-        }
-        if deleted_namedview_uids:
-            linked_hotlinks = (
-                self._linked_hotlink_resolver(deleted_namedview_uids)
-                if self._linked_hotlink_resolver is not None
-                else []
+        skipped_namedview_uids: set[str] = set()
+        if any(annotation.is_namedview for annotation in saved_annotations):
+            resolver = self._linked_hotlink_resolver or (lambda _uids: [])
+            delete_plan = plan_named_view_hotlink_delete(
+                saved_annotations,
+                resolver,
+                lambda _annotation: confirm(
+                    self,
+                    "Delete Named View",
+                    NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
+                ),
             )
-            if linked_hotlinks and not confirm(
-                self,
-                "Delete Named View",
-                NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
-            ):
+            saved_annotations = delete_plan.annotations_to_delete
+            skipped_namedview_uids = delete_plan.skipped_named_view_uids
+            if not saved_annotations:
                 self.plan_view.set_selected_uids(set(uids))
                 return
-            existing = {
-                (annotation.uid, annotation.annotation_type)
-                for annotation in saved_annotations
-            }
-            for annotation in linked_hotlinks:
-                key = (annotation.uid, annotation.annotation_type)
-                if key not in existing:
-                    saved_annotations.append(annotation)
-                    existing.add(key)
-            saved_annotations = order_annotations_for_delete(saved_annotations)
+        skipped_selection_keys = skipped_named_view_selection_keys(
+            annotation_selection_keys, skipped_namedview_uids
+        )
         if not self._delete_saved_annotations(db_path, saved_annotations):
             self.plan_view.set_selected_uids(set(uids))
             return
+        if skipped_selection_keys:
+            self.plan_view.set_selected_uids(skipped_selection_keys)
         if self._undo_svc is None:
             return
         cmd = DeleteAnnotationsCommand(
