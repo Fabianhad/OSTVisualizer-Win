@@ -14,6 +14,7 @@
 - Cover Sheet page scale selectors now include all known scale groups, so pages using civil or metric scales show the matching scale instead of a custom-looking value.
 - Re-enabling the Image layer now reloads the current page image when the visual layer was hidden across project switches or app restarts.
 - Takeoff edit previews now keep inactive-area styling instead of temporarily showing grayed-out items in full condition color.
+- 2D View highlight annotations now mark the paper/background without tinting takeoffs, annotation strokes/text/shapes, image overlays, or selection graphics.
 - PDF page rendering now retains a useful working set of large plan sheets instead of evicting most cached pages after only a few renders.
 - Tree views now use the same indentation as the Conditions sidebar throughout the app.
 - Summary CSV exports now place area labels before condition type, expand multi-area details with trailing totals, and match expected whole-number quantity formatting.

@@ -44,6 +44,7 @@ AnnotationItemsResult = Tuple[
 ]
 DIMENSION_FONT_SIZE_ADJUSTMENT = 0.75
 NAMED_VIEW_FONT_SIZE_ADJUSTMENT = 0.75
+PAPER_HIGHLIGHT_Z = 0.4
 
 
 def create_named_view_label_font(coord_system) -> QFont:
@@ -325,7 +326,7 @@ class AnnotationItemRenderer:
             qcolor = QColor(color)
             qcolor.setAlphaF(0.3)
             item.setBrush(qcolor)
-            item.setZValue(1)
+            item.setZValue(PAPER_HIGHLIGHT_Z)
         return [(item, None)]
 
     def _render_shape(
@@ -405,7 +406,7 @@ class AnnotationItemRenderer:
         qcolor.setAlphaF(0.3)
         item.setBrush(qcolor)
         item.setPen(Qt.PenStyle.NoPen)
-        item.setZValue(1)
+        item.setZValue(PAPER_HIGHLIGHT_Z)
         return [(item, None)]
 
     def _render_namedview(self, view_info: Dict) -> List[AnnotationItemResult]:

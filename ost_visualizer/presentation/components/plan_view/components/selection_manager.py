@@ -103,7 +103,8 @@ class SelectionManagerMixin:
 
     def find_takeoffs_at(self, scene_pos) -> List[str]:
         seen: Set[str] = set()
-        result: List[str] = []
+        annotation_hits: List[str] = []
+        takeoff_hits: List[str] = []
         for item in self._scene.items(scene_pos):
             uid = item.data(0)
             if not uid or uid in seen or not self._is_selectable(uid):
@@ -113,7 +114,10 @@ class SelectionManagerMixin:
                 if not self._text_annotation_contains_scene_point(uid, scene_pos):
                     continue
             seen.add(uid)
-            result.append(uid)
+            if ann is not None:
+                annotation_hits.append(uid)
+            else:
+                takeoff_hits.append(uid)
         for uid, ann in self._current_annotations.items():
             if (
                 uid not in seen
@@ -123,8 +127,8 @@ class SelectionManagerMixin:
                 and self._text_annotation_contains_scene_point(uid, scene_pos)
             ):
                 seen.add(uid)
-                result.append(uid)
-        return result
+                annotation_hits.append(uid)
+        return annotation_hits + takeoff_hits
 
     def _iter_ann_hits(self, scene_pos, uid_ann_pairs=None):
         if uid_ann_pairs is None:
