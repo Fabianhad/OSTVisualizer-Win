@@ -55,6 +55,7 @@ from ....utils.view_context_menu import (
 from .geometry_utils import (
     mirror_points_around,
     polygon_centroid,
+    polygon_is_valid,
     rotate_points_around,
     rotate_position_coords,
 )
@@ -2340,6 +2341,89 @@ class InputHandlerMixin:
             self._current_conditions,
         )
 
+    def _area_control_point_position(self, target) -> Optional[List[float]]:
+        if not self._selection_enabled:
+            return None
+        takeoff = self._current_takeoffs.get(target.takeoff_uid)
+        if takeoff is None or takeoff.is_hole:
+            return None
+        condition = self._current_conditions.get(takeoff.condition_uid)
+        if condition is None or not condition.is_area:
+            return None
+        if any(
+            child.uid != target.takeoff_uid and child.parent_uid == target.takeoff_uid
+            for child in self._current_takeoffs.values()
+        ):
+            return None
+        raw_pos = self._scene_builder.get_coordinate_system().parse_position(
+            takeoff.position
+        )
+        if not raw_pos:
+            return None
+        point_count = len(raw_pos) // 2
+        if point_count < 3 or len(raw_pos) % 2 != 0:
+            return None
+        if target.kind == "edge":
+            if target.insert_point is None or not (
+                0 <= target.edge_index < point_count
+            ):
+                return None
+            insert_at = (target.edge_index + 1) * 2
+            new_pos = (
+                raw_pos[:insert_at]
+                + [float(target.insert_point[0]), float(target.insert_point[1])]
+                + raw_pos[insert_at:]
+            )
+        elif target.kind == "vertex":
+            if point_count <= 3 or not (0 <= target.vertex_index < point_count):
+                return None
+            remove_at = target.vertex_index * 2
+            new_pos = raw_pos[:remove_at] + raw_pos[remove_at + 2 :]
+        else:
+            return None
+        area_pts = [
+            (new_pos[index], new_pos[index + 1]) for index in range(0, len(new_pos), 2)
+        ]
+        if len(area_pts) < 3 or not polygon_is_valid(area_pts):
+            return None
+        return new_pos
+
+    def _add_area_control_point_context_action(self, menu: QMenu, target):
+        if target is None or self._area_control_point_position(target) is None:
+            return None, None
+        if target.kind == "edge":
+            return (
+                ContextMenuManager.add_action(
+                    menu,
+                    ContextMenuManager.action_spec(None, "Add Control Point"),
+                ),
+                None,
+            )
+        if target.kind == "vertex":
+            return (
+                None,
+                ContextMenuManager.add_action(
+                    menu,
+                    ContextMenuManager.action_spec(None, "Subtract Control Point"),
+                ),
+            )
+        return None, None
+
+    def _apply_area_control_point_target(self, target) -> bool:
+        new_pos = self._area_control_point_position(target)
+        if new_pos is None:
+            return False
+        takeoff = self._current_takeoffs[target.takeoff_uid]
+        old_pos = list(takeoff.position)
+        if target.takeoff_uid not in self._position_before_edit:
+            self._position_before_edit[target.takeoff_uid] = old_pos
+        takeoff.position = list(new_pos)
+        self._dirty_positions[target.takeoff_uid] = list(new_pos)
+        self._rebuild_current_overlays_from_model()
+        self.update_selection_visuals()
+        self._flush_dirty_positions()
+        return True
+
     def _selected_annotation_style_context_state(self):
         annotation_uids = [
             uid for uid in self._selected_uids if uid in self._current_annotations
@@ -2449,6 +2533,15 @@ class InputHandlerMixin:
             self._suppress_next_context_menu = False
             event.accept()
             return
+        scene_pos = self.mapToScene(event.pos())
+        control_point_target = self.area_control_point_target_at(scene_pos)
+        if control_point_target is not None and self._selected_uids != {
+            control_point_target.takeoff_uid
+        }:
+            self._flush_dirty_positions()
+            self._selected_uids = {control_point_target.takeoff_uid}
+            self._on_selection_changed()
+            self.update_selection_visuals()
         selected_state = self._selected_takeoff_context_state()
         annotation_state = self._selected_annotation_style_context_state()
         if not selected_state.takeoff_uids and annotation_state.annotation_uids:
@@ -2467,6 +2560,9 @@ class InputHandlerMixin:
         negative_action = None
         curved_action = None
         reassign_condition_menu = None
+        add_control_point_action, subtract_control_point_action = (
+            self._add_area_control_point_context_action(menu, control_point_target)
+        )
         if selected_state.show_curved:
             curved_action = ContextMenuManager.add_action(
                 menu,
@@ -2492,7 +2588,13 @@ class InputHandlerMixin:
                     checked=selected_state.all_negative,
                 ),
             )
-        if curved_action or assign_action or negative_action:
+        if (
+            add_control_point_action
+            or subtract_control_point_action
+            or curved_action
+            or assign_action
+            or negative_action
+        ):
             menu.addSeparator()
         current_mode, overlay_action, original_action = (
             self._add_common_context_submenus(menu)
@@ -2518,7 +2620,11 @@ class InputHandlerMixin:
             event.accept()
             return
         selected_takeoff_uids = list(selected_state.takeoff_uids)
-        if reassign_condition_menu and action in reassign_condition_menu.actions:
+        if add_control_point_action and action == add_control_point_action:
+            self._apply_area_control_point_target(control_point_target)
+        elif subtract_control_point_action and action == subtract_control_point_action:
+            self._apply_area_control_point_target(control_point_target)
+        elif reassign_condition_menu and action in reassign_condition_menu.actions:
             self.reassign_condition_requested.emit(
                 selected_takeoff_uids, reassign_condition_menu.actions[action]
             )

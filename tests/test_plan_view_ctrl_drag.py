@@ -7,7 +7,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPainterPath, QPen, QTransform
+from PySide6.QtGui import QAction, QColor, QPainterPath, QPen, QTransform
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsPathItem,
@@ -36,6 +36,7 @@ from ost_visualizer.presentation.components.plan_view.components.placement_mode 
     PlacementModeMixin,
 )
 from ost_visualizer.presentation.components.plan_view.components.selection_manager import (
+    AreaControlPointTarget,
     SelectionManagerMixin,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
@@ -433,6 +434,49 @@ class FakeSignal:
         self.emitted.append(args)
 
 
+class FakeContextMenuEvent:
+    def __init__(self, x, y):
+        self._point = QtCore.QPoint(int(x), int(y))
+        self.accepted = False
+
+    def pos(self):
+        return self._point
+
+    def globalPos(self):
+        return self._point
+
+    def accept(self):
+        self.accepted = True
+
+
+class CapturingMenu:
+    instances = []
+    action_text_to_return = None
+
+    def __init__(self, _parent=None):
+        self.actions = []
+        CapturingMenu.instances.append(self)
+
+    def addAction(self, text):
+        action = QAction(str(text))
+        self.actions.append(action)
+        return action
+
+    def addSeparator(self):
+        return None
+
+    def exec(self, _pos):
+        if CapturingMenu.action_text_to_return is None:
+            return None
+        for action in self.actions:
+            if (
+                isinstance(action, QAction)
+                and action.text() == CapturingMenu.action_text_to_return
+            ):
+                return action
+        return None
+
+
 class FakeItem:
     def __init__(self, x=0.0, y=0.0, uid=None):
         self._pos = QtCore.QPointF(x, y)
@@ -454,9 +498,52 @@ class FakeItem:
         return None
 
 
+AREA_CP_ORIGINAL_POSITION = [
+    0.0,
+    0.0,
+    100.0,
+    0.0,
+    100.0,
+    100.0,
+    0.0,
+    100.0,
+]
+AREA_CP_ADDED_POSITION = [
+    0.0,
+    0.0,
+    50.0,
+    0.0,
+    100.0,
+    0.0,
+    100.0,
+    100.0,
+    0.0,
+    100.0,
+]
+AREA_CP_SUBTRACTED_SECOND_VERTEX_POSITION = [
+    0.0,
+    0.0,
+    100.0,
+    100.0,
+    0.0,
+    100.0,
+]
+AREA_CP_SUBTRACTED_FIRST_VERTEX_POSITION = [
+    100.0,
+    0.0,
+    100.0,
+    100.0,
+    0.0,
+    100.0,
+]
+
+
 class FakeCoordinateSystem:
     scale_ratio = 1.0
     view_scale = 1.0
+
+    def parse_position(self, position):
+        return list(position)
 
     def transform_vertices_to_2d(self, pos):
         return list(pos)
@@ -596,6 +683,282 @@ class CtrlDragTests(unittest.TestCase):
         view._rubber_band = None
         view._update_cursor = lambda *args, **_call_options: None
         return view
+
+    def _make_area_control_point_view(self, selected_uids=None):
+        view = self._make_view(set() if selected_uids is None else selected_uids)
+        view._scene = QGraphicsScene()
+        view._scene_builder = FakeSceneBuilder()
+        view._annotation_only_selection = False
+        view._hidden_layer_uids = set()
+        view._current_page = None
+        view._current_conditions = {
+            "area": Condition(
+                uid="area",
+                condition_type=Condition.TYPE_AREA,
+                layer_visible=True,
+            ),
+            "linear": Condition(
+                uid="linear",
+                condition_type=Condition.TYPE_LINEAR,
+                layer_visible=True,
+            ),
+        }
+        view._current_takeoffs = {
+            "area1": Takeoff(
+                uid="area1",
+                condition_uid="area",
+                page_uid="page-1",
+                position=list(AREA_CP_ORIGINAL_POSITION),
+            ),
+            "linear1": Takeoff(
+                uid="linear1",
+                condition_uid="linear",
+                page_uid="page-1",
+                position=[200.0, 0.0, 300.0, 0.0],
+            ),
+        }
+        area_path = QPainterPath()
+        area_path.moveTo(0.0, 0.0)
+        area_path.lineTo(100.0, 0.0)
+        area_path.lineTo(100.0, 100.0)
+        area_path.lineTo(0.0, 100.0)
+        area_path.closeSubpath()
+        area_item = QGraphicsPathItem(area_path)
+        area_item.setData(0, "area1")
+        area_item.setZValue(0.5)
+        linear_path = QPainterPath()
+        linear_path.moveTo(200.0, 0.0)
+        linear_path.lineTo(300.0, 0.0)
+        linear_item = QGraphicsPathItem(linear_path)
+        linear_item.setData(0, "linear1")
+        linear_item.setZValue(0.5)
+        view._scene.addItem(area_item)
+        view._scene.addItem(linear_item)
+        view._uid_to_items = {"area1": [area_item], "linear1": [linear_item]}
+        view._current_annotations = {}
+        view._hotlink_items = []
+        view._current_page_transform = lambda: None
+        view._pt_to_scene = lambda x, y: QtCore.QPointF(float(x), float(y))
+        view._scene_pos_to_ost = lambda point: QtCore.QPointF(point)
+        view.transform = lambda: QTransform()
+        view.mapToScene = lambda point: QtCore.QPointF(point)
+        view.mapFromScene = lambda point: QtCore.QPoint(int(point.x()), int(point.y()))
+        del view.find_takeoff_at
+        del view.find_takeoffs_at
+        view._position_before_edit = {}
+        view._dirty_positions = {}
+        view._dirty_ann_positions = {}
+        view._ann_db_uid_map = {}
+        view._refreshing_overlays = False
+        view.positions_flushed = FakeSignal()
+        view.rebuild_count = 0
+        view.selection_update_count = 0
+        view.snap_invalidations = 0
+
+        def rebuild_current_overlays_from_model():
+            view.rebuild_count += 1
+
+        def update_selection_visuals(*_args, **_options):
+            view.selection_update_count += 1
+
+        def invalidate_snap_index():
+            view.snap_invalidations += 1
+
+        view._rebuild_current_overlays_from_model = rebuild_current_overlays_from_model
+        view.update_selection_visuals = update_selection_visuals
+        view._invalidate_snap_index = invalidate_snap_index
+
+        def flush_dirty_positions():
+            if view._refreshing_overlays:
+                return
+            if not view._dirty_positions and not view._dirty_ann_positions:
+                return
+            if view._dirty_positions:
+                view._invalidate_snap_index()
+            dirty = dict(view._dirty_positions)
+            ann_dirty = dict(view._dirty_ann_positions)
+            prev = dict(view._position_before_edit)
+            view._dirty_positions.clear()
+            view._dirty_ann_positions.clear()
+            view._position_before_edit.clear()
+            takeoff_changes = [
+                (uid, prev.get(uid, []), pos) for uid, pos in dirty.items()
+            ]
+            ann_changes = [
+                (view._ann_db_uid_map.get(uid, uid), ann_type, prev.get(uid, []), pos)
+                for uid, (ann_type, pos) in ann_dirty.items()
+            ]
+            view.positions_flushed.emit(takeoff_changes, ann_changes)
+
+        view._flush_dirty_positions = flush_dirty_positions
+        view._add_common_context_submenus = lambda _menu: (0, None, None)
+        view._add_context_clipboard_actions = lambda _menu: None
+        view._add_context_page_actions = lambda _menu, **_options: None
+        view._context_menu_command_trigger = None
+        view._context_menu_action_state = None
+        view._suppress_next_context_menu = False
+        view.reset_ctrl_held = lambda: None
+        return view
+
+    def _capture_context_menu(self, view, x, y, action_text=None):
+        CapturingMenu.instances = []
+        CapturingMenu.action_text_to_return = action_text
+        with patch.object(input_handler_module, "QMenu", CapturingMenu), patch.object(
+            input_handler_module, "add_reassign_condition_submenu", return_value=None
+        ):
+            InputHandlerMixin.contextMenuEvent(view, FakeContextMenuEvent(x, y))
+        self.assertTrue(CapturingMenu.instances)
+        return [
+            action.text()
+            for action in CapturingMenu.instances[0].actions
+            if isinstance(action, QAction)
+        ]
+
+    def test_area_control_point_target_returns_edge_near_boundary(self):
+        view = self._make_area_control_point_view()
+        target = view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0))
+        self.assertEqual(target.kind, "edge")
+        self.assertEqual(target.takeoff_uid, "area1")
+        self.assertEqual(target.edge_index, 0)
+        self.assertEqual(target.insert_point, (50.0, 0.0))
+
+    def test_area_control_point_target_ignores_fill_click(self):
+        view = self._make_area_control_point_view()
+        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(50.0, 50.0)))
+
+    def test_area_control_point_target_prefers_vertex_over_edge(self):
+        view = self._make_area_control_point_view()
+        target = view.area_control_point_target_at(QtCore.QPointF(0.0, 0.0))
+        self.assertEqual(target.kind, "vertex")
+        self.assertEqual(target.takeoff_uid, "area1")
+        self.assertEqual(target.vertex_index, 0)
+
+    def test_area_control_point_target_ignores_non_area_takeoffs(self):
+        view = self._make_area_control_point_view()
+        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(250.0, 0.0)))
+
+    def test_area_control_point_target_respects_selection_edit_gate(self):
+        view = self._make_area_control_point_view()
+        view._selection_enabled = False
+        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0)))
+        target = AreaControlPointTarget(
+            takeoff_uid="area1",
+            kind="edge",
+            edge_index=0,
+            insert_point=(50.0, 0.0),
+        )
+        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertEqual(view.positions_flushed.emitted, [])
+
+    def test_area_control_point_target_skips_holes_and_parents_with_holes(self):
+        view = self._make_area_control_point_view()
+        view._current_takeoffs["area1"].parent_uid = "parent-area"
+        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0)))
+        view = self._make_area_control_point_view()
+        view._current_takeoffs["hole1"] = Takeoff(
+            uid="hole1",
+            condition_uid="area",
+            page_uid="page-1",
+            parent_uid="area1",
+            position=[20.0, 20.0, 40.0, 20.0, 40.0, 40.0, 20.0, 40.0],
+        )
+        self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0)))
+
+    def test_add_area_control_point_flushes_old_and_new_position(self):
+        view = self._make_area_control_point_view()
+        old_pos = list(view._current_takeoffs["area1"].position)
+        target = AreaControlPointTarget(
+            takeoff_uid="area1",
+            kind="edge",
+            edge_index=0,
+            insert_point=(50.0, 0.0),
+        )
+        self.assertTrue(view._apply_area_control_point_target(target))
+        new_pos = list(AREA_CP_ADDED_POSITION)
+        self.assertEqual(view._current_takeoffs["area1"].position, new_pos)
+        self.assertEqual(
+            view.positions_flushed.emitted,
+            [([("area1", old_pos, new_pos)], [])],
+        )
+        self.assertEqual(view.snap_invalidations, 1)
+        self.assertEqual(view.rebuild_count, 1)
+
+    def test_subtract_area_control_point_flushes_old_and_new_position(self):
+        view = self._make_area_control_point_view()
+        old_pos = list(view._current_takeoffs["area1"].position)
+        target = AreaControlPointTarget(
+            takeoff_uid="area1",
+            kind="vertex",
+            vertex_index=1,
+        )
+        self.assertTrue(view._apply_area_control_point_target(target))
+        new_pos = list(AREA_CP_SUBTRACTED_SECOND_VERTEX_POSITION)
+        self.assertEqual(view._current_takeoffs["area1"].position, new_pos)
+        self.assertEqual(
+            view.positions_flushed.emitted,
+            [([("area1", old_pos, new_pos)], [])],
+        )
+
+    def test_subtract_area_control_point_rejects_triangle(self):
+        view = self._make_area_control_point_view()
+        view._current_takeoffs["area1"].position = [0.0, 0.0, 10.0, 0.0, 0.0, 10.0]
+        target = AreaControlPointTarget(
+            takeoff_uid="area1",
+            kind="vertex",
+            vertex_index=1,
+        )
+        self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertEqual(view.positions_flushed.emitted, [])
+
+    def test_area_control_point_rejects_invalid_polygon_result(self):
+        view = self._make_area_control_point_view()
+        target = AreaControlPointTarget(
+            takeoff_uid="area1",
+            kind="edge",
+            edge_index=0,
+            insert_point=(50.0, 0.0),
+        )
+        with patch.object(input_handler_module, "polygon_is_valid", return_value=False):
+            self.assertFalse(view._apply_area_control_point_target(target))
+        self.assertEqual(view.positions_flushed.emitted, [])
+
+    def test_context_menu_shows_add_control_point_only_for_edge_target(self):
+        view = self._make_area_control_point_view()
+        texts = self._capture_context_menu(view, 50.0, 0.0)
+        self.assertIn("Add Control Point", texts)
+        self.assertNotIn("Subtract Control Point", texts)
+
+    def test_context_menu_shows_subtract_control_point_only_for_vertex_target(self):
+        view = self._make_area_control_point_view()
+        texts = self._capture_context_menu(view, 0.0, 0.0)
+        self.assertIn("Subtract Control Point", texts)
+        self.assertNotIn("Add Control Point", texts)
+
+    def test_context_menu_uses_actual_hit_not_stale_selected_area(self):
+        view = self._make_area_control_point_view({"area1"})
+        texts = self._capture_context_menu(view, 50.0, 50.0)
+        self.assertNotIn("Add Control Point", texts)
+        self.assertNotIn("Subtract Control Point", texts)
+
+    def test_context_menu_add_control_point_uses_existing_flush_path(self):
+        view = self._make_area_control_point_view()
+        old_pos = list(view._current_takeoffs["area1"].position)
+        self._capture_context_menu(view, 50.0, 0.0, action_text="Add Control Point")
+        new_pos = list(AREA_CP_ADDED_POSITION)
+        self.assertEqual(
+            view.positions_flushed.emitted,
+            [([("area1", old_pos, new_pos)], [])],
+        )
+
+    def test_context_menu_subtract_control_point_uses_existing_flush_path(self):
+        view = self._make_area_control_point_view()
+        old_pos = list(view._current_takeoffs["area1"].position)
+        self._capture_context_menu(view, 0.0, 0.0, action_text="Subtract Control Point")
+        new_pos = list(AREA_CP_SUBTRACTED_FIRST_VERTEX_POSITION)
+        self.assertEqual(
+            view.positions_flushed.emitted,
+            [([("area1", old_pos, new_pos)], [])],
+        )
 
     def _make_selected_text_annotation_view(self):
         view = self._make_view({"a1"})
