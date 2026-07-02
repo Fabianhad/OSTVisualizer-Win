@@ -23,3 +23,4 @@
 - OSP/OST exports now prune stale child rows with missing parent records, reject invalid imports with table/UID details, and keep same-named drawing files distinct inside packages.
 - The Takeoff cursor now remains available on the active 2D page even when that page is unchecked for 3D/multi-page selection.
 - Copying plan-view selections now copies only items loaded on the active 2D page, preventing stale off-page takeoffs from being pasted while keeping selected text annotations in the paste set.
+- Cover Sheet page scale changes now preserve takeoff placement the same way as the Takeoff tab scale control instead of visually resizing area takeoffs.

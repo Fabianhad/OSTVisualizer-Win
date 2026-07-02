@@ -17,21 +17,9 @@ class PageOperationsMixin:
                     schema, "BidPages", ("UID", "ScaleFactor1", "ScaleFactor2")
                 )
                 cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT [ScaleFactor1], [ScaleFactor2] FROM [BidPages] WHERE [UID]=?",
-                    int(page_uid),
+                self._rescale_page_content_for_scale_change(
+                    cursor, schema, int(page_uid), sf1, sf2
                 )
-                row = cursor.fetchone()
-                if row and row[0] and row[1]:
-                    old_sf1 = float(row[0])
-                    old_sf2 = float(row[1])
-                    old_ratio = old_sf2 / old_sf1 if old_sf1 else 1.0
-                    new_ratio = sf2 / sf1 if sf1 else 1.0
-                    factor = new_ratio / old_ratio if old_ratio else 1.0
-                    if abs(factor - 1.0) > 1e-9:
-                        self._rescale_page_positions(
-                            cursor, schema, int(page_uid), factor
-                        )
                 cursor.execute(
                     "UPDATE [BidPages] SET [ScaleFactor1]=?, [ScaleFactor2]=? WHERE [UID]=?",
                     sf1,
@@ -44,6 +32,28 @@ class PageOperationsMixin:
                 "Failed to save page scale for page %s in %s", page_uid, db_path
             )
             return False
+
+    def _rescale_page_content_for_scale_change(
+        self,
+        cursor: "pyodbc.Cursor",
+        schema,
+        page_uid: int,
+        sf1: float,
+        sf2: float,
+    ) -> None:
+        cursor.execute(
+            "SELECT [ScaleFactor1], [ScaleFactor2] FROM [BidPages] WHERE [UID]=?",
+            page_uid,
+        )
+        row = cursor.fetchone()
+        if row and row[0] and row[1]:
+            old_sf1 = float(row[0])
+            old_sf2 = float(row[1])
+            old_ratio = old_sf2 / old_sf1 if old_sf1 else 1.0
+            new_ratio = sf2 / sf1 if sf1 else 1.0
+            factor = new_ratio / old_ratio if old_ratio else 1.0
+            if abs(factor - 1.0) > 1e-9:
+                self._rescale_page_positions(cursor, schema, page_uid, factor)
 
     def save_page_name(self, db_path: str, page_uid: str, name: str) -> bool:
         try:

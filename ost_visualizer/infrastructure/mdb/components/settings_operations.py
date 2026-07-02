@@ -183,6 +183,13 @@ class SettingsOperationsMixin:
                         folder_uid_val = (
                             int(page["folder_uid"]) if page.get("folder_uid") else None
                         )
+                        self._rescale_page_content_for_scale_change(
+                            cursor,
+                            schema,
+                            int(page["uid"]),
+                            page["scale_factor1"],
+                            page["scale_factor2"],
+                        )
                         self._execute_update_values(
                             cursor,
                             schema,

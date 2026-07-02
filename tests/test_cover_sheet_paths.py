@@ -40,8 +40,10 @@ class _FakeSchema:
 class _FakeCursor:
     def __init__(self):
         self.connection = object()
+        self.last_query = None
 
-    def execute(self, *_args):
+    def execute(self, query, *_args):
+        self.last_query = query
         return None
 
     def fetchone(self):
@@ -62,11 +64,12 @@ class _FakeConnection:
         return self.cursor_obj
 
 
-class _CoverSheetSettingsOps(SettingsOperationsMixin):
+class _CoverSheetSettingsOps(SettingsOperationsMixin, PageOperationsMixin):
     def __init__(self):
         self.conn = _FakeConnection()
         self.schema = _FakeSchema()
         self.updates = []
+        self.inserts = []
         self.logger = _FakeLogger()
 
     def _connection(self, _db_path):
@@ -77,6 +80,9 @@ class _CoverSheetSettingsOps(SettingsOperationsMixin):
 
     def _require_write_columns(self, *_args):
         return None
+
+    def _next_uid(self, _cursor, _table):
+        return 99
 
     def _execute_update_values(
         self,
@@ -96,6 +102,73 @@ class _CoverSheetSettingsOps(SettingsOperationsMixin):
             }
         )
         return True
+
+    def _execute_insert_values(
+        self,
+        _cursor,
+        _schema,
+        table,
+        values,
+        _required_columns,
+        _operation,
+    ):
+        self.inserts.append(
+            {
+                "table": table,
+                "values": dict(values),
+            }
+        )
+        return True
+
+
+class _ScaleCursor(_FakeCursor):
+    def __init__(self, old_sf1, old_sf2):
+        super().__init__()
+        self.old_sf1 = old_sf1
+        self.old_sf2 = old_sf2
+
+    def fetchone(self):
+        if (
+            self.last_query
+            and "SELECT [ScaleFactor1], [ScaleFactor2]" in self.last_query
+        ):
+            return [self.old_sf1, self.old_sf2]
+        return super().fetchone()
+
+
+class _ScaleConnection(_FakeConnection):
+    def __init__(self, old_sf1, old_sf2):
+        self.cursor_obj = _ScaleCursor(old_sf1, old_sf2)
+
+
+class _ScaleCoverSheetOps(_CoverSheetSettingsOps):
+    def __init__(self, old_sf1, old_sf2):
+        super().__init__()
+        self.conn = _ScaleConnection(old_sf1, old_sf2)
+        self.rescale_calls = []
+
+    def _rescale_page_positions(self, _cursor, _schema, page_uid, factor):
+        self.rescale_calls.append((page_uid, factor))
+
+
+class _PageScaleOps(PageOperationsMixin):
+    def __init__(self, old_sf1, old_sf2):
+        self.conn = _ScaleConnection(old_sf1, old_sf2)
+        self.schema = _FakeSchema()
+        self.rescale_calls = []
+        self.logger = _FakeLogger()
+
+    def _connection(self, _db_path):
+        return self.conn
+
+    def _schema(self, _conn):
+        return self.schema
+
+    def _require_write_columns(self, *_args):
+        return None
+
+    def _rescale_page_positions(self, _cursor, _schema, page_uid, factor):
+        self.rescale_calls.append((page_uid, factor))
 
 
 class _FakeLogger:
@@ -229,6 +302,33 @@ def _first_page_update(dialog):
     return dialog.get_updates()["pages"][0]
 
 
+def _cover_sheet_page_update(
+    *,
+    uid="11",
+    scale_factor1=0.125,
+    scale_factor2=12.0,
+    sheet_no="S-100",
+    name="Level 1",
+    image_path="",
+    overlay_path="",
+):
+    return {
+        "uid": uid,
+        "width": 42.0,
+        "height": 30.0,
+        "scale_factor1": scale_factor1,
+        "scale_factor2": scale_factor2,
+        "show_mode": 0,
+        "sheet_no": sheet_no,
+        "index": 1,
+        "sequence": 1,
+        "multi_page_count": 0,
+        "name": name,
+        "image_path": image_path,
+        "overlay_path": overlay_path,
+    }
+
+
 class CoverSheetPathSaveTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -245,22 +345,13 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             {
                 "measure_base": 0,
                 "pages": [
-                    {
-                        "uid": "11",
-                        "width": 42.0,
-                        "height": 30.0,
-                        "scale_factor1": 0.125,
-                        "scale_factor2": 12.0,
-                        "show_mode": 0,
-                        "sheet_no": "S-100",
-                        "index": 1,
-                        "name": "Level 1",
-                        "image_path": (
+                    _cover_sheet_page_update(
+                        image_path=(
                             "C:/OCS Documents/OST/25-051 Marriott Element, "
                             "Capel Hill, NC/S-100.pdf"
                         ),
-                        "overlay_path": "C:/OCS Documents/OST/overlay.pdf",
-                    }
+                        overlay_path="C:/OCS Documents/OST/overlay.pdf",
+                    )
                 ],
             },
         )
@@ -290,6 +381,58 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             "0.000000,0.000000,4032.000000,2880.000000",
         )
         self.assertEqual(page_update["values"]["SheetNo"], "S-100")
+
+    def test_cover_sheet_page_scale_change_rescales_existing_page_positions(self):
+        ops = _ScaleCoverSheetOps(old_sf1=0.125, old_sf2=12.0)
+        success = ops.save_cover_sheet(
+            "bid.mdb",
+            "7",
+            {
+                "measure_base": 0,
+                "pages": [_cover_sheet_page_update(scale_factor1=0.25)],
+            },
+        )
+        self.assertTrue(success)
+        self.assertEqual(ops.rescale_calls, [(11, 0.5)])
+
+    def test_cover_sheet_unchanged_page_scale_does_not_rescale_positions(self):
+        ops = _ScaleCoverSheetOps(old_sf1=0.125, old_sf2=12.0)
+        success = ops.save_cover_sheet(
+            "bid.mdb",
+            "7",
+            {
+                "measure_base": 0,
+                "pages": [_cover_sheet_page_update()],
+            },
+        )
+        self.assertTrue(success)
+        self.assertEqual(ops.rescale_calls, [])
+
+    def test_cover_sheet_new_page_scale_does_not_rescale_positions(self):
+        ops = _ScaleCoverSheetOps(old_sf1=0.125, old_sf2=12.0)
+        success = ops.save_cover_sheet(
+            "bid.mdb",
+            "7",
+            {
+                "measure_base": 0,
+                "pages": [
+                    _cover_sheet_page_update(
+                        uid=None,
+                        scale_factor1=0.25,
+                        sheet_no="S-101",
+                        name="Level 2",
+                    )
+                ],
+            },
+        )
+        self.assertTrue(success)
+        self.assertEqual(ops.rescale_calls, [])
+        self.assertEqual([insert["table"] for insert in ops.inserts], ["BidPages"])
+
+    def test_page_scale_save_uses_shared_content_rescale(self):
+        ops = _PageScaleOps(old_sf1=0.125, old_sf2=12.0)
+        self.assertTrue(ops.save_page_scale("bid.mdb", "11", 0.25, 12.0))
+        self.assertEqual(ops.rescale_calls, [(11, 0.5)])
 
     def test_saving_page_overlay_image_generates_full_page_overlay_rect(self):
         ops = _PageOverlayOps()
@@ -340,7 +483,9 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
         try:
             folder_item = dialog.plan_tree.topLevelItem(0)
-            self.assertEqual(folder_item.data(0, dialog._ITEM_ROLE), ("folder", "f1"))
+            self.assertEqual(
+                tuple(folder_item.data(0, dialog._ITEM_ROLE)), ("folder", "f1")
+            )
             self.assertFalse(folder_item.icon(0).isNull())
             self.assertEqual(
                 folder_item.icon(0).cacheKey(),
@@ -377,7 +522,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         try:
             page_item = dialog.plan_tree.topLevelItem(0)
             scale_combo = dialog.plan_tree.itemWidget(page_item, 3)
-            self.assertEqual(scale_combo.currentData(), (1.0, 120.0))
+            self.assertEqual(tuple(scale_combo.currentData()), (1.0, 120.0))
             self.assertEqual(scale_combo.currentText(), '1" = 10\' 0"')
         finally:
             dialog.close()
