@@ -19,6 +19,17 @@ from ost_visualizer.infrastructure.mdb.components.page_operations import (
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from ost_visualizer.infrastructure.mdb.importers.osp_importer import OspImporter
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
+from ost_visualizer.infrastructure.mdb.raw_bid_integrity import (
+    RAW_BID_RELATIONSHIPS,
+    prepare_raw_bid_data_for_export,
+    validate_raw_bid_integrity,
+)
+from ost_visualizer.infrastructure.mdb.schema_contract import (
+    BID_SECTIONS,
+    BID_TAIL_SECTIONS,
+    GLOBAL_SECTIONS,
+    PAGE_SECTIONS,
+)
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.presentation.visualization.exporters.osp_exporter import OspExporter
 
@@ -308,6 +319,14 @@ def _orphan_named_view_hotlink_raw_data() -> RawBidData:
                     "Name": "Valid Link",
                 },
                 {
+                    "UID": "43",
+                    "BidUID": "1",
+                    "BidPageUID": "20",
+                    "BidPageViewUID": "30",
+                    "BidLayerUID": "99",
+                    "Name": "Orphan Layer",
+                },
+                {
                     "UID": "41",
                     "BidUID": "1",
                     "BidPageUID": "20",
@@ -337,9 +356,12 @@ def _orphan_named_view_hotlink_xml() -> str:
           <BidNamedView UID="30" BidUID="1" BidPageUID="20" Name="Valid"/>
           <BidNamedView UID="31" BidUID="1" BidPageUID="99" Name="Orphan"/>
         </BidNamedViews>
-        <BidHotLinks>
+          <BidHotLinks>
           <BidHotLink UID="40" BidUID="1" BidPageUID="20"
                       BidPageViewUID="30" Name="Valid Link"/>
+          <BidHotLink UID="43" BidUID="1" BidPageUID="20"
+                      BidPageViewUID="30" BidLayerUID="99"
+                      Name="Orphan Layer"/>
           <BidHotLink UID="41" BidUID="1" BidPageUID="20"
                       BidPageViewUID="31" Name="Orphan Target"/>
           <BidHotLink UID="42" BidUID="1" BidPageUID="99"
@@ -350,7 +372,61 @@ def _orphan_named_view_hotlink_xml() -> str:
     """
 
 
+def _raw_data_with_row(table_name, row):
+    raw_data = RawBidData()
+    if table_name == "Bids":
+        raw_data.bid_row = row
+    elif table_name in GLOBAL_SECTIONS:
+        raw_data.global_tables[table_name] = [row]
+    elif table_name in PAGE_SECTIONS:
+        raw_data.page_tables[table_name] = [row]
+    elif table_name in BID_SECTIONS or table_name in BID_TAIL_SECTIONS:
+        raw_data.bid_tables[table_name] = [row]
+    elif table_name == "BidPages":
+        raw_data.bid_tables["BidPages"] = [row]
+    else:
+        raw_data.bid_tables[table_name] = [row]
+    return raw_data
+
+
 class OstImportExportRelationshipTests(unittest.TestCase):
+    def test_raw_bid_integrity_map_reports_each_declared_relationship(self):
+        for relationship in RAW_BID_RELATIONSHIPS:
+            with self.subTest(
+                table=relationship.child_table,
+                column=relationship.child_column,
+                parent=relationship.parent_table,
+            ):
+                raw_data = _raw_data_with_row(
+                    relationship.child_table,
+                    {"UID": "1", relationship.child_column: "999"},
+                )
+                issues = validate_raw_bid_integrity(raw_data)
+                self.assertTrue(
+                    any(
+                        issue.table == relationship.child_table
+                        and issue.column == relationship.child_column
+                        and issue.missing_uid == "999"
+                        and issue.parent_table == relationship.parent_table
+                        for issue in issues
+                    ),
+                    issues,
+                )
+
+    def test_prepare_export_prunes_named_views_and_hotlinks_for_missing_pages(self):
+        prepared = prepare_raw_bid_data_for_export(
+            _orphan_named_view_hotlink_raw_data()
+        )
+        self.assertEqual(
+            [row["Name"] for row in prepared.bid_tables["BidNamedViews"]],
+            ["Valid"],
+        )
+        self.assertEqual(
+            [row["Name"] for row in prepared.bid_tables["BidHotLinks"]],
+            ["Valid Link"],
+        )
+        self.assertEqual(validate_raw_bid_integrity(prepared), [])
+
     def test_ost_export_includes_referenced_estimator_employee_and_pay_class(self):
         raw_data = RawBidData(
             bid_row={"UID": "1", "EstimatorUID": "7", "JobName": "Bid"},
@@ -464,7 +540,69 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(selected_uid, page_uid)
 
-    def test_ost_import_clears_missing_bid_settings_selected_page(self):
+    def test_ost_import_remaps_area_translation_and_comment_parent_refs(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidAreas>
+              <BidArea UID="10" BidUID="1" Name="Area" Sequence="1"/>
+            </BidAreas>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1">
+                <BidAreaTranslations>
+                  <BidAreaTranslation UID="30" BidPageUID="20"
+                                      MasterAreaUID="10" TranslateAreaUID="10"/>
+                </BidAreaTranslations>
+                <BidComments>
+                  <BidComment UID="40" BidUID="1" BidPageUID="20"/>
+                  <BidComment UID="41" BidUID="1" BidPageUID="20"
+                              ParentCommentUID="40"/>
+                </BidComments>
+              </BidPage>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute(
+            """
+            CREATE TABLE BidAreaTranslations (
+                UID INTEGER PRIMARY KEY,
+                BidPageUID INTEGER,
+                MasterAreaUID INTEGER,
+                TranslateAreaUID INTEGER
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE BidComments (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                ParentCommentUID INTEGER
+            )
+            """
+        )
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "import.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            self.assertTrue(OstImporter(writer).import_ost(str(ost_path), "target.mdb"))
+        area_uid = connection.execute(
+            "SELECT UID FROM BidAreas WHERE Name='Area'"
+        ).fetchone()[0]
+        translation = connection.execute(
+            "SELECT MasterAreaUID, TranslateAreaUID FROM BidAreaTranslations"
+        ).fetchone()
+        comments = connection.execute(
+            "SELECT UID, ParentCommentUID FROM BidComments ORDER BY UID"
+        ).fetchall()
+        self.assertEqual(translation, (area_uid, area_uid))
+        self.assertEqual(comments[1][1], comments[0][0])
+
+    def test_ost_import_rejects_missing_bid_settings_selected_page(self):
         xml = """
         <XML_ROOT>
           <Bid UID="1" JobName="Imported">
@@ -483,14 +621,21 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             ost_path = Path(temp_dir) / "import.ost"
             ost_path.write_text(xml, encoding="utf-8")
-            self.assertTrue(OstImporter(writer).import_ost(str(ost_path), "target.mdb"))
-        selected_uid = connection.execute(
-            "SELECT BidPageSelectedUID FROM BidSettings"
-        ).fetchone()[0]
-        self.assertIsNone(selected_uid)
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ) as logs:
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        self.assertIn("BidSettings.UID=30 BidPageSelectedUID=999", logs.output[0])
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM BidSettings").fetchone()[0],
+            0,
+        )
 
-    def test_ost_import_clears_zero_blank_and_invalid_selected_page(self):
-        for selected_value in ("0", "", "not-a-uid"):
+    def test_ost_import_clears_zero_and_blank_selected_page(self):
+        for selected_value in ("0", ""):
             with self.subTest(selected_value=selected_value):
                 xml = f"""
                 <XML_ROOT>
@@ -519,12 +664,12 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 ).fetchone()[0]
                 self.assertIsNone(selected_uid)
 
-    def test_ost_import_does_not_insert_stale_source_selected_page_uid(self):
+    def test_ost_import_rejects_non_numeric_selected_page_uid(self):
         xml = """
         <XML_ROOT>
           <Bid UID="1" JobName="Imported">
             <BidSettings>
-              <BidSetting UID="30" BidUID="1" BidPageSelectedUID="999"/>
+              <BidSetting UID="30" BidUID="1" BidPageSelectedUID="not-a-uid"/>
             </BidSettings>
             <BidPages>
               <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1"/>
@@ -538,13 +683,15 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             ost_path = Path(temp_dir) / "import.ost"
             ost_path.write_text(xml, encoding="utf-8")
-            self.assertTrue(OstImporter(writer).import_ost(str(ost_path), "target.mdb"))
-        stale_count = connection.execute(
-            "SELECT COUNT(*) FROM BidSettings WHERE BidPageSelectedUID=999"
-        ).fetchone()[0]
-        self.assertEqual(stale_count, 0)
+            self.assertFalse(
+                OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+            )
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM BidSettings").fetchone()[0],
+            0,
+        )
 
-    def test_access_import_clears_old_ost_missing_selected_page_reference(self):
+    def test_access_import_rejects_old_ost_missing_selected_page_reference(self):
         if not _access_driver_available():
             self.skipTest("Microsoft Access ODBC driver is not available")
         xml = """
@@ -569,20 +716,11 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             )
             writer = MdbWriter()
             try:
-                self.assertTrue(
+                self.assertFalse(
                     OstImporter(writer).import_ost(str(ost_path), str(db_path))
                 )
             finally:
                 writer._conn_manager.close()
-            conn = _connect_access_or_skip(self, db_path)
-            cursor = conn.cursor()
-            try:
-                cursor.execute("SELECT [BidPageSelectedUID] FROM [BidSettings]")
-                self.assertIsNone(cursor.fetchone()[0])
-            finally:
-                conn.rollback()
-                cursor.close()
-                conn.close()
 
     def test_access_import_handles_new_ost_zero_bid_settings_uid(self):
         if not _access_driver_available():
@@ -789,7 +927,8 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 self.assertFalse(
                     OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                 )
-        self.assertIn("invalid page references", logs.output[0])
+        self.assertIn("invalid database references", logs.output[0])
+        self.assertIn("BidHotLinks.UID=43 BidLayerUID=99", logs.output[0])
         bid_count = connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0]
         named_view_count = connection.execute(
             "SELECT COUNT(*) FROM BidNamedViews"

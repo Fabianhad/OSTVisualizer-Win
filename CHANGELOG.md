@@ -19,3 +19,4 @@
 - Tree views now use the same indentation as the Conditions sidebar throughout the app.
 - Summary CSV exports now place area labels before condition type, expand multi-area details with trailing totals, and match expected whole-number quantity formatting.
 - New area takeoffs now keep the OST curve flag disabled so polygon and rectangle areas recalculate correctly in OST.
+- OSP/OST exports now prune stale child rows with missing parent records, reject invalid imports with table/UID details, and keep same-named drawing files distinct inside packages.

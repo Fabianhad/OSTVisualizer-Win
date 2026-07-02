@@ -12,6 +12,11 @@ from ..schema_contract import BID_TAIL_SECTIONS as _BID_TAIL_SECTIONS
 from ..schema_contract import GLOBAL_SECTIONS as _GLOBAL_SECTIONS
 from ..schema_contract import PAGE_SECTIONS as _PAGE_SECTIONS
 from ..schema_contract import singular as _singular
+from ..raw_bid_integrity import (
+    format_integrity_issues,
+    prepare_raw_bid_data_for_export,
+    validate_raw_bid_integrity,
+)
 from ..reference_validation import (
     collect_present_uids,
     filter_hotlink_rows,
@@ -633,6 +638,18 @@ class OstExporter:
         on_progress=None,
     ) -> ExportResultDto:
         try:
+            raw_data = prepare_raw_bid_data_for_export(raw_data)
+            integrity_issues = validate_raw_bid_integrity(raw_data)
+            if integrity_issues:
+                return ExportResultDto(
+                    success=False,
+                    format_name="OST",
+                    error_message=(
+                        "Cannot export OST because database references are invalid: "
+                        f"{format_integrity_issues(integrity_issues)}"
+                    ),
+                    error_code=ExportErrorCode.UNEXPECTED,
+                )
             root = Element("XML_ROOT")
             SubElement(root, "OST", Version="3.2.0")
             bid_row = _normalize_column_names(_normalize_nulls(raw_data.bid_row))

@@ -226,6 +226,64 @@ class ImportRefreshFlowTests(unittest.TestCase):
         self.assertEqual(len(importer.calls), 1)
         self.assertTrue(str(fake_cab.root).startswith(str(short_parent)))
 
+    def test_osp_import_rewrites_exact_nested_image_members(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            first_member = Path("TempImages!.tmp") / "10_a" / "sheet.pdf"
+            second_member = Path("TempImages!.tmp") / "11_b" / "sheet.pdf"
+            (tmp_path / first_member).parent.mkdir(parents=True)
+            (tmp_path / second_member).parent.mkdir(parents=True)
+            (tmp_path / first_member).write_bytes(b"first")
+            (tmp_path / second_member).write_bytes(b"second")
+            ost_path = tmp_path / "Project.ost"
+            ost_path.write_text(
+                """
+                <XML_ROOT>
+                  <Bid>
+                    <BidPages>
+                      <BidPage ImagePath="TempImages!.tmp\\10_a\\sheet.pdf"/>
+                      <BidPage ImagePath="TempImages!.tmp\\11_b\\sheet.pdf"/>
+                    </BidPages>
+                  </Bid>
+                </XML_ROOT>
+                """,
+                encoding="utf-8",
+            )
+            dest_dir = tmp_path / "dest"
+            OspImporter(FakeImporter())._extract_images(tmp_path, ost_path, dest_dir)
+            rewritten = ost_path.read_text(encoding="utf-8")
+            first_dest = dest_dir / "Images" / "10_a" / "sheet.pdf"
+            second_dest = dest_dir / "Images" / "11_b" / "sheet.pdf"
+            self.assertEqual(first_dest.read_bytes(), b"first")
+            self.assertEqual(second_dest.read_bytes(), b"second")
+            self.assertIn(str(first_dest), rewritten)
+            self.assertIn(str(second_dest), rewritten)
+
+    def test_osp_import_skips_ambiguous_legacy_basename_image_member(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            first = tmp_path / "TempImages!.tmp" / "a" / "sheet.pdf"
+            second = tmp_path / "TempImages!.tmp" / "b" / "sheet.pdf"
+            first.parent.mkdir(parents=True)
+            second.parent.mkdir(parents=True)
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            ost_path = tmp_path / "Project.ost"
+            original_xml = """
+                <XML_ROOT>
+                  <Bid>
+                    <BidPages>
+                      <BidPage ImagePath="C:\\old\\folder\\sheet.pdf"/>
+                    </BidPages>
+                  </Bid>
+                </XML_ROOT>
+                """
+            ost_path.write_text(original_xml, encoding="utf-8")
+            dest_dir = tmp_path / "dest"
+            OspImporter(FakeImporter())._extract_images(tmp_path, ost_path, dest_dir)
+            self.assertFalse(dest_dir.exists())
+            self.assertEqual(ost_path.read_text(encoding="utf-8"), original_xml)
+
     def test_loaded_databases_have_path_tiebreaker_when_file_times_match(self):
         repository = FileProjectRepository.__new__(FileProjectRepository)
 

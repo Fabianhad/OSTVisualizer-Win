@@ -317,26 +317,87 @@ class OspExporterProgressTests(unittest.TestCase):
                 "1.0",
                 self._unused_ost_exporter_factory,
             )
+            _package_data, image_sources, missing = exporter._prepare_package_data(
+                raw_data
+            )
+            self.assertEqual(missing, [])
             source_files = []
             archive_names = []
             progress = []
             exporter._collect_images(
-                raw_data,
+                image_sources,
                 source_files,
                 archive_names,
                 lambda current, total, description: progress.append(
                     (current, total, description)
                 ),
             )
-        self.assertEqual(source_files, [str(first), str(second)])
         self.assertEqual(
-            archive_names,
-            ["TempImages!.tmp\\first.pdf", "TempImages!.tmp\\second.tif"],
+            set(source_files), {str(first.resolve()), str(second.resolve())}
         )
-        self.assertEqual(
+        self.assertEqual(len(archive_names), 2)
+        self.assertTrue(
+            all(name.startswith("TempImages!.tmp\\") for name in archive_names)
+        )
+        self.assertCountEqual(
             [description for _current, _total, description in progress],
             ["Collecting first.pdf", "Collecting second.tif"],
         )
+
+    def test_prepare_package_data_keeps_same_filenames_from_different_folders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first_dir = Path(tmp) / "first"
+            second_dir = Path(tmp) / "second"
+            first_dir.mkdir()
+            second_dir.mkdir()
+            first = first_dir / "sheet.pdf"
+            second = second_dir / "sheet.pdf"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            raw_data = RawBidData(
+                bid_row={"UID": "1", "JobName": "Bid"},
+                bid_tables={
+                    "BidPages": [
+                        {"UID": "10", "BidUID": "1", "ImagePath": str(first)},
+                        {"UID": "11", "BidUID": "1", "ImagePath": str(second)},
+                    ]
+                },
+            )
+            exporter = OspExporter(
+                SimpleNamespace(),
+                "1.0",
+                self._unused_ost_exporter_factory,
+            )
+            package_data, image_sources, missing = exporter._prepare_package_data(
+                raw_data
+            )
+        page_paths = [row["ImagePath"] for row in package_data.bid_tables["BidPages"]]
+        self.assertEqual(missing, [])
+        self.assertEqual(len(image_sources), 2)
+        self.assertEqual(len(set(page_paths)), 2)
+        self.assertTrue(all(path.endswith("\\sheet.pdf") for path in page_paths))
+
+    def test_prepare_package_data_reports_missing_drawing_files(self):
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Bid"},
+            bid_tables={
+                "BidPages": [
+                    {
+                        "UID": "10",
+                        "BidUID": "1",
+                        "ImagePath": r"C:\missing\sheet.pdf",
+                    }
+                ]
+            },
+        )
+        exporter = OspExporter(
+            SimpleNamespace(),
+            "1.0",
+            self._unused_ost_exporter_factory,
+        )
+        _package_data, image_sources, missing = exporter._prepare_package_data(raw_data)
+        self.assertEqual(image_sources, {})
+        self.assertEqual(missing, [r"C:\missing\sheet.pdf"])
 
     def test_osp_export_reports_image_progress_before_packaging(self):
         class FakeOstExporter:
@@ -393,7 +454,12 @@ class OspExporterProgressTests(unittest.TestCase):
             ],
         )
         self.assertEqual(len(cab_calls), 1)
-        self.assertIn("TempImages!.tmp\\sheet.pdf", cab_calls[0][1])
+        self.assertTrue(
+            any(
+                name.startswith("TempImages!.tmp\\") and name.endswith("\\sheet.pdf")
+                for name in cab_calls[0][1]
+            )
+        )
 
 
 if __name__ == "__main__":

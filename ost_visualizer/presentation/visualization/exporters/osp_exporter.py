@@ -1,4 +1,5 @@
 import logging
+import hashlib
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
@@ -43,6 +44,22 @@ class OspExporter:
                 tmp_path = Path(tmp)
                 source_files: List[str] = []
                 archive_names: List[str] = []
+                package_data, image_sources, missing_images = (
+                    self._prepare_package_data(raw_data)
+                )
+                if missing_images:
+                    preview = "; ".join(missing_images[:10])
+                    if len(missing_images) > 10:
+                        preview += f"; +{len(missing_images) - 10} more"
+                    return ExportResultDto(
+                        success=False,
+                        format_name="OSP",
+                        error_message=(
+                            "Cannot export OSP because referenced drawing files are "
+                            f"missing: {preview}"
+                        ),
+                        error_code=ExportErrorCode.WRITE_FAILED,
+                    )
                 _INVALID_FS = set('/\\:*?"<>|')
                 ost_name = (
                     "".join(
@@ -52,7 +69,7 @@ class OspExporter:
                 )
                 ost_path = tmp_path / ost_name
                 ost_exporter = self._ost_exporter_factory(self._uom_service)
-                ost_result = ost_exporter.export(raw_data, str(ost_path))
+                ost_result = ost_exporter.export(package_data, str(ost_path))
                 if not ost_result.success:
                     return ExportResultDto(
                         success=False,
@@ -69,7 +86,12 @@ class OspExporter:
                 source_files.append(str(bid_trans_path))
                 archive_names.append("BidTrans.xml")
                 _report(3, 4, "Collecting images")
-                self._collect_images(raw_data, source_files, archive_names, _report)
+                self._collect_images(
+                    image_sources,
+                    source_files,
+                    archive_names,
+                    _report,
+                )
                 _report(4, 4, "Packaging archive")
                 if not ost_cab.create_cab_with_names(
                     source_files, archive_names, output_file
@@ -92,22 +114,27 @@ class OspExporter:
 
     def _collect_images(
         self,
-        raw_data: RawBidData,
+        image_sources: dict[str, str],
         source_files: List[str],
         archive_names: List[str],
         report: Callable[[int, int, str], None],
     ) -> None:
-        seen_paths: set = set()
-        image_rows = [
-            page_row
-            for page_row in raw_data.bid_tables.get("BidPages", [])
-            if page_row.get("ImagePath", "") or page_row.get("OverlayImagePath", "")
-        ]
-        image_row_count = max(len(image_rows), 1)
-        checked_rows = 0
-        for page_row in raw_data.bid_tables.get("BidPages", []):
-            if page_row.get("ImagePath", "") or page_row.get("OverlayImagePath", ""):
-                checked_rows += 1
+        total = max(len(image_sources), 1)
+        for index, archive_name in enumerate(sorted(image_sources), start=1):
+            source_path = image_sources[archive_name]
+            report(index, total, f"Collecting {Path(source_path).name}")
+            source_files.append(source_path)
+            archive_names.append(archive_name)
+
+    def _prepare_package_data(
+        self, raw_data: RawBidData
+    ) -> tuple[RawBidData, dict[str, str], list[str]]:
+        package_data = self._clone_raw_bid_data(raw_data)
+        image_sources: dict[str, str] = {}
+        archive_names_by_source: dict[str, str] = {}
+        missing_images: list[str] = []
+        for page_row in package_data.bid_tables.get("BidPages", []):
+            page_uid = str(page_row.get("UID", "") or "page")
             for attr in ("ImagePath", "OverlayImagePath"):
                 image_path = page_row.get(attr, "") or ""
                 if not image_path:
@@ -116,14 +143,43 @@ class OspExporter:
                 if p.suffix.lower() not in OSP_IMAGE_EXTENSIONS:
                     continue
                 if not p.exists():
+                    missing_images.append(image_path)
                     continue
-                abs_path = str(p.resolve())
-                if abs_path in seen_paths:
-                    continue
-                seen_paths.add(abs_path)
-                report(checked_rows, image_row_count, f"Collecting {p.name}")
-                source_files.append(str(p))
-                archive_names.append(f"TempImages!.tmp\\{p.name}")
+                source_key = str(p.resolve())
+                archive_name = archive_names_by_source.get(source_key)
+                if archive_name is None:
+                    archive_name = self._archive_image_name(
+                        source_key, p.name, page_uid
+                    )
+                    archive_names_by_source[source_key] = archive_name
+                    image_sources[archive_name] = source_key
+                page_row[attr] = archive_name
+        return package_data, image_sources, missing_images
+
+    def _clone_raw_bid_data(self, raw_data: RawBidData) -> RawBidData:
+        return RawBidData(
+            bid_row=dict(raw_data.bid_row),
+            bid_tables={
+                table: [dict(row) for row in rows]
+                for table, rows in raw_data.bid_tables.items()
+            },
+            page_tables={
+                table: [dict(row) for row in rows]
+                for table, rows in raw_data.page_tables.items()
+            },
+            global_tables={
+                table: [dict(row) for row in rows]
+                for table, rows in raw_data.global_tables.items()
+            },
+        )
+
+    def _archive_image_name(self, source_key: str, filename: str, page_uid: str) -> str:
+        digest = hashlib.sha1(source_key.casefold().encode("utf-8")).hexdigest()[:16]
+        safe_page_uid = "".join(c if c.isalnum() else "_" for c in page_uid) or "page"
+        safe_filename = "".join(
+            c if c not in set('/\\:*?"<>|') else "_" for c in (filename or "image")
+        )
+        return f"TempImages!.tmp\\{safe_page_uid}_{digest}\\{safe_filename}"
 
     def _generate_bid_trans_xml(self, tmp_path: Path) -> Path:
         root = ET.Element("XML_ROOT")

@@ -4,7 +4,7 @@ import shutil
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional, Set
+from typing import Dict, List, Optional
 from ....domain.entities.file_extensions import OSP_IMAGE_EXTENSIONS
 from ....presentation.visualization.exporters import ost_cab
 from ...app_paths import get_default_working_dir
@@ -130,68 +130,85 @@ class OspImporter:
                 _remove_temp_tree(tmp_path)
 
     def _extract_images(self, tmp_path: Path, ost_path: Path, dest_dir: Path) -> None:
-        main_names, overlay_names = self._collect_image_names(ost_path)
-        all_names = main_names | overlay_names
-        if not all_names:
+        image_refs = self._collect_image_references(ost_path)
+        if not image_refs:
             return
-        image_files = [
-            f
-            for f in tmp_path.rglob("*")
-            if f.is_file()
-            and f.suffix.lower() in OSP_IMAGE_EXTENSIONS
-            and f.name in all_names
-        ]
-        if not image_files:
+        copied_paths = self._copy_referenced_images(tmp_path, dest_dir, image_refs)
+        if not copied_paths:
             return
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        overlay_dir = dest_dir / "Overlay"
-        conflicting = overlay_names & main_names
-        if conflicting:
-            overlay_dir.mkdir(parents=True, exist_ok=True)
-        for img in image_files:
-            if img.name in overlay_names and img.name in main_names:
-                shutil.copy2(str(img), str(overlay_dir / img.name))
-            else:
-                shutil.copy2(str(img), str(dest_dir / img.name))
-        self._rewrite_image_paths(ost_path, dest_dir, main_names)
+        self._rewrite_image_paths(ost_path, copied_paths)
 
-    def _collect_image_names(self, ost_path: Path) -> tuple:
+    def _collect_image_references(self, ost_path: Path) -> Dict[str, str]:
         tree = ET.parse(str(ost_path))
         root = tree.getroot()
-        main_names: Set[str] = set()
-        overlay_names: Set[str] = set()
+        image_refs: Dict[str, str] = {}
         for page_elem in root.iter("BidPage"):
-            image_path = page_elem.get("ImagePath")
-            if image_path:
-                main_names.add(Path(image_path).name)
-            overlay_path = page_elem.get("OverlayImagePath")
-            if overlay_path:
-                overlay_names.add(Path(overlay_path).name)
-        return main_names, overlay_names
+            for attr in ("ImagePath", "OverlayImagePath"):
+                image_path = page_elem.get(attr)
+                if not image_path:
+                    continue
+                member_name = self._image_member_name(image_path)
+                if member_name:
+                    image_refs[image_path] = member_name
+        return image_refs
+
+    def _image_member_name(self, image_path: str) -> str:
+        normalized = image_path.replace("/", "\\")
+        marker = "TempImages!.tmp\\"
+        marker_index = normalized.lower().find(marker.lower())
+        if marker_index >= 0:
+            return normalized[marker_index:]
+        filename = Path(image_path).name
+        if filename:
+            return filename
+        return ""
+
+    def _copy_referenced_images(
+        self,
+        tmp_path: Path,
+        dest_dir: Path,
+        image_refs: Dict[str, str],
+    ) -> Dict[str, str]:
+        copied_paths: Dict[str, str] = {}
+        fallback_by_name: Dict[str, List[Path]] = {}
+        for file_path in tmp_path.rglob("*"):
+            if file_path.is_file() and file_path.suffix.lower() in OSP_IMAGE_EXTENSIONS:
+                fallback_by_name.setdefault(file_path.name, []).append(file_path)
+        for original_path, member_name in image_refs.items():
+            source_path = tmp_path / member_name
+            if not source_path.is_file():
+                candidates = fallback_by_name.get(Path(member_name).name, [])
+                source_path = candidates[0] if len(candidates) == 1 else None
+            if source_path is None or not source_path.is_file():
+                continue
+            relative_dest = self._image_destination_relative_path(member_name)
+            dest_path = dest_dir / relative_dest
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(source_path), str(dest_path))
+            copied_paths[original_path] = str(dest_path)
+        return copied_paths
+
+    def _image_destination_relative_path(self, member_name: str) -> Path:
+        normalized = member_name.replace("/", "\\")
+        marker = "TempImages!.tmp\\"
+        if normalized.lower().startswith(marker.lower()):
+            relative = normalized[len(marker) :]
+            return Path("Images") / Path(relative)
+        return Path(Path(normalized).name)
 
     def _rewrite_image_paths(
         self,
         ost_path: Path,
-        dest_dir: Path,
-        main_names: Set[str],
+        copied_paths: Dict[str, str],
     ) -> None:
         tree = ET.parse(str(ost_path))
         root = tree.getroot()
-        overlay_dir = dest_dir / "Overlay"
         modified = False
         for page_elem in root.iter("BidPage"):
-            image_path = page_elem.get("ImagePath")
-            if image_path:
-                filename = Path(image_path).name
-                page_elem.set("ImagePath", str(dest_dir / filename))
-                modified = True
-            overlay_path = page_elem.get("OverlayImagePath")
-            if overlay_path:
-                filename = Path(overlay_path).name
-                if filename in main_names:
-                    page_elem.set("OverlayImagePath", str(overlay_dir / filename))
-                else:
-                    page_elem.set("OverlayImagePath", str(dest_dir / filename))
-                modified = True
+            for attr in ("ImagePath", "OverlayImagePath"):
+                image_path = page_elem.get(attr)
+                if image_path and image_path in copied_paths:
+                    page_elem.set(attr, copied_paths[image_path])
+                    modified = True
         if modified:
             tree.write(str(ost_path), encoding="unicode", xml_declaration=False)
