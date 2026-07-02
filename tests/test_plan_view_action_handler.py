@@ -83,6 +83,7 @@ class FakePlanView:
         self.activated_annotations = []
         self.named_view_name_validator = None
         self.placement_flow = []
+        self.clipboard_changed = SimpleNamespace(emit=lambda: None)
 
     def set_selected_uids(self, uids):
         self.selected = set(uids)
@@ -929,6 +930,75 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             color=color,
             width=1.0,
         )
+
+    def test_copy_ignores_takeoff_uid_not_loaded_on_current_plan_page(self):
+        data = FakeProjectData()
+        data.takeoffs["other-page"] = Takeoff(
+            uid="other-page",
+            condition_uid="c1",
+            page_uid="p2",
+            position=[1.0, 2.0],
+        )
+        plan_view = FakePlanView()
+        handler = self._paste_handler(plan_view=plan_view)
+        handler._data_svc = data
+        handler.on_copy_requested(["other-page"])
+        self.assertFalse(handler._clipboard_svc.has_content())
+
+    def test_copy_keeps_current_page_text_annotation_without_off_page_takeoff(self):
+        data = FakeProjectData()
+        data.takeoffs["other-page"] = Takeoff(
+            uid="other-page",
+            condition_uid="c1",
+            page_uid="p2",
+            position=[99.0, 100.0],
+        )
+        current_takeoff = Takeoff(
+            uid="current",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[1.0, 2.0],
+        )
+        text_annotation = BidAnnotation(
+            uid="text-1",
+            annotation_type="text",
+            page_uid="p1",
+            position=[10.0, 20.0, 80.0, 24.0],
+            properties={"Text": "Copied note"},
+        )
+        plan_view = FakePlanView()
+        plan_view.get_takeoff = lambda uid: (
+            current_takeoff if uid == "current" else None
+        )
+        plan_view.annotations["text-1"] = text_annotation
+        write = FakeWriteService()
+        ann_write = FakeAnnotationWriteService()
+        handler = self._paste_handler(
+            plan_view=plan_view, write=write, ann_write=ann_write
+        )
+        handler._data_svc = data
+        handler.on_copy_requested(["current", "text-1", "other-page"])
+        self.assertEqual(
+            [takeoff.uid for takeoff in handler._clipboard_svc.items],
+            ["current"],
+        )
+        self.assertEqual(
+            [
+                (annotation.uid, annotation.annotation_type)
+                for annotation in handler._clipboard_svc.annotations
+            ],
+            [("text-1", "text")],
+        )
+        plan_view.current_page_uid = "p2"
+        plan_view.annotation_key_map = {("ann-1", "text"): "ann-1"}
+        handler.on_paste_requested()
+        self.assertEqual(len(write.calls), 1)
+        self.assertEqual(len(write.calls[0][2]), 1)
+        self.assertEqual(write.calls[0][2][0].page_uid, "p2")
+        self.assertEqual(len(ann_write.insert_calls), 1)
+        self.assertEqual(len(ann_write.insert_calls[0][2]), 1)
+        self.assertEqual(ann_write.insert_calls[0][2][0].annotation_type, "text")
+        self.assertEqual(ann_write.insert_calls[0][2][0].page_uid, "p2")
 
     def test_set_curved_uses_targeted_update_after_curve_writes(self):
         data = FakeProjectData()

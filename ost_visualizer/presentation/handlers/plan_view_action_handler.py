@@ -19,7 +19,6 @@ from ...domain.entities.named_view import (
 from ...domain.entities.takeoff import Takeoff
 from ..dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ..managers.ui_access_manager import Feature
-from ..resolvers.entity_resolver import EntityResolver
 from ..services.selection_clipboard_service import SelectionClipboardService
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.selection_commands import (
@@ -114,7 +113,6 @@ class PlanViewActionHandler:
         self._ui_access_manager = ui_access_manager
         self._deferred_persistence = deferred_persistence_manager
         self._clipboard_svc = SelectionClipboardService()
-        self._resolver = EntityResolver(plan_view, project_data_svc)
         self._annotation_writes = AnnotationWriteCoordinator(
             annotation_write_svc, project_data_svc, event_bus
         )
@@ -208,7 +206,14 @@ class PlanViewActionHandler:
         )
 
     def _takeoff_uids_only(self, uids: list) -> list:
-        return [u for u in uids if self._resolver.resolve_takeoff(u)]
+        return [u for u in uids if self._command_takeoff(u)]
+
+    def _current_plan_takeoff(self, uid: str):
+        return self._plan_view.get_takeoff(uid) if self._plan_view else None
+
+    def _command_takeoff(self, uid: str):
+        takeoff = self._current_plan_takeoff(uid)
+        return takeoff or self._data_svc.get_takeoff(uid)
 
     def _publish_takeoffs_changed_for_pages(
         self,
@@ -422,7 +427,7 @@ class PlanViewActionHandler:
         takeoff_uids = []
         takeoffs = []
         for uid in uids:
-            takeoff = self._resolver.resolve_takeoff(uid)
+            takeoff = self._command_takeoff(uid)
             if takeoff is None:
                 continue
             takeoff_uids.append(uid)
@@ -490,7 +495,7 @@ class PlanViewActionHandler:
         page_uids = []
         condition_uids = []
         for uid in takeoff_uids:
-            takeoff = self._resolver.resolve_takeoff(uid)
+            takeoff = self._command_takeoff(uid)
             if not takeoff:
                 continue
             pos = cs.parse_position(takeoff.position)
@@ -1205,7 +1210,7 @@ class PlanViewActionHandler:
         saved_annotations = []
         annotation_selection_keys = {}
         for uid in uids:
-            t = self._resolver.resolve_takeoff(uid)
+            t = self._command_takeoff(uid)
             if t:
                 saved_takeoffs.append(t)
                 continue
@@ -1365,7 +1370,7 @@ class PlanViewActionHandler:
         takeoffs = []
         annotations = []
         for uid in uids:
-            t = self._resolver.resolve_takeoff(uid)
+            t = self._current_plan_takeoff(uid)
             if t:
                 takeoffs.append(t)
                 continue

@@ -29,7 +29,6 @@ from ..dialogs.set_scale_dialog import ScaleSettings, SetScaleDialog
 from ..handlers.condition_action_handler import ConditionActionHandler
 from ..managers.app_config_presentation_manager import AppConfigPresentationManager
 from ..managers.ui_access_manager import Feature
-from ..resolvers.entity_resolver import EntityResolver
 from ..utils.image_show_mode import SHOW_BOTH, SHOW_ORIGINAL, SHOW_OVERLAY
 from ..utils.messagebox import (
     DB_LOCKED_HINT,
@@ -179,7 +178,6 @@ class UIEventCoordinator:
         self._subscriptions = []
         self._page_settings_bar = None
         self._undo_service = None
-        self._resolver = EntityResolver(None, self.project_data)
         self._suspended_layer_tool: Optional[_SuspendedLayerTool] = None
         self._mesh_window: Optional[MeshViewWindow] = None
         self._mesh_window_action: Optional[QtGui.QAction] = None
@@ -599,7 +597,6 @@ class UIEventCoordinator:
 
     def set_plan_view(self, view) -> None:
         self.plan_view = view
-        self._resolver.set_plan_view(view)
         self._viewer.plan_view = view
         self._toolbar.set_plan_view(view)
         view.takeoff_selection_changed.connect(self._on_takeoff_selection_changed)
@@ -1498,7 +1495,6 @@ class UIEventCoordinator:
         self.ui_state_manager = None
         self.ui_access_manager = None
         self.event_bus = None
-        self._resolver = None
         self.project_data = None
         self.project_operations = None
         self.visualization_service = None
@@ -2199,7 +2195,7 @@ class UIEventCoordinator:
         if not takeoff_uids:
             return False
         for uid in takeoff_uids:
-            t = self._resolver.resolve_takeoff(uid)
+            t = self.project_data.get_takeoff(uid)
             if t is None or not t.is_negative:
                 return False
         return True
@@ -2211,7 +2207,7 @@ class UIEventCoordinator:
         all_linear = True
         all_curved = True
         for uid in takeoff_uids:
-            t = self._resolver.resolve_takeoff(uid)
+            t = self.project_data.get_takeoff(uid)
             if t is None:
                 return False, False
             c = conditions.get(t.condition_uid)
@@ -2225,7 +2221,7 @@ class UIEventCoordinator:
     def _selected_takeoff_context_state(self, takeoff_uids: list):
         return build_selected_takeoff_context_state(
             takeoff_uids,
-            self._resolver.resolve_takeoff,
+            self.project_data.get_takeoff,
             self.project_data.get_bid_conditions(),
         )
 
