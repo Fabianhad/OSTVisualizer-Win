@@ -362,6 +362,7 @@ class TakeoffPlanView(
         self._load_user_view_changed: bool = False
         self._load_waiting_for_visibility: bool = False
         self._load_geometry_notified: bool = False
+        self._applying_pending_visible_view_state: bool = False
         self._saved_scroll_state: Optional[Tuple[int, int]] = None
         self._zoom_press_ctrl: bool = False
         self._selection_enabled: bool = False
@@ -2502,13 +2503,18 @@ class TakeoffPlanView(
 
     def _apply_pending_visible_view_state(self) -> None:
         if (
-            self._load_view_applied
+            self._applying_pending_visible_view_state
+            or self._load_view_applied
             or not self.isVisible()
             or not self.viewport().size().isValid()
         ):
             return
-        self._apply_loading_view_contract()
-        self._finalize_page_load_if_ready()
+        self._applying_pending_visible_view_state = True
+        try:
+            self._apply_loading_view_contract()
+            self._finalize_page_load_if_ready()
+        finally:
+            self._applying_pending_visible_view_state = False
 
     def _finalize_page_load_if_ready(self) -> bool:
         if not self._load_geometry_ready or self._load_view_applied:

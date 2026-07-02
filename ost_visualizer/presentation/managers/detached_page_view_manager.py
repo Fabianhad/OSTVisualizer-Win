@@ -100,6 +100,9 @@ class DetachedPageViewManager(IShutdownAware):
         self._visibility_changed_callback = None
         self._refresh_signaler = _RefreshSignaler(self._refresh_window, parent_window)
         self.event_bus.subscribe(
+            AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
+        )
+        self.event_bus.subscribe(
             AppEvents.NATIVE_SCENE_UPDATED, self._on_native_scene_updated
         )
         self.event_bus.subscribe(
@@ -120,6 +123,9 @@ class DetachedPageViewManager(IShutdownAware):
 
     def shutdown(self) -> None:
         if self.event_bus is not None:
+            self.event_bus.unsubscribe(
+                AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
+            )
             self.event_bus.unsubscribe(
                 AppEvents.NATIVE_SCENE_UPDATED, self._on_native_scene_updated
             )
@@ -172,6 +178,17 @@ class DetachedPageViewManager(IShutdownAware):
         self, geometries: list, bounds: tuple | None = None
     ) -> None:
         if not self.is_view_open():
+            return
+        self._refresh_signaler.request_refresh()
+
+    def _on_database_refreshed(self, file_path: str = "") -> None:
+        if not self.is_view_open():
+            return
+        view = self.repository.get_active_view()
+        if not view:
+            return
+        bid_ref = view.bid_ref
+        if bid_ref and file_path and bid_ref.file_path != file_path:
             return
         self._refresh_signaler.request_refresh()
 
@@ -265,9 +282,29 @@ class DetachedPageViewManager(IShutdownAware):
         if not view:
             return
         page_data = self._get_page_data(view)
+        if page_data.page is None and self._retarget_missing_active_page(view):
+            page_data = self._get_page_data(view)
         self._update_window_navigation(view)
         self._window.set_read_only(self._is_read_only())
         self._window.update_page(page_data)
+
+    def _retarget_missing_active_page(self, view: AnnotationView) -> bool:
+        bid_ref = view.bid_ref
+        if bid_ref and self.project_data.get_current_bid_ref() != bid_ref:
+            return False
+        bid = self._get_bid_for_view(view)
+        if bid is None:
+            return False
+        page_uids = [uid for uid, _name in _collect_pages_from_bid(bid)]
+        target_page_uid = str(view.target_page_uid or "")
+        if target_page_uid in page_uids:
+            return False
+        replacement_uid = page_uids[0] if page_uids else ""
+        if target_page_uid == replacement_uid and view.target_named_view_uid is None:
+            return False
+        view.update_view_target(page_uid=replacement_uid, named_view_uid=None)
+        self.repository.update_view(view)
+        return True
 
     def get_active_view(self) -> Optional[AnnotationView]:
         return self.repository.get_active_view()

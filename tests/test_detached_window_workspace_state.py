@@ -15,6 +15,7 @@ from ost_visualizer.application.use_cases.annotation_view.open_annotation_view_u
     OpenAnnotationViewUseCase,
 )
 from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.annotation_view import AnnotationView
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
@@ -28,6 +29,7 @@ from ost_visualizer.presentation.coordinators.workspace_state_coordinator import
     WorkspaceStateCoordinator,
 )
 from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.windows.components.window import DetachedPageViewWindow
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
@@ -2241,6 +2243,137 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             calls,
             [("navigation", "view-1"), ("read_only", False), ("page", "p1")],
         )
+
+    def test_database_refresh_refreshes_matching_detached_view(self):
+        calls = []
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="p1",
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = object()
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._refresh_signaler = SimpleNamespace(
+            request_refresh=lambda: calls.append("refresh")
+        )
+        manager._on_database_refreshed(file_path="other.mdb")
+        manager._on_database_refreshed(file_path="file.mdb")
+        self.assertEqual(calls, ["refresh"])
+
+    def test_refresh_window_retargets_deleted_active_page(self):
+        calls = []
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="deleted-page",
+        )
+        bid = SimpleNamespace(
+            folders={},
+            pages_without_folder=[
+                Page(uid="p2", name="Page 2"),
+                Page(uid="p3", name="Page 3"),
+            ],
+        )
+
+        def page_data(active_view):
+            page = (
+                Page(uid=active_view.target_page_uid, name="Page 2")
+                if active_view.target_page_uid == "p2"
+                else None
+            )
+            return PageViewDto(page=page, bid_ref=active_view.bid_ref)
+
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            set_read_only=lambda read_only: calls.append(("read_only", read_only)),
+            update_page=lambda data: calls.append(("page", data.page.uid)),
+        )
+        manager.repository = SimpleNamespace(
+            get_active_view=lambda: view,
+            update_view=lambda active_view: calls.append(
+                ("repo", active_view.target_page_uid, active_view.target_named_view_uid)
+            ),
+        )
+        bid_ref = view.bid_ref
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: bid_ref,
+            get_bid=lambda _bid_ref: bid,
+        )
+        manager._get_page_data = page_data
+        manager._update_window_navigation = lambda active_view: calls.append(
+            ("navigation", active_view.target_page_uid)
+        )
+        manager._is_read_only = lambda: False
+        manager._refresh_window()
+        self.assertEqual(view.target_page_uid, "p2")
+        self.assertEqual(
+            calls,
+            [
+                ("repo", "p2", None),
+                ("navigation", "p2"),
+                ("read_only", False),
+                ("page", "p2"),
+            ],
+        )
+
+    def test_refresh_window_does_not_retarget_missing_page_for_inactive_bid(self):
+        calls = []
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="p1",
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = SimpleNamespace(
+            set_read_only=lambda read_only: calls.append(("read_only", read_only)),
+            update_page=lambda data: calls.append(("page", data.page)),
+        )
+        manager.repository = SimpleNamespace(
+            get_active_view=lambda: view,
+            update_view=lambda active_view: calls.append(
+                ("repo", active_view.target_page_uid)
+            ),
+        )
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("file.mdb", "other-bid"),
+            get_bid=lambda _bid_ref: calls.append("get_bid"),
+        )
+        manager._get_page_data = lambda active_view: PageViewDto(
+            page=None, bid_ref=active_view.bid_ref
+        )
+        manager._update_window_navigation = lambda active_view: calls.append(
+            ("navigation", active_view.uid)
+        )
+        manager._is_read_only = lambda: False
+        manager._refresh_window()
+        self.assertEqual(
+            calls,
+            [("navigation", "view-1"), ("read_only", False), ("page", None)],
+        )
+
+    def test_pending_visible_view_state_ignores_reentrant_resize_apply(self):
+        calls = []
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._applying_pending_visible_view_state = False
+        view._load_view_applied = False
+        view.isVisible = lambda: True
+        view.viewport = lambda: SimpleNamespace(
+            size=lambda: SimpleNamespace(isValid=lambda: True)
+        )
+
+        def apply_loading_view_contract():
+            calls.append("loading")
+            TakeoffPlanView._apply_pending_visible_view_state(view)
+
+        view._apply_loading_view_contract = apply_loading_view_contract
+        view._finalize_page_load_if_ready = lambda: calls.append("finalize")
+        TakeoffPlanView._apply_pending_visible_view_state(view)
+        self.assertEqual(calls, ["loading", "finalize"])
+        self.assertFalse(view._applying_pending_visible_view_state)
 
     def test_layer_visibility_event_refreshes_matching_detached_view(self):
         calls = []
