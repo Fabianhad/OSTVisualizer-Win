@@ -379,8 +379,30 @@ class _DeleteBidUiState:
 
 
 class _FakeDeferredPersistence:
+    def __init__(self):
+        self.cancelled_bid_selected_pages = []
+        self.flushes = []
+
+    def cancel_bid_selected_pages(self, file_path, bid_uids):
+        self.cancelled_bid_selected_pages.append((file_path, list(bid_uids)))
+
     def flush_for_file(self, _file_path):
+        self.flushes.append(_file_path)
         return True
+
+
+class _DeferredPersistenceRequiringBidCancel(_FakeDeferredPersistence):
+    def __init__(self, blocked_file_path, blocked_bid_uid):
+        super().__init__()
+        self.blocked_file_path = blocked_file_path
+        self.blocked_bid_uid = blocked_bid_uid
+
+    def flush_for_file(self, file_path):
+        super().flush_for_file(file_path)
+        return (
+            self.blocked_file_path,
+            [self.blocked_bid_uid],
+        ) in self.cancelled_bid_selected_pages
 
 
 def _write_service(project_data, reload_success=True):
@@ -1151,6 +1173,37 @@ class BidLockPermissionTests(unittest.TestCase):
             ["bid-2"],
         )
 
+    def test_move_bid_to_deleted_discards_pending_selected_page_before_flush(self):
+        bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")
+        ui_state = _DeleteBidUiState(bid_ref)
+        project_data = self._delete_project_data(remaining_uids=[])
+        write_service = _MoveToDeletedWriteService(ui_state)
+        deferred = _DeferredPersistenceRequiringBidCancel("C:/jobs/test.mdb", "bid-1")
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=deferred,
+        )
+        from ost_visualizer.presentation.handlers import project_write_handler
+
+        old_confirm = project_write_handler.confirm
+        project_write_handler.confirm = lambda _window, _title, _message: True
+        try:
+            handler.delete_selected()
+        finally:
+            project_write_handler.confirm = old_confirm
+        self.assertEqual(
+            deferred.cancelled_bid_selected_pages,
+            [("C:/jobs/test.mdb", ["bid-1"])],
+        )
+        self.assertEqual(deferred.flushes, ["C:/jobs/test.mdb"])
+        self.assertEqual(
+            write_service.move_calls,
+            [("C:/jobs/test.mdb", ["bid-1"], "1", "project-2", False)],
+        )
+
     def test_permanently_deleting_active_deleted_bid_selects_replacement_before_refresh(
         self,
     ):
@@ -1195,6 +1248,41 @@ class BidLockPermissionTests(unittest.TestCase):
                 for ref in write_service.selected_bid_during_notify
             ],
             ["deleted-2"],
+        )
+
+    def test_permanent_bid_delete_discards_pending_selected_page_before_flush(self):
+        bid_ref = BidRef("C:/jobs/test.mdb", "deleted-1")
+        ui_state = _DeleteBidUiState(bid_ref)
+        project_data = self._delete_project_data(
+            selected_project_uid="1", remaining_uids=[]
+        )
+        write_service = _MoveToDeletedWriteService(ui_state)
+        deferred = _DeferredPersistenceRequiringBidCancel(
+            "C:/jobs/test.mdb", "deleted-1"
+        )
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=deferred,
+        )
+        from ost_visualizer.presentation.handlers import project_write_handler
+
+        old_confirm = project_write_handler.confirm
+        project_write_handler.confirm = lambda _window, _title, _message: True
+        try:
+            handler.delete_selected()
+        finally:
+            project_write_handler.confirm = old_confirm
+        self.assertEqual(
+            deferred.cancelled_bid_selected_pages,
+            [("C:/jobs/test.mdb", ["deleted-1"])],
+        )
+        self.assertEqual(deferred.flushes, ["C:/jobs/test.mdb"])
+        self.assertEqual(
+            write_service.delete_calls,
+            [("C:/jobs/test.mdb", ["deleted-1"], False)],
         )
 
     def test_permanently_deleting_only_deleted_bid_falls_back_before_refresh(self):

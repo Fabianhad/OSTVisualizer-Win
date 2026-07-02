@@ -43,7 +43,10 @@ from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_ren
     AnnotationItemRenderer,
 )
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import (
+    CLOUD_SCALLOP_SIZE_SCALE,
     calculate_annotation_geometry,
+    calculate_cloud_scallop_radius,
+    create_cloud_path_points,
     format_dimension_distance,
 )
 
@@ -473,6 +476,17 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertEqual(format_dimension_distance(255.0), "21' - 3\"")
         self.assertEqual(format_dimension_distance(18.0), "1' - 6\"")
         self.assertEqual(format_dimension_distance(6.0), '6"')
+
+    def test_cloud_scallop_radius_is_quarter_of_legacy_size(self):
+        self.assertEqual(CLOUD_SCALLOP_SIZE_SCALE, 0.25)
+        self.assertAlmostEqual(calculate_cloud_scallop_radius(30.0, 2.0), 5.0)
+        self.assertAlmostEqual(calculate_cloud_scallop_radius(300.0, 2.0), 12.5)
+
+    def test_cloud_path_uses_quarter_size_scallop_density(self):
+        segments = create_cloud_path_points(
+            [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
+        )
+        self.assertEqual(len(segments), 80)
 
     def test_horizontal_dimension_renders_line_ticks_and_centered_text(self):
         renderer = AnnotationItemRenderer(OSTCoordinateSystem())

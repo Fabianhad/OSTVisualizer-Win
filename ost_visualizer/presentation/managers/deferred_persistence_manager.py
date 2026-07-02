@@ -89,6 +89,14 @@ class DeferredPersistenceManager(QtCore.QObject):
             skippable_when_blocked=True,
         )
 
+    def cancel_bid_selected_pages(self, db_path: str, bid_uids: list[str]) -> None:
+        if not db_path or not bid_uids:
+            return
+        for bid_uid in bid_uids:
+            self._pending.pop(("bid_selected_page", db_path, str(bid_uid)), None)
+        if not self._pending:
+            self._timer.stop()
+
     def schedule_layer_show(self, db_path: str, layer_uid: str, show: bool) -> None:
         self.schedule(
             "layer_show",

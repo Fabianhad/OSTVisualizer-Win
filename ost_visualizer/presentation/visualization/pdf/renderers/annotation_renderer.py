@@ -20,6 +20,9 @@ from .....domain.services.dimension_format_service import inches_to_display
 
 Point = Tuple[float, float]
 Segment = Tuple[float, float, float, float]
+CLOUD_SCALLOP_MIN_RADIUS = 15.0
+CLOUD_SCALLOP_MAX_RADIUS = 50.0
+CLOUD_SCALLOP_SIZE_SCALE = 0.25
 
 
 def create_cloud_path_points(
@@ -35,7 +38,7 @@ def create_cloud_path_points(
     if not edges:
         return []
     avg_e = sum(e[2] for e in edges) / len(edges)
-    cloud_radius = max(15.0, min(avg_e * intensity / 3, 50.0))
+    cloud_radius = calculate_cloud_scallop_radius(avg_e, intensity)
     perimeter = sum(e[2] for e in edges)
     step = 3.25 * cloud_radius
     n_samples = max(6, int(math.ceil(perimeter / step)))
@@ -60,6 +63,14 @@ def create_cloud_path_points(
         for cp1, cp2, pt in bezier_segments:
             segments.append((start if k == 0 else None, cp1, cp2, pt))
     return segments
+
+
+def calculate_cloud_scallop_radius(avg_edge_length: float, intensity: float) -> float:
+    base_radius = max(
+        CLOUD_SCALLOP_MIN_RADIUS,
+        min(avg_edge_length * intensity / 3, CLOUD_SCALLOP_MAX_RADIUS),
+    )
+    return base_radius * CLOUD_SCALLOP_SIZE_SCALE
 
 
 def process_text_for_box(

@@ -51,6 +51,11 @@ class ProjectWriteHandler:
             return True
         return bool(self._deferred_persistence.flush_for_file(file_path))
 
+    def _discard_deleting_bid_selected_page_writes(
+        self, file_path: str, bid_uids: List[str]
+    ) -> None:
+        self._deferred_persistence.cancel_bid_selected_pages(file_path, bid_uids)
+
     def duplicate_selected(self) -> None:
         if self._duplicate_in_progress:
             return
@@ -425,6 +430,7 @@ class ProjectWriteHandler:
             if not confirm(self.window, "Delete Bids", msg):
                 return
             for file_path, uids in self._group_bids_by_file(in_trash).items():
+                self._discard_deleting_bid_selected_page_writes(file_path, uids)
                 if not self._flush_deferred_for_file(file_path):
                     return
                 selected_bid = self.ui_state_manager.get_selected_bid_ref()
@@ -474,6 +480,7 @@ class ProjectWriteHandler:
                 return
             for orig_project_uid, refs in active_orig.items():
                 for file_path, uids in self._group_bids_by_file(refs).items():
+                    self._discard_deleting_bid_selected_page_writes(file_path, uids)
                     if not self._flush_deferred_for_file(file_path):
                         return
                     selected_bid = self.ui_state_manager.get_selected_bid_ref()

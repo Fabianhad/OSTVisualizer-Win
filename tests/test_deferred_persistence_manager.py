@@ -241,6 +241,21 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             [("page_show_mode", "b.mdb", "p1", 2, False)],
         )
 
+    def test_cancel_bid_selected_pages_removes_only_matching_bid_writes(self):
+        self.manager.schedule_bid_selected_page("a.mdb", "b1", "p1")
+        self.manager.schedule_bid_selected_page("a.mdb", "b2", "p2")
+        self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        self.manager.cancel_bid_selected_pages("a.mdb", ["b1"])
+        self.assertEqual(self.manager.pending_count, 2)
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(
+            self.service.calls,
+            [
+                ("bid_selected_page", "a.mdb", "b2", "p2"),
+                ("page_view_state", "a.mdb", "p1", 2.0, 10.0, 20.0),
+            ],
+        )
+
     def test_cleanup_flushes_pending_writes(self):
         self.manager.schedule_page_overlay_rect("a.mdb", "p1", (1, 2.5, 3, 4.25))
         self.assertTrue(self.manager.cleanup())
