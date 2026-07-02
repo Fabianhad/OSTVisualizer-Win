@@ -167,6 +167,27 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         coordinator.refresh()
         self.assertFalse(action.isEnabled())
 
+    def test_place_action_enabled_for_active_2d_page_without_3d_page_selection(self):
+        class PlanView(_PlanView):
+            place_condition_uid = None
+
+            def selected_takeoff_condition_uid(self):
+                return "c1"
+
+        _app()
+        action = QtGui.QAction()
+        coordinator = ToolbarStateCoordinator(
+            _UiState(selected_page_uids=[], active_page_uid="p1"),
+            _Access(),
+            _ProjectData(),
+        )
+        coordinator.set_place_action(action)
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_IndexWidget(1))
+        coordinator.set_plan_view(PlanView())
+        coordinator.refresh()
+        self.assertTrue(action.isEnabled())
+
     def test_summary_tab_disables_project_only_edit_actions_despite_project_selection(
         self,
     ):
