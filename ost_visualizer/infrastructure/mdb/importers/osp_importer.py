@@ -4,7 +4,7 @@ import shutil
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from ....domain.entities.file_extensions import OSP_IMAGE_EXTENSIONS
 from ....presentation.visualization.exporters import ost_cab
 from ...app_paths import get_default_working_dir
@@ -13,6 +13,7 @@ from .ost_importer import OstImporter
 logger = logging.getLogger(__name__)
 _OSP_TEMP_PREFIX = "ostv_osp_"
 _LEGACY_WINDOWS_PATH_LIMIT = 240
+_IMAGE_MEMBER_PREFIX = "TempImages!.tmp\\"
 
 
 def _cab_extract_output_dir(path: Path) -> str:
@@ -147,21 +148,17 @@ class OspImporter:
                 image_path = page_elem.get(attr)
                 if not image_path:
                     continue
-                member_name = self._image_member_name(image_path)
+                member_name = self._packaged_image_member_name(image_path)
                 if member_name:
                     image_refs[image_path] = member_name
         return image_refs
 
-    def _image_member_name(self, image_path: str) -> str:
+    def _packaged_image_member_name(self, image_path: str) -> str:
         normalized = image_path.replace("/", "\\")
-        marker = "TempImages!.tmp\\"
-        marker_index = normalized.lower().find(marker.lower())
-        if marker_index >= 0:
-            return normalized[marker_index:]
-        filename = Path(image_path).name
-        if filename:
-            return filename
-        return ""
+        marker_index = normalized.lower().find(_IMAGE_MEMBER_PREFIX.lower())
+        if marker_index < 0:
+            return ""
+        return normalized[marker_index:]
 
     def _copy_referenced_images(
         self,
@@ -170,16 +167,9 @@ class OspImporter:
         image_refs: Dict[str, str],
     ) -> Dict[str, str]:
         copied_paths: Dict[str, str] = {}
-        fallback_by_name: Dict[str, List[Path]] = {}
-        for file_path in tmp_path.rglob("*"):
-            if file_path.is_file() and file_path.suffix.lower() in OSP_IMAGE_EXTENSIONS:
-                fallback_by_name.setdefault(file_path.name, []).append(file_path)
         for original_path, member_name in image_refs.items():
             source_path = tmp_path / member_name
             if not source_path.is_file():
-                candidates = fallback_by_name.get(Path(member_name).name, [])
-                source_path = candidates[0] if len(candidates) == 1 else None
-            if source_path is None or not source_path.is_file():
                 continue
             relative_dest = self._image_destination_relative_path(member_name)
             dest_path = dest_dir / relative_dest
@@ -190,9 +180,8 @@ class OspImporter:
 
     def _image_destination_relative_path(self, member_name: str) -> Path:
         normalized = member_name.replace("/", "\\")
-        marker = "TempImages!.tmp\\"
-        if normalized.lower().startswith(marker.lower()):
-            relative = normalized[len(marker) :]
+        if normalized.lower().startswith(_IMAGE_MEMBER_PREFIX.lower()):
+            relative = normalized[len(_IMAGE_MEMBER_PREFIX) :]
             return Path("Images") / Path(relative)
         return Path(Path(normalized).name)
 

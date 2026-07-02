@@ -259,15 +259,12 @@ class ImportRefreshFlowTests(unittest.TestCase):
             self.assertIn(str(first_dest), rewritten)
             self.assertIn(str(second_dest), rewritten)
 
-    def test_osp_import_skips_ambiguous_legacy_basename_image_member(self):
+    def test_osp_import_ignores_non_package_image_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            first = tmp_path / "TempImages!.tmp" / "a" / "sheet.pdf"
-            second = tmp_path / "TempImages!.tmp" / "b" / "sheet.pdf"
-            first.parent.mkdir(parents=True)
-            second.parent.mkdir(parents=True)
-            first.write_bytes(b"first")
-            second.write_bytes(b"second")
+            packaged = tmp_path / "TempImages!.tmp" / "a" / "sheet.pdf"
+            packaged.parent.mkdir(parents=True)
+            packaged.write_bytes(b"packaged")
             ost_path = tmp_path / "Project.ost"
             original_xml = """
                 <XML_ROOT>
