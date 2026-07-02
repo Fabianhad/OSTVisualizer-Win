@@ -301,6 +301,7 @@ class FakeDetachedPlanView:
         self.selected_uids = set()
         self.annotation_key_map = {}
         self.activate_calls = []
+        self.cancel_place_mode_calls = 0
         self.clipboard_emit_count = 0
         self.intelligent_paste_calls = []
         self.clipboard_changed = SimpleNamespace(emit=self._emit_clipboard_changed)
@@ -341,6 +342,9 @@ class FakeDetachedPlanView:
     def activate_annotation_placement(self, annotation_type):
         self.activate_calls.append(annotation_type)
         return True
+
+    def cancel_place_mode(self):
+        self.cancel_place_mode_calls += 1
 
     def current_mouse_ost_position(self):
         return self.mouse_ost_position
@@ -2634,6 +2638,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             write_service.insert_calls[0][2][0].layer_uid,
             "detached-annotation-layer",
         )
+        self.assertEqual(plan_view.cancel_place_mode_calls, 1)
         self.assertEqual(plan_view.activate_calls, ["hotlink"])
         self.assertEqual(plan_view.selected_uids, {"ann-1_hotlink"})
         self.assertEqual(len(undo_service.pushes), 1)
@@ -2662,6 +2667,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         ):
             window._on_hotlink_placement_requested([5.0, 6.0], "p1")
         self.assertEqual(write_service.insert_calls, [])
+        self.assertEqual(plan_view.cancel_place_mode_calls, 1)
         self.assertEqual(plan_view.activate_calls, ["namedview"])
 
     def test_detached_named_view_delete_with_linked_hotlink_no_or_close_cancels(self):

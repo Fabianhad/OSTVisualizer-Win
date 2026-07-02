@@ -1,5 +1,4 @@
 import logging
-import time
 import unittest
 from types import SimpleNamespace
 from ost_visualizer.application.app_controller import AppController
@@ -283,14 +282,12 @@ class ApplicationLifecycleTests(unittest.TestCase):
 
         manager = LicenseThreadManager(logging.getLogger("test"))
         with self.assertLogs("test", level="ERROR"):
-            manager.spawn_with_bridge(
+            thread = manager.spawn_with_bridge(
                 operation=lambda: (True, "ok", None),
                 callback_bridge=RaisingBridge(),
                 on_main_thread=lambda *_args: None,
             )
-            deadline = time.time() + 2
-            while manager._active_threads and time.time() < deadline:
-                time.sleep(0.01)
+            thread.join(timeout=2)
         self.assertEqual(manager._active_threads, [])
 
 
