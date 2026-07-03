@@ -8,6 +8,7 @@ from ...domain.entities.workspace_state import (
     WorkspaceState,
 )
 from ..interfaces.i_workspace_shell import IWorkspaceShell
+from ..utils.qt_state import decode_byte_array, encode_byte_array
 
 
 class WorkspaceStateCoordinator(QtCore.QObject):
@@ -681,6 +682,7 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             previous_splitter_sizes,
         )
         state = WorkspaceState()
+        state.cover_sheet = previous.cover_sheet
         state.main_window.geometry_b64 = self._encode_byte_array(
             self._shell.saveGeometry()
         )
@@ -878,14 +880,8 @@ class WorkspaceStateCoordinator(QtCore.QObject):
 
     @staticmethod
     def _encode_byte_array(value: QtCore.QByteArray) -> Optional[str]:
-        if value is None or value.isEmpty():
-            return None
-        return bytes(value.toBase64()).decode("ascii")
+        return encode_byte_array(value)
 
     @staticmethod
     def _decode_byte_array(value: Optional[str]) -> QtCore.QByteArray:
-        if not value or not isinstance(value, str):
-            return QtCore.QByteArray()
-        if not value.isascii():
-            return QtCore.QByteArray()
-        return QtCore.QByteArray.fromBase64(value.encode("ascii"))
+        return decode_byte_array(value)

@@ -19,6 +19,7 @@ class CoverSheetHandler:
         ui_state_manager,
         ui_access_manager,
         deferred_persistence_manager,
+        workspace_state_model,
     ) -> None:
         self.window = window
         self.icon_provider = icon_provider
@@ -30,6 +31,7 @@ class CoverSheetHandler:
         self._infrastructure_provider = infrastructure_provider
         self._event_bus = event_bus
         self._deferred_persistence = deferred_persistence_manager
+        self._workspace_state_model = workspace_state_model
 
     def open_cover_sheet(self) -> None:
         if not self._ui_access_manager.is_allowed(Feature.COVER_SHEET):
@@ -71,6 +73,7 @@ class CoverSheetHandler:
             pdf_page_sizes_fn=self._infrastructure_provider.get_pdf_page_sizes,
             pages_with_takeoffs=pages_with_takeoffs,
             pages_requiring_delete_confirmation=pages_requiring_delete_confirmation,
+            workspace_state_model=self._workspace_state_model,
         )
         try:
             locked_at_open = self._project_data.is_current_bid_locked()

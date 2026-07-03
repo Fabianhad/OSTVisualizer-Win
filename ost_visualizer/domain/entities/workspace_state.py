@@ -12,6 +12,7 @@ WORKSPACE_KEY_SCHEMA_VERSION = "schema_version"
 WORKSPACE_KEY_MAIN_WINDOW = "main_window"
 WORKSPACE_KEY_TAKEOFF_WORKSPACE = "takeoff_workspace"
 WORKSPACE_KEY_PROJECT_WORKSPACE = "project_workspace"
+WORKSPACE_KEY_COVER_SHEET = "cover_sheet"
 WORKSPACE_KEY_TOOLBAR_VISIBILITY = "toolbar_visibility"
 WORKSPACE_KEY_DETACHED_WINDOWS = "detached_windows"
 WORKSPACE_KEY_ACTIVE_VIEW = "active_view"
@@ -289,6 +290,26 @@ class ProjectWorkspaceState:
 
 
 @dataclass
+class CoverSheetWorkspaceState:
+    plan_header_state_b64: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "plan_header_state_b64": self.plan_header_state_b64,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> CoverSheetWorkspaceState:
+        if not isinstance(data, dict):
+            return cls()
+        return cls(
+            plan_header_state_b64=_coerce_optional_str(
+                data.get("plan_header_state_b64")
+            ),
+        )
+
+
+@dataclass
 class DetachedWindowState:
     open: bool = False
     geometry_b64: Optional[str] = None
@@ -389,6 +410,9 @@ class WorkspaceState:
     project_workspace: ProjectWorkspaceState = field(
         default_factory=ProjectWorkspaceState
     )
+    cover_sheet: CoverSheetWorkspaceState = field(
+        default_factory=CoverSheetWorkspaceState
+    )
     toolbar_visibility: ToolbarVisibilityState = field(
         default_factory=ToolbarVisibilityState
     )
@@ -400,6 +424,7 @@ class WorkspaceState:
             WORKSPACE_KEY_MAIN_WINDOW: self.main_window.to_dict(),
             WORKSPACE_KEY_TAKEOFF_WORKSPACE: self.takeoff_workspace.to_dict(),
             WORKSPACE_KEY_PROJECT_WORKSPACE: self.project_workspace.to_dict(),
+            WORKSPACE_KEY_COVER_SHEET: self.cover_sheet.to_dict(),
             WORKSPACE_KEY_TOOLBAR_VISIBILITY: self.toolbar_visibility.to_dict(),
             WORKSPACE_KEY_DETACHED_WINDOWS: self.detached_windows.to_dict(),
         }
@@ -423,6 +448,9 @@ class WorkspaceState:
             ),
             project_workspace=ProjectWorkspaceState.from_dict(
                 data.get(WORKSPACE_KEY_PROJECT_WORKSPACE, {})
+            ),
+            cover_sheet=CoverSheetWorkspaceState.from_dict(
+                data.get(WORKSPACE_KEY_COVER_SHEET, {})
             ),
             toolbar_visibility=ToolbarVisibilityState.from_dict(
                 data.get(WORKSPACE_KEY_TOOLBAR_VISIBILITY, {})

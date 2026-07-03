@@ -1038,6 +1038,7 @@ class ComponentBuilder:
         file_loading_service,
         create_new_database_fn,
         deferred_persistence_manager,
+        workspace_state_model,
         shared_actions=None,
     ) -> MenuController:
         menu_controller = MenuController(
@@ -1057,6 +1058,7 @@ class ComponentBuilder:
             create_new_database_fn=create_new_database_fn,
             shared_actions=shared_actions,
             deferred_persistence_manager=deferred_persistence_manager,
+            workspace_state_model=workspace_state_model,
         )
         menu_bar = menu_controller.create_menu()
         self.window.setMenuBar(menu_bar)

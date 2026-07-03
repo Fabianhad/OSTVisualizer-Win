@@ -1037,10 +1037,12 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
         coordinator._shell = CaptureShell()
         coordinator._state = WorkspaceState()
+        coordinator._state.cover_sheet.plan_header_state_b64 = "cover-header"
         coordinator._pending_mesh_restore = False
         coordinator._pending_annotation_restore = False
         coordinator._pending_view_restore = False
         captured = coordinator._capture_current_state()
+        self.assertEqual(captured.cover_sheet.plan_header_state_b64, "cover-header")
         self.assertTrue(captured.takeoff_workspace.summary_group_by_page)
         self.assertFalse(captured.takeoff_workspace.summary_group_by_type)
         self.assertTrue(captured.takeoff_workspace.summary_group_by_area)

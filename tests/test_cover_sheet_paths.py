@@ -1,17 +1,19 @@
 import os
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 from ost_visualizer.domain.entities.cover_sheet import (
     CoverSheetData,
     CoverSheetFolder,
     CoverSheetPage,
 )
 from ost_visualizer.domain.entities.employee import Employee
+from ost_visualizer.domain.entities.workspace_state import WorkspaceState
 from ost_visualizer.infrastructure.mdb.components.settings_operations import (
     SettingsOperationsMixin,
 )
@@ -19,6 +21,10 @@ from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
 )
 from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDialog
+from ost_visualizer.presentation.dialogs.cover_sheet.header_state import (
+    load_cover_sheet_plan_header_state,
+    save_cover_sheet_plan_header_state,
+)
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 
 
@@ -260,6 +266,18 @@ class _FakeMouseEvent:
         self.accepted = True
 
 
+class _FakeWorkspaceStateModel:
+    def __init__(self, state=None):
+        self._state = deepcopy(state or WorkspaceState())
+
+    @property
+    def state(self):
+        return deepcopy(self._state)
+
+    def update_state(self, state):
+        self._state = deepcopy(state)
+
+
 def _cover_sheet_data(
     *, image_path="", overlay_image_path="", scale_factor1=0.125, scale_factor2=12.0
 ):
@@ -336,6 +354,114 @@ class CoverSheetPathSaveTests(unittest.TestCase):
 
     def tearDown(self):
         self.app.processEvents()
+
+    def test_cover_sheet_plan_header_uses_default_layout_without_saved_state(self):
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, _cover_sheet_data())
+        try:
+            header = dialog.plan_tree.header()
+            self.assertEqual(header.sectionSize(0), 140)
+            self.assertEqual(header.sectionSize(2), 120)
+            self.assertEqual(header.sectionSize(6), 45)
+            self.assertEqual(header.visualIndex(0), 0)
+        finally:
+            dialog.deleteLater()
+
+    def test_cover_sheet_plan_header_state_restores_width_and_order(self):
+        model = _FakeWorkspaceStateModel()
+        source = CoverSheetDialog(_FakeIconProvider(), None, _cover_sheet_data())
+        try:
+            header = source.plan_tree.header()
+            header.resizeSection(0, 222)
+            header.moveSection(0, 2)
+            save_cover_sheet_plan_header_state(model, source.save_plan_header_state())
+        finally:
+            source.deleteLater()
+        restored = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
+        try:
+            header = restored.plan_tree.header()
+            self.assertEqual(header.sectionSize(0), 222)
+            self.assertEqual(header.visualIndex(0), 2)
+        finally:
+            restored.deleteLater()
+
+    def test_cover_sheet_plan_header_invalid_state_keeps_default_layout(self):
+        state = WorkspaceState()
+        state.cover_sheet.plan_header_state_b64 = "not valid base64"
+        model = _FakeWorkspaceStateModel(state)
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
+        try:
+            header = dialog.plan_tree.header()
+            self.assertEqual(header.sectionSize(0), 140)
+            self.assertEqual(header.visualIndex(0), 0)
+            self.assertFalse(
+                dialog.restore_plan_header_state(
+                    QtCore.QByteArray(b"not a qt header state")
+                )
+            )
+        finally:
+            dialog.deleteLater()
+
+    def test_cover_sheet_plan_header_reject_saves_state_to_workspace_key(self):
+        model = _FakeWorkspaceStateModel()
+        self.assertTrue(load_cover_sheet_plan_header_state(model).isEmpty())
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
+        try:
+            dialog.plan_tree.header().resizeSection(0, 233)
+            dialog.reject()
+        finally:
+            dialog.deleteLater()
+        self.assertIsNotNone(model.state.cover_sheet.plan_header_state_b64)
+        restored = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            workspace_state_model=model,
+        )
+        try:
+            self.assertEqual(restored.plan_tree.header().sectionSize(0), 233)
+        finally:
+            restored.deleteLater()
+
+    def test_new_project_cover_sheet_uses_same_plan_header_state(self):
+        model = _FakeWorkspaceStateModel()
+        source = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            create_mode=True,
+            workspace_state_model=model,
+        )
+        try:
+            source.plan_tree.header().resizeSection(0, 244)
+            source.reject()
+        finally:
+            source.deleteLater()
+        restored = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            create_mode=True,
+            workspace_state_model=model,
+        )
+        try:
+            self.assertEqual(restored.plan_tree.header().sectionSize(0), 244)
+        finally:
+            restored.deleteLater()
 
     def test_cover_sheet_save_writes_page_image_paths_with_windows_separators(self):
         ops = _CoverSheetSettingsOps()

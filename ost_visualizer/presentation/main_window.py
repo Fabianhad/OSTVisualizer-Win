@@ -380,6 +380,7 @@ class MainWindow(QtWidgets.QMainWindow):
             file_loading_service=self._file_loading_service,
             create_new_database_fn=self._create_database_with_progress,
             deferred_persistence_manager=self._deferred_persistence_manager,
+            workspace_state_model=self._workspace_state_model,
             shared_actions={
                 ACTION_NEW_PROJECT: components.new_project_action,
                 ACTION_NEW_FOLDER: components.new_folder_action,
@@ -534,6 +535,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ui_state_manager=self.ui_state_manager,
             ui_access_manager=self.ui_access_manager,
             deferred_persistence_manager=self._deferred_persistence_manager,
+            workspace_state_model=self._workspace_state_model,
         )
         handlers.ui_event = UIEventCoordinator(
             main_window=self,

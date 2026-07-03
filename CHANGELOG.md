@@ -17,6 +17,7 @@
 - Hotlink placement now restores the normal cursor outside the plan canvas after choosing a named view while still allowing continuous hotlink placement.
 - Bulk named-view deletion now skips only the named views declined during linked-hotlink confirmation instead of canceling the remaining selected deletes.
 - Cover Sheet page scale selectors now include all known scale groups, so pages using civil or metric scales show the matching scale instead of a custom-looking value.
+- Cover Sheet Plan Organizer columns now keep their header layout between dialog openings.
 - Re-enabling the Image layer now reloads the current page image when the visual layer was hidden across project switches or app restarts.
 - Takeoff edit previews now keep inactive-area styling instead of temporarily showing grayed-out items in full condition color.
 - 2D View highlight annotations now mark the paper/background without tinting takeoffs, annotation strokes/text/shapes, image overlays, or selection graphics.

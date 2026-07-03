@@ -44,6 +44,10 @@ from .components import (
     format_scale,
 )
 from .context import CoverSheetContext
+from .header_state import (
+    load_cover_sheet_plan_header_state,
+    save_cover_sheet_plan_header_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +125,12 @@ class CoverSheetDialog(QtWidgets.QDialog):
         create_mode: bool = False,
         pages_with_takeoffs: Optional[set] = None,
         pages_requiring_delete_confirmation: Optional[set] = None,
+        workspace_state_model=None,
     ):
         super().__init__(parent)
         self.icon_provider = icon_provider
         self.data = cover_sheet_data
+        self._workspace_state_model = workspace_state_model
         self._has_license: bool = has_license
         self._used_employee_uids: set = used_employee_uids or set()
         self._bid_ref = context.bid_ref if context else bid_ref
@@ -328,6 +334,10 @@ class CoverSheetDialog(QtWidgets.QDialog):
         header.resizeSection(3, 120)
         header.resizeSection(6, 45)
         header.resizeSection(7, 90)
+        if self._workspace_state_model is not None:
+            self.restore_plan_header_state(
+                load_cover_sheet_plan_header_state(self._workspace_state_model)
+            )
         self.plan_tree.setVerticalScrollMode(
             QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel
         )
@@ -374,6 +384,24 @@ class CoverSheetDialog(QtWidgets.QDialog):
         bottom_bar.addStretch()
         plan_layout.addLayout(bottom_bar)
         return plan_tab
+
+    def save_plan_header_state(self) -> QtCore.QByteArray:
+        return self.plan_tree.header().saveState()
+
+    def restore_plan_header_state(self, state: QtCore.QByteArray) -> bool:
+        if state is None or state.isEmpty():
+            return False
+        return bool(self.plan_tree.header().restoreState(state))
+
+    def done(self, result: int) -> None:
+        if self._workspace_state_model is not None:
+            try:
+                save_cover_sheet_plan_header_state(
+                    self._workspace_state_model, self.save_plan_header_state()
+                )
+            except OSError as exc:
+                logger.error("Failed to save Cover Sheet header state: %s", exc)
+        super().done(result)
 
     def _setup_pref_tab(self) -> QtWidgets.QWidget:
         pref_tab = QtWidgets.QWidget()

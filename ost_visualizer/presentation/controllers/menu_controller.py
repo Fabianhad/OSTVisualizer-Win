@@ -83,6 +83,7 @@ class MenuController:
         file_loading_service,
         create_new_database_fn,
         deferred_persistence_manager,
+        workspace_state_model,
         shared_actions=None,
     ):
         self.window = window
@@ -99,6 +100,7 @@ class MenuController:
         self._file_loading_service = file_loading_service
         self._create_new_database_fn = create_new_database_fn
         self._deferred_persistence = deferred_persistence_manager
+        self._workspace_state_model = workspace_state_model
         self._shared_actions = dict(shared_actions or {})
         self.menu_bar: QtWidgets.QMenuBar | None = None
         self._actions: Dict[str, QtWidgets.QAction] = {}
@@ -842,6 +844,7 @@ class MenuController:
             ),
             pdf_page_sizes_fn=self._infrastructure_provider.get_pdf_page_sizes,
             create_mode=True,
+            workspace_state_model=self._workspace_state_model,
         )
         try:
             result = exec_with_ost_blocking(dialog, self._event_bus)
