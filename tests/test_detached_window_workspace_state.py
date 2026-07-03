@@ -631,6 +631,7 @@ class CleanupPlanView:
     def __init__(self):
         self.page_geometry_ready = CleanupSignal()
         self.page_fully_loaded = CleanupSignal()
+        self.page_view_state_changed = CleanupSignal()
         self.positions_flushed = CleanupSignal()
         self.annotation_text_properties_flushed = CleanupSignal()
         self.annotation_text_and_positions_flushed = CleanupSignal()
@@ -1633,6 +1634,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         window._color_service = retained
         window._config = retained
         window._pages_with_takeoffs = {"page-1"}
+        window._page_view_states = {"page-1": (2.0, 10.0, 20.0)}
         window._on_page_selected = lambda _uid: None
         window._on_named_view_selected = lambda _page, _view: None
         window._on_scale_changed = lambda _page, _sf1, _sf2: None
@@ -1652,6 +1654,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertIsNone(window._color_service)
         self.assertIsNone(window._config)
         self.assertEqual(window._pages_with_takeoffs, set())
+        self.assertEqual(window._page_view_states, {})
         self.assertIsNone(window._page_combo)
         self.assertIsNone(window._named_view_combo)
         self.assertIsNone(window._scale_combo)
@@ -1672,6 +1675,7 @@ def FakeDetachedPageData(*, annotation_layer_hidden: bool = False):
 class FakeToolbarPlanView(QtWidgets.QWidget):
     page_geometry_ready = QtCore.Signal()
     page_fully_loaded = QtCore.Signal()
+    page_view_state_changed = QtCore.Signal(str, float, float, float)
     positions_flushed = QtCore.Signal(list)
     annotation_text_properties_flushed = QtCore.Signal(list)
     annotation_text_and_positions_flushed = QtCore.Signal(list)
@@ -3408,6 +3412,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             hidden_layer_uids={"annotation-layer"},
         )
         window.plan_view = plan_view
+        window._page_view_states = {}
         window._navigation_source = "refresh"
         window._scale_combo = None
         window._apply_named_view_focus_if_possible = lambda require_stable_view: False
@@ -3421,6 +3426,130 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(
             plan_view.load_calls[0]["hidden_layer_uids"], {"annotation-layer"}
         )
+
+    def test_detached_refresh_uses_cached_view_state_when_live_state_unstable(self):
+        page = Page(
+            uid="p1",
+            name="Page 1",
+            zoom_fac=1.0,
+            current_x=10.0,
+            current_y=20.0,
+        )
+        plan_view = FakeDetachedLoadPlanView(
+            stable=False, view_state=(5.0, 500.0, 600.0)
+        )
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window.page_data = SimpleNamespace(
+            page=page,
+            takeoffs=[],
+            conditions={},
+            color_map={},
+            bid_ref=BidRef("bid.mdb", "bid-1"),
+            annotations=[],
+            ordered_pages=[page],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+        )
+        window.plan_view = plan_view
+        window._page_view_states = {"p1": (3.25, 120.0, 240.0)}
+        window._navigation_source = "refresh"
+        window._scale_combo = None
+        window._apply_named_view_focus_if_possible = lambda require_stable_view: False
+        window.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
+        self.assertTrue(DetachedPageViewWindow._load_page_content(window))
+        self.assertEqual(
+            (page.zoom_fac, page.current_x, page.current_y),
+            (3.25, 120.0, 240.0),
+        )
+
+    def test_detached_refresh_ignores_main_window_page_state_when_cached(self):
+        page = Page(
+            uid="p1",
+            name="Page 1",
+            zoom_fac=0.5,
+            current_x=5.0,
+            current_y=6.0,
+        )
+        plan_view = FakeDetachedLoadPlanView(stable=False)
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window.page_data = SimpleNamespace(
+            page=page,
+            takeoffs=[],
+            conditions={},
+            color_map={},
+            bid_ref=BidRef("bid.mdb", "bid-1"),
+            annotations=[],
+            ordered_pages=[page],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+        )
+        window.plan_view = plan_view
+        window._page_view_states = {"p1": (4.0, 400.0, 800.0)}
+        window._navigation_source = "refresh"
+        window._scale_combo = None
+        window._apply_named_view_focus_if_possible = lambda require_stable_view: False
+        window.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
+        self.assertTrue(DetachedPageViewWindow._load_page_content(window))
+        self.assertEqual(
+            (page.zoom_fac, page.current_x, page.current_y),
+            (4.0, 400.0, 800.0),
+        )
+
+    def test_detached_page_view_state_signal_updates_refresh_cache(self):
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._page_view_states = {}
+        DetachedPageViewWindow._on_page_view_state_changed(
+            window, "p1", 2.75, 33.0, 44.0
+        )
+        self.assertEqual(window._page_view_states, {"p1": (2.75, 33.0, 44.0)})
+
+    def test_detached_refresh_does_not_refocus_target_named_view(self):
+        calls = []
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._is_closing = False
+        window.view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            target_page_uid="p1",
+            target_named_view_uid="nv1",
+            file_path="bid.mdb",
+        )
+        window.page_data = SimpleNamespace(named_view=object())
+        window._navigation_source = "refresh"
+        window._reveal_named_view_blank_canvas = lambda: calls.append("reveal")
+        window._focus_on_named_view = lambda: calls.append("focus")
+        self.assertFalse(
+            DetachedPageViewWindow._apply_named_view_focus_if_possible(
+                window, require_stable_view=False
+            )
+        )
+        self.assertEqual(calls, ["reveal"])
+
+    def test_detached_hotlink_navigation_still_focuses_target_named_view(self):
+        calls = []
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._is_closing = False
+        window.view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            target_page_uid="p1",
+            target_named_view_uid="nv1",
+            file_path="bid.mdb",
+        )
+        window.page_data = SimpleNamespace(named_view=object())
+        window._navigation_source = "hotlink"
+        window.isVisible = lambda: True
+        window.plan_view = SimpleNamespace(
+            sceneRect=lambda: SimpleNamespace(isValid=lambda: True),
+        )
+        window._reveal_named_view_blank_canvas = lambda: calls.append("reveal")
+        window._focus_on_named_view = lambda: calls.append("focus")
+        self.assertTrue(
+            DetachedPageViewWindow._apply_named_view_focus_if_possible(
+                window, require_stable_view=False
+            )
+        )
+        self.assertEqual(calls, ["focus"])
 
     def test_detached_hotlink_load_does_not_reuse_previous_window_camera(self):
         page = Page(
@@ -3444,6 +3573,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             hidden_layer_uids=set(),
         )
         window.plan_view = plan_view
+        window._page_view_states = {"p1": (3.25, 120.0, 240.0)}
         window._navigation_source = "hotlink"
         window._scale_combo = None
         window._apply_named_view_focus_if_possible = lambda require_stable_view: False

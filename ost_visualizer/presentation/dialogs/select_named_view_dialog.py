@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 from ..config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
@@ -44,6 +44,10 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
     def result_data(self) -> SelectNamedViewResult:
         return self._result
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._focus_named_view_search()
+
     def _build_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(*COMPACT_MARGINS)
@@ -58,6 +62,20 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
             QtWidgets.QSizePolicy.Policy.Expanding,
             QtWidgets.QSizePolicy.Policy.Fixed,
         )
+        self._named_view_combo.setEditable(True)
+        self._named_view_combo.setInsertPolicy(
+            QtWidgets.QComboBox.InsertPolicy.NoInsert
+        )
+        completer = self._named_view_combo.completer()
+        if completer is not None:
+            completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+            completer.setFilterMode(QtCore.Qt.MatchFlag.MatchContains)
+            completer.setCompletionMode(
+                QtWidgets.QCompleter.CompletionMode.PopupCompletion
+            )
+        line_edit = self._named_view_combo.lineEdit()
+        if line_edit is not None:
+            line_edit.setClearButtonEnabled(True)
         existing_row.addWidget(self._existing_radio)
         existing_row.addWidget(self._named_view_combo, 1)
         layout.addLayout(existing_row)
@@ -85,13 +103,23 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
         self._named_view_combo.setEnabled(
             has_named_views and self._existing_radio.isChecked()
         )
+        self._focus_named_view_search()
+
+    def _focus_named_view_search(self) -> None:
+        if not self._named_view_combo.isEnabled():
+            return
+        line_edit = self._named_view_combo.lineEdit()
+        if line_edit is None:
+            return
+        line_edit.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        line_edit.selectAll()
 
     def accept(self) -> None:
         if self._new_radio.isChecked():
             self._result = SelectNamedViewResult(create_new=True)
             super().accept()
             return
-        named_view_uid = self._named_view_combo.currentData()
+        named_view_uid = self._selected_named_view_uid()
         if not named_view_uid:
             return
         self._result = SelectNamedViewResult(
@@ -99,3 +127,19 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
             named_view_uid=str(named_view_uid),
         )
         super().accept()
+
+    def _selected_named_view_uid(self) -> Optional[str]:
+        current_index = self._named_view_combo.currentIndex()
+        current_text = self._named_view_combo.currentText().strip()
+        for index in range(self._named_view_combo.count()):
+            if (
+                self._named_view_combo.itemText(index).casefold()
+                == current_text.casefold()
+            ):
+                return str(self._named_view_combo.itemData(index))
+        if current_index < 0:
+            return None
+        if current_text != self._named_view_combo.itemText(current_index).strip():
+            return None
+        data = self._named_view_combo.itemData(current_index)
+        return str(data) if data else None

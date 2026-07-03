@@ -190,6 +190,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._named_view_resize_focus_timer: Optional[QtCore.QTimer] = None
         self._pending_named_view_resize_focus: bool = False
         self._named_view_blank_canvas_active: bool = False
+        self._page_view_states: dict[str, tuple[float, float, float]] = {}
         self._hotlink_adapter: Optional[HotlinkEventAdapter] = None
         self._initial_geometry = QtCore.QByteArray()
         self._initial_show_maximized = False
@@ -237,6 +238,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._setup_ui()
         self.plan_view.page_geometry_ready.connect(self._on_page_geometry_ready)
         self.plan_view.page_fully_loaded.connect(self._on_page_loaded)
+        self.plan_view.page_view_state_changed.connect(self._on_page_view_state_changed)
         if bid:
             self._populate_page_combo(bid)
         if self._named_views:
@@ -858,17 +860,39 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _capture_refresh_view_state(self, page) -> None:
         if self._navigation_source != "refresh" or self.plan_view is None:
             return
+        state = None
         if (
-            self.plan_view.current_page_uid != page.uid
-            or not self.plan_view.is_view_state_stable
+            self.plan_view.current_page_uid == page.uid
+            and self.plan_view.is_view_state_stable
         ):
+            state = self.plan_view.get_view_state()
+            self._remember_page_view_state(page.uid, *state)
+        if state is None:
+            state = self._page_view_states.get(str(page.uid))
+        if state is None:
             return
-        zoom_fac, current_x, current_y = self.plan_view.get_view_state()
+        zoom_fac, current_x, current_y = state
         if zoom_fac <= 0:
             return
         page.zoom_fac = zoom_fac
         page.current_x = current_x
         page.current_y = current_y
+
+    def _remember_page_view_state(
+        self, page_uid: str, zoom_fac: float, current_x: float, current_y: float
+    ) -> None:
+        if not page_uid or zoom_fac <= 0:
+            return
+        self._page_view_states[str(page_uid)] = (
+            float(zoom_fac),
+            float(current_x),
+            float(current_y),
+        )
+
+    def _on_page_view_state_changed(
+        self, page_uid: str, zoom_fac: float, current_x: float, current_y: float
+    ) -> None:
+        self._remember_page_view_state(page_uid, zoom_fac, current_x, current_y)
 
     def _focus_on_named_view(self) -> None:
         if self._is_closing:
@@ -918,6 +942,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             or not self.view.target_named_view_uid
             or not self.page_data
             or not self.page_data.named_view
+            or self._navigation_source not in ("hotlink", "named_view_combo")
         ):
             self._reveal_named_view_blank_canvas()
             return False
@@ -1852,6 +1877,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self.plan_view is not None:
             self.plan_view.page_geometry_ready.disconnect(self._on_page_geometry_ready)
             self.plan_view.page_fully_loaded.disconnect(self._on_page_loaded)
+            self.plan_view.page_view_state_changed.disconnect(
+                self._on_page_view_state_changed
+            )
             self.plan_view.positions_flushed.disconnect(self._on_positions_flushed)
             self.plan_view.annotation_text_properties_flushed.disconnect(
                 self._on_annotation_text_properties_flushed
@@ -1908,6 +1936,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._scale_combo = None
         self._btn_select = None
         self._annotation_tool_buttons = {}
+        self._page_view_states.clear()
         self._named_views = []
         self.event_bus = None
         self.view = None
