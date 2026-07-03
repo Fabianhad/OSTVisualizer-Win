@@ -129,17 +129,12 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
         super().accept()
 
     def _selected_named_view_uid(self) -> Optional[str]:
-        current_index = self._named_view_combo.currentIndex()
         current_text = self._named_view_combo.currentText().strip()
         for index in range(self._named_view_combo.count()):
             if (
                 self._named_view_combo.itemText(index).casefold()
                 == current_text.casefold()
             ):
-                return str(self._named_view_combo.itemData(index))
-        if current_index < 0:
-            return None
-        if current_text != self._named_view_combo.itemText(current_index).strip():
-            return None
-        data = self._named_view_combo.itemData(current_index)
-        return str(data) if data else None
+                data = self._named_view_combo.itemData(index)
+                return str(data) if data else None
+        return None

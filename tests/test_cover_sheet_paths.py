@@ -320,6 +320,17 @@ def _first_page_update(dialog):
     return dialog.get_updates()["pages"][0]
 
 
+def _top_level_labels(dialog):
+    return [
+        dialog.plan_tree.topLevelItem(index).text(0)
+        for index in range(dialog.plan_tree.topLevelItemCount())
+    ]
+
+
+def _child_labels(item):
+    return [item.child(index).text(0) for index in range(item.childCount())]
+
+
 def _cover_sheet_page_update(
     *,
     uid="11",
@@ -625,15 +636,113 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         dialog = CoverSheetDialog(_FakeIconProvider(), None, _cover_sheet_data())
         try:
             dialog._add_new_folder()
-            folder_item = dialog.plan_tree.topLevelItem(
-                dialog.plan_tree.topLevelItemCount() - 1
-            )
+            folder_item = dialog.plan_tree.topLevelItem(0)
             data = folder_item.data(0, dialog._ITEM_ROLE)
             self.assertEqual(data[0], "new_folder")
             self.assertFalse(folder_item.icon(0).isNull())
             self.assertEqual(
                 folder_item.icon(0).cacheKey(),
                 IconManager.icon(IconId.FOLDER).cacheKey(),
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_new_root_folder_uses_reopen_folder_order(self):
+        data = _cover_sheet_data()
+        data.folders["z1"] = CoverSheetFolder(uid="z1", name="Zulu")
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            self.assertEqual(_top_level_labels(dialog), ["Zulu", "A101"])
+            dialog._add_new_folder()
+            self.assertEqual(_top_level_labels(dialog), ["New Folder", "Zulu", "A101"])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_renamed_folder_reorders_before_reopen(self):
+        data = _cover_sheet_data()
+        data.folders["b1"] = CoverSheetFolder(uid="b1", name="Beta")
+        data.folders["z1"] = CoverSheetFolder(uid="z1", name="Zulu")
+        data.folders["c1"] = CoverSheetFolder(uid="c1", name="Charlie")
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            beta_item = dialog.plan_tree.topLevelItem(0)
+            zulu_item = dialog.plan_tree.topLevelItem(2)
+            beta_item.setText(0, "Yankee")
+            self.assertEqual(
+                _top_level_labels(dialog), ["Charlie", "Yankee", "Zulu", "A101"]
+            )
+            zulu_item.setText(0, "Alpha")
+            self.assertEqual(
+                _top_level_labels(dialog), ["Alpha", "Charlie", "Yankee", "A101"]
+            )
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_moved_folder_reorders_to_persisted_position(self):
+        data = _cover_sheet_data()
+        data.folders["b1"] = CoverSheetFolder(uid="b1", name="Beta")
+        data.folders["z1"] = CoverSheetFolder(uid="z1", name="Zulu")
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            folder_item = dialog.plan_tree.takeTopLevelItem(0)
+            dialog.plan_tree.addTopLevelItem(folder_item)
+            dialog._on_tree_items_moved([folder_item])
+            self.assertEqual(_top_level_labels(dialog), ["Beta", "Zulu", "A101"])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_new_child_folder_stays_before_child_pages(self):
+        data = _cover_sheet_data()
+        parent = CoverSheetFolder(uid="f1", name="Plans")
+        parent.pages.append(
+            CoverSheetPage(
+                uid="p2",
+                sheet_no="A102",
+                name="Level 2",
+                width=42.0,
+                height=30.0,
+                scale_factor1=0.125,
+                scale_factor2=12.0,
+                image_path="",
+                overlay_image_path="",
+                index=2,
+                show_mode=0,
+            )
+        )
+        data.folders["f1"] = parent
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            folder_item = dialog.plan_tree.topLevelItem(0)
+            dialog.plan_tree.setCurrentItem(folder_item)
+            folder_item.setSelected(True)
+            dialog._add_new_folder()
+            self.assertEqual(_child_labels(folder_item), ["New Folder", "A102"])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_imported_image_pages_keep_visual_sequence(self):
+        data = _cover_sheet_data()
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            dialog._populate_imported_pages(
+                [("C:/Plans/A102.pdf", [(42.0, 30.0, ""), (42.0, 30.0, "")])]
+            )
+            labels = [
+                dialog.plan_tree.topLevelItem(index).text(1)
+                for index in range(dialog.plan_tree.topLevelItemCount())
+            ]
+            self.assertEqual(labels, ["Level 1", "A102.pdf (1)", "A102.pdf (2)"])
+            self.assertEqual(
+                [
+                    (page["name"], page["sequence"])
+                    for page in dialog.get_updates()["pages"]
+                ],
+                [("Level 1", 1), ("A102.pdf (1)", 2), ("A102.pdf (2)", 3)],
             )
         finally:
             dialog.close()

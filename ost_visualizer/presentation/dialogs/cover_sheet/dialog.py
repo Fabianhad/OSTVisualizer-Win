@@ -346,6 +346,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         )
         self.plan_tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.plan_tree.itemSelectionChanged.connect(self._update_action_button_states)
+        self.plan_tree.itemChanged.connect(self._on_plan_item_changed)
         plan_layout.addWidget(self.plan_tree)
         self.plan_tree.on_items_about_to_move = self._on_tree_items_about_to_move
         self.plan_tree.on_items_moved = self._on_tree_items_moved
@@ -842,10 +843,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self._apply_folder_icon(folder_item)
         folder_item.setData(0, self._ITEM_ROLE, ("folder", folder.uid))
         folder_item.setFlags(folder_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-        if parent is not None:
-            parent.addChild(folder_item)
-        else:
-            self.plan_tree.addTopLevelItem(folder_item)
+        self._insert_folder_item(parent, folder_item)
         self._folder_items[folder.uid] = folder_item
         for subfolder in folder.subfolders.values():
             self._add_folder_item(folder_item, subfolder)
@@ -1153,11 +1151,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             0, self._ITEM_ROLE, ("new_folder", local_uid, parent_folder_uid)
         )
         folder_item.setFlags(folder_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-        if parent_item is not None:
-            parent_item.addChild(folder_item)
-            parent_item.setExpanded(True)
-        else:
-            self.plan_tree.addTopLevelItem(folder_item)
+        self._insert_folder_item(parent_item, folder_item)
         self._new_folder_items[local_uid] = (folder_item, parent_folder_uid)
         self.plan_tree.scrollToItem(folder_item)
         self.plan_tree.editItem(folder_item, 0)
@@ -1398,7 +1392,12 @@ class CoverSheetDialog(QtWidgets.QDialog):
         try:
             for item in items:
                 data = item.data(0, self._ITEM_ROLE) or ()
-                if not data or data[0] not in ("page", "new_page"):
+                if not data:
+                    continue
+                if data[0] in ("folder", "new_folder"):
+                    self._reinsert_folder_item(item)
+                    continue
+                if data[0] not in ("page", "new_page"):
                     continue
                 uid = data[1]
                 state = self._pre_move_states.get(uid, {})
@@ -1432,6 +1431,83 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self.plan_tree.editItem(item, 1)
         elif data[0] in ("folder", "new_folder") and column == 0:
             self.plan_tree.editItem(item, 0)
+
+    def _on_plan_item_changed(
+        self, item: QtWidgets.QTreeWidgetItem, column: int
+    ) -> None:
+        if column != 0:
+            return
+        data = item.data(0, self._ITEM_ROLE) or ()
+        if data and data[0] in ("folder", "new_folder"):
+            self._reinsert_folder_item(item)
+
+    @staticmethod
+    def _folder_sort_key(item: QtWidgets.QTreeWidgetItem) -> tuple[str, str]:
+        data = item.data(0, CoverSheetDialog._ITEM_ROLE) or ()
+        uid = str(data[1]) if len(data) > 1 else ""
+        return ((item.text(0) or "").casefold(), uid)
+
+    def _folder_insert_index(
+        self,
+        parent_item: Optional[QtWidgets.QTreeWidgetItem],
+        folder_item: QtWidgets.QTreeWidgetItem,
+    ) -> int:
+        target_key = self._folder_sort_key(folder_item)
+        if parent_item is not None:
+            count = parent_item.childCount()
+            get_item = parent_item.child
+        else:
+            count = self.plan_tree.topLevelItemCount()
+            get_item = self.plan_tree.topLevelItem
+        insert_index = 0
+        for index in range(count):
+            sibling = get_item(index)
+            if sibling is folder_item:
+                continue
+            data = sibling.data(0, self._ITEM_ROLE) or ()
+            if not data or data[0] not in ("folder", "new_folder"):
+                return insert_index
+            if self._folder_sort_key(sibling) > target_key:
+                return insert_index
+            insert_index += 1
+        return insert_index
+
+    def _insert_folder_item(
+        self,
+        parent_item: Optional[QtWidgets.QTreeWidgetItem],
+        folder_item: QtWidgets.QTreeWidgetItem,
+    ) -> None:
+        insert_index = self._folder_insert_index(parent_item, folder_item)
+        if parent_item is not None:
+            parent_item.insertChild(insert_index, folder_item)
+            parent_item.setExpanded(True)
+        else:
+            self.plan_tree.insertTopLevelItem(insert_index, folder_item)
+
+    def _reinsert_folder_item(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        parent_item = item.parent()
+        old_index = (
+            parent_item.indexOfChild(item)
+            if parent_item is not None
+            else self.plan_tree.indexOfTopLevelItem(item)
+        )
+        if old_index < 0:
+            return
+        new_index = self._folder_insert_index(parent_item, item)
+        if old_index == new_index:
+            return
+        self.plan_tree.blockSignals(True)
+        try:
+            if parent_item is not None:
+                parent_item.takeChild(old_index)
+                parent_item.insertChild(new_index, item)
+                parent_item.setExpanded(True)
+            else:
+                self.plan_tree.takeTopLevelItem(old_index)
+                self.plan_tree.insertTopLevelItem(new_index, item)
+            self.plan_tree.setCurrentItem(item)
+        finally:
+            self.plan_tree.blockSignals(False)
 
     def _make_file_picker(
         self, page_uid: str, path_key: str, initial_path: str
