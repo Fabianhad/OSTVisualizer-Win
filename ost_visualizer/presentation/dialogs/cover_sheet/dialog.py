@@ -826,7 +826,6 @@ class CoverSheetDialog(QtWidgets.QDialog):
             bid_areas=bid_areas,
             save_fn=save_bid_areas if self._save_bid_areas_fn else None,
             used_uids=used_uids,
-            on_saved_fn=self._refresh_fn,
             has_license=self._has_license,
             bid_ref=self._bid_ref,
         )
@@ -836,7 +835,17 @@ class CoverSheetDialog(QtWidgets.QDialog):
         finally:
             self._active_sub_dialog = None
             dialog.cleanup()
+            saved_changes = dialog.has_saved_changes()
             dialog.deleteLater()
+        if saved_changes and self._refresh_fn:
+            refresh_result = self._refresh_fn()
+            if refresh_result is False:
+                show_warning(
+                    self,
+                    "Refresh Error",
+                    "The bid area changes were saved, but the area list could not be "
+                    "refreshed. Reopen the database to see the latest bid areas.",
+                )
 
     def _add_folder_item(self, parent, folder) -> QtWidgets.QTreeWidgetItem:
         folder_item = QtWidgets.QTreeWidgetItem([folder.name] + [""] * 7)

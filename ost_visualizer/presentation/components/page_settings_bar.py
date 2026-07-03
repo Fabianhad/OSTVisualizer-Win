@@ -199,7 +199,10 @@ class PageSettingsBar(QtWidgets.QWidget):
 
         def _save_fn(changes: dict):
             result = self._save_areas_fn(
-                self._bid_ref.file_path, self._bid_ref.bid_uid, changes
+                self._bid_ref.file_path,
+                self._bid_ref.bid_uid,
+                changes,
+                publish_database_refreshed_after_write=False,
             )
             if save_result_refresh_failed(result):
                 show_warning(

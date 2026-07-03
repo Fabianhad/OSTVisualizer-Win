@@ -8,6 +8,7 @@
 - Annotation View windows now place annotation tools on a second toolbar row, keeping navigation and view controls on the first row.
 - Progress dialogs are now fixed-size with the loading bar centered.
 - The Connect Hotlink named-view picker now supports typing to search existing Named Views.
+- Bid Area edits now save in the background while deferring the full database refresh until the dialog closes.
 
 ### Fixed
 

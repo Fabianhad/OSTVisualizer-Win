@@ -1078,7 +1078,12 @@ class ProjectWriteService(BaseWriteService):
     def save_employees(self, db_path: str, changes: dict) -> bool:
         return bool(self.save_employees_result(db_path, changes))
 
-    def save_employees_result(self, db_path: str, changes: dict) -> WriteReloadResult:
+    def save_employees_result(
+        self,
+        db_path: str,
+        changes: dict,
+        publish_database_refreshed_after_write: bool = True,
+    ) -> WriteReloadResult:
         changes_to_write = changes or {}
         has_changes = any(
             changes_to_write.get(key) for key in ("new", "updated", "deleted_uids")
@@ -1086,7 +1091,11 @@ class ProjectWriteService(BaseWriteService):
         result = self._save_employees.execute(db_path, changes_to_write)
         if result is None or result is False:
             return WriteReloadResult(None, write_success=False, reload_success=False)
-        reload_success = self.reload_and_notify(db_path) if has_changes else True
+        reload_success = (
+            self.reload_and_notify(db_path)
+            if has_changes and publish_database_refreshed_after_write
+            else True
+        )
         return WriteReloadResult(
             result if isinstance(result, dict) else {},
             write_success=True,
@@ -1122,7 +1131,10 @@ class ProjectWriteService(BaseWriteService):
         )
 
     def save_condition_types_result(
-        self, db_path: str, changes: dict
+        self,
+        db_path: str,
+        changes: dict,
+        publish_database_refreshed_after_write: bool = True,
     ) -> WriteReloadResult:
         changes_to_write = dict(changes or {})
         deleted_uids = [
@@ -1153,7 +1165,11 @@ class ProjectWriteService(BaseWriteService):
                 failure_reason=validation.failure_reason,
                 blocked_uids=validation.blocked_uids,
             )
-        reload_success = self.reload_and_notify(db_path) if has_changes else True
+        reload_success = (
+            self.reload_and_notify(db_path)
+            if has_changes and publish_database_refreshed_after_write
+            else True
+        )
         return WriteReloadResult(
             result,
             write_success=True,
@@ -1183,7 +1199,11 @@ class ProjectWriteService(BaseWriteService):
         return result.value if result.success else None
 
     def save_bid_areas_result(
-        self, db_path: str, bid_uid: str, changes
+        self,
+        db_path: str,
+        bid_uid: str,
+        changes,
+        publish_database_refreshed_after_write: bool = True,
     ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult(None, write_success=False, reload_success=False)
@@ -1195,7 +1215,11 @@ class ProjectWriteService(BaseWriteService):
         if missing_new_uids:
             return WriteReloadResult(None, write_success=False, reload_success=False)
         has_changes = bool(changes.new or changes.updated or changes.deleted_uids)
-        reload_success = self.reload_and_notify(db_path) if has_changes else True
+        reload_success = (
+            self.reload_and_notify(db_path)
+            if has_changes and publish_database_refreshed_after_write
+            else True
+        )
         return WriteReloadResult(
             uid_map,
             write_success=True,

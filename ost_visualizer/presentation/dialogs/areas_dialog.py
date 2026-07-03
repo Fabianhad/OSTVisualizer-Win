@@ -17,6 +17,7 @@ from ..utils.dialog import (
     save_result_succeeded,
 )
 from ..utils.condition_tree_style import apply_tree_indentation
+from ..utils.deferred_dialog_save import DeferredDialogSaveController
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
 
@@ -43,8 +44,14 @@ class BidAreasDialog(BaseListDialog):
         self._used_uids: Set[str] = used_uids or set()
         self._on_saved_fn = on_saved_fn
         self._has_license: bool = has_license
+        self._saved_area_state: Dict[str, Tuple[str, str, int]] = {}
+        self._has_saved_changes = False
+        self._save_controller = DeferredDialogSaveController(
+            self._live_save, parent=self
+        )
         self._setup_ui()
         self._populate()
+        self._mark_saved_state()
         if not self._has_license:
             self._set_controls_interactive(False)
 
@@ -232,6 +239,22 @@ class BidAreasDialog(BaseListDialog):
 
         _traverse(self.tree.invisibleRootItem())
 
+    def _mark_saved_state(self) -> None:
+        self._saved_area_state = {}
+
+        def _traverse(parent: QtWidgets.QTreeWidgetItem, parent_uid: str) -> None:
+            for index in range(parent.childCount()):
+                child = parent.child(index)
+                uid = str(child.data(0, self._UID_ROLE) or "")
+                self._saved_area_state[uid] = (
+                    parent_uid,
+                    child.text(0).strip(),
+                    index,
+                )
+                _traverse(child, uid)
+
+        _traverse(self.tree.invisibleRootItem(), "")
+
     def _single_selected(self) -> Optional[QtWidgets.QTreeWidgetItem]:
         items = self.tree.selectedItems()
         return items[0] if len(items) == 1 else None
@@ -318,11 +341,35 @@ class BidAreasDialog(BaseListDialog):
     def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, _column: int) -> None:
         if not self._has_license:
             return
-        if self._validate_item_name(item) and self._item_name_changed(item):
-            self._live_save()
+        if not self._validate_item_name(item):
+            return
+        if self._item_name_changed(item):
+            item.setData(0, self._VALID_NAME_ROLE, item.text(0).strip())
+            self._schedule_live_save()
 
     def _on_ok(self) -> None:
         self.accept()
+
+    def _schedule_live_save(self) -> None:
+        self._save_controller.schedule()
+
+    def flush_pending_save(self) -> bool:
+        return self._save_controller.flush()
+
+    def has_saved_changes(self) -> bool:
+        return self._has_saved_changes
+
+    def _save_pending(self) -> bool:
+        return self.flush_pending_save()
+
+    def done(self, result: int) -> None:
+        if result != QtWidgets.QDialog.DialogCode.Accepted:
+            self.flush_pending_save()
+        super().done(result)
+
+    def cleanup(self) -> None:
+        self.flush_pending_save()
+        super().cleanup()
 
     def _on_new(self) -> None:
         uid = f"new_{self._new_counter}"
@@ -356,7 +403,7 @@ class BidAreasDialog(BaseListDialog):
             self._deleted_uids.append(uid)
         self._take_item(item)
         self._update_button_states()
-        self._live_save()
+        self._schedule_live_save()
 
     def _on_indent(self) -> None:
         item = self._single_selected()
@@ -371,7 +418,7 @@ class BidAreasDialog(BaseListDialog):
         new_parent.setExpanded(True)
         self.tree.setCurrentItem(item)
         self._update_button_states()
-        self._live_save()
+        self._schedule_live_save()
 
     def _on_outdent(self) -> None:
         item = self._single_selected()
@@ -385,7 +432,7 @@ class BidAreasDialog(BaseListDialog):
         self._insert_item(grandparent, parent_idx + 1, item)
         self.tree.setCurrentItem(item)
         self._update_button_states()
-        self._live_save()
+        self._schedule_live_save()
 
     def _move(self, direction: int) -> None:
         item = self._single_selected()
@@ -399,7 +446,7 @@ class BidAreasDialog(BaseListDialog):
         self._insert_item(parent, target, item)
         self.tree.setCurrentItem(item)
         self._update_button_states()
-        self._live_save()
+        self._schedule_live_save()
 
     def _on_move_up(self) -> None:
         self._move(-1)
@@ -432,7 +479,7 @@ class BidAreasDialog(BaseListDialog):
             )
             if is_new:
                 new_areas.append(area)
-            else:
+            elif self._saved_area_state.get(str(uid)) != (parent_uid, name, seq):
                 updated_areas.append(area)
             for i in range(item.childCount()):
                 _traverse(item.child(i), uid, i)
@@ -461,10 +508,16 @@ class BidAreasDialog(BaseListDialog):
                     self._apply_uid_map(self.tree.invisibleRootItem(), uid_map)
                 finally:
                     self.tree.blockSignals(False)
+                self._on_uid_map_applied(uid_map)
             if self._on_saved_fn and not save_result_refresh_failed(result):
                 self._on_saved_fn()
             self._mark_saved_names()
+            self._mark_saved_state()
+            self._has_saved_changes = True
         return True
+
+    def _on_uid_map_applied(self, _uid_map: Dict[str, str]) -> None:
+        pass
 
     def _apply_uid_map(
         self, parent_item: QtWidgets.QTreeWidgetItem, uid_map: Dict[str, str]
@@ -478,8 +531,10 @@ class BidAreasDialog(BaseListDialog):
             self._apply_uid_map(item, uid_map)
 
     def _on_cleanup(self) -> None:
+        self._save_controller.cleanup()
         self._initial_areas.clear()
         self._new_uids.clear()
+        self._saved_area_state.clear()
 
 
 class BidAreaPickerDialog(BidAreasDialog):
@@ -533,3 +588,7 @@ class BidAreaPickerDialog(BidAreasDialog):
 
     def get_selected_uid(self) -> Optional[str]:
         return self._selected_uid
+
+    def _on_uid_map_applied(self, uid_map: Dict[str, str]) -> None:
+        if self._selected_uid in uid_map:
+            self._selected_uid = uid_map[self._selected_uid]

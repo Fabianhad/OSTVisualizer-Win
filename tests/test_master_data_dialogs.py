@@ -10,6 +10,7 @@ from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.domain.entities.file_state import FileEntry
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.presentation.dialogs.areas_dialog import (
     BidAreaPickerDialog,
@@ -32,6 +33,10 @@ from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
     PayrollClassListDialog,
 )
 from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
+from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
+from ost_visualizer.presentation.utils.deferred_dialog_save import (
+    DeferredDialogSaveController,
+)
 from ost_visualizer.presentation.utils.tree_widget import DEFAULT_TREE_ROW_HEIGHT
 from ost_visualizer.application.services.project_write_service import (
     BatchWriteResult,
@@ -340,6 +345,43 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_deferred_dialog_save_controller_flushes_scheduled_save(self):
+        calls = []
+        controller = DeferredDialogSaveController(lambda: calls.append("save") or True)
+        try:
+            controller.schedule()
+            self.assertEqual(calls, [])
+            self.assertTrue(controller.pending)
+            self.assertTrue(controller.flush())
+            self.assertEqual(calls, ["save"])
+            self.assertFalse(controller.pending)
+        finally:
+            controller.cleanup()
+
+    def test_bid_area_picker_select_new_area_flushes_and_returns_mapped_uid(self):
+        save_calls = []
+        dialog = BidAreaPickerDialog(
+            FakeIconProvider(),
+            bid_areas=[],
+            save_fn=lambda changes: save_calls.append(changes) or {"new_0": "area-2"},
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Area 2")
+            dialog.tree.blockSignals(False)
+            dialog._on_item_changed(item, 0)
+            self.assertEqual(save_calls, [])
+            dialog._on_select()
+            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(dialog.get_selected_uid(), "area-2")
+            self.assertEqual(len(save_calls), 1)
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_bid_areas_dialog_keeps_new_uid_pending_when_uid_map_missing(self):
         saved = []
         dialog = BidAreasDialog(
@@ -408,6 +450,55 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertEqual(item.data(0, dialog._UID_ROLE), "area-2")
             self.assertNotIn("new_0", dialog._new_uids)
             self.assertEqual(saved, [])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_bid_areas_dialog_new_area_save_does_not_rewrite_existing_areas(self):
+        save_calls = []
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[self._area()],
+            save_fn=lambda changes: save_calls.append(changes) or {"new_0": "area-2"},
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Area 2")
+            dialog.tree.blockSignals(False)
+            self.assertTrue(dialog._live_save())
+            self.assertEqual(len(save_calls), 1)
+            self.assertEqual([area.uid for area in save_calls[0].new], ["new_0"])
+            self.assertEqual(save_calls[0].updated, [])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_bid_areas_dialog_move_schedules_save_and_flushes_changed_rows(self):
+        save_calls = []
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[
+                self._area(),
+                BidArea("area-2", "bid-1", "", "Area 2", 2),
+                BidArea("area-3", "bid-1", "", "Area 3", 3),
+            ],
+            save_fn=lambda changes: save_calls.append(changes) or {},
+        )
+        try:
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            dialog._on_move_down()
+            self.assertEqual(save_calls, [])
+            self.assertTrue(dialog.flush_pending_save())
+            self.assertEqual(len(save_calls), 1)
+            self.assertEqual(
+                [(area.uid, area.sequence) for area in save_calls[0].updated],
+                [("area-2", 0), ("area-1", 1)],
+            )
+            self.assertTrue(dialog.has_saved_changes())
         finally:
             dialog.close()
             dialog.cleanup()
@@ -519,6 +610,8 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             ) as warning:
                 dialog._on_item_changed(item, 0)
             warning.assert_not_called()
+            self.assertEqual(save_calls, [])
+            self.assertTrue(dialog.flush_pending_save())
             self.assertEqual(len(save_calls), 1)
             self.assertEqual(save_calls[0].updated[0].uid, "area-1")
             self.assertEqual(save_calls[0].updated[0].name, "main")
@@ -581,6 +674,154 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.close()
             dialog.cleanup()
             dialog.deleteLater()
+
+    def test_bid_areas_dialog_cleanup_flushes_pending_save(self):
+        save_calls = []
+        dialog = BidAreasDialog(
+            FakeIconProvider(),
+            bid_areas=[],
+            save_fn=lambda changes: save_calls.append(changes) or {"new_0": "area-2"},
+        )
+        try:
+            dialog._on_new()
+            item = dialog.tree.currentItem()
+            dialog.tree.blockSignals(True)
+            item.setText(0, "Area 2")
+            dialog.tree.blockSignals(False)
+            dialog._on_item_changed(item, 0)
+            self.assertEqual(save_calls, [])
+            dialog.cleanup()
+            self.assertEqual(len(save_calls), 1)
+            self.assertTrue(dialog.has_saved_changes())
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_page_settings_area_picker_saves_without_database_refresh(self):
+        load_calls = []
+        save_calls = []
+
+        def load_areas(file_path, bid_uid):
+            load_calls.append((file_path, bid_uid))
+            return [BidArea("area-2", "bid-1", "", "Area 2", 1)]
+
+        def save_areas(file_path, bid_uid, changes, **kwargs):
+            save_calls.append((file_path, bid_uid, changes, kwargs))
+            return {"new_0": "area-2"}
+
+        class CapturingPicker:
+            def __init__(self, **kwargs):
+                self._save_fn = kwargs["save_fn"]
+                self._on_saved_fn = kwargs["on_saved_fn"]
+
+            def set_interactive(self, _enabled):
+                pass
+
+            def get_selected_uid(self):
+                return "area-2"
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        def exec_picker(picker, _event_bus):
+            picker._save_fn(object())
+            picker._on_saved_fn()
+            return QtWidgets.QDialog.DialogCode.Accepted
+
+        bar = PageSettingsBar(
+            FakeIconProvider(),
+            event_bus=object(),
+            load_areas_fn=load_areas,
+            save_areas_fn=save_areas,
+        )
+        bar.load_bid_areas(BidRef("db.mdb", "bid-1"))
+        bar.load_page("page-1", 1.0, 1.0, "")
+        try:
+            from ost_visualizer.presentation.components import page_settings_bar
+
+            old_dialog = page_settings_bar.BidAreaPickerDialog
+            old_exec = page_settings_bar.exec_with_ost_blocking
+            page_settings_bar.BidAreaPickerDialog = CapturingPicker
+            page_settings_bar.exec_with_ost_blocking = exec_picker
+            try:
+                bar._on_area_browse()
+            finally:
+                page_settings_bar.BidAreaPickerDialog = old_dialog
+                page_settings_bar.exec_with_ost_blocking = old_exec
+            self.assertEqual(
+                save_calls[0][3]["publish_database_refreshed_after_write"], False
+            )
+            self.assertIn(("db.mdb", "bid-1"), load_calls)
+            self.assertEqual(bar.area_combo.get_current_area_uid(), "area-2")
+        finally:
+            bar.deleteLater()
+
+    def test_open_areas_dialog_refreshes_once_after_saved_changes(self):
+        reload_calls = []
+        bid_ref = BidRef("db.mdb", "bid-1")
+
+        class Access:
+            def is_allowed(self, _feature):
+                return True
+
+        class UiState:
+            selected_area_uid = None
+
+            def get_selected_bid_ref(self):
+                return bid_ref
+
+        class ProjectData:
+            def get_area_uids_with_takeoff(self):
+                return set()
+
+        class ReadService:
+            def get_bid_areas(self, file_path, bid_uid):
+                return [BidArea("area-1", bid_uid, "", "Area 1", 1)]
+
+        class WriteService:
+            def reload_and_notify(self, file_path):
+                reload_calls.append(file_path)
+                return True
+
+        class CapturingAreasDialog:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def cleanup(self):
+                pass
+
+            def has_saved_changes(self):
+                return True
+
+            def deleteLater(self):
+                pass
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = UiState()
+        coordinator.ui_access_manager = Access()
+        coordinator.project_data = ProjectData()
+        coordinator._project_read_service = ReadService()
+        coordinator._project_write_service = WriteService()
+        coordinator._icon_provider = FakeIconProvider()
+        coordinator.main_window = None
+        coordinator.event_bus = object()
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        old_dialog = ui_event_coordinator.BidAreasDialog
+        old_exec = ui_event_coordinator.exec_with_ost_blocking
+        ui_event_coordinator.BidAreasDialog = CapturingAreasDialog
+        ui_event_coordinator.exec_with_ost_blocking = (
+            lambda _dialog, _event_bus: QtWidgets.QDialog.DialogCode.Rejected
+        )
+        try:
+            UIEventCoordinator.open_areas_dialog(coordinator)
+        finally:
+            ui_event_coordinator.BidAreasDialog = old_dialog
+            ui_event_coordinator.exec_with_ost_blocking = old_exec
+        self.assertEqual(reload_calls, ["db.mdb"])
 
     def test_base_picker_does_not_accept_when_save_returns_false(self):
         dialog = self._payroll_class_dialog_with_save(lambda _changes: False)

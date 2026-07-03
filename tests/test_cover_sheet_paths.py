@@ -748,6 +748,50 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_cover_sheet_bid_areas_dialog_refreshes_once_after_saved_changes(self):
+        captured = {}
+        refresh_calls = []
+
+        class CapturingAreasDialog:
+            def __init__(self, *_args, **kwargs):
+                captured.update(kwargs)
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Rejected
+
+            def cleanup(self):
+                pass
+
+            def has_saved_changes(self):
+                return True
+
+            def deleteLater(self):
+                pass
+
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+            reload_bid_areas_fn=lambda: [],
+            save_bid_areas_fn=lambda _changes: {},
+            get_used_area_uids_fn=lambda: set(),
+            refresh_fn=lambda: refresh_calls.append("refresh") or True,
+        )
+        try:
+            from ost_visualizer.presentation.dialogs.cover_sheet import dialog as module
+
+            old_dialog = module.BidAreasDialog
+            module.BidAreasDialog = CapturingAreasDialog
+            try:
+                dialog._open_bid_areas_dialog()
+            finally:
+                module.BidAreasDialog = old_dialog
+            self.assertNotIn("on_saved_fn", captured)
+            self.assertEqual(refresh_calls, ["refresh"])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
     def test_cover_sheet_page_scale_combo_includes_known_non_architectural_scales(self):
         dialog = CoverSheetDialog(
             _FakeIconProvider(),

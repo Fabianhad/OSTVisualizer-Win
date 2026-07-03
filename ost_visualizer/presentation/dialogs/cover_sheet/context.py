@@ -54,7 +54,10 @@ class CoverSheetContext:
         if not self._flush_pending_visual_state():
             return False
         return self._write.save_bid_areas_result(
-            self._bid_ref.file_path, self._bid_ref.bid_uid, changes
+            self._bid_ref.file_path,
+            self._bid_ref.bid_uid,
+            changes,
+            publish_database_refreshed_after_write=False,
         )
 
     def reload_bid_areas(self):
@@ -63,8 +66,7 @@ class CoverSheetContext:
     def refresh(self) -> bool:
         if not self._flush_pending_visual_state():
             return False
-        self._write.reload_and_notify(self._bid_ref.file_path)
-        return True
+        return bool(self._write.reload_and_notify(self._bid_ref.file_path))
 
     def save_cover_sheet(self, updates) -> bool:
         if not self._flush_pending_visual_state():

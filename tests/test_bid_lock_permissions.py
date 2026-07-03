@@ -1478,6 +1478,28 @@ class BidLockPermissionTests(unittest.TestCase):
             service.save_employees(project_data.bid_ref.file_path, changes)
         )
 
+    def test_employee_save_result_can_skip_database_refresh(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        reload_calls = []
+        service._reload_database = (
+            lambda file_path: reload_calls.append(file_path) or True
+        )
+        service._save_employees = _UseCase({"new_0": "employee-new"})
+        changes = {
+            "new": [SimpleNamespace(uid="new_0")],
+            "updated": [],
+            "deleted_uids": [],
+        }
+        result = service.save_employees_result(
+            project_data.bid_ref.file_path,
+            changes,
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertTrue(result)
+        self.assertEqual(result.value, {"new_0": "employee-new"})
+        self.assertEqual(reload_calls, [])
+
     def test_condition_type_save_result_reports_write_failure(self):
         project_data = _ProjectData()
         service, *_ = _write_service(project_data)
@@ -1490,6 +1512,28 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(result.write_success)
         self.assertFalse(result.reload_success)
         self.assertIsNone(result.value)
+
+    def test_condition_type_save_result_can_skip_database_refresh(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        reload_calls = []
+        service._reload_database = (
+            lambda file_path: reload_calls.append(file_path) or True
+        )
+        service._save_condition_types = _UseCase({"new_condition_type": "type-new"})
+        changes = {
+            "new": [{"uid": "new_condition_type", "name": "Concrete"}],
+            "updated": [],
+            "deleted_uids": [],
+        }
+        result = service.save_condition_types_result(
+            project_data.bid_ref.file_path,
+            changes,
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertTrue(result)
+        self.assertEqual(result.value, {"new_condition_type": "type-new"})
+        self.assertEqual(reload_calls, [])
 
     def test_condition_folder_delete_result_blocks_in_use_folder(self):
         project_data = _ProjectData()
@@ -1843,6 +1887,37 @@ class BidLockPermissionTests(unittest.TestCase):
                 changes,
             )
         )
+
+    def test_save_bid_areas_result_can_skip_database_refresh(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        reload_calls = []
+        service._reload_database = (
+            lambda file_path: reload_calls.append(file_path) or True
+        )
+        service._save_bid_areas = _UseCase({"new_0": "area-2"})
+        changes = BidAreaChangeset(
+            new=[
+                BidArea(
+                    uid="new_0",
+                    bid_uid=project_data.bid_ref.bid_uid,
+                    parent_uid="",
+                    name="Area 2",
+                    sequence=0,
+                )
+            ],
+            updated=[],
+            deleted_uids=[],
+        )
+        result = service.save_bid_areas_result(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            changes,
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertTrue(result)
+        self.assertEqual(result.value, {"new_0": "area-2"})
+        self.assertEqual(reload_calls, [])
 
 
 if __name__ == "__main__":

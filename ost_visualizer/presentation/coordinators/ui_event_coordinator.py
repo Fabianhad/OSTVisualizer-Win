@@ -1113,21 +1113,12 @@ class UIEventCoordinator:
         def save_fn(changes):
             return self._save_bid_areas_from_dialog(bid_ref, changes)
 
-        def on_saved() -> None:
-            if self._page_settings_bar:
-                self._page_settings_bar.load_bid_areas(
-                    bid_ref,
-                    areas_with_takeoff=self.project_data.get_area_uids_with_takeoff(),
-                    selected_uid=self.ui_state_manager.selected_area_uid or None,
-                )
-
         dialog = BidAreasDialog(
             self._icon_provider,
             parent=self.main_window,
             bid_areas=areas,
             save_fn=save_fn,
             used_uids=used_uids,
-            on_saved_fn=on_saved,
             has_license=True,
             bid_ref=bid_ref,
         )
@@ -1135,13 +1126,26 @@ class UIEventCoordinator:
             exec_with_ost_blocking(dialog, self.event_bus)
         finally:
             dialog.cleanup()
+            saved_changes = dialog.has_saved_changes()
             dialog.deleteLater()
+        if saved_changes and not self._project_write_service.reload_and_notify(
+            bid_ref.file_path
+        ):
+            show_warning(
+                self.main_window,
+                "Refresh Error",
+                "The bid area changes were saved, but the area list could not be "
+                "refreshed. Reopen the database to see the latest bid areas.",
+            )
 
     def _save_bid_areas_from_dialog(self, bid_ref, changes):
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
             return None
         result = self._project_write_service.save_bid_areas_result(
-            bid_ref.file_path, bid_ref.bid_uid, changes
+            bid_ref.file_path,
+            bid_ref.bid_uid,
+            changes,
+            publish_database_refreshed_after_write=False,
         )
         if not result.write_success:
             return None
