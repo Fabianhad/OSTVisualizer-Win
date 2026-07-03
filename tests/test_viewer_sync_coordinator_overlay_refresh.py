@@ -3554,6 +3554,40 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(view._condition_text_toolbar.isHidden())
         view.cleanup()
 
+    def test_named_view_inline_edit_uses_ibeam_cursor_over_label(self):
+        view = self._make_plan_view()
+        annotation = BidAnnotation(
+            uid="nv1",
+            annotation_type="namedview",
+            properties={"Text": "Before"},
+        )
+        background = QGraphicsRectItem(0.0, 0.0, 40.0, 18.0)
+        background.setData(0, "nv1")
+        background.setData(2, NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND)
+        label = QGraphicsTextItem("Before")
+        label.setData(0, "nv1")
+        label.setData(2, NAMED_VIEW_LABEL_ITEM_KIND)
+        view._scene.addItem(background)
+        view._scene.addItem(label)
+        view._uid_to_items = {"nv1": [background, label]}
+        view._current_annotations = {"nv1": annotation}
+        view._selection_enabled = True
+        view._selected_uids = {"nv1"}
+        view._cursor_mode = "select"
+        self.assertTrue(view._begin_named_view_rename("nv1"))
+        label_center = view.mapFromScene(
+            label.mapToScene(label.boundingRect().center())
+        )
+        self.assertEqual(
+            view._resolve_cursor(label_center),
+            QtCore.Qt.CursorShape.IBeamCursor,
+        )
+        self.assertEqual(
+            view._resolve_cursor(QtCore.QPoint(200, 200)),
+            QtCore.Qt.CursorShape.ArrowCursor,
+        )
+        view.cleanup()
+
     def test_click_outside_inline_text_edit_commits_and_clears_access_lock(self):
         view = self._make_plan_view()
         annotation, item = self._add_text_annotation(

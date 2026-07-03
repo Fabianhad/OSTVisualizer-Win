@@ -118,6 +118,8 @@ class PdfTextSelectionTests(unittest.TestCase):
         view._handle_infos = []
         view._zoom_press_ctrl = False
         view._current_annotations = {}
+        view._editing_text_annotation_uid = None
+        view._editing_named_view_uid = None
         view._takeoff_items = []
         view._hotlink_items = []
         view._uid_to_items = {}

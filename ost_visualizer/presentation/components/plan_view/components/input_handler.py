@@ -2278,6 +2278,14 @@ class InputHandlerMixin:
             )
         ):
             return Qt.CursorShape.IBeamCursor
+        if (
+            self._editing_named_view_uid is not None
+            and vp_pos is not None
+            and self._named_view_label_contains_scene_point(
+                self._editing_named_view_uid, self.mapToScene(vp_pos)
+            )
+        ):
+            return Qt.CursorShape.IBeamCursor
         if self._cursor_mode in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE):
             if self._is_over_rotate_handle(vp_pos):
                 return self._rotate_cursor

@@ -180,6 +180,23 @@ class DialogLifecycleTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_progress_dialog_is_fixed_size_with_centered_progress_bar(self):
+        _app()
+        dialog = ProgressDialog("export.ost", lambda: True)
+        try:
+            self.assertEqual(dialog.minimumWidth(), dialog.maximumWidth())
+            self.assertEqual(dialog.minimumHeight(), dialog.maximumHeight())
+            self.assertFalse(dialog.isSizeGripEnabled())
+            self.assertLess(dialog._progress.width(), dialog.width())
+            progress_item = dialog.layout().itemAt(1)
+            self.assertEqual(
+                progress_item.alignment(),
+                QtCore.Qt.AlignmentFlag.AlignHCenter,
+            )
+        finally:
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_progress_dialog_runs_task_on_worker_thread_after_show(self):
         _app()
         ui_thread = threading.get_ident()

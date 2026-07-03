@@ -6,6 +6,8 @@ from PySide6.QtCore import QObject, QThread, Signal
 from ..config import RELAXED_MARGINS, RELAXED_SPACING
 
 logger = logging.getLogger(__name__)
+_DIALOG_WIDTH = 380
+_PROGRESS_BAR_WIDTH = 260
 
 
 class ProgressReporter(QObject):
@@ -60,7 +62,8 @@ class ProgressDialog(QtWidgets.QDialog):
             self.windowFlags() & ~QtCore.Qt.WindowType.WindowCloseButtonHint
         )
         self.setModal(True)
-        self.setFixedWidth(380)
+        self.setSizeGripEnabled(False)
+        self.setFixedWidth(_DIALOG_WIDTH)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(*RELAXED_MARGINS)
         layout.setSpacing(RELAXED_SPACING)
@@ -71,8 +74,13 @@ class ProgressDialog(QtWidgets.QDialog):
         layout.addWidget(self._label)
         self._progress = QtWidgets.QProgressBar()
         self._progress.setRange(0, 0)
+        self._progress.setFixedWidth(_PROGRESS_BAR_WIDTH)
         self._progress.setFixedHeight(16)
-        layout.addWidget(self._progress)
+        layout.addWidget(self._progress, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
+        self._apply_fixed_size()
+
+    def _apply_fixed_size(self) -> None:
+        self.setFixedSize(_DIALOG_WIDTH, self.sizeHint().height())
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)
@@ -102,6 +110,7 @@ class ProgressDialog(QtWidgets.QDialog):
         if self._cleaned_up or self._label is None:
             return
         self._label.setText(f"{self._action_text} <b>{description}</b>...")
+        self._apply_fixed_size()
 
     def _on_finished(self, result: Any, error: Optional[Exception]) -> None:
         if self._cleaned_up:
