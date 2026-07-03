@@ -5,6 +5,7 @@
 ### Changed
 
 - Plan-view cloud annotations now render with smaller scallops for a less bulky outline.
+- Annotation View windows now place annotation tools on a second toolbar row, keeping navigation and view controls on the first row.
 
 ### Fixed
 
@@ -15,6 +16,7 @@
 - Changing the active Area now immediately refreshes current-page takeoff overlay styling without requiring a page switch.
 - Switching pages after entering rotate mode from placement no longer raises an unhandled placement cursor assertion.
 - Hotlink placement now restores the normal cursor outside the plan canvas after choosing a named view while still allowing continuous hotlink placement.
+- Named View creation now commits when switching tools, so selecting the mouse cursor no longer reactivates the Named View tool afterward.
 - Bulk named-view deletion now skips only the named views declined during linked-hotlink confirmation instead of canceling the remaining selected deletes.
 - Cover Sheet page scale selectors now include all known scale groups, so pages using civil or metric scales show the matching scale instead of a custom-looking value.
 - Cover Sheet Plan Organizer columns now keep their header layout between dialog openings.

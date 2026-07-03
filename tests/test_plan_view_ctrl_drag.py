@@ -17,7 +17,11 @@ from PySide6.QtWidgets import (
 )
 from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.domain.entities import pattern as pattern_values
-from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    BidAnnotation,
+)
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.components.plan_view.components.drag_handler import (
@@ -40,6 +44,10 @@ from ost_visualizer.presentation.components.plan_view.components.selection_manag
     SelectionManagerMixin,
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_SELECT,
+)
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
     AnnotationItemRenderer,
 )
@@ -1278,6 +1286,99 @@ class CtrlDragTests(unittest.TestCase):
         self.assertTrue(event.accepted)
         self.assertEqual(view.finished_inline_edits, [True])
         self.assertEqual(view.annotation_place_presses, [])
+
+    def _make_tool_change_commit_view(self):
+        view = SimpleNamespace()
+        view._cursor_mode = CURSOR_MODE_ANNOTATION_PLACE
+        view._editing_named_view_uid = "draft"
+        view._editing_text_annotation_uid = None
+        view._annotation_place_type = ANNOTATION_TYPE_NAMED_VIEW
+        view._current_bid_page_uid = "page-1"
+        view.finished_inline_edits = []
+        view.exited_annotation_place = 0
+        view.entered_annotation_place = []
+        view.cursor_mode_change_requested = _FakeSignal()
+
+        def is_text_annotation_inline_edit_active():
+            return (
+                view._editing_named_view_uid is not None
+                or view._editing_text_annotation_uid is not None
+            )
+
+        def finish_inline_edit(commit):
+            view.finished_inline_edits.append(commit)
+            view._editing_named_view_uid = None
+            view._editing_text_annotation_uid = None
+            view._annotation_place_type = ANNOTATION_TYPE_NAMED_VIEW
+
+        def exit_annotation_place_mode():
+            view.exited_annotation_place += 1
+            view._annotation_place_type = None
+
+        def enter_annotation_place_mode(annotation_type):
+            view.entered_annotation_place.append(annotation_type)
+            view._annotation_place_type = annotation_type
+            return True
+
+        view.is_text_annotation_inline_edit_active = (
+            is_text_annotation_inline_edit_active
+        )
+        view._finish_active_inline_text_edit = finish_inline_edit
+        view._finish_inline_text_edit_before_tool_change = lambda: (
+            TakeoffPlanView._finish_inline_text_edit_before_tool_change(view)
+        )
+        view.cancel_overlay_move_mode = lambda restore_preview=True: None
+        view._remove_rotate_handle = lambda: None
+        view.finish_intelligent_paste_placement = lambda: None
+        view._exit_annotation_place_mode = exit_annotation_place_mode
+        view.enter_place_mode = lambda: True
+        view._exit_place_mode = lambda: None
+        view._clear_backout_state = lambda: None
+        view._apply_cursor_mode = lambda mode: setattr(view, "_cursor_mode", mode)
+        view._can_begin_annotation_placement = lambda: True
+        view._enter_annotation_place_mode = enter_annotation_place_mode
+        return view
+
+    def test_cursor_mode_change_commits_named_view_edit_before_switching_tool(self):
+        view = self._make_tool_change_commit_view()
+        TakeoffPlanView.set_cursor_mode(view, CURSOR_MODE_SELECT)
+        self.assertEqual(view.finished_inline_edits, [True])
+        self.assertEqual(view._cursor_mode, CURSOR_MODE_SELECT)
+        self.assertIsNone(view._annotation_place_type)
+        self.assertEqual(
+            view.cursor_mode_change_requested.emitted, [(CURSOR_MODE_SELECT,)]
+        )
+
+    def test_cursor_mode_change_stays_put_when_named_view_commit_keeps_edit_active(
+        self,
+    ):
+        view = self._make_tool_change_commit_view()
+
+        def finish_invalid_edit(commit):
+            view.finished_inline_edits.append(commit)
+
+        view._finish_active_inline_text_edit = finish_invalid_edit
+        TakeoffPlanView.set_cursor_mode(view, CURSOR_MODE_SELECT)
+        self.assertEqual(view.finished_inline_edits, [True])
+        self.assertEqual(view._cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+        self.assertEqual(view.exited_annotation_place, 0)
+        self.assertEqual(view.cursor_mode_change_requested.emitted, [])
+
+    def test_annotation_tool_change_commits_named_view_edit_before_switching_tool(self):
+        view = self._make_tool_change_commit_view()
+        self.assertTrue(
+            TakeoffPlanView.activate_annotation_placement(
+                view, ANNOTATION_TYPE_DIMENSION
+            )
+        )
+        self.assertEqual(view.finished_inline_edits, [True])
+        self.assertEqual(view.entered_annotation_place, [ANNOTATION_TYPE_DIMENSION])
+        self.assertEqual(view._cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+        self.assertEqual(view._annotation_place_type, ANNOTATION_TYPE_DIMENSION)
+        self.assertEqual(
+            view.cursor_mode_change_requested.emitted,
+            [(CURSOR_MODE_ANNOTATION_PLACE,)],
+        )
 
     def test_single_click_hotlink_does_not_select_it(self):
         view = self._make_hotlink_view(selected=False)

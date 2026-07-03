@@ -46,6 +46,7 @@ from ...config import (
     COMPACT_MARGINS,
     COMPACT_SPACING,
     DEFAULT_ICON_SIZE,
+    INLINE_MARGINS,
     NAMED_VIEWS_TOOLTIP,
     NO_MARGINS,
     NO_SPACING,
@@ -326,9 +327,21 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         main_layout.setContentsMargins(*NO_MARGINS)
         main_layout.setSpacing(NO_SPACING)
         nav_bar = QtWidgets.QWidget()
+        nav_bar.setObjectName("detachedPageViewNavigationToolbar")
         nav_layout = QtWidgets.QHBoxLayout(nav_bar)
         nav_layout.setContentsMargins(*COMPACT_MARGINS)
         nav_layout.setSpacing(COMPACT_SPACING)
+        annotation_bar = None
+        annotation_layout = None
+        if self._config.annotation_tool_specs:
+            nav_layout.setContentsMargins(
+                COMPACT_MARGINS[0], COMPACT_MARGINS[1], COMPACT_MARGINS[2], 0
+            )
+            annotation_bar = QtWidgets.QWidget()
+            annotation_bar.setObjectName("detachedPageViewAnnotationToolbar")
+            annotation_layout = QtWidgets.QHBoxLayout(annotation_bar)
+            annotation_layout.setContentsMargins(*INLINE_MARGINS)
+            annotation_layout.setSpacing(COMPACT_SPACING)
         self._btn_prev = QtWidgets.QPushButton()
         IconManager.apply(self._btn_prev, IconId.PREVIOUS_PAGE)
         self._btn_prev.setIconSize(QtCore.QSize(*DEFAULT_ICON_SIZE))
@@ -387,7 +400,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._cursor_group.addButton(button)
             self._annotation_tool_buttons[spec.action_key] = button
             split_button, _ = create_annotation_tool_split_button(
-                nav_bar,
+                annotation_bar,
                 button,
                 lambda annotation_type=spec.annotation_type: (
                     self._annotation_style_getter(annotation_type)
@@ -401,7 +414,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 icon_size=btn_size,
                 annotation_type=spec.annotation_type,
             )
-            nav_layout.addWidget(split_button)
+            annotation_layout.addWidget(split_button)
 
             def _activate_annotation_tool(
                 checked: bool, annotation_type: str = spec.annotation_type
@@ -414,6 +427,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             button.toggled.connect(_activate_annotation_tool)
         if self._config.annotation_tool_specs:
             apply_annotation_tool_icon_color(self._annotation_tool_buttons)
+            annotation_layout.addStretch()
         self._btn_pan = QtWidgets.QToolButton()
         IconManager.apply(self._btn_pan, IconId.PAN_TOOL)
         self._btn_pan.setIconSize(btn_size)
@@ -444,6 +458,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         nav_layout.addWidget(self._btn_zoom_in)
         nav_layout.addWidget(self._btn_zoom_out)
         main_layout.addWidget(nav_bar)
+        if annotation_bar is not None:
+            main_layout.addWidget(annotation_bar)
         self.plan_view = TakeoffPlanView(
             self._color_service,
             self._renderers.rendering_service,
@@ -558,6 +574,16 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         button.setChecked(True)
 
     def _on_cursor_mode_change_requested(self, mode: str) -> None:
+        button_map = {
+            CURSOR_MODE_SELECT: self._btn_select,
+            CURSOR_MODE_PAN: self._btn_pan,
+            CURSOR_MODE_ZOOM: self._btn_zoom_mode,
+        }
+        button = button_map.get(mode)
+        if button is not None:
+            if not button.isChecked():
+                button.setChecked(True)
+            return
         if mode != CURSOR_MODE_ANNOTATION_PLACE:
             return
         annotation_type = self.plan_view.annotation_place_type

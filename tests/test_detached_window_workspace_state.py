@@ -1,6 +1,9 @@
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
 from PySide6 import QtWidgets
 from ost_visualizer.application.builders.annotation_view_builder import (
@@ -14,7 +17,10 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.use_cases.annotation_view.open_annotation_view_use_case import (
     OpenAnnotationViewUseCase,
 )
-from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_NAMED_VIEW,
+    BidAnnotation,
+)
 from ost_visualizer.domain.entities.annotation_view import AnnotationView
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.identity_refs import BidRef
@@ -30,6 +36,10 @@ from ost_visualizer.presentation.coordinators.workspace_state_coordinator import
 )
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_SELECT,
+)
 from ost_visualizer.presentation.windows.components.window import DetachedPageViewWindow
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
@@ -44,8 +54,10 @@ from ost_visualizer.presentation.utils.plan_tool_registry import (
     PLAN_ANNOTATION_TOOL_SPECS,
 )
 from ost_visualizer.presentation.windows.annotation_view_window import (
+    AnnotationViewWindow,
     _ANNOTATION_WINDOW_CONFIG,
 )
+from ost_visualizer.presentation.windows.view_window import ViewWindow
 
 
 def _encoded_geometry(value: bytes = b"geometry") -> str:
@@ -1657,7 +1669,196 @@ def FakeDetachedPageData(*, annotation_layer_hidden: bool = False):
     )
 
 
+class FakeToolbarPlanView(QtWidgets.QWidget):
+    page_geometry_ready = QtCore.Signal()
+    page_fully_loaded = QtCore.Signal()
+    positions_flushed = QtCore.Signal(list)
+    annotation_text_properties_flushed = QtCore.Signal(list)
+    annotation_text_and_positions_flushed = QtCore.Signal(list)
+    annotation_styles_flushed = QtCore.Signal(list)
+    elements_deleted = QtCore.Signal(list)
+    annotation_created = QtCore.Signal(str, list, str)
+    text_annotation_created = QtCore.Signal(str, list, str)
+    named_view_created = QtCore.Signal(str, list, str)
+    hotlink_placement_requested = QtCore.Signal(str, list, str)
+    hotlink_clicked = QtCore.Signal(object)
+    copy_requested = QtCore.Signal()
+    paste_requested = QtCore.Signal()
+    undo_requested = QtCore.Signal()
+    redo_requested = QtCore.Signal()
+    cursor_mode_change_requested = QtCore.Signal(str)
+    annotation_place_type = ""
+
+    def __init__(self, *_args, **_kwargs):
+        super().__init__()
+        self.cursor_modes = []
+
+    def set_selection_enabled(self, _enabled):
+        pass
+
+    def set_annotation_only_selection(self, _enabled):
+        pass
+
+    def set_text_annotation_inline_edit_enabled(self, _enabled):
+        pass
+
+    def set_annotation_placement_allowed_fn(self, _callback):
+        pass
+
+    def set_named_view_name_validator(self, _callback):
+        pass
+
+    def set_roping_selection_method(self, _method):
+        pass
+
+    def set_disable_high_resolution_images(self, _disabled):
+        pass
+
+    def set_intelligent_paste_enabled(self, _enabled):
+        pass
+
+    def set_advanced_mouse_controls_enabled(self, _enabled):
+        pass
+
+    def set_default_auto_zoom_level(self, _level):
+        pass
+
+    def set_full_window_crosshairs(self, *_args):
+        pass
+
+    def set_mouse_snap_angles(self, *_args):
+        pass
+
+    def set_snap_preferences(self, **_options):
+        pass
+
+    def set_zoom_cursor(self, _cursor):
+        pass
+
+    def set_context_menu_command_handlers(self, *_args):
+        pass
+
+    def reset_view(self):
+        pass
+
+    def zoom_in(self):
+        pass
+
+    def zoom_out(self):
+        pass
+
+    def cleanup(self):
+        pass
+
+    def set_cursor_mode(self, mode):
+        self.cursor_modes.append(mode)
+
+    def activate_annotation_placement(self, annotation_type):
+        self.annotation_place_type = annotation_type
+        return True
+
+
+def _detached_toolbar_renderers():
+    return SimpleNamespace(
+        rendering_service=object(),
+        load_coordinator=object(),
+        takeoff_renderer=object(),
+        annotation_renderer=object(),
+        linear_geometry=object(),
+        prefetch_coordinator=object(),
+    )
+
+
+class FakeWindowIconProvider:
+    def set_window_icon(self, _window):
+        return None
+
+
 class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def _make_toolbar_window(self, window_cls):
+        with patch(
+            "ost_visualizer.presentation.windows.components.window.TakeoffPlanView",
+            FakeToolbarPlanView,
+        ), patch.object(
+            DetachedPageViewWindow, "load_view", lambda *_args, **_kwargs: None
+        ):
+            return window_cls(
+                FakeWindowIconProvider(),
+                AnnotationView(
+                    uid="view-1",
+                    bid_uid="bid-1",
+                    target_page_uid="page-1",
+                    file_path="bid.mdb",
+                ),
+                SimpleNamespace(),
+                FakeDetachedPageData(),
+                SimpleNamespace(),
+                SimpleNamespace(),
+                _detached_toolbar_renderers(),
+            )
+
+    def test_annotation_view_places_annotation_tools_on_second_toolbar_row(self):
+        window = self._make_toolbar_window(AnnotationViewWindow)
+        try:
+            nav_bar = window.findChild(
+                QtWidgets.QWidget, "detachedPageViewNavigationToolbar"
+            )
+            annotation_bar = window.findChild(
+                QtWidgets.QWidget, "detachedPageViewAnnotationToolbar"
+            )
+            self.assertIsNotNone(nav_bar)
+            self.assertIsNotNone(annotation_bar)
+            nav_margins = nav_bar.layout().contentsMargins()
+            annotation_margins = annotation_bar.layout().contentsMargins()
+            self.assertEqual(nav_margins.bottom(), 0)
+            self.assertEqual(annotation_margins.top(), 0)
+            self.assertLess(annotation_margins.top(), nav_margins.top())
+            self.assertTrue(window._annotation_tool_buttons)
+            for button in window._annotation_tool_buttons.values():
+                self.assertIs(button.window(), window)
+                self.assertIs(annotation_bar, button.parentWidget().parentWidget())
+            self.assertIs(window._btn_pan.parentWidget(), nav_bar)
+            self.assertIs(window._btn_zoom_mode.parentWidget(), nav_bar)
+            self.assertIs(window._page_combo.parentWidget(), nav_bar)
+        finally:
+            window.cleanup()
+            window.deleteLater()
+
+    def test_view_window_does_not_create_empty_annotation_toolbar_row(self):
+        window = self._make_toolbar_window(ViewWindow)
+        try:
+            self.assertIsNone(
+                window.findChild(QtWidgets.QWidget, "detachedPageViewAnnotationToolbar")
+            )
+            nav_bar = window.findChild(
+                QtWidgets.QWidget, "detachedPageViewNavigationToolbar"
+            )
+            self.assertIsNotNone(nav_bar)
+            self.assertIs(window._page_combo.parentWidget(), nav_bar)
+            self.assertEqual(window._annotation_tool_buttons, {})
+        finally:
+            window.cleanup()
+            window.deleteLater()
+
+    def test_annotation_view_cursor_mode_signal_restores_select_button(self):
+        window = self._make_toolbar_window(AnnotationViewWindow)
+        try:
+            window.plan_view.annotation_place_type = ANNOTATION_TYPE_NAMED_VIEW
+            window._on_cursor_mode_change_requested(CURSOR_MODE_ANNOTATION_PLACE)
+            named_view_button = window._annotation_tool_buttons["named_view_tool"]
+            self.assertTrue(named_view_button.isChecked())
+            self.assertFalse(window._btn_select.isChecked())
+            window._on_cursor_mode_change_requested(CURSOR_MODE_SELECT)
+            self.assertTrue(window._btn_select.isChecked())
+            self.assertFalse(named_view_button.isChecked())
+        finally:
+            window.cleanup()
+            window.deleteLater()
+
     def _make_annotation_clipboard_window(
         self,
         annotations=None,

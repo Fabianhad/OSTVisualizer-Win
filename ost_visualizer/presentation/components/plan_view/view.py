@@ -1695,6 +1695,12 @@ class TakeoffPlanView(
     def set_named_view_name_validator(self, validator) -> None:
         self._named_view_name_validator = validator
 
+    def _finish_inline_text_edit_before_tool_change(self) -> bool:
+        if not self.is_text_annotation_inline_edit_active():
+            return True
+        self._finish_active_inline_text_edit(commit=True)
+        return not self.is_text_annotation_inline_edit_active()
+
     def _can_begin_text_annotation_inline_edit(self) -> bool:
         if not self._text_annotation_inline_edit_enabled or not self._selection_enabled:
             return False
@@ -5469,6 +5475,8 @@ class TakeoffPlanView(
         self._deferred_page_visual_result = None
 
     def set_cursor_mode(self, mode: str) -> None:
+        if not self._finish_inline_text_edit_before_tool_change():
+            return
         if mode not in (CURSOR_MODE_MOVE_OVERLAY, CURSOR_MODE_MOVE_OVERLAY_HANDLE):
             self.cancel_overlay_move_mode(restore_preview=True)
         if mode not in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE):
@@ -5507,6 +5515,8 @@ class TakeoffPlanView(
         return True
 
     def activate_annotation_placement(self, annotation_type: str) -> bool:
+        if not self._finish_inline_text_edit_before_tool_change():
+            return False
         if not self._can_begin_annotation_placement():
             return False
         self.cancel_overlay_move_mode(restore_preview=True)
