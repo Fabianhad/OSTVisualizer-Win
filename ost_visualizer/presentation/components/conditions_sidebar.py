@@ -382,6 +382,10 @@ class ConditionsSidebar(QtWidgets.QWidget):
         preserve_tree_state = preserve_scroll and had_tree
         expanded_keys = self._expanded_item_keys() if preserve_tree_state else set()
         scroll_value = self.tree.verticalScrollBar().value() if preserve_scroll else 0
+        selected_conditions = (
+            self._selected_condition_uids[:] if preserve_tree_state else []
+        )
+        selected_folders = self._selected_folder_uids[:] if preserve_tree_state else []
         self.tree.setSortingEnabled(False)
         self.tree.setUpdatesEnabled(False)
         self._block_item_changed = True
@@ -434,6 +438,10 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._pending_condition_select_uid = None
         if pending_condition:
             self.highlight_conditions({pending_condition})
+        elif selected_conditions or selected_folders:
+            self._restore_context_selection(selected_conditions, selected_folders)
+            if preserve_scroll:
+                self.tree.verticalScrollBar().setValue(scroll_value)
         elif preserve_scroll:
             self.tree.verticalScrollBar().setValue(scroll_value)
         pending = self._pending_folder_edit_uid
