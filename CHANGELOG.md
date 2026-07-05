@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Plan-view cloud annotations now render with smaller scallops for a less bulky outline.
+- Plan-view cloud annotations now render with smaller scallops, and PDF exports now give cloud annotations cloud-shaped appearances instead of straight polygon appearances.
 - Annotation View windows now place annotation tools on a second toolbar row, keeping navigation and view controls on the first row.
 - Progress dialogs are now fixed-size with the loading bar centered.
 - The Connect Hotlink named-view picker now supports typing to search existing Named Views.

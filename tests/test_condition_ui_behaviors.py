@@ -263,10 +263,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         scrollbar.setValue(0)
         sidebar.highlight_conditions({"c1"}, reveal=False)
         self.app.processEvents()
-
         sidebar.load_conditions(self._make_conditions(80), {}, "Project")
         self.app.processEvents()
-
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
         self.assertTrue(sidebar._condition_items["c1"].isSelected())
         self.assertEqual(scrollbar.value(), 0)
@@ -281,9 +279,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         folder = sidebar._folder_items["f1"]
         folder.setExpanded(False)
         sidebar._restore_context_selection(["c1"], [])
-
         sidebar.load_conditions(dict(conditions), folders, "Project")
-
         self.assertFalse(sidebar._folder_items["f1"].isExpanded())
         self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
 

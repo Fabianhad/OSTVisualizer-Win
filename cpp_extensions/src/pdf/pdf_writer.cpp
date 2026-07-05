@@ -591,9 +591,9 @@ namespace ost_pdf_writer
             QPDFObjectHandle annot_obj = QPDFObjectHandle::parse(&output, annot_dict_str);
             annot_obj.replaceKey("/P", page_dict);
             std::string ap_content = generate_polygon_annot_appearance_stream(poly);
-            auto bb = compute_bbox(poly.vertices);
+            auto rect = compute_polygon_annot_rect(poly);
             attach_appearance_stream(output, annot_obj, ap_content,
-                                     bb[0] - 5.0, bb[1] - 5.0, bb[2] + 5.0, bb[3] + 5.0);
+                                     rect[0], rect[1], rect[2], rect[3]);
             QPDFObjectHandle annot = output.makeIndirectObject(annot_obj);
             annots.appendItem(annot);
         }

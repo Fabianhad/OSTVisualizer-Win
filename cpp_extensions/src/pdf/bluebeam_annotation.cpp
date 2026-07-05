@@ -8,6 +8,11 @@
 #include <random>
 namespace ost_pdf_writer
 {
+    constexpr double CLOUD_BORDER_EFFECT_INTENSITY = 2.0;
+    constexpr double CLOUD_SCALLOP_MIN_RADIUS = 15.0;
+    constexpr double CLOUD_SCALLOP_MAX_RADIUS = 50.0;
+    constexpr double CLOUD_SCALLOP_SIZE_SCALE = 0.25;
+
     std::string generate_nm()
     {
         static std::mt19937 rng(std::random_device{}());
@@ -316,6 +321,274 @@ namespace ost_pdf_writer
             {
                 oss << v[0] << " " << v[1] << " l ";
             }
+        }
+        oss << "h ";
+    }
+
+    static double point_distance(const std::array<double, 2> &a,
+                                 const std::array<double, 2> &b)
+    {
+        return std::hypot(b[0] - a[0], b[1] - a[1]);
+    }
+
+    static std::array<double, 2> midpoint(const std::array<double, 2> &a,
+                                          const std::array<double, 2> &b)
+    {
+        return {(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5};
+    }
+
+    static std::array<double, 2> normalize(double x, double y)
+    {
+        double length = std::hypot(x, y);
+        if (length <= 1e-12)
+        {
+            return {0.0, 0.0};
+        }
+        return {x / length, y / length};
+    }
+
+    static std::vector<std::array<double, 2>> normalize_cloud_vertices(
+        const std::vector<std::array<double, 2>> &vertices)
+    {
+        std::vector<std::array<double, 2>> points = vertices;
+        if (points.empty())
+        {
+            return points;
+        }
+        const auto &first = points.front();
+        const auto &last = points.back();
+        if (std::abs(first[0] - last[0]) > 1e-6 ||
+            std::abs(first[1] - last[1]) > 1e-6)
+        {
+            points.push_back(first);
+        }
+        double area = 0.0;
+        for (size_t i = 0; i < points.size(); ++i)
+        {
+            const auto &a = points[i];
+            const auto &b = points[(i + 1) % points.size()];
+            area += a[0] * b[1] - b[0] * a[1];
+        }
+        if (area < 0.0)
+        {
+            std::reverse(points.begin(), points.end());
+        }
+        return points;
+    }
+
+    struct PerimeterEdge
+    {
+        std::array<double, 2> start;
+        std::array<double, 2> end;
+        double length;
+    };
+
+    static std::vector<PerimeterEdge> polygon_perimeter_edges(
+        const std::vector<std::array<double, 2>> &points)
+    {
+        std::vector<PerimeterEdge> edges;
+        if (points.size() < 2)
+        {
+            return edges;
+        }
+        for (size_t i = 0; i < points.size(); ++i)
+        {
+            const auto &start = points[i];
+            const auto &end = points[(i + 1) % points.size()];
+            double length = point_distance(start, end);
+            if (length > 1e-9)
+            {
+                edges.push_back({start, end, length});
+            }
+        }
+        return edges;
+    }
+
+    static double calculate_cloud_scallop_radius(double average_edge_length)
+    {
+        double base_radius = std::max(
+            CLOUD_SCALLOP_MIN_RADIUS,
+            std::min(average_edge_length * CLOUD_BORDER_EFFECT_INTENSITY / 3.0,
+                     CLOUD_SCALLOP_MAX_RADIUS));
+        return base_radius * CLOUD_SCALLOP_SIZE_SCALE;
+    }
+
+    static std::vector<std::array<double, 2>> sample_along_perimeter(
+        const std::vector<std::array<double, 2>> &points,
+        int sample_count)
+    {
+        std::vector<std::array<double, 2>> samples;
+        std::vector<PerimeterEdge> edges = polygon_perimeter_edges(points);
+        if (edges.empty())
+        {
+            return samples;
+        }
+        double perimeter = 0.0;
+        for (const auto &edge : edges)
+        {
+            perimeter += edge.length;
+        }
+        for (int k = 0; k < sample_count; ++k)
+        {
+            double target = (static_cast<double>(k) * perimeter) / sample_count;
+            double accumulated = 0.0;
+            for (const auto &edge : edges)
+            {
+                if (accumulated + edge.length >= target)
+                {
+                    double local = (target - accumulated) / edge.length;
+                    samples.push_back({edge.start[0] + (edge.end[0] - edge.start[0]) * local,
+                                       edge.start[1] + (edge.end[1] - edge.start[1]) * local});
+                    break;
+                }
+                accumulated += edge.length;
+            }
+        }
+        return samples;
+    }
+
+    static std::vector<std::array<double, 2>> compute_centers_from_samples(
+        const std::vector<std::array<double, 2>> &samples,
+        double radius)
+    {
+        std::vector<std::array<double, 2>> centers(samples.size(), {0.0, 0.0});
+        for (size_t i = 0; i < samples.size(); ++i)
+        {
+            const auto &a = samples[i];
+            const auto &b = samples[(i + 1) % samples.size()];
+            auto mid = midpoint(a, b);
+            double half_chord = point_distance(a, b) * 0.5;
+            double inside = std::max(0.0, radius * radius - half_chord * half_chord);
+            double offset = std::sqrt(inside);
+            auto tangent = normalize(b[0] - a[0], b[1] - a[1]);
+            double normal_x = -tangent[1];
+            double normal_y = tangent[0];
+            centers[(i + 1) % samples.size()] = {
+                mid[0] + normal_x * offset,
+                mid[1] + normal_y * offset};
+        }
+        return centers;
+    }
+
+    struct CloudCurveSegment
+    {
+        std::array<double, 2> start;
+        std::array<double, 2> cp1;
+        std::array<double, 2> cp2;
+        std::array<double, 2> end;
+    };
+
+    static std::vector<CloudCurveSegment> cloud_arc_to_bezier(
+        const std::array<double, 2> &center,
+        double radius,
+        double start_angle,
+        double end_angle,
+        const std::array<double, 2> &start)
+    {
+        constexpr double pi = 3.14159265358979323846;
+        constexpr double kappa = 0.5522847498;
+        while (end_angle < start_angle)
+        {
+            end_angle += 2.0 * pi;
+        }
+        double angle_span = end_angle - start_angle;
+        int segment_count = std::max(1, static_cast<int>(std::ceil(std::abs(angle_span) / (pi / 2.0))));
+        double segment_angle = angle_span / segment_count;
+        std::vector<CloudCurveSegment> segments;
+        std::array<double, 2> segment_start = start;
+        for (int i = 0; i < segment_count; ++i)
+        {
+            double a1 = start_angle + i * segment_angle;
+            double a2 = a1 + segment_angle;
+            double cos_a1 = std::cos(a1);
+            double sin_a1 = std::sin(a1);
+            double cos_a2 = std::cos(a2);
+            double sin_a2 = std::sin(a2);
+            std::array<double, 2> end = {
+                center[0] + radius * cos_a2,
+                center[1] + radius * sin_a2};
+            double d = std::abs(segment_angle - pi / 2.0) > 1e-6
+                           ? radius * kappa * std::tan(segment_angle / 4.0) / std::tan(pi / 8.0)
+                           : radius * kappa;
+            std::array<double, 2> cp1 = {
+                center[0] + radius * cos_a1 - d * sin_a1,
+                center[1] + radius * sin_a1 + d * cos_a1};
+            std::array<double, 2> cp2 = {
+                end[0] + d * sin_a2,
+                end[1] - d * cos_a2};
+            segments.push_back({segment_start, cp1, cp2, end});
+            segment_start = end;
+        }
+        return segments;
+    }
+
+    static std::vector<CloudCurveSegment> build_cloud_curve_segments(
+        const std::vector<std::array<double, 2>> &vertices)
+    {
+        constexpr double pi = 3.14159265358979323846;
+        std::vector<CloudCurveSegment> segments;
+        if (vertices.size() < 2)
+        {
+            return segments;
+        }
+        std::vector<std::array<double, 2>> points = normalize_cloud_vertices(vertices);
+        std::vector<PerimeterEdge> edges = polygon_perimeter_edges(points);
+        if (edges.empty())
+        {
+            return segments;
+        }
+        double average_edge_length = 0.0;
+        double perimeter = 0.0;
+        for (const auto &edge : edges)
+        {
+            average_edge_length += edge.length;
+            perimeter += edge.length;
+        }
+        average_edge_length /= static_cast<double>(edges.size());
+        double radius = calculate_cloud_scallop_radius(average_edge_length);
+        int sample_count = std::max(6, static_cast<int>(std::ceil(perimeter / (3.25 * radius))));
+        std::vector<std::array<double, 2>> samples = sample_along_perimeter(points, sample_count);
+        if (samples.size() < 2)
+        {
+            return segments;
+        }
+        std::vector<std::array<double, 2>> centers = compute_centers_from_samples(samples, radius);
+        for (size_t k = 0; k < samples.size(); ++k)
+        {
+            const auto &start = samples[k];
+            const auto &end = samples[(k + 1) % samples.size()];
+            const auto &center = centers[(k + 1) % samples.size()];
+            double r = point_distance(center, start);
+            double start_angle = std::atan2(start[1] - center[1], start[0] - center[0]);
+            double end_angle = std::atan2(end[1] - center[1], end[0] - center[0]);
+            while (end_angle < start_angle)
+            {
+                end_angle += 2.0 * pi;
+            }
+            if (end_angle - start_angle > pi)
+            {
+                end_angle -= 2.0 * pi;
+            }
+            std::vector<CloudCurveSegment> arc_segments =
+                cloud_arc_to_bezier(center, r, start_angle, end_angle, start);
+            segments.insert(segments.end(), arc_segments.begin(), arc_segments.end());
+        }
+        return segments;
+    }
+
+    static void emit_cloud_appearance_path(std::ostringstream &oss,
+                                           const std::vector<CloudCurveSegment> &segments)
+    {
+        if (segments.empty())
+        {
+            return;
+        }
+        oss << segments.front().start[0] << " " << segments.front().start[1] << " m ";
+        for (const auto &segment : segments)
+        {
+            oss << segment.cp1[0] << " " << segment.cp1[1] << " "
+                << segment.cp2[0] << " " << segment.cp2[1] << " "
+                << segment.end[0] << " " << segment.end[1] << " c ";
         }
         oss << "h ";
     }
@@ -783,9 +1056,7 @@ namespace ost_pdf_writer
     std::string generate_bluebeam_polygon_annot_dict(const BluebeamPolygonAnnot &poly)
     {
         std::ostringstream oss;
-        auto bb = compute_bbox(poly.vertices);
-        double rect_x1 = bb[0] - 5.0, rect_y1 = bb[1] - 5.0;
-        double rect_x2 = bb[2] + 5.0, rect_y2 = bb[3] + 5.0;
+        auto rect = compute_polygon_annot_rect(poly);
         auto [stroke_r, stroke_g, stroke_b] = color_to_rgb(poly.color);
         std::string pdf_date = poly.created_date.empty() ? generate_pdf_date() : poly.created_date;
         std::string nm = generate_nm();
@@ -795,6 +1066,7 @@ namespace ost_pdf_writer
         {
             oss << "/BE << /S /C /I 2 >>\n";
         }
+        oss << "/BS << /S /S /Type /Border /W " << poly.width << " >>\n";
         oss << "/C [ " << stroke_r << " " << stroke_g << " " << stroke_b << " ]\n";
         oss << "/CreationDate (" << pdf_date << ")\n";
         oss << "/F 4\n";
@@ -804,7 +1076,7 @@ namespace ost_pdf_writer
         }
         oss << "/M (" << pdf_date << ")\n";
         oss << "/NM (" << nm << ")\n";
-        oss << "/Rect [ " << rect_x1 << " " << rect_y1 << " " << rect_x2 << " " << rect_y2 << " ]\n";
+        oss << "/Rect [ " << rect[0] << " " << rect[1] << " " << rect[2] << " " << rect[3] << " ]\n";
         oss << "/Subj (" << subject << ")\n";
         oss << "/Subtype /Polygon\n";
         oss << "/T (" << poly.author << ")\n";
@@ -824,9 +1096,42 @@ namespace ost_pdf_writer
         std::ostringstream oss;
         oss << stroke_r << " " << stroke_g << " " << stroke_b << " RG ";
         oss << poly.width << " w ";
-        emit_subpath(oss, poly.vertices);
+        if (poly.is_cloud)
+        {
+            std::vector<CloudCurveSegment> cloud_segments = build_cloud_curve_segments(poly.vertices);
+            if (!cloud_segments.empty())
+            {
+                oss << "1 j 1 J ";
+                emit_cloud_appearance_path(oss, cloud_segments);
+            }
+            else
+            {
+                emit_subpath(oss, poly.vertices);
+            }
+        }
+        else
+        {
+            emit_subpath(oss, poly.vertices);
+        }
         oss << "S ";
         return oss.str();
+    }
+    std::array<double, 4> compute_polygon_annot_rect(const BluebeamPolygonAnnot &poly)
+    {
+        auto bb = compute_bbox(poly.vertices);
+        if (poly.is_cloud)
+        {
+            std::vector<CloudCurveSegment> cloud_segments = build_cloud_curve_segments(poly.vertices);
+            for (const auto &segment : cloud_segments)
+            {
+                add_bbox_point(bb, segment.start[0], segment.start[1]);
+                add_bbox_point(bb, segment.cp1[0], segment.cp1[1]);
+                add_bbox_point(bb, segment.cp2[0], segment.cp2[1]);
+                add_bbox_point(bb, segment.end[0], segment.end[1]);
+            }
+        }
+        double padding = poly.is_cloud ? std::max(5.0, poly.width / 2.0 + 2.0) : 5.0;
+        return {bb[0] - padding, bb[1] - padding, bb[2] + padding, bb[3] + padding};
     }
     std::string generate_bluebeam_ink_dict(const BluebeamInk &ink)
     {

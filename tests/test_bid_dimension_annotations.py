@@ -1556,6 +1556,34 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertIn("text-align:center", text_block)
         self.assertGreaterEqual(pdf_text.count("/AP <<"), 7)
 
+    def test_native_pdf_export_writes_cloud_appearance_as_curves(self):
+        pdf_text = self._write_native_pdf(polygons=[self._native_cloud()])
+        cloud_block = self._annot_block_by_subject(pdf_text, "Cloud")
+        self.assertIn("/Subtype /Polygon", cloud_block)
+        self.assertIn("/IT /PolygonCloud", cloud_block)
+        self.assertRegex(cloud_block, r"/BE\s+<<[^>]*?/S\s+/C")
+        self.assertRegex(cloud_block, r"/BE\s+<<[^>]*?/I\s+2")
+        self.assertRegex(cloud_block, r"/BS\s+<<[^>]*?/W\s+2")
+        rect = self._array_values(cloud_block, "Rect")
+        ap_block = self._ap_block_for_annotation(pdf_text, cloud_block)
+        bbox = self._array_values(ap_block, "BBox")
+        self._assert_ap_rect_bbox_and_matrix_match(rect, bbox, ap_block)
+        stream_text = self._stream_text(ap_block)
+        self.assertIn(" c ", stream_text)
+        self.assertIn("1 j 1 J", stream_text)
+        self.assertNotIn(" l ", stream_text)
+
+    def test_native_pdf_export_keeps_regular_polygon_appearance_straight(self):
+        pdf_text = self._write_native_pdf(polygons=[self._native_polygon()])
+        polygon_block = self._annot_block_by_subject(pdf_text, "Polygon")
+        self.assertIn("/Subtype /Polygon", polygon_block)
+        self.assertNotIn("/IT /PolygonCloud", polygon_block)
+        self.assertNotIn("/BE <<", polygon_block)
+        ap_block = self._ap_block_for_annotation(pdf_text, polygon_block)
+        stream_text = self._stream_text(ap_block)
+        self.assertIn(" l ", stream_text)
+        self.assertNotIn(" c ", stream_text)
+
     def test_native_pdf_export_writes_highlight_annotation_fields(self):
         pdf_text = self._write_native_pdf(highlights=[self._native_highlight()])
         highlight_block = self._annot_block_by_subject(pdf_text, "Highlight")
@@ -1784,6 +1812,19 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         polygon.width = 1.0
         polygon.is_cloud = False
         return polygon
+
+    def _native_cloud(self):
+        cloud = ost_pdf_writer.PolygonAnnotationAnnotData()
+        cloud.vertices = [
+            [30.0, 30.0],
+            [130.0, 30.0],
+            [130.0, 130.0],
+            [30.0, 130.0],
+        ]
+        cloud.color = [128, 64, 255]
+        cloud.width = 2.0
+        cloud.is_cloud = True
+        return cloud
 
     def _native_ink(self):
         ink = ost_pdf_writer.InkAnnotationData()

@@ -156,6 +156,7 @@ namespace ost_pdf_writer
     };
     std::string generate_bluebeam_polygon_annot_dict(const BluebeamPolygonAnnot &poly);
     std::string generate_polygon_annot_appearance_stream(const BluebeamPolygonAnnot &poly);
+    std::array<double, 4> compute_polygon_annot_rect(const BluebeamPolygonAnnot &poly);
     struct BluebeamInk
     {
         std::vector<std::vector<std::array<double, 2>>> strokes;
