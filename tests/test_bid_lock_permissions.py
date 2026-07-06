@@ -381,10 +381,14 @@ class _DeleteBidUiState:
 class _FakeDeferredPersistence:
     def __init__(self):
         self.cancelled_bid_selected_pages = []
+        self.cancelled_bid_selected_page_files = []
         self.flushes = []
 
     def cancel_bid_selected_pages(self, file_path, bid_uids):
         self.cancelled_bid_selected_pages.append((file_path, list(bid_uids)))
+
+    def cancel_bid_selected_pages_for_file(self, file_path):
+        self.cancelled_bid_selected_page_files.append(file_path)
 
     def flush_for_file(self, _file_path):
         self.flushes.append(_file_path)
@@ -403,6 +407,19 @@ class _DeferredPersistenceRequiringBidCancel(_FakeDeferredPersistence):
             self.blocked_file_path,
             [self.blocked_bid_uid],
         ) in self.cancelled_bid_selected_pages
+
+
+class _DeferredPersistenceRequiringSelectedPageFileCancel(_FakeDeferredPersistence):
+    def __init__(self, blocked_file_path):
+        super().__init__()
+        self.blocked_file_path = blocked_file_path
+
+    def flush_for_file(self, file_path):
+        super().flush_for_file(file_path)
+        return (
+            file_path != self.blocked_file_path
+            or file_path in self.cancelled_bid_selected_page_files
+        )
 
 
 def _write_service(project_data, reload_success=True):
@@ -1134,6 +1151,62 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(write_service.selected_bid_during_notify, [None])
         self.assertIsNone(ui_state.get_selected_bid_ref())
         self.assertEqual(write_service.notifications, ["C:/jobs/test.mdb"])
+
+    def test_empty_project_delete_discards_selected_page_writes_before_flush(self):
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path="C:/jobs/test.mdb",
+                    display_name="test.mdb",
+                    bid_projects={
+                        "project-empty": HierarchyProjectInfo(
+                            name="Empty Project",
+                            bids=[],
+                        )
+                    },
+                )
+            ]
+        )
+        project_data = SimpleNamespace(
+            get_hierarchy=lambda: hierarchy,
+            project_has_bids=lambda _project_uid: False,
+        )
+        ui_state = SimpleNamespace(
+            selected_project_uids=["project-empty"],
+            selected_file_path="C:/jobs/test.mdb",
+            get_selected_bid_refs=lambda: [],
+        )
+        delete_calls = []
+        write_service = SimpleNamespace(
+            delete_projects=lambda file_path, uids: delete_calls.append(
+                (file_path, list(uids))
+            )
+            or True
+        )
+        deferred = _DeferredPersistenceRequiringSelectedPageFileCancel(
+            "C:/jobs/test.mdb"
+        )
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=write_service,
+            ui_state_manager=ui_state,
+            deferred_persistence_manager=deferred,
+        )
+        from ost_visualizer.presentation.handlers import project_write_handler
+
+        old_confirm = project_write_handler.confirm
+        project_write_handler.confirm = lambda _window, _title, _message: True
+        try:
+            handler.delete_selected()
+        finally:
+            project_write_handler.confirm = old_confirm
+        self.assertEqual(
+            deferred.cancelled_bid_selected_page_files,
+            ["C:/jobs/test.mdb"],
+        )
+        self.assertEqual(deferred.flushes, ["C:/jobs/test.mdb"])
+        self.assertEqual(delete_calls, [("C:/jobs/test.mdb", ["project-empty"])])
 
     def test_moving_active_bid_to_deleted_selects_replacement_before_refresh(self):
         bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")

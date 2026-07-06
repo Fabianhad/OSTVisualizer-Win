@@ -2104,6 +2104,11 @@ class UIEventCoordinator:
                 )
         page_to_save = selected_page_override or page_uid or active_page_uid
         if page_to_save:
+            if not self.project_data.get_page(page_to_save):
+                self._deferred_persistence.cancel_bid_selected_pages(
+                    bid_ref.file_path, [bid_ref.bid_uid]
+                )
+                return
             self._deferred_persistence.schedule_bid_selected_page(
                 bid_ref.file_path, bid_ref.bid_uid, page_to_save
             )

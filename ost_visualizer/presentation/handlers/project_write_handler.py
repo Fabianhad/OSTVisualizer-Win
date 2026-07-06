@@ -56,6 +56,9 @@ class ProjectWriteHandler:
     ) -> None:
         self._deferred_persistence.cancel_bid_selected_pages(file_path, bid_uids)
 
+    def _discard_project_delete_selected_page_writes(self, file_path: str) -> None:
+        self._deferred_persistence.cancel_bid_selected_pages_for_file(file_path)
+
     def duplicate_selected(self) -> None:
         if self._duplicate_in_progress:
             return
@@ -633,6 +636,7 @@ class ProjectWriteHandler:
         )
         if not confirm(self.window, "Delete Projects", msg):
             return
+        self._discard_project_delete_selected_page_writes(file_path)
         if not self._flush_deferred_for_file(file_path):
             return
         if not self._write_service.delete_projects(file_path, deletable):

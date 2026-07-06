@@ -1619,6 +1619,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().closeEvent(event)
 
     def _flush_deferred_persistence_before_close(self) -> bool:
+        self._deferred_persistence_manager.begin_shutdown()
         if not self.handlers.ui_event.flush_current_page_state():
             return False
         return bool(self._deferred_persistence_manager.cleanup())

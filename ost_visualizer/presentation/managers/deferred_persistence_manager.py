@@ -4,6 +4,8 @@ from typing import Callable, Dict, Hashable, Optional, Tuple
 from PySide6 import QtCore
 
 DeferredPersistenceKey = Tuple[Hashable, ...]
+BID_SELECTED_PAGE_KIND = "bid_selected_page"
+NON_RETRYABLE_UI_STATE_KINDS = {BID_SELECTED_PAGE_KIND}
 
 
 @dataclass
@@ -30,6 +32,7 @@ class DeferredPersistenceManager(QtCore.QObject):
         self._pending: Dict[DeferredPersistenceKey, DeferredPersistenceItem] = {}
         self._flushing = False
         self._cleaned_up = False
+        self._shutdown_started = False
         self._timer = QtCore.QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(self.DEBOUNCE_MS)
@@ -80,8 +83,8 @@ class DeferredPersistenceManager(QtCore.QObject):
         self, db_path: str, bid_uid: str, page_uid: str
     ) -> None:
         self.schedule(
-            "bid_selected_page",
-            ("bid_selected_page", db_path, bid_uid),
+            BID_SELECTED_PAGE_KIND,
+            self._bid_selected_page_key(db_path, bid_uid),
             f"selected page {page_uid} for bid {bid_uid}",
             lambda: self._write_service.save_bid_selected_page(
                 db_path, bid_uid, page_uid
@@ -93,7 +96,28 @@ class DeferredPersistenceManager(QtCore.QObject):
         if not db_path or not bid_uids:
             return
         for bid_uid in bid_uids:
-            self._pending.pop(("bid_selected_page", db_path, str(bid_uid)), None)
+            self._pending.pop(self._bid_selected_page_key(db_path, bid_uid), None)
+        self._stop_timer_if_idle()
+
+    def cancel_bid_selected_pages_for_file(self, db_path: str) -> None:
+        if not db_path:
+            return
+        for key, item in list(self._pending.items()):
+            if (
+                item.kind == BID_SELECTED_PAGE_KIND
+                and len(key) > 1
+                and str(key[1]) == str(db_path)
+            ):
+                self._pending.pop(key, None)
+        self._stop_timer_if_idle()
+
+    @staticmethod
+    def _bid_selected_page_key(
+        db_path: str, bid_uid: str | int
+    ) -> DeferredPersistenceKey:
+        return (BID_SELECTED_PAGE_KIND, db_path, str(bid_uid))
+
+    def _stop_timer_if_idle(self) -> None:
         if not self._pending:
             self._timer.stop()
 
@@ -239,6 +263,8 @@ class DeferredPersistenceManager(QtCore.QObject):
         try:
             success = bool(item.write_fn())
         except Exception:
+            if self._is_non_retryable_ui_state(item):
+                return True
             self._logger.warning(
                 "Deferred persistence failed for %s %s",
                 item.kind,
@@ -247,12 +273,18 @@ class DeferredPersistenceManager(QtCore.QObject):
             )
             success = False
         if not success:
+            if self._is_non_retryable_ui_state(item):
+                return True
             self._logger.warning(
                 "Deferred persistence write did not complete: %s (%s)",
                 item.description,
                 item.key,
             )
         return success
+
+    @staticmethod
+    def _is_non_retryable_ui_state(item: DeferredPersistenceItem) -> bool:
+        return item.kind in NON_RETRYABLE_UI_STATE_KINDS
 
     def _should_skip_expected_block(self, item: DeferredPersistenceItem) -> bool:
         if not item.skippable_when_blocked:
@@ -267,12 +299,17 @@ class DeferredPersistenceManager(QtCore.QObject):
         for key in list(self._pending):
             if len(key) > 1 and str(key[1]) == str(db_path):
                 self._pending.pop(key, None)
-        if not self._pending:
-            self._timer.stop()
+        self._stop_timer_if_idle()
+
+    def begin_shutdown(self) -> None:
+        self._shutdown_started = True
+        self._timer.stop()
 
     def cleanup(self) -> bool:
         if self._cleaned_up:
             return True
+        if not self._shutdown_started:
+            self.begin_shutdown()
         if not self.flush():
             return False
         self._timer.stop()

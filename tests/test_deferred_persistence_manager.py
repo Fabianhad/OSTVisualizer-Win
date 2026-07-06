@@ -256,6 +256,86 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             ],
         )
 
+    def test_cancel_bid_selected_pages_for_file_uses_expected_key_only(self):
+        self.manager.schedule_bid_selected_page("a.mdb", "b1", "p1")
+        self.manager.schedule_bid_selected_page("b.mdb", "b1", "p2")
+        self.manager.schedule_page_view_state("a.mdb", "p1", 2.0, 10.0, 20.0)
+        self.manager.cancel_bid_selected_pages_for_file("a.mdb")
+        self.assertEqual(self.manager.pending_count, 2)
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(
+            self.service.calls,
+            [
+                ("bid_selected_page", "b.mdb", "b1", "p2"),
+                ("page_view_state", "a.mdb", "p1", 2.0, 10.0, 20.0),
+            ],
+        )
+
+    def test_failed_bid_selected_page_is_resolved_without_warning(self):
+        self.service.fail_methods.add("save_bid_selected_page")
+        logger = logging.getLogger("tests.deferred_selected_page_failure")
+        manager = DeferredPersistenceManager(self.service, logger_=logger)
+        self.addCleanup(manager.cleanup)
+        manager.schedule_bid_selected_page(
+            r"C:\OCS Documents\OST\OST Projects.mdb", "13245", "15477"
+        )
+        with self.assertNoLogs(logger, level="WARNING"):
+            self.assertTrue(
+                manager.flush_for_file(r"C:\OCS Documents\OST\OST Projects.mdb")
+            )
+        self.assertEqual(manager.pending_count, 0)
+        self.assertEqual(
+            self.service.calls,
+            [
+                (
+                    "bid_selected_page",
+                    r"C:\OCS Documents\OST\OST Projects.mdb",
+                    "13245",
+                    "15477",
+                )
+            ],
+        )
+
+    def test_failed_bid_selected_page_does_not_block_shutdown_cleanup(self):
+        self.service.fail_methods.add("save_bid_selected_page")
+        manager = DeferredPersistenceManager(
+            self.service, logger_=logging.getLogger(__name__)
+        )
+        manager.schedule_bid_selected_page("a.mdb", "b1", "missing-page")
+        manager.begin_shutdown()
+        self.assertTrue(manager.cleanup())
+        self.assertEqual(manager.pending_count, 0)
+
+    def test_selected_page_failure_does_not_drop_real_data_write(self):
+        self.service.fail_methods.add("save_bid_selected_page")
+        manager = DeferredPersistenceManager(
+            self.service, logger_=logging.getLogger(__name__)
+        )
+        self.addCleanup(manager.cleanup)
+        critical_calls = []
+
+        def critical_write():
+            critical_calls.append("critical")
+            return len(critical_calls) > 1
+
+        manager.schedule_bid_selected_page("a.mdb", "b1", "missing-page")
+        manager.schedule(
+            "critical_data",
+            ("critical_data", "a.mdb", "row-1"),
+            "critical data write",
+            critical_write,
+        )
+        self.assertFalse(manager.flush_for_file("a.mdb"))
+        self.assertEqual(manager.pending_count, 1)
+        self.assertEqual(
+            self.service.calls,
+            [("bid_selected_page", "a.mdb", "b1", "missing-page")],
+        )
+        self.assertEqual(critical_calls, ["critical"])
+        self.assertTrue(manager.flush_for_file("a.mdb"))
+        self.assertEqual(manager.pending_count, 0)
+        self.assertEqual(critical_calls, ["critical", "critical"])
+
     def test_cleanup_flushes_pending_writes(self):
         self.manager.schedule_page_overlay_rect("a.mdb", "p1", (1, 2.5, 3, 4.25))
         self.assertTrue(self.manager.cleanup())
@@ -376,6 +456,8 @@ class RecordingDeferredPersistence:
         self.page_show_mode_calls = []
         self.flush_calls = []
         self.cancel_calls = []
+        self.cancel_bid_selected_pages_calls = []
+        self.shutdown_calls = 0
         self.flush_all_calls = 0
         self.flush_result = True
 
@@ -407,6 +489,12 @@ class RecordingDeferredPersistence:
     def cancel_for_file(self, db_path):
         self.cancel_calls.append(db_path)
 
+    def cancel_bid_selected_pages(self, db_path, bid_uids):
+        self.cancel_bid_selected_pages_calls.append((db_path, list(bid_uids)))
+
+    def begin_shutdown(self):
+        self.shutdown_calls += 1
+
 
 class FakeCloseEvent:
     def __init__(self):
@@ -426,10 +514,11 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             )
         )
         window._deferred_persistence_manager = SimpleNamespace(
-            cleanup=lambda: calls.append("cleanup") or True
+            begin_shutdown=lambda: calls.append("begin_shutdown"),
+            cleanup=lambda: calls.append("cleanup") or True,
         )
         self.assertTrue(MainWindow._flush_deferred_persistence_before_close(window))
-        self.assertEqual(calls, ["flush_state", "cleanup"])
+        self.assertEqual(calls, ["begin_shutdown", "flush_state", "cleanup"])
 
     def test_app_close_does_not_cleanup_when_current_page_flush_fails(self):
         calls = []
@@ -440,10 +529,11 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             )
         )
         window._deferred_persistence_manager = SimpleNamespace(
-            cleanup=lambda: calls.append("cleanup") or True
+            begin_shutdown=lambda: calls.append("begin_shutdown"),
+            cleanup=lambda: calls.append("cleanup") or True,
         )
         self.assertFalse(MainWindow._flush_deferred_persistence_before_close(window))
-        self.assertEqual(calls, ["flush_state"])
+        self.assertEqual(calls, ["begin_shutdown", "flush_state"])
 
     def test_app_close_rejects_close_when_deferred_cleanup_fails(self):
         window = MainWindow.__new__(MainWindow)
@@ -648,6 +738,15 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [("a.mdb", "bid-1", "p2")],
         )
         self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p2")
+
+    def test_missing_selected_page_cancels_pending_bid_selected_page_write(self):
+        coordinator, _pages = self._make_view_state_coordinator()
+        coordinator._save_current_page_view_state(selected_page_override="missing")
+        self.assertEqual(coordinator._deferred_persistence.selected_page_calls, [])
+        self.assertEqual(
+            coordinator._deferred_persistence.cancel_bid_selected_pages_calls,
+            [("a.mdb", ["bid-1"])],
+        )
 
     def test_active_page_switch_recovers_stale_placement_cursor_mismatch(self):
         coordinator, _pages = self._make_view_state_coordinator()

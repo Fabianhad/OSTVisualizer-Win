@@ -38,4 +38,4 @@
 - Cover Sheet page scale changes now preserve takeoff placement the same way as the Takeoff tab scale control instead of visually resizing area takeoffs.
 - Cover Sheet folders now appear in their persisted alphabetical position as soon as they are added or renamed instead of jumping after reopening the dialog.
 - Annotation View windows now recover when their active page is deleted from Cover Sheet instead of recursing during page navigation.
-- Bid deletion no longer gets blocked by a stale deferred selected-page write for the bid being removed.
+- Bid and project deletion, plus app shutdown, no longer get blocked by stale deferred selected-page writes.
