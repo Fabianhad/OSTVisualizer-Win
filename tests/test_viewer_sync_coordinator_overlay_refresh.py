@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
     ANNOTATION_TYPE_TEXT,
     BidAnnotation,
 )
@@ -259,6 +260,21 @@ class FakeAnnotationRenderer:
                     )
                 results.append((item, None))
                 uid_to_items[uid] = [item]
+                continue
+            if annotation.is_namedview:
+                rect_item = QGraphicsRectItem(0.0, 0.0, 10.0, 10.0)
+                rect_item.setData(0, uid)
+                label_item = QGraphicsTextItem(
+                    str(annotation.properties.get("Text", ""))
+                )
+                label_item.setData(0, uid)
+                label_item.setData(2, NAMED_VIEW_LABEL_ITEM_KIND)
+                background_item = QGraphicsRectItem(0.0, 0.0, 10.0, 4.0)
+                background_item.setData(0, uid)
+                background_item.setData(2, NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND)
+                items = [rect_item, background_item, label_item]
+                results.extend((item, None) for item in items)
+                uid_to_items[uid] = items
                 continue
             if not annotation.is_text:
                 continue
@@ -5560,6 +5576,18 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             visible=True,
         )
 
+    def _named_view_annotation(self, uid="view-1", page_uid="page-1"):
+        return BidAnnotation(
+            uid=uid,
+            annotation_type=ANNOTATION_TYPE_NAMED_VIEW,
+            page_uid=page_uid,
+            position=[13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+            color="#008000",
+            width=2.0,
+            properties={"Text": "Lobby"},
+            visible=True,
+        )
+
     def _install_annotation_item(self, view, annotation, key=None, hotlink=False):
         key = key or annotation.uid
         item = QGraphicsPathItem()
@@ -5855,6 +5883,37 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(renderer.calls, [])
         self.assertIn("ann-1", view._current_annotations)
         self.assertIn("ann-1", view._uid_to_items)
+        self.assertNotIn("refresh_overlays", calls)
+        self.assertIn("sync", calls)
+        self.assertIn("scene_rect", calls)
+        self.assertIn("viewport.update", calls)
+
+    def test_named_view_insert_refreshes_visible_selectable_overlay(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        view._refresh_overlays = lambda *_args: self.fail(
+            "named view insert should refresh annotation graphics directly"
+        )
+        named_view = self._named_view_annotation()
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[view._current_takeoffs["1"]],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[named_view],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=["view-1"],
+            changed_annotation_types=[ANNOTATION_TYPE_NAMED_VIEW],
+        )
+        self.assertTrue(refreshed)
+        self.assertIn("view-1", view._current_annotations)
+        self.assertIn("view-1", view._uid_to_items)
+        self.assertEqual(len(view._uid_to_items["view-1"]), 3)
+        self.assertTrue(
+            all(item.scene() is view._scene for item in view._uid_to_items["view-1"])
+        )
         self.assertNotIn("refresh_overlays", calls)
         self.assertIn("sync", calls)
         self.assertIn("scene_rect", calls)

@@ -1147,11 +1147,12 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             encode_position([7.0, 8.0, 12.0, 12.0]),
         )
         named_view_row = conn.execute(
-            "SELECT BidUID, BidPageUID, Name, Color, Position FROM BidNamedViews"
+            "SELECT BidUID, BidPageUID, Name, Color, Origin, Position "
+            "FROM BidNamedViews"
         ).fetchone()
-        self.assertEqual(named_view_row[:4], (1, 3, "Lobby", 32768))
+        self.assertEqual(named_view_row[:5], (1, 3, "Lobby", 32768, 0))
         self.assertEqual(
-            named_view_row[4],
+            named_view_row[5],
             encode_position([13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]),
         )
         hotlink_row = conn.execute(

@@ -543,6 +543,7 @@ class AnnotationOperationsMixin:
                     "Name": self._named_view_name_value(properties),
                     "Position": position_val,
                     "Color": color_int,
+                    "Origin": 0,
                 },
                 ("UID", "BidUID", "BidPageUID", "Name", "Position"),
                 "insert_namedview_annotation",
