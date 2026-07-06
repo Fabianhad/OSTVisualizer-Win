@@ -3,6 +3,18 @@ import decimal
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 
+def _format_decimal_string(value: decimal.Decimal) -> str:
+    if value == int(value):
+        return str(int(value))
+    return format(value, "f").rstrip("0").rstrip(".")
+
+
+def _format_float(value: float) -> str:
+    if value == int(value) and abs(value) < 1e15:
+        return str(int(value))
+    return f"{value:.15f}".rstrip("0").rstrip(".")
+
+
 def serialize_value(value: Any, col_type: Optional[Type] = None) -> str:
     if value is None:
         return "NULL"
@@ -14,13 +26,9 @@ def serialize_value(value: Any, col_type: Optional[Type] = None) -> str:
     if isinstance(value, bool):
         return "1" if value else "0"
     if isinstance(value, float):
-        if value == int(value) and abs(value) < 1e15:
-            return str(int(value))
-        return str(value)
+        return _format_float(value)
     if isinstance(value, decimal.Decimal):
-        if value == int(value):
-            return str(int(value))
-        return str(value)
+        return _format_decimal_string(value)
     return str(value)
 
 

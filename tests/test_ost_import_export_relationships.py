@@ -19,6 +19,7 @@ from ost_visualizer.infrastructure.mdb.components.page_operations import (
 from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 from ost_visualizer.infrastructure.mdb.importers.osp_importer import OspImporter
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
+from ost_visualizer.infrastructure.parsers.ost_serializer import serialize_value
 from ost_visualizer.infrastructure.mdb.raw_bid_integrity import (
     RAW_BID_RELATIONSHIPS,
     prepare_raw_bid_data_for_export,
@@ -340,6 +341,110 @@ def _orphan_named_view_hotlink_raw_data() -> RawBidData:
                     "BidPageViewUID": "30",
                     "Name": "Orphan Page",
                 },
+            ],
+        },
+    )
+
+
+def _reference_shape_export_raw_data() -> RawBidData:
+    return RawBidData(
+        bid_row={
+            "UID": "1",
+            "JobName": "Reference Shape",
+            "EstimatorUID": "2",
+            "JobStatusUID": "79",
+        },
+        bid_tables={
+            "BidConditions": [
+                {
+                    "UID": "10",
+                    "BidUID": "1",
+                    "CdnTypeUID": "7",
+                    "Name": "Area",
+                    "Type": "2",
+                    "Width": "0",
+                    "Height": "0",
+                    "Depth": "0",
+                    "Quantity1": "0",
+                    "Quantity2": "0",
+                    "Quantity3": "0",
+                    "UOM1": "0",
+                    "UOM2": "0",
+                    "UOM3": "0",
+                }
+            ],
+            "BidPages": [
+                {
+                    "UID": "20",
+                    "BidUID": "1",
+                    "Name": "Sheet",
+                    "Sequence": "1",
+                    "CurrentX": serialize_value(2302.4439862543),
+                    "CurrentY": serialize_value(1725.01718213058),
+                }
+            ],
+            "BidNamedViews": [
+                {
+                    "UID": "31",
+                    "BidUID": "1",
+                    "BidPageUID": "20",
+                    "Name": "Second",
+                    "Position": "B",
+                    "Color": "",
+                    "Origin": "",
+                },
+                {
+                    "UID": "30",
+                    "BidUID": "1",
+                    "BidPageUID": "20",
+                    "Name": "First",
+                    "Position": "A",
+                    "Color": "",
+                    "Origin": "",
+                },
+            ],
+            "BidHotLinks": [
+                {
+                    "UID": "40",
+                    "BidUID": "1",
+                    "BidPageUID": "20",
+                    "BidPageViewUID": "30",
+                    "Position": "A",
+                },
+                {
+                    "UID": "41",
+                    "BidUID": "1",
+                    "BidPageUID": "20",
+                    "BidPageViewUID": "31",
+                    "Position": "B",
+                },
+            ],
+        },
+        global_tables={
+            "Employees": [
+                {
+                    "UID": "2",
+                    "PayClassUID": "",
+                    "AccessLevelUID": "",
+                    "EmployeeNo": "",
+                    "FirstName": "Ada",
+                    "LastName": "Lovelace",
+                    "EnableLogin": "0",
+                    "LoginName": "",
+                    "Password": "0",
+                    "Address1": "",
+                    "Address2": "",
+                    "City": "",
+                    "State": "",
+                    "Zip": "",
+                    "HomePhone": "",
+                    "MobilePhone": "",
+                    "EMail": "",
+                }
+            ],
+            "CdnTypes": [{"UID": "7", "Name": "Area", "ExpandState": "0"}],
+            "JobStatuses": [
+                {"UID": "79", "Locked": "0", "Name": "Pending", "Sequence": "9"}
             ],
         },
     )
@@ -957,6 +1062,133 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertEqual(named_view_names, ["Valid"])
         self.assertEqual(hotlink_names, ["Valid Link"])
 
+    def test_ost_export_matches_reference_xml_shape_for_core_sections(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "reference.ost"
+            result = OstExporter(SimpleNamespace()).export(
+                _reference_shape_export_raw_data(),
+                str(output_path),
+            )
+            self.assertTrue(result.success, result.error_message)
+            raw_bytes = output_path.read_bytes()
+            text = raw_bytes.decode("utf-8")
+            root = ET.fromstring(text)
+        self.assertFalse(raw_bytes.startswith(b"\xef\xbb\xbf"))
+        self.assertFalse(text.startswith("<?xml"))
+        self.assertTrue(raw_bytes.endswith(b"\r\n"))
+        self.assertIn(b"\r\n", raw_bytes)
+        self.assertNotIn(b" />", raw_bytes)
+        self.assertNotIn(b"\n", raw_bytes.replace(b"\r\n", b""))
+        self.assertEqual(
+            [child.tag for child in root],
+            ["OST", "Bid", "Employees", "AccessLevels", "CdnTypes", "JobStatuses"],
+        )
+        self.assertIn("<AccessLevels/>", text)
+        self.assertNotIn("<BidEmployees", text)
+        self.assertIn('<JobStatuse UID="79"', text)
+        self.assertNotIn('<JobStatus UID="79"', text)
+        self.assertIn('PayClassUID="0" AccessLevelUID="0"', text)
+        self.assertLess(text.index('LoginName=""'), text.index('Password="0"'))
+        self.assertLess(text.index('Password="0"'), text.index('Address1=""'))
+        self.assertNotIn('Color=""', text)
+        self.assertNotIn('Origin=""', text)
+        self.assertLess(
+            text.index('BidNamedView UID="31"'), text.index('BidNamedView UID="30"')
+        )
+        self.assertLess(
+            text.index('BidHotLink UID="41"'), text.index('BidHotLink UID="40"')
+        )
+        self.assertIn('CurrentX="2302.443986254299944"', text)
+        self.assertIn('CurrentY="1725.017182130580068"', text)
+        self.assertIn('Quantity1="0" Quantity2="0" Quantity3="0"', text)
+
+    def test_ost_numeric_serializer_uses_reference_float_shape(self):
+        self.assertEqual(serialize_value(0.0), "0")
+        self.assertEqual(serialize_value(12.0), "12")
+        self.assertEqual(serialize_value(2302.4439862543), "2302.443986254299944")
+
+    def test_ost_export_preserves_non_empty_bid_employees_section(self):
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Bid Employee"},
+            bid_tables={
+                "BidEmployees": [
+                    {
+                        "UID": "5",
+                        "BidUID": "1",
+                        "EmployeeUID": "2",
+                        "PayClassUID": "0",
+                    }
+                ]
+            },
+            global_tables={
+                "Employees": [
+                    {
+                        "UID": "2",
+                        "PayClassUID": "",
+                        "AccessLevelUID": "",
+                        "FirstName": "Ada",
+                    }
+                ]
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "bid_employee.ost"
+            result = OstExporter(SimpleNamespace()).export(raw_data, str(output_path))
+            self.assertTrue(result.success, result.error_message)
+            text = output_path.read_text(encoding="utf-8")
+        self.assertIn("<BidEmployees>", text)
+        self.assertIn('<BidEmployee UID="5" BidUID="1" EmployeeUID="2"', text)
+
+    def test_ost_export_formats_calculated_area_condition_quantities(self):
+        uom_service = SimpleNamespace(
+            calculate_condition_quantities=lambda **_kwargs: (734.012, 0.0, 1.25)
+        )
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Quantities"},
+            bid_tables={
+                "BidConditions": [
+                    {
+                        "UID": "10",
+                        "BidUID": "1",
+                        "Name": "Linear",
+                        "Type": "1",
+                        "Width": "0",
+                        "Height": "0",
+                        "Depth": "0",
+                        "Quantity1": "0",
+                        "Quantity2": "0",
+                        "Quantity3": "0",
+                        "UOM1": "0",
+                        "UOM2": "0",
+                        "UOM3": "0",
+                    }
+                ],
+                "BidPages": [
+                    {"UID": "20", "BidUID": "1", "Name": "Sheet", "Sequence": "1"}
+                ],
+            },
+            page_tables={
+                "BidTakeoffs": [
+                    {
+                        "UID": "30",
+                        "BidUID": "1",
+                        "BidConditionUID": "10",
+                        "BidPageUID": "20",
+                        "Position": "1;2;3;4",
+                    }
+                ]
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "quantities.ost"
+            result = OstExporter(uom_service).export(raw_data, str(output_path))
+            self.assertTrue(result.success, result.error_message)
+            text = output_path.read_text(encoding="utf-8")
+        self.assertIn(
+            'Quantity1="734.011999999999944" Quantity2="0" Quantity3="1.25"',
+            text,
+        )
+
     def test_save_page_area_handles_duplicate_selected_settings_rows(self):
         connection = sqlite3.connect(":memory:")
         _create_import_schema(connection, unique_page_selected=True)
@@ -1168,7 +1400,9 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             lambda *_args, **_call_options: fake_connection
         )
         try:
-            database_creator.DatabaseCreator()._create_schema(Path("test.mdb"))
+            creator = database_creator.DatabaseCreator()
+            creator._apply_reference_schema_metadata = lambda *_args, **_kwargs: None
+            creator._create_schema(Path("test.mdb"))
         finally:
             database_creator.pyodbc.connect = original_connect
         self.assertNotIn(

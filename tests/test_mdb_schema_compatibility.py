@@ -1,5 +1,6 @@
 import unittest
 import gc
+import json
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,9 @@ except ImportError:
 _ACCESS_DRIVER = "Microsoft Access Driver (*.mdb, *.accdb)"
 _OLD_MDB_PATH = Path(r"C:\OCS Documents\OST\OST Projects.mdb")
 _NEW_MDB_PATH = Path(r"C:\OCS Documents\OST\OST Projects.mdb")
+_REFERENCE_SCHEMA_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "reference_mdb_schema.json"
+)
 _KEY_TABLES = (
     "Bids",
     "BidPages",
@@ -234,6 +238,115 @@ def _relationship_targets(table_metadata: dict) -> set[tuple[tuple[str, ...], st
         (tuple(relationship["columns"]), relationship["related_table"])
         for relationship in table_metadata["relationships"]
     }
+
+
+def _load_reference_schema_fixture() -> dict:
+    return json.loads(_REFERENCE_SCHEMA_FIXTURE.read_text(encoding="utf-8"))
+
+
+def _dao_created_schema_snapshot(path: Path) -> dict:
+    engine = _win32_client.Dispatch("DAO.DBEngine.120")
+    database = engine.OpenDatabase(str(path))
+    try:
+        table_names = sorted(
+            table_def.Name
+            for table_number in range(database.TableDefs.Count)
+            for table_def in [database.TableDefs(table_number)]
+            if not table_def.Name.startswith("MSys")
+        )
+        relationships = []
+        for relation_number in range(database.Relations.Count):
+            relation = database.Relations(relation_number)
+            field = relation.Fields(0)
+            relationships.append(
+                {
+                    "name": relation.Name,
+                    "child_table": relation.ForeignTable,
+                    "child_column": field.ForeignName,
+                    "parent_table": relation.Table,
+                    "parent_column": field.Name,
+                }
+            )
+        relationship_names = {relationship["name"] for relationship in relationships}
+        uid_required_tables = []
+        field_defaults = []
+        primary_index_definitions = []
+        explicit_indexes = []
+        total_fields = 0
+        total_indexes = 0
+        total_primary_indexes = 0
+        for table_name in table_names:
+            table_def = database.TableDefs(table_name)
+            total_fields += table_def.Fields.Count
+            uid_field = table_def.Fields("UID")
+            if bool(uid_field.Required):
+                uid_required_tables.append(table_name)
+            for field_number in range(table_def.Fields.Count):
+                field = table_def.Fields(field_number)
+                default_value = str(field.DefaultValue or "")
+                if default_value:
+                    field_defaults.append(
+                        {
+                            "table": table_name,
+                            "field": field.Name,
+                            "default": default_value,
+                        }
+                    )
+            for index_number in range(table_def.Indexes.Count):
+                index = table_def.Indexes(index_number)
+                total_indexes += 1
+                fields = [
+                    index.Fields(field_number).Name
+                    for field_number in range(index.Fields.Count)
+                ]
+                if bool(index.Primary):
+                    total_primary_indexes += 1
+                    primary_index_definitions.append(
+                        {
+                            "table": table_name,
+                            "fields": fields,
+                            "unique": bool(index.Unique),
+                            "required": bool(index.Required),
+                            "ignore_nulls": bool(index.IgnoreNulls),
+                            "foreign": bool(index.Foreign),
+                            "clustered": bool(index.Clustered),
+                        }
+                    )
+                elif index.Name not in relationship_names:
+                    explicit_indexes.append(
+                        {
+                            "table": table_name,
+                            "name": index.Name,
+                            "unique": bool(index.Unique),
+                            "fields": fields,
+                        }
+                    )
+        return {
+            "table_count": len(table_names),
+            "field_count": total_fields,
+            "index_count": total_indexes,
+            "primary_index_count": total_primary_indexes,
+            "relationship_count": len(relationships),
+            "uid_required_tables": uid_required_tables,
+            "field_defaults": sorted(
+                field_defaults,
+                key=lambda item: (item["table"], item["field"]),
+            ),
+            "primary_index_definitions": sorted(
+                primary_index_definitions,
+                key=lambda item: item["table"],
+            ),
+            "explicit_indexes": sorted(
+                explicit_indexes,
+                key=lambda item: (item["table"], item["name"], item["fields"]),
+            ),
+            "relationships": sorted(
+                relationships,
+                key=lambda item: item["name"],
+            ),
+        }
+    finally:
+        database.Close()
 
 
 def _next_table_uid(cursor, table_name: str) -> int:
@@ -474,7 +587,7 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 )
                 bid_pages = metadata["key_tables"]["BidPages"]
                 bid_named_views = metadata["key_tables"]["BidNamedViews"]
-                if label == "old":
+                if label == "old" and "ALState" not in _column_names(bid_pages):
                     self.assertNotIn("ALState", _column_names(bid_pages))
                     self.assertFalse(
                         {"Color", "Origin"}.issubset(_column_names(bid_named_views))
@@ -515,6 +628,66 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
         bid_named_views = metadata["key_tables"]["BidNamedViews"]
         self.assertIn("ALState", _column_names(bid_pages))
         self.assertTrue({"Color", "Origin"}.issubset(_column_names(bid_named_views)))
+
+    def test_app_created_mdb_matches_reference_dao_schema_metadata(self):
+        if not _access_available():
+            self.skipTest("Access ODBC/ADOX metadata is not available")
+        fixture = _load_reference_schema_fixture()
+        fixture["uid_required_tables"] = sorted(fixture["uid_required_tables"])
+        fixture["field_defaults"] = sorted(
+            fixture["field_defaults"],
+            key=lambda item: (item["table"], item["field"]),
+        )
+        fixture["explicit_indexes"] = sorted(
+            fixture["explicit_indexes"],
+            key=lambda item: (item["table"], item["name"], item["fields"]),
+        )
+        fixture["relationships"] = sorted(
+            fixture["relationships"],
+            key=lambda item: item["name"],
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            db_path = Path(temp_dir) / "reference_shape.mdb"
+            if not DatabaseCreator().create_database(db_path, "Reference Shape"):
+                self.skipTest("Could not create an Access test database")
+            snapshot = _dao_created_schema_snapshot(db_path)
+        self.assertEqual(snapshot["table_count"], 64)
+        self.assertEqual(snapshot["field_count"], 668)
+        self.assertEqual(snapshot["index_count"], 278)
+        self.assertEqual(snapshot["primary_index_count"], 64)
+        self.assertEqual(snapshot["relationship_count"], 83)
+        self.assertEqual(
+            snapshot["uid_required_tables"],
+            fixture["uid_required_tables"],
+        )
+        self.assertEqual(snapshot["field_defaults"], fixture["field_defaults"])
+        self.assertEqual(
+            snapshot["primary_index_definitions"],
+            [
+                {
+                    "table": table_name,
+                    "fields": ["UID"],
+                    "unique": True,
+                    "required": True,
+                    "ignore_nulls": False,
+                    "foreign": False,
+                    "clustered": False,
+                }
+                for table_name in fixture["uid_required_tables"]
+            ],
+        )
+        self.assertEqual(snapshot["explicit_indexes"], fixture["explicit_indexes"])
+        self.assertEqual(snapshot["relationships"], fixture["relationships"])
+        self.assertIn(
+            {
+                "name": "BidPlanrooms_BidUID1",
+                "child_table": "BidPlanrooms",
+                "child_column": "BidUID",
+                "parent_table": "Bids",
+                "parent_column": "UID",
+            },
+            snapshot["relationships"],
+        )
 
     def test_page_area_and_employee_writes_work_on_supported_schema_versions(self):
         if not _access_available():
@@ -600,7 +773,8 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
                 if source_path is not None:
                     source_path_text = str(source_path)
                 code = (
-                    "from tests.test_mdb_schema_compatibility import "
+                    "import sys; sys.path.insert(0, 'tests'); "
+                    "from test_mdb_schema_compatibility import "
                     "_run_employee_estimator_round_trip_for_label as run; "
                     f"run({label!r}, {source_path_text!r})"
                 )

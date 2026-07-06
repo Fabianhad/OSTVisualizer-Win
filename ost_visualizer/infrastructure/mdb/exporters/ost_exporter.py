@@ -7,6 +7,7 @@ from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.area import UNASSIGNED_AREA_UID
 from ....domain.entities.condition import Condition
+from ...parsers.ost_serializer import serialize_value
 from ..schema_contract import BID_SECTIONS as _BID_SECTIONS
 from ..schema_contract import BID_TAIL_SECTIONS as _BID_TAIL_SECTIONS
 from ..schema_contract import GLOBAL_SECTIONS as _GLOBAL_SECTIONS
@@ -178,6 +179,7 @@ _EMPLOYEE_ATTR_ORDER = [
     "LastName",
     "EnableLogin",
     "LoginName",
+    "Password",
     "Address1",
     "Address2",
     "City",
@@ -429,6 +431,8 @@ _ZERO_DEFAULT_FIELDS = {
     "BidConditionUID",
     "BidUID",
     "JobStatusUID",
+    "PayClassUID",
+    "AccessLevelUID",
     "CoverSheetSelItemUID",
     "BidPageSelectedUID",
     "OCRUID",
@@ -467,6 +471,10 @@ _OMIT_IF_EMPTY_FIELDS = {
     "BFperLF",
     "ALState",
 }
+_OMIT_IF_EMPTY_BY_ELEMENT = {
+    "BidNamedView": frozenset({"Color", "Origin"}),
+}
+_XML_NEWLINE = "\r\n"
 _ALWAYS_SELF_CLOSE_CHILD = frozenset({"BidAreas", "BidTypAreas", "BidTypAreaCounts"})
 _SELF_CLOSING_BID_SECTIONS = frozenset(
     {
@@ -552,11 +560,15 @@ def _normalize_table_rows(tables: Dict[str, List]) -> Dict[str, List]:
     return result
 
 
-def _filter_empty_attrs(row: Dict[str, str]) -> Dict[str, str]:
+def _filter_empty_attrs(row: Dict[str, str], element_type: str = "") -> Dict[str, str]:
+    element_omit_fields = _OMIT_IF_EMPTY_BY_ELEMENT.get(element_type, frozenset())
     return {
         key: value
         for key, value in row.items()
-        if not (key in _OMIT_IF_EMPTY_FIELDS and value in ("", "NULL"))
+        if not (
+            key in _OMIT_IF_EMPTY_FIELDS.union(element_omit_fields)
+            and value in ("", "NULL")
+        )
     }
 
 
@@ -577,7 +589,7 @@ def _build_section(
     container = SubElement(parent, table_name)
     item_tag = _singular(table_name)
     for row in rows:
-        filtered_row = _filter_empty_attrs(row)
+        filtered_row = _filter_empty_attrs(row, item_tag)
         sorted_row = _sort_attrs(filtered_row, element_type=item_tag)
         SubElement(container, item_tag, sorted_row)
     if table_name in _ALWAYS_SELF_CLOSE_CHILD:
@@ -616,15 +628,17 @@ def _write_element(file_obj, elem: Element) -> None:
     children = list(elem)
     text = elem.text or ""
     if not children and not text.strip():
-        file_obj.write(f"<{elem.tag}{attr_str}/>\n")
+        file_obj.write(f"<{elem.tag}{attr_str}/>{_XML_NEWLINE}")
     elif not children:
         escaped_text = _escape_xml_attr(text)
-        file_obj.write(f"<{elem.tag}{attr_str}>{escaped_text}</{elem.tag}>\n")
+        file_obj.write(
+            f"<{elem.tag}{attr_str}>{escaped_text}</{elem.tag}>{_XML_NEWLINE}"
+        )
     else:
-        file_obj.write(f"<{elem.tag}{attr_str}>\n")
+        file_obj.write(f"<{elem.tag}{attr_str}>{_XML_NEWLINE}")
         for child in children:
             _write_element(file_obj, child)
-        file_obj.write(f"</{elem.tag}>\n")
+        file_obj.write(f"</{elem.tag}>{_XML_NEWLINE}")
 
 
 class OstExporter:
@@ -666,7 +680,7 @@ class OstExporter:
             self._build_global_sections(root, bid_tables, global_tables, bid_row)
             if on_progress:
                 on_progress(1, 1, "Writing OST")
-            with open(output_path, "w", encoding="utf-8") as f:
+            with open(output_path, "w", encoding="utf-8", newline="") as f:
                 _write_element(f, root)
             return ExportResultDto(success=True, format_name="OST")
         except Exception as exc:
@@ -686,6 +700,8 @@ class OstExporter:
     ) -> None:
         for table_name in _BID_SECTIONS:
             rows = bid_tables.get(table_name, [])
+            if table_name == "BidEmployees" and not rows:
+                continue
             sorted_rows = self._sort_rows(table_name, rows)
             self_closing = table_name in _SELF_CLOSING_BID_SECTIONS
             if table_name == "BidConditions":
@@ -726,6 +742,8 @@ class OstExporter:
             rows_copy.sort(key=lambda x: int(x.get("UID", 0)), reverse=True)
         elif table_name == "BidPages":
             rows_copy.sort(key=lambda x: int(x.get("Sequence", 0)))
+        elif table_name in ("BidNamedViews", "BidHotLinks"):
+            rows_copy.sort(key=lambda x: int(x.get("UID", 0)), reverse=True)
         return rows_copy
 
     def _build_conditions_section(
@@ -762,7 +780,7 @@ class OstExporter:
         for cdn_row in condition_rows:
             if "ExternalID" not in cdn_row or not cdn_row["ExternalID"]:
                 cdn_row["ExternalID"] = "0"
-            filtered_cdn = _filter_empty_attrs(cdn_row)
+            filtered_cdn = _filter_empty_attrs(cdn_row, "BidCondition")
             sorted_cdn = _sort_attrs(filtered_cdn, element_type="BidCondition")
             cdn_elem = SubElement(container, "BidCondition", sorted_cdn)
             cdn_uid = cdn_row.get("UID", "")
@@ -893,9 +911,9 @@ class OstExporter:
                     "BidConditionUID": cdn_uid,
                     "AreaUID": area_uid,
                     "TypAreaUID": typ_area_uid,
-                    "Quantity1": str(totals[0]),
-                    "Quantity2": str(totals[1]),
-                    "Quantity3": str(totals[2]),
+                    "Quantity1": serialize_value(totals[0]),
+                    "Quantity2": serialize_value(totals[1]),
+                    "Quantity3": serialize_value(totals[2]),
                 }
                 sorted_area = _sort_attrs(
                     area_condition, element_type="BidAreaCondition"
@@ -923,7 +941,7 @@ class OstExporter:
                     self._sort_rows(table_name, page_rows_for_table)
                 )
         for page_row in page_rows:
-            filtered_page = _filter_empty_attrs(page_row)
+            filtered_page = _filter_empty_attrs(page_row, "BidPage")
             sorted_page = _sort_attrs(filtered_page, element_type="BidPage")
             page_uid = page_row.get("UID", "")
             page_elem = SubElement(pages_container, "BidPage", sorted_page)
@@ -1010,5 +1028,5 @@ class OstExporter:
                 rows = [r for r in rows if r.get("UID") in used_cdn_types]
             elif table_name == "JobStatuses":
                 rows = [r for r in rows if r.get("UID") == job_status_uid]
-            if rows:
+            if rows or table_name == "AccessLevels":
                 _build_section(root, table_name, rows)

@@ -24,6 +24,25 @@ def _app():
     return app
 
 
+def _painted_x_bounds(widget):
+    image = widget.grab().toImage()
+    background = image.pixelColor(0, 0)
+    min_x = image.width()
+    max_x = -1
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            color_delta = (
+                abs(color.red() - background.red())
+                + abs(color.green() - background.green())
+                + abs(color.blue() - background.blue())
+            )
+            if color.alpha() > 0 and color_delta > 12:
+                min_x = min(min_x, x)
+                max_x = max(max_x, x)
+    return min_x, max_x, image.width()
+
+
 class FakeEventBus:
     def __init__(self):
         self.subscriptions = []
@@ -193,6 +212,39 @@ class DialogLifecycleTests(unittest.TestCase):
                 progress_item.alignment(),
                 QtCore.Qt.AlignmentFlag.AlignHCenter,
             )
+            self.assertTrue(
+                bool(dialog._label.alignment() & QtCore.Qt.AlignmentFlag.AlignHCenter)
+            )
+        finally:
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_progress_dialog_paints_track_across_full_progress_width(self):
+        _app()
+        dialog = ProgressDialog("export.ost", lambda: True)
+        try:
+            min_x, max_x, width = _painted_x_bounds(dialog._progress)
+            self.assertEqual(min_x, 0)
+            self.assertEqual(max_x, width - 1)
+        finally:
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_progress_dialog_title_bar_has_no_window_buttons(self):
+        _app()
+        dialog = ProgressDialog("export.ost", lambda: True)
+        try:
+            flags = dialog.windowFlags()
+            self.assertTrue(bool(flags & QtCore.Qt.WindowType.Dialog))
+            self.assertTrue(bool(flags & QtCore.Qt.WindowType.CustomizeWindowHint))
+            self.assertTrue(bool(flags & QtCore.Qt.WindowType.WindowTitleHint))
+            self.assertFalse(
+                bool(flags & QtCore.Qt.WindowType.WindowMinimizeButtonHint)
+            )
+            self.assertFalse(
+                bool(flags & QtCore.Qt.WindowType.WindowMaximizeButtonHint)
+            )
+            self.assertFalse(bool(flags & QtCore.Qt.WindowType.WindowCloseButtonHint))
         finally:
             dialog.cleanup()
             dialog.deleteLater()

@@ -8,6 +8,11 @@ from ..config import RELAXED_MARGINS, RELAXED_SPACING
 logger = logging.getLogger(__name__)
 _DIALOG_WIDTH = 380
 _PROGRESS_BAR_WIDTH = 260
+_PROGRESS_BAR_HEIGHT = 16
+_PROGRESS_TRACK_HEIGHT = 3
+_PROGRESS_CHUNK_WIDTH = 38
+_PROGRESS_ANIMATION_INTERVAL_MS = 35
+_PROGRESS_ANIMATION_STEP = 4
 
 
 class ProgressReporter(QObject):
@@ -35,6 +40,74 @@ class _Worker(QObject):
         self.finished.emit(result, error)
 
 
+class _CenteredBusyProgressBar(QtWidgets.QProgressBar):
+    def __init__(self) -> None:
+        super().__init__()
+        self._offset = _PROGRESS_CHUNK_WIDTH
+        self._timer = QtCore.QBasicTimer()
+        self.setRange(0, 0)
+        self.setTextVisible(False)
+        self.setFixedSize(_PROGRESS_BAR_WIDTH, _PROGRESS_BAR_HEIGHT)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Fixed,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        if not self._timer.isActive():
+            self._timer.start(_PROGRESS_ANIMATION_INTERVAL_MS, self)
+
+    def hideEvent(self, event: QtGui.QHideEvent) -> None:
+        self.stop_animation()
+        super().hideEvent(event)
+
+    def stop_animation(self) -> None:
+        if self._timer.isActive():
+            self._timer.stop()
+
+    def timerEvent(self, event: QtCore.QTimerEvent) -> None:
+        if event.timerId() != self._timer.timerId():
+            super().timerEvent(event)
+            return
+        self._offset = (
+            self._offset + _PROGRESS_ANIMATION_STEP
+        ) % self._animation_span()
+        self.update()
+
+    def paintEvent(self, _event: QtGui.QPaintEvent) -> None:
+        painter = QtGui.QPainter(self)
+        try:
+            painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
+            track_rect = self._track_rect()
+            painter.fillRect(
+                track_rect,
+                self.palette().color(QtGui.QPalette.ColorRole.Mid),
+            )
+            painter.fillRect(
+                self._chunk_rect(track_rect).intersected(track_rect),
+                self.palette().color(QtGui.QPalette.ColorRole.Highlight),
+            )
+        finally:
+            painter.end()
+
+    def _track_rect(self) -> QtCore.QRect:
+        y = self.rect().center().y() - (_PROGRESS_TRACK_HEIGHT // 2)
+        return QtCore.QRect(0, y, self.width(), _PROGRESS_TRACK_HEIGHT)
+
+    def _chunk_rect(self, track_rect: QtCore.QRect) -> QtCore.QRect:
+        x = self._offset - _PROGRESS_CHUNK_WIDTH
+        return QtCore.QRect(
+            x,
+            track_rect.y(),
+            _PROGRESS_CHUNK_WIDTH,
+            _PROGRESS_TRACK_HEIGHT,
+        )
+
+    def _animation_span(self) -> int:
+        return self.width() + _PROGRESS_CHUNK_WIDTH
+
+
 class ProgressDialog(QtWidgets.QDialog):
     def __init__(
         self,
@@ -59,7 +132,9 @@ class ProgressDialog(QtWidgets.QDialog):
     def _setup_ui(self, filename: str) -> None:
         self.setWindowTitle("Working...")
         self.setWindowFlags(
-            self.windowFlags() & ~QtCore.Qt.WindowType.WindowCloseButtonHint
+            QtCore.Qt.WindowType.Dialog
+            | QtCore.Qt.WindowType.CustomizeWindowHint
+            | QtCore.Qt.WindowType.WindowTitleHint
         )
         self.setModal(True)
         self.setSizeGripEnabled(False)
@@ -71,11 +146,9 @@ class ProgressDialog(QtWidgets.QDialog):
             f"{self._action_text} <b>{os.path.basename(filename)}</b>..."
         )
         self._label.setWordWrap(True)
+        self._label.setAlignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self._label)
-        self._progress = QtWidgets.QProgressBar()
-        self._progress.setRange(0, 0)
-        self._progress.setFixedWidth(_PROGRESS_BAR_WIDTH)
-        self._progress.setFixedHeight(16)
+        self._progress = _CenteredBusyProgressBar()
         layout.addWidget(self._progress, alignment=QtCore.Qt.AlignmentFlag.AlignHCenter)
         self._apply_fixed_size()
 
@@ -141,6 +214,8 @@ class ProgressDialog(QtWidgets.QDialog):
                 self._reporter.progress.disconnect(self._on_progress)
             except (TypeError, RuntimeError):
                 pass
+        if isinstance(self._progress, _CenteredBusyProgressBar):
+            self._progress.stop_animation()
         self._task_fn = None
         self._worker = None
         self._thread = None

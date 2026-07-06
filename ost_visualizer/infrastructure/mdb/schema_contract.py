@@ -53,7 +53,7 @@ RAW_GLOBAL_TABLES: List[str] = [
     "JobStatuses",
 ]
 _SINGULAR_OVERRIDES = {
-    "JobStatuses": "JobStatus",
+    "JobStatuses": "JobStatuse",
     "PayClasses": "PayClass",
 }
 DEFAULT_LAYER_ROWS: Tuple[Tuple[str, bool, bool, int], ...] = (

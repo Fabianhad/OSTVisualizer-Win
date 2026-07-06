@@ -5,6 +5,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 import pyodbc
+from .reference_schema_metadata import (
+    EXPLICIT_INDEXES,
+    FIELD_DEFAULTS,
+    REFERENCE_RELATIONSHIPS,
+    UID_REQUIRED_TABLES,
+)
 from .schema_contract import DEFAULT_LAYER_ROWS
 
 _TABLE_DDL = [
@@ -834,230 +840,6 @@ _SCHEMA_VERSIONS = [
     113,
 ]
 _DEFAULT_LAYERS = DEFAULT_LAYER_ROWS
-_FK_INDEXES = [
-    ("AffectDPCTypGroupViews", "BidUID"),
-    ("BidALines", "BidPageUID"),
-    ("BidALines", "BidTakeoffFromUID"),
-    ("BidALines", "BidTakeoffToUID"),
-    ("BidALines", "BidUID"),
-    ("BidAnnoInk", "BidPageUID"),
-    ("BidAnnoInk", "BidUID"),
-    ("BidAnnotationClouds", "BidLayerUID"),
-    ("BidAnnotationClouds", "BidPageUID"),
-    ("BidAnnotationClouds", "BidUID"),
-    ("BidAnnotationOvals", "BidLayerUID"),
-    ("BidAnnotationOvals", "BidPageUID"),
-    ("BidAnnotationOvals", "BidUID"),
-    ("BidAnnotationPolygons", "BidLayerUID"),
-    ("BidAnnotationPolygons", "BidPageUID"),
-    ("BidAnnotationPolygons", "BidUID"),
-    ("BidAnnotationRects", "BidLayerUID"),
-    ("BidAnnotationRects", "BidPageUID"),
-    ("BidAnnotationRects", "BidUID"),
-    ("BidAreaTranslations", "BidPageUID"),
-    ("BidAreas", "BidUID"),
-    ("BidAreas", "GUID"),
-    ("BidAreas", "ParentUID"),
-    ("BidArrows", "BidPageUID"),
-    ("BidArrows", "BidTakeoffFromUID"),
-    ("BidArrows", "BidTakeoffToUID"),
-    ("BidArrows", "BidUID"),
-    ("BidCallOuts", "BidLayerUID"),
-    ("BidCallOuts", "BidPageUID"),
-    ("BidCallOuts", "BidUID"),
-    ("BidComments", "BidLayerUID"),
-    ("BidComments", "BidPageUID"),
-    ("BidComments", "BidUID"),
-    ("BidComments", "ParentCommentUID"),
-    ("BidConditionFolders", "BidUID"),
-    ("BidConditionFolders", "ParentUID"),
-    ("BidConditions", "BidConditionFolderUID"),
-    ("BidConditions", "BidLayerUID"),
-    ("BidConditions", "BidUID"),
-    ("BidConditions", "CdnTypeUID"),
-    ("BidDPCSubscribers", "BidEmployeeUID"),
-    ("BidDPCSubscribers", "BidUID"),
-    ("BidDimensions", "BidPageUID"),
-    ("BidDimensions", "BidTakeoffFromUID"),
-    ("BidDimensions", "BidTakeoffToUID"),
-    ("BidDimensions", "BidUID"),
-    ("BidEmployees", "BidUID"),
-    ("BidEmployees", "EmployeeUID"),
-    ("BidEmployees", "GUID"),
-    ("BidEmployees", "PayClassUID"),
-    ("BidHighlights", "BidLayerUID"),
-    ("BidHighlights", "BidPageUID"),
-    ("BidHighlights", "BidUID"),
-    ("BidHotLinks", "BidLayerUID"),
-    ("BidHotLinks", "BidPageUID"),
-    ("BidHotLinks", "BidPageViewUID"),
-    ("BidHotLinks", "BidUID"),
-    ("BidLaborActivity", "BidConditionUID"),
-    ("BidLaborActivity", "BidLaborCostCodeUID"),
-    ("BidLaborActivity", "BidUID"),
-    ("BidLaborCostCodeTotals", "BidPageUID"),
-    ("BidLaborCostCodeTotals", "BidUID"),
-    ("BidLaborCostCodes", "BidUID"),
-    ("BidLaborCostCodes", "CostCodeUID"),
-    ("BidLaborCostCodes", "GUID"),
-    ("BidLayers", "BidUID"),
-    ("BidLayers", "IsTemplate"),
-    ("BidLegends", "BidPageUID"),
-    ("BidLegends", "BidUID"),
-    ("BidNamedViews", "BidPageUID"),
-    ("BidNamedViews", "BidUID"),
-    ("BidNotes", "BidUID"),
-    ("BidNotes", "GUID"),
-    ("BidPageFolders", "BidUID"),
-    ("BidPageFolders", "GUID"),
-    ("BidPageFolders", "ParentUID"),
-    ("BidPageSettings", "BidAreaUID"),
-    ("BidPageSettings", "BidPageUID"),
-    ("BidPageSettings", "BidTypAreaUID"),
-    ("BidPages", "BidPageFolderUID"),
-    ("BidPages", "BidUID"),
-    ("BidPages", "GUID"),
-    ("BidPercents", "BidLaborActivityUID"),
-    ("BidPercents", "BidLaborCostCodeUID"),
-    ("BidPercents", "BidPageUID"),
-    ("BidPercents", "BidTakeoffUID"),
-    ("BidPercents", "BidTimeCardStateUID"),
-    ("BidPercents", "GUID"),
-    ("BidPlanRooms", "BidUID"),
-    ("BidProjects", "Name"),
-    ("BidSettings", "BidPageSelectedUID"),
-    ("BidTakeoffTotals", "BidPageUID"),
-    ("BidTakeoffTotals", "BidUID"),
-    ("BidTakeoffs", "BidAreaUID"),
-    ("BidTakeoffs", "BidConditionUID"),
-    ("BidTakeoffs", "BidPageUID"),
-    ("BidTakeoffs", "BidTypAreaUID"),
-    ("BidTakeoffs", "BidUID"),
-    ("BidTakeoffs", "BidZoneUID"),
-    ("BidTakeoffs", "GUID"),
-    ("BidTakeoffs", "No"),
-    ("BidTakeoffs", "ParentUID"),
-    ("BidTexts", "BidLayerUID"),
-    ("BidTexts", "BidPageUID"),
-    ("BidTexts", "BidUID"),
-    ("BidTimeCardStates", "BidUID"),
-    ("BidTimeCardStates", "GUID"),
-    ("BidTimeCards", "BidAreaUID"),
-    ("BidTimeCards", "BidEmployeeUID"),
-    ("BidTimeCards", "BidLaborCostCodeUID"),
-    ("BidTimeCards", "BidTimeCardStateUID"),
-    ("BidTimeCards", "BidTypicalAreaUID"),
-    ("BidTimeCards", "GUID"),
-    ("BidTransactionsHistory", "BidUID"),
-    ("BidTypAreaCounts", "BidAreaUID"),
-    ("BidTypAreaCounts", "BidTypAreaUID"),
-    ("BidTypAreas", "BidUID"),
-    ("BidTypGroupViews", "BidPageUID"),
-    ("BidTypGroupViews", "BidUID"),
-    ("BidTypicalGroupTotals", "BidPageUID"),
-    ("BidTypicalGroupTotals", "BidUID"),
-    ("BidZones", "BidLayerUID"),
-    ("BidZones", "BidUID"),
-    ("Bids", "BidProjectUID"),
-    ("Bids", "BidType"),
-    ("Bids", "ParentBidUID"),
-    ("CdnTypes", "Name"),
-    ("ConditionSetStyles", "ConditionSetUID"),
-    ("ConditionSetStyles", "ConditionStyleUID"),
-    ("ConditionSets", "EmployeeUID"),
-    ("DPCCalcFilter", "BidUID"),
-    ("Employees", "AccessLevelUID"),
-    ("Employees", "LoginName"),
-    ("Employees", "PayClassUID"),
-    ("STSTransactionHistory", "ChangeType"),
-    ("STSTransactionHistory", "ObjectUID"),
-    ("UserMasterConditions", "Name"),
-]
-_FK_RELATIONSHIPS = [
-    ("Employees", "AccessLevelUID", "AccessLevels", "UID"),
-    ("BidPageSettings", "BidAreaUID", "BidAreas", "UID"),
-    ("BidTakeoffs", "BidAreaUID", "BidAreas", "UID"),
-    ("BidTimeCards", "BidAreaUID", "BidAreas", "UID"),
-    ("BidTypAreaCounts", "BidAreaUID", "BidAreas", "UID"),
-    ("BidConditions", "BidConditionFolderUID", "BidConditionFolders", "UID"),
-    ("BidLaborActivity", "BidConditionUID", "BidConditions", "UID"),
-    ("BidTakeoffs", "BidConditionUID", "BidConditions", "UID"),
-    ("ConditionSetStyles", "ConditionStyleUID", "BidConditions", "UID"),
-    ("BidTimeCards", "BidEmployeeUID", "BidEmployees", "UID"),
-    ("BidLaborActivity", "BidLaborCostCodeUID", "BidLaborCostCodes", "UID"),
-    ("BidPercents", "BidLaborCostCodeUID", "BidLaborCostCodes", "UID"),
-    ("BidTimeCards", "BidLaborCostCodeUID", "BidLaborCostCodes", "UID"),
-    ("BidCallOuts", "BidLayerUID", "BidLayers", "UID"),
-    ("BidConditions", "BidLayerUID", "BidLayers", "UID"),
-    ("BidHighlights", "BidLayerUID", "BidLayers", "UID"),
-    ("BidHotLinks", "BidLayerUID", "BidLayers", "UID"),
-    ("BidTexts", "BidLayerUID", "BidLayers", "UID"),
-    ("BidZones", "BidLayerUID", "BidLayers", "UID"),
-    ("BidHotLinks", "BidPageViewUID", "BidNamedViews", "UID"),
-    ("BidPages", "BidPageFolderUID", "BidPageFolders", "UID"),
-    ("BidALines", "BidPageUID", "BidPages", "UID"),
-    ("BidAnnoInk", "BidPageUID", "BidPages", "UID"),
-    ("BidArrows", "BidPageUID", "BidPages", "UID"),
-    ("BidCallOuts", "BidPageUID", "BidPages", "UID"),
-    ("BidDimensions", "BidPageUID", "BidPages", "UID"),
-    ("BidHighlights", "BidPageUID", "BidPages", "UID"),
-    ("BidHotLinks", "BidPageUID", "BidPages", "UID"),
-    ("BidLegends", "BidPageUID", "BidPages", "UID"),
-    ("BidNamedViews", "BidPageUID", "BidPages", "UID"),
-    ("BidPageSettings", "BidPageUID", "BidPages", "UID"),
-    ("BidSettings", "BidPageSelectedUID", "BidPages", "UID"),
-    ("BidTakeoffTotals", "BidPageUID", "BidPages", "UID"),
-    ("BidTakeoffs", "BidPageUID", "BidPages", "UID"),
-    ("BidTexts", "BidPageUID", "BidPages", "UID"),
-    ("BidTypicalGroupTotals", "BidPageUID", "BidPages", "UID"),
-    ("Bids", "BidProjectUID", "BidProjects", "UID"),
-    ("BidALines", "BidTakeoffFromUID", "BidTakeoffs", "UID"),
-    ("BidArrows", "BidTakeoffFromUID", "BidTakeoffs", "UID"),
-    ("BidDimensions", "BidTakeoffFromUID", "BidTakeoffs", "UID"),
-    ("BidPercents", "BidTakeoffUID", "BidTakeoffs", "UID"),
-    ("BidPercents", "BidTimeCardStateUID", "BidTimeCardStates", "UID"),
-    ("BidTimeCards", "BidTimeCardStateUID", "BidTimeCardStates", "UID"),
-    ("BidPageSettings", "BidTypAreaUID", "BidTypAreas", "UID"),
-    ("BidTakeoffs", "BidTypAreaUID", "BidTypAreas", "UID"),
-    ("BidTimeCards", "BidTypicalAreaUID", "BidTypAreas", "UID"),
-    ("BidTypAreaCounts", "BidTypAreaUID", "BidTypAreas", "UID"),
-    ("BidTakeoffs", "BidZoneUID", "BidZones", "UID"),
-    ("BidALines", "BidUID", "Bids", "UID"),
-    ("BidAreas", "BidUID", "Bids", "UID"),
-    ("BidArrows", "BidUID", "Bids", "UID"),
-    ("BidCallOuts", "BidUID", "Bids", "UID"),
-    ("BidConditionFolders", "BidUID", "Bids", "UID"),
-    ("BidConditions", "BidUID", "Bids", "UID"),
-    ("BidDPCSubscribers", "BidUID", "Bids", "UID"),
-    ("BidDimensions", "BidUID", "Bids", "UID"),
-    ("BidEmployees", "BidUID", "Bids", "UID"),
-    ("BidHighlights", "BidUID", "Bids", "UID"),
-    ("BidHotLinks", "BidUID", "Bids", "UID"),
-    ("BidLaborActivity", "BidUID", "Bids", "UID"),
-    ("BidLaborCostCodes", "BidUID", "Bids", "UID"),
-    ("BidLayers", "BidUID", "Bids", "UID"),
-    ("BidLegends", "BidUID", "Bids", "UID"),
-    ("BidNamedViews", "BidUID", "Bids", "UID"),
-    ("BidNotes", "BidUID", "Bids", "UID"),
-    ("BidPageFolders", "BidUID", "Bids", "UID"),
-    ("BidPages", "BidUID", "Bids", "UID"),
-    ("BidPlanRooms", "BidUID", "Bids", "UID"),
-    ("BidTakeoffTotals", "BidUID", "Bids", "UID"),
-    ("BidTexts", "BidUID", "Bids", "UID"),
-    ("BidTimeCardStates", "BidUID", "Bids", "UID"),
-    ("BidTransactionsHistory", "BidUID", "Bids", "UID"),
-    ("BidTypAreas", "BidUID", "Bids", "UID"),
-    ("BidTypicalGroupTotals", "BidUID", "Bids", "UID"),
-    ("BidZones", "BidUID", "Bids", "UID"),
-    ("BidConditions", "CdnTypeUID", "CdnTypes", "UID"),
-    ("ConditionSetStyles", "ConditionSetUID", "ConditionSets", "UID"),
-    ("BidLaborCostCodes", "CostCodeUID", "CostCodes", "UID"),
-    ("BidDPCSubscribers", "BidEmployeeUID", "Employees", "UID"),
-    ("BidEmployees", "EmployeeUID", "Employees", "UID"),
-    ("ConditionSets", "EmployeeUID", "Employees", "UID"),
-    ("BidEmployees", "PayClassUID", "PayClasses", "UID"),
-    ("Employees", "PayClassUID", "PayClasses", "UID"),
-]
 
 
 class DatabaseCreator:
@@ -1143,23 +925,6 @@ class DatabaseCreator:
             self._report_progress(progress_callback, "schema tables")
             for ddl in _TABLE_DDL:
                 cursor.execute(ddl)
-            self._report_progress(progress_callback, "schema indexes")
-            for table, column in _FK_INDEXES:
-                cursor.execute(
-                    f"CREATE INDEX [{table}_{column}] " f"ON [{table}] ([{column}])"
-                )
-            cursor.execute("CREATE UNIQUE INDEX [UI_Locking2] ON [Locking] ([Essence])")
-            cursor.execute(
-                "CREATE UNIQUE INDEX [UI_Locking] " "ON [Locking] ([Essence], [Owner])"
-            )
-            self._report_progress(progress_callback, "schema relationships")
-            for child, child_col, parent, parent_col in _FK_RELATIONSHIPS:
-                cursor.execute(
-                    f"ALTER TABLE [{child}] "
-                    f"ADD CONSTRAINT [FK_{child}_{child_col}] "
-                    f"FOREIGN KEY ([{child_col}]) "
-                    f"REFERENCES [{parent}] ([{parent_col}])"
-                )
             conn.commit()
         except Exception:
             conn.rollback()
@@ -1168,6 +933,54 @@ class DatabaseCreator:
             if cursor is not None:
                 cursor.close()
             conn.close()
+        self._apply_reference_schema_metadata(
+            db_path,
+            progress_callback=progress_callback,
+        )
+
+    def _apply_reference_schema_metadata(
+        self,
+        db_path: Path,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        import win32com.client
+
+        engine = win32com.client.Dispatch("DAO.DBEngine.120")
+        db = engine.OpenDatabase(str(db_path))
+        try:
+            self._report_progress(progress_callback, "schema field metadata")
+            for table_name in UID_REQUIRED_TABLES:
+                db.TableDefs(table_name).Fields("UID").Required = True
+            for (table_name, field_name), default_value in FIELD_DEFAULTS.items():
+                db.TableDefs(table_name).Fields(field_name).DefaultValue = default_value
+            self._report_progress(progress_callback, "schema indexes")
+            for table_name, index_name, unique, columns in EXPLICIT_INDEXES:
+                table_def = db.TableDefs(table_name)
+                index = table_def.CreateIndex(index_name)
+                index.Unique = bool(unique)
+                for column in columns:
+                    index.Fields.Append(index.CreateField(column))
+                table_def.Indexes.Append(index)
+            self._report_progress(progress_callback, "schema relationships")
+            for (
+                relation_name,
+                child_table,
+                child_column,
+                parent_table,
+                parent_column,
+            ) in REFERENCE_RELATIONSHIPS:
+                relation = db.CreateRelation(
+                    relation_name,
+                    parent_table,
+                    child_table,
+                    0,
+                )
+                relation_field = relation.CreateField(parent_column)
+                relation_field.ForeignName = child_column
+                relation.Fields.Append(relation_field)
+                db.Relations.Append(relation)
+        finally:
+            db.Close()
 
     def _insert_seed_data(
         self,

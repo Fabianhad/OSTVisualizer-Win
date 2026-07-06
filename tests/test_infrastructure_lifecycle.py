@@ -322,6 +322,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
 
             def _create_schema(self, db_path, progress_callback=None):
                 self._report_progress(progress_callback, "schema tables")
+                self._report_progress(progress_callback, "schema field metadata")
                 self._report_progress(progress_callback, "schema indexes")
                 self._report_progress(progress_callback, "schema relationships")
 
@@ -344,6 +345,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             [
                 "database file",
                 "schema tables",
+                "schema field metadata",
                 "schema indexes",
                 "schema relationships",
                 "default data",

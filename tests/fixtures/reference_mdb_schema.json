@@ -1,0 +1,2009 @@
+{
+  "uid_required_tables": [
+    "AccessLevels",
+    "AffectDPCTypGroupViews",
+    "BidALines",
+    "BidAnnoInk",
+    "BidAnnotationClouds",
+    "BidAnnotationOvals",
+    "BidAnnotationPolygons",
+    "BidAnnotationRects",
+    "BidAreas",
+    "BidAreaTranslations",
+    "BidArrows",
+    "BidCallOuts",
+    "BidComments",
+    "BidConditionFolders",
+    "BidConditions",
+    "BidConditionUser",
+    "BidDimensions",
+    "BidDPCSubscribers",
+    "BidEmployees",
+    "BidHighlights",
+    "BidHotLinks",
+    "BidLaborActivity",
+    "BidLaborCostCodes",
+    "BidLaborCostCodeTotals",
+    "BidLayers",
+    "BidLegends",
+    "BidMarkedPages",
+    "BidNamedViews",
+    "BidNotes",
+    "BidPageFolders",
+    "BidPages",
+    "BidPageSettings",
+    "BidPercents",
+    "BidPlanRooms",
+    "BidProjects",
+    "Bids",
+    "BidSettings",
+    "BidTakeoffs",
+    "BidTakeoffTotals",
+    "BidTexts",
+    "BidTimeCards",
+    "BidTimeCardStates",
+    "BidTransactionsHistory",
+    "BidTypAreaCounts",
+    "BidTypAreas",
+    "BidTypGroupViews",
+    "BidTypicalGroupTotals",
+    "BidZones",
+    "Boost",
+    "CdnTypes",
+    "ConditionSets",
+    "ConditionSetStyles",
+    "CostCodes",
+    "DPCCalcFilter",
+    "Employees",
+    "JobStatuses",
+    "Locking",
+    "OCRProps",
+    "PayClasses",
+    "SchemaRegistry",
+    "Settings",
+    "STSTransactionHistory",
+    "Transactions",
+    "UserMasterConditions"
+  ],
+  "field_defaults": [
+    {
+      "table": "BidALines",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidAnnoInk",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidAnnotationClouds",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidAnnotationOvals",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidAnnotationPolygons",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidAnnotationRects",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidAreas",
+      "field": "Sequence",
+      "default": "0"
+    },
+    {
+      "table": "BidArrows",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidCallOuts",
+      "field": "FontColor",
+      "default": "0"
+    },
+    {
+      "table": "BidCallOuts",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidComments",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidConditions",
+      "field": "Spacing",
+      "default": "0"
+    },
+    {
+      "table": "BidDimensions",
+      "field": "FontColor",
+      "default": "0"
+    },
+    {
+      "table": "BidHighlights",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidHotLinks",
+      "field": "BidPageViewUID",
+      "default": "0"
+    },
+    {
+      "table": "BidHotLinks",
+      "field": "Color",
+      "default": "0"
+    },
+    {
+      "table": "BidLaborActivity",
+      "field": "RuleValue",
+      "default": "0"
+    },
+    {
+      "table": "BidLaborCostCodes",
+      "field": "Type",
+      "default": "0"
+    },
+    {
+      "table": "BidLegends",
+      "field": "FontColor",
+      "default": "0"
+    },
+    {
+      "table": "BidPages",
+      "field": "DigitizerNX1",
+      "default": "0"
+    },
+    {
+      "table": "BidPages",
+      "field": "DigitizerNY1",
+      "default": "0"
+    },
+    {
+      "table": "BidPages",
+      "field": "DigitizerNX2",
+      "default": "0"
+    },
+    {
+      "table": "BidPages",
+      "field": "DigitizerNY2",
+      "default": "0"
+    },
+    {
+      "table": "BidPages",
+      "field": "DigitizerWidth",
+      "default": "0"
+    },
+    {
+      "table": "BidPages",
+      "field": "DigitizerHeight",
+      "default": "0"
+    },
+    {
+      "table": "BidPages",
+      "field": "DigitizerResX",
+      "default": "0"
+    },
+    {
+      "table": "BidPages",
+      "field": "DigitizerResY",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "ExternalID",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "HoursPerDay",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "MeasureBase",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "WeekStartDay",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "DPCMode",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "IsDPCUpdated",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "IgnoreBidAreas",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "SendImageFiles",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "HasSTSClash",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "SRPending",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "IsUnlocked",
+      "default": "0"
+    },
+    {
+      "table": "Bids",
+      "field": "FullBidSent",
+      "default": "0"
+    },
+    {
+      "table": "BidTakeoffs",
+      "field": "Count",
+      "default": "0"
+    },
+    {
+      "table": "BidTakeoffs",
+      "field": "GridOffsetX",
+      "default": "0"
+    },
+    {
+      "table": "BidTakeoffs",
+      "field": "GridOffsetY",
+      "default": "0"
+    },
+    {
+      "table": "BidTakeoffs",
+      "field": "GridRotation",
+      "default": "0"
+    },
+    {
+      "table": "BidTakeoffs",
+      "field": "IsNegativeQuantity",
+      "default": "0"
+    },
+    {
+      "table": "BidTakeoffs",
+      "field": "FontColor",
+      "default": "0"
+    },
+    {
+      "table": "BidTakeoffs",
+      "field": "NameFontColor",
+      "default": "0"
+    },
+    {
+      "table": "BidTexts",
+      "field": "FontColor",
+      "default": "0"
+    },
+    {
+      "table": "BidTransactionsHistory",
+      "field": "TransactionID",
+      "default": "0"
+    },
+    {
+      "table": "BidTypAreas",
+      "field": "Sequence",
+      "default": "0"
+    },
+    {
+      "table": "CostCodes",
+      "field": "Sequence",
+      "default": "0"
+    },
+    {
+      "table": "CostCodes",
+      "field": "RuleValue",
+      "default": "0"
+    },
+    {
+      "table": "Settings",
+      "field": "QuantitiesInLegend",
+      "default": "0"
+    },
+    {
+      "table": "Settings",
+      "field": "HoursPerDay",
+      "default": "0"
+    },
+    {
+      "table": "Settings",
+      "field": "StartWeekOn",
+      "default": "0"
+    },
+    {
+      "table": "Settings",
+      "field": "GridCountMethod",
+      "default": "0"
+    },
+    {
+      "table": "Settings",
+      "field": "IgnoreBidAreas",
+      "default": "0"
+    },
+    {
+      "table": "Settings",
+      "field": "SendImageFiles",
+      "default": "0"
+    },
+    {
+      "table": "Settings",
+      "field": "BackupNo",
+      "default": "2"
+    },
+    {
+      "table": "Settings",
+      "field": "BackupPeriod",
+      "default": "2"
+    },
+    {
+      "table": "Settings",
+      "field": "CompressPeriod",
+      "default": "3"
+    },
+    {
+      "table": "STSTransactionHistory",
+      "field": "ChangeType",
+      "default": "0"
+    }
+  ],
+  "explicit_indexes": [
+    {
+      "table": "AffectDPCTypGroupViews",
+      "name": "AffectDPCTypGroupViews_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidALines",
+      "name": "BidALines_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidALines",
+      "name": "BidALines_BidTakeoffFromUID",
+      "unique": false,
+      "fields": [
+        "BidTakeoffFromUID"
+      ]
+    },
+    {
+      "table": "BidALines",
+      "name": "BidALines_BidTakeoffToUID",
+      "unique": false,
+      "fields": [
+        "BidTakeoffToUID"
+      ]
+    },
+    {
+      "table": "BidALines",
+      "name": "BidALines_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidAnnoInk",
+      "name": "BidAnnoInk_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidAnnoInk",
+      "name": "BidAnnoInk_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationClouds",
+      "name": "BidAnnotationClouds_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationClouds",
+      "name": "BidAnnotationClouds_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationClouds",
+      "name": "BidAnnotationClouds_LayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationOvals",
+      "name": "BidAnnotationOvals_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationOvals",
+      "name": "BidAnnotationOvals_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationOvals",
+      "name": "BidAnnotationOvals_LayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationPolygons",
+      "name": "BidAnnotationPolygons_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationPolygons",
+      "name": "BidAnnotationPolygons_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationPolygons",
+      "name": "BidAnnotationPolygons_LayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationRects",
+      "name": "BidAnnotationRects_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationRects",
+      "name": "BidAnnotationRects_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidAnnotationRects",
+      "name": "BidAnnotationRects_LayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidAreas",
+      "name": "BidAreas_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidAreas",
+      "name": "BidAreas_GUID",
+      "unique": false,
+      "fields": [
+        "GUID"
+      ]
+    },
+    {
+      "table": "BidAreas",
+      "name": "BidAreas_ParentUID",
+      "unique": false,
+      "fields": [
+        "ParentUID"
+      ]
+    },
+    {
+      "table": "BidAreaTranslations",
+      "name": "BidAreaTranslations_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidArrows",
+      "name": "BidArrows_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidArrows",
+      "name": "BidArrows_BidTakeoffFromUID",
+      "unique": false,
+      "fields": [
+        "BidTakeoffFromUID"
+      ]
+    },
+    {
+      "table": "BidArrows",
+      "name": "BidArrows_BidTakeoffToUID",
+      "unique": false,
+      "fields": [
+        "BidTakeoffToUID"
+      ]
+    },
+    {
+      "table": "BidArrows",
+      "name": "BidArrows_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidCallOuts",
+      "name": "BidCallOuts_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidCallOuts",
+      "name": "BidCallOuts_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidCallOuts",
+      "name": "BidCallOuts_LayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidComments",
+      "name": "BidComments_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidComments",
+      "name": "BidComments_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidComments",
+      "name": "BidComments_LayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidComments",
+      "name": "BidComments_ParentUID",
+      "unique": false,
+      "fields": [
+        "ParentCommentUID"
+      ]
+    },
+    {
+      "table": "BidConditionFolders",
+      "name": "BidConditionFolders_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidConditionFolders",
+      "name": "BidConditionFolders_ParentUID",
+      "unique": false,
+      "fields": [
+        "ParentUID"
+      ]
+    },
+    {
+      "table": "BidConditions",
+      "name": "BidConditions_BidConditionFolderUID",
+      "unique": false,
+      "fields": [
+        "BidConditionFolderUID"
+      ]
+    },
+    {
+      "table": "BidConditions",
+      "name": "BidConditions_BidLayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidConditions",
+      "name": "BidConditions_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidDimensions",
+      "name": "BidDimensions_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidDimensions",
+      "name": "BidDimensions_BidTakeoffFromUID",
+      "unique": false,
+      "fields": [
+        "BidTakeoffFromUID"
+      ]
+    },
+    {
+      "table": "BidDimensions",
+      "name": "BidDimensions_BidTakeoffToUID",
+      "unique": false,
+      "fields": [
+        "BidTakeoffToUID"
+      ]
+    },
+    {
+      "table": "BidDimensions",
+      "name": "BidDimensions_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidDPCSubscribers",
+      "name": "BidDPCSubscribers_BidEmployeeUID",
+      "unique": false,
+      "fields": [
+        "BidEmployeeUID"
+      ]
+    },
+    {
+      "table": "BidDPCSubscribers",
+      "name": "BidDPCSubscribers_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidEmployees",
+      "name": "BidEmployees_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidEmployees",
+      "name": "BidEmployees_EmployeeUID",
+      "unique": false,
+      "fields": [
+        "EmployeeUID"
+      ]
+    },
+    {
+      "table": "BidEmployees",
+      "name": "BidEmployees_GUID",
+      "unique": false,
+      "fields": [
+        "GUID"
+      ]
+    },
+    {
+      "table": "BidHighlights",
+      "name": "BidHighlights_BidLayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidHighlights",
+      "name": "BidHighlights_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidHighlights",
+      "name": "BidHighlights_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidHotLinks",
+      "name": "BidHotLinks_BidLayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidHotLinks",
+      "name": "BidHotLinks_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidHotLinks",
+      "name": "BidHotLinks_BidPageViewUID",
+      "unique": false,
+      "fields": [
+        "BidPageViewUID"
+      ]
+    },
+    {
+      "table": "BidHotLinks",
+      "name": "BidHotLinks_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidLaborActivity",
+      "name": "BidLaborActivity_BidConditionUID",
+      "unique": false,
+      "fields": [
+        "BidConditionUID"
+      ]
+    },
+    {
+      "table": "BidLaborActivity",
+      "name": "BidLaborActivity_BidLaborCostCodeUID",
+      "unique": false,
+      "fields": [
+        "BidLaborCostCodeUID"
+      ]
+    },
+    {
+      "table": "BidLaborActivity",
+      "name": "BidLaborActivity_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidLaborCostCodes",
+      "name": "BidLaborCostCodes_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidLaborCostCodes",
+      "name": "BidLaborCostCodes_GUID",
+      "unique": false,
+      "fields": [
+        "GUID"
+      ]
+    },
+    {
+      "table": "BidLaborCostCodeTotals",
+      "name": "BidLaborCostCodeTotals_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidLaborCostCodeTotals",
+      "name": "BidLaborCostCodeTotals_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidLayers",
+      "name": "BidLayers_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidLayers",
+      "name": "BidLayers_IsTemplateUID",
+      "unique": false,
+      "fields": [
+        "IsTemplate"
+      ]
+    },
+    {
+      "table": "BidLegends",
+      "name": "BidLegends_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidLegends",
+      "name": "BidLegends_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidNamedViews",
+      "name": "BidNamedViews_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidNamedViews",
+      "name": "BidNamedViews_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidNotes",
+      "name": "BidNotes_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidNotes",
+      "name": "BidNotes_GUID",
+      "unique": false,
+      "fields": [
+        "GUID"
+      ]
+    },
+    {
+      "table": "BidPageFolders",
+      "name": "BidPageFolders_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidPageFolders",
+      "name": "BidPageFolders_GUID",
+      "unique": false,
+      "fields": [
+        "GUID"
+      ]
+    },
+    {
+      "table": "BidPageFolders",
+      "name": "BidPageFolders_ParentUID",
+      "unique": false,
+      "fields": [
+        "ParentUID"
+      ]
+    },
+    {
+      "table": "BidPages",
+      "name": "BidPages_BidPageFolderUID",
+      "unique": false,
+      "fields": [
+        "BidPageFolderUID"
+      ]
+    },
+    {
+      "table": "BidPages",
+      "name": "BidPages_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidPages",
+      "name": "BidPages_GUID",
+      "unique": false,
+      "fields": [
+        "GUID"
+      ]
+    },
+    {
+      "table": "BidPercents",
+      "name": "BidPercents_BidLaborActivityUID",
+      "unique": false,
+      "fields": [
+        "BidLaborActivityUID"
+      ]
+    },
+    {
+      "table": "BidPercents",
+      "name": "BidPercents_BidLaborCostCodeUID",
+      "unique": false,
+      "fields": [
+        "BidLaborCostCodeUID"
+      ]
+    },
+    {
+      "table": "BidPercents",
+      "name": "BidPercents_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidPercents",
+      "name": "BidPercents_BidTakeoffUID",
+      "unique": false,
+      "fields": [
+        "BidTakeoffUID"
+      ]
+    },
+    {
+      "table": "BidPercents",
+      "name": "BidPercents_BidTimeCardStateUID",
+      "unique": false,
+      "fields": [
+        "BidTimeCardStateUID"
+      ]
+    },
+    {
+      "table": "BidPercents",
+      "name": "BidPercents_GUID",
+      "unique": false,
+      "fields": [
+        "GUID"
+      ]
+    },
+    {
+      "table": "BidPlanRooms",
+      "name": "BidPlanRooms_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidProjects",
+      "name": "BidProjects_Name",
+      "unique": false,
+      "fields": [
+        "Name"
+      ]
+    },
+    {
+      "table": "Bids",
+      "name": "Bids_BidProjectUID",
+      "unique": false,
+      "fields": [
+        "BidProjectUID"
+      ]
+    },
+    {
+      "table": "Bids",
+      "name": "Bids_BidType",
+      "unique": false,
+      "fields": [
+        "BidType"
+      ]
+    },
+    {
+      "table": "Bids",
+      "name": "Bids_ParentBidUID",
+      "unique": false,
+      "fields": [
+        "ParentBidUID"
+      ]
+    },
+    {
+      "table": "BidTakeoffs",
+      "name": "BidTakeoffs_BidAreaUID",
+      "unique": false,
+      "fields": [
+        "BidAreaUID"
+      ]
+    },
+    {
+      "table": "BidTakeoffs",
+      "name": "BidTakeoffs_BidConditionUID",
+      "unique": false,
+      "fields": [
+        "BidConditionUID"
+      ]
+    },
+    {
+      "table": "BidTakeoffs",
+      "name": "BidTakeoffs_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidTakeoffs",
+      "name": "BidTakeoffs_BidTypAreaUID",
+      "unique": false,
+      "fields": [
+        "BidTypAreaUID"
+      ]
+    },
+    {
+      "table": "BidTakeoffs",
+      "name": "BidTakeoffs_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidTakeoffs",
+      "name": "BidTakeoffs_BidZoneUID",
+      "unique": false,
+      "fields": [
+        "BidZoneUID"
+      ]
+    },
+    {
+      "table": "BidTakeoffs",
+      "name": "BidTakeoffs_GUID",
+      "unique": false,
+      "fields": [
+        "GUID"
+      ]
+    },
+    {
+      "table": "BidTakeoffs",
+      "name": "BidTakeoffs_No",
+      "unique": false,
+      "fields": [
+        "No"
+      ]
+    },
+    {
+      "table": "BidTakeoffs",
+      "name": "BidTakeoffs_ParentUID",
+      "unique": false,
+      "fields": [
+        "ParentUID"
+      ]
+    },
+    {
+      "table": "BidTakeoffTotals",
+      "name": "BidTakeoffTotals_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidTakeoffTotals",
+      "name": "BidTakeoffTotals_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidTexts",
+      "name": "BidTexts_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidTexts",
+      "name": "BidTexts_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidTexts",
+      "name": "BidTexts_LayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidTimeCards",
+      "name": "BidTimeCards_BidAreaUID",
+      "unique": false,
+      "fields": [
+        "BidAreaUID"
+      ]
+    },
+    {
+      "table": "BidTimeCards",
+      "name": "BidTimeCards_BidEmployeeUID",
+      "unique": false,
+      "fields": [
+        "BidEmployeeUID"
+      ]
+    },
+    {
+      "table": "BidTimeCards",
+      "name": "BidTimeCards_BidLaborCostCodeUID",
+      "unique": false,
+      "fields": [
+        "BidLaborCostCodeUID"
+      ]
+    },
+    {
+      "table": "BidTimeCards",
+      "name": "BidTimeCards_BidTimeCardStateUID",
+      "unique": false,
+      "fields": [
+        "BidTimeCardStateUID"
+      ]
+    },
+    {
+      "table": "BidTimeCards",
+      "name": "BidTimeCards_BidTypicalAreaUID",
+      "unique": false,
+      "fields": [
+        "BidTypicalAreaUID"
+      ]
+    },
+    {
+      "table": "BidTimeCards",
+      "name": "BidTimeCards_GUID",
+      "unique": false,
+      "fields": [
+        "GUID"
+      ]
+    },
+    {
+      "table": "BidTimeCardStates",
+      "name": "BidTimeCardStates_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidTimeCardStates",
+      "name": "BidTimeCardStates_GUID",
+      "unique": false,
+      "fields": [
+        "GUID"
+      ]
+    },
+    {
+      "table": "BidTransactionsHistory",
+      "name": "BidTransactionsHistory_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidTypAreaCounts",
+      "name": "BidTypAreaCounts_BidAreaUID",
+      "unique": false,
+      "fields": [
+        "BidAreaUID"
+      ]
+    },
+    {
+      "table": "BidTypAreaCounts",
+      "name": "BidTypAreaCounts_BidTypAreaUID",
+      "unique": false,
+      "fields": [
+        "BidTypAreaUID"
+      ]
+    },
+    {
+      "table": "BidTypAreas",
+      "name": "BidTypAreas_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidTypGroupViews",
+      "name": "BidTypGroupViews_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidTypGroupViews",
+      "name": "BidTypGroupViews_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidTypicalGroupTotals",
+      "name": "BidTypicalGroupTotals_BidPageUID",
+      "unique": false,
+      "fields": [
+        "BidPageUID"
+      ]
+    },
+    {
+      "table": "BidTypicalGroupTotals",
+      "name": "BidTypicalGroupTotals_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "BidZones",
+      "name": "BidZones_BidLayerUID",
+      "unique": false,
+      "fields": [
+        "BidLayerUID"
+      ]
+    },
+    {
+      "table": "BidZones",
+      "name": "BidZones_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "CdnTypes",
+      "name": "CdnTypes_Name",
+      "unique": false,
+      "fields": [
+        "Name"
+      ]
+    },
+    {
+      "table": "ConditionSetStyles",
+      "name": "ConditionSetStyles_ConditionSetUID",
+      "unique": false,
+      "fields": [
+        "ConditionSetUID"
+      ]
+    },
+    {
+      "table": "ConditionSetStyles",
+      "name": "ConditionSetStyles_ConditionStyleUID",
+      "unique": false,
+      "fields": [
+        "ConditionStyleUID"
+      ]
+    },
+    {
+      "table": "DPCCalcFilter",
+      "name": "DPCCalcFilter_BidUID",
+      "unique": false,
+      "fields": [
+        "BidUID"
+      ]
+    },
+    {
+      "table": "Employees",
+      "name": "Employees_AccessLevelUID",
+      "unique": false,
+      "fields": [
+        "AccessLevelUID"
+      ]
+    },
+    {
+      "table": "Employees",
+      "name": "Employees_LoginName",
+      "unique": false,
+      "fields": [
+        "LoginName"
+      ]
+    },
+    {
+      "table": "Employees",
+      "name": "Employees_PayClassUID",
+      "unique": false,
+      "fields": [
+        "PayClassUID"
+      ]
+    },
+    {
+      "table": "Locking",
+      "name": "UI_Locking",
+      "unique": true,
+      "fields": [
+        "Essence",
+        "Owner"
+      ]
+    },
+    {
+      "table": "Locking",
+      "name": "UI_Locking2",
+      "unique": true,
+      "fields": [
+        "Essence"
+      ]
+    },
+    {
+      "table": "STSTransactionHistory",
+      "name": "STSTransactionHistory_ChangeType",
+      "unique": false,
+      "fields": [
+        "ChangeType"
+      ]
+    },
+    {
+      "table": "STSTransactionHistory",
+      "name": "STSTransactionHistory_ObjectUID",
+      "unique": false,
+      "fields": [
+        "ObjectUID"
+      ]
+    },
+    {
+      "table": "UserMasterConditions",
+      "name": "UserMasterConditions_Name",
+      "unique": false,
+      "fields": [
+        "Name"
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "name": "BidALines_BidPageUID1",
+      "child_table": "BidALines",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidALines_BidTakeoffFromUID1",
+      "child_table": "BidALines",
+      "child_column": "BidTakeoffFromUID",
+      "parent_table": "BidTakeoffs",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidALines_BidUID1",
+      "child_table": "BidALines",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidAnnoInk_BidPageUID1",
+      "child_table": "BidAnnoInk",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidAreas_BidUID1",
+      "child_table": "BidAreas",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidArrows_BidPageUID1",
+      "child_table": "BidArrows",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidArrows_BidTakeoffFromUID1",
+      "child_table": "BidArrows",
+      "child_column": "BidTakeoffFromUID",
+      "parent_table": "BidTakeoffs",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidArrows_BidUID1",
+      "child_table": "BidArrows",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidCallOuts_BidLayerUID1",
+      "child_table": "BidCallOuts",
+      "child_column": "BidLayerUID",
+      "parent_table": "BidLayers",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidCallOuts_BidPageUID1",
+      "child_table": "BidCallOuts",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidCallOuts_BidUID1",
+      "child_table": "BidCallOuts",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidConditionFolders_BidUID1",
+      "child_table": "BidConditionFolders",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidConditions_BidConditionFolderUID1",
+      "child_table": "BidConditions",
+      "child_column": "BidConditionFolderUID",
+      "parent_table": "BidConditionFolders",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidConditions_BidLayerUID1",
+      "child_table": "BidConditions",
+      "child_column": "BidLayerUID",
+      "parent_table": "BidLayers",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidConditions_BidUID1",
+      "child_table": "BidConditions",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidConditions_CdnTypeUID1",
+      "child_table": "BidConditions",
+      "child_column": "CdnTypeUID",
+      "parent_table": "CdnTypes",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidDimensions_BidPageUID1",
+      "child_table": "BidDimensions",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidDimensions_BidTakeoffFromUID1",
+      "child_table": "BidDimensions",
+      "child_column": "BidTakeoffFromUID",
+      "parent_table": "BidTakeoffs",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidDimensions_BidUID1",
+      "child_table": "BidDimensions",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidDPCSubscribers_BidEmployeeUID1",
+      "child_table": "BidDPCSubscribers",
+      "child_column": "BidEmployeeUID",
+      "parent_table": "Employees",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidDPCSubscribers_BidUID1",
+      "child_table": "BidDPCSubscribers",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidEmployees_BidUID1",
+      "child_table": "BidEmployees",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidEmployees_EmployeeUID1",
+      "child_table": "BidEmployees",
+      "child_column": "EmployeeUID",
+      "parent_table": "Employees",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidEmployees_PayClassUID1",
+      "child_table": "BidEmployees",
+      "child_column": "PayClassUID",
+      "parent_table": "PayClasses",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidHighlights_BidLayerUID1",
+      "child_table": "BidHighlights",
+      "child_column": "BidLayerUID",
+      "parent_table": "BidLayers",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidHighlights_BidPageUID1",
+      "child_table": "BidHighlights",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidHighlights_BidUID1",
+      "child_table": "BidHighlights",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidHotLinks_BidLayerUID1",
+      "child_table": "BidHotLinks",
+      "child_column": "BidLayerUID",
+      "parent_table": "BidLayers",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidHotLinks_BidPageUID1",
+      "child_table": "BidHotLinks",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidHotLinks_BidPageViewUID1",
+      "child_table": "BidHotLinks",
+      "child_column": "BidPageViewUID",
+      "parent_table": "BidNamedViews",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidHotLinks_BidUID1",
+      "child_table": "BidHotLinks",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidLaborActivity_BidConditionUID1",
+      "child_table": "BidLaborActivity",
+      "child_column": "BidConditionUID",
+      "parent_table": "BidConditions",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidLaborActivity_BidLaborCostCodeUID1",
+      "child_table": "BidLaborActivity",
+      "child_column": "BidLaborCostCodeUID",
+      "parent_table": "BidLaborCostCodes",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidLaborActivity_BidUID1",
+      "child_table": "BidLaborActivity",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidLaborCostCodes_BidUID1",
+      "child_table": "BidLaborCostCodes",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidLaborCostCodes_CostCodeUID1",
+      "child_table": "BidLaborCostCodes",
+      "child_column": "CostCodeUID",
+      "parent_table": "CostCodes",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidLayers_BidUID1",
+      "child_table": "BidLayers",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidLegends_BidPageUID1",
+      "child_table": "BidLegends",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidLegends_BidUID1",
+      "child_table": "BidLegends",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidNamedViews_BidPageUID1",
+      "child_table": "BidNamedViews",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidNamedViews_BidUID1",
+      "child_table": "BidNamedViews",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidNotes_Bids1",
+      "child_table": "BidNotes",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidPageFolders_BidUID1",
+      "child_table": "BidPageFolders",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidPages_BidPageFolderUID1",
+      "child_table": "BidPages",
+      "child_column": "BidPageFolderUID",
+      "parent_table": "BidPageFolders",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidPages_BidUID1",
+      "child_table": "BidPages",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidPageSettings_BidAreaUID1",
+      "child_table": "BidPageSettings",
+      "child_column": "BidAreaUID",
+      "parent_table": "BidAreas",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidPageSettings_BidPageUID1",
+      "child_table": "BidPageSettings",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidPageSettings_BidTypAreaUID1",
+      "child_table": "BidPageSettings",
+      "child_column": "BidTypAreaUID",
+      "parent_table": "BidTypAreas",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidPercents_BidLaborCostCodeUID1",
+      "child_table": "BidPercents",
+      "child_column": "BidLaborCostCodeUID",
+      "parent_table": "BidLaborCostCodes",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidPercents_BidTakeoffUID1",
+      "child_table": "BidPercents",
+      "child_column": "BidTakeoffUID",
+      "parent_table": "BidTakeoffs",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidPercents_BidTimeCardStateUID1",
+      "child_table": "BidPercents",
+      "child_column": "BidTimeCardStateUID",
+      "parent_table": "BidTimeCardStates",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidPlanrooms_BidUID1",
+      "child_table": "BidPlanrooms",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "Bids_BidProjectUID1",
+      "child_table": "Bids",
+      "child_column": "BidProjectUID",
+      "parent_table": "BidProjects",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidSettings_BidPageSelectedUID1",
+      "child_table": "BidSettings",
+      "child_column": "BidPageSelectedUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTakeoffs_BidAreaUID1",
+      "child_table": "BidTakeoffs",
+      "child_column": "BidAreaUID",
+      "parent_table": "BidAreas",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTakeoffs_BidConditionUID1",
+      "child_table": "BidTakeoffs",
+      "child_column": "BidConditionUID",
+      "parent_table": "BidConditions",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTakeoffs_BidPageUID1",
+      "child_table": "BidTakeoffs",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTakeoffs_BidTypAreaUID1",
+      "child_table": "BidTakeoffs",
+      "child_column": "BidTypAreaUID",
+      "parent_table": "BidTypAreas",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTakeoffs_BidZoneUID1",
+      "child_table": "BidTakeoffs",
+      "child_column": "BidZoneUID",
+      "parent_table": "BidZones",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTakeoffTotals_BidPageUID1",
+      "child_table": "BidTakeoffTotals",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTakeoffTotals_BidUID1",
+      "child_table": "BidTakeoffTotals",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTexts_BidLayerUID1",
+      "child_table": "BidTexts",
+      "child_column": "BidLayerUID",
+      "parent_table": "BidLayers",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTexts_BidPageUID1",
+      "child_table": "BidTexts",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTexts_BidUID1",
+      "child_table": "BidTexts",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTimeCards_BidAreaUID1",
+      "child_table": "BidTimeCards",
+      "child_column": "BidAreaUID",
+      "parent_table": "BidAreas",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTimeCards_BidEmployeeUID1",
+      "child_table": "BidTimeCards",
+      "child_column": "BidEmployeeUID",
+      "parent_table": "BidEmployees",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTimeCards_BidLaborCostCodeUID1",
+      "child_table": "BidTimeCards",
+      "child_column": "BidLaborCostCodeUID",
+      "parent_table": "BidLaborCostCodes",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTimeCards_BidTimeCardStateUID1",
+      "child_table": "BidTimeCards",
+      "child_column": "BidTimeCardStateUID",
+      "parent_table": "BidTimeCardStates",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTimeCards_BidTypicalAreaUID1",
+      "child_table": "BidTimeCards",
+      "child_column": "BidTypicalAreaUID",
+      "parent_table": "BidTypAreas",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTimeCardStates_BidUID1",
+      "child_table": "BidTimeCardStates",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTransactionsHistory_BidUID1",
+      "child_table": "BidTransactionsHistory",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTypAreaCounts_BidAreaUID1",
+      "child_table": "BidTypAreaCounts",
+      "child_column": "BidAreaUID",
+      "parent_table": "BidAreas",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTypAreaCounts_BidTypAreaUID1",
+      "child_table": "BidTypAreaCounts",
+      "child_column": "BidTypAreaUID",
+      "parent_table": "BidTypAreas",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTypAreas_BidUID1",
+      "child_table": "BidTypAreas",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTypicalGroupTotals_BidPageUID1",
+      "child_table": "BidTypicalGroupTotals",
+      "child_column": "BidPageUID",
+      "parent_table": "BidPages",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidTypicalGroupTotals_BidUID1",
+      "child_table": "BidTypicalGroupTotals",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidZones_BidLayerUID1",
+      "child_table": "BidZones",
+      "child_column": "BidLayerUID",
+      "parent_table": "BidLayers",
+      "parent_column": "UID"
+    },
+    {
+      "name": "BidZones_BidUID1",
+      "child_table": "BidZones",
+      "child_column": "BidUID",
+      "parent_table": "Bids",
+      "parent_column": "UID"
+    },
+    {
+      "name": "ConditionSets_EmployeeUID1",
+      "child_table": "ConditionSets",
+      "child_column": "EmployeeUID",
+      "parent_table": "Employees",
+      "parent_column": "UID"
+    },
+    {
+      "name": "ConditionSetStyles_ConditionSetUID1",
+      "child_table": "ConditionSetStyles",
+      "child_column": "ConditionSetUID",
+      "parent_table": "ConditionSets",
+      "parent_column": "UID"
+    },
+    {
+      "name": "ConditionSetStyles_ConditionStyleUID1",
+      "child_table": "ConditionSetStyles",
+      "child_column": "ConditionStyleUID",
+      "parent_table": "BidConditions",
+      "parent_column": "UID"
+    },
+    {
+      "name": "Employees_AccessLevelUID1",
+      "child_table": "Employees",
+      "child_column": "AccessLevelUID",
+      "parent_table": "AccessLevels",
+      "parent_column": "UID"
+    },
+    {
+      "name": "Employees_PayClassUID1",
+      "child_table": "Employees",
+      "child_column": "PayClassUID",
+      "parent_table": "PayClasses",
+      "parent_column": "UID"
+    }
+  ]
+}
