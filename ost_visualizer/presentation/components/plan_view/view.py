@@ -1590,6 +1590,20 @@ class TakeoffPlanView(
             commit
             and item is not None
             and ann is not None
+            and self._is_named_view_draft_uid(uid)
+            and not pending_text_stripped
+        ):
+            self._finishing_named_view_rename = True
+            try:
+                self._refresh_named_view_label_background(uid)
+                item.setFocus(Qt.FocusReason.OtherFocusReason)
+                return
+            finally:
+                self._finishing_named_view_rename = False
+        if (
+            commit
+            and item is not None
+            and ann is not None
             and pending_text_stripped
             and self._named_view_name_validator is not None
         ):

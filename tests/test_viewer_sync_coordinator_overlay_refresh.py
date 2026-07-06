@@ -4559,7 +4559,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertFalse(view.is_text_annotation_inline_edit_active())
         view.cleanup()
 
-    def test_empty_named_view_draft_commit_removes_item_without_create(self):
+    def test_empty_named_view_draft_commit_keeps_editor_active(self):
         view = self._make_plan_view()
         view._selection_enabled = True
         emitted = []
@@ -4578,6 +4578,10 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._editing_named_view_item.setPlainText("   ")
         view._finish_named_view_rename(commit=True)
         self.assertEqual(emitted, [])
+        self.assertEqual(view._draft_named_view_uid, uid)
+        self.assertIn(uid, view._current_annotations)
+        self.assertTrue(view.is_text_annotation_inline_edit_active())
+        view._finish_named_view_rename(commit=False)
         self.assertIsNone(view._draft_named_view_uid)
         self.assertNotIn(uid, view._current_annotations)
         self.assertFalse(view.is_text_annotation_inline_edit_active())
@@ -4603,6 +4607,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(item.font().family(), expected.family())
         self.assertEqual(item.font().pointSize(), expected.pointSize())
         self.assertEqual(item.font().bold(), expected.bold())
+        view._finish_named_view_rename(commit=False)
         view.cleanup()
 
     def test_overlay_refresh_after_inline_text_edit_keeps_textbox_width(self):
