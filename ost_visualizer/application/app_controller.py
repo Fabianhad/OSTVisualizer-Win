@@ -12,6 +12,9 @@ from .interfaces.i_event_bus import IEventBus
 from .service_container import ServiceContainer
 from .services.project_operations_service import ProjectOperationsService
 from .services.project_read_service import ProjectReadService
+from .use_cases.project.import_project_files_from_args_use_case import (
+    ImportProjectFilesFromArgsUseCase,
+)
 
 
 class AppController:
@@ -302,6 +305,16 @@ class AppControllerBuilder:
             event_bus=event_bus,
             connection_manager=connection_manager,
             license_api_client=license_api_client,
+        )
+        self.container.register_instance(
+            "import_project_files_from_args_use_case",
+            ImportProjectFilesFromArgsUseCase(
+                import_service=self.container.get("import_service"),
+                project_data_service=project_data_service,
+                file_state_model=self.container.get("file_state_model"),
+                workspace_state_model=self.container.get("workspace_state_model"),
+                logger=self.logger.getChild("ImportProjectFilesFromArgs"),
+            ),
         )
         AnnotationViewBuilder(
             self.container,

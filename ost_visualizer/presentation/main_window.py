@@ -5,6 +5,11 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
 from ..application.events.app_events import AppEvents
 from ..application.dtos.condition_summary_dtos import ConditionSummaryGrouping
+from ..application.dtos.file_import_args import ProjectFileArgs
+from ..application.use_cases.project.import_project_files_from_args_use_case import (
+    ProjectFileImportBatchResult,
+    ProjectImportCurrentTarget,
+)
 from ..domain.entities.annotation_style import AnnotationStyle
 from ..domain.entities.file_state import normalize_path
 from .actions.action_ids import (
@@ -73,7 +78,7 @@ from .utils.annotation_defaults import (
     set_annotation_styles_by_tool as set_active_annotation_styles_by_tool,
 )
 from .utils.annotation_style_controls import apply_annotation_tool_icon_color
-from .utils.messagebox import show_warning
+from .utils.messagebox import show_critical, show_info, show_warning
 from .utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
 from .utils.qt_window_icon_provider import QtWindowIconProvider
 from .utils.themed_icon import rebuild_all_icons
@@ -92,9 +97,13 @@ class MainWindow(QtWidgets.QMainWindow):
     _PLAN_TOOLS_TOOLBAR_KEY = PLAN_TOOLS_TOOLBAR_KEY
     _OVERLAY_TOOLS_TOOLBAR_KEY = OVERLAY_TOOLS_TOOLBAR_KEY
 
-    def __init__(self, app_controller, splash_screen=None):
+    def __init__(
+        self, app_controller, splash_screen=None, startup_project_file_args=None
+    ):
         super().__init__()
         self._needs_create_database_prompt = False
+        self._startup_load_complete = False
+        self._pending_project_file_args = []
         self.splash_screen = splash_screen
         self.app_controller = app_controller
         app_controller.container.register_instance("main_window", self)
@@ -136,6 +145,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._osp_exporter = app_controller.get_service("osp_exporter")
         self._mdb_file_parser = app_controller.get_service("mdb_file_parser")
         self._import_service = app_controller.get_service("import_service")
+        self._import_project_files_from_args = app_controller.get_service(
+            "import_project_files_from_args_use_case"
+        )
         self._file_loading_service = app_controller.get_service("file_loading_service")
         self._file_state_model = app_controller.get_service("file_state_model")
         self._cleanup_deleted_files_use_case = app_controller.get_service(
@@ -461,6 +473,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._mcp_context_bridge.start()
         self.update_dialog_requested.connect(self._show_update_dialog)
         self._update_service = self._resolve_update_service()
+        if (
+            startup_project_file_args is not None
+            and startup_project_file_args.has_file_args
+        ):
+            self._pending_project_file_args.append(startup_project_file_args)
         QtCore.QTimer.singleShot(0, self._load_files_from_config)
         QtCore.QTimer.singleShot(0, self._show_main_window)
 
@@ -563,6 +580,103 @@ class MainWindow(QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(
             0, self._workspace_state_coordinator.restore_deferred_state
         )
+        self._startup_load_complete = True
+        if self._pending_project_file_args:
+            QtCore.QTimer.singleShot(0, self._run_pending_project_file_imports)
+
+    def enqueue_project_file_args(self, args: ProjectFileArgs) -> None:
+        if not args.has_file_args:
+            return
+        self._pending_project_file_args.append(args)
+        if self._startup_load_complete:
+            QtCore.QTimer.singleShot(0, self._run_pending_project_file_imports)
+
+    def _run_pending_project_file_imports(self) -> None:
+        if not self._pending_project_file_args:
+            return
+        pending = self._pending_project_file_args
+        self._pending_project_file_args = []
+        args = ProjectFileArgs(
+            files=[file_arg for item in pending for file_arg in item.files],
+            rejected=[rejected for item in pending for rejected in item.rejected],
+        )
+        result = self._import_project_files_from_args.execute(
+            args,
+            current_target=self._current_project_import_target(),
+            flush_for_file=self._deferred_persistence_manager.flush_for_file,
+        )
+        self._select_project_file_import_result(result)
+        self._show_project_file_import_result(result)
+
+    def _current_project_import_target(self) -> ProjectImportCurrentTarget | None:
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if bid_ref:
+            return ProjectImportCurrentTarget(
+                file_path=bid_ref.file_path,
+                project_uid=self._project_data_service.find_project_uid_for_bid(
+                    bid_ref
+                ),
+            )
+        if self.ui_state_manager.selected_project_uid:
+            hierarchy = self._project_data_service.get_hierarchy()
+            file_path = hierarchy.find_file_path_for_project(
+                self.ui_state_manager.selected_project_uid
+            )
+            if file_path:
+                return ProjectImportCurrentTarget(
+                    file_path=file_path,
+                    project_uid=self.ui_state_manager.selected_project_uid,
+                )
+        if self.ui_state_manager.selected_file_path:
+            return ProjectImportCurrentTarget(
+                file_path=self.ui_state_manager.selected_file_path
+            )
+        current_file_path = self._project_data_service.get_current_file_path()
+        if current_file_path:
+            return ProjectImportCurrentTarget(file_path=current_file_path)
+        return None
+
+    def _select_project_file_import_result(
+        self, result: ProjectFileImportBatchResult
+    ) -> None:
+        if result.selected_project_uid and result.target_db_path:
+            self.project_view.restore_project_selection(
+                result.selected_project_uid, result.target_db_path
+            )
+            return
+        if result.target_db_path:
+            self.project_view.restore_file_selection(result.target_db_path)
+
+    def _show_project_file_import_result(
+        self, result: ProjectFileImportBatchResult
+    ) -> None:
+        if not result.results and not result.rejected:
+            return
+        details = self._format_project_file_import_details(result)
+        if result.failed and result.succeeded:
+            show_warning(self, "Import Complete", details)
+        elif result.failed:
+            show_critical(self, "Import Error", details)
+        else:
+            show_info(self, "Import Complete", details)
+
+    def _format_project_file_import_details(
+        self, result: ProjectFileImportBatchResult
+    ) -> str:
+        lines = []
+        if result.succeeded:
+            if result.succeeded == 1:
+                success = next(item for item in result.results if item.success)
+                project_name = success.project_name or "project file"
+                lines.append(f"Imported {project_name}.")
+            else:
+                lines.append(f"Imported {result.succeeded} project files.")
+        for item in result.results:
+            if not item.success:
+                lines.append(f"{item.source_path}: {item.message}")
+        for item in result.rejected:
+            lines.append(f"{item.value}: {item.reason}")
+        return "\n".join(lines)
 
     def _prompt_create_database(self) -> None:
         if not self.ui_access_manager.is_allowed(Feature.CREATE_DATABASE):

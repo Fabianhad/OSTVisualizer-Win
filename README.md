@@ -211,6 +211,14 @@ New-Item -ItemType Directory -Force .secrets
 .\build-msi.ps1               # Package into MSI installer
 ```
 
+For development or manual repair, per-user associations can be managed without
+administrator rights:
+
+```powershell
+python tools\register_file_associations.py --exe .\venv\Scripts\python.exe --script .\Visualizer.py
+python tools\register_file_associations.py --unregister
+```
+
 ## Contributing
 
 Contributions are welcome under the [Elastic License 2.0](LICENSE). By submitting a pull request, you agree that your contribution will be licensed under the same terms.

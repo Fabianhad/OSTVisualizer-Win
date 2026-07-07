@@ -1,0 +1,112 @@
+{
+    "upgrade_guid": "8434E789-7060-45BA-B9F5-3981CF97EA0A",
+    "version": "1.2.4.2",
+    "product_name": "OST Visualizer",
+    "manufacturer": "Fabian.",
+    "name": "OST Visualizer",
+    "name_base": "ost3dvisualizer",
+    "comments": "OST 3D Visualizer",
+    "installdir": "OST Visualizer",
+    "license_file": "License.rtf",
+    "addremove_icon": "staging\\ost_visualizer\\resources\\icon.ico",
+    "installscope": "perMachine",
+    "need_msvcrt": false,
+    "major_upgrade": {
+        "AllowSameVersionUpgrades": "yes",
+        "DowngradeErrorMessage": "A newer version of OST Visualizer is already installed.",
+        "Schedule": "afterInstallInitialize"
+    },
+    "startmenu_shortcut": "\\Visualizer.exe",
+    "desktop_shortcut": "\\Visualizer.exe",
+    "registry_entries": [
+        {
+            "root": "HKLM",
+            "key": "Software\\Classes\\.ost",
+            "name": null,
+            "type": "string",
+            "value": "OSTVisualizer.ost",
+            "key_path": "yes"
+        },
+        {
+            "root": "HKLM",
+            "key": "Software\\Classes\\.osp",
+            "name": null,
+            "type": "string",
+            "value": "OSTVisualizer.osp",
+            "key_path": "no"
+        },
+        {
+            "root": "HKLM",
+            "key": "Software\\Classes\\OSTVisualizer.ost",
+            "name": null,
+            "type": "string",
+            "value": "OST Visualizer OST Project",
+            "key_path": "no"
+        },
+        {
+            "root": "HKLM",
+            "key": "Software\\Classes\\OSTVisualizer.ost\\Application",
+            "name": "ApplicationName",
+            "type": "string",
+            "value": "OST Visualizer",
+            "key_path": "no"
+        },
+        {
+            "root": "HKLM",
+            "key": "Software\\Classes\\OSTVisualizer.ost\\DefaultIcon",
+            "name": null,
+            "type": "string",
+            "value": "[INSTALLDIR]Visualizer.exe,0",
+            "key_path": "no"
+        },
+        {
+            "root": "HKLM",
+            "key": "Software\\Classes\\OSTVisualizer.ost\\shell\\open\\command",
+            "name": null,
+            "type": "string",
+            "value": "\"[INSTALLDIR]Visualizer.exe\" \"%1\"",
+            "key_path": "no"
+        },
+        {
+            "root": "HKLM",
+            "key": "Software\\Classes\\OSTVisualizer.osp",
+            "name": null,
+            "type": "string",
+            "value": "OST Visualizer OSP Package",
+            "key_path": "no"
+        },
+        {
+            "root": "HKLM",
+            "key": "Software\\Classes\\OSTVisualizer.osp\\Application",
+            "name": "ApplicationName",
+            "type": "string",
+            "value": "OST Visualizer",
+            "key_path": "no"
+        },
+        {
+            "root": "HKLM",
+            "key": "Software\\Classes\\OSTVisualizer.osp\\DefaultIcon",
+            "name": null,
+            "type": "string",
+            "value": "[INSTALLDIR]Visualizer.exe,0",
+            "key_path": "no"
+        },
+        {
+            "root": "HKLM",
+            "key": "Software\\Classes\\OSTVisualizer.osp\\shell\\open\\command",
+            "name": null,
+            "type": "string",
+            "value": "\"[INSTALLDIR]Visualizer.exe\" \"%1\"",
+            "key_path": "no"
+        }
+    ],
+    "parts": [
+        {
+            "id": "MainProgram",
+            "title": "OST Visualizer",
+            "description": "OST 3D Visualizer",
+            "absent": "disallow",
+            "staged_dir": "staging"
+        }
+    ]
+}
