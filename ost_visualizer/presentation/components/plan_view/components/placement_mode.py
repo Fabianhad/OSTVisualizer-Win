@@ -714,6 +714,8 @@ class PlacementModeMixin:
         if annotation_type not in PLACEABLE_ANNOTATION_TYPES:
             return False
         self.clear_place_preview()
+        if self._annotation_place_type in _AREA_ANNOTATION_TYPES:
+            self._set_area_placement_in_progress(False)
         if annotation_type not in _POINT_ANNOTATION_TYPES:
             self._point_annotation_release_pending = False
         self._annotation_place_type = annotation_type
@@ -724,6 +726,8 @@ class PlacementModeMixin:
 
     def _exit_annotation_place_mode(self) -> None:
         self.clear_place_preview()
+        if self._annotation_place_type in _AREA_ANNOTATION_TYPES:
+            self._set_area_placement_in_progress(False)
         self._point_annotation_release_pending = False
         self._annotation_place_type = None
         self._annotation_place_points = []
@@ -1060,6 +1064,8 @@ class PlacementModeMixin:
             self.update_selection_visuals()
             self._annotation_place_points = [(ost_x, ost_y)]
             self._annotation_area_rect_dragging = True
+            if self._annotation_place_type in _AREA_ANNOTATION_TYPES:
+                self._set_area_placement_in_progress(True)
             self.update_annotation_place_preview(scene_pos)
             event.accept()
             return True
@@ -1210,6 +1216,8 @@ class PlacementModeMixin:
         self._annotation_place_points = []
         self._annotation_place_dragging = False
         self._annotation_area_rect_dragging = False
+        if annotation_type in _AREA_ANNOTATION_TYPES:
+            self._set_area_placement_in_progress(False)
         if annotation_type == ANNOTATION_TYPE_TEXT:
             return bool(self.begin_text_annotation_draft(position, page_uid))
         if annotation_type == ANNOTATION_TYPE_NAMED_VIEW:

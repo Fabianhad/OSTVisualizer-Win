@@ -129,10 +129,13 @@ class AnnotationPlacementHarness(PlacementModeMixin):
         self._annotation_place_points = []
         self._annotation_place_dragging = False
         self._annotation_area_rect_dragging = False
+        self._area_in_progress = False
         self._current_bid_page_uid = "page-1"
         self._snap_increments = 1.0
         self.annotation_created = _FakeSignal()
         self.hotlink_placement_requested = _FakeSignal()
+        self.area_placement_in_progress = _FakeSignal()
+        self.area_progress_states = []
         self.text_drafts = []
         self.named_view_drafts = []
         self.preview_repaints = 0
@@ -182,6 +185,13 @@ class AnnotationPlacementHarness(PlacementModeMixin):
     def begin_named_view_draft(self, position, page_uid):
         self.named_view_drafts.append((list(position), page_uid))
         return True
+
+    def _set_area_placement_in_progress(self, in_progress):
+        if self._area_in_progress == in_progress:
+            return
+        self._area_in_progress = in_progress
+        self.area_progress_states.append(in_progress)
+        self.area_placement_in_progress.emit(in_progress)
 
 
 class AreaPlacementHarness(PlacementModeMixin):
@@ -2832,6 +2842,9 @@ class AnnotationPlacementTests(unittest.TestCase):
                 self.assertEqual(view._annotation_place_points, [(1.0, 2.0)])
                 self.assertFalse(view._annotation_area_rect_dragging)
                 self.assertEqual(view.annotation_created.emitted, [])
+                self.assertEqual(view.area_progress_states, [True])
+                view._exit_annotation_place_mode()
+                self.assertEqual(view.area_progress_states, [True, False])
 
     def test_polygon_and_cloud_click_drag_creates_area_like_rectangle(self):
         for annotation_type in ("polygon", "cloud"):
@@ -2877,6 +2890,7 @@ class AnnotationPlacementTests(unittest.TestCase):
                     self.assertEqual(view._annotation_place_points, [])
                     self.assertFalse(view._annotation_area_rect_dragging)
                     self.assertEqual(view._annotation_place_type, annotation_type)
+                    self.assertEqual(view.area_progress_states, [True, False])
         finally:
             for annotation_type in ("polygon", "cloud"):
                 set_annotation_style_for_tool(
@@ -3118,6 +3132,20 @@ class AnnotationPlacementTests(unittest.TestCase):
                     ],
                 )
                 self.assertEqual(view._annotation_place_points, [])
+                self.assertEqual(view.area_progress_states, [True, False])
+
+    def test_polygon_and_cloud_placement_lock_clears_when_switching_tools(self):
+        for annotation_type in ("polygon", "cloud"):
+            with self.subTest(annotation_type=annotation_type):
+                view = AnnotationPlacementHarness()
+                self.assertTrue(view._enter_annotation_place_mode(annotation_type))
+                self.assertTrue(
+                    view.handle_annotation_place_press(_PlacementMouseEvent(1, 2))
+                )
+                self.assertEqual(view.area_progress_states, [True])
+                self.assertTrue(view._enter_annotation_place_mode("rect"))
+                self.assertEqual(view.area_progress_states, [True, False])
+                self.assertEqual(view._annotation_place_type, "rect")
 
 
 if __name__ == "__main__":
