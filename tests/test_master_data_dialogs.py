@@ -700,14 +700,20 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
     def test_page_settings_area_picker_saves_without_database_refresh(self):
         load_calls = []
         save_calls = []
+        refresh_calls = []
 
         def load_areas(file_path, bid_uid):
             load_calls.append((file_path, bid_uid))
+            if not refresh_calls:
+                return []
             return [BidArea("area-2", "bid-1", "", "Area 2", 1)]
 
         def save_areas(file_path, bid_uid, changes, **kwargs):
             save_calls.append((file_path, bid_uid, changes, kwargs))
             return {"new_0": "area-2"}
+
+        def refresh_areas(file_path):
+            refresh_calls.append(file_path)
 
         class CapturingPicker:
             def __init__(self, **kwargs):
@@ -719,6 +725,9 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
 
             def get_selected_uid(self):
                 return "area-2"
+
+            def has_saved_changes(self):
+                return True
 
             def cleanup(self):
                 pass
@@ -736,9 +745,17 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             event_bus=object(),
             load_areas_fn=load_areas,
             save_areas_fn=save_areas,
+            refresh_areas_fn=refresh_areas,
+        )
+        area_changes = []
+        bar.area_change_requested.connect(
+            lambda file_path, page_uid, area_uid: area_changes.append(
+                (file_path, page_uid, area_uid)
+            )
         )
         bar.load_bid_areas(BidRef("db.mdb", "bid-1"))
         bar.load_page("page-1", 1.0, 1.0, "")
+        bar.set_interactive(True)
         try:
             from ost_visualizer.presentation.components import page_settings_bar
 
@@ -754,8 +771,10 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             self.assertEqual(
                 save_calls[0][3]["publish_database_refreshed_after_write"], False
             )
+            self.assertEqual(refresh_calls, ["db.mdb"])
             self.assertIn(("db.mdb", "bid-1"), load_calls)
             self.assertEqual(bar.area_combo.get_current_area_uid(), "area-2")
+            self.assertEqual(area_changes, [("db.mdb", "page-1", "area-2")])
         finally:
             bar.deleteLater()
 

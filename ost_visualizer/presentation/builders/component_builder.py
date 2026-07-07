@@ -426,6 +426,7 @@ class ComponentBuilder:
             event_bus=event_bus,
             load_areas_fn=project_read_service.get_bid_areas,
             save_areas_fn=project_write_service.save_bid_areas_result,
+            refresh_areas_fn=project_write_service.reload_and_notify,
             parent=viewer_container,
             ui_access_manager=ui_access_manager,
         )

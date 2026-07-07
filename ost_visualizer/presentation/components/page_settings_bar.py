@@ -9,8 +9,6 @@ from ..config import COMPACT_MARGINS, COMPACT_SPACING, NO_MARGINS, SCALE_TOOLTIP
 from ..dialogs.areas_dialog import BidAreaPickerDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.button_policy import apply_no_highlight_button_policy
-from ..utils.dialog import save_result_refresh_failed
-from ..utils.messagebox import show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
 from ..utils.scales import ALL_SCALES
 
@@ -31,6 +29,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         self,
         icon_provider,
         event_bus,
+        refresh_areas_fn: Callable,
         load_areas_fn: Optional[Callable] = None,
         save_areas_fn: Optional[Callable] = None,
         parent=None,
@@ -42,6 +41,7 @@ class PageSettingsBar(QtWidgets.QWidget):
         self._access = ui_access_manager
         self._load_areas_fn = load_areas_fn
         self._save_areas_fn = save_areas_fn
+        self._refresh_areas_fn = refresh_areas_fn
         self._bid_ref: Optional[BidRef] = None
         self._page_uid: Optional[str] = None
         self._interactive: bool = False
@@ -198,20 +198,12 @@ class PageSettingsBar(QtWidgets.QWidget):
         prev_area_uid = self.area_combo.get_current_area_uid()
 
         def _save_fn(changes: dict):
-            result = self._save_areas_fn(
+            return self._save_areas_fn(
                 self._bid_ref.file_path,
                 self._bid_ref.bid_uid,
                 changes,
                 publish_database_refreshed_after_write=False,
             )
-            if save_result_refresh_failed(result):
-                show_warning(
-                    self,
-                    "Refresh Error",
-                    "The bid area changes were saved, but the area list could not be "
-                    "refreshed. Reopen the database to see the latest bid areas.",
-                )
-            return result
 
         def _on_saved() -> None:
             self.load_bid_areas(
@@ -240,7 +232,10 @@ class PageSettingsBar(QtWidgets.QWidget):
                 selected_uid = dlg.get_selected_uid()
         finally:
             dlg.cleanup()
+            saved_changes = dlg.has_saved_changes()
             dlg.deleteLater()
+        if saved_changes:
+            self._refresh_areas_fn(self._bid_ref.file_path)
         self.load_bid_areas(self._bid_ref, areas_with_takeoff=self._bid_areas_in_use)
         if self._page_areas_in_use is not None:
             self.update_bold_states(self._page_areas_in_use)
