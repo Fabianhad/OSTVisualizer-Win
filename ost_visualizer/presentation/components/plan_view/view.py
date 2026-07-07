@@ -1207,6 +1207,23 @@ class TakeoffPlanView(
         if emit_mode_changed:
             self.text_annotation_edit_mode_changed.emit(True)
 
+    def _set_inline_text_edit_target(
+        self,
+        *,
+        text_annotation_uid: Optional[str] = None,
+        named_view_uid: Optional[str] = None,
+        named_view_item: Optional[QGraphicsTextItem] = None,
+    ) -> None:
+        self._editing_text_annotation_uid = text_annotation_uid
+        self._editing_named_view_uid = named_view_uid
+        self._editing_named_view_item = named_view_item
+
+    def _enter_inline_text_edit_cursor_mode(self) -> None:
+        if self._cursor_mode != CURSOR_MODE_ANNOTATION_PLACE:
+            return
+        self._apply_cursor_mode(CURSOR_MODE_SELECT)
+        self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
+
     def _begin_text_annotation_edit(self, uid: str) -> bool:
         if not self._can_begin_text_annotation_inline_edit():
             return False
@@ -1223,7 +1240,8 @@ class TakeoffPlanView(
         ann = self._current_annotations.get(uid)
         if item is None or ann is None:
             return False
-        self._editing_text_annotation_uid = uid
+        self._set_inline_text_edit_target(text_annotation_uid=uid)
+        self._enter_inline_text_edit_cursor_mode()
         self._begin_inline_text_edit_for_item(
             item,
             str(ann.properties.get("Text", "")),
@@ -1297,7 +1315,8 @@ class TakeoffPlanView(
         self._on_selection_changed()
         self.update_selection_visuals()
         self._show_text_toolbar_for_item(item, annotation_uid=uid)
-        self._editing_text_annotation_uid = uid
+        self._set_inline_text_edit_target(text_annotation_uid=uid)
+        self._enter_inline_text_edit_cursor_mode()
         self._begin_inline_text_edit_for_item(
             item,
             "",
@@ -1309,10 +1328,38 @@ class TakeoffPlanView(
     def _is_text_annotation_draft_uid(self, uid: str) -> bool:
         return bool(uid and uid == self._draft_text_annotation_uid)
 
+    def _clear_inline_text_edit_state(
+        self,
+        *,
+        item: Optional[QGraphicsTextItem] = None,
+        text_annotation_uid: Optional[str] = None,
+    ) -> None:
+        was_active = self.is_text_annotation_inline_edit_active()
+        if item is None:
+            item = self._active_inline_text_item()
+        if item is not None:
+            self._clear_inline_text_item_selection(item)
+            item.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+            item.clearFocus()
+        self._clear_inline_text_document()
+        self._set_inline_text_edit_target()
+        self._editing_text_original = ""
+        if (
+            text_annotation_uid is not None
+            and self._selected_text_annotation_uid == text_annotation_uid
+        ):
+            self._clear_text_toolbar_target()
+        self._update_cursor()
+        if was_active:
+            self.text_annotation_edit_mode_changed.emit(False)
+
     def _remove_text_annotation_draft(self) -> None:
         uid = self._draft_text_annotation_uid
         if uid is None:
             return
+        was_editing = self._editing_text_annotation_uid == uid
+        if was_editing:
+            self._clear_inline_text_edit_state(text_annotation_uid=uid)
         for item in self._uid_to_items.pop(uid, []):
             if item.scene() is self._scene:
                 self._scene.removeItem(item)
@@ -1397,6 +1444,9 @@ class TakeoffPlanView(
         uid = self._draft_named_view_uid
         if uid is None:
             return
+        was_editing = self._editing_named_view_uid == uid
+        if was_editing:
+            self._clear_inline_text_edit_state()
         for item in self._uid_to_items.pop(uid, []):
             if item.scene() is self._scene:
                 self._scene.removeItem(item)
@@ -1420,8 +1470,8 @@ class TakeoffPlanView(
             return False
         was_inactive = not self.is_text_annotation_inline_edit_active()
         self._clear_text_toolbar_target()
-        self._editing_named_view_uid = uid
-        self._editing_named_view_item = item
+        self._set_inline_text_edit_target(named_view_uid=uid, named_view_item=item)
+        self._enter_inline_text_edit_cursor_mode()
         self._begin_inline_text_edit_for_item(
             item,
             str(ann.properties.get("Text", "")),
@@ -1533,20 +1583,21 @@ class TakeoffPlanView(
                 if commit and ann is not None:
                     text = item.toPlainText()
                     if self._is_text_annotation_draft_uid(uid):
-                        if text.strip():
-                            try:
-                                self._persist_text_annotation(
-                                    uid,
-                                    item,
-                                    text_override=text,
-                                )
-                                draft_payload = (
-                                    list(ann.position),
-                                    ann.page_uid,
-                                    dict(ann.properties),
-                                )
-                            except Exception as exc:
-                                error = exc
+                        if not text.strip():
+                            return
+                        try:
+                            self._persist_text_annotation(
+                                uid,
+                                item,
+                                text_override=text,
+                            )
+                            draft_payload = (
+                                list(ann.position),
+                                ann.page_uid,
+                                dict(ann.properties),
+                            )
+                        except Exception as exc:
+                            error = exc
                     else:
                         try:
                             self._persist_text_annotation(
@@ -1558,16 +1609,10 @@ class TakeoffPlanView(
                             error = exc
                 elif not commit:
                     item.setPlainText(self._editing_text_original)
-                self._clear_inline_text_item_selection(item)
-                item.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-                item.clearFocus()
-            self._clear_inline_text_document()
-            self._editing_text_annotation_uid = None
-            self._editing_text_original = ""
-            if self._selected_text_annotation_uid == uid:
-                self._clear_text_toolbar_target()
-            self._update_cursor()
-            self.text_annotation_edit_mode_changed.emit(False)
+            self._clear_inline_text_edit_state(
+                item=item,
+                text_annotation_uid=uid,
+            )
         finally:
             self._finishing_text_annotation_edit = False
         if self._is_text_annotation_draft_uid(uid):
@@ -1593,13 +1638,8 @@ class TakeoffPlanView(
             and self._is_named_view_draft_uid(uid)
             and not pending_text_stripped
         ):
-            self._finishing_named_view_rename = True
-            try:
-                self._refresh_named_view_label_background(uid)
-                item.setFocus(Qt.FocusReason.OtherFocusReason)
-                return
-            finally:
-                self._finishing_named_view_rename = False
+            self._refresh_named_view_label_background(uid)
+            return
         if (
             commit
             and item is not None
@@ -1607,17 +1647,10 @@ class TakeoffPlanView(
             and pending_text_stripped
             and self._named_view_name_validator is not None
         ):
-            self._finishing_named_view_rename = True
-            try:
-                is_valid_name = self._named_view_name_validator(
-                    pending_text_stripped, uid
-                )
-                if not is_valid_name:
-                    self._refresh_named_view_label_background(uid)
-                    item.setFocus(Qt.FocusReason.OtherFocusReason)
-                    return
-            finally:
-                self._finishing_named_view_rename = False
+            is_valid_name = self._named_view_name_validator(pending_text_stripped, uid)
+            if not is_valid_name:
+                self._refresh_named_view_label_background(uid)
+                return
         draft_payload: Optional[Tuple[List[float], str, Dict[str, object]]] = None
         self._finishing_named_view_rename = True
         try:
@@ -1634,15 +1667,8 @@ class TakeoffPlanView(
                         self._persist_named_view_name(uid, pending_text_stripped)
                 elif not commit:
                     item.setPlainText(self._editing_text_original)
-                self._clear_inline_text_item_selection(item)
-                item.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-                item.clearFocus()
+            self._clear_inline_text_edit_state(item=item)
         finally:
-            self._clear_inline_text_document()
-            self._editing_named_view_uid = None
-            self._editing_named_view_item = None
-            self._editing_text_original = ""
-            self.text_annotation_edit_mode_changed.emit(False)
             self._finishing_named_view_rename = False
         if self._is_named_view_draft_uid(uid):
             self._remove_named_view_draft()
@@ -4847,6 +4873,8 @@ class TakeoffPlanView(
         saved_dimension_label_uid = self._selected_dimension_text_label_target()
         saved_condition_label_target = self._selected_condition_text_label_target()
         self._clear_text_selection()
+        self._remove_text_annotation_draft()
+        self._remove_named_view_draft()
         self.clear_selection_items()
         saved_selection = set(self._selected_uids)
         self._selected_uids.clear()
@@ -4867,6 +4895,9 @@ class TakeoffPlanView(
             items_to_remove.add(item)
         for item, _ in self._hotlink_items:
             items_to_remove.add(item)
+        active_inline_item = self._active_inline_text_item()
+        if active_inline_item in items_to_remove:
+            self._clear_inline_text_edit_state()
         for item in items_to_remove:
             if item.scene() is self._scene:
                 self._scene.removeItem(item)
@@ -5726,9 +5757,7 @@ class TakeoffPlanView(
         self._selected_text_annotation_uid = None
         self._selected_text_model_font_size = None
         self._selected_text_annotation_font_scale = 1.0
-        self._editing_text_annotation_uid = None
-        self._editing_named_view_uid = None
-        self._editing_named_view_item = None
+        self._set_inline_text_edit_target()
         self._finishing_named_view_rename = False
         self._draft_named_view_uid = None
         self._named_view_name_validator = None

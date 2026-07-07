@@ -881,7 +881,9 @@ class PlanViewActionHandler:
         font_color = spec.properties.get("FontColor")
         if isinstance(font_color, int):
             spec.color = int_color_to_hex(font_color)
-        self._insert_annotations_with_undo(bid_ref, [spec])
+        new_uids = self._insert_annotations_with_undo(bid_ref, [spec])
+        if new_uids:
+            self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_TEXT)
 
     def on_named_view_created(
         self, position: list, page_uid: str, properties: dict

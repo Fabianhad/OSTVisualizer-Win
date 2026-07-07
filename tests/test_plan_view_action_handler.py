@@ -1171,6 +1171,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(specs[0].color, "#996633")
         self.assertFalse(publish_database_refreshed_after_write)
         self.assertEqual(plan_view.selected, {"ann-1"})
+        self.assertEqual(plan_view.activated_annotations, ["text"])
         self.assertEqual(undo.count, 1)
 
     def test_non_navigation_annotation_placement_emits_only_annotation_refresh(self):
@@ -1355,8 +1356,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
 
     def test_empty_text_annotation_commit_is_not_written(self):
         ann_write = FakeAnnotationWriteService()
+        plan_view = FakePlanView()
         handler = PlanViewActionHandler(
-            plan_view=FakePlanView(),
+            plan_view=plan_view,
             ui_state_manager=FakeUiState(),
             project_data_svc=FakeProjectData(),
             project_write_svc=FakeWriteService(),
@@ -1373,6 +1375,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             {"Text": "   ", "FontColor": 0x336699},
         )
         self.assertEqual(ann_write.insert_calls, [])
+        self.assertEqual(plan_view.activated_annotations, [])
 
     def test_named_view_created_commits_non_empty_name_through_write_path(self):
         plan_view = FakePlanView()
@@ -1412,6 +1415,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(specs[0].color, "#008000")
         self.assertFalse(publish_database_refreshed_after_write)
         self.assertEqual(plan_view.selected, {"ann-1_namedview"})
+        self.assertEqual(plan_view.activated_annotations, ["namedview"])
         self.assertEqual(undo.count, 1)
         self.assertEqual(
             event_bus.events,
@@ -1435,7 +1439,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ],
         )
 
-    def test_named_view_write_failure_reports_warning_without_refresh(self):
+    def test_named_view_write_failure_does_not_refresh_or_reactivate_tool(self):
         plan_view = FakePlanView()
         ann_write = FakeAnnotationWriteService()
         ann_write.next_uids = []
@@ -1452,19 +1456,12 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             deferred_persistence_manager=FakeDeferredPersistence(),
             ui_access_manager=FakeAccess({Feature.PLACE_ANNOTATIONS}),
         )
-        with patch.object(handler_module, "show_warning") as warning:
-            handler.on_named_view_created(
-                [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
-                "p1",
-                {"Text": "Lobby View", "Color": "#008000"},
-            )
-        self.assertEqual(len(ann_write.insert_calls), 1)
-        warning.assert_called_once_with(
-            plan_view,
-            "Named View Not Created",
-            "The named view could not be saved. Check that the bid is writable "
-            "and the selected page still exists.",
+        handler.on_named_view_created(
+            [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0],
+            "p1",
+            {"Text": "Lobby View", "Color": "#008000"},
         )
+        self.assertEqual(len(ann_write.insert_calls), 1)
         self.assertEqual(event_bus.events, [])
         self.assertEqual(plan_view.activated_annotations, [])
         self.assertEqual(plan_view.selected, set())
@@ -1576,7 +1573,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ],
         )
 
-    def test_hotlink_write_failure_reports_warning_without_reactivating_tool(self):
+    def test_hotlink_write_failure_does_not_reactivate_tool(self):
         data = FakeProjectData()
         data.annotations = [
             BidAnnotation(
@@ -1614,15 +1611,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 return SimpleNamespace(create_new=False, named_view_uid="nv1")
 
         with patch.object(handler_module, "SelectNamedViewDialog", FakeDialog):
-            with patch.object(handler_module, "show_warning") as warning:
-                handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
+            handler.on_hotlink_placement_requested([9.0, 11.0], "p1")
         self.assertEqual(len(ann_write.insert_calls), 1)
-        warning.assert_called_once_with(
-            plan_view,
-            "Hotlink Not Created",
-            "The hotlink could not be saved. Check that the bid is writable "
-            "and the selected named view still exists.",
-        )
         self.assertEqual(plan_view.activated_annotations, [])
 
     def test_hotlink_create_new_switches_to_named_view_tool_without_write(self):

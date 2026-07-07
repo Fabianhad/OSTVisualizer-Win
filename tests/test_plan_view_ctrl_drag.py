@@ -1563,7 +1563,20 @@ class CtrlDragTests(unittest.TestCase):
         view._editing_named_view_item = ReentrantItem()
         view._clear_inline_text_item_selection = lambda _item: None
         view._clear_inline_text_document = lambda: None
+        view._set_inline_text_edit_target = lambda **_kwargs: setattr(
+            view, "_editing_named_view_uid", None
+        )
+        view._update_cursor = lambda: None
         view._is_named_view_draft_uid = lambda uid: uid == view._draft_named_view_uid
+
+        def clear_edit_state(item=None):
+            if item is not None:
+                item.setTextInteractionFlags(None)
+                item.clearFocus()
+            view._set_inline_text_edit_target()
+            view.text_annotation_edit_mode_changed.emit(False)
+
+        view._clear_inline_text_edit_state = clear_edit_state
 
         def remove_draft():
             view.removed_drafts += 1
@@ -1586,7 +1599,7 @@ class CtrlDragTests(unittest.TestCase):
             ],
         )
 
-    def test_duplicate_named_view_focus_restore_does_not_reenter_commit(self):
+    def test_duplicate_named_view_commit_keeps_draft_without_focus_restore(self):
         position = [13.0, 14.0, 1.0, 2.0, 13.0, 2.0, 1.0, 14.0, 0.0]
         view = SimpleNamespace()
         view._finishing_named_view_rename = False
@@ -1645,7 +1658,7 @@ class CtrlDragTests(unittest.TestCase):
         )
         TakeoffPlanView._finish_named_view_rename(view, True)
         self.assertEqual(validator_calls, [("Lobby", "draft")])
-        self.assertEqual(item.focus_restores, 1)
+        self.assertEqual(item.focus_restores, 0)
         self.assertEqual(view.named_view_created.emitted, [])
         self.assertEqual(view._editing_named_view_uid, "draft")
         self.assertEqual(view._draft_named_view_uid, "draft")

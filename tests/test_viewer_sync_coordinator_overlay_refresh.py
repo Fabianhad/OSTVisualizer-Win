@@ -4414,7 +4414,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(flushed, [])
         view.cleanup()
 
-    def test_empty_text_annotation_draft_commit_removes_item_without_create(self):
+    def test_empty_text_annotation_draft_commit_keeps_editor_active(self):
         view = self._make_plan_view()
         view._selection_enabled = True
         emitted = []
@@ -4431,9 +4431,44 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         item.setPlainText("   ")
         view._finish_text_annotation_edit(commit=True)
         self.assertEqual(emitted, [])
+        self.assertEqual(view._draft_text_annotation_uid, uid)
+        self.assertIn(uid, view._current_annotations)
+        self.assertTrue(view.is_text_annotation_inline_edit_active())
+        self.assertEqual(
+            item.textInteractionFlags(),
+            QtCore.Qt.TextInteractionFlag.TextEditorInteraction,
+        )
+        view._finish_text_annotation_edit(commit=False)
         self.assertIsNone(view._draft_text_annotation_uid)
         self.assertNotIn(uid, view._current_annotations)
         self.assertIsNone(view._text_annotation_item(uid))
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+        view.cleanup()
+
+    def test_full_overlay_refresh_removes_text_draft_and_releases_edit_mode(self):
+        view = self._make_plan_view()
+        page = Page(uid="page-1", name="Page 1", width_pts=100.0, height_pts=100.0)
+        bid_ref = BidRef(file_path="bid.mdb", bid_uid="bid-1")
+        view._current_page = page
+        view._current_bid_page_uid = page.uid
+        view._current_bid_ref = bid_ref
+        view._current_render_identity = view._build_render_identity(page, bid_ref)
+        view._selection_enabled = True
+        edit_states = []
+        view.text_annotation_edit_mode_changed.connect(edit_states.append)
+        self.assertTrue(
+            view.begin_text_annotation_draft([100.0, 100.0, 80.0, 24.0], page.uid)
+        )
+        uid = view._draft_text_annotation_uid
+        item = view._text_annotation_item(uid)
+        self.assertTrue(view.is_text_annotation_inline_edit_active())
+        view._refresh_overlays(page, [], {}, {}, [], {}, bid_ref)
+        self.assertIsNone(view._draft_text_annotation_uid)
+        self.assertIsNone(view._editing_text_annotation_uid)
+        self.assertNotIn(uid, view._current_annotations)
+        self.assertIsNone(item.scene())
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+        self.assertEqual(edit_states, [True, False])
         view.cleanup()
 
     def test_non_empty_text_annotation_draft_commit_emits_create_once(self):
@@ -5982,6 +6017,50 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(view._selected_uids, set())
         self.assertIn("selection", calls)
 
+    def test_annotation_delete_full_refresh_releases_active_text_edit(self):
+        view = self._make_plan_view()
+        page = Page(uid="page-1", name="Page 1", width_pts=100.0, height_pts=100.0)
+        bid_ref = BidRef(file_path="bid.mdb", bid_uid="bid-1")
+        annotation, item = self._add_text_annotation(
+            view,
+            uid="ann-1",
+            text="old",
+            page_uid=page.uid,
+            position=[20.0, 20.0, 80.0, 24.0],
+        )
+        view._current_page = page
+        view._current_bid_page_uid = page.uid
+        view._current_bid_ref = bid_ref
+        view._current_render_identity = view._build_render_identity(page, bid_ref)
+        view._current_takeoffs = {}
+        view._current_conditions = {}
+        view._current_color_map = {}
+        view._current_page_area_selections = {}
+        view._ann_db_uid_map = {}
+        view._takeoff_items = [item]
+        view._selected_uids = {annotation.uid}
+        edit_states = []
+        view.text_annotation_edit_mode_changed.connect(edit_states.append)
+        self.assertTrue(view._begin_text_annotation_edit(annotation.uid))
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[],
+            conditions={},
+            color_map={},
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_annotation_uids=[annotation.uid],
+            changed_annotation_types=[ANNOTATION_TYPE_TEXT],
+        )
+        self.assertTrue(refreshed)
+        self.assertIsNone(item.scene())
+        self.assertIsNone(view._editing_text_annotation_uid)
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+        self.assertEqual(edit_states, [True, False])
+        view.cleanup()
+
     def test_hotlink_annotation_update_replaces_hotlink_target(self):
         renderer = RecordingPathTakeoffRenderer()
         view, page, bid_ref, _calls = self._make_incremental_refresh_view(renderer)
@@ -6030,53 +6109,6 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertTrue(refreshed)
         self.assertEqual(renderer.calls, [])
         self.assertIn("refresh_overlays", calls)
-
-    def test_active_inline_annotation_target_uses_full_refresh(self):
-        def editing_text(view):
-            view._editing_text_annotation_uid = "ann-1"
-
-        def draft_text(view):
-            view._draft_text_annotation_uid = "ann-1"
-
-        def editing_named_view(view):
-            view._editing_named_view_uid = "ann-1"
-
-        def draft_named_view(view):
-            view._draft_named_view_uid = "ann-1"
-
-        editing_states = [
-            ("editing text annotation", editing_text),
-            ("draft text annotation", draft_text),
-            ("editing named view", editing_named_view),
-            ("draft named view", draft_named_view),
-        ]
-        for label, mark_active in editing_states:
-            with self.subTest(label=label):
-                renderer = RecordingPathTakeoffRenderer()
-                view, page, bid_ref, calls = self._make_incremental_refresh_view(
-                    renderer
-                )
-                old_item = self._install_annotation_item(
-                    view, self._text_annotation(text="old")
-                )
-                mark_active(view)
-                view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
-                refreshed = view.refresh_current_page_overlays(
-                    page=page,
-                    takeoffs=[view._current_takeoffs["1"]],
-                    conditions=view._current_conditions,
-                    color_map=view._current_color_map,
-                    bid_ref=bid_ref,
-                    annotations=[self._text_annotation(text="new")],
-                    page_area_selections={},
-                    hidden_layer_uids=set(),
-                    changed_annotation_uids=["ann-1"],
-                    changed_annotation_types=[ANNOTATION_TYPE_TEXT],
-                )
-                self.assertTrue(refreshed)
-                self.assertIs(old_item.scene(), view._scene)
-                self.assertEqual(renderer.calls, [])
-                self.assertIn("refresh_overlays", calls)
 
     def test_annotation_change_with_hidden_layer_mismatch_uses_full_refresh(self):
         renderer = RecordingPathTakeoffRenderer()
