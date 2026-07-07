@@ -36,6 +36,7 @@ from ..config import (
 from ..managers.context_menu_manager import ContextMenuManager
 from .annotation_style_controls import apply_annotation_tool_icon_color
 from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_CONTEXT_ACTIONS
+from .compact_context_menu import populate_compact_context_menu
 from .condition_icon import make_condition_color_icon
 from .overlay_context_menu import add_overlay_submenu_with_select
 from .takeoff_condition_compatibility import (
@@ -351,8 +352,11 @@ def add_reassign_condition_submenu(
     if not ordered:
         return ReassignConditionSubmenu(submenu, actions)
     menu.addMenu(submenu)
-    for condition in ordered:
-        action = submenu.addAction(_condition_menu_label(condition))
+
+    def _add_condition_action(
+        target_menu: QtWidgets.QMenu, condition: Condition
+    ) -> QtGui.QAction:
+        action = target_menu.addAction(_condition_menu_label(condition))
         action.setIcon(
             make_condition_color_icon(
                 condition.color_fill,
@@ -361,6 +365,9 @@ def add_reassign_condition_submenu(
             )
         )
         actions[action] = condition.uid
+        return action
+
+    populate_compact_context_menu(submenu, ordered, _add_condition_action)
     return ReassignConditionSubmenu(submenu, actions)
 
 

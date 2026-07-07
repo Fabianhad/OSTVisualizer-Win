@@ -12,9 +12,11 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.area import BidArea
+from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
@@ -32,13 +34,18 @@ from ost_visualizer.presentation.handlers.condition_action_handler import (
 )
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.utils.compact_context_menu import (
+    COMPACT_CONTEXT_MENU_MAX_VISIBLE_ROWS,
+    COMPACT_CONTEXT_MENU_NEXT_TEXT,
+    COMPACT_CONTEXT_MENU_PREVIOUS_TEXT,
+)
 from ost_visualizer.presentation.utils.view_context_menu import (
     build_selected_takeoff_context_state,
 )
 from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
     TakeoffRenderer,
 )
-from tests.single_action import SingleCallRecorder
+from single_action import SingleCallRecorder
 
 
 def _app():
@@ -142,6 +149,78 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             self._path_midpoint(second_item), normal_angle
         )
         return abs(second_projection - first_projection)
+
+    def test_condition_assignment_context_submenus_use_compact_overflow_menus(self):
+        sidebar = ConditionsSidebar(None)
+        try:
+            sidebar._conditions = {
+                "c1": Condition(
+                    uid="c1",
+                    layer_uid="layer-10",
+                    cdn_type_uid="type-10",
+                )
+            }
+            sidebar.set_available_layers(
+                [
+                    BidLayer(
+                        uid=f"layer-{index}",
+                        bid_uid="bid",
+                        name=f"Layer {index:02d}",
+                        show=True,
+                        sequence=index,
+                    )
+                    for index in range(1, 81)
+                ]
+            )
+            sidebar.set_available_condition_types(
+                [
+                    CdnType(uid=f"type-{index}", name=f"Type {index:02d}")
+                    for index in range(1, 81)
+                ]
+            )
+            menu = QtWidgets.QMenu()
+            try:
+                sidebar._add_condition_assignment_submenus(menu, ["c1"], True)
+                submenus = [action.menu() for action in menu.actions()]
+                self.assertEqual(
+                    [submenu.title() for submenu in submenus],
+                    ["Set Layer", "Set Type"],
+                )
+                for submenu in submenus:
+                    with self.subTest(submenu=submenu.title()):
+                        self.assertTrue(submenu.property("ost_compact_overflow_menu"))
+                        self.assertEqual(
+                            submenu.property("ost_compact_overflow_max_visible_rows"),
+                            COMPACT_CONTEXT_MENU_MAX_VISIBLE_ROWS,
+                        )
+                        self.assertEqual(
+                            submenu.property("ost_compact_overflow_item_count"), 80
+                        )
+                        self.assertEqual(
+                            len(submenu.actions()),
+                            COMPACT_CONTEXT_MENU_MAX_VISIBLE_ROWS,
+                        )
+                        self.assertEqual(
+                            submenu.actions()[-1].text(),
+                            COMPACT_CONTEXT_MENU_NEXT_TEXT,
+                        )
+                        checked = [
+                            action.data()
+                            for action in submenu.actions()
+                            if action.isChecked()
+                        ]
+                        self.assertEqual(len(checked), 1)
+                        self.assertTrue(str(checked[0]).endswith("-10"))
+                        submenu.actions()[-1].defaultWidget().click()
+                        self.app.processEvents()
+                        self.assertEqual(
+                            submenu.actions()[0].text(),
+                            COMPACT_CONTEXT_MENU_PREVIOUS_TEXT,
+                        )
+            finally:
+                menu.deleteLater()
+        finally:
+            sidebar.deleteLater()
 
     def _point_projection(self, point, angle):
         return point[0] * math.cos(angle) + point[1] * math.sin(angle)

@@ -11,6 +11,7 @@ from ..config import COMPACT_SPACING, NO_MARGINS
 from ..managers.context_menu_manager import ContextMenuManager
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
+from ..utils.compact_context_menu import populate_compact_context_menu
 from ..utils.condition_icon import make_condition_color_icon
 from ..utils.condition_tree_style import (
     apply_condition_tree_style,
@@ -1075,11 +1076,13 @@ class ConditionsSidebar(QtWidgets.QWidget):
         checked_uid: Optional[str],
         callback,
     ) -> None:
-        submenu = menu.addMenu(title)
+        submenu = QtWidgets.QMenu(title, menu)
+        menu.addMenu(submenu)
         submenu.setEnabled(enabled and bool(condition_uids) and bool(items))
-        for item in items:
+
+        def _add_assignment_action(target_menu: QtWidgets.QMenu, item) -> QtGui.QAction:
             action = self._add_context_action(
-                submenu,
+                target_menu,
                 item.name,
                 lambda uid=item.uid: callback(condition_uids, uid),
                 enabled,
@@ -1087,6 +1090,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
                 checked=str(item.uid) == str(checked_uid),
             )
             action.setData(item.uid)
+            return action
+
+        populate_compact_context_menu(submenu, items, _add_assignment_action)
 
     def _request_condition_layer_change(
         self, condition_uids: List[str], layer_uid: str

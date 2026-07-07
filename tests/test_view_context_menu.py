@@ -7,6 +7,11 @@ from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.managers.icon_manager import IconManager, IconId
+from ost_visualizer.presentation.utils.compact_context_menu import (
+    COMPACT_CONTEXT_MENU_MAX_VISIBLE_ROWS,
+    COMPACT_CONTEXT_MENU_NEXT_TEXT,
+    COMPACT_CONTEXT_MENU_PREVIOUS_TEXT,
+)
 from ost_visualizer.presentation.utils.annotation_defaults import (
     get_annotation_style_for_tool,
     set_annotation_style_for_tool,
@@ -90,6 +95,77 @@ class ViewContextMenuTests(unittest.TestCase):
                     not action.icon().isNull()
                     for action in reassign_menu.submenu.actions()
                 )
+            )
+        finally:
+            menu.deleteLater()
+
+    def test_reassign_condition_submenu_uses_compact_overflow_menu(self):
+        menu = QtWidgets.QMenu()
+        try:
+            conditions = {
+                str(index): Condition(
+                    uid=str(index),
+                    name=f"Condition {index}",
+                    ref_no=index,
+                    condition_type=Condition.TYPE_LINEAR,
+                )
+                for index in range(1, 81)
+            }
+            reassign_menu = add_reassign_condition_submenu(
+                menu, conditions, Condition.TYPE_LINEAR
+            )
+            submenu = reassign_menu.submenu
+            self.assertTrue(submenu.property("ost_compact_overflow_menu"))
+            self.assertEqual(
+                submenu.property("ost_compact_overflow_max_visible_rows"),
+                COMPACT_CONTEXT_MENU_MAX_VISIBLE_ROWS,
+            )
+            self.assertEqual(submenu.property("ost_compact_overflow_item_count"), 80)
+            self.assertEqual(
+                len(submenu.actions()), COMPACT_CONTEXT_MENU_MAX_VISIBLE_ROWS
+            )
+            self.assertEqual(reassign_menu.actions[submenu.actions()[0]], "1")
+            self.assertEqual(
+                submenu.actions()[-1].text(), COMPACT_CONTEXT_MENU_NEXT_TEXT
+            )
+            submenu.actions()[-1].defaultWidget().click()
+            self.app.processEvents()
+            self.assertEqual(
+                submenu.actions()[0].text(), COMPACT_CONTEXT_MENU_PREVIOUS_TEXT
+            )
+            self.assertEqual(
+                submenu.actions()[-1].text(), COMPACT_CONTEXT_MENU_NEXT_TEXT
+            )
+            self.assertEqual(reassign_menu.actions[submenu.actions()[1]], "22")
+        finally:
+            menu.deleteLater()
+
+    def test_reassign_condition_submenu_sizes_naturally_when_under_limit(self):
+        menu = QtWidgets.QMenu()
+        try:
+            reassign_menu = add_reassign_condition_submenu(
+                menu,
+                {
+                    "1": Condition(
+                        uid="1",
+                        name="First",
+                        ref_no=1,
+                        condition_type=Condition.TYPE_LINEAR,
+                    ),
+                    "2": Condition(
+                        uid="2",
+                        name="Second",
+                        ref_no=2,
+                        condition_type=Condition.TYPE_LINEAR,
+                    ),
+                },
+                Condition.TYPE_LINEAR,
+            )
+            submenu = reassign_menu.submenu
+            self.assertTrue(submenu.property("ost_compact_overflow_menu"))
+            self.assertEqual(
+                [action.text() for action in submenu.actions()],
+                ["1 - First", "2 - Second"],
             )
         finally:
             menu.deleteLater()
