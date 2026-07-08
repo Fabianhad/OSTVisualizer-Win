@@ -5,6 +5,7 @@ import sys
 from dataclasses import dataclass
 from string import Formatter
 from typing import Any, Callable, Optional, Union, get_args, get_origin
+from .output_artifacts import McpOutputFormatter
 
 
 @dataclass(frozen=True)
@@ -25,8 +26,13 @@ class _ResourceHandler:
 
 
 class OstMcpServer:
-    def __init__(self, name: str = "ost-visualizer"):
+    def __init__(
+        self,
+        name: str = "ost-visualizer",
+        output_formatter: Optional[McpOutputFormatter] = None,
+    ):
         self.name = name
+        self._output_formatter = output_formatter
         self._tools: dict[str, _Handler] = {}
         self._prompts: dict[str, _Handler] = {}
         self._resources: dict[str, _ResourceHandler] = {}
@@ -187,14 +193,15 @@ class OstMcpServer:
         if handler is None:
             raise KeyError(f"Unknown tool: {name}")
         result = _invoke(handler.fn, arguments)
+        formatted = self._format_result(f"tool-{name}", result)
         return {
             "content": [
                 {
                     "type": "text",
-                    "text": json.dumps(result, ensure_ascii=False),
+                    "text": formatted.text,
                 }
             ],
-            "structuredContent": result,
+            "structuredContent": formatted.structured_content,
             "isError": _is_error_result(result),
         }
 
@@ -219,16 +226,32 @@ class OstMcpServer:
             if match is None:
                 continue
             result = handler.fn(**match)
+            formatted = self._format_result(f"resource-{handler.name}", result)
             return {
                 "contents": [
                     {
                         "uri": uri,
                         "mimeType": handler.mime_type,
-                        "text": json.dumps(result, ensure_ascii=False),
+                        "text": json.dumps(
+                            formatted.structured_content,
+                            ensure_ascii=False,
+                        ),
                     }
                 ]
             }
         raise KeyError(f"Unknown resource: {uri}")
+
+    def _format_result(self, label: str, result: Any):
+        if self._output_formatter is None:
+            text = json.dumps(result, ensure_ascii=False)
+            return _InlineFormattedOutput(text=text, structured_content=result)
+        return self._output_formatter.format_result(label, result)
+
+
+@dataclass(frozen=True)
+class _InlineFormattedOutput:
+    text: str
+    structured_content: Any
 
 
 def _invoke(fn: Callable, arguments: dict) -> Any:

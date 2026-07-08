@@ -37,6 +37,7 @@ from ..infrastructure.persistence.repositories.file_project_repository import (
 )
 from .bridge_client import McpBridgeClient
 from .internal_server import OstMcpServer
+from .output_artifacts import McpOutputFormatter
 from .registry import DatabaseRegistry
 from .serializers import error, ok, to_jsonable
 
@@ -70,7 +71,10 @@ def build_mcp_server(
 ) -> OstMcpServer:
     log = logger or LOGGER
     read_service = create_read_service(registry, log)
-    mcp = OstMcpServer(name)
+    mcp = OstMcpServer(
+        name,
+        output_formatter=McpOutputFormatter(registry.output_artifacts_dir),
+    )
 
     def run_read(fn, *args, **call_options) -> dict:
         try:

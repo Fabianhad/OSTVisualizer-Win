@@ -55,7 +55,6 @@ from .geometry_utils import polygon_is_valid, polyline_self_intersects
 from .handle_style import apply_takeoff_handle_style
 from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
 from ....modes.cursor import CURSOR_MODE_ANNOTATION_PLACE, CURSOR_MODE_SELECT
-
 logger = logging.getLogger(__name__)
 PDF_INTELLIGENCE_SOURCE_MAIN = "main"
 PDF_INTELLIGENCE_SOURCE_OVERLAY = "overlay"
@@ -70,15 +69,11 @@ _DRAG_ANNOTATION_TYPES = (
     - _POINT_ANNOTATION_TYPES
 )
 _TEXT_SELECTION_OUTLINE_COLOR = QColor(128, 128, 128)
-
-
 class AreaPlacementEndpoint(NamedTuple):
     final_x: float
     final_y: float
     right_angle_candidate_active: bool
     right_angle_indicator_active: bool
-
-
 class PlacementModeMixin:
     def _snap_angle(
         self, origin_x: float, origin_y: float, target_x: float, target_y: float
@@ -101,7 +96,6 @@ class PlacementModeMixin:
         return origin_x + length * math.cos(snapped), origin_y + length * math.sin(
             snapped
         )
-
     def _right_angle_target_from_first_point(
         self, target_x: float, target_y: float
     ) -> tuple[float, float, bool]:
@@ -122,7 +116,6 @@ class PlacementModeMixin:
         if snap_y:
             target_y = first_y
         return target_x, target_y, snap_x or snap_y
-
     def _is_right_angle_aligned_to_first_point(
         self, target_x: float, target_y: float
     ) -> bool:
@@ -133,7 +126,6 @@ class PlacementModeMixin:
             abs(target_x - first_x) <= _RIGHT_ANGLE_ALIGNMENT_TOLERANCE
             or abs(target_y - first_y) <= _RIGHT_ANGLE_ALIGNMENT_TOLERANCE
         )
-
     def _area_final_endpoint_for_placement(
         self,
         origin_x: float,
@@ -161,15 +153,12 @@ class PlacementModeMixin:
             right_angle_candidate_active=right_angle_candidate_active,
             right_angle_indicator_active=right_angle_indicator_active,
         )
-
     def _rectangle_position_from_corners(
         self, x1: float, y1: float, x2: float, y2: float
     ) -> list[float]:
         return [x1, y1, x2, y1, x2, y2, x1, y2]
-
     def _points_from_position(self, position: list[float]) -> list[tuple[float, float]]:
         return [(position[i], position[i + 1]) for i in range(0, len(position) - 1, 2)]
-
     def _snap_angle_for_placement(
         self,
         origin_x: float,
@@ -187,7 +176,6 @@ class PlacementModeMixin:
             snapped_x,
             snapped_y,
         )
-
     def _snap_placement_distance(
         self,
         origin_x: float,
@@ -208,11 +196,9 @@ class PlacementModeMixin:
             return origin_x, origin_y
         scale = snapped_length / length
         return origin_x + dx * scale, origin_y + dy * scale
-
     def _invalidate_snap_index(self) -> None:
         self._takeoff_snap_index_dirty = True
         self._pdf_snap_index_dirty = True
-
     def _pdf_snap_available_for_current_page(self) -> bool:
         page = self._current_page
         return bool(
@@ -220,7 +206,6 @@ class PlacementModeMixin:
             and self._current_bid_page_uid == page.uid
             and self._load_geometry_ready
         )
-
     def _pdf_intelligence_source(self):
         page = self._current_page
         if not page or not page.layer_visible:
@@ -239,7 +224,6 @@ class PlacementModeMixin:
                 int(page.page_index or 0),
             )
         return None
-
     def _pdf_snap_cache_key(self):
         source = self._pdf_intelligence_source()
         if source is None:
@@ -264,7 +248,6 @@ class PlacementModeMixin:
             float(page.deskew_rotation_overlay),
             float(ratio),
         )
-
     def _pdf_raw_point_to_page_point(
         self,
         x: float,
@@ -281,7 +264,6 @@ class PlacementModeMixin:
         if rotation == 270:
             return raw_height_pts - y, raw_width_pts - x
         return x, raw_height_pts - y
-
     def _pdf_intelligence_point_to_page_point(
         self,
         source_layer: str,
@@ -313,10 +295,8 @@ class PlacementModeMixin:
             rect_x + scaled_x * cos_a - scaled_y * sin_a,
             rect_y + scaled_x * sin_a + scaled_y * cos_a,
         )
-
     def _build_takeoff_snap_segments(self) -> list:
         segments = []
-
         def add_polygon_segments(points: list[tuple[float, float]]) -> None:
             if len(points) < 2:
                 return
@@ -326,7 +306,6 @@ class PlacementModeMixin:
                 if math.hypot(x2 - x1, y2 - y1) < 1e-9:
                     continue
                 segments.append((float(x1), float(y1), float(x2), float(y2)))
-
         def add_linear_border_segments(
             x1: float,
             y1: float,
@@ -349,7 +328,6 @@ class PlacementModeMixin:
             oy = ny * half_thickness
             segments.append((x1 + ox, y1 + oy, x2 + ox, y2 + oy))
             segments.append((x1 - ox, y1 - oy, x2 - ox, y2 - oy))
-
         def add_count_border_segments(takeoff, condition) -> None:
             if len(takeoff.position) < 2:
                 return
@@ -374,7 +352,6 @@ class PlacementModeMixin:
                 takeoff.rotation,
             )
             add_polygon_segments(points)
-
         for takeoff in self._current_takeoffs.values():
             condition = self._current_conditions.get(takeoff.condition_uid)
             if not condition or not condition.layer_visible:
@@ -409,7 +386,6 @@ class PlacementModeMixin:
             ):
                 add_count_border_segments(takeoff, condition)
         return segments
-
     def _build_pdf_snap_segments(self) -> list:
         if not self._pdf_snap_available_for_current_page():
             return []
@@ -511,7 +487,6 @@ class PlacementModeMixin:
         finally:
             with pdfium_lock:
                 renderer.close()
-
     def _ensure_takeoff_snap_index(self) -> SnapIndex:
         if self._takeoff_snap_index is None:
             self._takeoff_snap_index = SnapIndex()
@@ -519,7 +494,6 @@ class PlacementModeMixin:
             self._takeoff_snap_index.build(self._build_takeoff_snap_segments())
             self._takeoff_snap_index_dirty = False
         return self._takeoff_snap_index
-
     def _ensure_pdf_snap_index(self) -> SnapIndex:
         if self._pdf_snap_index is None:
             self._pdf_snap_index = SnapIndex()
@@ -527,12 +501,10 @@ class PlacementModeMixin:
             self._pdf_snap_index.build(self._build_pdf_snap_segments())
             self._pdf_snap_index_dirty = False
         return self._pdf_snap_index
-
     def _request_place_preview_repaint(self) -> None:
         viewport = self.viewport()
         if viewport is not None:
             viewport.update()
-
     def refresh_place_preview_after_view_change(self) -> None:
         if self._last_mouse_vp_pos is not None and self._place_preview_items:
             if self._cursor_mode == CURSOR_MODE_ANNOTATION_PLACE:
@@ -542,7 +514,6 @@ class PlacementModeMixin:
             else:
                 self.update_place_preview(self.mapToScene(self._last_mouse_vp_pos))
         self._request_place_preview_repaint()
-
     def _should_update_place_preview(self, cond_type: int) -> bool:
         if cond_type in (
             Condition.TYPE_AREA,
@@ -553,7 +524,6 @@ class PlacementModeMixin:
         if cond_type == Condition.TYPE_LINEAR:
             return self._place_linear_dragging or not self._place_points
         return False
-
     def _screen_px_to_ost_radius(self, threshold_px: float) -> float:
         origin = self.mapToScene(QtCore.QPoint(0, 0))
         offset = self.mapToScene(QtCore.QPoint(int(threshold_px), 0))
@@ -563,7 +533,6 @@ class PlacementModeMixin:
             ost_offset.x() - ost_origin.x(),
             ost_offset.y() - ost_origin.y(),
         )
-
     def _query_takeoff_snap(
         self, ost_x: float, ost_y: float, threshold_px: int
     ) -> tuple | None:
@@ -574,7 +543,6 @@ class PlacementModeMixin:
             float(ost_y),
             float(self._screen_px_to_ost_radius(float(threshold_px))),
         )
-
     def _query_pdf_line_snap(
         self, ost_x: float, ost_y: float, threshold_px: int
     ) -> tuple | None:
@@ -589,7 +557,6 @@ class PlacementModeMixin:
             float(ost_y),
             float(self._screen_px_to_ost_radius(float(threshold_px))),
         )
-
     def _grid_snap_from_cursor(
         self, cursor_scene: QtCore.QPointF, cursor_ost: QtCore.QPointF
     ) -> tuple[float, float] | None:
@@ -612,7 +579,6 @@ class PlacementModeMixin:
         if dist_px > threshold_px:
             return None
         return ost_x, ost_y
-
     def _placement_snap_from_scene(self, cursor_scene: QtCore.QPointF):
         cs = self._scene_builder.get_coordinate_system()
         ost_factor = cs.scale_ratio / (72.0 * cs.view_scale)
@@ -645,10 +611,8 @@ class PlacementModeMixin:
         ost_x = float(cursor_ost.x())
         ost_y = float(cursor_ost.y())
         return ost_x, ost_y, ost_x * inv_factor, ost_y * inv_factor, NONE
-
     def _is_line_snap(self, snap_kind: int) -> bool:
         return snap_kind in (ENDPOINT, MIDPOINT, PERPENDICULAR)
-
     def _add_place_handle(self, x: float, y: float, half: float = 4.0) -> None:
         marker = QGraphicsRectItem(-half, -half, half * 2, half * 2)
         background_color = self._current_handle_background_color()
@@ -658,11 +622,9 @@ class PlacementModeMixin:
         marker.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
         self._scene.addItem(marker)
         self._place_preview_items.append(marker)
-
     def _add_snap_cursor_marker(self, x: float, y: float, snap_kind: int) -> None:
         if self._is_line_snap(snap_kind):
             self._add_place_handle(x, y)
-
     def _add_preview_item(self, item, page_transform=None, target_list=None) -> None:
         if page_transform is not None:
             item.setTransform(page_transform)
@@ -670,7 +632,6 @@ class PlacementModeMixin:
         (target_list if target_list is not None else self._place_preview_items).append(
             item
         )
-
     def _add_dashed_path_preview(
         self,
         path: QPainterPath,
@@ -690,7 +651,6 @@ class PlacementModeMixin:
         item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         item.setZValue(z_value)
         self._add_preview_item(item, page_transform, target_list)
-
     def clear_place_preview(self) -> None:
         if not self._place_preview_items and not self._backout_orig_parent_path:
             self._place_flashing = False
@@ -709,7 +669,6 @@ class PlacementModeMixin:
             except (TypeError, RuntimeError):
                 pass
         self._place_preview_items.clear()
-
     def _enter_annotation_place_mode(self, annotation_type: str) -> bool:
         if annotation_type not in PLACEABLE_ANNOTATION_TYPES:
             return False
@@ -723,7 +682,6 @@ class PlacementModeMixin:
         self._annotation_place_dragging = False
         self._annotation_area_rect_dragging = False
         return True
-
     def _exit_annotation_place_mode(self) -> None:
         self.clear_place_preview()
         if self._annotation_place_type in _AREA_ANNOTATION_TYPES:
@@ -733,7 +691,6 @@ class PlacementModeMixin:
         self._annotation_place_points = []
         self._annotation_place_dragging = False
         self._annotation_area_rect_dragging = False
-
     def _drag_annotation_placement_position(
         self, cursor_scene: QtCore.QPointF
     ) -> tuple[list, int]:
@@ -750,7 +707,6 @@ class PlacementModeMixin:
         else:
             x2, y2 = ost_x, ost_y
         return [x1, y1, x2, y2], snap_kind
-
     def _text_position_from_drag_corners(self, position: list) -> list:
         x1, y1, x2, y2 = position[:4]
         return [
@@ -759,11 +715,9 @@ class PlacementModeMixin:
             abs(x2 - x1),
             abs(y2 - y1),
         ]
-
     def _annotation_preview_style(self) -> tuple[QColor, float]:
         color_hex, width = annotation_default_style(self._annotation_place_type)
         return QColor(color_hex), width
-
     def _add_linear_annotation_preview(
         self,
         annotation_type: str,
@@ -792,7 +746,6 @@ class PlacementModeMixin:
             path.lineTo(x2, y2)
             path.lineTo(right_x, right_y)
         self._add_annotation_path_preview(path, color, width, page_transform)
-
     def _add_box_annotation_preview(
         self,
         annotation_type: str,
@@ -845,7 +798,6 @@ class PlacementModeMixin:
             self._add_preview_item(item, page_transform)
             return
         self._add_annotation_path_preview(path, color, width, page_transform)
-
     def _add_area_annotation_preview(
         self,
         annotation_type: str,
@@ -881,7 +833,6 @@ class PlacementModeMixin:
         self._add_annotation_path_preview(path, color, width, page_transform)
         for hx, hy in scene_points:
             self._add_place_handle(hx, hy)
-
     def _add_ink_annotation_preview(
         self,
         points: list[tuple[float, float]],
@@ -901,7 +852,6 @@ class PlacementModeMixin:
         for i in range(2, len(flat_scene) - 1, 2):
             path.lineTo(flat_scene[i], flat_scene[i + 1])
         self._add_annotation_path_preview(path, color, width, page_transform)
-
     def _add_annotation_path_preview(
         self, path: QPainterPath, color: QColor, width: float, page_transform
     ) -> None:
@@ -916,7 +866,6 @@ class PlacementModeMixin:
         item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         item.setZValue(15)
         self._add_preview_item(item, page_transform)
-
     def update_annotation_place_preview(self, cursor_scene: QtCore.QPointF) -> None:
         self.clear_place_preview()
         if self._annotation_place_type not in PLACEABLE_ANNOTATION_TYPES:
@@ -1005,7 +954,6 @@ class PlacementModeMixin:
                 annotation_type, points, color, width, page_transform
             )
         self._request_place_preview_repaint()
-
     def handle_annotation_place_press(self, event) -> bool:
         if self._annotation_place_type not in PLACEABLE_ANNOTATION_TYPES:
             return False
@@ -1084,7 +1032,6 @@ class PlacementModeMixin:
         self.update_annotation_place_preview(scene_pos)
         event.accept()
         return True
-
     def handle_annotation_place_release(self, event) -> bool:
         if self._point_annotation_release_pending:
             self._point_annotation_release_pending = False
@@ -1143,7 +1090,6 @@ class PlacementModeMixin:
         self.update_annotation_place_preview(scene_pos)
         event.accept()
         return True
-
     def _is_annotation_close_to_first(self, scene_pos: QtCore.QPointF) -> bool:
         if len(self._annotation_place_points) < 3:
             return False
@@ -1154,13 +1100,11 @@ class PlacementModeMixin:
         dx = current_vp.x() - first_vp.x()
         dy = current_vp.y() - first_vp.y()
         return math.hypot(dx, dy) <= 12.0
-
     def _ink_annotation_point_from_scene(
         self, scene_pos: QtCore.QPointF
     ) -> tuple[float, float]:
         point = self._scene_pos_to_ost(scene_pos)
         return float(point.x()), float(point.y())
-
     def _append_ink_annotation_point(self, scene_pos: QtCore.QPointF) -> None:
         point = self._ink_annotation_point_from_scene(scene_pos)
         if not self._annotation_place_points:
@@ -1169,7 +1113,6 @@ class PlacementModeMixin:
         last_x, last_y = self._annotation_place_points[-1]
         if math.hypot(point[0] - last_x, point[1] - last_y) > 1e-9:
             self._annotation_place_points.append(point)
-
     def _commit_annotation_placement(
         self, annotation_type: str, position: list
     ) -> bool:
@@ -1224,7 +1167,6 @@ class PlacementModeMixin:
             return bool(self.begin_named_view_draft(position, page_uid))
         self.annotation_created.emit(annotation_type, position, page_uid)
         return True
-
     def _flash_invalid_preview(self, condition_color: QColor) -> None:
         if self._place_flashing:
             return
@@ -1246,7 +1188,6 @@ class PlacementModeMixin:
         fill_item.setBrush(QBrush(condition_color))
         weak_self = weakref.ref(self)
         weak_item = weakref.ref(fill_item)
-
         def _restore() -> None:
             view = weak_self()
             item = weak_item()
@@ -1257,9 +1198,7 @@ class PlacementModeMixin:
             item.setPen(QPen(red))
             item.setBrush(QBrush(red))
             view._place_flashing = False
-
         QtCore.QTimer.singleShot(220, _restore)
-
     def _condition_preview_color_and_opacity(
         self, condition_uid: str, condition: Condition, default_opacity: float = 1.0
     ) -> tuple[str, float]:
@@ -1272,7 +1211,6 @@ class PlacementModeMixin:
             else "#808080"
         )
         return color_hex, default_opacity
-
     def update_place_preview(self, cursor_scene: QtCore.QPointF) -> None:
         self.clear_place_preview()
         cs = self._scene_builder.get_coordinate_system()
@@ -1462,7 +1400,6 @@ class PlacementModeMixin:
         elif cond_type in (Condition.TYPE_COUNT, Condition.TYPE_ATTACHMENT):
             self._add_snap_cursor_marker(cx, cy, snap_kind)
             self._request_place_preview_repaint()
-
     def handle_place_press(self, event) -> None:
         if self._place_flashing:
             event.accept()
@@ -1572,7 +1509,6 @@ class PlacementModeMixin:
                         self._place_points.append((ost_x, ost_y))
                         self.update_place_preview(scene_pos)
         event.accept()
-
     def handle_place_release_area(self, event) -> bool:
         condition = self._current_conditions.get(
             self._backout_active_uid or self._place_session_uid
@@ -1632,7 +1568,6 @@ class PlacementModeMixin:
             self.update_place_preview(scene_pos)
         event.accept()
         return True
-
     def handle_place_release_linear(self, event) -> bool:
         condition = self._current_conditions.get(self._place_session_uid)
         if not (
@@ -1673,7 +1608,6 @@ class PlacementModeMixin:
                 )
         event.accept()
         return True
-
     def enter_place_mode(self) -> bool:
         if not self._selected_uids:
             return False
@@ -1682,7 +1616,6 @@ class PlacementModeMixin:
         if not takeoff:
             return False
         return self.enter_place_mode_for_condition(takeoff.condition_uid)
-
     def enter_place_mode_for_condition(self, condition_uid: str) -> bool:
         condition = self._current_conditions.get(condition_uid)
         if not condition:
@@ -1704,20 +1637,17 @@ class PlacementModeMixin:
         self._place_session_uid = condition_uid
         self._reset_place_session_state()
         return True
-
     def _reset_place_session_state(self) -> None:
         self._place_points = []
         self._place_linear_dragging = False
         self._place_area_rect_dragging = False
         self._backout_last_valid_ost = None
         self._set_area_placement_in_progress(False)
-
     def _finish_area_placement_preview_state(self) -> None:
         self.clear_place_preview()
         self._place_points = []
         self._set_area_placement_in_progress(False)
         self._invalidate_snap_index()
-
     def _apply_pattern_preview(
         self,
         item: QGraphicsPathItem,
@@ -1755,7 +1685,6 @@ class PlacementModeMixin:
         for pitem in pattern_items:
             pitem.setZValue(10)
             self._add_preview_item(pitem, page_transform)
-
     def _add_secondary_condition_previews(
         self,
         path: QPainterPath,
@@ -1792,7 +1721,6 @@ class PlacementModeMixin:
                 page_transform,
                 pattern_angle,
             )
-
     def _build_linear_path(self, cs, condition, x1, y1, x2, y2) -> QPainterPath:
         thickness_ost = condition.thickness if condition.thickness else 1.0
         view_scale = cs.page_info.get("view_scale", 1.0)
@@ -1811,7 +1739,6 @@ class PlacementModeMixin:
         path.lineTo(x2 + px, y2 + py)
         path.closeSubpath()
         return path
-
     def _exit_place_mode(self) -> None:
         was_active = self._place_session_uid is not None
         self.clear_place_preview()
@@ -1821,7 +1748,6 @@ class PlacementModeMixin:
         if was_active:
             self._apply_cursor_mode(CURSOR_MODE_SELECT)
             self.place_exited.emit()
-
     @staticmethod
     def _path_from_transformed_polygon(points: list) -> QPainterPath:
         path = QPainterPath()
@@ -1830,7 +1756,6 @@ class PlacementModeMixin:
             path.lineTo(points[i], points[i + 1])
         path.closeSubpath()
         return path
-
     def _find_area_at(self, ost_x: float, ost_y: float) -> str:
         cs = self._scene_builder.get_coordinate_system()
         pt_tx = cs.transform_vertices_to_2d([ost_x, ost_y])
@@ -1849,7 +1774,6 @@ class PlacementModeMixin:
             if path.contains(pt):
                 return t.uid
         return ""
-
     def _point_in_sibling_hole(self, ost_x: float, ost_y: float) -> bool:
         if not self._backout_parent_uid:
             return False
@@ -1867,7 +1791,6 @@ class PlacementModeMixin:
             if sib_path.contains(pt):
                 return True
         return False
-
     def _check_hole_overlap(
         self, pos_flat: list, parent_uid: str = None, exclude_uid: str = None
     ) -> bool:
@@ -1898,7 +1821,6 @@ class PlacementModeMixin:
             if new_path.intersects(sib_path):
                 return True
         return False
-
     def _update_parent_hole_preview(self, hole_path: QPainterPath) -> None:
         cs = self._scene_builder.get_coordinate_system()
         parent = self._current_takeoffs.get(self._backout_parent_uid)
@@ -1926,13 +1848,11 @@ class PlacementModeMixin:
                     self._backout_orig_parent_path = item.path()
                 item.setPath(combined)
                 break
-
     def _set_area_placement_in_progress(self, in_progress: bool) -> None:
         if self._area_in_progress == in_progress:
             return
         self._area_in_progress = in_progress
         self.area_placement_in_progress.emit(in_progress)
-
     def _paste_backout_compute_translations(self, cursor_scene: QtCore.QPointF) -> list:
         sources = self._paste_backout_sources
         if not sources:
@@ -1951,7 +1871,6 @@ class PlacementModeMixin:
                 new_pos.append(pos[i * 2 + 1] + dy)
             translated.append(new_pos)
         return translated
-
     def _paste_backout_validate_all(self, translated_list: list) -> tuple:
         results = []
         for pos in translated_list:
@@ -1968,7 +1887,6 @@ class PlacementModeMixin:
             results.append((parent_uid, True))
         all_valid = bool(results) and all(r[1] for r in results)
         return results, all_valid
-
     def clear_paste_backout_preview(self) -> None:
         for item in self._paste_backout_preview_items:
             try:
@@ -1976,7 +1894,6 @@ class PlacementModeMixin:
             except (TypeError, RuntimeError):
                 pass
         self._paste_backout_preview_items.clear()
-
     def update_paste_backout_preview(self, cursor_scene: QtCore.QPointF) -> None:
         self.clear_paste_backout_preview()
         if not self._paste_backout_active:
@@ -2001,12 +1918,10 @@ class PlacementModeMixin:
                 target_list=self._paste_backout_preview_items,
                 pen_width=2.0,
             )
-
     def refresh_paste_backout_preview_after_view_change(self) -> None:
         if self._last_mouse_vp_pos is not None:
             self.update_paste_backout_preview(self.mapToScene(self._last_mouse_vp_pos))
         self.viewport().update()
-
     def handle_paste_backout_press(self, event) -> bool:
         if not self._paste_backout_active:
             return False

@@ -7,7 +7,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 from PySide6 import QtWidgets
-from ost_visualizer.application.dtos.file_import_args import parse_project_file_args
+from ost_visualizer.application.dtos.file_import_args import (
+    PROJECT_IMPORT_EXTENSION_OSP,
+    PROJECT_IMPORT_EXTENSION_OST,
+    parse_project_file_args,
+)
 from ost_visualizer.application.use_cases.project import (
     import_project_files_from_args_use_case as import_args_use_case,
 )
@@ -45,6 +49,8 @@ from ost_visualizer.presentation.main_window import MainWindow
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MSI_CREATOR_ROOT = REPO_ROOT.parent / "msicreator-master"
 REPO_MSI_CONFIG = REPO_ROOT / "installer" / "ostvisualizer.json"
+OST_PROG_ID = ASSOCIATIONS[PROJECT_IMPORT_EXTENSION_OST][0]
+OSP_PROG_ID = ASSOCIATIONS[PROJECT_IMPORT_EXTENSION_OSP][0]
 
 
 class FakeImportService:
@@ -189,7 +195,8 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             osp.write_text("osp")
             result = parse_project_file_args([str(ost), str(osp)])
             self.assertEqual(
-                [item.extension for item in result.files], [".ost", ".osp"]
+                [item.extension for item in result.files],
+                [PROJECT_IMPORT_EXTENSION_OST, PROJECT_IMPORT_EXTENSION_OSP],
             )
             self.assertEqual([item.path for item in result.files], [str(ost), str(osp)])
             self.assertEqual(result.rejected, [])
@@ -407,7 +414,7 @@ class FileAssociationStartupImportTests(unittest.TestCase):
         self.assertEqual(
             details,
             f"Successfully imported '{source}' as orphaned because "
-            "Deleted Bids cannot be used as an import target.",
+            f"{DELETED_BIDS_PROJECT_NAME} cannot be used as an import target.",
         )
 
     def test_import_use_case_uses_stored_project_before_first_checked_fallback(self):
@@ -754,18 +761,22 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             for entry in config["registry_entries"]
         }
         self.assertEqual(
-            entries[("HKLM", "Software\\Classes\\.ost", None)]["value"],
-            "OSTVisualizer.ost",
+            entries[
+                ("HKLM", f"Software\\Classes\\{PROJECT_IMPORT_EXTENSION_OST}", None)
+            ]["value"],
+            OST_PROG_ID,
         )
         self.assertEqual(
-            entries[("HKLM", "Software\\Classes\\.osp", None)]["value"],
-            "OSTVisualizer.osp",
+            entries[
+                ("HKLM", f"Software\\Classes\\{PROJECT_IMPORT_EXTENSION_OSP}", None)
+            ]["value"],
+            OSP_PROG_ID,
         )
         self.assertEqual(
             entries[
                 (
                     "HKLM",
-                    "Software\\Classes\\OSTVisualizer.ost\\shell\\open\\command",
+                    f"Software\\Classes\\{OST_PROG_ID}\\shell\\open\\command",
                     None,
                 )
             ]["value"],
@@ -775,7 +786,7 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             entries[
                 (
                     "HKLM",
-                    "Software\\Classes\\OSTVisualizer.osp\\shell\\open\\command",
+                    f"Software\\Classes\\{OSP_PROG_ID}\\shell\\open\\command",
                     None,
                 )
             ]["value"],
@@ -805,17 +816,17 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             component,
             {
                 "root": "HKLM",
-                "key": "Software\\Classes\\.ost",
+                "key": f"Software\\Classes\\{PROJECT_IMPORT_EXTENSION_OST}",
                 "name": None,
                 "type": "string",
-                "value": "OSTVisualizer.ost",
+                "value": OST_PROG_ID,
                 "key_path": "yes",
             },
         )
         value = component.find("RegistryKey/RegistryValue")
         self.assertIsNotNone(value)
         self.assertNotIn("Name", value.attrib)
-        self.assertEqual(value.attrib["Value"], "OSTVisualizer.ost")
+        self.assertEqual(value.attrib["Value"], OST_PROG_ID)
 
 
 if __name__ == "__main__":

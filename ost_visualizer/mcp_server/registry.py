@@ -19,6 +19,7 @@ from ..domain.entities.workspace_state import (
 )
 from ..application.services.mcp_read_service import McpDatabaseRef
 from ..infrastructure.app_paths import get_app_data_dir
+from .output_artifacts import MCP_OUTPUT_DIR_NAME
 
 
 @dataclass
@@ -46,6 +47,10 @@ class DatabaseRegistry:
     @property
     def databases(self) -> List[McpDatabaseRef]:
         return list(self._databases)
+
+    @property
+    def output_artifacts_dir(self) -> Path:
+        return self._app_data_dir / MCP_OUTPUT_DIR_NAME
 
     @property
     def workspace_selection(self) -> McpWorkspaceSelection:

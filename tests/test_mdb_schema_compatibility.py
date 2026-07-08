@@ -27,7 +27,6 @@ try:
 except ImportError:
     _win32_client = None
 _ACCESS_DRIVER = "Microsoft Access Driver (*.mdb, *.accdb)"
-_OLD_MDB_PATH = Path(r"C:\OCS Documents\OST\OST Projects.mdb")
 _NEW_MDB_PATH = Path(r"C:\OCS Documents\OST\OST Projects.mdb")
 _REFERENCE_SCHEMA_FIXTURE = (
     Path(__file__).resolve().parent / "fixtures" / "reference_mdb_schema.json"
@@ -558,56 +557,46 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
             "[UID]",
         )
 
-    def test_real_old_and_new_mdb_key_schema_compatibility(self):
+    def test_real_mdb_key_schema_compatibility(self):
         if not _access_available():
             self.skipTest("Access ODBC/ADOX metadata is not available")
-        for label, path in (("old", _OLD_MDB_PATH), ("new", _NEW_MDB_PATH)):
-            if not path.exists():
-                self.skipTest(f"{label} MDB is not available at {path}")
-            with self.subTest(database=label):
-                metadata = _extract_mdb_metadata(path)
-                self.assertEqual(len(metadata["tables"]), 64)
-                for table_name in _KEY_TABLES:
-                    self.assertIn(table_name, metadata["key_tables"])
-                page_settings = metadata["key_tables"]["BidPageSettings"]
-                self.assertIn("UID", _column_names(page_settings))
-                self.assertIn(("UID",), _primary_index_columns(page_settings))
-                self.assertIn(("UID",), _unique_index_columns(page_settings))
-                self.assertNotIn(
-                    ("BidPageUID", "BidAreaSelected"),
-                    _unique_index_columns(page_settings),
-                )
-                self.assertEqual(
-                    _relationship_targets(page_settings),
-                    {
-                        (("BidAreaUID",), "BidAreas"),
-                        (("BidPageUID",), "BidPages"),
-                        (("BidTypAreaUID",), "BidTypAreas"),
-                    },
-                )
-                bid_pages = metadata["key_tables"]["BidPages"]
-                bid_named_views = metadata["key_tables"]["BidNamedViews"]
-                if label == "old" and "ALState" not in _column_names(bid_pages):
-                    self.assertNotIn("ALState", _column_names(bid_pages))
-                    self.assertFalse(
-                        {"Color", "Origin"}.issubset(_column_names(bid_named_views))
-                    )
-                else:
-                    self.assertIn("ALState", _column_names(bid_pages))
-                    self.assertTrue(
-                        {"Color", "Origin"}.issubset(_column_names(bid_named_views))
-                    )
-                employees = metadata["key_tables"]["Employees"]
-                pay_classes = metadata["key_tables"]["PayClasses"]
-                bid_employees = metadata["key_tables"]["BidEmployees"]
-                bids = metadata["key_tables"]["Bids"]
-                self.assertIn("EstimatorUID", _column_names(bids))
-                self.assertIn("PayClassUID", _column_names(employees))
-                self.assertEqual(_primary_index_columns(pay_classes), {("UID",)})
-                self.assertIn(
-                    (("EmployeeUID",), "Employees"),
-                    _relationship_targets(bid_employees),
-                )
+        if not _NEW_MDB_PATH.exists():
+            self.skipTest(f"MDB is not available at {_NEW_MDB_PATH}")
+        metadata = _extract_mdb_metadata(_NEW_MDB_PATH)
+        self.assertEqual(len(metadata["tables"]), 64)
+        for table_name in _KEY_TABLES:
+            self.assertIn(table_name, metadata["key_tables"])
+        page_settings = metadata["key_tables"]["BidPageSettings"]
+        self.assertIn("UID", _column_names(page_settings))
+        self.assertIn(("UID",), _primary_index_columns(page_settings))
+        self.assertIn(("UID",), _unique_index_columns(page_settings))
+        self.assertNotIn(
+            ("BidPageUID", "BidAreaSelected"),
+            _unique_index_columns(page_settings),
+        )
+        self.assertEqual(
+            _relationship_targets(page_settings),
+            {
+                (("BidAreaUID",), "BidAreas"),
+                (("BidPageUID",), "BidPages"),
+                (("BidTypAreaUID",), "BidTypAreas"),
+            },
+        )
+        bid_pages = metadata["key_tables"]["BidPages"]
+        bid_named_views = metadata["key_tables"]["BidNamedViews"]
+        self.assertIn("ALState", _column_names(bid_pages))
+        self.assertTrue({"Color", "Origin"}.issubset(_column_names(bid_named_views)))
+        employees = metadata["key_tables"]["Employees"]
+        pay_classes = metadata["key_tables"]["PayClasses"]
+        bid_employees = metadata["key_tables"]["BidEmployees"]
+        bids = metadata["key_tables"]["Bids"]
+        self.assertIn("EstimatorUID", _column_names(bids))
+        self.assertIn("PayClassUID", _column_names(employees))
+        self.assertEqual(_primary_index_columns(pay_classes), {("UID",)})
+        self.assertIn(
+            (("EmployeeUID",), "Employees"),
+            _relationship_targets(bid_employees),
+        )
 
     def test_app_created_mdb_key_schema_compatibility(self):
         if not _access_available():
@@ -695,12 +684,11 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             temp_path = Path(temp_dir)
             db_paths = []
-            for label, source_path in (("old", _OLD_MDB_PATH), ("new", _NEW_MDB_PATH)):
-                if not source_path.exists():
-                    self.skipTest(f"{label} MDB is not available at {source_path}")
-                copied_path = temp_path / f"{label}.mdb"
-                shutil.copy2(source_path, copied_path)
-                db_paths.append((label, copied_path))
+            if not _NEW_MDB_PATH.exists():
+                self.skipTest(f"MDB is not available at {_NEW_MDB_PATH}")
+            copied_path = temp_path / "new.mdb"
+            shutil.copy2(_NEW_MDB_PATH, copied_path)
+            db_paths.append(("new", copied_path))
             app_path = temp_path / "app_created.mdb"
             self.assertTrue(DatabaseCreator().create_database(app_path, "Compat"))
             db_paths.append(("app", app_path))
@@ -761,7 +749,6 @@ class MdbSchemaCompatibilityTests(unittest.TestCase):
         if not _access_available():
             self.skipTest("Access ODBC/ADOX metadata is not available")
         cases = (
-            ("old", _OLD_MDB_PATH),
             ("new", _NEW_MDB_PATH),
             ("app", None),
         )
