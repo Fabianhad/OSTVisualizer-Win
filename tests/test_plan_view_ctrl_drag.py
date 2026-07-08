@@ -7,7 +7,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QPainterPath, QPen, QTransform
+from PySide6.QtGui import QAction, QBrush, QColor, QPainterPath, QPen, QTransform
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsPathItem,
@@ -2270,6 +2270,75 @@ class CtrlDragTests(unittest.TestCase):
         view._has_child_holes = lambda *_args: False
         return view, main_item, old_pattern
 
+    def _make_hole_resize_view(self):
+        view = InputHandlerHarness()
+        view._scene = QGraphicsScene()
+        view._scene_builder = FakeSceneBuilder()
+        view._color_service = FakeColorService()
+        view._linear_geom = FakeLinearGeom()
+        condition = Condition(
+            uid="c1",
+            condition_type=Condition.TYPE_AREA,
+            pattern=pattern_values.TRANSPARENT,
+            spacing=4.0,
+            thickness=2.0,
+            color_fill=1,
+        )
+        parent = Takeoff(
+            uid="parent",
+            condition_uid="c1",
+            page_uid="page-1",
+            area_uid="area-1",
+            position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0, 0.0, 20.0],
+        )
+        hole = Takeoff(
+            uid="hole",
+            condition_uid="c1",
+            page_uid="page-1",
+            area_uid="area-1",
+            parent_uid="parent",
+            position=[4.0, 4.0, 10.0, 4.0, 10.0, 10.0, 4.0, 10.0],
+        )
+        parent_path = QPainterPath()
+        parent_path.addRect(0.0, 0.0, 20.0, 20.0)
+        parent_item = QGraphicsPathItem(parent_path)
+        hole_path = QPainterPath()
+        hole_path.addRect(4.0, 4.0, 6.0, 6.0)
+        hole_item = QGraphicsPathItem(hole_path)
+        hole_item.setPen(QPen(Qt.PenStyle.NoPen))
+        hole_item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        stale_hole_pattern = QGraphicsPathItem(hole_path)
+        stale_hole_pattern.setPen(QPen(QColor("#ff00ff")))
+        for item in (parent_item, hole_item, stale_hole_pattern):
+            view._scene.addItem(item)
+        view._current_takeoffs = {"parent": parent, "hole": hole}
+        view._current_annotations = {}
+        view._current_conditions = {"c1": condition}
+        view._current_color_map = {}
+        view._current_page_area_selections = {}
+        view._uid_to_items = {
+            "parent": [parent_item],
+            "hole": [hole_item, stale_hole_pattern],
+        }
+        view._takeoff_items = [parent_item, hole_item, stale_hole_pattern]
+        view._handle_infos = [SimpleNamespace(item=FakeItem()) for _ in range(8)]
+        view._drag_handle_index = 2
+        view._drag_handle_corner_count = 4
+        view._drag_last_valid_new_pos = list(hole.position)
+        view._drag_item_orig_positions = {}
+        view._drag_item_orig_paths = {}
+        view._drag_item_orig_text_states = {}
+        view._drag_uid_orig_items = {}
+        view._drag_multi_orig_positions = {}
+        view._selection_items = []
+        view._pt_to_scene = lambda x, y: QtCore.QPointF(x, y)
+        view._current_page_transform = lambda: None
+        view._validate_hole_position = lambda *_args: True
+        view._validate_parent_contains_holes = lambda *_args: True
+        view._has_child_holes = lambda *_args: False
+        view._refresh_condition_text_labels_for_takeoff = lambda _uid: None
+        return view, parent_item, hole_item, stale_hole_pattern
+
     def _make_dimension_resize_view(self, position=None):
         view = InputHandlerHarness()
         view._scene = QGraphicsScene()
@@ -2502,6 +2571,19 @@ class CtrlDragTests(unittest.TestCase):
             [0.0, 0.0, 20.0, 0.0, 20.0, 12.0, 0.0, 12.0], "t1"
         )
         self.assertEqual(main_item.pen().color().name(), "#808080")
+
+    def test_hole_resize_preview_keeps_child_item_invisible(self):
+        view, parent_item, hole_item, stale_hole_pattern = self._make_hole_resize_view()
+        view.update_drag_handle_positions(
+            [4.0, 4.0, 10.0, 4.0, 14.0, 14.0, 4.0, 10.0], "hole"
+        )
+        self.assertEqual(hole_item.pen().style(), Qt.PenStyle.NoPen)
+        self.assertEqual(hole_item.brush().style(), Qt.BrushStyle.NoBrush)
+        self.assertEqual(view._uid_to_items["hole"], [hole_item])
+        self.assertIsNone(stale_hole_pattern.scene())
+        self.assertFalse(parent_item.path().contains(QtCore.QPointF(8.0, 8.0)))
+        self.assertTrue(parent_item.path().contains(QtCore.QPointF(2.0, 2.0)))
+        self.assertEqual(len(view._scene_builder.pattern_angles), 1)
 
     def test_area_resize_preview_recenters_condition_labels(self):
         view, main_item, _old_pattern = self._make_pattern_resize_view(

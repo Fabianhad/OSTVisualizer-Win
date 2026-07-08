@@ -191,6 +191,25 @@ class DragHandlerMixin:
         new_items.extend(preserved_items)
         self._uid_to_items[uid] = new_items
 
+    def _apply_hole_cutout_preview_style(
+        self, uid: str, path_item: QGraphicsPathItem, path: QPainterPath
+    ) -> None:
+        path_item.setPos(0.0, 0.0)
+        path_item.setPath(path)
+        path_item.setPen(QPen(Qt.PenStyle.NoPen))
+        path_item.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        existing_items = list(self._uid_to_items.get(uid, []))
+        preserved_items: List = []
+        for item in existing_items[1:]:
+            if isinstance(item, QGraphicsPathItem):
+                if item.scene() is self._scene:
+                    self._scene.removeItem(item)
+                if item in self._takeoff_items:
+                    self._takeoff_items.remove(item)
+            else:
+                preserved_items.append(item)
+        self._uid_to_items[uid] = [path_item, *preserved_items]
+
     def scene_to_ost_delta(self, dx: float, dy: float) -> Tuple[float, float]:
         cs = self._scene_builder.get_coordinate_system()
         factor = cs.scale_ratio / (72.0 * cs.view_scale)
@@ -451,11 +470,16 @@ class DragHandlerMixin:
                 new_path.closeSubpath()
                 items_for_uid = self._uid_to_items.get(uid, [])
                 if items_for_uid and isinstance(items_for_uid[0], QGraphicsPathItem):
-                    items_for_uid[0].setPos(0.0, 0.0)
-                    items_for_uid[0].setPath(new_path)
-                    self._refresh_takeoff_pattern_preview(
-                        uid, items_for_uid[0], new_path, condition
-                    )
+                    if takeoff.is_hole:
+                        self._apply_hole_cutout_preview_style(
+                            uid, items_for_uid[0], new_path
+                        )
+                    else:
+                        items_for_uid[0].setPos(0.0, 0.0)
+                        items_for_uid[0].setPath(new_path)
+                        self._refresh_takeoff_pattern_preview(
+                            uid, items_for_uid[0], new_path, condition
+                        )
                 if takeoff.is_hole:
                     self._update_parent_hole_path(takeoff.parent_uid, uid, new_path)
                 elif self._has_child_holes(uid):
