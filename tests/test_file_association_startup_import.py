@@ -6,6 +6,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
+from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.file_import_args import parse_project_file_args
 from ost_visualizer.application.use_cases.project import (
     import_project_files_from_args_use_case as import_args_use_case,
@@ -16,6 +17,10 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyData,
     HierarchyFileEntry,
     HierarchyProjectInfo,
+)
+from ost_visualizer.domain.entities.project_constants import (
+    DELETED_BIDS_PROJECT_NAME,
+    DELETED_BIDS_PROJECT_UID,
 )
 from ost_visualizer.domain.entities.workspace_state import (
     ProjectTreeSelectionState,
@@ -34,6 +39,7 @@ from ost_visualizer.main import (
     _project_file_args_from_payload,
     _project_file_args_to_payload,
 )
+from ost_visualizer.presentation import main_window as main_window_module
 from ost_visualizer.presentation.main_window import MainWindow
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -116,6 +122,59 @@ class FakeProjectView:
         self.file_selections.append(file_path)
 
 
+class FakeTimerQueue:
+    def __init__(self):
+        self.callbacks = []
+
+    def singleShot(self, _delay_ms, callback):
+        self.callbacks.append(callback)
+
+
+class FakeStartupProgressDialog:
+    result_code = QtWidgets.QDialog.DialogCode.Accepted
+    instances = []
+
+    def __init__(
+        self, filename, task_fn, parent=None, reporter=None, action_text="Processing"
+    ):
+        self.filename = filename
+        self.parent = parent
+        self.action_text = action_text
+        self.reporter = reporter
+        self.result = task_fn()
+        self.error = None
+        self.cleanup_calls = 0
+        self.delete_later_calls = 0
+        self.window_modality = None
+        self.instances.append(self)
+
+    def setWindowModality(self, modality):
+        self.window_modality = modality
+
+    def exec(self):
+        return self.result_code
+
+    def cleanup(self):
+        self.cleanup_calls += 1
+
+    def deleteLater(self):
+        self.delete_later_calls += 1
+
+
+def _project_file_args(*paths):
+    return parse_project_file_args([str(path) for path in paths])
+
+
+def _startup_import_window():
+    window = MainWindow.__new__(MainWindow)
+    window._pending_project_file_args = []
+    window._startup_load_complete = False
+    window._main_window_ready = False
+    window._project_file_import_scheduled = False
+    window._project_file_import_running = False
+    return window
+
+
 class FileAssociationStartupImportTests(unittest.TestCase):
     def test_parse_project_file_args_with_no_files_keeps_startup_path_empty(self):
         result = parse_project_file_args([])
@@ -146,6 +205,210 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             self.assertEqual(len(result.rejected), 2)
             self.assertIn("Unsupported file type", result.rejected[0].reason)
             self.assertEqual(result.rejected[1].reason, "File does not exist.")
+
+    def test_startup_import_waits_for_config_load_and_main_window_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.ost"
+            source.write_text("ost")
+            window = _startup_import_window()
+            window._pending_project_file_args.append(_project_file_args(source))
+            timer = FakeTimerQueue()
+            original_single_shot = main_window_module.QtCore.QTimer.singleShot
+            try:
+                main_window_module.QtCore.QTimer.singleShot = timer.singleShot
+                MainWindow._schedule_pending_project_file_imports(window)
+                self.assertEqual(timer.callbacks, [])
+                window._startup_load_complete = True
+                MainWindow._schedule_pending_project_file_imports(window)
+                self.assertEqual(timer.callbacks, [])
+                MainWindow._mark_main_window_ready(window)
+            finally:
+                main_window_module.QtCore.QTimer.singleShot = original_single_shot
+            self.assertTrue(window._main_window_ready)
+            self.assertEqual(
+                timer.callbacks, [window._run_pending_project_file_imports]
+            )
+            self.assertTrue(window._project_file_import_scheduled)
+
+    def test_startup_load_does_not_schedule_import_before_main_window_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.ost"
+            source.write_text("ost")
+            window = _startup_import_window()
+            window._pending_project_file_args.append(_project_file_args(source))
+            window.app_controller = SimpleNamespace(
+                load_files_from_config=lambda: ["target.mdb"],
+                has_any_databases=lambda: True,
+            )
+            window.handlers = SimpleNamespace(
+                ui_event=SimpleNamespace(sync_after_startup_load=lambda: None)
+            )
+            window._sync_database_monitoring = lambda: None
+            window._workspace_state_coordinator = SimpleNamespace(
+                restore_deferred_state=lambda: None
+            )
+            timer = FakeTimerQueue()
+            original_single_shot = main_window_module.QtCore.QTimer.singleShot
+            try:
+                main_window_module.QtCore.QTimer.singleShot = timer.singleShot
+                MainWindow._load_files_from_config(window)
+            finally:
+                main_window_module.QtCore.QTimer.singleShot = original_single_shot
+            self.assertTrue(window._startup_load_complete)
+            self.assertEqual(
+                timer.callbacks,
+                [window._workspace_state_coordinator.restore_deferred_state],
+            )
+            self.assertFalse(window._project_file_import_scheduled)
+
+    def test_ready_startup_import_batches_pending_args_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first.ost"
+            second = root / "second.osp"
+            first.write_text("ost")
+            second.write_text("osp")
+            window = _startup_import_window()
+            window._startup_load_complete = True
+            window._main_window_ready = True
+            execute_calls = []
+            refresh_calls = []
+            flush_calls = []
+            selections = []
+            summaries = []
+            target = import_args_use_case.ProjectImportTarget("target.mdb")
+            window._import_project_files_from_args = SimpleNamespace(
+                resolve_target=lambda _current_target: target,
+                execute_imports=lambda args, target, refresh_after_import=True: (
+                    execute_calls.append((args, target, refresh_after_import))
+                    or import_args_use_case.ProjectFileImportBatchResult(
+                        results=[
+                            import_args_use_case.ProjectFileImportResult(
+                                source_path=args.files[0].path,
+                                success=True,
+                                message="Imported successfully.",
+                            )
+                        ],
+                        target_db_path=target.file_path,
+                        refresh_pending=True,
+                    )
+                ),
+                refresh_import_result=lambda result: refresh_calls.append(result)
+                or import_args_use_case.ProjectFileImportBatchResult(
+                    target_db_path=result.target_db_path
+                ),
+            )
+            window._current_project_import_target = lambda: None
+            window._deferred_persistence_manager = SimpleNamespace(
+                flush_for_file=lambda path: flush_calls.append(path) or True
+            )
+            window._select_project_file_import_result = selections.append
+            window._show_project_file_import_result = summaries.append
+            timer = FakeTimerQueue()
+            original_single_shot = main_window_module.QtCore.QTimer.singleShot
+            original_progress_dialog = main_window_module.ProgressDialog
+            try:
+                FakeStartupProgressDialog.instances = []
+                main_window_module.ProgressDialog = FakeStartupProgressDialog
+                main_window_module.QtCore.QTimer.singleShot = timer.singleShot
+                MainWindow.enqueue_project_file_args(window, _project_file_args(first))
+                MainWindow.enqueue_project_file_args(window, _project_file_args(second))
+                self.assertEqual(
+                    timer.callbacks, [window._run_pending_project_file_imports]
+                )
+                timer.callbacks.pop(0)()
+            finally:
+                main_window_module.ProgressDialog = original_progress_dialog
+                main_window_module.QtCore.QTimer.singleShot = original_single_shot
+            self.assertEqual(len(execute_calls), 1)
+            self.assertIs(execute_calls[0][1], target)
+            self.assertFalse(execute_calls[0][2])
+            self.assertEqual(
+                [item.path for item in execute_calls[0][0].files],
+                [str(first), str(second)],
+            )
+            self.assertEqual(flush_calls, ["target.mdb"])
+            self.assertEqual(len(refresh_calls), 1)
+            self.assertEqual(len(selections), 1)
+            self.assertEqual(len(summaries), 1)
+            self.assertEqual(len(FakeStartupProgressDialog.instances), 1)
+            self.assertIs(FakeStartupProgressDialog.instances[0].parent, window)
+            self.assertEqual(
+                FakeStartupProgressDialog.instances[0].action_text, "Importing"
+            )
+            self.assertFalse(window._pending_project_file_args)
+            self.assertFalse(window._project_file_import_scheduled)
+            self.assertFalse(window._project_file_import_running)
+
+    def test_startup_import_summary_uses_main_window_parent(self):
+        window = _startup_import_window()
+        calls = []
+        result = import_args_use_case.ProjectFileImportBatchResult(
+            results=[
+                import_args_use_case.ProjectFileImportResult(
+                    source_path="source.ost",
+                    success=True,
+                    message="Imported successfully.",
+                    project_name="Imported Project",
+                )
+            ],
+            target_db_path="target.mdb",
+            selected_project_uid="project-1",
+        )
+        original_show_info = main_window_module.show_info
+        try:
+            main_window_module.show_info = lambda parent, title, details: calls.append(
+                (parent, title, details)
+            )
+            MainWindow._show_project_file_import_result(window, result)
+        finally:
+            main_window_module.show_info = original_show_info
+        self.assertEqual(calls[0][0], window)
+        self.assertEqual(calls[0][1], "Import Complete")
+
+    def test_startup_import_success_message_uses_source_path(self):
+        source = "C:/Users/fabia/Downloads/Woodside Village.osp"
+        result = import_args_use_case.ProjectFileImportBatchResult(
+            results=[
+                import_args_use_case.ProjectFileImportResult(
+                    source_path=source,
+                    success=True,
+                    message="Imported successfully.",
+                    project_name=DELETED_BIDS_PROJECT_NAME,
+                )
+            ],
+            target_db_path="target.mdb",
+            selected_project_uid=DELETED_BIDS_PROJECT_UID,
+        )
+        details = MainWindow._format_project_file_import_details(
+            _startup_import_window(), result
+        )
+        self.assertEqual(
+            details,
+            f"Successfully imported '{source}' into the database.",
+        )
+
+    def test_startup_import_orphan_message_explains_deleted_bids_fallback(self):
+        source = "C:/Users/fabia/Downloads/Woodside Village.osp"
+        result = import_args_use_case.ProjectFileImportBatchResult(
+            results=[
+                import_args_use_case.ProjectFileImportResult(
+                    source_path=source,
+                    success=True,
+                    message="Imported successfully.",
+                )
+            ],
+            target_db_path="target.mdb",
+            import_as_orphaned_due_to_deleted_target=True,
+        )
+        details = MainWindow._format_project_file_import_details(
+            _startup_import_window(), result
+        )
+        self.assertEqual(
+            details,
+            f"Successfully imported '{source}' as orphaned because "
+            "Deleted Bids cannot be used as an import target.",
+        )
 
     def test_import_use_case_uses_stored_project_before_first_checked_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -203,6 +466,72 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             )
             use_case.execute(parse_project_file_args([str(source)]), lambda _path: True)
             self.assertEqual(import_service.calls[0][3], "stored-project")
+
+    def test_import_use_case_imports_deleted_bids_project_target_as_orphaned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_db = root / "target.mdb"
+            source = root / "source.ost"
+            target_db.write_text("db")
+            source.write_text("ost")
+            workspace = WorkspaceState()
+            workspace.project_workspace.selected_node = ProjectTreeSelectionState(
+                kind=WORKSPACE_NODE_KIND_PROJECT,
+                file_path=str(target_db),
+                project_uid=DELETED_BIDS_PROJECT_UID,
+            )
+            import_service = FakeImportService()
+            use_case = import_args_use_case.ImportProjectFilesFromArgsUseCase(
+                import_service=import_service,
+                project_data_service=FakeProjectData(str(target_db)),
+                file_state_model=SimpleNamespace(
+                    file_entries=[FileEntry(str(target_db), is_checked=True)]
+                ),
+                workspace_state_model=SimpleNamespace(state=workspace),
+            )
+            result = use_case.execute(
+                parse_project_file_args([str(source)]), lambda _path: True
+            )
+            self.assertEqual(result.succeeded, 1)
+            self.assertIsNone(import_service.calls[0][3])
+            self.assertTrue(result.import_as_orphaned_due_to_deleted_target)
+            self.assertIsNone(result.selected_project_uid)
+
+    def test_import_use_case_imports_deleted_bids_bid_target_as_orphaned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_db = root / "target.mdb"
+            source = root / "source.ost"
+            target_db.write_text("db")
+            source.write_text("ost")
+            workspace = WorkspaceState()
+            workspace.project_workspace.selected_node = ProjectTreeSelectionState(
+                kind=WORKSPACE_NODE_KIND_BID,
+                file_path=str(target_db),
+                bid_uid="deleted-bid",
+            )
+            project_data = FakeProjectData(str(target_db))
+            project_data.hierarchy.loaded_files[0].bid_projects[
+                DELETED_BIDS_PROJECT_UID
+            ] = HierarchyProjectInfo(
+                name=DELETED_BIDS_PROJECT_NAME,
+                bids=[HierarchyBidInfo(uid="deleted-bid")],
+            )
+            import_service = FakeImportService()
+            use_case = import_args_use_case.ImportProjectFilesFromArgsUseCase(
+                import_service=import_service,
+                project_data_service=project_data,
+                file_state_model=SimpleNamespace(
+                    file_entries=[FileEntry(str(target_db), is_checked=True)]
+                ),
+                workspace_state_model=SimpleNamespace(state=workspace),
+            )
+            result = use_case.execute(
+                parse_project_file_args([str(source)]), lambda _path: True
+            )
+            self.assertEqual(result.succeeded, 1)
+            self.assertIsNone(import_service.calls[0][3])
+            self.assertTrue(result.import_as_orphaned_due_to_deleted_target)
 
     def test_import_use_case_imports_multiple_files_sequentially(self):
         with tempfile.TemporaryDirectory() as tmp:

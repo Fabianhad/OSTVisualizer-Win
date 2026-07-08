@@ -107,11 +107,15 @@ class FakeDeferredPersistence:
 class FakeProgressDialog:
     error = None
     result_code = QtWidgets.QDialog.DialogCode.Accepted
+    instances = []
 
-    def __init__(self, _filename, task_fn, parent=None):
+    def __init__(self, filename, task_fn, parent=None):
+        self.filename = filename
+        self.parent = parent
         self.result = task_fn()
         self.cleanup_calls = 0
         self.delete_later_calls = 0
+        self.instances.append(self)
 
     def exec(self):
         return self.result_code
@@ -314,8 +318,10 @@ class ImportRefreshFlowTests(unittest.TestCase):
         self,
     ):
         service = FakeImportService()
+        messages = []
+        window = object()
         handler = ImportHandler(
-            window=None,
+            window=window,
             project_data_service=FakeProjectData(),
             import_service=service,
             ui_state_manager=FakeUiState(),
@@ -325,11 +331,14 @@ class ImportRefreshFlowTests(unittest.TestCase):
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
         original_show_info = import_handler_module.show_info
         try:
+            FakeProgressDialog.instances = []
             import_handler_module.ProgressDialog = FakeProgressDialog
             import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
                 lambda *_args, **_call_options: ("source.ost", "")
             )
-            import_handler_module.show_info = lambda *_args, **_call_options: None
+            import_handler_module.show_info = (
+                lambda parent, title, message: messages.append((parent, title, message))
+            )
             handler.import_ost()
         finally:
             import_handler_module.ProgressDialog = original_dialog
@@ -342,6 +351,18 @@ class ImportRefreshFlowTests(unittest.TestCase):
             [("source.ost", "target.mdb", None, False)],
         )
         self.assertEqual(service.reloads, ["target.mdb"])
+        self.assertEqual(len(FakeProgressDialog.instances), 1)
+        self.assertIs(FakeProgressDialog.instances[0].parent, window)
+        self.assertEqual(
+            messages,
+            [
+                (
+                    window,
+                    "Import Complete",
+                    "Successfully imported 'source.ost' into the database.",
+                )
+            ],
+        )
 
     def test_import_handler_stops_when_deferred_flush_fails(self):
         service = FakeImportService()

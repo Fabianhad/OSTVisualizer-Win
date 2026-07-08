@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional
 from ....domain.entities.file_state import normalize_path
+from ....domain.entities.project_constants import is_deleted_bids_project_uid
 from ....domain.entities.workspace_state import (
     WORKSPACE_NODE_KIND_BID,
     WORKSPACE_NODE_KIND_PROJECT,
@@ -26,6 +27,7 @@ class ProjectImportCurrentTarget:
 class ProjectImportTarget:
     file_path: str
     project_uid: Optional[str] = None
+    import_as_orphaned_due_to_deleted_target: bool = False
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,9 @@ class ProjectFileImportBatchResult:
     rejected: List[RejectedProjectFileArg] = field(default_factory=list)
     target_db_path: Optional[str] = None
     selected_project_uid: Optional[str] = None
+    import_as_orphaned_due_to_deleted_target: bool = False
+    refresh_pending: bool = False
+    project_uids_before: frozenset[str] = field(default_factory=frozenset)
 
     @property
     def succeeded(self) -> int:
@@ -74,63 +79,118 @@ class ImportProjectFilesFromArgsUseCase:
         args: ProjectFileArgs,
         flush_for_file: Callable[[str], bool],
         current_target: Optional[ProjectImportCurrentTarget] = None,
+        refresh_after_import: bool = True,
     ) -> ProjectFileImportBatchResult:
-        target = self._resolve_target(current_target)
+        target = self.resolve_target(current_target)
         if target is None:
-            message = (
-                "No enabled database is available. Enable or store a database before "
-                "importing .ost or .osp files from Windows Explorer."
-            )
-            return ProjectFileImportBatchResult(
-                results=[
-                    ProjectFileImportResult(
-                        source_path=item.path,
-                        success=False,
-                        message=message,
-                    )
-                    for item in args.files
-                ],
-                rejected=list(args.rejected),
-            )
+            return self.build_no_target_result(args)
         if not flush_for_file(target.file_path):
-            message = "Pending database changes could not be saved before import."
-            return ProjectFileImportBatchResult(
-                results=[
-                    ProjectFileImportResult(
-                        source_path=item.path,
-                        success=False,
-                        message=message,
-                    )
-                    for item in args.files
-                ],
-                rejected=list(args.rejected),
-                target_db_path=target.file_path,
-                selected_project_uid=target.project_uid,
-            )
+            return self.build_flush_failure_result(args, target)
+        return self.execute_imports(
+            args, target, refresh_after_import=refresh_after_import
+        )
+
+    def build_no_target_result(
+        self, args: ProjectFileArgs
+    ) -> ProjectFileImportBatchResult:
+        message = (
+            "No enabled database is available. Enable or store a database before "
+            "importing .ost or .osp files from Windows Explorer."
+        )
+        return ProjectFileImportBatchResult(
+            results=[
+                ProjectFileImportResult(
+                    source_path=item.path,
+                    success=False,
+                    message=message,
+                )
+                for item in args.files
+            ],
+            rejected=list(args.rejected),
+        )
+
+    def build_flush_failure_result(
+        self, args: ProjectFileArgs, target: ProjectImportTarget
+    ) -> ProjectFileImportBatchResult:
+        message = "Pending database changes could not be saved before import."
+        return ProjectFileImportBatchResult(
+            results=[
+                ProjectFileImportResult(
+                    source_path=item.path,
+                    success=False,
+                    message=message,
+                )
+                for item in args.files
+            ],
+            rejected=list(args.rejected),
+            target_db_path=target.file_path,
+            selected_project_uid=target.project_uid,
+            import_as_orphaned_due_to_deleted_target=(
+                target.import_as_orphaned_due_to_deleted_target
+            ),
+        )
+
+    def execute_imports(
+        self,
+        args: ProjectFileArgs,
+        target: ProjectImportTarget,
+        refresh_after_import: bool = True,
+    ) -> ProjectFileImportBatchResult:
         before_uids = self._project_uids_for_file(target.file_path)
         results = [self._import_file(item, target) for item in args.files]
         success_count = sum(1 for result in results if result.success)
         selected_project_uid = target.project_uid
-        if success_count:
-            if not self._import_service.reload_and_notify(target.file_path):
-                return ProjectFileImportBatchResult(
-                    results=self._mark_successes_refresh_failed(results),
-                    rejected=list(args.rejected),
-                    target_db_path=target.file_path,
-                    selected_project_uid=selected_project_uid,
-                )
-            selected_project_uid = selected_project_uid or self._detect_new_project_uid(
-                target.file_path, before_uids
-            )
-            if success_count == 1:
-                results = self._with_single_success_project_name(
-                    results, target.file_path, selected_project_uid
-                )
-        return ProjectFileImportBatchResult(
+        batch = ProjectFileImportBatchResult(
             results=results,
             rejected=list(args.rejected),
             target_db_path=target.file_path,
             selected_project_uid=selected_project_uid,
+            import_as_orphaned_due_to_deleted_target=(
+                target.import_as_orphaned_due_to_deleted_target
+            ),
+            refresh_pending=bool(success_count),
+            project_uids_before=frozenset(before_uids),
+        )
+        if refresh_after_import and success_count:
+            return self.refresh_import_result(batch)
+        return batch
+
+    def refresh_import_result(
+        self, result: ProjectFileImportBatchResult
+    ) -> ProjectFileImportBatchResult:
+        if not result.refresh_pending:
+            return result
+        if not result.target_db_path:
+            return replace(result, refresh_pending=False)
+        success_count = result.succeeded
+        selected_project_uid = result.selected_project_uid
+        if success_count:
+            if not self._import_service.reload_and_notify(result.target_db_path):
+                return replace(
+                    result,
+                    results=self._mark_successes_refresh_failed(result.results),
+                    refresh_pending=False,
+                )
+            if not result.import_as_orphaned_due_to_deleted_target:
+                selected_project_uid = (
+                    selected_project_uid
+                    or self._detect_new_project_uid(
+                        result.target_db_path, result.project_uids_before
+                    )
+                )
+            if success_count == 1:
+                results = self._with_single_success_project_name(
+                    result.results, result.target_db_path, selected_project_uid
+                )
+            else:
+                results = result.results
+        else:
+            results = result.results
+        return replace(
+            result,
+            results=results,
+            selected_project_uid=selected_project_uid,
+            refresh_pending=False,
         )
 
     def _import_file(
@@ -211,7 +271,7 @@ class ImportProjectFilesFromArgsUseCase:
                 updated.append(result)
         return updated
 
-    def _resolve_target(
+    def resolve_target(
         self, current_target: Optional[ProjectImportCurrentTarget]
     ) -> Optional[ProjectImportTarget]:
         enabled_paths = self._enabled_existing_paths()
@@ -250,6 +310,12 @@ class ImportProjectFilesFromArgsUseCase:
         resolved = enabled_paths.get(normalize_path(file_path))
         if not resolved:
             return None
+        if is_deleted_bids_project_uid(project_uid):
+            return ProjectImportTarget(
+                file_path=resolved,
+                project_uid=None,
+                import_as_orphaned_due_to_deleted_target=True,
+            )
         return ProjectImportTarget(file_path=resolved, project_uid=project_uid)
 
     def _workspace_target(

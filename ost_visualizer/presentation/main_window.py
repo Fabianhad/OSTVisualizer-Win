@@ -8,10 +8,13 @@ from ..application.dtos.condition_summary_dtos import ConditionSummaryGrouping
 from ..application.dtos.file_import_args import ProjectFileArgs
 from ..application.use_cases.project.import_project_files_from_args_use_case import (
     ProjectFileImportBatchResult,
+    ProjectFileImportResult,
     ProjectImportCurrentTarget,
+    ProjectImportTarget,
 )
 from ..domain.entities.annotation_style import AnnotationStyle
 from ..domain.entities.file_state import normalize_path
+from ..domain.entities.project_constants import DELETED_BIDS_PROJECT_NAME
 from .actions.action_ids import (
     ACTION_ANNOTATION_WINDOW,
     ACTION_BACKOUT_MODE,
@@ -103,6 +106,9 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self._needs_create_database_prompt = False
         self._startup_load_complete = False
+        self._main_window_ready = False
+        self._project_file_import_scheduled = False
+        self._project_file_import_running = False
         self._pending_project_file_args = []
         self.splash_screen = splash_screen
         self.app_controller = app_controller
@@ -483,8 +489,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)
-        if self.splash_screen:
-            self.splash_screen.finish(self)
+        self._finish_splash_screen()
+        QtCore.QTimer.singleShot(0, self._mark_main_window_ready)
 
     def changeEvent(self, event: QtCore.QEvent) -> None:
         super().changeEvent(event)
@@ -500,6 +506,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._needs_create_database_prompt:
             self._needs_create_database_prompt = False
             QtCore.QTimer.singleShot(0, self._prompt_create_database)
+
+    def _finish_splash_screen(self) -> None:
+        if not self.splash_screen:
+            return
+        self.splash_screen.finish(self)
+        self.splash_screen = None
+
+    def _mark_main_window_ready(self) -> None:
+        self._main_window_ready = True
+        self._schedule_pending_project_file_imports()
 
     def _create_handlers(self) -> SimpleNamespace:
         handlers = SimpleNamespace()
@@ -581,32 +597,113 @@ class MainWindow(QtWidgets.QMainWindow):
             0, self._workspace_state_coordinator.restore_deferred_state
         )
         self._startup_load_complete = True
-        if self._pending_project_file_args:
-            QtCore.QTimer.singleShot(0, self._run_pending_project_file_imports)
+        self._schedule_pending_project_file_imports()
 
     def enqueue_project_file_args(self, args: ProjectFileArgs) -> None:
         if not args.has_file_args:
             return
         self._pending_project_file_args.append(args)
-        if self._startup_load_complete:
-            QtCore.QTimer.singleShot(0, self._run_pending_project_file_imports)
+        self._schedule_pending_project_file_imports()
 
-    def _run_pending_project_file_imports(self) -> None:
+    def _schedule_pending_project_file_imports(self) -> None:
         if not self._pending_project_file_args:
             return
-        pending = self._pending_project_file_args
-        self._pending_project_file_args = []
-        args = ProjectFileArgs(
-            files=[file_arg for item in pending for file_arg in item.files],
-            rejected=[rejected for item in pending for rejected in item.rejected],
+        if not self._startup_load_complete or not self._main_window_ready:
+            return
+        if self._project_file_import_scheduled or self._project_file_import_running:
+            return
+        self._project_file_import_scheduled = True
+        QtCore.QTimer.singleShot(0, self._run_pending_project_file_imports)
+
+    def _run_pending_project_file_imports(self) -> None:
+        self._project_file_import_scheduled = False
+        if not self._pending_project_file_args:
+            return
+        if self._project_file_import_running:
+            self._schedule_pending_project_file_imports()
+            return
+        self._project_file_import_running = True
+        try:
+            pending = self._pending_project_file_args
+            self._pending_project_file_args = []
+            args = ProjectFileArgs(
+                files=[file_arg for item in pending for file_arg in item.files],
+                rejected=[rejected for item in pending for rejected in item.rejected],
+            )
+            result = self._import_project_files_with_progress(args)
+            self._select_project_file_import_result(result)
+            self._show_project_file_import_result(result)
+        finally:
+            self._project_file_import_running = False
+            self._schedule_pending_project_file_imports()
+
+    def _import_project_files_with_progress(
+        self, args: ProjectFileArgs
+    ) -> ProjectFileImportBatchResult:
+        if not args.files:
+            return ProjectFileImportBatchResult(rejected=list(args.rejected))
+        current_target = self._current_project_import_target()
+        target = self._import_project_files_from_args.resolve_target(current_target)
+        if target is None:
+            return self._import_project_files_from_args.build_no_target_result(args)
+        if not self._deferred_persistence_manager.flush_for_file(target.file_path):
+            return self._import_project_files_from_args.build_flush_failure_result(
+                args, target
+            )
+        progress = ProgressDialog(
+            self._project_file_import_progress_label(args),
+            lambda: self._import_project_files_from_args.execute_imports(
+                args, target, refresh_after_import=False
+            ),
+            parent=self,
+            action_text="Importing",
         )
-        result = self._import_project_files_from_args.execute(
-            args,
-            current_target=self._current_project_import_target(),
-            flush_for_file=self._deferred_persistence_manager.flush_for_file,
+        progress.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        try:
+            rc = progress.exec()
+            result = progress.result
+            worker_error = progress.error
+        finally:
+            progress.cleanup()
+            progress.deleteLater()
+        if rc != QtWidgets.QDialog.DialogCode.Accepted or not isinstance(
+            result, ProjectFileImportBatchResult
+        ):
+            if worker_error is not None:
+                logger.error(
+                    "Startup project file import worker raised: %s",
+                    worker_error,
+                    exc_info=True,
+                )
+            return self._project_file_import_progress_failure(args, target)
+        return self._import_project_files_from_args.refresh_import_result(result)
+
+    @staticmethod
+    def _project_file_import_progress_label(args: ProjectFileArgs) -> str:
+        if len(args.files) == 1:
+            return args.files[0].path
+        return f"{len(args.files)} project files"
+
+    @staticmethod
+    def _project_file_import_progress_failure(
+        args: ProjectFileArgs, target: ProjectImportTarget
+    ) -> ProjectFileImportBatchResult:
+        return ProjectFileImportBatchResult(
+            results=[
+                ProjectFileImportResult(
+                    source_path=item.path,
+                    success=False,
+                    message="The file could not be imported.",
+                )
+                for item in args.files
+            ],
+            rejected=list(args.rejected),
+            target_db_path=target.file_path,
+            selected_project_uid=target.project_uid,
+            import_as_orphaned_due_to_deleted_target=(
+                target.import_as_orphaned_due_to_deleted_target
+            ),
         )
-        self._select_project_file_import_result(result)
-        self._show_project_file_import_result(result)
 
     def _current_project_import_target(self) -> ProjectImportCurrentTarget | None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -667,16 +764,38 @@ class MainWindow(QtWidgets.QMainWindow):
         if result.succeeded:
             if result.succeeded == 1:
                 success = next(item for item in result.results if item.success)
-                project_name = success.project_name or "project file"
-                lines.append(f"Imported {project_name}.")
+                lines.append(
+                    self._format_single_project_file_import_success(
+                        success, result.import_as_orphaned_due_to_deleted_target
+                    )
+                )
             else:
-                lines.append(f"Imported {result.succeeded} project files.")
+                lines.append(
+                    f"Successfully imported {result.succeeded} project files into "
+                    "the database."
+                )
+                if result.import_as_orphaned_due_to_deleted_target:
+                    lines.append(
+                        f"Imported as orphaned because {DELETED_BIDS_PROJECT_NAME} "
+                        "cannot be used as an import target."
+                    )
         for item in result.results:
             if not item.success:
                 lines.append(f"{item.source_path}: {item.message}")
         for item in result.rejected:
             lines.append(f"{item.value}: {item.reason}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_single_project_file_import_success(
+        result: ProjectFileImportResult, imported_as_orphaned: bool
+    ) -> str:
+        if imported_as_orphaned:
+            return (
+                f"Successfully imported '{result.source_path}' as orphaned because "
+                f"{DELETED_BIDS_PROJECT_NAME} cannot be used as an import target."
+            )
+        return f"Successfully imported '{result.source_path}' into the database."
 
     def _prompt_create_database(self) -> None:
         if not self.ui_access_manager.is_allowed(Feature.CREATE_DATABASE):

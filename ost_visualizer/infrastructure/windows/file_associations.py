@@ -29,8 +29,6 @@ class FileAssociationRegistryError(RuntimeError):
 class IRegistry(Protocol):
     def set_value(self, key_path: str, name: str, value: str) -> None: ...
     def delete_tree(self, key_path: str) -> None: ...
-
-
 class WinRegRegistry:
     def __init__(
         self, import_module: Callable[[str], ModuleType] = importlib.import_module
