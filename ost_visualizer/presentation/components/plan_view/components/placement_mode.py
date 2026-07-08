@@ -1064,8 +1064,6 @@ class PlacementModeMixin:
             self.update_selection_visuals()
             self._annotation_place_points = [(ost_x, ost_y)]
             self._annotation_area_rect_dragging = True
-            if self._annotation_place_type in _AREA_ANNOTATION_TYPES:
-                self._set_area_placement_in_progress(True)
             self.update_annotation_place_preview(scene_pos)
             event.accept()
             return True
@@ -1114,6 +1112,7 @@ class PlacementModeMixin:
                         event.accept()
                         return True
                 self.update_annotation_place_preview(scene_pos)
+                self._set_area_placement_in_progress(True)
             event.accept()
             return True
         if self._annotation_place_type in _INK_ANNOTATION_TYPES:
@@ -1522,7 +1521,6 @@ class PlacementModeMixin:
                         return
                 self._place_points = [(ost_x, ost_y)]
                 self._place_area_rect_dragging = True
-                self._set_area_placement_in_progress(True)
             else:
                 first_ost_x, first_ost_y = self._place_points[0]
                 factor = cs.scale_ratio / (72.0 * cs.view_scale)
@@ -1605,6 +1603,7 @@ class PlacementModeMixin:
             elif use_valid:
                 self.update_place_preview(scene_pos)
                 self._backout_last_valid_ost = None
+                self._set_area_placement_in_progress(True)
                 event.accept()
                 return True
             x2, y2 = ost_x2, ost_y2
@@ -1630,6 +1629,7 @@ class PlacementModeMixin:
             )
         else:
             self.update_place_preview(scene_pos)
+            self._set_area_placement_in_progress(True)
         event.accept()
         return True
 

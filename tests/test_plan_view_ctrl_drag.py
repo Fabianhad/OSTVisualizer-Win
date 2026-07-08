@@ -203,7 +203,9 @@ class AreaPlacementHarness(PlacementModeMixin):
         self._backout_parent_uid = None
         self._backout_active_uid = None
         self._backout_orig_parent_path = None
+        self._backout_last_valid_ost = None
         self._scene_builder = _PlacementSceneBuilder()
+        self._linear_geom = FakeLinearGeom()
         self._place_session_uid = "area"
         self._current_bid_page_uid = "page-1"
         self._snap_increments = 1.0
@@ -216,10 +218,12 @@ class AreaPlacementHarness(PlacementModeMixin):
         }
         self._selected_uids = {"old"}
         self.takeoff_created = _FakeSignal()
+        self.hole_created = _FakeSignal()
         self.preview_updates = 0
         self.selection_updates = 0
         self.area_progress_states = []
         self.snap_invalidations = 0
+        self._area_in_progress = False
 
     def mapToScene(self, point):
         return QtCore.QPointF(point)
@@ -228,6 +232,9 @@ class AreaPlacementHarness(PlacementModeMixin):
         x = float(cursor_scene.x())
         y = float(cursor_scene.y())
         return x, y, x, y, 0
+
+    def _snap_angle_for_placement(self, _x1, _y1, x2, y2, _snap_kind):
+        return x2, y2
 
     def update_selection_visuals(self):
         self.selection_updates += 1
@@ -239,10 +246,26 @@ class AreaPlacementHarness(PlacementModeMixin):
         pass
 
     def _set_area_placement_in_progress(self, in_progress):
+        if self._area_in_progress == in_progress:
+            return
+        self._area_in_progress = in_progress
         self.area_progress_states.append(in_progress)
 
     def _invalidate_snap_index(self):
         self.snap_invalidations += 1
+
+    def is_inside_parent(self, _ost_x, _ost_y):
+        return True
+
+    def _point_in_sibling_hole(self, _ost_x, _ost_y):
+        return False
+
+    def _check_hole_overlap(self, _pos, parent_uid=None, exclude_uid=None):
+        return False
+
+    def enable_backout_placement(self):
+        self._backout_parent_uid = "parent"
+        self._backout_active_uid = "area"
 
 
 class _PlacementMouseEvent:
@@ -2972,7 +2995,7 @@ class AnnotationPlacementTests(unittest.TestCase):
                     self.assertEqual(view._annotation_place_points, [])
                     self.assertFalse(view._annotation_area_rect_dragging)
                     self.assertEqual(view._annotation_place_type, annotation_type)
-                    self.assertEqual(view.area_progress_states, [True, False])
+                    self.assertEqual(view.area_progress_states, [])
         finally:
             for annotation_type in ("polygon", "cloud"):
                 set_annotation_style_for_tool(
@@ -2987,7 +3010,7 @@ class AnnotationPlacementTests(unittest.TestCase):
         self.assertTrue(press.accepted)
         self.assertEqual(view._place_points, [(0.0, 0.0)])
         self.assertTrue(view._place_area_rect_dragging)
-        self.assertEqual(view.area_progress_states, [True])
+        self.assertEqual(view.area_progress_states, [])
         self.assertEqual(view.selection_updates, 1)
         self.assertTrue(view.handle_place_release_area(release))
         self.assertTrue(release.accepted)
@@ -2995,7 +3018,93 @@ class AnnotationPlacementTests(unittest.TestCase):
             view.takeoff_created.emitted,
             [("area", [0.0, 0.0, 10.0, 0.0, 10.0, 8.0, 0.0, 8.0], "page-1")],
         )
+        self.assertEqual(view.area_progress_states, [])
+        self.assertEqual(view.snap_invalidations, 1)
+
+    def test_area_takeoff_simple_click_starts_point_placement_lock(self):
+        view = AreaPlacementHarness()
+        press = _PlacementMouseEvent(0, 0)
+        release = _PlacementMouseEvent(0, 0)
+        view.handle_place_press(press)
+        self.assertTrue(press.accepted)
+        self.assertTrue(view._place_area_rect_dragging)
+        self.assertEqual(view.area_progress_states, [])
+        self.assertTrue(view.handle_place_release_area(release))
+        self.assertTrue(release.accepted)
+        self.assertEqual(view.takeoff_created.emitted, [])
+        self.assertEqual(view._place_points, [(0.0, 0.0)])
+        self.assertFalse(view._place_area_rect_dragging)
+        self.assertEqual(view.area_progress_states, [True])
+        view._reset_place_session_state()
         self.assertEqual(view.area_progress_states, [True, False])
+
+    def test_backout_click_drag_rectangle_does_not_enter_placement_lock(self):
+        view = AreaPlacementHarness()
+        view.enable_backout_placement()
+        press = _PlacementMouseEvent(0, 0)
+        release = _PlacementMouseEvent(10, 8)
+        view.handle_place_press(press)
+        self.assertTrue(press.accepted)
+        self.assertTrue(view._place_area_rect_dragging)
+        self.assertEqual(view.area_progress_states, [])
+        self.assertTrue(view.handle_place_release_area(release))
+        self.assertEqual(
+            view.hole_created.emitted,
+            [
+                (
+                    "area",
+                    [0.0, 0.0, 10.0, 0.0, 10.0, 8.0, 0.0, 8.0],
+                    "page-1",
+                    "parent",
+                )
+            ],
+        )
+        self.assertEqual(view._place_points, [])
+        self.assertFalse(view._place_area_rect_dragging)
+        self.assertEqual(view.area_progress_states, [])
+        self.assertEqual(view.snap_invalidations, 1)
+
+    def test_backout_simple_click_starts_point_placement_lock(self):
+        view = AreaPlacementHarness()
+        view.enable_backout_placement()
+        press = _PlacementMouseEvent(0, 0)
+        release = _PlacementMouseEvent(0, 0)
+        view.handle_place_press(press)
+        self.assertTrue(press.accepted)
+        self.assertTrue(view._place_area_rect_dragging)
+        self.assertEqual(view.area_progress_states, [])
+        self.assertTrue(view.handle_place_release_area(release))
+        self.assertEqual(view.hole_created.emitted, [])
+        self.assertEqual(view._place_points, [(0.0, 0.0)])
+        self.assertFalse(view._place_area_rect_dragging)
+        self.assertEqual(view.area_progress_states, [True])
+        view._reset_place_session_state()
+        self.assertEqual(view.area_progress_states, [True, False])
+
+    def test_linear_takeoff_click_drag_does_not_enter_area_placement_lock(self):
+        view = AreaPlacementHarness()
+        view._place_session_uid = "linear"
+        view._current_conditions = {
+            "linear": Condition(
+                uid="linear",
+                condition_type=Condition.TYPE_LINEAR,
+                layer_visible=True,
+            )
+        }
+        press = _PlacementMouseEvent(1, 2)
+        release = _PlacementMouseEvent(13, 14)
+        view.handle_place_press(press)
+        self.assertTrue(press.accepted)
+        self.assertTrue(view._place_linear_dragging)
+        self.assertEqual(view.area_progress_states, [])
+        self.assertTrue(view.handle_place_release_linear(release))
+        self.assertEqual(
+            view.takeoff_created.emitted,
+            [("linear", [1.0, 2.0, 13.0, 14.0], "page-1")],
+        )
+        self.assertFalse(view._place_linear_dragging)
+        self.assertEqual(view._place_points, [])
+        self.assertEqual(view.area_progress_states, [])
         self.assertEqual(view.snap_invalidations, 1)
 
     def test_drag_annotation_tools_use_press_drag_release_positions(self):
@@ -3036,6 +3145,7 @@ class AnnotationPlacementTests(unittest.TestCase):
                 self.assertEqual(view._annotation_place_points, [])
                 self.assertFalse(view._annotation_place_dragging)
                 self.assertEqual(view._annotation_place_type, annotation_type)
+                self.assertEqual(view.area_progress_states, [])
 
     def test_named_view_single_click_does_not_create_draft(self):
         view = AnnotationPlacementHarness()
@@ -3183,7 +3293,12 @@ class AnnotationPlacementTests(unittest.TestCase):
             with self.subTest(annotation_type=annotation_type):
                 view = AnnotationPlacementHarness()
                 self.assertTrue(view._enter_annotation_place_mode(annotation_type))
-                for point in ((0, 0), (12, 0), (6, 8)):
+                first_press = _PlacementMouseEvent(0, 0)
+                first_release = _PlacementMouseEvent(0, 0)
+                self.assertTrue(view.handle_annotation_place_press(first_press))
+                self.assertTrue(view.handle_annotation_place_release(first_release))
+                self.assertEqual(view.area_progress_states, [True])
+                for point in ((12, 0), (6, 8)):
                     self.assertTrue(
                         view.handle_annotation_place_press(
                             _PlacementMouseEvent(point[0], point[1])
@@ -3223,6 +3338,9 @@ class AnnotationPlacementTests(unittest.TestCase):
                 self.assertTrue(view._enter_annotation_place_mode(annotation_type))
                 self.assertTrue(
                     view.handle_annotation_place_press(_PlacementMouseEvent(1, 2))
+                )
+                self.assertTrue(
+                    view.handle_annotation_place_release(_PlacementMouseEvent(1, 2))
                 )
                 self.assertEqual(view.area_progress_states, [True])
                 self.assertTrue(view._enter_annotation_place_mode("rect"))
