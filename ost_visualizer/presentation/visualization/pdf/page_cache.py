@@ -245,10 +245,6 @@ class PageCache:
                 self._in_flight_condition.notify_all()
         return image
 
-    def can_accept_prefetch(self) -> bool:
-        with self._lock:
-            return self._can_accept_prefetch_locked(0)
-
     def _can_accept_prefetch_locked(self, estimated_bytes: int) -> bool:
         return (
             len(self._cache) < self.MAX_ENTRIES

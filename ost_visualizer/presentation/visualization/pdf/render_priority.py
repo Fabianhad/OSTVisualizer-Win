@@ -7,4 +7,3 @@ class RenderPriority(IntEnum):
     PDF_TEXT = 2
     OPTIONAL_BASE = 3
     NEARBY_PREFETCH = 4
-    BACKGROUND = 5

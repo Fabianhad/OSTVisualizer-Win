@@ -103,7 +103,3 @@ def populate_compact_context_menu(
 
     render_page()
     return menu
-
-
-def is_compact_context_menu_overflow_action(action: QtGui.QAction) -> bool:
-    return action.data() == _OVERFLOW_ACTION_ROLE

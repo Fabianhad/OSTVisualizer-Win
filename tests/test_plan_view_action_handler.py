@@ -2214,7 +2214,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 for uid, takeoff in data.takeoffs.items()
                 if takeoff.page_uid == page_uid
             }
-            viewer.update_viewers([])
+            viewer.opengl_viewer.clear_scene()
+            visualization.refresh_mesh_view([])
 
         handler = PlanViewActionHandler(
             plan_view=plan_view,

@@ -123,7 +123,7 @@ from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer impor
 from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
     CompositeRenderer,
 )
-from tests.single_action import SingleCallRecorder
+from single_action import SingleCallRecorder
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

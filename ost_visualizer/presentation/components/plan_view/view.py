@@ -624,9 +624,6 @@ class TakeoffPlanView(
         self._position_viewport_overlay_bar(self._missing_file_bar)
         self._position_viewport_overlay_bar(self._render_loading_bar)
 
-    def _position_render_loading_bar(self) -> None:
-        self._position_viewport_overlay_bar(self._render_loading_bar)
-
     def _clear_missing_page_file_status(self) -> None:
         bar = self._missing_file_bar
         if bar is not None:

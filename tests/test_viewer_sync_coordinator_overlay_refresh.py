@@ -562,14 +562,6 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
             plan_view.load_options[0]["hidden_layer_uids"], {"annotation-layer"}
         )
 
-    def test_empty_mesh_refresh_does_not_clear_active_plan_view(self):
-        plan_view = FakePlanView(current_page_uid="page-2")
-        coordinator, visualization_service = self._make_coordinator(plan_view)
-        coordinator.update_viewers([])
-        self.assertEqual(plan_view.clear_calls, 0)
-        self.assertEqual(plan_view.current_page_uid, "page-2")
-        self.assertEqual(visualization_service.mesh_pages, [[]])
-
 
 class FakeViewport:
     def __init__(self, calls):
@@ -741,7 +733,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIs(bar.parent(), view)
         self.assertIsNot(bar.parent(), view.viewport())
         view._start_current_page_render_loading()
-        view._position_render_loading_bar()
+        view._position_viewport_overlay_bars()
         expected = view.viewport().geometry()
         self.assertEqual(bar.geometry().x(), expected.x())
         self.assertEqual(bar.geometry().y(), expected.y())

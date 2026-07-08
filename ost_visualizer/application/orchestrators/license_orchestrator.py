@@ -120,27 +120,6 @@ class LicenseOrchestrator:
             error_prefix="deactivation",
         )
 
-    def validate_license_async(self, callback: Callable[[bool, str], None]) -> None:
-        self._ensure_hwid()
-
-        def operation() -> tuple[bool, str, Optional[LicenseStatus]]:
-            result = self._validate_use_case.execute()
-            self._apply_result(result)
-            return result.success, result.message, result.license_status
-
-        def on_main(
-            _s: bool, message: str, license_status: Optional[LicenseStatus]
-        ) -> None:
-            self._publish_validation_outcome(_s, message, license_status)
-            callback(_s, message)
-
-        self._thread_manager.spawn_with_bridge(
-            operation=operation,
-            callback_bridge=self._callback_bridge,
-            on_main_thread=on_main,
-            error_prefix="validation",
-        )
-
     def _startup_validate_license_async(
         self, callback: Callable[[bool, str], None]
     ) -> None:

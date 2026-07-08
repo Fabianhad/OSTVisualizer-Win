@@ -10,14 +10,6 @@ def normalize_layer_name(name: str) -> str:
     return str(name or "").strip().lower()
 
 
-def is_annotation_layer_name(name: str) -> bool:
-    return normalize_layer_name(name) == ANNOTATION_LAYER_NAME
-
-
-def is_image_layer_name(name: str) -> bool:
-    return normalize_layer_name(name) == IMAGE_LAYER_NAME
-
-
 def is_comments_layer_name(name: str) -> bool:
     return normalize_layer_name(name) == COMMENTS_LAYER_NAME
 
