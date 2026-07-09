@@ -1,11 +1,14 @@
-import os
 import logging
+import os
 import unittest
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QCoreApplication
 from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.services.project_write_service import (
+    ProjectWriteService,
+)
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_RECT,
     ANNOTATION_TYPE_TEXT,
@@ -13,24 +16,21 @@ from ost_visualizer.domain.entities.annotation import (
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-)
+from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
     SidebarCoordinator,
 )
-from ost_visualizer.presentation.controllers.menu_controller import MenuController
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
 from ost_visualizer.presentation.dialogs.cover_sheet.context import CoverSheetContext
-from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.handlers.file_operation_handler import (
     FileOperationHandler,
 )
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.deferred_persistence_manager import (
     DeferredPersistenceManager,
-)
-from ost_visualizer.application.services.project_write_service import (
-    ProjectWriteService,
 )
 
 

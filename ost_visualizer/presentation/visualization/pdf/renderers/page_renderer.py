@@ -4,10 +4,7 @@ from pathlib import Path
 from typing import Dict, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QImageReader
-from .....domain.entities.file_extensions import (
-    TIFF_EXTENSIONS,
-    is_pdf_suffix,
-)
+from .....domain.entities.file_extensions import TIFF_EXTENSIONS, is_pdf_suffix
 from .. import ost_pdf
 from ..pdfium_lock import pdfium_lock
 

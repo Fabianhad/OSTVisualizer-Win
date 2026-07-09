@@ -4,9 +4,10 @@ from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from .....domain.dtos.page_render_info_dto import PageRenderInfo
 from .....domain.entities.area import area_group_uid
-from .....domain.entities.config import Config
 from .....domain.entities.condition import Condition
+from .....domain.entities.config import Config
 from .....domain.entities.takeoff import Takeoff
+from .....domain.services.coordinate_transformation_service import OSTCoordinateSystem
 from ...core.geometry.ost_linear_geom import (
     gen_curve_pts,
     gen_thick_curve_offsets,
@@ -17,7 +18,6 @@ from ...core.geometry.takeoff_geometry import (
     compute_curved_linear_vertices,
     compute_straight_linear_vertices,
 )
-from .....domain.services.coordinate_transformation_service import OSTCoordinateSystem
 from ...services.color_service import int_to_hex
 
 Point = Tuple[float, float]

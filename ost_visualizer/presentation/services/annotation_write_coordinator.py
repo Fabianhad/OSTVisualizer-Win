@@ -3,10 +3,7 @@ from ...application.dtos.annotation_creation_factory import AnnotationCreationFa
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.events.app_events import AppEvents
-from ...domain.entities.annotation import (
-    ANNOTATION_TYPE_NAMED_VIEW,
-    BidAnnotation,
-)
+from ...domain.entities.annotation import ANNOTATION_TYPE_NAMED_VIEW, BidAnnotation
 from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.named_view import normalize_named_view_position
 

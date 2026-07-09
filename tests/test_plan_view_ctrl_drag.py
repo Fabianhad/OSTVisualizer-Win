@@ -24,14 +24,14 @@ from ost_visualizer.domain.entities.annotation import (
 )
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.presentation.components.plan_view.components import (
+    input_handler as input_handler_module,
+)
 from ost_visualizer.presentation.components.plan_view.components.drag_handler import (
     DragHandlerMixin,
 )
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
     NAMED_VIEW_LABEL_ITEM_KIND,
-)
-from ost_visualizer.presentation.components.plan_view.components import (
-    input_handler as input_handler_module,
 )
 from ost_visualizer.presentation.components.plan_view.components.input_handler import (
     InputHandlerMixin,
@@ -48,14 +48,14 @@ from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_SELECT,
 )
+from ost_visualizer.presentation.utils.annotation_defaults import (
+    set_annotation_style_for_tool,
+)
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_item_renderer import (
     AnnotationItemRenderer,
 )
 from ost_visualizer.presentation.visualization.pdf.renderers.annotation_renderer import (
     format_dimension_distance,
-)
-from ost_visualizer.presentation.utils.annotation_defaults import (
-    set_annotation_style_for_tool,
 )
 
 

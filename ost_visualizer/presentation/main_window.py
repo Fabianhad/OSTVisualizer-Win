@@ -3,9 +3,9 @@ import threading
 from types import SimpleNamespace
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
-from ..application.events.app_events import AppEvents
 from ..application.dtos.condition_summary_dtos import ConditionSummaryGrouping
 from ..application.dtos.file_import_args import ProjectFileArgs
+from ..application.events.app_events import AppEvents
 from ..application.use_cases.project.import_project_files_from_args_use_case import (
     ProjectFileImportBatchResult,
     ProjectFileImportResult,
@@ -47,12 +47,12 @@ from .config import (
     MAIN_MARGINS,
     MAIN_TOOLBAR_LABEL,
     NO_SPACING,
+    OVERLAY_TOOLS_TOOLBAR_LABEL,
+    PLAN_TOOLS_TOOLBAR_LABEL,
     SHOW_TOOLBARS_MENU_TITLE,
     SIDEBAR_MIN_WIDTH,
     TAB_INDEX_SUMMARY,
     TAB_INDEX_TAKEOFF,
-    PLAN_TOOLS_TOOLBAR_LABEL,
-    OVERLAY_TOOLS_TOOLBAR_LABEL,
     VIEW_TOOLBAR_LABEL,
 )
 from .configurators.window_configurator import WindowConfigurator
@@ -76,8 +76,14 @@ from .services.bid_clipboard_service import BidClipboardService
 from .services.mcp_context_bridge import McpContextBridge
 from .utils.annotation_defaults import (
     get_annotation_style_for_tool as get_active_annotation_style_for_tool,
+)
+from .utils.annotation_defaults import (
     get_annotation_styles_by_tool as get_active_annotation_styles_by_tool,
+)
+from .utils.annotation_defaults import (
     set_annotation_style_for_tool as set_active_annotation_style_for_tool,
+)
+from .utils.annotation_defaults import (
     set_annotation_styles_by_tool as set_active_annotation_styles_by_tool,
 )
 from .utils.annotation_style_controls import apply_annotation_tool_icon_color

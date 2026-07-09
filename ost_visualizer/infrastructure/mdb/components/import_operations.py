@@ -5,6 +5,7 @@ from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES
 from .connection_wrapper import ConnWrapper
 from .constants import BID_TABLES_WRITE_ORDER, NUMERIC_TYPE_SUBSTRINGS
+from .serialization import encode_text_blob
 
 
 class ImportOperationsMixin:
@@ -501,7 +502,7 @@ class ImportOperationsMixin:
         if "longbinary" in type_name or "memo" in type_name:
             if not value or value == "":
                 return None
-            return value.encode("utf-8")
+            return encode_text_blob(value)
         is_numeric = any(t in type_name for t in NUMERIC_TYPE_SUBSTRINGS)
         if is_numeric:
             if value == "":

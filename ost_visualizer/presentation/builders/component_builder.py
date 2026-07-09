@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from PySide6 import QtCore, QtGui, QtWidgets
-from ..adapters.hotlink_event_adapter import HotlinkEventAdapter
 from ..actions.action_ids import (
     ACTION_COPY,
     ACTION_CUT,
@@ -11,20 +10,13 @@ from ..actions.action_ids import (
     ACTION_REDO,
     ACTION_UNDO,
 )
-from ..components.conditions_sidebar import ConditionsSidebar
+from ..adapters.hotlink_event_adapter import HotlinkEventAdapter
 from ..components.condition_summary import ConditionSummaryTab
+from ..components.conditions_sidebar import ConditionsSidebar
 from ..components.layers_sidebar import BidLayersSidebar
 from ..components.mesh_view import OpenGLViewer
 from ..components.page_combo import PageComboBox
 from ..components.page_settings_bar import PageSettingsBar
-from ..modes.cursor import (
-    CURSOR_MODE_DEFAULT,
-    CURSOR_MODE_ANNOTATION_PLACE,
-    CURSOR_MODE_PAN,
-    CURSOR_MODE_PLACE,
-    CURSOR_MODE_SELECT,
-    CURSOR_MODE_ZOOM,
-)
 from ..components.plan_view.view import TakeoffPlanView
 from ..components.popup_tracking_combo import PopupTrackingComboBox
 from ..components.project_tree_view import ProjectView
@@ -35,6 +27,8 @@ from ..components.viewer_cursors import (
     make_zoom_cursor,
 )
 from ..config import (
+    ACTION_MOVE_OVERLAY_IMAGE_LABEL,
+    ACTION_MOVE_OVERLAY_IMAGE_TOOLTIP,
     ACTION_NEXT_PAGE_LABEL,
     ACTION_NEXT_PAGE_TOOLTIP,
     ACTION_PREVIOUS_PAGE_LABEL,
@@ -43,8 +37,6 @@ from ..config import (
     ACTION_RESET_VIEW_TOOLTIP,
     ACTION_ZOOM_IN_LABEL,
     ACTION_ZOOM_IN_TOOLTIP,
-    ACTION_MOVE_OVERLAY_IMAGE_LABEL,
-    ACTION_MOVE_OVERLAY_IMAGE_TOOLTIP,
     ACTION_ZOOM_OUT_LABEL,
     ACTION_ZOOM_OUT_TOOLTIP,
     ANNOTATION_VIEW_WINDOW_ACTION_LABEL,
@@ -56,11 +48,11 @@ from ..config import (
     MAIN_TOOLBAR_LABEL,
     NO_MARGINS,
     NO_SPACING,
+    OVERLAY_TOOLS_TOOLBAR_LABEL,
+    PLAN_TOOLS_TOOLBAR_LABEL,
     SIDEBAR_MIN_WIDTH,
     TAB_INDEX_SUMMARY,
     TAB_INDEX_TAKEOFF,
-    PLAN_TOOLS_TOOLBAR_LABEL,
-    OVERLAY_TOOLS_TOOLBAR_LABEL,
     VIEW_LABEL,
     VIEW_TOOLBAR_LABEL,
     VIEW_WINDOW_TITLE,
@@ -78,6 +70,14 @@ from ..handlers.plan_view_action_handler import PlanViewActionHandler
 from ..managers.icon_manager import IconId, IconManager
 from ..managers.shortcut_manager import ShortcutManager
 from ..managers.ui_access_manager import Feature
+from ..modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_DEFAULT,
+    CURSOR_MODE_PAN,
+    CURSOR_MODE_PLACE,
+    CURSOR_MODE_SELECT,
+    CURSOR_MODE_ZOOM,
+)
 from ..services.undo_redo_service import UndoRedoService
 from ..utils.annotation_style_controls import (
     apply_annotation_tool_icon_color,

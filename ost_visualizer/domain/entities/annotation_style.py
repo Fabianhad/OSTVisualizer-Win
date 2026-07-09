@@ -1,6 +1,6 @@
 from __future__ import annotations
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 DEFAULT_ANNOTATION_COLOR = "#ff0000"
 DEFAULT_ANNOTATION_LINE_WIDTH = 4.0

@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
-from ...domain.entities.config import Config
 from ...domain.entities.condition import Condition
+from ...domain.entities.config import Config
 from ...domain.entities.takeoff import Takeoff
 
 

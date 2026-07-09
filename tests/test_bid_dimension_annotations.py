@@ -14,6 +14,9 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsTextItem,
 )
+from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+    InsertAnnotationSpec,
+)
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.layer import Layer
@@ -21,16 +24,16 @@ from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,
 )
-from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
-    InsertAnnotationSpec,
-)
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
     AnnotationOperationsMixin,
 )
 from ost_visualizer.infrastructure.mdb.components.annotation_reader import (
     AnnotationReaderMixin,
 )
-from ost_visualizer.infrastructure.mdb.components.constants import encode_position
+from ost_visualizer.infrastructure.mdb.components.serialization import (
+    encode_position,
+    serialize_position_for_table,
+)
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
     DIMENSION_LABEL_ITEM_KIND,
 )
@@ -963,7 +966,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 FontItalic INTEGER,
                 FontUnderline INTEGER,
                 TextAlign INTEGER,
-                Position BLOB
+                Position TEXT
             )
             """
         )
@@ -1142,9 +1145,10 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             """
         ).fetchone()
         self.assertEqual(text_row[:6], (1, 3, "Arial", 0x996633, 12, 0))
+        self.assertIsInstance(text_row[6], str)
         self.assertEqual(
-            text_row[6].encode("latin-1"),
-            encode_position([7.0, 8.0, 12.0, 12.0]),
+            text_row[6],
+            serialize_position_for_table("BidTexts", [7.0, 8.0, 12.0, 12.0]),
         )
         named_view_row = conn.execute(
             "SELECT BidUID, BidPageUID, Name, Color, Origin, Position "
@@ -1163,6 +1167,48 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(hotlink_row[:4], (1, 3, 1, 255))
         self.assertEqual(hotlink_row[4], encode_position([5.0, 6.0]))
+
+    def test_text_annotation_position_updates_write_text_payload(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """
+            CREATE TABLE BidTexts (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidLayerUID INTEGER,
+                Name BLOB,
+                FontName TEXT,
+                FontColor INTEGER,
+                FontSize INTEGER,
+                FontBold INTEGER,
+                FontItalic INTEGER,
+                FontUnderline INTEGER,
+                TextAlign INTEGER,
+                Position TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO BidTexts
+                (UID, BidUID, BidPageUID, BidLayerUID, Position)
+            VALUES
+                (1, 1, 3, 4, ?)
+            """,
+            (encode_position([0.0, 0.0, 1.0, 1.0]),),
+        )
+        _DimensionWriteOps(conn).save_annotation_positions(
+            "bid.mdb", [("1", "text", [7.0, 8.0, 12.0, 12.0])]
+        )
+        position_value = conn.execute(
+            "SELECT Position FROM BidTexts WHERE UID=1"
+        ).fetchone()[0]
+        self.assertIsInstance(position_value, str)
+        self.assertEqual(
+            position_value,
+            serialize_position_for_table("BidTexts", [7.0, 8.0, 12.0, 12.0]),
+        )
 
     def test_annotation_style_updates_are_per_annotation_and_per_type(self):
         conn = sqlite3.connect(":memory:")
@@ -1258,7 +1304,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 FontItalic INTEGER,
                 FontUnderline INTEGER,
                 TextAlign INTEGER,
-                Position BLOB
+                Position TEXT
             )
             """
         )

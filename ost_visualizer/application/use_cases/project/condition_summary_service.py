@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
-from ....domain.entities.area import BidArea, UNASSIGNED_AREA_UID, normalize_area_uid
+from ....domain.entities.area import UNASSIGNED_AREA_UID, BidArea, normalize_area_uid
 from ....domain.entities.condition import Condition
 from ....domain.entities.condition_folder import BidConditionFolder
 from ....domain.entities.page import Page

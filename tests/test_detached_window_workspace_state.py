@@ -4,8 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 from ost_visualizer.application.builders.annotation_view_builder import (
     AnnotationViewBuilder,
 )
@@ -27,6 +26,7 @@ from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.workspace_state import WorkspaceState
 from ost_visualizer.presentation.actions.action_ids import ACTION_COPY, ACTION_PASTE
+from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
@@ -35,28 +35,27 @@ from ost_visualizer.presentation.coordinators.workspace_state_coordinator import
     WorkspaceStateCoordinator,
 )
 from ost_visualizer.presentation.main_window import MainWindow
-from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.managers.detached_page_view_manager import (
+    DetachedPageViewManager,
+)
 from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_SELECT,
 )
-from ost_visualizer.presentation.windows.components.window import DetachedPageViewWindow
-from ost_visualizer.presentation.managers.detached_page_view_manager import (
-    DetachedPageViewManager,
+from ost_visualizer.presentation.services.annotation_write_coordinator import (
+    AnnotationWriteCoordinator,
 )
 from ost_visualizer.presentation.services.selection_clipboard_service import (
     SelectionClipboardService,
-)
-from ost_visualizer.presentation.services.annotation_write_coordinator import (
-    AnnotationWriteCoordinator,
 )
 from ost_visualizer.presentation.utils.plan_tool_registry import (
     PLAN_ANNOTATION_TOOL_SPECS,
 )
 from ost_visualizer.presentation.windows.annotation_view_window import (
-    AnnotationViewWindow,
     _ANNOTATION_WINDOW_CONFIG,
+    AnnotationViewWindow,
 )
+from ost_visualizer.presentation.windows.components.window import DetachedPageViewWindow
 from ost_visualizer.presentation.windows.view_window import ViewWindow
 
 

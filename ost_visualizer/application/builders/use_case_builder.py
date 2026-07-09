@@ -47,11 +47,11 @@ from ..use_cases.project.renumber_conditions_use_case import RenumberConditionsU
 from ..use_cases.project.save_annotation_positions_use_case import (
     SaveAnnotationPositionsUseCase,
 )
-from ..use_cases.project.save_annotation_text_properties_use_case import (
-    SaveAnnotationTextPropertiesUseCase,
-)
 from ..use_cases.project.save_annotation_styles_use_case import (
     SaveAnnotationStylesUseCase,
+)
+from ..use_cases.project.save_annotation_text_properties_use_case import (
+    SaveAnnotationTextPropertiesUseCase,
 )
 from ..use_cases.project.save_bid_areas_use_case import SaveBidAreasUseCase
 from ..use_cases.project.save_bid_selected_page_use_case import (

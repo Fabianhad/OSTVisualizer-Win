@@ -2,8 +2,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 from ....application.dtos.color_dtos import ColorMappingResult, ColorWithOpacity
 from ....application.interfaces.i_color_service import ColorRGBA
 from ....domain.entities import pattern as pt
-from ....domain.entities.config import Config
 from ....domain.entities.condition import Condition
+from ....domain.entities.config import Config
 
 
 def parse_hex_color(color: str) -> Tuple[float, float, float]:

@@ -2,38 +2,30 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
+from ....application.dtos.annotation_creation_factory import AnnotationCreationFactory
+from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.page_view_dto import PageViewDto
 from ....application.dtos.plan_view_renderers_dto import PlanViewRenderers
-from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.events.app_events import AppEvents
 from ....application.interfaces.i_color_service import IColorService
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....application.interfaces.i_window_icon_provider import IWindowIconProvider
-from ....application.dtos.annotation_creation_factory import (
-    AnnotationCreationFactory,
-)
-from ....domain.entities.annotation_style import AnnotationStyle
 from ....domain.entities.annotation import (
     ANNOTATION_TYPE_HOTLINK,
     ANNOTATION_TYPE_NAMED_VIEW,
     ANNOTATION_TYPE_TEXT,
     int_color_to_hex,
 )
+from ....domain.entities.annotation_style import AnnotationStyle
 from ....domain.entities.annotation_view import AnnotationView
 from ....domain.entities.bid import Bid
 from ....domain.entities.config import Config
+from ...actions.action_ids import ACTION_COPY, ACTION_PASTE
 from ...adapters.hotlink_event_adapter import HotlinkEventAdapter
 from ...components.page_combo import SinglePageComboBox
-from ...modes.cursor import (
-    CURSOR_MODE_ANNOTATION_PLACE,
-    CURSOR_MODE_PAN,
-    CURSOR_MODE_SELECT,
-    CURSOR_MODE_ZOOM,
-)
 from ...components.plan_view.view import TakeoffPlanView
 from ...components.resizable_combo import ResizableComboBox
 from ...components.viewer_cursors import make_zoom_cursor
-from ...actions.action_ids import ACTION_COPY, ACTION_PASTE
 from ...config import (
     ACTION_NEXT_PAGE_TOOLTIP,
     ACTION_PAN_TOOLTIP,
@@ -56,19 +48,27 @@ from ...config import (
 )
 from ...dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ...managers.icon_manager import IconId, IconManager
+from ...modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_PAN,
+    CURSOR_MODE_SELECT,
+    CURSOR_MODE_ZOOM,
+)
 from ...services.selection_clipboard_service import SelectionClipboardService
-from ...services.selection_commands import DeleteAnnotationsCommand
-from ...services.selection_commands import InsertAnnotationsCommand
-from ...services.selection_commands import PasteAnnotationsCommand
-from ...utils.annotation_delete import (
-    NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
-    plan_named_view_hotlink_delete,
-    skipped_named_view_selection_keys,
+from ...services.selection_commands import (
+    DeleteAnnotationsCommand,
+    InsertAnnotationsCommand,
+    PasteAnnotationsCommand,
 )
 from ...utils.annotation_defaults import (
     build_placed_annotation_spec,
     get_annotation_style_for_tool,
     set_annotation_style_for_tool,
+)
+from ...utils.annotation_delete import (
+    NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
+    plan_named_view_hotlink_delete,
+    skipped_named_view_selection_keys,
 )
 from ...utils.annotation_paste import (
     annotation_paste_translation,
@@ -78,8 +78,8 @@ from ...utils.annotation_style_controls import (
     apply_annotation_tool_icon_color,
     create_annotation_tool_split_button,
 )
-from ...utils.named_view_focus import focus_plan_view_on_named_view
 from ...utils.messagebox import confirm
+from ...utils.named_view_focus import focus_plan_view_on_named_view
 from ...utils.named_view_validation import (
     named_view_name_exists,
     show_duplicate_named_view_name,

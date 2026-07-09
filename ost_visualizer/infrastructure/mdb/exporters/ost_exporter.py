@@ -7,12 +7,8 @@ from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.area import UNASSIGNED_AREA_UID
 from ....domain.entities.condition import Condition
+from ....domain.utils.position import parse_position
 from ...parsers.ost_serializer import serialize_value
-from ..schema_contract import BID_SECTIONS as _BID_SECTIONS
-from ..schema_contract import BID_TAIL_SECTIONS as _BID_TAIL_SECTIONS
-from ..schema_contract import GLOBAL_SECTIONS as _GLOBAL_SECTIONS
-from ..schema_contract import PAGE_SECTIONS as _PAGE_SECTIONS
-from ..schema_contract import singular as _singular
 from ..raw_bid_integrity import (
     format_integrity_issues,
     prepare_raw_bid_data_for_export,
@@ -23,7 +19,11 @@ from ..reference_validation import (
     filter_hotlink_rows,
     filter_page_referenced_rows,
 )
-from ....domain.utils.position import parse_position
+from ..schema_contract import BID_SECTIONS as _BID_SECTIONS
+from ..schema_contract import BID_TAIL_SECTIONS as _BID_TAIL_SECTIONS
+from ..schema_contract import GLOBAL_SECTIONS as _GLOBAL_SECTIONS
+from ..schema_contract import PAGE_SECTIONS as _PAGE_SECTIONS
+from ..schema_contract import singular as _singular
 
 logger = logging.getLogger(__name__)
 _PRIORITY_ATTRS = [

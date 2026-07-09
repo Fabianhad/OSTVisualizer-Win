@@ -18,7 +18,8 @@ from ....domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
 )
 from ....domain.entities.named_view import normalize_named_view_position
-from .constants import encode_position, hex_to_color_int
+from .constants import hex_to_color_int
+from .serialization import encode_annotation_text, serialize_position_for_table
 
 
 class AnnotationOperationsMixin:
@@ -79,19 +80,9 @@ class AnnotationOperationsMixin:
                         if annotation_type == ANNOTATION_TYPE_NAMED_VIEW
                         else position
                     )
-                    position_bytes = encode_position(position_to_save)
-                    position_val = (
-                        position_bytes.decode("latin-1")
-                        if annotation_type
-                        in (
-                            ANNOTATION_TYPE_TEXT,
-                            ANNOTATION_TYPE_CALLOUT,
-                        )
-                        else position_bytes
-                    )
                     cursor.execute(
                         f"UPDATE [{table}] SET [Position]=? WHERE [UID]=?",
-                        position_val,
+                        serialize_position_for_table(table, position_to_save),
                         int(uid),
                     )
                 return True
@@ -251,9 +242,7 @@ class AnnotationOperationsMixin:
     @staticmethod
     def _text_annotation_name_value(properties: Dict[str, object]):
         text_content = properties.get("Text", "")
-        if isinstance(text_content, str):
-            return text_content.encode("latin-1", errors="replace")
-        return text_content
+        return encode_annotation_text(text_content)
 
     @staticmethod
     def _named_view_name_value(properties: Dict[str, object]) -> str:
@@ -324,16 +313,7 @@ class AnnotationOperationsMixin:
                     if not table:
                         new_uids.append(None)
                         continue
-                    position_bytes = encode_position(position)
-                    position_val = (
-                        position_bytes.decode("latin-1")
-                        if annotation_type
-                        in (
-                            ANNOTATION_TYPE_TEXT,
-                            ANNOTATION_TYPE_CALLOUT,
-                        )
-                        else position_bytes
-                    )
+                    position_val = serialize_position_for_table(table, position)
                     color_int = hex_to_color_int(color)
                     width_int = int(width) if width else 0
                     layer_int = int(layer_uid) if layer_uid else None
@@ -440,8 +420,7 @@ class AnnotationOperationsMixin:
             )
         elif annotation_type == ANNOTATION_TYPE_TEXT:
             text_content = properties.get("Text", "")
-            if isinstance(text_content, str):
-                text_content = text_content.encode("latin-1", errors="replace")
+            text_content = encode_annotation_text(text_content)
             self._execute_insert_values(
                 cursor,
                 schema,
@@ -466,8 +445,7 @@ class AnnotationOperationsMixin:
             )
         elif annotation_type == ANNOTATION_TYPE_CALLOUT:
             text_content = properties.get("Text", "")
-            if isinstance(text_content, str):
-                text_content = text_content.encode("latin-1", errors="replace")
+            text_content = encode_annotation_text(text_content)
             self._execute_insert_values(
                 cursor,
                 schema,

@@ -1,9 +1,9 @@
 import unittest
-from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
-    InsertAnnotationSpec,
-)
 from ost_visualizer.application.dtos.annotation_creation_factory import (
     AnnotationCreationFactory,
+)
+from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+    InsertAnnotationSpec,
 )
 
 

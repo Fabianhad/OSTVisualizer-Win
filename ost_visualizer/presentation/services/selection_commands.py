@@ -1,3 +1,4 @@
+from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
@@ -13,6 +14,22 @@ AnnotationInsertFn = Callable[
 AnnotationDeleteFn = Callable[[str, List[str], List[InsertAnnotationSpec]], bool]
 SavedAnnotationInsertFn = Callable[[BidRef, list], list]
 SavedAnnotationDeleteFn = Callable[[str, list], bool]
+TakeoffSpecsPrepareFn = Callable[[List[InsertTakeoffSpec]], List[InsertTakeoffSpec]]
+AnnotationSpecsPrepareFn = Callable[
+    [List[InsertAnnotationSpec]], List[InsertAnnotationSpec]
+]
+
+
+def _identity_takeoff_specs(
+    specs: List[InsertTakeoffSpec],
+) -> List[InsertTakeoffSpec]:
+    return specs
+
+
+def _identity_annotation_specs(
+    specs: List[InsertAnnotationSpec],
+) -> List[InsertAnnotationSpec]:
+    return specs
 
 
 def _default_insert_takeoffs(write_svc) -> TakeoffInsertFn:
@@ -65,22 +82,30 @@ class InsertTakeoffsCommand:
         specs: list,
         write_svc,
         plan_view,
+        insert_takeoffs_fn: Optional[TakeoffInsertFn] = None,
+        delete_takeoffs_fn: Optional[TakeoffDeleteFn] = None,
+        prepare_specs_fn: Optional[TakeoffSpecsPrepareFn] = None,
     ) -> None:
         self._current_uids = list(uids)
         self._bid_ref = bid_ref
         self._specs = list(specs)
         self._write_svc = write_svc
         self._plan_view = plan_view
+        self._insert_takeoffs_fn = insert_takeoffs_fn or _default_insert_takeoffs(
+            write_svc
+        )
+        self._delete_takeoffs_fn = delete_takeoffs_fn or _default_delete_takeoffs(
+            write_svc
+        )
+        self._prepare_specs_fn = prepare_specs_fn or _identity_takeoff_specs
 
     def undo(self) -> None:
-        self._write_svc.delete_takeoffs(
-            self._bid_ref.file_path, list(self._current_uids)
-        )
-        self._plan_view.clear_selection()
+        if self._delete_takeoffs_fn(self._bid_ref.file_path, list(self._current_uids)):
+            self._plan_view.clear_selection()
 
     def redo(self) -> None:
-        new_uids = self._write_svc.insert_takeoffs(
-            self._bid_ref.file_path, self._bid_ref.bid_uid, self._specs
+        new_uids = self._insert_takeoffs_fn(
+            self._bid_ref, self._prepare_specs_fn(self._specs)
         )
         for i, uid in enumerate(new_uids):
             self._current_uids[i] = uid
@@ -98,6 +123,7 @@ class InsertAnnotationsCommand:
         plan_view,
         insert_annotations_fn: Optional[AnnotationInsertFn] = None,
         delete_annotations_fn: Optional[AnnotationDeleteFn] = None,
+        prepare_specs_fn: Optional[AnnotationSpecsPrepareFn] = None,
     ) -> None:
         self._current_uids = list(uids)
         self._bid_ref = bid_ref
@@ -110,6 +136,7 @@ class InsertAnnotationsCommand:
         self._delete_annotations_fn = (
             delete_annotations_fn or _default_delete_annotations(write_svc)
         )
+        self._prepare_specs_fn = prepare_specs_fn or _identity_annotation_specs
 
     def undo(self) -> None:
         if self._delete_annotations_fn(
@@ -118,7 +145,8 @@ class InsertAnnotationsCommand:
             self._plan_view.clear_selection()
 
     def redo(self) -> None:
-        new_uids = self._insert_annotations_fn(self._bid_ref, self._specs, None)
+        prepared_specs = self._prepare_specs_fn(self._specs)
+        new_uids = self._insert_annotations_fn(self._bid_ref, prepared_specs, None)
         self._specs = self._specs[: len(new_uids)]
         self._current_uids = list(new_uids)
         if self._current_uids:
@@ -157,6 +185,7 @@ def _insert_takeoffs_with_source_parent_remap(
     source_parent_uids: List[str],
     source_bid_uid: Optional[str],
     takeoff_extras: Dict[str, Dict[str, Any]],
+    prepare_specs_fn: Optional[TakeoffSpecsPrepareFn] = None,
 ) -> List[Optional[str]]:
     new_uids: List[Optional[str]] = [None] * len(takeoffs)
     source_to_new: Dict[str, str] = {}
@@ -183,7 +212,8 @@ def _insert_takeoffs_with_source_parent_remap(
             if source_parent_uid in source_to_new:
                 spec.parent_uid = source_to_new[source_parent_uid]
             specs.append(spec)
-        inserted_uids = insert_takeoffs_fn(bid_ref, specs)
+        prepared_specs = (prepare_specs_fn or _identity_takeoff_specs)(specs)
+        inserted_uids = insert_takeoffs_fn(bid_ref, prepared_specs)
         for i, uid in zip(ready, inserted_uids):
             source_uid = str(source_uids[i])
             source_parent_uid = str(source_parent_uids[i])
@@ -205,30 +235,41 @@ class DeleteTakeoffsCommand:
         write_svc,
         plan_view,
         takeoff_extras: Optional[Dict[str, Dict[str, Any]]] = None,
+        insert_takeoffs_fn: Optional[TakeoffInsertFn] = None,
+        delete_takeoffs_fn: Optional[TakeoffDeleteFn] = None,
+        prepare_specs_fn: Optional[TakeoffSpecsPrepareFn] = None,
     ) -> None:
-        self._saved_takeoffs = saved_takeoffs
+        self._saved_takeoffs = deepcopy(saved_takeoffs)
         self._bid_ref = bid_ref
         self._write_svc = write_svc
         self._plan_view = plan_view
         self._source_bid_uid = bid_ref.bid_uid
-        self._current_uids: List[str] = [t.uid for t in saved_takeoffs]
-        self._source_uids: List[str] = [str(t.uid) for t in saved_takeoffs]
+        self._current_uids: List[str] = [t.uid for t in self._saved_takeoffs]
+        self._source_uids: List[str] = [str(t.uid) for t in self._saved_takeoffs]
         self._source_parent_uids: List[str] = [
-            str(t.parent_uid) for t in saved_takeoffs
+            str(t.parent_uid) for t in self._saved_takeoffs
         ]
         self._takeoff_extras: Dict[str, Dict[str, Any]] = {
             str(uid): dict(extras) for uid, extras in (takeoff_extras or {}).items()
         }
+        self._insert_takeoffs_fn = insert_takeoffs_fn or _default_insert_takeoffs(
+            write_svc
+        )
+        self._delete_takeoffs_fn = delete_takeoffs_fn or _default_delete_takeoffs(
+            write_svc
+        )
+        self._prepare_specs_fn = prepare_specs_fn or _identity_takeoff_specs
 
     def undo(self) -> None:
         new_uids_by_index = _insert_takeoffs_with_source_parent_remap(
-            _default_insert_takeoffs(self._write_svc),
+            self._insert_takeoffs_fn,
             self._bid_ref,
             self._saved_takeoffs,
             self._source_uids,
             self._source_parent_uids,
             self._source_bid_uid,
             self._takeoff_extras,
+            self._prepare_specs_fn,
         )
         self._current_uids = [uid for uid in new_uids_by_index if uid is not None]
         new_uids = list(self._current_uids)
@@ -236,10 +277,8 @@ class DeleteTakeoffsCommand:
             self._plan_view.set_selected_uids(set(new_uids))
 
     def redo(self) -> None:
-        self._write_svc.delete_takeoffs(
-            self._bid_ref.file_path, list(self._current_uids)
-        )
-        self._plan_view.clear_selection()
+        if self._delete_takeoffs_fn(self._bid_ref.file_path, list(self._current_uids)):
+            self._plan_view.clear_selection()
 
 
 class PasteTakeoffsCommand:
@@ -255,13 +294,14 @@ class PasteTakeoffsCommand:
         takeoff_extras: Optional[Dict[str, Dict[str, Any]]] = None,
         insert_takeoffs_fn: Optional[TakeoffInsertFn] = None,
         delete_takeoffs_fn: Optional[TakeoffDeleteFn] = None,
+        prepare_specs_fn: Optional[TakeoffSpecsPrepareFn] = None,
     ) -> None:
-        self._pasted_takeoffs = pasted_takeoffs
+        self._pasted_takeoffs = deepcopy(pasted_takeoffs)
         self._bid_ref = bid_ref
         self._write_svc = write_svc
         self._plan_view = plan_view
         self._source_bid_uid = source_bid_uid or bid_ref.bid_uid
-        self._current_uids: List[str] = [t.uid for t in pasted_takeoffs]
+        self._current_uids: List[str] = [t.uid for t in self._pasted_takeoffs]
         self._source_uids: List[str] = [str(uid) for uid in source_uids]
         self._source_parent_uids: List[str] = [str(uid) for uid in source_parent_uids]
         self._takeoff_extras: Dict[str, Dict[str, Any]] = {
@@ -273,6 +313,7 @@ class PasteTakeoffsCommand:
         self._delete_takeoffs_fn = delete_takeoffs_fn or _default_delete_takeoffs(
             write_svc
         )
+        self._prepare_specs_fn = prepare_specs_fn or _identity_takeoff_specs
 
     def get_uid_remap(self) -> Dict[str, str]:
         return {
@@ -296,6 +337,7 @@ class PasteTakeoffsCommand:
             self._source_parent_uids,
             self._source_bid_uid,
             self._takeoff_extras,
+            self._prepare_specs_fn,
         )
         self._current_uids = [uid for uid in new_uids_by_index if uid is not None]
         new_uids = list(self._current_uids)
@@ -312,14 +354,16 @@ class DeleteAnnotationsCommand:
         plan_view,
         insert_saved_annotations_fn: Optional[SavedAnnotationInsertFn] = None,
         delete_saved_annotations_fn: Optional[SavedAnnotationDeleteFn] = None,
+        prepare_specs_fn: Optional[AnnotationSpecsPrepareFn] = None,
     ) -> None:
-        self._saved = list(saved_annotations)
+        self._saved = deepcopy(saved_annotations)
         self._bid_ref = bid_ref
         self._write_svc = write_svc
         self._plan_view = plan_view
-        self._current_uids: List[str] = [a.uid for a in saved_annotations]
+        self._current_uids: List[str] = [a.uid for a in self._saved]
         self._insert_saved_annotations_fn = insert_saved_annotations_fn
         self._delete_saved_annotations_fn = delete_saved_annotations_fn
+        self._prepare_specs_fn = prepare_specs_fn or _identity_annotation_specs
 
     def undo(self) -> None:
         if self._insert_saved_annotations_fn is not None:
@@ -356,7 +400,9 @@ class DeleteAnnotationsCommand:
                 for i in nv_indices
             ]
             nv_new = self._write_svc.insert_annotations(
-                self._bid_ref.file_path, self._bid_ref.bid_uid, nv_specs
+                self._bid_ref.file_path,
+                self._bid_ref.bid_uid,
+                self._prepare_specs_fn(nv_specs),
             )
             for j, idx in enumerate(nv_indices):
                 if j < len(nv_new):
@@ -379,7 +425,7 @@ class DeleteAnnotationsCommand:
             other_new = self._write_svc.insert_annotations(
                 self._bid_ref.file_path,
                 self._bid_ref.bid_uid,
-                other_specs,
+                self._prepare_specs_fn(other_specs),
                 ref_remap=ref_remap,
             )
             for j, idx in enumerate(other_indices):
@@ -422,6 +468,7 @@ class PasteAnnotationsCommand:
         sibling_takeoff_cmd: Optional[PasteTakeoffsCommand] = None,
         insert_annotations_fn: Optional[AnnotationInsertFn] = None,
         delete_annotations_fn: Optional[AnnotationDeleteFn] = None,
+        prepare_specs_fn: Optional[AnnotationSpecsPrepareFn] = None,
     ) -> None:
         self._specs = list(specs)
         self._current_uids = list(new_uids)
@@ -435,6 +482,7 @@ class PasteAnnotationsCommand:
         self._delete_annotations_fn = (
             delete_annotations_fn or _default_delete_annotations(write_svc)
         )
+        self._prepare_specs_fn = prepare_specs_fn or _identity_annotation_specs
 
     def get_result_keys(self) -> set:
         uid_type_set = {
@@ -453,7 +501,8 @@ class PasteAnnotationsCommand:
         ref_remap = PasteRefRemap()
         if self._sibling_takeoff_cmd is not None:
             ref_remap.takeoff_uids.update(self._sibling_takeoff_cmd.get_uid_remap())
-        new_uids = self._insert_annotations_fn(self._bid_ref, self._specs, ref_remap)
+        prepared_specs = self._prepare_specs_fn(self._specs)
+        new_uids = self._insert_annotations_fn(self._bid_ref, prepared_specs, ref_remap)
         self._specs = self._specs[: len(new_uids)]
         self._current_uids = list(new_uids)
         if self._current_uids:

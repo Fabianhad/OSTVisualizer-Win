@@ -31,6 +31,11 @@ from PySide6.QtWidgets import (
     QStyleOptionGraphicsItem,
 )
 from ost_visualizer.application.dtos.hotlink_dto import HotlinkDto
+from ost_visualizer.application.dtos.render_result_dto import RenderResult
+from ost_visualizer.application.services.page_load_strategy_service import (
+    LoadStrategy,
+    PageLoadStrategyService,
+)
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_HOTLINK,
     ANNOTATION_TYPE_NAMED_VIEW,
@@ -42,11 +47,6 @@ from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.application.dtos.render_result_dto import RenderResult
-from ost_visualizer.application.services.page_load_strategy_service import (
-    LoadStrategy,
-    PageLoadStrategyService,
-)
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
     DIMENSION_LABEL_ITEM_KIND,
     NAMED_VIEW_LABEL_BACKGROUND_ITEM_KIND,

@@ -1,7 +1,13 @@
 import pyodbc
 from ....domain.entities.area import UNASSIGNED_AREA_UID
+from ....domain.services.page_scale_transform import (
+    SCALE_EPSILON,
+    position_rescale_factor_between_page_scales,
+    rescale_position_values,
+)
 from .constants import PAGE_CONTENT_TABLES
 from .overlay_rect import default_overlay_rect
+from .serialization import parse_position_storage, serialize_position_for_table
 
 
 class PageOperationsMixin:
@@ -49,10 +55,10 @@ class PageOperationsMixin:
         if row and row[0] and row[1]:
             old_sf1 = float(row[0])
             old_sf2 = float(row[1])
-            old_ratio = old_sf2 / old_sf1 if old_sf1 else 1.0
-            new_ratio = sf2 / sf1 if sf1 else 1.0
-            factor = new_ratio / old_ratio if old_ratio else 1.0
-            if abs(factor - 1.0) > 1e-9:
+            factor = position_rescale_factor_between_page_scales(
+                (old_sf1, old_sf2), (sf1, sf2)
+            )
+            if abs(factor - 1.0) > SCALE_EPSILON:
                 self._rescale_page_positions(cursor, schema, page_uid, factor)
 
     def save_page_name(self, db_path: str, page_uid: str, name: str) -> bool:
@@ -99,31 +105,30 @@ class PageOperationsMixin:
                 )
                 rows = cursor.fetchall()
                 for r in rows:
-                    raw = r.Position
-                    if not raw:
+                    raw_position = r.Position
+                    if not raw_position:
                         continue
-                    if isinstance(raw, bytes):
-                        pos_str = raw.decode("utf-8", errors="ignore")
-                    else:
-                        pos_str = str(raw)
-                    parts = [p.strip() for p in pos_str.split(";") if p.strip()]
-                    scaled = []
-                    for p in parts:
-                        try:
-                            scaled.append(float(p) * factor)
-                        except ValueError:
-                            scaled.append(p)
-                    new_str = ";".join(
-                        (f"{v:.6g}" if isinstance(v, float) else v) for v in scaled
-                    )
-                    new_bytes = new_str.encode("utf-8")
+                    position = parse_position_storage(raw_position)
+                    if not position:
+                        self.logger.warning(
+                            "Skipping page-scale rescale for %s UID %s because Position is not numeric",
+                            table,
+                            r.UID,
+                        )
+                        continue
+                    scaled = [
+                        float(value)
+                        for value in rescale_position_values(position, factor)
+                    ]
                     cursor.execute(
                         f"UPDATE [{table}] SET [Position]=? WHERE [UID]=?",
-                        new_bytes,
+                        serialize_position_for_table(table, scaled),
                         int(r.UID),
                     )
-            except (pyodbc.Error, TypeError, ValueError):
-                pass
+            except pyodbc.Error:
+                self.logger.exception(
+                    "Failed to rescale positions in %s for page %s", table, page_uid
+                )
 
     def save_page_view_state(
         self,

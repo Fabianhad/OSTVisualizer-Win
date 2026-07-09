@@ -21,8 +21,8 @@ from ...domain.repositories.i_annotation_view_repository import (
     IAnnotationViewRepository,
 )
 from ...domain.services.project_data_service import ProjectDataService
-from ..services.undo_redo_service import UndoRedoService
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
+from ..services.undo_redo_service import UndoRedoService
 from .ui_access_manager import Feature
 
 

@@ -9,6 +9,7 @@ from ....domain.entities.hierarchy_data import (
 )
 from ...parsers.utils.parser import decode_value, parse_float, remove_empty_folders
 from ..schema_compatibility import MdbSchemaInspector
+from .serialization import decode_text_blob
 
 
 class HierarchyReaderMixin:
@@ -103,7 +104,7 @@ class HierarchyReaderMixin:
                 job_id=decode_value(bid_row.JobID),
                 bid_no=bid_row.BidNo,
                 bid_date=bid_row.BidDate,
-                notes=decode_value(bid_row.Notes),
+                notes=decode_text_blob(bid_row.Notes),
                 status=status_value,
                 estimator=estimator_value,
                 page_count=page_count,

@@ -8,6 +8,7 @@ from .constants import (
     PAGE_DELETE_CHILD_TABLES,
     TAKEOFF_REFERENCE_TABLES,
 )
+from .serialization import coerce_binary_column_value, encode_text_blob
 from .sql_helpers import placeholders
 
 _BID_SCOPED_PRE = (
@@ -524,11 +525,7 @@ class BidOperationsMixin:
                 new_guid = "{" + str(uuid.uuid4()).upper() + "}"
                 now = datetime.datetime.now().replace(second=0, microsecond=0)
                 notes_raw = updates.get("notes", "") or ""
-                notes_val = (
-                    notes_raw.encode("utf-8")
-                    if isinstance(notes_raw, str)
-                    else notes_raw
-                )
+                notes_val = encode_text_blob(notes_raw)
                 self._execute_insert_values(
                     cursor,
                     schema,
@@ -773,8 +770,8 @@ class BidOperationsMixin:
                 values = []
                 for c in insert_cols:
                     val = row_data[c]
-                    if c in binary_cols and val is not None and isinstance(val, str):
-                        val = val.encode("utf-8")
+                    if c in binary_cols and val is not None:
+                        val = coerce_binary_column_value(val)
                     values.append(val)
                 self._execute_insert_values(
                     cursor,
@@ -822,8 +819,8 @@ class BidOperationsMixin:
                 values = []
                 for c in insert_cols:
                     val = row_data[c]
-                    if c in binary_cols and val is not None and isinstance(val, str):
-                        val = val.encode("utf-8")
+                    if c in binary_cols and val is not None:
+                        val = coerce_binary_column_value(val)
                     values.append(val)
                 self._execute_insert_values(
                     cursor,

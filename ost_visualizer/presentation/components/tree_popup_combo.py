@@ -1,6 +1,6 @@
 from PySide6 import QtCore, QtGui, QtWidgets
-from .popup_frame import PopupFrame
 from ..utils.condition_tree_style import apply_tree_indentation
+from .popup_frame import PopupFrame
 
 
 class TreePopupComboBoxBase(QtWidgets.QComboBox):

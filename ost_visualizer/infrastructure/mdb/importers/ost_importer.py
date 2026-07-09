@@ -2,10 +2,7 @@ import logging
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set
 from ....domain.dtos.raw_bid_data_dto import RawBidData
-from ..raw_bid_integrity import (
-    format_integrity_issues,
-    validate_raw_bid_integrity,
-)
+from ..raw_bid_integrity import format_integrity_issues, validate_raw_bid_integrity
 from ..schema_contract import (
     BID_SECTIONS,
     BID_TAIL_SECTIONS,

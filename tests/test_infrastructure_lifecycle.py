@@ -8,7 +8,6 @@ from types import MappingProxyType, SimpleNamespace
 import pyodbc
 from ost_visualizer.infrastructure import providers
 from ost_visualizer.infrastructure.mdb import database_creator
-from ost_visualizer.infrastructure.mdb.schema_contract import DEFAULT_LAYER_ROWS
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
     AnnotationOperationsMixin,
 )
@@ -18,11 +17,11 @@ from ost_visualizer.infrastructure.mdb.components.bid_operations import (
 from ost_visualizer.infrastructure.mdb.components.bulk_write_helpers import (
     AccessBulkWriteMixin,
 )
-from ost_visualizer.infrastructure.mdb.components.condition_operations import (
-    ConditionOperationsMixin,
-)
 from ost_visualizer.infrastructure.mdb.components.condition_folder_operations import (
     ConditionFolderOperationsMixin,
+)
+from ost_visualizer.infrastructure.mdb.components.condition_operations import (
+    ConditionOperationsMixin,
 )
 from ost_visualizer.infrastructure.mdb.components.layer_operations import (
     LayerOperationsMixin,
@@ -36,6 +35,7 @@ from ost_visualizer.infrastructure.mdb.components.settings_operations import (
 from ost_visualizer.infrastructure.mdb.components.takeoff_operations import (
     TakeoffOperationsMixin,
 )
+from ost_visualizer.infrastructure.mdb.schema_contract import DEFAULT_LAYER_ROWS
 from ost_visualizer.infrastructure.services.license_validation_scheduler import (
     LicenseValidationScheduler,
 )

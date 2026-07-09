@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, List, Optional
 from PySide6 import QtWidgets
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
@@ -13,14 +13,16 @@ from ...domain.entities.annotation import (
     int_color_to_hex,
 )
 from ...domain.entities.area import normalize_area_uid
-from ...domain.entities.named_view import (
-    build_named_view_from_annotation,
-)
+from ...domain.entities.named_view import build_named_view_from_annotation
 from ...domain.entities.takeoff import Takeoff
+from ...domain.services.page_scale_transform import (
+    PageScale,
+    rescale_position_between_page_scales,
+)
 from ..dialogs.select_named_view_dialog import SelectNamedViewDialog
 from ..managers.ui_access_manager import Feature
-from ..services.selection_clipboard_service import SelectionClipboardService
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
+from ..services.selection_clipboard_service import SelectionClipboardService
 from ..services.selection_commands import (
     DeleteAnnotationsCommand,
     DeleteTakeoffsCommand,
@@ -28,13 +30,11 @@ from ..services.selection_commands import (
     PasteAnnotationsCommand,
     PasteTakeoffsCommand,
 )
+from ..utils.annotation_defaults import build_placed_annotation_spec
 from ..utils.annotation_delete import (
     NAMED_VIEW_HOTLINK_DELETE_MESSAGE,
     plan_named_view_hotlink_delete,
     skipped_named_view_selection_keys,
-)
-from ..utils.annotation_defaults import (
-    build_placed_annotation_spec,
 )
 from ..utils.annotation_paste import (
     annotation_paste_anchor,
@@ -317,6 +317,182 @@ class PlanViewActionHandler:
             db_path, updates, positions
         )
 
+    def _page_scale_for_page_uid(self, page_uid: str) -> PageScale:
+        page = self._data_svc.get_page(str(page_uid))
+        if page is None:
+            return (1.0, 1.0)
+        return (
+            float(page.scale_factor1 or 1.0),
+            float(page.scale_factor2 or 1.0),
+        )
+
+    def _takeoff_scale_for_uid(self, uid: str) -> PageScale:
+        takeoff = self._command_takeoff(str(uid))
+        if takeoff is None:
+            return (1.0, 1.0)
+        return self._page_scale_for_page_uid(takeoff.page_uid)
+
+    def _annotation_scale_for_key(self, uid: str, annotation_type: str) -> PageScale:
+        target_key = (str(uid), str(annotation_type))
+        for annotation in self._data_svc.get_all_annotations():
+            key = (str(annotation.uid), str(annotation.annotation_type))
+            if key == target_key:
+                return self._page_scale_for_page_uid(annotation.page_uid)
+        return (1.0, 1.0)
+
+    def _capture_takeoff_scales(self, positions: List[tuple]) -> dict[str, PageScale]:
+        return {
+            str(uid): self._takeoff_scale_for_uid(str(uid))
+            for uid, _position in positions
+        }
+
+    def _capture_annotation_scales(
+        self, positions: List[tuple]
+    ) -> dict[tuple[str, str], PageScale]:
+        return {
+            (str(uid), str(annotation_type)): self._annotation_scale_for_key(
+                str(uid), str(annotation_type)
+            )
+            for uid, annotation_type, _position in positions
+        }
+
+    def _capture_item_page_scales(self, items: list) -> dict[str, PageScale]:
+        return {
+            str(item.page_uid): self._page_scale_for_page_uid(item.page_uid)
+            for item in items
+        }
+
+    def _capture_takeoff_spec_scales(
+        self, specs: List[InsertTakeoffSpec]
+    ) -> dict[str, PageScale]:
+        return self._capture_item_page_scales(specs)
+
+    def _capture_annotation_spec_scales(
+        self, specs: List[InsertAnnotationSpec]
+    ) -> dict[str, PageScale]:
+        return self._capture_item_page_scales(specs)
+
+    def _capture_saved_annotation_scales(
+        self, annotations: list
+    ) -> dict[str, PageScale]:
+        return self._capture_item_page_scales(annotations)
+
+    def _positions_for_current_takeoff_scales(
+        self, positions: List[tuple], captured_scales: dict[str, PageScale]
+    ) -> List[tuple]:
+        scaled = []
+        for uid, position in positions:
+            uid_key = str(uid)
+            scaled.append(
+                (
+                    uid,
+                    rescale_position_between_page_scales(
+                        position,
+                        captured_scales.get(uid_key),
+                        self._takeoff_scale_for_uid(uid_key),
+                    ),
+                )
+            )
+        return scaled
+
+    def _positions_for_current_annotation_scales(
+        self,
+        positions: List[tuple],
+        captured_scales: dict[tuple[str, str], PageScale],
+    ) -> List[tuple]:
+        scaled = []
+        for uid, annotation_type, position in positions:
+            key = (str(uid), str(annotation_type))
+            scaled.append(
+                (
+                    uid,
+                    annotation_type,
+                    rescale_position_between_page_scales(
+                        position,
+                        captured_scales.get(key),
+                        self._annotation_scale_for_key(*key),
+                    ),
+                )
+            )
+        return scaled
+
+    def _takeoff_specs_for_current_scales(
+        self,
+        specs: List[InsertTakeoffSpec],
+        captured_scales: dict[str, PageScale],
+    ) -> List[InsertTakeoffSpec]:
+        return [
+            replace(
+                spec,
+                position=rescale_position_between_page_scales(
+                    spec.position,
+                    captured_scales.get(str(spec.page_uid)),
+                    self._page_scale_for_page_uid(spec.page_uid),
+                ),
+            )
+            for spec in specs
+        ]
+
+    def _annotation_specs_for_current_scales(
+        self,
+        specs: List[InsertAnnotationSpec],
+        captured_scales: dict[str, PageScale],
+    ) -> List[InsertAnnotationSpec]:
+        return [
+            replace(
+                spec,
+                position=rescale_position_between_page_scales(
+                    spec.position,
+                    captured_scales.get(str(spec.page_uid)),
+                    self._page_scale_for_page_uid(spec.page_uid),
+                ),
+            )
+            for spec in specs
+        ]
+
+    def _saved_annotations_for_current_scales(
+        self,
+        annotations: list,
+        captured_scales: dict[str, PageScale],
+    ) -> list:
+        return [
+            replace(
+                annotation,
+                position=rescale_position_between_page_scales(
+                    annotation.position,
+                    captured_scales.get(str(annotation.page_uid)),
+                    self._page_scale_for_page_uid(annotation.page_uid),
+                ),
+            )
+            for annotation in annotations
+        ]
+
+    def _save_takeoff_positions_for_current_scales(
+        self,
+        db_path: str,
+        positions: List[tuple],
+        captured_scales: dict[str, PageScale],
+    ) -> bool:
+        if not positions:
+            return True
+        return self._save_takeoff_positions_fast(
+            db_path,
+            self._positions_for_current_takeoff_scales(positions, captured_scales),
+        )
+
+    def _save_annotation_positions_for_current_scales(
+        self,
+        db_path: str,
+        positions: List[tuple],
+        captured_scales: dict[tuple[str, str], PageScale],
+    ) -> bool:
+        if not positions:
+            return True
+        return self._save_annotation_positions_fast(
+            db_path,
+            self._positions_for_current_annotation_scales(positions, captured_scales),
+        )
+
     def _push_position_undo_for_committed_partial(
         self,
         db_path: str,
@@ -329,21 +505,25 @@ class PlanViewActionHandler:
         a_new = a_new or []
         if not (t_old or a_old):
             return
+        takeoff_scales = self._capture_takeoff_scales(t_old or t_new)
+        annotation_scales = self._capture_annotation_scales(a_old or a_new)
 
         def _save_takeoff_positions(positions: List[tuple]) -> None:
-            if not positions:
-                return
-            self._save_takeoff_positions_fast(db_path, positions)
+            self._save_takeoff_positions_for_current_scales(
+                db_path, positions, takeoff_scales
+            )
 
         def _undo_partial():
             _save_takeoff_positions(t_old)
-            if a_old:
-                self._save_annotation_positions_fast(db_path, a_old)
+            self._save_annotation_positions_for_current_scales(
+                db_path, a_old, annotation_scales
+            )
 
         def _redo_partial():
             _save_takeoff_positions(t_new)
-            if a_new:
-                self._save_annotation_positions_fast(db_path, a_new)
+            self._save_annotation_positions_for_current_scales(
+                db_path, a_new, annotation_scales
+            )
 
         self._undo_svc.push(_undo_partial, _redo_partial)
 
@@ -539,6 +719,8 @@ class PlanViewActionHandler:
         t_new = [(uid, list(new)) for uid, _, new in takeoff_changes]
         a_old = [(uid, t, list(old)) for uid, t, old, _ in ann_changes if old]
         a_new = [(uid, t, list(new)) for uid, t, _, new in ann_changes]
+        takeoff_scales = self._capture_takeoff_scales(t_old or t_new)
+        annotation_scales = self._capture_annotation_scales(a_old or a_new)
         ok_t = True
         if takeoff_changes:
             ok_t = self._save_takeoff_positions_fast(db_path, t_new)
@@ -562,16 +744,20 @@ class PlanViewActionHandler:
             return
 
         def _undo_move():
-            if t_old:
-                self._save_takeoff_positions_fast(db_path, t_old)
-            if a_old:
-                self._save_annotation_positions_fast(db_path, a_old)
+            self._save_takeoff_positions_for_current_scales(
+                db_path, t_old, takeoff_scales
+            )
+            self._save_annotation_positions_for_current_scales(
+                db_path, a_old, annotation_scales
+            )
 
         def _redo_move():
-            if t_new:
-                self._save_takeoff_positions_fast(db_path, t_new)
-            if a_new:
-                self._save_annotation_positions_fast(db_path, a_new)
+            self._save_takeoff_positions_for_current_scales(
+                db_path, t_new, takeoff_scales
+            )
+            self._save_annotation_positions_for_current_scales(
+                db_path, a_new, annotation_scales
+            )
 
         self._undo_svc.push(_undo_move, _redo_move)
 
@@ -675,17 +861,28 @@ class PlanViewActionHandler:
             for uid, ann_type, old_pos, _new_pos in ann_position_changes
             if old_pos
         ]
+        annotation_scales = self._capture_annotation_scales(
+            old_positions or new_positions
+        )
         if not (old_updates or old_positions):
             return
 
         def _undo_text_and_position():
             self._save_annotation_text_and_positions_fast(
-                db_path, old_updates, old_positions
+                db_path,
+                old_updates,
+                self._positions_for_current_annotation_scales(
+                    old_positions, annotation_scales
+                ),
             )
 
         def _redo_text_and_position():
             self._save_annotation_text_and_positions_fast(
-                db_path, new_updates, new_positions
+                db_path,
+                new_updates,
+                self._positions_for_current_annotation_scales(
+                    new_positions, annotation_scales
+                ),
             )
 
         self._undo_svc.push(_undo_text_and_position, _redo_text_and_position)
@@ -729,6 +926,8 @@ class PlanViewActionHandler:
         a_old = [(uid, t, list(old)) for uid, t, old, _ in ann_changes if old]
         a_new = [(uid, t, list(new)) for uid, t, _, new in ann_changes]
         r_old = [(uid, old) for uid, old, _ in rotation_changes if old is not None]
+        takeoff_scales = self._capture_takeoff_scales(t_old or t_new)
+        annotation_scales = self._capture_annotation_scales(a_old or a_new)
         ok_t = True
         ok_r = True
         if ann_changes:
@@ -786,23 +985,37 @@ class PlanViewActionHandler:
 
         def _undo_group():
             if a_old:
-                if t_old:
-                    self._save_takeoff_positions_fast(db_path, t_old)
-                self._save_annotation_positions_fast(db_path, a_old)
+                self._save_takeoff_positions_for_current_scales(
+                    db_path, t_old, takeoff_scales
+                )
+                self._save_annotation_positions_for_current_scales(
+                    db_path, a_old, annotation_scales
+                )
                 if r_old:
                     self._save_takeoff_rotations_fast(db_path, r_old)
             else:
-                self._save_takeoff_position_rotation_fast(db_path, t_old, r_old)
+                self._save_takeoff_position_rotation_fast(
+                    db_path,
+                    self._positions_for_current_takeoff_scales(t_old, takeoff_scales),
+                    r_old,
+                )
 
         def _redo_group():
             if a_new:
-                if t_new:
-                    self._save_takeoff_positions_fast(db_path, t_new)
-                self._save_annotation_positions_fast(db_path, a_new)
+                self._save_takeoff_positions_for_current_scales(
+                    db_path, t_new, takeoff_scales
+                )
+                self._save_annotation_positions_for_current_scales(
+                    db_path, a_new, annotation_scales
+                )
                 if r_new:
                     self._save_takeoff_rotations_fast(db_path, r_new)
             else:
-                self._save_takeoff_position_rotation_fast(db_path, t_new, r_new)
+                self._save_takeoff_position_rotation_fast(
+                    db_path,
+                    self._positions_for_current_takeoff_scales(t_new, takeoff_scales),
+                    r_new,
+                )
 
         if t_old or a_old or r_old:
             self._undo_svc.push(_undo_group, _redo_group)
@@ -1007,6 +1220,7 @@ class PlanViewActionHandler:
         if keys:
             self._plan_view.set_selected_uids(keys)
         current_uids = list(new_uids)
+        current_specs_scales = self._capture_annotation_spec_scales(current_specs)
 
         def _undo_insert():
             if self._delete_annotations_fast(
@@ -1015,7 +1229,10 @@ class PlanViewActionHandler:
                 self._plan_view.clear_selection()
 
         def _redo_insert():
-            redone_uids = self._insert_annotations_fast(bid_ref, current_specs)
+            redone_specs = self._annotation_specs_for_current_scales(
+                current_specs, current_specs_scales
+            )
+            redone_uids = self._insert_annotations_fast(bid_ref, redone_specs)
             current_uids[:] = list(redone_uids)
             if redone_uids:
                 uid_type_set = {
@@ -1123,13 +1340,18 @@ class PlanViewActionHandler:
         self._plan_view.set_selected_uids(set(new_uids))
         if use_fast_refresh:
             current_uids = list(new_uids)
+            current_specs = specs[: len(new_uids)]
+            current_specs_scales = self._capture_takeoff_spec_scales(current_specs)
 
             def _undo_insert():
                 if self._delete_takeoffs_fast(bid_ref.file_path, list(current_uids)):
                     self._plan_view.clear_selection()
 
             def _redo_insert():
-                redone_uids = self._insert_takeoffs_fast(bid_ref, specs)
+                redone_specs = self._takeoff_specs_for_current_scales(
+                    current_specs, current_specs_scales
+                )
+                redone_uids = self._insert_takeoffs_fast(bid_ref, redone_specs)
                 for i, uid in enumerate(redone_uids):
                     if i < len(current_uids):
                         current_uids[i] = uid
@@ -1138,12 +1360,19 @@ class PlanViewActionHandler:
 
             self._undo_svc.push(_undo_insert, _redo_insert)
             return True
+        specs_scales = self._capture_takeoff_spec_scales(specs)
         cmd = InsertTakeoffsCommand(
             uids=new_uids,
             bid_ref=bid_ref,
             specs=specs,
             write_svc=self._write_svc,
             plan_view=self._plan_view,
+            prepare_specs_fn=lambda current_specs: (
+                self._takeoff_specs_for_current_scales(
+                    current_specs,
+                    specs_scales,
+                )
+            ),
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
         return True
@@ -1268,13 +1497,17 @@ class PlanViewActionHandler:
                 )
                 for t in saved_takeoffs
             ]
+            specs_scales = self._capture_takeoff_spec_scales(specs)
             if not self._delete_takeoffs_fast(db_path, takeoff_uids):
                 self._plan_view.set_selected_uids(set(uids))
                 return
             current_uids = list(takeoff_uids)
 
             def _undo_delete():
-                new_uids = self._insert_takeoffs_fast(bid_ref, specs)
+                restore_specs = self._takeoff_specs_for_current_scales(
+                    specs, specs_scales
+                )
+                new_uids = self._insert_takeoffs_fast(bid_ref, restore_specs)
                 for i, uid in enumerate(new_uids):
                     if i < len(current_uids):
                         current_uids[i] = uid
@@ -1290,17 +1523,26 @@ class PlanViewActionHandler:
             return
         if saved_annotations and not takeoff_uids:
             current_annotations = list(saved_annotations)
+            current_annotation_scales = self._capture_saved_annotation_scales(
+                current_annotations
+            )
             if not self._delete_saved_annotations_fast(db_path, current_annotations):
                 self._plan_view.set_selected_uids(set(uids))
                 return
 
             def _undo_annotation_delete():
-                nonlocal current_annotations
+                nonlocal current_annotations, current_annotation_scales
+                restore_annotations = self._saved_annotations_for_current_scales(
+                    current_annotations, current_annotation_scales
+                )
                 restored = self._insert_saved_annotations_fast(
-                    bid_ref, current_annotations
+                    bid_ref, restore_annotations
                 )
                 if restored:
                     current_annotations = restored
+                    current_annotation_scales = self._capture_saved_annotation_scales(
+                        current_annotations
+                    )
                     uid_type_set = {
                         (annotation.uid, annotation.annotation_type)
                         for annotation in current_annotations
@@ -1329,6 +1571,7 @@ class PlanViewActionHandler:
             saved_takeoff_extras = {
                 t.uid: self._data_svc.get_takeoff_extras(t.uid) for t in saved_takeoffs
             }
+            saved_takeoff_scales = self._capture_item_page_scales(saved_takeoffs)
             delete_cmds.append(
                 DeleteTakeoffsCommand(
                     saved_takeoffs=saved_takeoffs,
@@ -1336,15 +1579,30 @@ class PlanViewActionHandler:
                     write_svc=self._write_svc,
                     plan_view=self._plan_view,
                     takeoff_extras=saved_takeoff_extras,
+                    prepare_specs_fn=lambda current_specs: (
+                        self._takeoff_specs_for_current_scales(
+                            current_specs,
+                            saved_takeoff_scales,
+                        )
+                    ),
                 )
             )
         if saved_annotations and annotations_deleted:
+            saved_annotation_scales = self._capture_saved_annotation_scales(
+                saved_annotations
+            )
             delete_cmds.append(
                 DeleteAnnotationsCommand(
                     saved_annotations=saved_annotations,
                     bid_ref=bid_ref,
                     write_svc=self._ann_write_svc,
                     plan_view=self._plan_view,
+                    prepare_specs_fn=lambda current_specs: (
+                        self._annotation_specs_for_current_scales(
+                            current_specs,
+                            saved_annotation_scales,
+                        )
+                    ),
                 )
             )
         if not delete_cmds:
@@ -1630,6 +1888,9 @@ class PlanViewActionHandler:
         paste_cmds = []
         takeoff_cmd = None
         if pasted_takeoffs:
+            takeoff_specs_scales = self._capture_takeoff_spec_scales(
+                takeoff_specs[: len(new_takeoff_uids)]
+            )
             takeoff_cmd = PasteTakeoffsCommand(
                 pasted_takeoffs=pasted_takeoffs,
                 bid_ref=bid_ref,
@@ -1645,9 +1906,16 @@ class PlanViewActionHandler:
                 delete_takeoffs_fn=(
                     self._delete_takeoffs_fast if use_fast_takeoff_paste else None
                 ),
+                prepare_specs_fn=lambda current_specs: (
+                    self._takeoff_specs_for_current_scales(
+                        current_specs,
+                        takeoff_specs_scales,
+                    )
+                ),
             )
             paste_cmds.append(takeoff_cmd)
         if new_ann_uids and ann_specs:
+            ann_specs_scales = self._capture_annotation_spec_scales(ann_specs)
             paste_cmds.append(
                 PasteAnnotationsCommand(
                     specs=ann_specs,
@@ -1665,6 +1933,12 @@ class PlanViewActionHandler:
                         self._delete_annotations_fast
                         if use_fast_annotation_paste
                         else None
+                    ),
+                    prepare_specs_fn=lambda current_specs: (
+                        self._annotation_specs_for_current_scales(
+                            current_specs,
+                            ann_specs_scales,
+                        )
                     ),
                 )
             )

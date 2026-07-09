@@ -12,11 +12,6 @@ from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.project_factory import build_loaded_files
 from ..config import TAB_INDEX_PROJECTS, TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
-from ..modes.cursor import (
-    CURSOR_MODE_ANNOTATION_PLACE,
-    CURSOR_MODE_PLACE,
-    CURSOR_MODE_SELECT,
-)
 from ..dialogs.adjust_images_dialog import AdjustImagesDialog, ImageAdjustmentSettings
 from ..dialogs.areas_dialog import BidAreasDialog
 from ..dialogs.condition_types_dialog import ConditionTypesDialog
@@ -29,6 +24,11 @@ from ..dialogs.set_scale_dialog import ScaleSettings, SetScaleDialog
 from ..handlers.condition_action_handler import ConditionActionHandler
 from ..managers.app_config_presentation_manager import AppConfigPresentationManager
 from ..managers.ui_access_manager import Feature
+from ..modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_PLACE,
+    CURSOR_MODE_SELECT,
+)
 from ..utils.image_show_mode import SHOW_BOTH, SHOW_ORIGINAL, SHOW_OVERLAY
 from ..utils.messagebox import (
     DB_LOCKED_HINT,
@@ -1949,8 +1949,14 @@ class UIEventCoordinator:
     def handle_page_selection(self, page_uids: List[str]) -> None:
         if self._nav.is_refreshing:
             return
-        self._update_page_selection(page_uids)
-        if page_uids:
+        if not self.ui_state_manager.get_selected_bid_ref():
+            if self.ui_state_manager.selected_page_uids:
+                self._update_page_selection([])
+            return
+        selected = self._update_page_selection(page_uids)
+        if self._nav.current_state == NavState.FILE_LOADED_NO_BID:
+            self._nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
+        if selected:
             self._nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
         else:
             self._nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
@@ -2041,7 +2047,7 @@ class UIEventCoordinator:
             self._page_settings_bar.get_selected_area_uid() or ""
         )
 
-    def _update_page_selection(self, page_uids: List[str]) -> None:
+    def _update_page_selection(self, page_uids: List[str]) -> List[str]:
         previous = list(self.ui_state_manager.selected_page_uids)
         selected = self.project_data.select_pages(page_uids)
         self.ui_state_manager.set_page_selection(selected)
@@ -2054,6 +2060,7 @@ class UIEventCoordinator:
         self._sidebar.update_conditions_quantities()
         self._update_export_menu_state()
         self._update_page_info_status()
+        return selected
 
     def _cache_bid_data(self, loaded_files: List[LoadedFile]) -> None:
         if self._bid_data_cache:

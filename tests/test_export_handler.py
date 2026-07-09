@@ -5,10 +5,7 @@ from types import SimpleNamespace
 from ost_visualizer.application.dtos.condition_summary_dtos import (
     ConditionSummaryGrouping,
 )
-from ost_visualizer.application.dtos.export_dto import (
-    ExportErrorCode,
-    ExportResultDto,
-)
+from ost_visualizer.application.dtos.export_dto import ExportErrorCode, ExportResultDto
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.page import Page

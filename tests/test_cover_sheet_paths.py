@@ -14,11 +14,11 @@ from ost_visualizer.domain.entities.cover_sheet import (
 )
 from ost_visualizer.domain.entities.employee import Employee
 from ost_visualizer.domain.entities.workspace_state import WorkspaceState
-from ost_visualizer.infrastructure.mdb.components.settings_operations import (
-    SettingsOperationsMixin,
-)
 from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
+)
+from ost_visualizer.infrastructure.mdb.components.settings_operations import (
+    SettingsOperationsMixin,
 )
 from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDialog
 from ost_visualizer.presentation.dialogs.cover_sheet.header_state import (

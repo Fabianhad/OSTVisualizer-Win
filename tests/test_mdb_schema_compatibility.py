@@ -1,26 +1,26 @@
-import unittest
 import gc
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
-import shutil
+import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 import pyodbc
 
 pyodbc.pooling = False
+from ost_visualizer.infrastructure.mdb import schema_contract
+from ost_visualizer.infrastructure.mdb.database_creator import DatabaseCreator
+from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
+from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
+from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
+from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.mdb.schema_compatibility import (
     MdbSchemaInspector,
     UnsupportedMdbSchemaError,
 )
-from ost_visualizer.infrastructure.mdb import schema_contract
-from ost_visualizer.infrastructure.mdb.database_creator import DatabaseCreator
-from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
-from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
-from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
-from ost_visualizer.infrastructure.mdb.importers.ost_importer import OstImporter
 
 try:
     import win32com.client as _win32_client

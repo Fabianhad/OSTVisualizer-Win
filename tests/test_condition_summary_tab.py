@@ -24,16 +24,14 @@ from ost_visualizer.application.use_cases.project.condition_summary_service impo
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.condition_folder import BidConditionFolder
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
 )
 from ost_visualizer.domain.services.uom_service import CALC_COUNT, UOM_EACH
-from ost_visualizer.presentation.components.condition_summary import (
-    ConditionSummaryTab,
-)
+from ost_visualizer.presentation.components.condition_summary import ConditionSummaryTab
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.config import (
     TAB_INDEX_PROJECTS,

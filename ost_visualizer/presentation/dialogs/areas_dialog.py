@@ -10,14 +10,14 @@ from ..config import (
     RELAXED_MARGINS,
     RELAXED_SPACING,
 )
+from ..utils.condition_tree_style import apply_tree_indentation
+from ..utils.deferred_dialog_save import DeferredDialogSaveController
 from ..utils.dialog import (
     BaseListDialog,
     save_result_mapping,
     save_result_refresh_failed,
     save_result_succeeded,
 )
-from ..utils.condition_tree_style import apply_tree_indentation
-from ..utils.deferred_dialog_save import DeferredDialogSaveController
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
 

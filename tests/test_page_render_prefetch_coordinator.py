@@ -10,14 +10,14 @@ from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
     ViewerSyncCoordinator,
 )
+from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
+from ost_visualizer.presentation.visualization.pdf.render_priority import RenderPriority
 from ost_visualizer.presentation.visualization.pdf.services.page_render_prefetch_coordinator import (
     PageRenderPrefetchCoordinator,
 )
 from ost_visualizer.presentation.visualization.pdf.services.pdf_rendering_service import (
     PDFRenderingService,
 )
-from ost_visualizer.presentation.visualization.pdf.page_cache import PageCache
-from ost_visualizer.presentation.visualization.pdf.render_priority import RenderPriority
 
 
 class FakePageSizeProvider:

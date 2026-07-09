@@ -1,10 +1,10 @@
 from typing import List, Optional
-from ...domain.entities.layer import IMAGE_LAYER_NAME
 from ...domain.entities.file_extensions import is_pdf_suffix
-from ..dtos.html_export_page_dto import HtmlExportPageDto
+from ...domain.entities.layer import IMAGE_LAYER_NAME
 from ...domain.services.project_data_service import ProjectDataService
 from ..dtos.export_dialog_dto import ExportDialogDto
 from ..dtos.export_dto import ExportErrorCode, ExportRequestDto, ExportResultDto
+from ..dtos.html_export_page_dto import HtmlExportPageDto
 from ..interfaces.i_visualization_provider import IVisualizationProvider
 
 HTML_EXTENSION = "html"

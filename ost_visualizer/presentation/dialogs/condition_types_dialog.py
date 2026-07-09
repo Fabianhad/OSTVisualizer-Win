@@ -9,8 +9,8 @@ from ..config import (
     RELAXED_MARGINS,
     RELAXED_SPACING,
 )
-from ..utils.dialog import save_result_succeeded
 from ..utils.condition_tree_style import apply_tree_indentation
+from ..utils.dialog import save_result_succeeded
 from ..utils.messagebox import confirm_multi_delete, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize, set_initial_window_size

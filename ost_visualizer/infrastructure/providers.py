@@ -50,13 +50,13 @@ from ..presentation.visualization.factories.coordinate_transformer_factory impor
 )
 from ..presentation.visualization.pdf import ost_pdf as _ost_pdf
 from ..presentation.visualization.pdf.page_cache import PageCache
-from ..presentation.visualization.pdf.services.page_render_prefetch_coordinator import (
-    PageRenderPrefetchCoordinator,
-)
 from ..presentation.visualization.pdf.renderers.annotation_item_renderer import (
     AnnotationItemRenderer,
 )
 from ..presentation.visualization.pdf.renderers.takeoff_renderer import TakeoffRenderer
+from ..presentation.visualization.pdf.services.page_render_prefetch_coordinator import (
+    PageRenderPrefetchCoordinator,
+)
 from ..presentation.visualization.pdf.services.pdf_rendering_service import (
     PDFRenderingService,
 )

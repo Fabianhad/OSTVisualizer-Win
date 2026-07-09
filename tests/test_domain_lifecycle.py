@@ -2,8 +2,8 @@ import unittest
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.entities.workspace_state import (
-    TakeoffWorkspaceState,
     WORKSPACE_VALID_ACTIVE_VIEWS,
+    TakeoffWorkspaceState,
     WorkspaceState,
 )
 

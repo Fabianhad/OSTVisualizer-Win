@@ -1,8 +1,8 @@
 import logging
 import os
-from types import SimpleNamespace
 import tempfile
 import unittest
+from types import SimpleNamespace
 from ost_visualizer.infrastructure.pdf_metadata_provider import (
     NativePdfMetadataProvider,
 )

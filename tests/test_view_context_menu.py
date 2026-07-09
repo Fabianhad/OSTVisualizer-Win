@@ -6,22 +6,22 @@ from PySide6 import QtWidgets
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.presentation.managers.icon_manager import IconManager, IconId
+from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
+from ost_visualizer.presentation.utils.annotation_defaults import (
+    get_annotation_style_for_tool,
+    set_annotation_style_for_tool,
+)
 from ost_visualizer.presentation.utils.compact_context_menu import (
     COMPACT_CONTEXT_MENU_MAX_VISIBLE_ROWS,
     COMPACT_CONTEXT_MENU_NEXT_TEXT,
     COMPACT_CONTEXT_MENU_PREVIOUS_TEXT,
 )
-from ost_visualizer.presentation.utils.annotation_defaults import (
-    get_annotation_style_for_tool,
-    set_annotation_style_for_tool,
-)
 from ost_visualizer.presentation.utils.view_context_menu import (
     add_common_context_submenus,
     add_reassign_condition_submenu,
     add_selected_annotation_style_actions,
-    build_selected_takeoff_context_state,
     build_selected_annotation_style_context_state,
+    build_selected_takeoff_context_state,
 )
 
 

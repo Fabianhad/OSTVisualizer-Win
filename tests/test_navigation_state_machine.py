@@ -3,12 +3,12 @@ import unittest
 from types import SimpleNamespace
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.coordinators.navigation_state_machine import (
+    NavigationStateMachine,
+    NavState,
+)
 from ost_visualizer.presentation.coordinators.placement_coordinator import (
     PlacementCoordinator,
-)
-from ost_visualizer.presentation.coordinators.navigation_state_machine import (
-    NavState,
-    NavigationStateMachine,
 )
 from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
     ToolbarStateCoordinator,
@@ -185,6 +185,61 @@ class NavigationStateMachineTests(unittest.TestCase):
         placement.set_nav(nav)
         with self.assertNoLogs(self.logger, level="WARNING"):
             self.assertFalse(placement.enter("c1", ["c1"]))
+        self.assertEqual(nav.current_state, NavState.BID_ACTIVE_NO_PAGES)
+
+    def test_placement_coordinator_ignores_stale_active_page_when_nav_has_no_pages(
+        self,
+    ):
+        nav = NavigationStateMachine()
+        nav.transition_to(NavState.FILE_LOADED_NO_BID)
+        nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
+        ui_state = SimpleNamespace(
+            active_page_uid="stale-page",
+            selected_page_uids=[],
+            place_condition_uid=None,
+            set_place_condition_uids=lambda _uids: None,
+            clear_place_condition=lambda: None,
+            state=SimpleNamespace(
+                display_mode_2d="condition",
+                display_mode_3d="condition",
+                display_modes_synced=True,
+                grayscale_enabled=False,
+            ),
+        )
+        place_calls = []
+        plan_view = SimpleNamespace(
+            activate_place_for_condition=lambda condition_uid, condition_uids: (
+                place_calls.append((condition_uid, list(condition_uids))) or True
+            ),
+            update_color_map=lambda _color_map: None,
+            cancel_place_mode=lambda: None,
+        )
+        project_data = SimpleNamespace(
+            get_bid_conditions=lambda: {
+                "c1": Condition(
+                    uid="c1",
+                    name="Area",
+                    condition_type=Condition.TYPE_AREA,
+                )
+            },
+            get_page_takeoffs=lambda _page_uid: [],
+        )
+        placement = PlacementCoordinator(
+            ui_state_manager=ui_state,
+            ui_access_manager=SimpleNamespace(
+                is_allowed=lambda feature: feature == Feature.PLACE_PLAN_ITEMS,
+                set_area_placement_active=lambda _active: None,
+            ),
+            color_service=SimpleNamespace(
+                get_color_mapping=lambda *_args, **_call_options: ({}, {})
+            ),
+            project_data=project_data,
+        )
+        placement._plan_view = plan_view
+        placement.set_nav(nav)
+        with self.assertNoLogs(self.logger, level="WARNING"):
+            self.assertFalse(placement.enter("c1", ["c1"]))
+        self.assertEqual(place_calls, [])
         self.assertEqual(nav.current_state, NavState.BID_ACTIVE_NO_PAGES)
 
     def test_placement_coordinator_keeps_active_condition_in_place_list(self):

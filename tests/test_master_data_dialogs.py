@@ -5,13 +5,22 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtTest import QTest
-from ost_visualizer.domain.entities.cover_sheet import JobStatus
+from ost_visualizer.application.services.project_write_service import (
+    BatchWriteResult,
+    WriteReloadResult,
+)
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.cdn_type import CdnType
+from ost_visualizer.domain.entities.cover_sheet import JobStatus
 from ost_visualizer.domain.entities.employee import Employee, PayClass
 from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.layer import BidLayer
+from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
+from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
 from ost_visualizer.presentation.dialogs.areas_dialog import (
     BidAreaPickerDialog,
     BidAreasDialog,
@@ -20,28 +29,19 @@ from ost_visualizer.presentation.dialogs.condition_types_dialog import (
     ConditionTypesDialog,
 )
 from ost_visualizer.presentation.dialogs.employees_dialog import EmployeesDialog
+from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
 from ost_visualizer.presentation.dialogs.layers_dialog import (
     LayersDialog,
     LayersDialogMode,
 )
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-)
-from ost_visualizer.presentation.dialogs.job_statuses_dialog import JobStatusesDialog
 from ost_visualizer.presentation.dialogs.open_files_dialog import OpenFilesDialog
 from ost_visualizer.presentation.dialogs.payroll_class_dialog import (
     PayrollClassListDialog,
 )
-from ost_visualizer.presentation.components.layers_sidebar import BidLayersSidebar
-from ost_visualizer.presentation.components.page_settings_bar import PageSettingsBar
 from ost_visualizer.presentation.utils.deferred_dialog_save import (
     DeferredDialogSaveController,
 )
 from ost_visualizer.presentation.utils.tree_widget import DEFAULT_TREE_ROW_HEIGHT
-from ost_visualizer.application.services.project_write_service import (
-    BatchWriteResult,
-    WriteReloadResult,
-)
 
 
 def _app():

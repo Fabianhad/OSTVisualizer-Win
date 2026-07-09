@@ -1,14 +1,14 @@
 from typing import Any, Dict, List, Optional, Tuple
 import pyodbc
 from ....domain.dtos.raw_bid_data_dto import RawBidData
-from ....domain.entities.area import BidArea, UNASSIGNED_AREA_UID
+from ....domain.entities.area import UNASSIGNED_AREA_UID, BidArea
 from ....domain.entities.cdn_type import CdnType
 from ....domain.entities.condition import Condition
 from ....domain.entities.condition_folder import BidConditionFolder
 from ....domain.entities.layer import (
+    IMAGE_LAYER_NAME,
     BidLayer,
     BidLayers,
-    IMAGE_LAYER_NAME,
     Layer,
     get_layer_uid_by_name,
     is_layer_visible,
@@ -18,9 +18,10 @@ from ....domain.entities.takeoff import Takeoff
 from ...parsers.ost_serializer import serialize_row
 from ...parsers.position_parser import extract_z_value_from_name, parse_position
 from ...parsers.utils.parser import decode_value, parse_float, parse_overlay_rect
+from ..schema_compatibility import MdbSchemaInspector
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES
 from .constants import PAGE_DELETE_CONFIRMATION_TABLES
-from ..schema_compatibility import MdbSchemaInspector
+from .serialization import decode_text_blob, parse_position_storage
 
 BidConditions = Dict[str, Condition]
 BidTakeoffs = List[Takeoff]
@@ -731,11 +732,7 @@ class BidDataReaderMixin:
                     if row.BidConditionFolderUID is not None
                     else None
                 )
-                notes_raw = row.Notes
-                if isinstance(notes_raw, (bytes, bytearray)):
-                    notes = notes_raw.decode("utf-8", errors="replace")
-                else:
-                    notes = decode_value(notes_raw) if notes_raw else ""
+                notes = decode_text_blob(row.Notes)
                 round_quantity = (
                     bool(row.RoundQuantity) if row.RoundQuantity is not None else False
                 )
@@ -945,11 +942,7 @@ class BidDataReaderMixin:
                         if row_data.get("NameFontSize") not in (None, 0)
                         else None
                     )
-                    if isinstance(position_raw, bytes):
-                        position_str = position_raw.decode("latin-1")
-                    else:
-                        position_str = str(position_raw)
-                    position = parse_position(position_str)
+                    position = parse_position_storage(position_raw)
                     bid_takeoffs.append(
                         Takeoff(
                             uid=uid,

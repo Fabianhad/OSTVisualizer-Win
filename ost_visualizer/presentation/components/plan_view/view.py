@@ -1,7 +1,7 @@
 import math
 import os
-import weakref
 import uuid
+import weakref
 from dataclasses import replace
 from typing import Callable, Dict, List, Optional, Set, Tuple, cast
 from PySide6 import QtCore, QtSvg
@@ -46,9 +46,6 @@ from ....application.interfaces.i_page_load_strategy_service import (
     IPageLoadStrategyService,
 )
 from ....application.interfaces.i_page_rendering_service import IPageRenderingService
-from ...visualization.pdf.services.page_render_prefetch_coordinator import (
-    PageRenderPrefetchCoordinator,
-)
 from ....domain.entities.annotation import BidAnnotation, int_color_to_hex
 from ....domain.entities.condition import Condition
 from ....domain.entities.config import Config
@@ -60,16 +57,29 @@ from ...configurators.window_configurator import resource_path
 from ...interfaces.i_annotation_item_renderer import IAnnotationItemRenderer
 from ...interfaces.i_takeoff_renderer import ITakeoffRenderer
 from ...managers.icon_manager import IconId, IconManager
+from ...modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_MOVE_OVERLAY,
+    CURSOR_MODE_MOVE_OVERLAY_HANDLE,
+    CURSOR_MODE_PASTE_BACKOUT,
+    CURSOR_MODE_PLACE,
+    CURSOR_MODE_ROTATE,
+    CURSOR_MODE_SELECT,
+    CURSOR_MODE_SLOPE_ROTATE,
+    CURSOR_MODE_ZOOM,
+    PASSIVE_MOUSE_TRACKING_CURSOR_MODES,
+)
 from ...scene.scene_builder import SceneBuilder
-from ...utils.color_swatch import rounded_color_swatch
 from ...utils.annotation_defaults import (
     annotation_default_style,
     text_annotation_properties,
 )
+from ...utils.color_swatch import rounded_color_swatch
 from ...utils.messagebox import show_warning
 from ...utils.theme import set_palette_background
 from ...utils.themed_icon import current_text_hex, recolor_svg
 from ...utils.zoom_debouncer import ZoomDebouncer
+from ...visualization.pdf.render_priority import RenderPriority
 from ...visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
     create_named_view_label_font,
@@ -78,7 +88,9 @@ from ...visualization.pdf.renderers.annotation_item_renderer import (
 from ...visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_geometry,
 )
-from ...visualization.pdf.render_priority import RenderPriority
+from ...visualization.pdf.services.page_render_prefetch_coordinator import (
+    PageRenderPrefetchCoordinator,
+)
 from ...visualization.utils.image_effects import page_effect_paper_color
 from ..viewer_cursors import OUTLINE_OFFSETS, recolor_pixmap
 from .components.drag_handler import DragHandlerMixin
@@ -107,18 +119,6 @@ from .components.placement_mode import (
 )
 from .components.selection_manager import SelectionManagerMixin
 from .components.zoom_handler import ZoomHandlerMixin
-from ...modes.cursor import (
-    CURSOR_MODE_ANNOTATION_PLACE,
-    CURSOR_MODE_MOVE_OVERLAY,
-    CURSOR_MODE_MOVE_OVERLAY_HANDLE,
-    CURSOR_MODE_PASTE_BACKOUT,
-    CURSOR_MODE_PLACE,
-    CURSOR_MODE_ROTATE,
-    CURSOR_MODE_SELECT,
-    CURSOR_MODE_SLOPE_ROTATE,
-    CURSOR_MODE_ZOOM,
-    PASSIVE_MOUSE_TRACKING_CURSOR_MODES,
-)
 
 SLOPE_ROTATE_HANDLE_HEX = "#2f9e44"
 SLOPE_ROTATE_HANDLE_RGB = (47, 158, 68)

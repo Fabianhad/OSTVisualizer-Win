@@ -1,7 +1,7 @@
 import unittest
 from PySide6 import QtGui, QtWidgets
-from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.presentation.config import (
     TAB_INDEX_PROJECTS,
     TAB_INDEX_SUMMARY,

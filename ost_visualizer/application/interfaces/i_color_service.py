@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional, Protocol, Sequence, Set, Tuple, Union
-from ...domain.entities.config import Config
 from ...domain.entities.condition import Condition
+from ...domain.entities.config import Config
 from ...domain.entities.takeoff import Takeoff
 from ..dtos.color_dtos import ColorMappingResult, ColorWithOpacity
 

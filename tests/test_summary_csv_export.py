@@ -4,11 +4,11 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from ost_visualizer.application.dtos.condition_summary_dtos import (
+    SUMMARY_NODE_CONDITION,
+    SUMMARY_NODE_ROOT,
     ConditionSummaryGrouping,
     ConditionSummaryNode,
     ConditionSummaryValues,
-    SUMMARY_NODE_CONDITION,
-    SUMMARY_NODE_ROOT,
 )
 from ost_visualizer.application.services.summary_csv_export_service import (
     SummaryCsvExportService,

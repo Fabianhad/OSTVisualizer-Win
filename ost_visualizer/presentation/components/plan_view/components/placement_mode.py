@@ -17,6 +17,7 @@ from .....domain.entities.annotation import (
     ANNOTATION_TYPE_ARROW,
     ANNOTATION_TYPE_CLOUD,
     ANNOTATION_TYPE_DIMENSION,
+    ANNOTATION_TYPE_HIGHLIGHT,
     ANNOTATION_TYPE_HOTLINK,
     ANNOTATION_TYPE_INK,
     ANNOTATION_TYPE_LINE,
@@ -25,17 +26,23 @@ from .....domain.entities.annotation import (
     ANNOTATION_TYPE_POLYGON,
     ANNOTATION_TYPE_RECT,
     ANNOTATION_TYPE_TEXT,
-    ANNOTATION_TYPE_HIGHLIGHT,
     BidAnnotation,
 )
 from .....domain.entities.condition import Condition
 from .....domain.entities.file_extensions import is_pdf_suffix
 from .....domain.entities.named_view import named_view_position_from_bounds
+from ....modes.cursor import CURSOR_MODE_ANNOTATION_PLACE, CURSOR_MODE_SELECT
+from ....utils.annotation_defaults import (
+    PLACEABLE_ANNOTATION_TYPES,
+    annotation_default_style,
+    dimension_annotation_properties,
+)
 from ....visualization.core.geometry.takeoff_geometry import (
     compute_count_vertices,
     compute_line_angle,
 )
 from ....visualization.pdf import ost_pdf
+from ....visualization.pdf.pdfium_lock import pdfium_lock
 from ....visualization.pdf.renderers.annotation_item_renderer import (
     DIMENSION_FONT_SIZE_ADJUSTMENT,
     build_dimension_path,
@@ -45,16 +52,9 @@ from ....visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_geometry,
     create_cloud_path_points,
 )
-from ....utils.annotation_defaults import (
-    PLACEABLE_ANNOTATION_TYPES,
-    annotation_default_style,
-    dimension_annotation_properties,
-)
-from ....visualization.pdf.pdfium_lock import pdfium_lock
 from .geometry_utils import polygon_is_valid, polyline_self_intersects
 from .handle_style import apply_takeoff_handle_style
 from .snap_index import ENDPOINT, GRID, MIDPOINT, NONE, PERPENDICULAR, SnapIndex
-from ....modes.cursor import CURSOR_MODE_ANNOTATION_PLACE, CURSOR_MODE_SELECT
 
 logger = logging.getLogger(__name__)
 PDF_INTELLIGENCE_SOURCE_MAIN = "main"

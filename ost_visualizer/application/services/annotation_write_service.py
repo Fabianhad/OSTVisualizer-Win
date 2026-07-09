@@ -6,11 +6,11 @@ from ..use_cases.project.insert_annotations_use_case import InsertAnnotationsUse
 from ..use_cases.project.save_annotation_positions_use_case import (
     SaveAnnotationPositionsUseCase,
 )
-from ..use_cases.project.save_annotation_text_properties_use_case import (
-    SaveAnnotationTextPropertiesUseCase,
-)
 from ..use_cases.project.save_annotation_styles_use_case import (
     SaveAnnotationStylesUseCase,
+)
+from ..use_cases.project.save_annotation_text_properties_use_case import (
+    SaveAnnotationTextPropertiesUseCase,
 )
 from .active_bid_write_guard import ActiveBidWriteGuard
 from .base_write_service import BaseWriteService

@@ -1,27 +1,27 @@
 import base64
-import unittest
 import tempfile
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from ost_visualizer.application.services.export_service import ExportService
 from ost_visualizer.application.dtos.export_dto import ExportRequestDto
-from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.application.services.export_service import ExportService
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.presentation.visualization.core.mesh_generator import MeshData
+from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 from ost_visualizer.presentation.visualization.renderers.threejs.adapters.threejs_mesh_adapter import (
     ThreejsMeshAdapter,
-)
-from ost_visualizer.presentation.visualization.renderers.threejs.two_d_takeoff_processor import (
-    process_takeoffs_2d_for_threejs,
 )
 from ost_visualizer.presentation.visualization.renderers.threejs.threejs_renderer import (
     _build_multi_page_data,
 )
-from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
+from ost_visualizer.presentation.visualization.renderers.threejs.two_d_takeoff_processor import (
+    process_takeoffs_2d_for_threejs,
+)
 from ost_visualizer.presentation.visualization.services.color_service import (
     ColorService,
 )

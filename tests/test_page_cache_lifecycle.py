@@ -1,6 +1,6 @@
-import unittest
-import threading
 import tempfile
+import threading
+import unittest
 from PySide6.QtGui import QImage
 from ost_visualizer.presentation.visualization.pdf.page_cache import (
     PageCache,

@@ -2,19 +2,23 @@ import unittest
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
 from ost_visualizer.application.services.project_write_service import WriteReloadResult
 from ost_visualizer.domain.entities.annotation import ANNOTATION_TYPE_TEXT
-from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyData,
     HierarchyFileEntry,
     HierarchyProjectInfo,
 )
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
+from ost_visualizer.presentation.coordinators.navigation_state_machine import (
+    NavigationStateMachine,
+    NavState,
+)
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
     _MainThreadSignaler,
 )
-from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 
 
@@ -495,6 +499,90 @@ class FakeRefreshNav:
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def _make_page_selection_coordinator(self, *, bid_ref=None, current_state=None):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        nav = NavigationStateMachine()
+        if current_state is not None:
+            nav.transition_to(NavState.FILE_LOADED_NO_BID)
+            if current_state == NavState.BID_ACTIVE_NO_PAGES:
+                nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
+        coordinator._nav = nav
+
+        class UiState:
+            def __init__(self):
+                self.selected_page_uids = []
+                self.set_page_selection_calls = []
+
+            def get_selected_bid_ref(self):
+                return bid_ref
+
+            def set_page_selection(self, page_uids):
+                self.selected_page_uids = list(page_uids)
+                self.set_page_selection_calls.append(list(page_uids))
+
+        class ProjectData:
+            def __init__(self):
+                self.select_calls = []
+
+            def select_pages(self, page_uids):
+                self.select_calls.append(list(page_uids))
+                return [uid for uid in page_uids if uid == "page-1"]
+
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator.ui_access_manager = type(
+            "Access",
+            (),
+            {"is_allowed": lambda _self, _feature: False},
+        )()
+        coordinator._sidebar = type(
+            "Sidebar",
+            (),
+            {"update_conditions_quantities": lambda _self: None},
+        )()
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._update_page_info_status = lambda: None
+        return coordinator
+
+    def test_page_selection_without_bid_does_not_enter_bid_page_state(self):
+        coordinator = self._make_page_selection_coordinator(
+            bid_ref=None, current_state=NavState.FILE_LOADED_NO_BID
+        )
+        logger = "ost_visualizer.presentation.coordinators.navigation_state_machine"
+        with self.assertNoLogs(logger, level="WARNING"):
+            coordinator.handle_page_selection(["page-1"])
+        self.assertEqual(coordinator._nav.current_state, NavState.FILE_LOADED_NO_BID)
+        self.assertEqual(coordinator.project_data.select_calls, [])
+        self.assertEqual(coordinator.ui_state_manager.set_page_selection_calls, [])
+
+    def test_page_selection_from_file_state_steps_through_bid_no_pages(self):
+        bid_ref = BidRef("active.mdb", "bid-1")
+        coordinator = self._make_page_selection_coordinator(
+            bid_ref=bid_ref, current_state=NavState.FILE_LOADED_NO_BID
+        )
+        logger = "ost_visualizer.presentation.coordinators.navigation_state_machine"
+        with self.assertNoLogs(logger, level="WARNING"):
+            coordinator.handle_page_selection(["page-1"])
+        self.assertEqual(
+            coordinator.project_data.select_calls,
+            [["page-1"]],
+        )
+        self.assertEqual(
+            coordinator._nav.current_state,
+            NavState.BID_ACTIVE_PAGES_SELECTED,
+        )
+
+    def test_invalid_page_selection_uses_filtered_empty_selection_for_nav_state(self):
+        bid_ref = BidRef("active.mdb", "bid-1")
+        coordinator = self._make_page_selection_coordinator(
+            bid_ref=bid_ref, current_state=NavState.BID_ACTIVE_NO_PAGES
+        )
+        logger = "ost_visualizer.presentation.coordinators.navigation_state_machine"
+        with self.assertNoLogs(logger, level="WARNING"):
+            coordinator.handle_page_selection(["missing-page"])
+        self.assertEqual(coordinator._nav.current_state, NavState.BID_ACTIVE_NO_PAGES)
+        self.assertEqual(coordinator.ui_state_manager.selected_page_uids, [])
+
     def test_master_condition_type_save_warns_when_refresh_fails(self):
         warnings = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

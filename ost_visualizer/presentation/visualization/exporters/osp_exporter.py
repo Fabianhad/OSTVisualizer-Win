@@ -1,5 +1,5 @@
-import logging
 import hashlib
+import logging
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET

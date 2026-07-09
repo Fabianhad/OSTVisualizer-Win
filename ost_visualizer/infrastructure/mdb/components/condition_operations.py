@@ -4,6 +4,7 @@ from types import MappingProxyType
 from typing import Dict, List, Optional
 from ....application.dtos.create_condition_spec_dto import CreateConditionSpec
 from ....application.dtos.update_condition_dto import UpdateConditionDto
+from .serialization import coerce_binary_column_value, encode_text_blob
 
 
 class ConditionOperationsMixin:
@@ -72,12 +73,8 @@ class ConditionOperationsMixin:
                     values = []
                     for c in cols:
                         val = row_data[c]
-                        if (
-                            c in binary_cols
-                            and val is not None
-                            and isinstance(val, str)
-                        ):
-                            val = val.encode("utf-8")
+                        if c in binary_cols and val is not None:
+                            val = coerce_binary_column_value(val)
                         values.append(val)
                     self._execute_insert_values(
                         cursor,
@@ -147,12 +144,8 @@ class ConditionOperationsMixin:
                     values = []
                     for c in cols:
                         val = row_data[c]
-                        if (
-                            c in binary_cols
-                            and val is not None
-                            and isinstance(val, str)
-                        ):
-                            val = val.encode("utf-8")
+                        if c in binary_cols and val is not None:
+                            val = coerce_binary_column_value(val)
                         values.append(val)
                     self._execute_insert_values(
                         cursor,
@@ -230,8 +223,8 @@ class ConditionOperationsMixin:
                     col = self._FIELD_TO_COLUMN.get(field_name)
                     if col is None or col in _RESERVED:
                         continue
-                    if col == "Notes" and val is not None:
-                        val = val.encode("utf-8") if val else None
+                    if col == "Notes":
+                        val = encode_text_blob(val) if val else None
                     elif col in ("CdnTypeUID", "BidLayerUID", "BidConditionFolderUID"):
                         val = int(val) if val else None
                     values_by_col[col] = val
@@ -403,8 +396,8 @@ class ConditionOperationsMixin:
                     col_name = self._FIELD_TO_COLUMN.get(field_name)
                     if col_name is None:
                         continue
-                    if col_name == "Notes" and val is not None:
-                        val = val.encode("utf-8") if val else None
+                    if col_name == "Notes":
+                        val = encode_text_blob(val) if val else None
                     elif col_name == "CdnTypeUID":
                         val = int(val) if val else None
                     elif col_name in ("BidLayerUID", "BidConditionFolderUID"):

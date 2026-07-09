@@ -27,10 +27,10 @@ from ost_visualizer.domain.entities.project_constants import (
     DELETED_BIDS_PROJECT_UID,
 )
 from ost_visualizer.domain.entities.workspace_state import (
-    ProjectTreeSelectionState,
-    WorkspaceState,
     WORKSPACE_NODE_KIND_BID,
     WORKSPACE_NODE_KIND_PROJECT,
+    ProjectTreeSelectionState,
+    WorkspaceState,
 )
 from ost_visualizer.infrastructure.windows.file_associations import (
     ASSOCIATIONS,

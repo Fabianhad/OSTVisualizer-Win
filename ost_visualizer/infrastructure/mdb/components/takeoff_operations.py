@@ -3,7 +3,8 @@ from typing import List
 from ....application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ....domain.entities.area import is_unassigned_area_uid
 from .bulk_write_helpers import ACCESS_BULK_CHUNK_SIZE
-from .constants import TAKEOFF_REFERENCE_TABLES, encode_position
+from .constants import TAKEOFF_REFERENCE_TABLES
+from .serialization import encode_position
 
 
 class TakeoffOperationsMixin:

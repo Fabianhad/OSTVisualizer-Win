@@ -5,6 +5,7 @@ from ....domain.services.uom_service import normalize_uom_for_system
 from ...parsers.position_parser import convert_elevation_in_name
 from .constants import PAGE_DELETE_CHILD_TABLES, TAKEOFF_REFERENCE_TABLES
 from .overlay_rect import default_overlay_rect
+from .serialization import encode_text_blob
 
 
 class SettingsOperationsMixin:
@@ -30,8 +31,7 @@ class SettingsOperationsMixin:
                     row = cursor.fetchone()
                     old_mb = int(row[0] or 0) if row else new_mb
                 notes = updates.get("notes", "") or ""
-                if isinstance(notes, str):
-                    notes = notes.encode("utf-8")
+                notes = encode_text_blob(notes)
                 self._execute_update_values(
                     cursor,
                     schema,

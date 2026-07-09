@@ -116,7 +116,14 @@ class PlacementCoordinator:
         return bool(condition and condition.layer_visible)
 
     def _has_active_page_context(self) -> bool:
-        return bool(self._ui_state.active_page_uid)
+        if not self._ui_state.active_page_uid:
+            return False
+        if self._nav and self._nav.current_state not in (
+            NavState.BID_ACTIVE_PAGES_SELECTED,
+            NavState.PLACE_MODE,
+        ):
+            return False
+        return True
 
     def _normalize_place_condition_uids(
         self, active_uid: str, condition_uids: list

@@ -3,9 +3,9 @@ from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from .....domain.dtos.mesh_metadata_dto import MeshMetadata
-from .....domain.entities.config import Config
-from .....domain.entities.condition import Condition
 from .....domain.entities.area import BidArea, area_group_uid
+from .....domain.entities.condition import Condition
+from .....domain.entities.config import Config
 from .....domain.entities.takeoff import Takeoff
 from ...core.boolean_operations import apply_boolean_operations
 from ...core.mesh_generator import MeshData

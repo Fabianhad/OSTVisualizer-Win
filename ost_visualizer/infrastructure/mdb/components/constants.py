@@ -2,14 +2,6 @@ from typing import List, Set
 from ..schema_contract import BID_SECTIONS
 
 
-def encode_position(position: List[float]) -> bytes:
-    parts = []
-    for v in position:
-        rounded = round(v, 3)
-        parts.append(f"{rounded:g}")
-    return (";".join(parts) + "\n").encode("latin-1")
-
-
 def hex_to_color_int(color: str) -> int:
     color = color.lstrip("#")
     r = int(color[0:2], 16)

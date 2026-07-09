@@ -21,8 +21,8 @@ from ..dtos.condition_summary_dtos import (
     ConditionSummaryValues,
 )
 from ..dtos.export_dto import ExportErrorCode, ExportResultDto
-from .project_read_service import ProjectReadService
 from ..use_cases.project.condition_summary_service import ConditionSummaryService
+from .project_read_service import ProjectReadService
 
 
 @dataclass(frozen=True)

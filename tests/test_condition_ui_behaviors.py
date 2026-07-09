@@ -10,6 +10,7 @@ from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
+from single_action import SingleCallRecorder
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.cdn_type import CdnType
@@ -21,11 +22,11 @@ from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.condition_quantity_service import (
     compute_page_quantities,
 )
-from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.components import (
     conditions_sidebar as conditions_sidebar_module,
 )
 from ost_visualizer.presentation.components.area_combo import AreaComboBox
+from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
 )
@@ -45,7 +46,6 @@ from ost_visualizer.presentation.utils.view_context_menu import (
 from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
     TakeoffRenderer,
 )
-from single_action import SingleCallRecorder
 
 
 def _app():

@@ -1,8 +1,8 @@
 from typing import Optional
 from PySide6 import QtGui, QtWidgets
 from ..config import TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
-from ..modes.cursor import CURSOR_MODE_SELECT
 from ..managers.ui_access_manager import Feature
+from ..modes.cursor import CURSOR_MODE_SELECT
 from ..services.bid_clipboard_service import BidClipboardService
 
 _BACKOUT_ENABLED_TOOLTIP = "Create a backout in the selected area takeoff"

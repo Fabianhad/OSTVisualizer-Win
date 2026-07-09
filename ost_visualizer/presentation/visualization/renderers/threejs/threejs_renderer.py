@@ -11,9 +11,9 @@ from .....application.dtos.scene_data_dto import SceneData, ScenePageImageLayer
 from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
-from .....domain.entities.config import Config
-from .....domain.entities.condition import Condition
 from .....domain.entities.area import BidArea
+from .....domain.entities.condition import Condition
+from .....domain.entities.config import Config
 from .....domain.entities.layer import BidLayer
 from .....domain.entities.takeoff import Takeoff
 from ...exporters import ost_pdf_writer

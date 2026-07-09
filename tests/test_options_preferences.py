@@ -9,6 +9,19 @@ from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
+from single_action import SingleCallRecorder
+from ost_visualizer.application.dtos.render_result_dto import RenderResult
+from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
+from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.services.config_service import ConfigService
+from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
+from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
+from ost_visualizer.domain.entities.bid import Bid
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
+from ost_visualizer.domain.entities.page_info import BidPageInfo
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.actions.action_ids import (
     ACTION_ANNOTATION_WINDOW,
     ACTION_BACKOUT_MODE,
@@ -34,18 +47,6 @@ from ost_visualizer.presentation.actions.action_ids import (
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
 )
-from ost_visualizer.application.dtos.render_result_dto import RenderResult
-from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
-from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.application.services.config_service import ConfigService
-from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
-from ost_visualizer.domain.entities.bid import Bid
-from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
-from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.config import Config
-from ost_visualizer.domain.entities.page import Page, build_pages_from_bid_data
-from ost_visualizer.domain.entities.page_info import BidPageInfo
-from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.components.menu_builder import MenuBuilder
 from ost_visualizer.presentation.components.page_combo import (
     PageComboBox,
@@ -94,23 +95,23 @@ from ost_visualizer.presentation.managers.icon_manager import (
     IconManager,
 )
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.utils.annotation_defaults import (
+    set_annotation_style_for_tool,
+)
 from ost_visualizer.presentation.utils.annotation_style_controls import (
     apply_annotation_tool_icon_color,
     create_annotation_style_button,
     create_annotation_tool_split_button,
 )
-from ost_visualizer.presentation.utils.annotation_defaults import (
-    set_annotation_style_for_tool,
-)
 from ost_visualizer.presentation.utils.color_swatch import rounded_color_swatch
-from ost_visualizer.presentation.utils.plan_tool_registry import (
-    PLAN_ANNOTATION_TOOL_SPECS,
-    PLAN_TOOL_SPECS,
-)
 from ost_visualizer.presentation.utils.mcp_setup_config import (
     build_claude_desktop_config,
     build_codex_config_toml,
     build_codex_mcp_add_command,
+)
+from ost_visualizer.presentation.utils.plan_tool_registry import (
+    PLAN_ANNOTATION_TOOL_SPECS,
+    PLAN_TOOL_SPECS,
 )
 from ost_visualizer.presentation.utils.zoom_debouncer import (
     ZOOM_SETTLE_DELAY_MS,
@@ -123,7 +124,6 @@ from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer impor
 from ost_visualizer.presentation.visualization.pdf.services.composite_renderer import (
     CompositeRenderer,
 )
-from single_action import SingleCallRecorder
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

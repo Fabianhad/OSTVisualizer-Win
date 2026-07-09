@@ -1,24 +1,28 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from ost_visualizer.presentation.handlers import (
-    plan_view_action_handler as handler_module,
-)
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.events.app_events import AppEvents
-from ost_visualizer.domain.entities.annotation import BidAnnotation
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_RECT,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.page_selection_service import PageSelectionService
-from ost_visualizer.presentation.handlers.plan_view_action_handler import (
-    PlanViewActionHandler,
-)
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
     ViewerSyncCoordinator,
+)
+from ost_visualizer.presentation.handlers import (
+    plan_view_action_handler as handler_module,
+)
+from ost_visualizer.presentation.handlers.plan_view_action_handler import (
+    PlanViewActionHandler,
 )
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.services.selection_commands import (
@@ -172,7 +176,14 @@ class FakeProjectData:
         self.removed_annotation_uids = []
         self.annotation_layer_uid = "annotation-layer"
         self.page_names = {"p1": "Page 1"}
-        self.pages = {"p1": SimpleNamespace(uid="p1", overlay_rect=None)}
+        self.pages = {
+            "p1": SimpleNamespace(
+                uid="p1",
+                overlay_rect=None,
+                scale_factor1=1.0,
+                scale_factor2=1.0,
+            )
+        }
         self.conditions = {
             "42": Condition(
                 uid="42", layer_visible=True, condition_type=Condition.TYPE_AREA
@@ -2546,6 +2557,65 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
+    def test_takeoff_position_undo_redo_after_page_scale_change_uses_current_scale(
+        self,
+    ):
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 0.125
+        data.pages["p1"].scale_factor2 = 12.0
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0, 96.0, 0.0, 96.0, 96.0, 0.0, 96.0],
+        )
+        write = FakeWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        old_position = [0.0, 0.0, 96.0, 0.0, 96.0, 96.0, 0.0, 96.0]
+        edited_position = [0.0, 0.0, 120.0, 0.0, 120.0, 120.0, 0.0, 120.0]
+        handler.on_positions_flushed([("t1", old_position, edited_position)], [])
+        data.pages["p1"].scale_factor1 = 0.1875
+        data.pages["p1"].scale_factor2 = 12.0
+        data.takeoffs["t1"].position = [
+            0.0,
+            0.0,
+            80.0,
+            0.0,
+            80.0,
+            80.0,
+            0.0,
+            80.0,
+        ]
+        undo.undo()
+        undo.redo()
+        self.assertEqual(
+            write.position_calls[1],
+            (
+                "bid.mdb",
+                [("t1", [0.0, 0.0, 64.0, 0.0, 64.0, 64.0, 0.0, 64.0])],
+                False,
+            ),
+        )
+        self.assertEqual(
+            write.position_calls[2],
+            (
+                "bid.mdb",
+                [("t1", [0.0, 0.0, 80.0, 0.0, 80.0, 80.0, 0.0, 80.0])],
+                False,
+            ),
+        )
+
     def test_failed_takeoff_position_save_restores_plan_view(self):
         plan_view = FakePlanView()
         write = FakeWriteService()
@@ -2607,6 +2677,66 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         ann_changes = [("a1", "annotation", [1.0, 1.0], [2.0, 2.0])]
         handler.on_positions_flushed(takeoff_changes, ann_changes)
         self.assertEqual(plan_view.restored_positions, [([], ann_changes)])
+
+    def test_shape_annotation_position_undo_redo_after_page_scale_change_uses_current_scale(
+        self,
+    ):
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 0.125
+        data.pages["p1"].scale_factor2 = 12.0
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type=ANNOTATION_TYPE_RECT,
+                page_uid="p1",
+                position=[0.0, 0.0, 96.0, 96.0],
+            )
+        ]
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_positions_flushed(
+            [],
+            [
+                (
+                    "a1",
+                    ANNOTATION_TYPE_RECT,
+                    [0.0, 0.0, 96.0, 96.0],
+                    [0.0, 0.0, 120.0, 120.0],
+                )
+            ],
+        )
+        data.pages["p1"].scale_factor1 = 0.1875
+        data.pages["p1"].scale_factor2 = 12.0
+        data.annotations[0].position = [0.0, 0.0, 80.0, 80.0]
+        undo.undo()
+        undo.redo()
+        self.assertEqual(
+            ann_write.position_calls[1],
+            (
+                "bid.mdb",
+                [("a1", ANNOTATION_TYPE_RECT, [0.0, 0.0, 64.0, 64.0])],
+                False,
+            ),
+        )
+        self.assertEqual(
+            ann_write.position_calls[2],
+            (
+                "bid.mdb",
+                [("a1", ANNOTATION_TYPE_RECT, [0.0, 0.0, 80.0, 80.0])],
+                False,
+            ),
+        )
 
     def test_failed_annotation_position_save_registers_takeoff_position_undo(self):
         data = FakeProjectData()
@@ -2702,6 +2832,76 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     False,
                 ),
             ],
+        )
+
+    def test_text_annotation_position_undo_redo_after_page_scale_change_uses_current_scale(
+        self,
+    ):
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 0.125
+        data.pages["p1"].scale_factor2 = 12.0
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type=ANNOTATION_TYPE_TEXT,
+                page_uid="p1",
+                position=[48.0, 48.0, 24.0, 12.0],
+                properties={"Text": "Old"},
+            )
+        ]
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_annotation_text_and_positions_flushed(
+            [
+                (
+                    "a1",
+                    ANNOTATION_TYPE_TEXT,
+                    {"Text": "Old"},
+                    {"Text": "New"},
+                )
+            ],
+            [
+                (
+                    "a1",
+                    ANNOTATION_TYPE_TEXT,
+                    [48.0, 48.0, 24.0, 12.0],
+                    [60.0, 60.0, 30.0, 12.0],
+                )
+            ],
+        )
+        data.pages["p1"].scale_factor1 = 0.1875
+        data.pages["p1"].scale_factor2 = 12.0
+        data.annotations[0].position = [40.0, 40.0, 20.0, 8.0]
+        undo.undo()
+        undo.redo()
+        self.assertEqual(
+            ann_write.text_and_position_calls[1],
+            (
+                "bid.mdb",
+                [("a1", ANNOTATION_TYPE_TEXT, {"Text": "Old"})],
+                [("a1", ANNOTATION_TYPE_TEXT, [32.0, 32.0, 16.0, 8.0])],
+                False,
+            ),
+        )
+        self.assertEqual(
+            ann_write.text_and_position_calls[2],
+            (
+                "bid.mdb",
+                [("a1", ANNOTATION_TYPE_TEXT, {"Text": "New"})],
+                [("a1", ANNOTATION_TYPE_TEXT, [40.0, 40.0, 20.0, 8.0])],
+                False,
+            ),
         )
 
     def test_failed_annotation_text_property_save_restores_plan_view(self):
@@ -2914,6 +3114,59 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.takeoffs["t1"].rotation, 45.0)
         self.assertEqual(len(event_bus.events), 1)
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
+
+    def test_group_rotation_undo_redo_after_page_scale_change_uses_current_scale(
+        self,
+    ):
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 0.125
+        data.pages["p1"].scale_factor2 = 12.0
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0, 96.0, 0.0],
+            rotation=0.0,
+        )
+        write = FakeWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_group_rotation_flushed(
+            [("t1", [0.0, 0.0, 96.0, 0.0], [0.0, 0.0, 120.0, 0.0])],
+            [],
+            [("t1", 0.0, 45.0)],
+        )
+        data.pages["p1"].scale_factor1 = 0.1875
+        data.pages["p1"].scale_factor2 = 12.0
+        data.takeoffs["t1"].position = [0.0, 0.0, 80.0, 0.0]
+        undo.undo()
+        undo.redo()
+        self.assertEqual(
+            write.position_calls[1],
+            (
+                "bid.mdb",
+                [("t1", [0.0, 0.0, 64.0, 0.0])],
+                False,
+            ),
+        )
+        self.assertEqual(
+            write.position_calls[2],
+            (
+                "bid.mdb",
+                [("t1", [0.0, 0.0, 80.0, 0.0])],
+                False,
+            ),
+        )
 
     def test_group_rotation_failure_keeps_persisted_position_change(self):
         data = FakeProjectData()
@@ -3232,6 +3485,72 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(
             [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
+        )
+
+    def test_takeoff_delete_undo_after_page_scale_change_uses_current_scale(self):
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 0.125
+        data.pages["p1"].scale_factor2 = 12.0
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0, 96.0, 0.0],
+        )
+        write = FakeWriteService()
+        write.next_uids = ["t2"]
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_elements_deleted(["t1"])
+        data.pages["p1"].scale_factor1 = 0.1875
+        data.pages["p1"].scale_factor2 = 12.0
+        undo.undo()
+        self.assertEqual(write.calls[0][2][0].position, [0.0, 0.0, 64.0, 0.0])
+
+    def test_annotation_delete_undo_after_page_scale_change_uses_current_scale(self):
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 0.125
+        data.pages["p1"].scale_factor2 = 12.0
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type=ANNOTATION_TYPE_RECT,
+            page_uid="p1",
+            position=[0.0, 0.0, 96.0, 96.0],
+        )
+        data.annotations = [annotation]
+        plan_view = FakePlanView(data)
+        plan_view.annotations["rect-item"] = annotation
+        plan_view.annotation_key_map = {("ann-1", ANNOTATION_TYPE_RECT): "rect-item"}
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler.on_elements_deleted(["rect-item"])
+        data.pages["p1"].scale_factor1 = 0.1875
+        data.pages["p1"].scale_factor2 = 12.0
+        undo.undo()
+        self.assertEqual(
+            ann_write.insert_calls[0][2][0].position,
+            [0.0, 0.0, 64.0, 64.0],
         )
 
     def test_named_view_delete_with_linked_hotlink_no_or_close_cancels_delete(self):
@@ -3703,6 +4022,48 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(
             [event for event, _event_payload in event_bus.events],
             [AppEvents.TAKEOFFS_CHANGED] * 3,
+        )
+
+    def test_takeoff_paste_redo_after_page_scale_change_uses_current_scale(self):
+        source = Takeoff(
+            uid="source",
+            condition_uid="c1",
+            page_uid="source-page",
+            position=[10.0, 20.0, 106.0, 20.0],
+            parent_uid="0",
+        )
+        data = FakeProjectData()
+        data.pages["p1"].scale_factor1 = 0.125
+        data.pages["p1"].scale_factor2 = 12.0
+        plan_view = FakePlanView(data)
+        plan_view.intelligent_paste_enabled = False
+        write = FakeWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+        )
+        handler._clipboard_svc = FakeClipboard([source])
+        handler.on_paste_requested()
+        undo.undo()
+        data.pages["p1"].scale_factor1 = 0.1875
+        data.pages["p1"].scale_factor2 = 12.0
+        undo.redo()
+        self.assertEqual(
+            write.calls[1][2][0].position,
+            [
+                7.333333333333333,
+                14.0,
+                71.33333333333333,
+                14.0,
+            ],
         )
 
     def test_takeoff_paste_with_unknown_extras_keeps_full_reload(self):

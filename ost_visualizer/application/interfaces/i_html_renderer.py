@@ -1,11 +1,11 @@
 from typing import Dict, List, Optional, Protocol
-from ..dtos.html_export_page_dto import HtmlExportPageDto
-from ..dtos.scene_data_dto import ScenePageImageLayer
 from ...domain.entities.area import BidArea
-from ...domain.entities.config import Config
 from ...domain.entities.condition import Condition
+from ...domain.entities.config import Config
 from ...domain.entities.layer import BidLayer
 from ...domain.entities.takeoff import Takeoff
+from ..dtos.html_export_page_dto import HtmlExportPageDto
+from ..dtos.scene_data_dto import ScenePageImageLayer
 
 
 class IHtmlRenderer(Protocol):

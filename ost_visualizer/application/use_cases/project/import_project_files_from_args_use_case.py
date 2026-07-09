@@ -10,8 +10,8 @@ from ....domain.entities.workspace_state import (
     WORKSPACE_NODE_KIND_PROJECT,
 )
 from ...dtos.file_import_args import (
-    ParsedProjectFileArg,
     PROJECT_IMPORT_EXTENSION_OST,
+    ParsedProjectFileArg,
     ProjectFileArgs,
     RejectedProjectFileArg,
 )

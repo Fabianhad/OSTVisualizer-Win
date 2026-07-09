@@ -3,11 +3,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
-from ...domain.entities.area import (
-    BidArea,
-    is_unassigned_area_uid as _is_unassigned_area_uid,
-    normalize_area_uid as _normalize_area_uid,
-)
 from ...domain.entities.annotation import (
     ANNOTATION_TYPE_CALLOUT,
     ANNOTATION_TYPE_DIMENSION,
@@ -16,6 +11,9 @@ from ...domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
     BidAnnotation,
 )
+from ...domain.entities.area import BidArea
+from ...domain.entities.area import is_unassigned_area_uid as _is_unassigned_area_uid
+from ...domain.entities.area import normalize_area_uid as _normalize_area_uid
 from ...domain.entities.condition import Condition
 from ...domain.entities.file_extensions import is_pdf_suffix
 from ...domain.entities.file_results import BidLoadResult, FileLoadResult
@@ -54,11 +52,6 @@ from ..dtos.mcp_context_dtos import (
     MCP_PDF_SOURCE_MAIN,
     MCP_PDF_SOURCE_OVERLAY,
     MCP_PDF_SOURCES,
-    MCP_SUMMARY_DEFAULT_GROUP_BY_AREA,
-    MCP_SUMMARY_DEFAULT_GROUP_BY_PAGE,
-    MCP_SUMMARY_DEFAULT_GROUP_BY_TYPE,
-    MCP_SUMMARY_DEFAULT_LIMIT,
-    MCP_SUMMARY_MAX_LIMIT,
     MCP_STATUS_CONFIGURED,
     MCP_STATUS_DEFERRED,
     MCP_STATUS_EMPTY,
@@ -67,6 +60,11 @@ from ..dtos.mcp_context_dtos import (
     MCP_STATUS_OK,
     MCP_STATUS_TRUNCATED,
     MCP_STATUS_UNAVAILABLE,
+    MCP_SUMMARY_DEFAULT_GROUP_BY_AREA,
+    MCP_SUMMARY_DEFAULT_GROUP_BY_PAGE,
+    MCP_SUMMARY_DEFAULT_GROUP_BY_TYPE,
+    MCP_SUMMARY_DEFAULT_LIMIT,
+    MCP_SUMMARY_MAX_LIMIT,
     McpAreaDto,
     McpAreaSummaryDto,
     McpBidDto,
@@ -88,9 +86,9 @@ from ..dtos.mcp_context_dtos import (
     McpPageOverlaySummaryDto,
     McpPageTakeoffSummaryDto,
     McpPdfOverlayTransformDto,
+    McpPdfTextRunDto,
     McpPdfTextSearchMatchDto,
     McpPdfTextSearchSummaryDto,
-    McpPdfTextRunDto,
     McpPdfTextSummaryDto,
     McpPdfVectorSegmentDto,
     McpPdfVectorsSummaryDto,

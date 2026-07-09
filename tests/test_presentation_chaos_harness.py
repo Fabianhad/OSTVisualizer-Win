@@ -8,40 +8,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
-from ost_visualizer.application.dtos.render_result_dto import RenderResult
-from ost_visualizer.application.dtos.page_view_dto import PageViewDto
-from ost_visualizer.domain.entities.annotation import (
-    ANNOTATION_TYPE_HOTLINK,
-    ANNOTATION_TYPE_NAMED_VIEW,
-    ANNOTATION_TYPE_TEXT,
-    BidAnnotation,
-)
-from ost_visualizer.domain.entities.annotation_view import AnnotationView
-from ost_visualizer.domain.entities.condition import Condition
-from ost_visualizer.domain.entities.identity_refs import BidRef
-from ost_visualizer.domain.entities.page import Page
-from ost_visualizer.domain.entities.takeoff import Takeoff
-from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
-from ost_visualizer.presentation.handlers import (
-    plan_view_action_handler as action_handler_module,
-)
-from ost_visualizer.presentation.handlers.plan_view_action_handler import (
-    PlanViewActionHandler,
-)
-from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
-    UIEventCoordinator,
-)
-from ost_visualizer.presentation.managers.detached_page_view_manager import (
-    DetachedPageViewManager,
-)
-from ost_visualizer.presentation.managers.deferred_persistence_manager import (
-    DeferredPersistenceManager,
-)
-from ost_visualizer.presentation.managers.ui_access_manager import Feature
-from ost_visualizer.presentation.modes.cursor import (
-    CURSOR_MODE_ANNOTATION_PLACE,
-    CURSOR_MODE_SELECT,
-)
 from test_plan_view_action_handler import (
     FakeAccess,
     FakeAnnotationWriteService,
@@ -56,21 +22,45 @@ from test_plan_view_action_handler import (
 )
 from test_ui_event_coordinator_takeoffs_changed import (
     FakeMainWindow as CoordinatorFakeMainWindow,
-    FakeMeshAccess as CoordinatorFakeMeshAccess,
-    FakeMeshPlanSignaler as CoordinatorFakeMeshPlanSignaler,
-    FakeMeshReceiver as CoordinatorFakeMeshReceiver,
-    FakeNav as CoordinatorFakeNav,
-    FakePageSettingsBar as CoordinatorFakePageSettingsBar,
-    FakePlacement as CoordinatorFakePlacement,
-    FakeProjectData as CoordinatorFakeProjectData,
-    FakeSidebar as CoordinatorFakeSidebar,
-    FakeTakeoffSidebar as CoordinatorFakeTakeoffSidebar,
-    FakeToolbar as CoordinatorFakeToolbar,
-    FakeUiState as CoordinatorFakeUiState,
-    FakeViewer as CoordinatorFakeViewer,
-    FakeVisualization as CoordinatorFakeVisualization,
-    configure_mesh_state,
 )
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakeMeshAccess as CoordinatorFakeMeshAccess,
+)
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakeMeshPlanSignaler as CoordinatorFakeMeshPlanSignaler,
+)
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakeMeshReceiver as CoordinatorFakeMeshReceiver,
+)
+from test_ui_event_coordinator_takeoffs_changed import FakeNav as CoordinatorFakeNav
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakePageSettingsBar as CoordinatorFakePageSettingsBar,
+)
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakePlacement as CoordinatorFakePlacement,
+)
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakeProjectData as CoordinatorFakeProjectData,
+)
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakeSidebar as CoordinatorFakeSidebar,
+)
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakeTakeoffSidebar as CoordinatorFakeTakeoffSidebar,
+)
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakeToolbar as CoordinatorFakeToolbar,
+)
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakeUiState as CoordinatorFakeUiState,
+)
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakeViewer as CoordinatorFakeViewer,
+)
+from test_ui_event_coordinator_takeoffs_changed import (
+    FakeVisualization as CoordinatorFakeVisualization,
+)
+from test_ui_event_coordinator_takeoffs_changed import configure_mesh_state
 from test_viewer_sync_coordinator_overlay_refresh import (
     FakeAnnotationRenderer,
     FakeColorService,
@@ -78,6 +68,40 @@ from test_viewer_sync_coordinator_overlay_refresh import (
     FakeLoadCoordinator,
     FakeRenderingService,
     RecordingPathTakeoffRenderer,
+)
+from ost_visualizer.application.dtos.page_view_dto import PageViewDto
+from ost_visualizer.application.dtos.render_result_dto import RenderResult
+from ost_visualizer.domain.entities.annotation import (
+    ANNOTATION_TYPE_HOTLINK,
+    ANNOTATION_TYPE_NAMED_VIEW,
+    ANNOTATION_TYPE_TEXT,
+    BidAnnotation,
+)
+from ost_visualizer.domain.entities.annotation_view import AnnotationView
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
+from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
+    UIEventCoordinator,
+)
+from ost_visualizer.presentation.handlers import (
+    plan_view_action_handler as action_handler_module,
+)
+from ost_visualizer.presentation.handlers.plan_view_action_handler import (
+    PlanViewActionHandler,
+)
+from ost_visualizer.presentation.managers.deferred_persistence_manager import (
+    DeferredPersistenceManager,
+)
+from ost_visualizer.presentation.managers.detached_page_view_manager import (
+    DetachedPageViewManager,
+)
+from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_SELECT,
 )
 
 DEFAULT_CHAOS_SEEDS = (101, 202, 303, 404, 505)

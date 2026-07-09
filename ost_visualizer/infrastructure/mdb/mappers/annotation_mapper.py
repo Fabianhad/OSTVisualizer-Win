@@ -1,9 +1,5 @@
 from typing import Any, Optional, Tuple
-from ....domain.entities.layer import (
-    ANNOTATION_LAYER_NAME,
-    BidLayers,
-    LayerSet,
-)
+from ....domain.entities.layer import ANNOTATION_LAYER_NAME, BidLayers, LayerSet
 
 
 class MdbAnnotationLayerMapper:

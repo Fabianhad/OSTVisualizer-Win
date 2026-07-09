@@ -1,5 +1,5 @@
-import unittest
 import tempfile
+import unittest
 from pathlib import Path, PureWindowsPath
 from PySide6 import QtWidgets
 from ost_visualizer.application.services.import_service import ImportService

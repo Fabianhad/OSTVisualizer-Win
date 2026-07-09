@@ -33,32 +33,9 @@ from .....domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
 )
 from .....domain.entities.config import Config
-from ....actions.action_ids import (
-    ACTION_SHOW_ORIGINAL_IMAGE,
-    ACTION_SHOW_OVERLAY_IMAGE,
-)
+from ....actions.action_ids import ACTION_SHOW_ORIGINAL_IMAGE, ACTION_SHOW_OVERLAY_IMAGE
 from ....config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ....managers.context_menu_manager import ContextMenuManager
-from ....utils.overlay_context_menu import resolve_overlay_menu_action
-from ....utils.view_context_menu import (
-    SelectedTakeoffContextState,
-    add_selected_annotation_style_actions,
-    add_common_context_submenus,
-    add_context_clipboard_actions,
-    add_context_command,
-    add_context_page_actions,
-    add_reassign_condition_submenu,
-    build_selected_annotation_style_context_state,
-    build_selected_takeoff_context_state,
-    context_command_state,
-)
-from .geometry_utils import (
-    mirror_points_around,
-    polygon_centroid,
-    polygon_is_valid,
-    rotate_points_around,
-    rotate_position_coords,
-)
 from ....modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_MOVE_OVERLAY,
@@ -70,6 +47,26 @@ from ....modes.cursor import (
     CURSOR_MODE_SELECT,
     CURSOR_MODE_SLOPE_ROTATE,
     CURSOR_MODE_ZOOM,
+)
+from ....utils.overlay_context_menu import resolve_overlay_menu_action
+from ....utils.view_context_menu import (
+    SelectedTakeoffContextState,
+    add_common_context_submenus,
+    add_context_clipboard_actions,
+    add_context_command,
+    add_context_page_actions,
+    add_reassign_condition_submenu,
+    add_selected_annotation_style_actions,
+    build_selected_annotation_style_context_state,
+    build_selected_takeoff_context_state,
+    context_command_state,
+)
+from .geometry_utils import (
+    mirror_points_around,
+    polygon_centroid,
+    polygon_is_valid,
+    rotate_points_around,
+    rotate_position_coords,
 )
 
 

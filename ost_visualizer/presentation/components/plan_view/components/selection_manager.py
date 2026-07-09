@@ -28,10 +28,10 @@ from .....domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
 )
 from .....domain.entities.named_view import named_view_edit_position
+from ....modes.cursor import CURSOR_MODE_SELECT
 from ....visualization.pdf.renderers.annotation_renderer import (
     calculate_dimension_segments,
 )
-from ....modes.cursor import CURSOR_MODE_SELECT
 from .geometry_utils import (
     HandleInfo,
     cursor_for_direction,

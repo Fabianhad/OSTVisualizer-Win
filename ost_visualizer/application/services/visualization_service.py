@@ -1,8 +1,8 @@
 import logging
 import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
-from ..dtos.mesh_geometry_dto import MeshGeometry
 from ...domain.services.project_data_service import ProjectDataService
+from ..dtos.mesh_geometry_dto import MeshGeometry
 from ..events.app_events import AppEvents
 from ..interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from ..interfaces.i_transaction_monitor import ITransactionMonitor

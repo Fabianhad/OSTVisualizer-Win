@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 from PySide6 import QtGui, QtWidgets
+from ...domain.entities.config import Config
 from ..actions.action_ids import (
     ACTION_ADJUST_IMAGES,
     ACTION_ANNOTATION_WINDOW,
@@ -15,7 +16,6 @@ from ..actions.action_ids import (
     ACTION_NEW_PROJECT,
     ACTION_NEXT_PAGE,
     ACTION_OPEN_FILES,
-    ACTION_SHOW_COVER_SHEET,
     ACTION_PREVIOUS_PAGE,
     ACTION_REMOVE_OVERLAY_IMAGE,
     ACTION_RESET_VIEW,
@@ -24,6 +24,7 @@ from ..actions.action_ids import (
     ACTION_SELECT_OVERLAY_IMAGE,
     ACTION_SET_TAKEOFF_DISPLAY_MODE_2D,
     ACTION_SET_TAKEOFF_DISPLAY_MODE_3D,
+    ACTION_SHOW_COVER_SHEET,
     ACTION_SHOW_ORIGINAL_IMAGE,
     ACTION_SHOW_OVERLAY_IMAGE,
     ACTION_STATUS_BAR,
@@ -34,7 +35,6 @@ from ..actions.action_ids import (
     ACTION_ZOOM_IN,
     ACTION_ZOOM_OUT,
 )
-from ...domain.entities.config import Config
 from ..config import MAIN_TOOLBAR_LABEL, PLAN_TOOLS_TOOLBAR_LABEL, VIEW_TOOLBAR_LABEL
 from ..managers.icon_manager import IconManager
 from ..managers.shortcut_manager import ShortcutManager
