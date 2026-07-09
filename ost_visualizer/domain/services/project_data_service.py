@@ -23,7 +23,10 @@ from ..entities.layer import (
     normalize_layer_name,
 )
 from .condition_quantity_service import compute_page_quantities
-from .takeoff_domain_service import is_takeoff_visible
+from .takeoff_domain_service import (
+    is_takeoff_relevant_for_area_usage,
+    is_takeoff_visible,
+)
 
 
 @dataclass
@@ -592,13 +595,30 @@ class ProjectDataService:
         return self.model.bid_conditions.get(uid)
 
     def get_area_uids_with_takeoff(self) -> set:
-        return {normalize_area_uid(t.area_uid) for t in self.model.get_all_takeoffs()}
+        bid_conditions = self.model.bid_conditions
+        return {
+            normalize_area_uid(t.area_uid)
+            for t in self.model.get_all_takeoffs()
+            if is_takeoff_relevant_for_area_usage(t, bid_conditions)
+        }
+
+    def get_assigned_area_uids_with_stored_takeoff(self) -> set:
+        return {
+            normalize_area_uid(t.area_uid)
+            for t in self.model.get_all_takeoffs()
+            if not is_unassigned_area_uid(t.area_uid)
+        }
 
     def get_area_uids_with_takeoff_for_page(self, page_uid: str) -> set:
         page = self.model.get_page(page_uid)
         if not page:
             return set()
-        return {normalize_area_uid(t.area_uid) for t in page.takeoffs}
+        bid_conditions = self.model.bid_conditions
+        return {
+            normalize_area_uid(t.area_uid)
+            for t in page.takeoffs
+            if is_takeoff_relevant_for_area_usage(t, bid_conditions)
+        }
 
     def get_bid_condition_folders(self) -> Dict[str, BidConditionFolder]:
         return self.model.bid_condition_folders

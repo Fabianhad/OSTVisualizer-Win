@@ -69,7 +69,9 @@ class CoverSheetHandler:
             used_employee_uids=used_employee_uids,
             has_license=self._ui_access_manager.has_license(),
             context=context,
-            get_used_area_uids_fn=self._project_data.get_area_uids_with_takeoff,
+            get_used_area_uids_fn=(
+                self._project_data.get_assigned_area_uids_with_stored_takeoff
+            ),
             pdf_page_sizes_fn=self._infrastructure_provider.get_pdf_page_sizes,
             pages_with_takeoffs=pages_with_takeoffs,
             pages_requiring_delete_confirmation=pages_requiring_delete_confirmation,

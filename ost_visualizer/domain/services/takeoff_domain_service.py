@@ -7,6 +7,30 @@ def is_takeoff_visible(takeoff: Takeoff, bid_conditions: Dict[str, Condition]) -
     return takeoff.is_visible(bid_conditions)
 
 
+def has_renderable_takeoff_position(takeoff: Takeoff, condition: Condition) -> bool:
+    position_len = len(takeoff.position or [])
+    if condition.is_count or condition.is_attachment:
+        return position_len >= 2
+    if condition.is_linear:
+        return position_len >= 4
+    if condition.is_area:
+        return position_len >= 6
+    return False
+
+
+def is_takeoff_relevant_for_area_usage(
+    takeoff: Takeoff, bid_conditions: Dict[str, Condition]
+) -> bool:
+    condition = takeoff.get_condition(bid_conditions)
+    if condition is None:
+        return False
+    if takeoff.is_hole:
+        return False
+    if not is_takeoff_visible(takeoff, bid_conditions):
+        return False
+    return has_renderable_takeoff_position(takeoff, condition)
+
+
 def group_takeoffs_by_type(
     bid_conditions: Dict[str, Condition], bid_takeoffs: List[Takeoff]
 ) -> Dict[int, List[Takeoff]]:
