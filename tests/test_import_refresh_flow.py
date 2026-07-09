@@ -1,6 +1,6 @@
 import unittest
 import tempfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from PySide6 import QtWidgets
 from ost_visualizer.application.services.import_service import ImportService
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
@@ -125,6 +125,27 @@ class FakeProgressDialog:
 
     def deleteLater(self):
         self.delete_later_calls += 1
+
+
+def _write_osp_page_xml(ost_path: Path, image_path: str) -> str:
+    xml = f"""
+                <XML_ROOT>
+                  <Bid>
+                    <BidPages>
+                      <BidPage ImagePath="{image_path}"/>
+                    </BidPages>
+                  </Bid>
+                </XML_ROOT>
+                """
+    ost_path.write_text(xml, encoding="utf-8")
+    return xml
+
+
+def _write_packaged_image(tmp_path: Path, member_name: str, content: bytes) -> Path:
+    path = tmp_path.joinpath(*PureWindowsPath(member_name).parts)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    return path
 
 
 class ImportRefreshFlowTests(unittest.TestCase):
@@ -263,25 +284,87 @@ class ImportRefreshFlowTests(unittest.TestCase):
             self.assertIn(str(first_dest), rewritten)
             self.assertIn(str(second_dest), rewritten)
 
-    def test_osp_import_ignores_non_package_image_paths(self):
+    def test_osp_import_resolves_legacy_absolute_paths_by_packaged_basename(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            packaged = tmp_path / "TempImages!.tmp" / "a" / "sheet.pdf"
-            packaged.parent.mkdir(parents=True)
-            packaged.write_bytes(b"packaged")
+            member_name = "TempImages!.tmp\\A00.00.pdf"
+            _write_packaged_image(tmp_path, member_name, b"packaged")
             ost_path = tmp_path / "Project.ost"
-            original_xml = """
-                <XML_ROOT>
-                  <Bid>
-                    <BidPages>
-                      <BidPage ImagePath="C:\\old\\folder\\sheet.pdf"/>
-                    </BidPages>
-                  </Bid>
-                </XML_ROOT>
-                """
-            ost_path.write_text(original_xml, encoding="utf-8")
+            source_path = "C:\\OCS Documents\\OST\\Project\\A00.00.pdf"
+            _write_osp_page_xml(ost_path, source_path)
             dest_dir = tmp_path / "dest"
-            OspImporter(FakeImporter())._extract_images(tmp_path, ost_path, dest_dir)
+            OspImporter(FakeImporter())._extract_images(
+                tmp_path,
+                ost_path,
+                dest_dir,
+                ["Project.ost", member_name],
+            )
+            dest_path = dest_dir / "A00.00.pdf"
+            self.assertEqual(dest_path.read_bytes(), b"packaged")
+            rewritten = ost_path.read_text(encoding="utf-8")
+            self.assertIn(str(dest_path), rewritten)
+            self.assertNotIn(source_path, rewritten)
+
+    def test_osp_import_places_legacy_absolute_images_under_ost_stem_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            member_name = "TempImages!.tmp\\A00.00.pdf"
+            _write_packaged_image(tmp_path, member_name, b"packaged")
+            ost_path = tmp_path / "Project Name.ost"
+            _write_osp_page_xml(
+                ost_path,
+                "C:\\OCS Documents\\OST\\Project Name\\A00.00.pdf",
+            )
+            working_dir = tmp_path / "working"
+            dest_dir = working_dir / ost_path.stem
+            OspImporter(FakeImporter())._extract_images(
+                tmp_path,
+                ost_path,
+                dest_dir,
+                ["Project Name.ost", member_name],
+            )
+            self.assertEqual((dest_dir / "A00.00.pdf").read_bytes(), b"packaged")
+            rewritten = ost_path.read_text(encoding="utf-8")
+            self.assertIn(str(working_dir / "Project Name" / "A00.00.pdf"), rewritten)
+
+    def test_osp_import_warns_when_legacy_image_is_missing_from_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            ost_path = tmp_path / "Project.ost"
+            original_xml = _write_osp_page_xml(ost_path, "C:\\old\\folder\\missing.pdf")
+            dest_dir = tmp_path / "dest"
+            with self.assertLogs(osp_importer_module.logger, level="WARNING") as logs:
+                OspImporter(FakeImporter())._extract_images(
+                    tmp_path, ost_path, dest_dir, ["Project.ost"]
+                )
+            self.assertIn(
+                "could not resolve 1 referenced image", "\n".join(logs.output)
+            )
+            self.assertFalse(dest_dir.exists())
+            self.assertEqual(ost_path.read_text(encoding="utf-8"), original_xml)
+
+    def test_osp_import_skips_ambiguous_legacy_basename_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            first = "TempImages!.tmp\\a\\sheet.pdf"
+            second = "TempImages!.tmp\\b\\sheet.pdf"
+            _write_packaged_image(tmp_path, first, b"first")
+            _write_packaged_image(tmp_path, second, b"second")
+            ost_path = tmp_path / "Project.ost"
+            original_xml = _write_osp_page_xml(ost_path, "C:\\old\\folder\\sheet.pdf")
+            dest_dir = tmp_path / "dest"
+            with self.assertLogs(osp_importer_module.logger, level="WARNING") as logs:
+                OspImporter(FakeImporter())._extract_images(
+                    tmp_path,
+                    ost_path,
+                    dest_dir,
+                    [
+                        "Project.ost",
+                        first,
+                        second,
+                    ],
+                )
+            self.assertIn("multiple packaged images", "\n".join(logs.output))
             self.assertFalse(dest_dir.exists())
             self.assertEqual(ost_path.read_text(encoding="utf-8"), original_xml)
 

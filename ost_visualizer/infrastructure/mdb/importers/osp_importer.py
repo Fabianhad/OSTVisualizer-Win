@@ -3,8 +3,9 @@ import os
 import shutil
 import tempfile
 import xml.etree.ElementTree as ET
-from pathlib import Path
-from typing import Dict, Optional
+from dataclasses import dataclass
+from pathlib import Path, PureWindowsPath
+from typing import Dict, Iterable, Optional
 from ....domain.entities.file_extensions import OSP_IMAGE_EXTENSIONS
 from ....presentation.visualization.exporters import ost_cab
 from ...app_paths import get_default_working_dir
@@ -14,6 +15,14 @@ logger = logging.getLogger(__name__)
 _OSP_TEMP_PREFIX = "ostv_osp_"
 _LEGACY_WINDOWS_PATH_LIMIT = 240
 _IMAGE_MEMBER_PREFIX = "TempImages!.tmp\\"
+_IMAGE_PATH_ATTRS = ("ImagePath", "OverlayImagePath")
+
+
+@dataclass(frozen=True)
+class _ImageReference:
+    original_path: str
+    member_name: str
+    relative_destination: Path
 
 
 def _cab_extract_output_dir(path: Path) -> str:
@@ -119,7 +128,7 @@ class OspImporter:
             ost_path = ost_files[0]
             bid_name = ost_path.stem
             dest_dir = get_default_working_dir() / bid_name
-            self._extract_images(tmp_path, ost_path, dest_dir)
+            self._extract_images(tmp_path, ost_path, dest_dir, names)
             return self._ost_importer.import_ost(
                 str(ost_path), target_db_path, target_project_uid
             )
@@ -130,8 +139,14 @@ class OspImporter:
             if tmp_path is not None:
                 _remove_temp_tree(tmp_path)
 
-    def _extract_images(self, tmp_path: Path, ost_path: Path, dest_dir: Path) -> None:
-        image_refs = self._collect_image_references(ost_path)
+    def _extract_images(
+        self,
+        tmp_path: Path,
+        ost_path: Path,
+        dest_dir: Path,
+        member_names: Optional[Iterable[str]] = None,
+    ) -> None:
+        image_refs = self._collect_image_references(ost_path, member_names)
         if not image_refs:
             return
         copied_paths = self._copy_referenced_images(tmp_path, dest_dir, image_refs)
@@ -139,19 +154,48 @@ class OspImporter:
             return
         self._rewrite_image_paths(ost_path, copied_paths)
 
-    def _collect_image_references(self, ost_path: Path) -> Dict[str, str]:
+    def _collect_image_references(
+        self, ost_path: Path, member_names: Optional[Iterable[str]] = None
+    ) -> list[_ImageReference]:
         tree = ET.parse(str(ost_path))
         root = tree.getroot()
-        image_refs: Dict[str, str] = {}
+        package_images = _PackageImageIndex(member_names)
+        image_refs_by_original: Dict[str, _ImageReference] = {}
+        missing_paths: Dict[str, None] = {}
+        ambiguous_paths: Dict[str, None] = {}
         for page_elem in root.iter("BidPage"):
-            for attr in ("ImagePath", "OverlayImagePath"):
+            for attr in _IMAGE_PATH_ATTRS:
                 image_path = page_elem.get(attr)
                 if not image_path:
                     continue
                 member_name = self._packaged_image_member_name(image_path)
                 if member_name:
-                    image_refs[image_path] = member_name
-        return image_refs
+                    image_refs_by_original[image_path] = _ImageReference(
+                        original_path=image_path,
+                        member_name=member_name,
+                        relative_destination=self._image_destination_relative_path(
+                            member_name
+                        ),
+                    )
+                    continue
+                if not _is_supported_image_path(image_path):
+                    continue
+                image_filename = _windows_path_name(image_path)
+                member_name = package_images.unique_member_named(image_filename)
+                if member_name:
+                    image_refs_by_original[image_path] = _ImageReference(
+                        original_path=image_path,
+                        member_name=member_name,
+                        relative_destination=Path(_windows_path_name(image_path)),
+                    )
+                elif package_images.has_ambiguous_name(image_filename):
+                    ambiguous_paths[image_path] = None
+                else:
+                    missing_paths[image_path] = None
+        self._log_unresolved_images(
+            ost_path, list(missing_paths), list(ambiguous_paths)
+        )
+        return list(image_refs_by_original.values())
 
     def _packaged_image_member_name(self, image_path: str) -> str:
         normalized = image_path.replace("/", "\\")
@@ -164,26 +208,30 @@ class OspImporter:
         self,
         tmp_path: Path,
         dest_dir: Path,
-        image_refs: Dict[str, str],
+        image_refs: list[_ImageReference],
     ) -> Dict[str, str]:
         copied_paths: Dict[str, str] = {}
-        for original_path, member_name in image_refs.items():
-            source_path = tmp_path / member_name
+        for image_ref in image_refs:
+            source_path = _cab_member_path(tmp_path, image_ref.member_name)
             if not source_path.is_file():
+                logger.warning(
+                    "Packaged OSP image member %s was not extracted for %s",
+                    image_ref.member_name,
+                    image_ref.original_path,
+                )
                 continue
-            relative_dest = self._image_destination_relative_path(member_name)
-            dest_path = dest_dir / relative_dest
+            dest_path = dest_dir / image_ref.relative_destination
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(str(source_path), str(dest_path))
-            copied_paths[original_path] = str(dest_path)
+            copied_paths[image_ref.original_path] = str(dest_path)
         return copied_paths
 
     def _image_destination_relative_path(self, member_name: str) -> Path:
         normalized = member_name.replace("/", "\\")
         if normalized.lower().startswith(_IMAGE_MEMBER_PREFIX.lower()):
             relative = normalized[len(_IMAGE_MEMBER_PREFIX) :]
-            return Path("Images") / Path(relative)
-        return Path(Path(normalized).name)
+            return Path("Images").joinpath(*_windows_path_parts(relative))
+        return Path(_windows_path_name(normalized))
 
     def _rewrite_image_paths(
         self,
@@ -194,10 +242,71 @@ class OspImporter:
         root = tree.getroot()
         modified = False
         for page_elem in root.iter("BidPage"):
-            for attr in ("ImagePath", "OverlayImagePath"):
+            for attr in _IMAGE_PATH_ATTRS:
                 image_path = page_elem.get(attr)
                 if image_path and image_path in copied_paths:
                     page_elem.set(attr, copied_paths[image_path])
                     modified = True
         if modified:
             tree.write(str(ost_path), encoding="unicode", xml_declaration=False)
+
+    def _log_unresolved_images(
+        self,
+        ost_path: Path,
+        missing_paths: list[str],
+        ambiguous_paths: list[str],
+    ) -> None:
+        if missing_paths:
+            logger.warning(
+                "OSP import could not resolve %d referenced image(s) in %s. "
+                "Import will continue, but affected page images may be missing. "
+                "First missing source path: %s",
+                len(missing_paths),
+                ost_path,
+                missing_paths[0],
+            )
+        if ambiguous_paths:
+            logger.warning(
+                "OSP import skipped %d referenced image(s) in %s because multiple "
+                "packaged images had the same filename. Import will continue, but "
+                "affected page images may be missing. First ambiguous source path: %s",
+                len(ambiguous_paths),
+                ost_path,
+                ambiguous_paths[0],
+            )
+
+
+class _PackageImageIndex:
+    def __init__(self, member_names: Optional[Iterable[str]]) -> None:
+        self._members_by_basename: Dict[str, list[str]] = {}
+        for member_name in member_names or ():
+            if not _is_supported_image_path(member_name):
+                continue
+            basename = _windows_path_name(member_name).casefold()
+            self._members_by_basename.setdefault(basename, []).append(member_name)
+
+    def unique_member_named(self, filename: str) -> str:
+        matches = self._members_named(filename)
+        return matches[0] if len(matches) == 1 else ""
+
+    def has_ambiguous_name(self, filename: str) -> bool:
+        return len(self._members_named(filename)) > 1
+
+    def _members_named(self, filename: str) -> list[str]:
+        return self._members_by_basename.get(filename.casefold(), [])
+
+
+def _is_supported_image_path(path: str) -> bool:
+    return Path(path).suffix.lower() in OSP_IMAGE_EXTENSIONS
+
+
+def _windows_path_name(path: str) -> str:
+    return PureWindowsPath(path.replace("/", "\\")).name
+
+
+def _windows_path_parts(path: str) -> tuple[str, ...]:
+    return PureWindowsPath(path.replace("/", "\\")).parts
+
+
+def _cab_member_path(root: Path, member_name: str) -> Path:
+    return root.joinpath(*_windows_path_parts(member_name))
