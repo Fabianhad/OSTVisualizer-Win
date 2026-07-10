@@ -1,5 +1,5 @@
 import logging
-from typing import Dict
+from typing import Dict, Mapping
 from ...application.dtos.condition_summary_dtos import ConditionSummaryGrouping
 from ...application.use_cases.project.condition_summary_service import (
     ConditionSummaryService,
@@ -63,6 +63,19 @@ class SidebarCoordinator:
         self.conditions_sidebar.load_conditions(
             conditions, folders, project_name, grayscale
         )
+        self._sync_sidebar_highlight_from_ui_state(conditions)
+
+    def _sync_sidebar_highlight_from_ui_state(
+        self, conditions: Mapping[str, object]
+    ) -> None:
+        if not self.conditions_sidebar:
+            return
+        current_highlight = set(self._ui_state.highlighted_condition_uids)
+        valid_highlight = current_highlight.intersection(conditions)
+        if valid_highlight != current_highlight:
+            self._ui_state.set_highlighted_conditions(valid_highlight)
+        if valid_highlight or self.conditions_sidebar.get_selected_condition_uids():
+            self.conditions_sidebar.highlight_conditions(valid_highlight, reveal=False)
 
     def load_condition_summary(
         self, grouping: ConditionSummaryGrouping | None = None

@@ -27,6 +27,9 @@ from ost_visualizer.presentation.components import (
 )
 from ost_visualizer.presentation.components.area_combo import AreaComboBox
 from ost_visualizer.presentation.components.conditions_sidebar import ConditionsSidebar
+from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
+    SidebarCoordinator,
+)
 from ost_visualizer.presentation.dialogs.edit_condition_dialog import (
     EditConditionDialog,
 )
@@ -114,6 +117,37 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             "f2": BidConditionFolder(uid="f2", name="Folder 2"),
         }
         return conditions, folders
+
+    def _make_sidebar_coordinator(self, conditions, highlighted=()):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+
+        class UiState:
+            def __init__(self, highlighted_uids):
+                self.highlighted_condition_uids = set(highlighted_uids)
+                self.state = SimpleNamespace(grayscale_enabled=False)
+                self._bid_ref = BidRef("db.mdb", "bid-1")
+
+            def get_selected_bid_ref(self):
+                return self._bid_ref
+
+            def set_highlighted_conditions(self, uids):
+                self.highlighted_condition_uids = set(uids)
+
+        ui_state = UiState(highlighted)
+        project_data = SimpleNamespace(
+            get_bid_conditions=lambda: conditions,
+            get_bid_condition_folders=lambda: {},
+            get_bid=lambda _bid_ref: SimpleNamespace(name="Project"),
+            set_bid_layer_visibility=lambda _layers: None,
+        )
+        read_service = SimpleNamespace(
+            get_merged_bid_layers=lambda _file_path, _bid_uid: [],
+            get_cdn_types=lambda _file_path: {},
+        )
+        coordinator = SidebarCoordinator(read_service, ui_state, project_data)
+        coordinator.conditions_sidebar = sidebar
+        return coordinator, sidebar, ui_state
 
     def _show_compact_sidebar(self, sidebar: ConditionsSidebar) -> None:
         sidebar.resize(260, 180)
@@ -278,6 +312,50 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             "Project",
         )
         self.assertEqual(sidebar.get_selected_condition_uids(), [])
+
+    def test_sidebar_coordinator_load_applies_internal_highlight_by_uid(self):
+        conditions = {
+            "c1": Condition(uid="c1", name="Duplicate Name", ref_no=1),
+            "c2": Condition(uid="c2", name="Duplicate Name", ref_no=2),
+        }
+        coordinator, sidebar, ui_state = self._make_sidebar_coordinator(
+            conditions, highlighted={"c2"}
+        )
+        coordinator.load_conditions_sidebar()
+        self.assertEqual(ui_state.highlighted_condition_uids, {"c2"})
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c2"])
+        self.assertFalse(sidebar._condition_items["c1"].isSelected())
+        self.assertTrue(sidebar._condition_items["c2"].isSelected())
+
+    def test_sidebar_coordinator_load_clears_stale_visual_highlight(self):
+        conditions = self._make_conditions(2)
+        coordinator, sidebar, ui_state = self._make_sidebar_coordinator(
+            conditions, highlighted={"c1"}
+        )
+        coordinator.load_conditions_sidebar()
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        ui_state.set_highlighted_conditions(set())
+        coordinator.load_conditions_sidebar()
+        self.assertEqual(ui_state.highlighted_condition_uids, set())
+        self.assertEqual(sidebar.get_selected_condition_uids(), [])
+
+    def test_sidebar_coordinator_load_drops_missing_internal_highlight(self):
+        coordinator, sidebar, ui_state = self._make_sidebar_coordinator(
+            self._make_conditions(1), highlighted={"missing"}
+        )
+        coordinator.load_conditions_sidebar()
+        self.assertEqual(ui_state.highlighted_condition_uids, set())
+        self.assertEqual(sidebar.get_selected_condition_uids(), [])
+
+    def test_sidebar_coordinator_load_sync_does_not_emit_condition_selected(self):
+        coordinator, sidebar, _ui_state = self._make_sidebar_coordinator(
+            self._make_conditions(1), highlighted={"c1"}
+        )
+        emitted = []
+        sidebar.condition_selected.connect(emitted.append)
+        coordinator.load_conditions_sidebar()
+        self.assertEqual(sidebar.get_selected_condition_uids(), ["c1"])
+        self.assertEqual(emitted, [])
 
     def test_condition_sidebar_passive_reload_does_not_reapply_stale_scroll(self):
         sidebar = ConditionsSidebar(None)
