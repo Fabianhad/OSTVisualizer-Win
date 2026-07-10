@@ -6,45 +6,6 @@ from ost_visualizer.presentation.visualization.renderers.threejs.threejs_rendere
 
 
 class ThreejsHtmlViewerTests(unittest.TestCase):
-    def test_viewer_mesh_lighting_matches_native_renderer(self):
-        html = _generate_html(
-            {
-                "title": "Lighting Test",
-                "geometries": [
-                    {
-                        "vertices": [0, 0, 0, 1, 0, 0, 0, 1, 0],
-                        "normals": [0, 1, 0, 0, 1, 0, 0, 1, 0],
-                        "indices": [0, 1, 2],
-                        "color": [0.3, 0.4, 0.5],
-                        "opacity": 1.0,
-                        "name": "Solid Mesh",
-                        "visible": True,
-                    }
-                ],
-                "camera": {
-                    "position": [0.0, 150.0, -100.0],
-                    "target": [0.0, 0.0, 0.0],
-                },
-                "bounds": {
-                    "min": [-50.0, -5.0, -50.0],
-                    "max": [50.0, 75.0, 50.0],
-                },
-            },
-            "Lighting Test",
-        )
-        self.assertIn("renderer.toneMapping = THREE.NoToneMapping", html)
-        self.assertIn("renderer.toneMappingExposure = 1.0", html)
-        self.assertIn("new THREE.AmbientLight(0xffffff, 0.55)", html)
-        self.assertIn("new THREE.DirectionalLight(0xffffff, 0.45)", html)
-        self.assertIn("keyLight.position.set(500, -500, 500)", html)
-        self.assertIn("new THREE.DirectionalLight(0xffffff, 0.35)", html)
-        self.assertIn("fillLight.position.set(-500, 500, 500)", html)
-        self.assertIn("new THREE.DirectionalLight(0xffffff, 0.2)", html)
-        self.assertIn("rimLight.position.set(0, 500, -500)", html)
-        self.assertIn("specular: 0x000000", html)
-        self.assertIn("shininess: 0", html)
-        self.assertIn("toneMapped: false", html)
-
     def test_viewer_uses_bounds_aware_dynamic_camera_clipping(self):
         scene_data = {
             "title": "Depth Test",

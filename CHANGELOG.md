@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-### Changed
-
-- Matched HTML 3D viewer mesh lighting more closely to the native renderer.
-
 ### Fixed
 
 - Fixed takeoff clicks after condition sidebar reloads so the clicked takeoff's condition is reselected and highlighted when the previous highlight was cleared.

@@ -639,8 +639,8 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setClearColor(getViewerBackgroundColor());
       renderer.outputColorSpace = THREE.SRGBColorSpace;
-      renderer.toneMapping = THREE.NoToneMapping;
-      renderer.toneMappingExposure = 1.0;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 0.75;
 
       const scene = new THREE.Scene();
       const layerPanel = document.getElementById("layer-panel");
@@ -1805,16 +1805,15 @@
 
       updateCameraClipping(true);
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
-      scene.add(ambientLight);
-      const keyLight = new THREE.DirectionalLight(0xffffff, 0.45);
-      keyLight.position.set(500, -500, 500);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+      const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+      keyLight.position.set(500, 500, -500);
       scene.add(keyLight);
-      const fillLight = new THREE.DirectionalLight(0xffffff, 0.35);
+      const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
       fillLight.position.set(-500, 500, 500);
       scene.add(fillLight);
-      const rimLight = new THREE.DirectionalLight(0xffffff, 0.2);
-      rimLight.position.set(0, 500, -500);
+      const rimLight = new THREE.DirectionalLight(0xffffff, 0.3);
+      rimLight.position.set(0, -500, -500);
       scene.add(rimLight);
 
       let hasTransparent = false;
@@ -1879,7 +1878,6 @@
             transparent: true,
             side: THREE.DoubleSide,
             depthWrite: false,
-            toneMapped: false,
             weight: 1.0,
           });
           mesh = new THREE.Mesh(geometry, material);
@@ -1891,9 +1889,6 @@
             transparent: isTransparent,
             side: THREE.DoubleSide,
             depthWrite: !isTransparent,
-            specular: 0x000000,
-            shininess: 0,
-            toneMapped: false,
           });
           mesh = new THREE.Mesh(geometry, material);
           mesh.renderOrder = isTransparent ? 1 : 0;
@@ -1985,7 +1980,11 @@
             pdfPlane.userData.usesPage3dVisibility = false;
             pdfPlane.userData.baseVisible = true;
           }
-          pdfPlane.position.set(page.planeX, page.planeY, page.planeZ);
+          pdfPlane.position.set(
+            page.planeX,
+            page.planeY,
+            page.planeZ,
+          );
           const uv = geo.attributes.uv;
           for (let i = 0; i < uv.count; i++) {
             if (page.planeFlipU) uv.setX(i, 1 - uv.getX(i));
