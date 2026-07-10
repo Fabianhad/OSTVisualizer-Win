@@ -982,7 +982,6 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                 SimpleNamespace(),
                 "test",
                 lambda _uom_service: OstExporter(SimpleNamespace()),
-                lambda: Path(temp_dir) / "working",
             )
             result = exporter.export(raw_data, str(osp_path), bid_name="Roundtrip")
             self.assertTrue(result.success, result.error_message)

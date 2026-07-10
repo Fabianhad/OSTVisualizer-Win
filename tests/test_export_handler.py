@@ -292,12 +292,11 @@ class OspExporterProgressTests(unittest.TestCase):
     def _unused_ost_exporter_factory(self, _uom_service):
         self.fail("OST exporter should not be constructed")
 
-    def _make_osp_exporter(self, ost_exporter_factory=None, working_dir=None):
+    def _make_osp_exporter(self, ost_exporter_factory=None):
         return OspExporter(
             SimpleNamespace(),
             "1.0",
             ost_exporter_factory or self._unused_ost_exporter_factory,
-            lambda: working_dir or Path("unused-ost-working-dir"),
         )
 
     def test_collect_images_reports_each_included_image(self):
@@ -374,9 +373,8 @@ class OspExporterProgressTests(unittest.TestCase):
         self.assertEqual(len(set(page_paths)), 2)
         self.assertTrue(all(path.endswith("\\sheet.pdf") for path in page_paths))
 
-    def test_prepare_package_data_writes_local_ost_paths_for_unique_images(self):
+    def test_prepare_package_data_preserves_database_paths_for_unique_images(self):
         with tempfile.TemporaryDirectory() as tmp:
-            working_dir = Path(tmp) / "working"
             image = Path(tmp) / "A0.01.pdf"
             image.write_bytes(b"pdf")
             raw_data = RawBidData(
@@ -385,10 +383,9 @@ class OspExporterProgressTests(unittest.TestCase):
                     "BidPages": [{"UID": "10", "BidUID": "1", "ImagePath": str(image)}]
                 },
             )
-            exporter = self._make_osp_exporter(working_dir=working_dir)
+            exporter = self._make_osp_exporter()
             package_data, image_sources, missing = exporter._prepare_package_data(
-                raw_data,
-                bid_name="26-053 8201 Metcalf Overland Park, KS",
+                raw_data
             )
         self.assertEqual(missing, [])
         self.assertEqual(len(image_sources), 1)
@@ -396,7 +393,7 @@ class OspExporterProgressTests(unittest.TestCase):
         self.assertTrue(package_member_path.startswith("TempImages!.tmp\\"))
         self.assertEqual(
             package_data.bid_tables["BidPages"][0]["ImagePath"],
-            str(working_dir / "26-053 8201 Metcalf Overland Park, KS" / "A0.01.pdf"),
+            str(image),
         )
         self.assertFalse(
             package_data.bid_tables["BidPages"][0]["ImagePath"].startswith(
@@ -404,11 +401,10 @@ class OspExporterProgressTests(unittest.TestCase):
             )
         )
 
-    def test_prepare_package_data_uses_local_unique_subdirs_for_duplicate_filenames(
+    def test_prepare_package_data_preserves_duplicate_database_paths(
         self,
     ):
         with tempfile.TemporaryDirectory() as tmp:
-            working_dir = Path(tmp) / "working"
             first_dir = Path(tmp) / "first"
             second_dir = Path(tmp) / "second"
             first_dir.mkdir()
@@ -426,25 +422,18 @@ class OspExporterProgressTests(unittest.TestCase):
                     ]
                 },
             )
-            exporter = self._make_osp_exporter(working_dir=working_dir)
+            exporter = self._make_osp_exporter()
             package_data, image_sources, missing = exporter._prepare_package_data(
-                raw_data,
-                bid_name="Bid",
+                raw_data
             )
         page_paths = [row["ImagePath"] for row in package_data.bid_tables["BidPages"]]
         self.assertEqual(missing, [])
         self.assertEqual(len(image_sources), 2)
         self.assertEqual(len(set(page_paths)), 2)
+        self.assertEqual(page_paths, [str(first), str(second)])
         self.assertTrue(
-            all(path.startswith(str(working_dir / "Bid")) for path in page_paths)
+            all(path.startswith("TempImages!.tmp\\") for path in image_sources)
         )
-        self.assertTrue(
-            all(
-                "TempImages!.tmp" + "\\" in path or "TempImages!.tmp" + "/" in path
-                for path in page_paths
-            )
-        )
-        self.assertTrue(all(path.endswith("sheet.pdf") for path in page_paths))
 
     def test_prepare_package_data_reports_missing_drawing_files(self):
         raw_data = RawBidData(
@@ -524,7 +513,7 @@ class OspExporterProgressTests(unittest.TestCase):
             )
         )
 
-    def test_osp_export_writes_local_image_paths_into_embedded_ost(self):
+    def test_osp_export_preserves_database_image_paths_in_embedded_ost(self):
         class FakeOstExporter:
             captured_rows = []
 
@@ -539,7 +528,6 @@ class OspExporterProgressTests(unittest.TestCase):
                 return ExportResultDto(success=True, format_name="OST")
 
         with tempfile.TemporaryDirectory() as tmp:
-            working_dir = Path(tmp) / "working"
             image = Path(tmp) / "A0.02.pdf"
             output = Path(tmp) / "out.osp"
             image.write_bytes(b"pdf")
@@ -556,7 +544,6 @@ class OspExporterProgressTests(unittest.TestCase):
                 fake_exporter = FakeOstExporter(SimpleNamespace())
                 exporter = self._make_osp_exporter(
                     lambda _uom_service: fake_exporter,
-                    working_dir=working_dir,
                 )
                 result = exporter.export(
                     raw_data,
@@ -568,7 +555,7 @@ class OspExporterProgressTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(
             fake_exporter.captured_rows[0]["ImagePath"],
-            str(working_dir / "26-053 8201 Metcalf Overland Park, KS" / "A0.02.pdf"),
+            str(image),
         )
 
 

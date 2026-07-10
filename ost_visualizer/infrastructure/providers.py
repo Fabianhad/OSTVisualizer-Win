@@ -266,12 +266,7 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
         return MdbWriter(conn_manager=conn_manager)
 
     def get_osp_exporter(self, uom_service: IUOMService, version: str) -> IOspExporter:
-        return OspExporter(
-            uom_service,
-            version,
-            self.get_ost_exporter,
-            default_working_dir_provider=self.get_default_working_dir,
-        )
+        return OspExporter(uom_service, version, self.get_ost_exporter)
 
     def get_database_creator(self) -> IDatabaseCreator:
         return DatabaseCreator()

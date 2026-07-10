@@ -26,12 +26,10 @@ class OspExporter:
         uom_service: IUOMService,
         version: str,
         ost_exporter_factory: Callable[[IUOMService], IOstExporter],
-        default_working_dir_provider: Callable[[], Path],
     ):
         self._uom_service = uom_service
         self._version = version
         self._ost_exporter_factory = ost_exporter_factory
-        self._default_working_dir_provider = default_working_dir_provider
 
     def export(
         self,
@@ -51,7 +49,7 @@ class OspExporter:
                 source_files: List[str] = []
                 archive_names: List[str] = []
                 package_data, image_sources, missing_images = (
-                    self._prepare_package_data(raw_data, bid_name=bid_name)
+                    self._prepare_package_data(raw_data)
                 )
                 if missing_images:
                     preview = "; ".join(missing_images[:10])
@@ -133,13 +131,11 @@ class OspExporter:
             archive_names.append(archive_name)
 
     def _prepare_package_data(
-        self, raw_data: RawBidData, bid_name: str = _DEFAULT_BID_NAME
+        self, raw_data: RawBidData
     ) -> tuple[RawBidData, dict[str, str], list[str]]:
         package_data = self._clone_raw_bid_data(raw_data)
         package_image_sources: dict[str, str] = {}
         package_member_by_source: dict[str, str] = {}
-        filename_by_source: dict[str, str] = {}
-        packaged_image_refs = []
         missing_images: list[str] = []
         for page_row in package_data.bid_tables.get("BidPages", []):
             page_uid = str(page_row.get("UID", "") or "page")
@@ -161,53 +157,11 @@ class OspExporter:
                     )
                     package_member_by_source[source_key] = package_member_path
                     package_image_sources[package_member_path] = source_key
-                    filename_by_source[source_key] = source_image_path.name
-                packaged_image_refs.append(
-                    (page_row, attr, package_member_path, source_key)
-                )
-        filename_counts = self._filename_counts(filename_by_source.values())
-        bid_dir = self._embedded_ost_image_dir(bid_name)
-        for page_row, attr, package_member_path, source_key in packaged_image_refs:
-            filename = filename_by_source[source_key]
-            duplicate_name = filename_counts[filename.casefold()] > 1
-            page_row[attr] = str(
-                self._embedded_ost_image_path(
-                    bid_dir, package_member_path, filename, duplicate_name
-                )
-            )
         return package_data, package_image_sources, missing_images
-
-    def _filename_counts(self, filenames) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for filename in filenames:
-            key = filename.casefold()
-            counts[key] = counts.get(key, 0) + 1
-        return counts
-
-    def _embedded_ost_image_dir(self, bid_name: str) -> Path:
-        safe_bid_name = self._safe_path_component(
-            bid_name or _DEFAULT_BID_NAME,
-            default=_DEFAULT_BID_NAME,
-        )
-        return Path(self._default_working_dir_provider()) / safe_bid_name
-
-    def _embedded_ost_image_path(
-        self,
-        bid_dir: Path,
-        package_member_path: str,
-        filename: str,
-        duplicate_name: bool,
-    ) -> Path:
-        if duplicate_name:
-            return bid_dir.joinpath(*self._windows_path_parts(package_member_path))
-        return bid_dir / self._safe_path_component(filename, default="image")
 
     def _safe_path_component(self, value: str, *, default: str) -> str:
         safe = "".join(c if c not in _INVALID_PATH_CHARS else "_" for c in value)
         return safe.strip() or default
-
-    def _windows_path_parts(self, path: str) -> tuple[str, ...]:
-        return tuple(part for part in path.replace("/", "\\").split("\\") if part)
 
     def _clone_raw_bid_data(self, raw_data: RawBidData) -> RawBidData:
         return RawBidData(

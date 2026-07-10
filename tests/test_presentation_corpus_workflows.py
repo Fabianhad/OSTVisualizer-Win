@@ -164,7 +164,6 @@ class PresentationImportExportWorkflowTests(unittest.TestCase):
                     SimpleNamespace(),
                     "1.0",
                     lambda uom_service: CapturingOstExporter(uom_service),
-                    lambda: tmp_path / "working",
                 )
                 result = exporter.export(raw_data, str(tmp_path / "out.osp"), "Bid")
             finally:
