@@ -1009,6 +1009,47 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(coordinator.conditions_sidebar.highlights, [{"c1"}, {"c2"}])
 
+    def test_repeated_takeoff_click_restores_highlight_after_reload_clears_it(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+
+        class UiState:
+            def __init__(self):
+                self.highlighted_condition_uids = set()
+
+            def set_highlighted_conditions(self, uids):
+                self.highlighted_condition_uids = set(uids)
+
+        class ProjectData:
+            def get_all_takeoffs(self):
+                return [type("Takeoff", (), {"uid": "t1", "condition_uid": "c1"})()]
+
+        class Sidebar:
+            def __init__(self):
+                self.highlights = []
+
+            def highlight_conditions(self, uids, reveal=True):
+                self.highlights.append(set(uids))
+
+        coordinator.ui_state_manager = UiState()
+        coordinator.project_data = ProjectData()
+        coordinator.conditions_sidebar = Sidebar()
+        coordinator.plan_view = None
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
+        coordinator._placement = FakePlacement()
+        coordinator._toolbar = FakeToolbar()
+        coordinator._tab_widget = FakeTabWidget(index=1)
+        coordinator._nav = type("Nav", (), {"is_refreshing": False})()
+        coordinator._last_takeoff_selection_context_by_source = {}
+        coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
+        coordinator.ui_state_manager.set_highlighted_conditions(set())
+        coordinator.conditions_sidebar.highlights.clear()
+        coordinator._sync_selection(coordinator._SOURCE_2D, ["t1"])
+        self.assertEqual(
+            coordinator.ui_state_manager.highlighted_condition_uids, {"c1"}
+        )
+        self.assertEqual(coordinator.conditions_sidebar.highlights, [{"c1"}])
+
     def test_new_takeoff_selection_after_dialog_condition_still_updates_condition(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
 

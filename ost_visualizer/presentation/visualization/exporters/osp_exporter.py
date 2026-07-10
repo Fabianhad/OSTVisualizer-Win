@@ -14,6 +14,10 @@ from ....domain.entities.file_extensions import OSP_IMAGE_EXTENSIONS
 from . import ost_cab
 
 logger = logging.getLogger(__name__)
+_DEFAULT_BID_NAME = "Bid"
+_IMAGE_PATH_ATTRS = ("ImagePath", "OverlayImagePath")
+_INVALID_PATH_CHARS = set('/\\:*?"<>|')
+_PACKAGE_IMAGE_ROOT = "TempImages!.tmp"
 
 
 class OspExporter:
@@ -22,10 +26,12 @@ class OspExporter:
         uom_service: IUOMService,
         version: str,
         ost_exporter_factory: Callable[[IUOMService], IOstExporter],
+        default_working_dir_provider: Callable[[], Path],
     ):
         self._uom_service = uom_service
         self._version = version
         self._ost_exporter_factory = ost_exporter_factory
+        self._default_working_dir_provider = default_working_dir_provider
 
     def export(
         self,
@@ -45,7 +51,7 @@ class OspExporter:
                 source_files: List[str] = []
                 archive_names: List[str] = []
                 package_data, image_sources, missing_images = (
-                    self._prepare_package_data(raw_data)
+                    self._prepare_package_data(raw_data, bid_name=bid_name)
                 )
                 if missing_images:
                     preview = "; ".join(missing_images[:10])
@@ -60,10 +66,10 @@ class OspExporter:
                         ),
                         error_code=ExportErrorCode.WRITE_FAILED,
                     )
-                _INVALID_FS = set('/\\:*?"<>|')
                 ost_name = (
-                    "".join(
-                        c if c not in _INVALID_FS else "_" for c in (bid_name or "Bid")
+                    self._safe_path_component(
+                        bid_name or _DEFAULT_BID_NAME,
+                        default=_DEFAULT_BID_NAME,
                     )
                     + ".ost"
                 )
@@ -127,34 +133,81 @@ class OspExporter:
             archive_names.append(archive_name)
 
     def _prepare_package_data(
-        self, raw_data: RawBidData
+        self, raw_data: RawBidData, bid_name: str = _DEFAULT_BID_NAME
     ) -> tuple[RawBidData, dict[str, str], list[str]]:
         package_data = self._clone_raw_bid_data(raw_data)
-        image_sources: dict[str, str] = {}
-        archive_names_by_source: dict[str, str] = {}
+        package_image_sources: dict[str, str] = {}
+        package_member_by_source: dict[str, str] = {}
+        filename_by_source: dict[str, str] = {}
+        packaged_image_refs = []
         missing_images: list[str] = []
         for page_row in package_data.bid_tables.get("BidPages", []):
             page_uid = str(page_row.get("UID", "") or "page")
-            for attr in ("ImagePath", "OverlayImagePath"):
-                image_path = page_row.get(attr, "") or ""
-                if not image_path:
+            for attr in _IMAGE_PATH_ATTRS:
+                original_image_path = page_row.get(attr, "") or ""
+                if not original_image_path:
                     continue
-                p = Path(image_path)
-                if p.suffix.lower() not in OSP_IMAGE_EXTENSIONS:
+                source_image_path = Path(original_image_path)
+                if source_image_path.suffix.lower() not in OSP_IMAGE_EXTENSIONS:
                     continue
-                if not p.exists():
-                    missing_images.append(image_path)
+                if not source_image_path.exists():
+                    missing_images.append(original_image_path)
                     continue
-                source_key = str(p.resolve())
-                archive_name = archive_names_by_source.get(source_key)
-                if archive_name is None:
-                    archive_name = self._archive_image_name(
-                        source_key, p.name, page_uid
+                source_key = str(source_image_path.resolve())
+                package_member_path = package_member_by_source.get(source_key)
+                if package_member_path is None:
+                    package_member_path = self._package_image_member_path(
+                        source_key, source_image_path.name, page_uid
                     )
-                    archive_names_by_source[source_key] = archive_name
-                    image_sources[archive_name] = source_key
-                page_row[attr] = archive_name
-        return package_data, image_sources, missing_images
+                    package_member_by_source[source_key] = package_member_path
+                    package_image_sources[package_member_path] = source_key
+                    filename_by_source[source_key] = source_image_path.name
+                packaged_image_refs.append(
+                    (page_row, attr, package_member_path, source_key)
+                )
+        filename_counts = self._filename_counts(filename_by_source.values())
+        bid_dir = self._embedded_ost_image_dir(bid_name)
+        for page_row, attr, package_member_path, source_key in packaged_image_refs:
+            filename = filename_by_source[source_key]
+            duplicate_name = filename_counts[filename.casefold()] > 1
+            page_row[attr] = str(
+                self._embedded_ost_image_path(
+                    bid_dir, package_member_path, filename, duplicate_name
+                )
+            )
+        return package_data, package_image_sources, missing_images
+
+    def _filename_counts(self, filenames) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for filename in filenames:
+            key = filename.casefold()
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    def _embedded_ost_image_dir(self, bid_name: str) -> Path:
+        safe_bid_name = self._safe_path_component(
+            bid_name or _DEFAULT_BID_NAME,
+            default=_DEFAULT_BID_NAME,
+        )
+        return Path(self._default_working_dir_provider()) / safe_bid_name
+
+    def _embedded_ost_image_path(
+        self,
+        bid_dir: Path,
+        package_member_path: str,
+        filename: str,
+        duplicate_name: bool,
+    ) -> Path:
+        if duplicate_name:
+            return bid_dir.joinpath(*self._windows_path_parts(package_member_path))
+        return bid_dir / self._safe_path_component(filename, default="image")
+
+    def _safe_path_component(self, value: str, *, default: str) -> str:
+        safe = "".join(c if c not in _INVALID_PATH_CHARS else "_" for c in value)
+        return safe.strip() or default
+
+    def _windows_path_parts(self, path: str) -> tuple[str, ...]:
+        return tuple(part for part in path.replace("/", "\\").split("\\") if part)
 
     def _clone_raw_bid_data(self, raw_data: RawBidData) -> RawBidData:
         return RawBidData(
@@ -173,13 +226,16 @@ class OspExporter:
             },
         )
 
-    def _archive_image_name(self, source_key: str, filename: str, page_uid: str) -> str:
+    def _package_image_member_path(
+        self, source_key: str, filename: str, page_uid: str
+    ) -> str:
         digest = hashlib.sha1(source_key.casefold().encode("utf-8")).hexdigest()[:16]
         safe_page_uid = "".join(c if c.isalnum() else "_" for c in page_uid) or "page"
-        safe_filename = "".join(
-            c if c not in set('/\\:*?"<>|') else "_" for c in (filename or "image")
+        safe_filename = self._safe_path_component(
+            filename or "image",
+            default="image",
         )
-        return f"TempImages!.tmp\\{safe_page_uid}_{digest}\\{safe_filename}"
+        return f"{_PACKAGE_IMAGE_ROOT}\\{safe_page_uid}_{digest}\\{safe_filename}"
 
     def _generate_bid_trans_xml(self, tmp_path: Path) -> Path:
         root = ET.Element("XML_ROOT")

@@ -1007,7 +1007,9 @@ class UIEventCoordinator:
                 != selection_context
             )
             self._last_takeoff_selection_context_by_source[source] = selection_context
-            if selection_changed:
+            current_highlight = set(self.ui_state_manager.highlighted_condition_uids)
+            highlight_missing = bool(cond_uids) and not current_highlight
+            if selection_changed or highlight_missing:
                 self.highlight_sidebar(cond_uids)
             if source != self._SOURCE_2D and self.plan_view:
                 self.plan_view.set_selected_uids(set(takeoff_uids), emit=False)
