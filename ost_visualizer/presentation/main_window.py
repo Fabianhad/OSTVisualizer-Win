@@ -139,6 +139,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._summary_csv_export_service = app_controller.get_service(
             "summary_csv_export_service"
         )
+        self._page_visualization_metadata_service = app_controller.get_service(
+            "page_visualization_metadata_service"
+        )
         self._infrastructure_provider = app_controller.get_service(
             "infrastructure_provider"
         )
@@ -211,6 +214,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ui_event_handler=self.handlers.ui_event,
             ui_access_manager=self.ui_access_manager,
             deferred_persistence_manager=self._deferred_persistence_manager,
+            page_visualization_metadata_service=self._page_visualization_metadata_service,
         )
         self.tab_widget = components.tab_widget
         self.takeoff_tab = components.takeoff_tab

@@ -3,6 +3,9 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from PySide6 import QtGui
+from ost_visualizer.application.services.page_visualization_metadata_service import (
+    PageVisualizationMetadataService,
+)
 from ost_visualizer.domain.services.page_image_plane_transform import (
     PAGE_PLANE_FLOOR_OFFSET,
     native_page_plane_transform,
@@ -93,9 +96,10 @@ class NativePageImagePlaneTests(unittest.TestCase):
         image.fill(QtGui.QColor(1, 2, 3, 4))
         cache = FakePageCache(image)
         provider = NativePageImagePlaneProvider(
-            FakeProjectData(page),
+            project_data := FakeProjectData(page),
             SimpleNamespace(active_page_uid="page-1"),
             cache,
+            PageVisualizationMetadataService(project_data),
         )
         data = provider.build_for_bounds((-5, 5, -2, 2, 3, 8))
         self.assertIsNotNone(data)

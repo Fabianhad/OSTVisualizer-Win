@@ -11,6 +11,9 @@ from ..services.config_service import ConfigService
 from ..services.export_service import ExportService
 from ..services.file_loading_service import FileLoadingService
 from ..services.import_service import ImportService
+from ..services.page_visualization_metadata_service import (
+    PageVisualizationMetadataService,
+)
 from ..services.summary_csv_export_service import SummaryCsvExportService
 from ..services.update_check_service import UpdateCheckService
 from ..services.visualization_service import VisualizationService
@@ -123,10 +126,15 @@ class ServiceBuilder:
             ),
         )
         self.container.register_singleton(
+            "page_visualization_metadata_service",
+            lambda: PageVisualizationMetadataService(project_data_service),
+        )
+        self.container.register_singleton(
             "export_service",
             lambda: ExportService(
                 visualization_provider,
                 project_data_service,
+                self.container.get("page_visualization_metadata_service"),
             ),
         )
         self.container.register_singleton(

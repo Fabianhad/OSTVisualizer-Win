@@ -4,9 +4,6 @@ import os
 from dataclasses import dataclass
 from typing import Optional, Sequence
 from PySide6 import QtGui
-from ...application.services.page_visualization_metadata_service import (
-    PageVisualizationMetadataService,
-)
 from ...domain.services.page_image_plane_transform import native_page_plane_transform
 from .pdf.page_cache import PageCache
 
@@ -36,11 +33,17 @@ class NativePageImagePlaneData:
 
 
 class NativePageImagePlaneProvider:
-    def __init__(self, project_data_service, ui_state_manager, page_cache: PageCache):
+    def __init__(
+        self,
+        project_data_service,
+        ui_state_manager,
+        page_cache: PageCache,
+        page_metadata_service,
+    ):
         self._project_data = project_data_service
         self._ui_state = ui_state_manager
         self._page_cache = page_cache
-        self._page_metadata = PageVisualizationMetadataService(project_data_service)
+        self._page_metadata = page_metadata_service
 
     def build_for_bounds(
         self, mesh_bounds: Optional[Sequence[float]]

@@ -5,6 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from ost_visualizer.application.dtos.export_dto import ExportRequestDto
 from ost_visualizer.application.services.export_service import ExportService
+from ost_visualizer.application.services.page_visualization_metadata_service import (
+    PageVisualizationMetadataService,
+)
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
@@ -405,7 +408,11 @@ class ThreejsExportLayerTests(unittest.TestCase):
     def test_html_export_collects_hidden_takeoffs_and_passes_layer_metadata(self):
         strategy = _ExportStrategy("html")
         project_data = _ProjectData()
-        service = ExportService(_Provider(strategy), project_data)
+        service = ExportService(
+            _Provider(strategy),
+            project_data,
+            PageVisualizationMetadataService(project_data),
+        )
         result = service.export(
             _ConfigModel(),
             ExportRequestDto(["page-1"], "html", "out.html", active_page_uid="page-1"),
@@ -436,7 +443,11 @@ class ThreejsExportLayerTests(unittest.TestCase):
     def test_html_export_passes_all_pages_and_resolves_active_page(self):
         strategy = _ExportStrategy("html")
         project_data = _ProjectData()
-        service = ExportService(_Provider(strategy), project_data)
+        service = ExportService(
+            _Provider(strategy),
+            project_data,
+            PageVisualizationMetadataService(project_data),
+        )
         result = service.export(
             _ConfigModel(),
             ExportRequestDto(["page-1", "page-2"], "html", "out.html"),
@@ -465,7 +476,11 @@ class ThreejsExportLayerTests(unittest.TestCase):
             project_data.pages["page-1"].page_index = 0
             project_data.pages["page-2"].image_path = pdf_path
             project_data.pages["page-2"].page_index = 1
-            service = ExportService(_Provider(strategy), project_data)
+            service = ExportService(
+                _Provider(strategy),
+                project_data,
+                PageVisualizationMetadataService(project_data),
+            )
             result = service.export(
                 _ConfigModel(),
                 ExportRequestDto(
@@ -490,7 +505,11 @@ class ThreejsExportLayerTests(unittest.TestCase):
             project_data.pages["page-1"].page_index = 0
             project_data.pages["page-2"].image_path = second_pdf_path
             project_data.pages["page-2"].page_index = 0
-            service = ExportService(_Provider(strategy), project_data)
+            service = ExportService(
+                _Provider(strategy),
+                project_data,
+                PageVisualizationMetadataService(project_data),
+            )
             result = service.export(
                 _ConfigModel(),
                 ExportRequestDto(["page-1", "page-2"], "html", "out.html"),
@@ -510,7 +529,11 @@ class ThreejsExportLayerTests(unittest.TestCase):
         strategy = _ExportStrategy("html")
         project_data = _ProjectData()
         project_data.last_selected_page_uid = "missing-page"
-        service = ExportService(_Provider(strategy), project_data)
+        service = ExportService(
+            _Provider(strategy),
+            project_data,
+            PageVisualizationMetadataService(project_data),
+        )
         result = service.export(
             _ConfigModel(),
             ExportRequestDto(
@@ -524,7 +547,11 @@ class ThreejsExportLayerTests(unittest.TestCase):
     def test_html_export_passes_split_display_modes(self):
         strategy = _ExportStrategy("html")
         project_data = _ProjectData()
-        service = ExportService(_Provider(strategy), project_data)
+        service = ExportService(
+            _Provider(strategy),
+            project_data,
+            PageVisualizationMetadataService(project_data),
+        )
         result = service.export(
             SimpleNamespace(
                 display_modes_synced=False,
@@ -545,7 +572,11 @@ class ThreejsExportLayerTests(unittest.TestCase):
         strategy = _ExportStrategy("obj")
         strategy.name = "OBJ"
         project_data = _ProjectData()
-        service = ExportService(_Provider(strategy), project_data)
+        service = ExportService(
+            _Provider(strategy),
+            project_data,
+            PageVisualizationMetadataService(project_data),
+        )
         result = service.export(
             _ConfigModel(),
             ExportRequestDto(["page-1"], "obj", "out.obj"),

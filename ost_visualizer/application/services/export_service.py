@@ -13,10 +13,11 @@ class ExportService:
         self,
         visualization_provider: IVisualizationProvider,
         project_data_service: ProjectDataService,
+        page_metadata_service: PageVisualizationMetadataService,
     ):
         self.project_data = project_data_service
         self._provider = visualization_provider
-        self._page_metadata = PageVisualizationMetadataService(project_data_service)
+        self._page_metadata = page_metadata_service
 
     def get_available_formats(self) -> list[str]:
         return self._provider.get_available_formats()

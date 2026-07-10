@@ -210,6 +210,7 @@ class ComponentBuilder:
         ui_state_manager,
         ui_event_handler,
         deferred_persistence_manager,
+        page_visualization_metadata_service,
         ui_access_manager=None,
     ) -> ComponentBundle:
         central_widget = QtWidgets.QWidget()
@@ -288,6 +289,7 @@ class ComponentBuilder:
             project_data_service,
             ui_state_manager,
             renderers.page_cache,
+            page_visualization_metadata_service,
         )
         canvas.set_plan_texture_provider(page_plane_provider.build_for_bounds)
         ui_event_handler.set_plan_texture_provider(page_plane_provider.build_for_bounds)
