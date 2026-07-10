@@ -136,6 +136,7 @@ class UIEventCoordinator:
         self._project_write_service = project_write_service
         self._project_read_service = project_read_service
         self._deferred_persistence = deferred_persistence_manager
+        self._plan_texture_provider = None
         self.conditions_sidebar = None
         self.condition_summary_tab = None
         self.takeoff_sidebar = None
@@ -408,6 +409,8 @@ class UIEventCoordinator:
         self.opengl_viewer = viewer
         self._viewer.opengl_viewer = viewer
         self._toolbar.opengl_viewer = viewer
+        if self._plan_texture_provider:
+            viewer.set_plan_texture_provider(self._plan_texture_provider)
         viewer.mesh_clicked.connect(self._on_3d_mesh_clicked)
         viewer.overlay_display_mode_requested.connect(
             self._on_overlay_display_mode_requested
@@ -419,6 +422,13 @@ class UIEventCoordinator:
         self._sync_overlay_display_mode(self.ui_state_manager.active_page_uid)
         self._viewer.update_license_visualization_state()
         self._sync_embedded_renderer_exposure()
+
+    def set_plan_texture_provider(self, provider) -> None:
+        self._plan_texture_provider = provider
+        if self.opengl_viewer:
+            self.opengl_viewer.set_plan_texture_provider(provider)
+        if self._mesh_window:
+            self._mesh_window.set_plan_texture_provider(provider)
 
     def set_plan_view_handler(self, handler) -> None:
         self._plan_view_handler = handler
@@ -482,6 +492,8 @@ class UIEventCoordinator:
                 )
             window.destroyed.connect(self._on_mesh_window_destroyed)
             self._mesh_window = window
+            if self._plan_texture_provider:
+                window.set_plan_texture_provider(self._plan_texture_provider)
             self._sync_overlay_display_mode(self.ui_state_manager.active_page_uid)
             self._sync_mesh_window_action(True)
             window.show_initial_window()
@@ -1879,6 +1891,8 @@ class UIEventCoordinator:
             "condition_uids": condition_uids,
             "takeoff_uids": takeoff_uids,
         }
+        if bounds is not None:
+            mesh_options["scene_bounds"] = bounds
         self._last_mesh_args = mesh_args
         self._last_mesh_options = mesh_options
         if self._pending_dirty_mesh_refresh:

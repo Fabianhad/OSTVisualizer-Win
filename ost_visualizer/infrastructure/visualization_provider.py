@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional, Sequence, Tuple, Union
-from ..application.dtos.html_export_page_dto import HtmlExportPageDto
+from ..application.dtos.page_visualization_page_dto import PageVisualizationPageDto
 from ..application.dtos.mesh_geometry_dto import MeshGeometry
 from ..application.dtos.scene_data_dto import ScenePageImageLayer
 from ..application.interfaces.i_color_service import IColorService
@@ -89,7 +89,7 @@ class _HtmlRendererAdapter(IHtmlRenderer):
         grayscale_enabled: bool = True,
         page_area_selections: Optional[Dict] = None,
         auto_open: bool = False,
-        pages: Optional[List[HtmlExportPageDto]] = None,
+        pages: Optional[List[PageVisualizationPageDto]] = None,
         active_page_uid: str = "",
         layers: Optional[List[BidLayer]] = None,
         areas: Optional[List[BidArea]] = None,

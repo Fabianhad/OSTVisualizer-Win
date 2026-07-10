@@ -1,8 +1,10 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/string.h>
+#include <stdexcept>
 #include "renderer/renderer.hpp"
 namespace nb = nanobind;
+using namespace nb::literals;
 using namespace ost_renderer;
 NB_MODULE(ost_renderer, m)
 {
@@ -63,6 +65,55 @@ NB_MODULE(ost_renderer, m)
         .def("resume", &Renderer::resume)
         .def("clear_frame", &Renderer::clear_frame)
         .def("set_background_color", &Renderer::set_background_color, "r", "g", "b", "a")
+        .def(
+            "set_plan_texture",
+            [](Renderer &renderer,
+               nb::bytes pixels_rgba,
+               int width_px,
+               int height_px,
+               float page_width,
+               float page_height,
+               float plane_x,
+               float plane_y,
+               float plane_z,
+               float opacity,
+               bool visible,
+               bool flip_u,
+               bool flip_v)
+            {
+                char *buffer = nullptr;
+                Py_ssize_t length = 0;
+                if (PyBytes_AsStringAndSize(pixels_rgba.ptr(), &buffer, &length) != 0)
+                    throw std::invalid_argument("pixels_rgba must be bytes");
+                renderer.set_plan_texture(
+                    std::string(buffer, static_cast<size_t>(length)),
+                    width_px,
+                    height_px,
+                    page_width,
+                    page_height,
+                    plane_x,
+                    plane_y,
+                    plane_z,
+                    opacity,
+                    visible,
+                    flip_u,
+                    flip_v);
+            },
+            "pixels_rgba"_a,
+            "width_px"_a,
+            "height_px"_a,
+            "page_width"_a,
+            "page_height"_a,
+            "plane_x"_a,
+            "plane_y"_a,
+            "plane_z"_a,
+            "opacity"_a,
+            "visible"_a,
+            "flip_u"_a,
+            "flip_v"_a)
+        .def("clear_plan_texture", &Renderer::clear_plan_texture)
+        .def("set_plan_texture_visibility", &Renderer::set_plan_texture_visibility, "visible")
+        .def("set_plan_texture_opacity", &Renderer::set_plan_texture_opacity, "opacity")
         .def("pick", &Renderer::pick, "screen_x", "screen_y")
         .def_rw("scene", &Renderer::scene)
         .def_rw("camera", &Renderer::camera);

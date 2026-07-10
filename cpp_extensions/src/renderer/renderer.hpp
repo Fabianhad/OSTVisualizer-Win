@@ -127,6 +127,22 @@ namespace ost_renderer
         void clear_frame();
         int pick(int screen_x, int screen_y);
         void set_background_color(float r, float g, float b, float a);
+        void set_plan_texture(
+            const std::string &pixels_rgba,
+            int width_px,
+            int height_px,
+            float page_width,
+            float page_height,
+            float plane_x,
+            float plane_y,
+            float plane_z,
+            float opacity,
+            bool visible,
+            bool flip_u,
+            bool flip_v);
+        void clear_plan_texture();
+        void set_plan_texture_visibility(bool visible);
+        void set_plan_texture_opacity(float opacity);
         int get_samples() const;
         Scene scene;
         Camera camera;

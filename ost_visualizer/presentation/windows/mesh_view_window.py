@@ -288,6 +288,7 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         bid_ref: Optional[BidRef] = None,
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
+        scene_bounds: Optional[Sequence[float]] = None,
     ) -> None:
         if self._is_closing or not self.viewer:
             return
@@ -299,7 +300,12 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             bid_ref=bid_ref,
             condition_uids=condition_uids,
             takeoff_uids=takeoff_uids,
+            scene_bounds=scene_bounds,
         )
+
+    def set_plan_texture_provider(self, provider) -> None:
+        if self.viewer:
+            self.viewer.set_plan_texture_provider(provider)
 
     def set_selected_takeoffs(self, takeoff_uids: list) -> None:
         if self.viewer:

@@ -1,4 +1,4 @@
-from typing import List, TypedDict
+from typing import List, NotRequired, TypedDict
 
 
 class SceneCameraConfig(TypedDict):
@@ -84,6 +84,13 @@ class ScenePageEntry(TypedDict):
     visible: bool
     pdf_document_uid: str
     pdf_page_index: int
+    plane_x: NotRequired[float]
+    plane_y: NotRequired[float]
+    plane_z: NotRequired[float]
+    plane_width: NotRequired[float]
+    plane_height: NotRequired[float]
+    plane_flip_u: NotRequired[bool]
+    plane_flip_v: NotRequired[bool]
 
 
 class SceneTakeoff2DEntry(TypedDict):

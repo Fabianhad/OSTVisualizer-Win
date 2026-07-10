@@ -84,6 +84,7 @@ from ..utils.annotation_style_controls import (
     create_annotation_tool_split_button,
 )
 from ..utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_SPECS
+from ..visualization.native_page_plane import NativePageImagePlaneProvider
 
 
 class _PlanRibbonToolBar(QtWidgets.QToolBar):
@@ -283,6 +284,13 @@ class ComponentBuilder:
         renderers = infrastructure_provider.create_plan_view_renderers(
             coord_system, color_service
         )
+        page_plane_provider = NativePageImagePlaneProvider(
+            project_data_service,
+            ui_state_manager,
+            renderers.page_cache,
+        )
+        canvas.set_plan_texture_provider(page_plane_provider.build_for_bounds)
+        ui_event_handler.set_plan_texture_provider(page_plane_provider.build_for_bounds)
         plan_view = TakeoffPlanView(
             color_service,
             renderers.rendering_service,

@@ -2,6 +2,10 @@
 
 ## 1.2.4.3 - Unreleased
 
+### Added
+
+- Native 3D views can now show the active page image plane beneath the generated model using the existing page image layer visibility.
+
 ### Changed
 
 - MCP tool and resource responses now summarize oversized inline output and save the full result under app-data MCP output files, returning local file references until downloadable attachments are supported.

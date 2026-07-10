@@ -6,11 +6,14 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from .....application.dtos.html_export_page_dto import HtmlExportPageDto
+from .....application.dtos.page_visualization_page_dto import PageVisualizationPageDto
 from .....application.dtos.scene_data_dto import SceneData, ScenePageImageLayer
 from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
+from .....domain.services.page_image_plane_transform import (
+    threejs_page_plane_transform,
+)
 from .....domain.entities.area import BidArea
 from .....domain.entities.condition import Condition
 from .....domain.entities.config import Config
@@ -37,7 +40,7 @@ def visualize_with_threejs(
     display_modes_synced: bool = True,
     grayscale_enabled: bool = True,
     page_area_selections: Optional[Dict] = None,
-    pages: Optional[List[HtmlExportPageDto]] = None,
+    pages: Optional[List[PageVisualizationPageDto]] = None,
     active_page_uid: str = "",
     layers: Optional[List[BidLayer]] = None,
     areas: Optional[List[BidArea]] = None,
@@ -82,6 +85,7 @@ def visualize_with_threejs(
         display_mode_2d,
         grayscale_enabled,
         page_area_selections,
+        scene_data.get("bounds"),
     )
     if page_entries:
         exported_page_uids = [page["uid"] for page in page_entries]
@@ -109,7 +113,7 @@ def visualize_with_threejs(
 
 
 def _build_multi_page_data(
-    pages: List[HtmlExportPageDto],
+    pages: List[PageVisualizationPageDto],
     bid_conditions: Dict[str, Condition],
     bid_takeoffs: List[Takeoff],
     color_service: IColorService,
@@ -117,6 +121,7 @@ def _build_multi_page_data(
     display_mode: str,
     grayscale_enabled: bool,
     page_area_selections: Optional[Dict],
+    scene_bounds: Optional[dict] = None,
 ):
     page_entries = []
     takeoffs_2d = []
@@ -144,23 +149,39 @@ def _build_multi_page_data(
                     pdf_documents.append(
                         {"uid": pdf_document_uid, "data_base64": data_base64}
                     )
-        page_entries.append(
-            {
-                "uid": page_uid,
-                "label": str(page["label"] or page_uid),
-                "name": str(page["name"] or ""),
-                "sheet_no": str(page["sheet_no"] or ""),
-                "sequence": int(page["sequence"] or 0),
-                "width": float(page["width"] or 0.0),
-                "height": float(page["height"] or 0.0),
-                "page_width": float(page["page_width"] or 0.0),
-                "page_height": float(page["page_height"] or 0.0),
-                "image_layer_uid": str(page["image_layer_uid"] or ""),
-                "visible": True,
-                "pdf_document_uid": pdf_document_uid,
-                "pdf_page_index": pdf_page_index,
-            }
+        page_entry = {
+            "uid": page_uid,
+            "label": str(page["label"] or page_uid),
+            "name": str(page["name"] or ""),
+            "sheet_no": str(page["sheet_no"] or ""),
+            "sequence": int(page["sequence"] or 0),
+            "width": float(page["width"] or 0.0),
+            "height": float(page["height"] or 0.0),
+            "page_width": float(page["page_width"] or 0.0),
+            "page_height": float(page["page_height"] or 0.0),
+            "image_layer_uid": str(page["image_layer_uid"] or ""),
+            "visible": True,
+            "pdf_document_uid": pdf_document_uid,
+            "pdf_page_index": pdf_page_index,
+        }
+        transform = threejs_page_plane_transform(
+            float(page["page_width"] or 0.0),
+            float(page["page_height"] or 0.0),
+            scene_bounds,
         )
+        if transform is not None:
+            page_entry.update(
+                {
+                    "plane_x": transform.plane_x,
+                    "plane_y": transform.plane_y,
+                    "plane_z": transform.plane_z,
+                    "plane_width": transform.plane_width,
+                    "plane_height": transform.plane_height,
+                    "plane_flip_u": transform.flip_u,
+                    "plane_flip_v": transform.flip_v,
+                }
+            )
+        page_entries.append(page_entry)
         if page["width"] > 0 and page["height"] > 0:
             page_info = {
                 "scale_factor1": 1.0,

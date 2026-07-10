@@ -759,6 +759,13 @@
           visible: page.visible !== false,
           pdfDocumentUid: normalizeOptionalUid(page.pdf_document_uid),
           pdfPageIndex: Number(page.pdf_page_index || 0),
+          planeX: Number(page.plane_x),
+          planeY: Number(page.plane_y),
+          planeZ: Number(page.plane_z),
+          planeWidth: Number(page.plane_width || page.page_width || 0),
+          planeHeight: Number(page.plane_height || page.page_height || 0),
+          planeFlipU: page.plane_flip_u !== false,
+          planeFlipV: page.plane_flip_v !== false,
         };
       }
 
@@ -1918,6 +1925,17 @@
             }
             return;
           }
+          if (
+            !Number.isFinite(page.planeX) ||
+            !Number.isFinite(page.planeY) ||
+            !Number.isFinite(page.planeZ)
+          ) {
+            if (pdfPlane) {
+              pdfPlane.userData.baseVisible = false;
+              setRenderedObjectVisible(pdfPlane, false);
+            }
+            return;
+          }
           const tex = new THREE.CanvasTexture(off);
           tex.colorSpace = THREE.SRGBColorSpace;
           tex.minFilter = THREE.LinearFilter;
@@ -1962,18 +1980,15 @@
             pdfPlane.userData.usesPage3dVisibility = false;
             pdfPlane.userData.baseVisible = true;
           }
-          const floorY = sceneData.bounds
-            ? sceneData.bounds.min[1] - 0.01
-            : -0.01;
           pdfPlane.position.set(
-            -page.pageWidth / 2,
-            floorY,
-            -page.pageHeight / 2,
+            page.planeX,
+            page.planeY,
+            page.planeZ,
           );
           const uv = geo.attributes.uv;
           for (let i = 0; i < uv.count; i++) {
-            uv.setX(i, 1 - uv.getX(i));
-            uv.setY(i, 1 - uv.getY(i));
+            if (page.planeFlipU) uv.setX(i, 1 - uv.getX(i));
+            if (page.planeFlipV) uv.setY(i, 1 - uv.getY(i));
           }
           uv.needsUpdate = true;
           setRenderedObjectVisible(pdfPlane, isObjectVisible(pdfPlane));

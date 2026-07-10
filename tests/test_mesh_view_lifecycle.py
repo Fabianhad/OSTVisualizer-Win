@@ -69,6 +69,9 @@ class FakeMeshRenderer:
     def suspend(self):
         self.suspend_calls += 1
 
+    def clear_plan_texture(self):
+        pass
+
 
 class FakePickingMeshRenderer(FakeMeshRenderer):
     def __init__(self, scene, pick_index):

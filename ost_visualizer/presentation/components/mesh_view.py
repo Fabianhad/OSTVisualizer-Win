@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 import math
-from typing import Optional, Sequence, Union
+from typing import Callable, Optional, Sequence, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QTimer, Signal
 from ...domain.entities.identity_refs import BidRef
@@ -19,6 +19,7 @@ from ..utils.view_context_menu import (
     add_context_page_actions,
     add_reassign_condition_submenu,
 )
+from ..visualization.native_page_plane import NativePageImagePlaneData
 from . import ost_renderer
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,11 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._negative_check_fn = lambda _uids: False
         self._curved_check_fn = lambda _uids: (False, False)
         self._selected_context_state_fn = None
+        self._plan_texture_provider: Optional[
+            Callable[[Optional[Sequence[float]]], Optional[NativePageImagePlaneData]]
+        ] = None
+        self._current_plan_texture: Optional[NativePageImagePlaneData] = None
+        self._has_plan_texture = False
         self._image_show_mode: int = 0
         self._context_menu_command_trigger = None
         self._context_menu_action_state = None
@@ -570,9 +576,12 @@ class OpenGLViewer(QtWidgets.QWidget):
         return self._zoom_reference_distance / dist * 100.0
 
     def reset_view(self) -> None:
-        if not self._renderer or self._renderer.scene.empty():
+        if not self._renderer:
             return
-        self._renderer.camera.show_object(self._renderer.scene.get_bounds())
+        bounds = self._current_view_bounds()
+        if bounds is None:
+            return
+        self._renderer.camera.show_object(bounds)
         self._zoom_reference_distance = self._get_camera_distance()
         self.zoom_changed.emit(1.0)
         self.update()
@@ -626,11 +635,21 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._renderer.suspend()
 
     def resume_rendering(self) -> None:
-        if not self._renderer or self._renderer.scene.empty():
+        if not self._renderer or (
+            self._renderer.scene.empty() and not self._has_plan_texture
+        ):
             return
         self._render_suspended = False
         self._renderer.resume()
         self.update()
+
+    def set_plan_texture_provider(
+        self,
+        provider: Optional[
+            Callable[[Optional[Sequence[float]]], Optional[NativePageImagePlaneData]]
+        ],
+    ) -> None:
+        self._plan_texture_provider = provider
 
     def apply_mesh_data(
         self,
@@ -641,6 +660,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         bid_ref: Optional[BidRef] = None,
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
+        scene_bounds: Optional[Sequence[float]] = None,
     ) -> None:
         if QtCore.QThread.currentThread() != self.thread():
             self._validate_mesh_buffer_lengths(
@@ -659,6 +679,7 @@ class OpenGLViewer(QtWidgets.QWidget):
                 "bid_ref": bid_ref,
                 "condition_uids": condition_uids,
                 "takeoff_uids": takeoff_uids,
+                "scene_bounds": scene_bounds,
             }
             QtCore.QMetaObject.invokeMethod(
                 self, "_apply_pending", QtCore.Qt.QueuedConnection
@@ -672,6 +693,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             bid_ref,
             condition_uids,
             takeoff_uids,
+            scene_bounds,
         )
 
     @staticmethod
@@ -717,6 +739,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             data["bid_ref"],
             data.get("condition_uids"),
             data.get("takeoff_uids"),
+            data.get("scene_bounds"),
         )
 
     def _do_apply_mesh_data(
@@ -728,6 +751,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         bid_ref: Optional[BidRef] = None,
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
+        scene_bounds: Optional[Sequence[float]] = None,
     ) -> None:
         self._validate_mesh_buffer_lengths(
             vertices_list,
@@ -769,8 +793,9 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._renderer.scene.clear()
         for mesh in meshes:
             self._renderer.scene.add_mesh(mesh)
+        self._sync_plan_texture(scene_bounds)
         self._reconcile_selected_takeoffs_with_scene()
-        if self._renderer.scene.empty():
+        if self._renderer.scene.empty() and not self._has_plan_texture:
             self._renderer.camera.reset()
             self._renderer.suspend()
             self._render_suspended = True
@@ -783,11 +808,78 @@ class OpenGLViewer(QtWidgets.QWidget):
             else:
                 self.update()
             return
-        if (is_new_project or scene_was_empty) and not self._renderer.scene.empty():
-            self._renderer.camera.show_object(self._renderer.scene.get_bounds())
+        if is_new_project or scene_was_empty:
+            bounds = self._current_view_bounds()
+            if bounds is not None:
+                self._renderer.camera.show_object(bounds)
             self._zoom_reference_distance = self._get_camera_distance()
             self.zoom_changed.emit(1.0)
         self.resume_rendering()
+
+    def _sync_plan_texture(self, scene_bounds: Optional[Sequence[float]]) -> None:
+        self._current_plan_texture = None
+        self._has_plan_texture = False
+        if not self._renderer:
+            return
+        if not self._plan_texture_provider:
+            self._renderer.clear_plan_texture()
+            return
+        data = self._plan_texture_provider(scene_bounds)
+        if data is None:
+            self._renderer.clear_plan_texture()
+            return
+        self._renderer.set_plan_texture(
+            data.pixels_rgba,
+            data.width_px,
+            data.height_px,
+            data.page_width,
+            data.page_height,
+            data.plane_x,
+            data.plane_y,
+            data.plane_z,
+            data.opacity,
+            data.visible,
+            data.flip_u,
+            data.flip_v,
+        )
+        self._current_plan_texture = data
+        self._has_plan_texture = data.visible
+
+    def _current_view_bounds(self):
+        if not self._renderer:
+            return None
+        has_scene = not self._renderer.scene.empty()
+        has_plan = self._has_plan_texture and self._current_plan_texture is not None
+        if not has_scene and not has_plan:
+            return None
+        if has_scene:
+            bounds = self._renderer.scene.get_bounds()
+        else:
+            bounds = ost_renderer.Box3()
+        if has_plan:
+            plan = self._current_plan_texture
+            padding = max(max(plan.page_width, plan.page_height) * 0.001, 0.05)
+            min_x = plan.plane_x - plan.page_width * 0.5
+            max_x = plan.plane_x + plan.page_width * 0.5
+            min_y = plan.plane_y - plan.page_height * 0.5
+            max_y = plan.plane_y + plan.page_height * 0.5
+            min_z = plan.plane_z - padding
+            max_z = plan.plane_z + padding
+            if bounds.is_empty():
+                bounds.min = ost_renderer.Vec3(min_x, min_y, min_z)
+                bounds.max = ost_renderer.Vec3(max_x, max_y, max_z)
+            else:
+                bounds.min = ost_renderer.Vec3(
+                    min(bounds.min.x, min_x),
+                    min(bounds.min.y, min_y),
+                    min(bounds.min.z, min_z),
+                )
+                bounds.max = ost_renderer.Vec3(
+                    max(bounds.max.x, max_x),
+                    max(bounds.max.y, max_y),
+                    max(bounds.max.z, max_z),
+                )
+        return bounds
 
     def _capture_camera_state(self) -> tuple[object, object, float, float]:
         camera = self._renderer.camera
@@ -824,10 +916,13 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._current_bid_ref = None
         if self._renderer:
             self._renderer.scene.clear()
+            self._renderer.clear_plan_texture()
             self._renderer.camera.reset()
             self._renderer.suspend()
         else:
             self._pending_camera_reset = True
+        self._current_plan_texture = None
+        self._has_plan_texture = False
         self._render_suspended = True
         self.update()
 
@@ -835,10 +930,11 @@ class OpenGLViewer(QtWidgets.QWidget):
         super().showEvent(event)
         if not self._ensure_renderer():
             return
-        if self._renderer.scene.empty() or self._render_suspended:
+        if self._renderer.scene.empty() and not self._has_plan_texture:
             self._render_suspended = True
             self._renderer.suspend()
             return
+        self._render_suspended = False
         self._renderer.resume()
         self._renderer.render()
 
@@ -858,6 +954,9 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._negative_check_fn = lambda _uids: False
         self._curved_check_fn = lambda _uids: (False, False)
         self._selected_context_state_fn = None
+        self._plan_texture_provider = None
+        self._current_plan_texture = None
+        self._has_plan_texture = False
         self._context_menu_command_trigger = None
         self._context_menu_action_state = None
         self._context_menu_conditions_fn = lambda: {}

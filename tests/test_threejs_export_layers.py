@@ -10,6 +10,9 @@ from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.services.page_image_plane_transform import (
+    PAGE_PLANE_FLOOR_OFFSET,
+)
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.presentation.visualization.core.mesh_generator import MeshData
 from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
@@ -190,7 +193,7 @@ def _page_template(pdf_path: Path, uid: str, page_index: int):
     }
 
 
-def _build_pages_without_takeoffs(pages):
+def _build_pages_without_takeoffs(pages, scene_bounds=None):
     return _build_multi_page_data(
         pages,
         {},
@@ -200,6 +203,7 @@ def _build_pages_without_takeoffs(pages):
         Config.DISPLAY_MODE_SOLID,
         True,
         {},
+        scene_bounds,
     )
 
 
@@ -839,8 +843,10 @@ class ThreejsExportLayerTests(unittest.TestCase):
             pdf_path = Path(tmpdir) / "pages.pdf"
             _write_minimal_pdf(pdf_path, [(612, 792), (300, 400), (500, 600)])
             source_size = pdf_path.stat().st_size
+            bounds = {"min": [0.0, 4.0, 0.0], "max": [10.0, 12.0, 8.0]}
             page_entries, pdf_documents, takeoffs_2d = _build_pages_without_takeoffs(
-                [_page_template(pdf_path, "page-2", 1)]
+                [_page_template(pdf_path, "page-2", 1)],
+                scene_bounds=bounds,
             )
         self.assertEqual(len(pdf_documents), 1)
         embedded_pdf = _decode_pdf_document(pdf_documents[0])
@@ -848,6 +854,13 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertEqual(_pdf_page_sizes(embedded_pdf), [[300.0, 400.0, 0.0, 0.0]])
         self.assertEqual(page_entries[0]["pdf_document_uid"], "pdf-1")
         self.assertEqual(page_entries[0]["pdf_page_index"], 1)
+        self.assertEqual(page_entries[0]["plane_x"], -0.5)
+        self.assertAlmostEqual(
+            page_entries[0]["plane_y"], 4.0 - PAGE_PLANE_FLOOR_OFFSET
+        )
+        self.assertEqual(page_entries[0]["plane_z"], -0.5)
+        self.assertTrue(page_entries[0]["plane_flip_u"])
+        self.assertTrue(page_entries[0]["plane_flip_v"])
         self.assertNotIn("image_visible", page_entries[0])
         self.assertEqual(takeoffs_2d, [])
 

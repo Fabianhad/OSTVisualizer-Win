@@ -4,9 +4,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <cmath>
 #include <chrono>
+#include <stdexcept>
 #include <unordered_map>
 #ifdef _WIN32
 #include <windows.h>
@@ -518,6 +520,29 @@ void main() {
     gl_Position = vec4(aPos, 0.0, 1.0);
 }
 )";
+    const char *plan_texture_vertex_shader = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec2 aTexCoord;
+out vec2 texCoord;
+uniform mat4 view;
+uniform mat4 projection;
+void main() {
+    texCoord = aTexCoord;
+    gl_Position = projection * view * vec4(aPos, 1.0);
+}
+)";
+    const char *plan_texture_fragment_shader = R"(
+#version 330 core
+in vec2 texCoord;
+out vec4 FragColor;
+uniform sampler2D planTexture;
+uniform float opacity;
+void main() {
+    vec4 color = texture(planTexture, texCoord);
+    FragColor = vec4(color.rgb, color.a * opacity);
+}
+)";
     const char *composite_fragment_shader = R"(
 #version 330 core
 in vec2 texCoord;
@@ -584,6 +609,7 @@ void main() {
         int samples = 0;
         GLuint opaque_shader = 0;
         GLuint transparent_accum_shader = 0;
+        GLuint plan_texture_shader = 0;
         GLuint composite_shader = 0;
         GLuint accum_fbo = 0;
         GLuint accum_texture = 0;
@@ -601,6 +627,13 @@ void main() {
         GLuint selection_post_shader_prog = 0;
         GLuint scene_fbo = 0, scene_texture = 0;
         GLuint sel_mask_fbo = 0, sel_mask_texture = 0;
+        GLuint plan_texture = 0;
+        GLuint plan_vao = 0;
+        GLuint plan_vbo = 0;
+        GLuint plan_ebo = 0;
+        bool plan_texture_ready = false;
+        bool plan_texture_visible = false;
+        float plan_texture_opacity = 1.0f;
         bool pick_initialized = false;
         std::vector<uint8_t> pick_buffer;
         float bg_r = 0.08f, bg_g = 0.08f, bg_b = 0.08f, bg_a = 1.0f;
@@ -631,6 +664,24 @@ void main() {
         void clear_frame();
         void suspend();
         void resume();
+        void set_plan_texture(
+            const std::string &pixels_rgba,
+            int width_px,
+            int height_px,
+            float page_width,
+            float page_height,
+            float plane_x,
+            float plane_y,
+            float plane_z,
+            float opacity,
+            bool visible,
+            bool flip_u,
+            bool flip_v);
+        void clear_plan_texture();
+        void set_plan_texture_visibility(bool visible);
+        void set_plan_texture_opacity(float opacity);
+        bool has_visible_plan_texture() const;
+        void render_plan_texture();
         void render_opaque();
         void render_transparent();
         void render_pick_pass();
@@ -751,6 +802,7 @@ void main() {
         glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
         opaque_shader = create_shader(mesh_vertex_shader, opaque_fragment_shader);
         transparent_accum_shader = create_shader(mesh_vertex_shader, transparent_accum_fragment_shader);
+        plan_texture_shader = create_shader(plan_texture_vertex_shader, plan_texture_fragment_shader);
         composite_shader = create_shader(quad_vertex_shader, composite_fragment_shader);
         set_lighting_uniforms(opaque_shader);
         set_lighting_uniforms(transparent_accum_shader);
@@ -792,10 +844,13 @@ void main() {
             ContextGuard guard(hdc, hglrc);
 #endif
             scene->clear();
+            clear_plan_texture();
             if (opaque_shader)
                 glDeleteProgram(opaque_shader);
             if (transparent_accum_shader)
                 glDeleteProgram(transparent_accum_shader);
+            if (plan_texture_shader)
+                glDeleteProgram(plan_texture_shader);
             if (composite_shader)
                 glDeleteProgram(composite_shader);
             if (accum_fbo)
@@ -1109,6 +1164,158 @@ void main() {
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(2 * sizeof(float)));
         glBindVertexArray(0);
     }
+    void Renderer::Impl::set_plan_texture(
+        const std::string &pixels_rgba,
+        int width_px,
+        int height_px,
+        float page_width,
+        float page_height,
+        float plane_x,
+        float plane_y,
+        float plane_z,
+        float opacity,
+        bool visible,
+        bool flip_u,
+        bool flip_v)
+    {
+        plan_texture_ready = false;
+        plan_texture_visible = false;
+        if (width_px <= 0 || height_px <= 0)
+            throw std::invalid_argument("Plan texture dimensions must be positive");
+        if (page_width <= 0.0f || page_height <= 0.0f)
+            throw std::invalid_argument("Plan texture page size must be positive");
+        const size_t expected_size = static_cast<size_t>(width_px) * static_cast<size_t>(height_px) * 4;
+        if (pixels_rgba.size() != expected_size)
+            throw std::invalid_argument("Plan texture RGBA buffer length does not match dimensions");
+        if (!initialized)
+            return;
+#ifdef _WIN32
+        ContextGuard guard(hdc, hglrc);
+#endif
+        GLint max_texture_size = 0;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
+        if (max_texture_size > 0 && (width_px > max_texture_size || height_px > max_texture_size))
+            throw std::invalid_argument("Plan texture exceeds GPU maximum texture size");
+        if (!plan_texture)
+            glGenTextures(1, &plan_texture);
+        glBindTexture(GL_TEXTURE_2D, plan_texture);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RGBA8,
+            width_px,
+            height_px,
+            0,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            reinterpret_cast<const unsigned char *>(pixels_rgba.data()));
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        const float half_width = page_width * 0.5f;
+        const float half_height = page_height * 0.5f;
+        const float min_x = plane_x - half_width;
+        const float max_x = plane_x + half_width;
+        const float min_y = plane_y - half_height;
+        const float max_y = plane_y + half_height;
+        const float u_min = flip_u ? 1.0f : 0.0f;
+        const float u_max = flip_u ? 0.0f : 1.0f;
+        const float v_min = flip_v ? 1.0f : 0.0f;
+        const float v_max = flip_v ? 0.0f : 1.0f;
+        struct PlanVertex
+        {
+            float x, y, z, u, v;
+        };
+        PlanVertex vertices[] = {
+            {min_x, min_y, plane_z, u_min, v_min},
+            {max_x, min_y, plane_z, u_max, v_min},
+            {max_x, max_y, plane_z, u_max, v_max},
+            {min_x, max_y, plane_z, u_min, v_max},
+        };
+        uint32_t indices[] = {0, 1, 2, 2, 3, 0};
+        if (!plan_vao)
+            glGenVertexArrays(1, &plan_vao);
+        if (!plan_vbo)
+            glGenBuffers(1, &plan_vbo);
+        if (!plan_ebo)
+            glGenBuffers(1, &plan_ebo);
+        glBindVertexArray(plan_vao);
+        glBindBuffer(GL_ARRAY_BUFFER, plan_vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, plan_ebo);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PlanVertex), 0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(PlanVertex), (void *)offsetof(PlanVertex, u));
+        glBindVertexArray(0);
+        plan_texture_ready = true;
+        plan_texture_visible = visible;
+        plan_texture_opacity = glm::clamp(opacity, 0.0f, 1.0f);
+    }
+    void Renderer::Impl::clear_plan_texture()
+    {
+        if (!initialized)
+            return;
+#ifdef _WIN32
+        ContextGuard guard(hdc, hglrc);
+#endif
+        if (plan_texture)
+        {
+            glDeleteTextures(1, &plan_texture);
+            plan_texture = 0;
+        }
+        if (plan_vao)
+        {
+            glDeleteVertexArrays(1, &plan_vao);
+            plan_vao = 0;
+        }
+        if (plan_vbo)
+        {
+            glDeleteBuffers(1, &plan_vbo);
+            plan_vbo = 0;
+        }
+        if (plan_ebo)
+        {
+            glDeleteBuffers(1, &plan_ebo);
+            plan_ebo = 0;
+        }
+        plan_texture_ready = false;
+        plan_texture_visible = false;
+        plan_texture_opacity = 1.0f;
+    }
+    void Renderer::Impl::set_plan_texture_visibility(bool visible)
+    {
+        plan_texture_visible = visible;
+    }
+    void Renderer::Impl::set_plan_texture_opacity(float opacity)
+    {
+        plan_texture_opacity = glm::clamp(opacity, 0.0f, 1.0f);
+    }
+    bool Renderer::Impl::has_visible_plan_texture() const
+    {
+        return plan_texture_ready && plan_texture_visible && plan_texture != 0 && plan_vao != 0;
+    }
+    void Renderer::Impl::render_plan_texture()
+    {
+        if (!has_visible_plan_texture() || !plan_texture_shader)
+            return;
+        glUseProgram(plan_texture_shader);
+        glm::mat4 view, projection;
+        camera->get_view_matrix(glm::value_ptr(view));
+        camera->get_projection_matrix(glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(plan_texture_shader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(plan_texture_shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniform1f(glGetUniformLocation(plan_texture_shader, "opacity"), plan_texture_opacity);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, plan_texture);
+        glUniform1i(glGetUniformLocation(plan_texture_shader, "planTexture"), 0);
+        glBindVertexArray(plan_vao);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
+    }
     void Renderer::Impl::render_opaque()
     {
         GLuint render_fbo = (opaque_ms_fbo != 0) ? opaque_ms_fbo : opaque_fbo;
@@ -1117,6 +1324,7 @@ void main() {
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
+        render_plan_texture();
         glUseProgram(opaque_shader);
         upload_matrices(opaque_shader);
         for (auto &m : scene->get_meshes())
@@ -1216,7 +1424,7 @@ void main() {
             accumulator -= fixed_dt;
         }
         camera->interpolate(accumulator / fixed_dt);
-        if (scene->empty())
+        if (scene->empty() && !has_visible_plan_texture())
         {
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glClearColor(bg_r, bg_g, bg_b, bg_a);
@@ -1226,7 +1434,10 @@ void main() {
 #endif
             return;
         }
-        render_pick_pass();
+        if (scene->empty())
+            pick_buffer.clear();
+        else
+            render_pick_pass();
         render_opaque();
         render_transparent();
         composite();
@@ -1341,6 +1552,43 @@ void main() {
         pImpl->bg_g = g;
         pImpl->bg_b = b;
         pImpl->bg_a = a;
+    }
+    void Renderer::set_plan_texture(
+        const std::string &pixels_rgba,
+        int width_px,
+        int height_px,
+        float page_width,
+        float page_height,
+        float plane_x,
+        float plane_y,
+        float plane_z,
+        float opacity,
+        bool visible,
+        bool flip_u,
+        bool flip_v)
+    {
+        pImpl->set_plan_texture(
+            pixels_rgba,
+            width_px,
+            height_px,
+            page_width,
+            page_height,
+            plane_x,
+            plane_y,
+            plane_z,
+            opacity,
+            visible,
+            flip_u,
+            flip_v);
+    }
+    void Renderer::clear_plan_texture() { pImpl->clear_plan_texture(); }
+    void Renderer::set_plan_texture_visibility(bool visible)
+    {
+        pImpl->set_plan_texture_visibility(visible);
+    }
+    void Renderer::set_plan_texture_opacity(float opacity)
+    {
+        pImpl->set_plan_texture_opacity(opacity);
     }
     int Renderer::get_samples() const { return pImpl->samples; }
 }

@@ -422,6 +422,7 @@ def configure_mesh_state(
     coordinator._view_stack = FakeViewStack(index=view_index)
     coordinator._mesh_window = mesh_window
     coordinator.opengl_viewer = opengl_viewer
+    coordinator._plan_texture_provider = None
     coordinator.visualization_service = visualization or FakeVisualization()
     coordinator._mesh_scene_dirty = False
     coordinator._dirty_mesh_page_uids = set()
@@ -870,13 +871,16 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             condition_uid="condition-1",
             takeoff_uid="takeoff-1",
         )
-        coordinator._on_native_scene_updated(geometries=[geometry])
+        coordinator._on_native_scene_updated(
+            geometries=[geometry], bounds=(-1, 1, -2, 2, -3, 3)
+        )
         self.assertEqual(1, len(coordinator.opengl_viewer.mesh_calls))
         args, mesh_options = coordinator.opengl_viewer.mesh_calls[0]
         self.assertEqual(([[0.0, 0.0, 0.0]], [[0.0, 1.0, 0.0]], [[0, 1, 2]]), args[:3])
         self.assertEqual([{"color": "#123456", "opacity": 0.75}], args[3])
         self.assertEqual(["condition-1"], mesh_options["condition_uids"])
         self.assertEqual(["takeoff-1"], mesh_options["takeoff_uids"])
+        self.assertEqual((-1, 1, -2, 2, -3, 3), mesh_options["scene_bounds"])
         self.assertEqual(coordinator._last_mesh_args, args)
         self.assertEqual(coordinator._last_mesh_options, mesh_options)
         self.assertEqual(1, coordinator._plan_view_signaler.requests)

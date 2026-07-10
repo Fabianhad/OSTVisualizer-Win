@@ -4,7 +4,7 @@ from ...domain.entities.condition import Condition
 from ...domain.entities.config import Config
 from ...domain.entities.layer import BidLayer
 from ...domain.entities.takeoff import Takeoff
-from ..dtos.html_export_page_dto import HtmlExportPageDto
+from ..dtos.page_visualization_page_dto import PageVisualizationPageDto
 from ..dtos.scene_data_dto import ScenePageImageLayer
 
 
@@ -22,7 +22,7 @@ class IHtmlRenderer(Protocol):
         grayscale_enabled: bool = True,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         auto_open: bool = False,
-        pages: Optional[List[HtmlExportPageDto]] = None,
+        pages: Optional[List[PageVisualizationPageDto]] = None,
         active_page_uid: str = "",
         layers: Optional[List[BidLayer]] = None,
         areas: Optional[List[BidArea]] = None,

@@ -1,7 +1,7 @@
 from typing import Optional, TypedDict
 
 
-class HtmlExportPageDto(TypedDict):
+class PageVisualizationPageDto(TypedDict):
     uid: str
     label: str
     name: str
