@@ -1544,6 +1544,7 @@ class UIEventCoordinator:
         self._set_takeoff_tab_visible(False)
         self._rebuild_ui_after_file_load()
         self._update_export_menu_state()
+        self.main_window.set_database_window_title(file_path)
 
     def _on_database_refreshed(self, file_path: str = "") -> None:
         if file_path and not self._flush_deferred_for_file(file_path):
@@ -1647,6 +1648,7 @@ class UIEventCoordinator:
         snap = self._nav.refresh_snapshot
         if not snap:
             self._nav.finish_refresh(NavState.FILE_LOADED_NO_BID)
+            self.main_window.refresh_window_title()
             return
         has_file = bool(self.project_data.get_current_file_path())
         if snap.bid_ref:
@@ -1665,6 +1667,9 @@ class UIEventCoordinator:
                 self.ui_access_manager.refresh()
                 self._toolbar.refresh()
                 self._update_export_menu_state()
+                self.main_window.set_database_window_title(
+                    snap.selected_file_path or snap.bid_ref.file_path
+                )
                 return
             self.main_window.project_view.restore_bid_selection(snap.bid_ref)
             if self.project_data.get_current_bid_ref() != snap.bid_ref:
@@ -1759,6 +1764,7 @@ class UIEventCoordinator:
             )
         self.ui_access_manager.refresh()
         self._update_export_menu_state()
+        self.main_window.refresh_window_title()
 
     def _validate_condition_uids(self, uids: set) -> set:
         if not uids:
@@ -1793,6 +1799,7 @@ class UIEventCoordinator:
         self._set_takeoff_tab_visible(False)
         self._refresh_project_tree_after_file_unload()
         self._update_export_menu_state()
+        self.main_window.refresh_window_title()
 
     def _refresh_project_tree_after_file_unload(self) -> None:
         has_files = bool(self.project_data.get_current_file_path())
@@ -1818,6 +1825,7 @@ class UIEventCoordinator:
         self.ui_state_manager.reset_selections()
         self.ui_state_manager.set_database_selected(is_database_root, file_path)
         self.ui_state_manager.set_project_uid(project_uid)
+        self.main_window.refresh_window_title()
         self.project_data.clear_bid()
         self._sync_undo_bid()
         self._nav.transition_to(NavState.FILE_LOADED_NO_BID)
@@ -1932,6 +1940,7 @@ class UIEventCoordinator:
             self.visualization_service.refresh_mesh_view([])
             self._set_takeoff_tab_visible(False)
             self._update_export_menu_state()
+            self.main_window.refresh_window_title()
             return
         prev_current_file_path = self.project_data.get_current_file_path()
         self.project_data.set_current_file(bid_ref.file_path)
@@ -1958,6 +1967,7 @@ class UIEventCoordinator:
         self._nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
         self.ui_access_manager.refresh()
         self._update_export_menu_state()
+        self.main_window.refresh_window_title()
         self._set_takeoff_tab_visible(True)
         if self._tab_widget and self._tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
             self._activate_takeoff_workspace()

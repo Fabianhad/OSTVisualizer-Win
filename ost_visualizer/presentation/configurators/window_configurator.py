@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from PySide6 import QtGui, QtWidgets
 from ...application.services.update_check_service import UpdateCheckService
+from ..config import MAIN_WINDOW_TITLE
 from ..utils.windows import set_initial_window_size
 
 APP_VERSION = UpdateCheckService.CURRENT_VERSION
@@ -24,7 +25,7 @@ def set_window_icon(window: QtWidgets.QWidget) -> None:
 
 
 class WindowConfigurator:
-    def __init__(self, width: int, height: int, title: str = "OST Visualizer"):
+    def __init__(self, width: int, height: int, title: str = MAIN_WINDOW_TITLE):
         self.width = width
         self.height = height
         self.title = title

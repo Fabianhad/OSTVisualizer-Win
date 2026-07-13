@@ -91,6 +91,7 @@ from .utils.messagebox import show_critical, show_info, show_warning
 from .utils.plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_ACTION_KEYS
 from .utils.qt_window_icon_provider import QtWindowIconProvider
 from .utils.themed_icon import rebuild_all_icons
+from .utils.window_title import format_main_window_title
 
 logger = logging.getLogger(__name__)
 
@@ -526,6 +527,25 @@ class MainWindow(QtWidgets.QMainWindow):
     def _mark_main_window_ready(self) -> None:
         self._main_window_ready = True
         self._schedule_pending_project_file_imports()
+
+    def set_database_window_title(self, file_path: str | None) -> None:
+        self.setWindowTitle(format_main_window_title(file_path))
+
+    def refresh_window_title(self) -> None:
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if bid_ref:
+            bid = self._project_data_service.get_bid(bid_ref)
+            self.setWindowTitle(
+                format_main_window_title(
+                    bid_ref.file_path,
+                    bid_no=bid.bid_no if bid else None,
+                    bid_name=bid.name if bid else None,
+                )
+            )
+            return
+        self.setWindowTitle(
+            format_main_window_title(self.ui_state_manager.selected_file_path)
+        )
 
     def _create_handlers(self) -> SimpleNamespace:
         handlers = SimpleNamespace()

@@ -1316,7 +1316,10 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             get_bid_conditions=lambda: conditions,
             deselect_pages=lambda: None,
         )
-        coordinator.main_window = SimpleNamespace(project_view=FakeProjectView())
+        coordinator.main_window = SimpleNamespace(
+            project_view=FakeProjectView(),
+            refresh_window_title=lambda: None,
+        )
         coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
         UIEventCoordinator._finish_refresh(coordinator)
         self.assertEqual(fake_sidebar.loads, 1)

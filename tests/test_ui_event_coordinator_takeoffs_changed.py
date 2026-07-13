@@ -251,6 +251,13 @@ class FakeMenuController:
 class FakeMainWindow:
     def __init__(self):
         self.menu_controller = FakeMenuController()
+        self.title_refreshes = 0
+
+    def refresh_window_title(self):
+        self.title_refreshes += 1
+
+    def set_database_window_title(self, _file_path):
+        self.title_refreshes += 1
 
 
 class FakeProjectView:
@@ -283,6 +290,14 @@ class FakeUnloadMainWindow:
     def __init__(self):
         self.menu_controller = FakeMenuController()
         self.project_view = FakeProjectView()
+        self.title_refreshes = 0
+        self.database_title_paths = []
+
+    def refresh_window_title(self):
+        self.title_refreshes += 1
+
+    def set_database_window_title(self, file_path):
+        self.database_title_paths.append(file_path)
 
 
 class FakeTabWidget:
@@ -1296,6 +1311,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 self.active.append(bid_ref)
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = FakeMainWindow()
         coordinator.ui_state_manager = UiState()
         coordinator.project_data = ProjectData()
         coordinator.project_operations = ProjectOperations()
@@ -1336,6 +1352,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 pass
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = FakeMainWindow()
         coordinator.ui_state_manager = UiState()
         clear_bid_calls = []
         coordinator.project_data = type(
@@ -1385,6 +1402,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 self.project_uid = project_uid
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = FakeMainWindow()
         coordinator.ui_state_manager = UiState()
         clear_bid_calls = []
         coordinator.project_data = type(

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Updated the main window title to show the selected database and bid alongside the OST Visualizer app name.
+
 ### Fixed
 
 - Fixed takeoff clicks after condition sidebar reloads so the clicked takeoff's condition is reselected and highlighted when the previous highlight was cleared.
