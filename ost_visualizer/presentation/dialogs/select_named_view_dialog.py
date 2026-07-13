@@ -76,6 +76,7 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
         line_edit = self._named_view_combo.lineEdit()
         if line_edit is not None:
             line_edit.setClearButtonEnabled(True)
+            line_edit.installEventFilter(self)
         existing_row.addWidget(self._existing_radio)
         existing_row.addWidget(self._named_view_combo, 1)
         layout.addLayout(existing_row)
@@ -113,6 +114,42 @@ class SelectNamedViewDialog(QtWidgets.QDialog):
             return
         line_edit.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
         line_edit.selectAll()
+
+    def eventFilter(self, watched, event) -> bool:
+        line_edit = self._named_view_combo.lineEdit()
+        if watched is line_edit:
+            event_type = event.type()
+            if event_type == QtCore.QEvent.Type.FocusIn:
+                if event.reason() != QtCore.Qt.FocusReason.OtherFocusReason:
+                    self._queue_show_current_completions()
+            elif event_type == QtCore.QEvent.Type.MouseButtonRelease:
+                self._queue_show_current_completions()
+        return super().eventFilter(watched, event)
+
+    def _queue_show_current_completions(self) -> None:
+        QtCore.QTimer.singleShot(0, self._show_current_completions)
+
+    def _show_current_completions(self) -> None:
+        if not self._named_view_combo.isEnabled():
+            return
+        line_edit = self._named_view_combo.lineEdit()
+        completer = self._named_view_combo.completer()
+        if line_edit is None or completer is None:
+            return
+        text = line_edit.text().strip()
+        if not text:
+            completer.setCompletionPrefix("")
+            completer.popup().hide()
+            return
+        completer.setCompletionPrefix(text)
+        if completer.completionCount() <= 0:
+            completer.popup().hide()
+            return
+        popup = completer.popup()
+        popup.setMinimumWidth(line_edit.width())
+        popup_rect = line_edit.rect()
+        popup_rect.setWidth(line_edit.width())
+        completer.complete(popup_rect)
 
     def accept(self) -> None:
         if self._new_radio.isChecked():

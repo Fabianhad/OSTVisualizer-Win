@@ -1,5 +1,5 @@
 import unittest
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from ost_visualizer.presentation.dialogs.select_named_view_dialog import (
     SelectNamedViewDialog,
 )
@@ -77,6 +77,60 @@ class SelectNamedViewDialogTests(unittest.TestCase):
         self.assertFalse(result.create_new)
         self.assertEqual(result.named_view_uid, "")
         self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
+
+    def test_refocusing_search_reopens_current_filtered_matches(self):
+        dialog = SelectNamedViewDialog(
+            [
+                ("nv-1", "p1", "Page A", "Level 6 East"),
+                ("nv-2", "p2", "Page B", "Level 6 West"),
+                ("nv-3", "p3", "Page C", "Lobby"),
+            ]
+        )
+        line_edit = dialog._named_view_combo.lineEdit()
+        completer = dialog._named_view_combo.completer()
+        self.assertIsNotNone(line_edit)
+        self.assertIsNotNone(completer)
+        dialog.show()
+        self.app.processEvents()
+        dialog._named_view_combo.setEditText("6")
+        completer.setCompletionPrefix("")
+        focus_event = QtGui.QFocusEvent(
+            QtCore.QEvent.Type.FocusIn,
+            QtCore.Qt.FocusReason.MouseFocusReason,
+        )
+        dialog.eventFilter(line_edit, focus_event)
+        self.app.processEvents()
+        popup = completer.popup()
+        self.assertEqual(line_edit.text(), "6")
+        self.assertEqual(completer.completionPrefix(), "6")
+        self.assertEqual(completer.completionCount(), 2)
+        self.assertTrue(popup.isVisible())
+        self.assertGreaterEqual(popup.width(), line_edit.width())
+        matches = []
+        self.assertEqual(popup.model().rowCount(), 2)
+        for row in range(popup.model().rowCount()):
+            index = popup.model().index(row, 0)
+            matches.append(index.data())
+        self.assertEqual(
+            matches,
+            ["Level 6 East (Page A)", "Level 6 West (Page B)"],
+        )
+
+    def test_empty_refocus_clears_stale_named_view_completion(self):
+        dialog = SelectNamedViewDialog(
+            [
+                ("nv-1", "p1", "Page A", "Level 6 East"),
+                ("nv-2", "p2", "Page B", "Lobby"),
+            ]
+        )
+        line_edit = dialog._named_view_combo.lineEdit()
+        completer = dialog._named_view_combo.completer()
+        self.assertIsNotNone(line_edit)
+        self.assertIsNotNone(completer)
+        completer.setCompletionPrefix("6")
+        dialog._named_view_combo.setEditText("")
+        dialog._show_current_completions()
+        self.assertEqual(completer.completionPrefix(), "")
 
 
 if __name__ == "__main__":
