@@ -717,7 +717,9 @@ class OstExporter:
         if not rows:
             return rows
         rows_copy = list(rows)
-        if table_name in ("BidLayers", "BidAreas"):
+        if table_name == "BidLayers":
+            rows_copy.sort(key=lambda x: int(x.get("Sequence", 0)))
+        elif table_name == "BidAreas":
             rows_copy.sort(key=lambda x: int(x.get("Sequence", 0)), reverse=True)
         elif table_name == "BidPageFolders":
             rows_copy.sort(key=lambda x: int(x.get("UID", 0)), reverse=True)

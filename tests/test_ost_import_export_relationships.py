@@ -574,6 +574,27 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertEqual(pay_class_uids, ["3"])
         self.assertEqual(root.find("./Bid").get("EstimatorUID"), "7")
 
+    def test_ost_export_writes_bid_layers_by_ascending_sequence(self):
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Bid"},
+            bid_tables={
+                "BidLayers": [
+                    {"UID": "12", "BidUID": "1", "Name": "High", "Sequence": "20"},
+                    {"UID": "10", "BidUID": "1", "Name": "Low", "Sequence": "0"},
+                    {"UID": "11", "BidUID": "1", "Name": "Mid", "Sequence": "10"},
+                ],
+                "BidConditions": [],
+                "BidPages": [],
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "bid.ost"
+            result = OstExporter(SimpleNamespace()).export(raw_data, str(output_path))
+            self.assertTrue(result.success, result.error_message)
+            root = ET.parse(output_path).getroot()
+        layers = root.findall("./Bid/BidLayers/BidLayer")
+        self.assertEqual([layer.get("Sequence") for layer in layers], ["0", "10", "20"])
+
     def test_ost_import_remaps_estimator_to_imported_employee(self):
         xml = """
         <XML_ROOT>
