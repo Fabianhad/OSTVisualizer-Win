@@ -18,6 +18,9 @@ from ost_visualizer.domain.services.uom_service import (
     UOM_SQUARE_FEET,
 )
 
+_REF_818_OLD_LENGTHS = (9.2, 2.1, 3.4, 2.7, 1.0, 919.6)
+_REF_818_NEW_LENGTHS = tuple(reversed(_REF_818_OLD_LENGTHS))
+
 
 def _condition(uid: str, ref_no: int, name: str = "Condition", notes: str = ""):
     return Condition(
@@ -107,6 +110,32 @@ class BidComparisonServiceTests(unittest.TestCase):
             new_data=_bid_data(new_conditions, new_takeoffs, "new"),
             limit=MCP_BID_COMPARISON_DEFAULT_LIMIT,
             include_details=include_details,
+        )
+
+    def _compare_takeoff_lengths(self, old_lengths, new_lengths):
+        old_condition = _condition("old", 1)
+        new_condition = _condition("new", 1)
+        return self.service.compare(
+            old_bid=McpBidDto(uid="old", name="Old"),
+            new_bid=McpBidDto(uid="new", name="New"),
+            old_data=_bid_data(
+                [old_condition],
+                [
+                    _takeoff(f"old-{index}", "old", "old-a", length)
+                    for index, length in enumerate(old_lengths)
+                ],
+                "old",
+            ),
+            new_data=_bid_data(
+                [new_condition],
+                [
+                    _takeoff(f"new-{index}", "new", "new-a", length)
+                    for index, length in enumerate(new_lengths)
+                ],
+                "new",
+            ),
+            limit=MCP_BID_COMPARISON_DEFAULT_LIMIT,
+            include_details=True,
         )
 
     def test_classifies_unchanged_changed_added_and_removed_by_ref_no(self):
@@ -260,6 +289,92 @@ class BidComparisonServiceTests(unittest.TestCase):
             result.data.warnings,
             ["Type A qty1 contains mixed UOM labels: LF, LY; reporting LY."],
         )
+
+    def test_tiny_quantity_float_noise_is_unchanged(self):
+        old_total = sum(length / 12.0 for length in _REF_818_OLD_LENGTHS)
+        new_total = sum(length / 12.0 for length in _REF_818_NEW_LENGTHS)
+        self.assertEqual(old_total, 78.16666666666667)
+        self.assertEqual(new_total, 78.16666666666666)
+        result = self._compare_takeoff_lengths(
+            _REF_818_OLD_LENGTHS, _REF_818_NEW_LENGTHS
+        )
+        self.assertEqual(result.data.counts.unchanged, 1)
+        self.assertEqual(result.data.counts.changed, 0)
+        self.assertEqual(result.data.details, [])
+
+    def test_meaningful_quantity_difference_is_changed(self):
+        result = self._compare_takeoff_lengths([12.0], [12.01])
+        self.assertEqual(result.data.counts.unchanged, 0)
+        self.assertEqual(result.data.counts.changed, 1)
+        self.assertTrue(result.data.details[0].quantity_changed)
+
+    def test_bid_38647_to_36969_repro_has_expected_classification_counts(self):
+        unchanged_refs = list(range(1, 782)) + [818]
+        changed_refs = list(range(783, 795))
+        removed_refs = list(range(795, 802))
+        added_ref = 802
+        old_conditions = [
+            _condition(
+                f"old-{ref_no}",
+                ref_no,
+                (
+                    "BA - To 4' Wall - Stem, Short or Pit Wall"
+                    if ref_no == 818
+                    else f"Condition {ref_no}"
+                ),
+            )
+            for ref_no in unchanged_refs
+        ]
+        new_conditions = [
+            _condition(
+                f"new-{ref_no}",
+                ref_no,
+                (
+                    "BA - To 4' Wall - Stem, Short or Pit Wall"
+                    if ref_no == 818
+                    else f"Condition {ref_no}"
+                ),
+            )
+            for ref_no in unchanged_refs
+        ]
+        old_conditions.extend(
+            _condition(f"old-{ref_no}", ref_no, notes="old") for ref_no in changed_refs
+        )
+        new_conditions.extend(
+            _condition(f"new-{ref_no}", ref_no, notes="new") for ref_no in changed_refs
+        )
+        old_conditions.extend(
+            _condition(f"old-{ref_no}", ref_no) for ref_no in removed_refs
+        )
+        new_conditions.append(_condition(f"new-{added_ref}", added_ref))
+        result = self.service.compare(
+            old_bid=McpBidDto(uid="38647", name="Bid 36", bid_no=36),
+            new_bid=McpBidDto(uid="36969", name="Bid 35", bid_no=35),
+            old_data=_bid_data(
+                old_conditions,
+                [
+                    _takeoff(f"old-818-{index}", "old-818", "old-a", length)
+                    for index, length in enumerate(_REF_818_OLD_LENGTHS)
+                ],
+                "old",
+            ),
+            new_data=_bid_data(
+                new_conditions,
+                [
+                    _takeoff(f"new-818-{index}", "new-818", "new-a", length)
+                    for index, length in enumerate(_REF_818_NEW_LENGTHS)
+                ],
+                "new",
+            ),
+            limit=5000,
+            include_details=True,
+        )
+        counts = result.data.counts
+        self.assertEqual(
+            (counts.unchanged, counts.changed, counts.added, counts.removed),
+            (782, 12, 1, 7),
+        )
+        self.assertNotIn(818, {detail.ref_no for detail in result.data.details})
 
     def test_details_and_groups_are_bounded_independently(self):
         result = self._comparison(include_details=True)

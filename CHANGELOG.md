@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added a read-only MCP bid comparison tool that matches conditions by reference number and returns bounded condition-type aggregates for metadata, quantities, takeoff counts, and changed pages.
+- Added a read-only MCP bid comparison tool that matches conditions by reference number, ignores insignificant floating-point quantity noise, and returns bounded condition-type aggregates for metadata, quantities, takeoff counts, and changed pages.
 
 ### Changed
 

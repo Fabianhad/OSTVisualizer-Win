@@ -1,3 +1,4 @@
+import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
@@ -20,6 +21,8 @@ from ..dtos.mcp_context_dtos import (
     McpBidMetadataChangeDto,
     McpDuplicateRefNoDto,
 )
+
+_QUANTITY_COMPARISON_ABS_TOLERANCE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -330,7 +333,15 @@ class BidComparisonService:
                 )
                 continue
             metadata_changed = old.metadata != new.metadata
-            quantity_changed = old.quantities != new.quantities
+            quantity_changed = any(
+                not math.isclose(
+                    old_value,
+                    new_value,
+                    rel_tol=0.0,
+                    abs_tol=_QUANTITY_COMPARISON_ABS_TOLERANCE,
+                )
+                for old_value, new_value in zip(old.quantities, new.quantities)
+            )
             takeoff_count_changed = old.takeoff_count != new.takeoff_count
             visible_count_changed = (
                 old.visible_takeoff_count != new.visible_takeoff_count
