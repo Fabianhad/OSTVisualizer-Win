@@ -3,8 +3,12 @@ from ost_visualizer.application.dtos.condition_summary_dtos import (
     SUMMARY_NODE_CONDITION,
 )
 from ost_visualizer.application.dtos.mcp_context_dtos import (
+    MCP_BID_COMPARISON_DEFAULT_LIMIT,
     McpAreaDto,
     McpAreaSummaryDto,
+    McpBidComparisonDto,
+    McpBidComparisonMetaDto,
+    McpBidDto,
     McpConditionDto,
     McpConditionQuantitySummaryDto,
     McpConditionSummaryDto,
@@ -67,6 +71,48 @@ class McpSchemaSnapshotTests(unittest.TestCase):
                 "visible_takeoff_count",
             },
         )
+
+    def test_bid_comparison_default_shape_has_no_condition_details(self):
+        payload = ok(
+            McpBidComparisonDto(
+                old_bid=McpBidDto(uid="old", name="Old"),
+                new_bid=McpBidDto(uid="new", name="New"),
+            ),
+            meta=McpBidComparisonMetaDto(limit=MCP_BID_COMPARISON_DEFAULT_LIMIT),
+        )
+        self.assertEqual(
+            set(payload["data"]),
+            {
+                "old_bid",
+                "new_bid",
+                "counts",
+                "bid_metadata_changed",
+                "bid_metadata_changes",
+                "groups",
+                "details",
+                "duplicate_ref_nos",
+                "warnings",
+            },
+        )
+        self.assertEqual(payload["data"]["details"], [])
+        self.assertEqual(
+            set(payload["meta"]),
+            {
+                "limit",
+                "returned_count",
+                "total_count",
+                "truncated",
+                "has_more",
+                "matched_by",
+                "grouped_by",
+                "details_included",
+                "detail_returned_count",
+                "detail_total_count",
+                "details_truncated",
+            },
+        )
+        self.assertEqual(payload["meta"]["matched_by"], "ref_no")
+        self.assertEqual(payload["meta"]["grouped_by"], "cdn_type_name")
 
     def test_selected_takeoffs_summary_shape_is_stable(self):
         payload = ok(

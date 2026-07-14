@@ -12,6 +12,7 @@ MCP_STATUS_NOT_PDF = "not_pdf"
 MCP_STATUS_NOT_REQUESTED = "not_requested"
 MCP_STATUS_UNAVAILABLE = "unavailable"
 MCP_STATUS_DEFERRED = "deferred"
+MCP_STATUS_DUPLICATE_REF_NO = "duplicate_ref_no"
 MCP_PDF_SOURCE_AUTO = "auto"
 MCP_PDF_SOURCE_MAIN = "main"
 MCP_PDF_SOURCE_OVERLAY = "overlay"
@@ -29,6 +30,8 @@ MCP_SUMMARY_DEFAULT_GROUP_BY_TYPE = True
 MCP_SUMMARY_DEFAULT_GROUP_BY_AREA = True
 MCP_SUMMARY_DEFAULT_LIMIT = 500
 MCP_SUMMARY_MAX_LIMIT = 5000
+MCP_BID_COMPARISON_DEFAULT_LIMIT = 250
+MCP_BID_COMPARISON_MAX_LIMIT = 5000
 
 
 @dataclass
@@ -306,6 +309,94 @@ class McpBidQuantitySummaryDto:
     bid_uid: str
     meta: McpResultMetaDto
     conditions: List[McpConditionQuantitySummaryDto] = field(default_factory=list)
+
+
+@dataclass
+class McpBidComparisonCountsDto:
+    unchanged: int = 0
+    changed: int = 0
+    added: int = 0
+    removed: int = 0
+
+
+@dataclass
+class McpBidComparisonQuantityDto:
+    uom_label: str = ""
+    old: float = 0.0
+    new: float = 0.0
+
+
+@dataclass
+class McpBidMetadataChangeDto:
+    field: str
+    old: object = None
+    new: object = None
+
+
+@dataclass
+class McpBidComparisonGroupDto:
+    cdn_type_name: str
+    total_affected: int = 0
+    changed: int = 0
+    added: int = 0
+    removed: int = 0
+    qty1: McpBidComparisonQuantityDto = field(
+        default_factory=McpBidComparisonQuantityDto
+    )
+    qty2: McpBidComparisonQuantityDto = field(
+        default_factory=McpBidComparisonQuantityDto
+    )
+    qty3: McpBidComparisonQuantityDto = field(
+        default_factory=McpBidComparisonQuantityDto
+    )
+    takeoffs: Dict[str, int] = field(default_factory=lambda: {"old": 0, "new": 0})
+    compact_page_changes: List[str] = field(default_factory=list)
+
+
+@dataclass
+class McpBidComparisonDetailDto:
+    ref_no: int
+    classification: str
+    cdn_type_name: str
+    old_condition_name: Optional[str] = None
+    new_condition_name: Optional[str] = None
+    metadata_changed: bool = False
+    quantity_changed: bool = False
+    takeoff_count_changed: bool = False
+    visible_takeoff_count_changed: bool = False
+    page_distribution_changed: bool = False
+    compact_page_changes: List[str] = field(default_factory=list)
+
+
+@dataclass
+class McpDuplicateRefNoDto:
+    bid: str
+    ref_no: int
+    condition_count: int
+    condition_names: List[str] = field(default_factory=list)
+
+
+@dataclass
+class McpBidComparisonDto:
+    old_bid: McpBidDto
+    new_bid: McpBidDto
+    counts: McpBidComparisonCountsDto = field(default_factory=McpBidComparisonCountsDto)
+    bid_metadata_changed: bool = False
+    bid_metadata_changes: List[McpBidMetadataChangeDto] = field(default_factory=list)
+    groups: List[McpBidComparisonGroupDto] = field(default_factory=list)
+    details: List[McpBidComparisonDetailDto] = field(default_factory=list)
+    duplicate_ref_nos: List[McpDuplicateRefNoDto] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+
+
+@dataclass
+class McpBidComparisonMetaDto(McpResultMetaDto):
+    matched_by: str = "ref_no"
+    grouped_by: str = "cdn_type_name"
+    details_included: bool = False
+    detail_returned_count: int = 0
+    detail_total_count: int = 0
+    details_truncated: bool = False
 
 
 @dataclass

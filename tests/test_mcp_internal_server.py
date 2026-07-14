@@ -16,6 +16,7 @@ EXPECTED_TOOLS = {
     "list_projects",
     "list_bids",
     "get_bid_summary",
+    "compare_bids_by_ref_no",
     "list_pages",
     "get_current_page",
     "get_page_metadata",
@@ -141,7 +142,7 @@ class McpInternalServerProtocolTests(unittest.TestCase):
         tools = self.request("tools/list")["result"]["tools"]
         tool_names = {tool["name"] for tool in tools}
         self.assertEqual(tool_names, EXPECTED_TOOLS)
-        self.assertEqual(len(tool_names), 37)
+        self.assertEqual(len(tool_names), 38)
         self.assertFalse(any("csv" in name.lower() for name in tool_names))
         self.assertTrue(all(tool["description"] for tool in tools))
         response = self.request(

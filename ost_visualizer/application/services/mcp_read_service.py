@@ -30,6 +30,7 @@ from ...domain.entities.takeoff import Takeoff
 from ...domain.repositories.i_project_repository import IProjectRepository
 from ...domain.services.condition_quantity_service import compute_page_quantities
 from ...domain.services.takeoff_domain_service import is_takeoff_visible
+from ...domain.services.takeoff_summary_service import summarize_takeoffs_by_page
 from ...domain.services.uom_service import get_uom_label
 from ..dtos.condition_summary_dtos import (
     SUMMARY_GROUP_AREA,
@@ -42,6 +43,8 @@ from ..dtos.condition_summary_dtos import (
     ConditionSummaryValues,
 )
 from ..dtos.mcp_context_dtos import (
+    MCP_BID_COMPARISON_DEFAULT_LIMIT,
+    MCP_BID_COMPARISON_MAX_LIMIT,
     MCP_OVERLAY_KIND_PDF,
     MCP_OVERLAY_KIND_RASTER,
     MCP_PAGE_SOURCE_BLANK,
@@ -109,6 +112,7 @@ from ..dtos.mcp_context_dtos import (
 from ..dtos.pdf_metadata_dtos import PdfPageInfoDto, PdfTextRunDto, PdfVectorSegmentDto
 from ..interfaces.i_pdf_metadata_provider import IPdfMetadataProvider
 from ..use_cases.project.condition_summary_service import ConditionSummaryService
+from .bid_comparison_service import BidComparisonResult, BidComparisonService
 
 
 class McpReadError(ValueError):
@@ -157,6 +161,7 @@ class McpReadService:
         self._repository = project_repository
         self._pdf_metadata_provider = pdf_metadata_provider
         self._summary_service = summary_service or ConditionSummaryService()
+        self._bid_comparison_service = BidComparisonService()
         self._databases: Dict[str, McpDatabaseRef] = {
             db.database_id: db for db in databases
         }
@@ -227,11 +232,33 @@ class McpReadService:
 
     def get_bid_summary(self, database_id: str, bid_uid: str) -> McpBidDto:
         entry = self._get_file_entry(database_id)
-        bid, project_uid, project_name = self._find_bid(entry, bid_uid)
-        bid_data = self._load_bid(database_id, bid_uid)
-        dto = self._bid_dto(bid, project_uid, project_name)
-        dto.selected_page_uid = bid_data.selected_page_uid
+        dto, _ = self._load_bid_context(entry, database_id, bid_uid)
         return dto
+
+    def compare_bids_by_ref_no(
+        self,
+        database_id: str,
+        old_bid_uid: str,
+        new_bid_uid: str,
+        include_details: bool = False,
+        limit: int = MCP_BID_COMPARISON_DEFAULT_LIMIT,
+    ) -> BidComparisonResult:
+        entry = self._get_file_entry(database_id)
+        old_dto, old_data = self._load_bid_context(entry, database_id, old_bid_uid)
+        new_dto, new_data = self._load_bid_context(entry, database_id, new_bid_uid)
+        clean_limit = self._clean_limit_with_max(
+            limit,
+            default=MCP_BID_COMPARISON_DEFAULT_LIMIT,
+            max_limit=MCP_BID_COMPARISON_MAX_LIMIT,
+        )
+        return self._bid_comparison_service.compare(
+            old_bid=old_dto,
+            new_bid=new_dto,
+            old_data=old_data,
+            new_data=new_data,
+            include_details=include_details,
+            limit=clean_limit,
+        )
 
     def list_pages(
         self, database_id: str, bid_uid: str, limit: int = 500
@@ -1349,6 +1376,18 @@ class McpReadService:
             self._find_bid(entry, bid_uid)
         return bid_data
 
+    def _load_bid_context(
+        self,
+        entry: HierarchyFileEntry,
+        database_id: str,
+        bid_uid: str,
+    ) -> Tuple[McpBidDto, BidLoadResult]:
+        bid, project_uid, project_name = self._find_bid(entry, bid_uid)
+        bid_data = self._load_bid(database_id, bid_uid)
+        dto = self._bid_dto(bid, project_uid, project_name)
+        dto.selected_page_uid = bid_data.selected_page_uid
+        return dto, bid_data
+
     def _get_file_entry(self, database_id: str) -> HierarchyFileEntry:
         db = self.get_database(database_id)
         result = self._load_file(db)
@@ -2033,37 +2072,17 @@ class McpReadService:
         takeoffs: List[Takeoff],
         bid_data: BidLoadResult,
     ) -> List[McpPageTakeoffSummaryDto]:
-        counts: Dict[str, int] = {}
-        visible_counts: Dict[str, int] = {}
-        for takeoff in takeoffs:
-            counts[takeoff.page_uid] = counts.get(takeoff.page_uid, 0) + 1
-            if is_takeoff_visible(takeoff, bid_data.bid_conditions):
-                visible_counts[takeoff.page_uid] = (
-                    visible_counts.get(takeoff.page_uid, 0) + 1
-                )
-        result = []
-        for page_uid, count in counts.items():
-            page = bid_data.pages.get(page_uid)
-            result.append(
-                McpPageTakeoffSummaryDto(
-                    page_uid=page_uid,
-                    page_name=page.name if page else "",
-                    takeoff_count=count,
-                    visible_takeoff_count=visible_counts.get(page_uid, 0),
-                )
+        return [
+            McpPageTakeoffSummaryDto(
+                page_uid=summary.page_uid,
+                page_name=summary.page_name,
+                takeoff_count=summary.takeoff_count,
+                visible_takeoff_count=summary.visible_takeoff_count,
             )
-        return sorted(
-            result,
-            key=lambda item: (
-                (
-                    bid_data.pages.get(item.page_uid).page_index
-                    if item.page_uid in bid_data.pages
-                    else 0
-                ),
-                item.page_name.lower(),
-                item.page_uid,
-            ),
-        )
+            for summary in summarize_takeoffs_by_page(
+                takeoffs, bid_data.pages, bid_data.bid_conditions
+            )
+        ]
 
     @staticmethod
     def _clean_limit(limit: int, default: int = 500, max_limit: int = 5000) -> int:

@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 from ..application.dtos.mcp_context_dtos import (
+    MCP_BID_COMPARISON_DEFAULT_LIMIT,
     MCP_PDF_SOURCE_AUTO,
     MCP_STATUS_EMPTY,
     MCP_STATUS_OK,
@@ -76,26 +77,33 @@ def build_mcp_server(
         output_formatter=McpOutputFormatter(registry.output_artifacts_dir),
     )
 
-    def run_read(fn, *args, **call_options) -> dict:
+    def run_safely(read) -> dict:
         try:
-            return ok(fn(*args, **call_options))
+            return read()
         except McpReadError as exc:
             return error(str(exc), code=_read_error_code(str(exc)))
         except Exception as exc:
             log.exception("MCP read failed")
             return error(str(exc), code="unexpected_error")
 
+    def run_read(fn, *args, **call_options) -> dict:
+        return run_safely(lambda: ok(fn(*args, **call_options)))
+
     def run_limited_read(fn, limit: int, *args, **call_options) -> dict:
-        try:
+        def read() -> dict:
             result = fn(*args, limit=limit, **call_options)
             meta = _result_meta(result, limit)
             status = _result_status(result, meta)
             return ok(result, status=status, meta=meta)
-        except McpReadError as exc:
-            return error(str(exc), code=_read_error_code(str(exc)))
-        except Exception as exc:
-            log.exception("MCP read failed")
-            return error(str(exc), code="unexpected_error")
+
+        return run_safely(read)
+
+    def run_bid_comparison(*args, **call_options) -> dict:
+        def read() -> dict:
+            result = read_service.compare_bids_by_ref_no(*args, **call_options)
+            return ok(result.data, status=result.status, meta=result.meta)
+
+        return run_safely(read)
 
     @mcp.tool()
     def list_databases() -> dict:
@@ -161,6 +169,23 @@ def build_mcp_server(
     def get_bid_summary(database_id: str, bid_uid: str) -> dict:
         """Return read-only bid metadata and current page selection."""
         return run_read(read_service.get_bid_summary, database_id, bid_uid)
+
+    @mcp.tool()
+    def compare_bids_by_ref_no(
+        database_id: str,
+        old_bid_uid: str,
+        new_bid_uid: str,
+        include_details: bool = False,
+        limit: int = MCP_BID_COMPARISON_DEFAULT_LIMIT,
+    ) -> dict:
+        """Compare two bids by condition ref_no and return bounded type aggregates."""
+        return run_bid_comparison(
+            database_id,
+            old_bid_uid,
+            new_bid_uid,
+            include_details=include_details,
+            limit=limit,
+        )
 
     @mcp.tool()
     def list_pages(database_id: str, bid_uid: str, limit: int = 500) -> dict:

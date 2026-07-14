@@ -234,12 +234,13 @@ class FakeProjectRepository:
             pages={"page-1": page1, "page-2": page2, "page-3": page3},
             selected_page_uid="page-2",
         )
+        self.bid_data_by_uid = {"bid-1": self.bid_data}
 
     def load_file(self, file_path):
         return FileLoadResult(success=True, hierarchy=self.hierarchy)
 
     def load_bid(self, bid_uid, file_path=None):
-        return self.bid_data if bid_uid == "bid-1" else BidLoadResult()
+        return self.bid_data_by_uid.get(bid_uid, BidLoadResult())
 
 
 class FakePdfMetadataProvider:
@@ -334,6 +335,26 @@ class McpReadServiceTests(unittest.TestCase):
         bids = self.service.list_bids("db-1")
         self.assertEqual(len(bids), 1)
         self.assertEqual(bids[0].uid, "bid-1")
+
+    def test_compare_bids_delegates_loaded_bid_data_by_ref_no(self):
+        project = self.repo.hierarchy.loaded_files[0].bid_projects["project-1"]
+        project.bids.append(
+            HierarchyBidInfo(
+                uid="bid-2",
+                name="Bid Two",
+                page_count=2,
+                condition_count=3,
+            )
+        )
+        self.repo.bid_data_by_uid["bid-2"] = self.repo.bid_data
+        result = self.service.compare_bids_by_ref_no("db-1", "bid-1", "bid-2", limit=0)
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.data.counts.unchanged, 3)
+        self.assertEqual(result.data.counts.changed, 0)
+        self.assertEqual(result.data.groups, [])
+        self.assertTrue(result.data.bid_metadata_changed)
+        self.assertFalse(result.meta.details_included)
+        self.assertEqual(result.meta.limit, 1)
 
     def test_database_and_page_outputs_redact_local_paths(self):
         databases = self.service.list_databases()

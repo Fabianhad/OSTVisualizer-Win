@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Added a read-only MCP bid comparison tool that matches conditions by reference number and returns bounded condition-type aggregates for metadata, quantities, takeoff counts, and changed pages.
+
 ### Changed
 
 - Changed OST/OSP exports to emit bid layers in ascending sequence order for closer compatibility with original On-Screen Takeoff exports.

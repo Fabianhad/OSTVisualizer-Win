@@ -99,6 +99,9 @@ server; it only provides a live-context bridge when the app is running.
 The MCP server exposes project, bid, page, layer, area, named-view, hotlink,
 condition, takeoff, quantity, and structured Summary context. Summary reads use
 the same grouping concepts as the desktop Summary tab: Area, Type, and Page.
+The `compare_bids_by_ref_no` tool directly compares an old/source bid with a
+new/target bid by condition reference number and returns bounded aggregates by
+condition type; per-condition detail is opt-in.
 It also includes bounded PDF text/vector summaries, page-scoped PDF text search,
 page markup summaries, overlay summaries, selected-page and selected-takeoff
 summaries, and lightweight scope-gap review tools. Broad result sets use

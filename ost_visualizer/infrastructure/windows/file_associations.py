@@ -1,7 +1,3 @@
-"""Development/manual repair helpers for Windows file associations.
-Installed OST Visualizer builds get file associations from the MSI package.
-"""
-
 from __future__ import annotations
 import importlib
 from dataclasses import dataclass

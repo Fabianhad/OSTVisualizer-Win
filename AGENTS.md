@@ -117,7 +117,7 @@ MCP ownership map:
 - `ost_visualizer/presentation/services/mcp_context_bridge.py` owns the GUI live-context bridge only.
 - `tests/test_mcp*.py` should cover public surface counts, status/source compatibility, registry filtering, and bounded outputs.
 
-Expected public MCP counts should remain 37 tools, 1 resource, 4 resource templates, and 7 prompts unless a change intentionally updates the public surface.
+Expected public MCP counts should remain 38 tools, 1 resource, 4 resource templates, and 7 prompts unless a change intentionally updates the public surface.
 
 ## Permission Model
 

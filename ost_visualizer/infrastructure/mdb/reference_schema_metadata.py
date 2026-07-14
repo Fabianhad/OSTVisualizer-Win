@@ -1,5 +1,3 @@
-"""Reference Access schema metadata for newly created OST databases."""
-
 UID_REQUIRED_TABLES = (
     "AccessLevels",
     "AffectDPCTypGroupViews",
