@@ -1,5 +1,9 @@
+from math import isfinite
 from typing import Dict, List, Optional, Tuple
-from .....application.dtos.scene_data_dto import SceneTakeoff2DEntry
+from .....application.dtos.scene_data_dto import (
+    SceneElevationCalloutEntry,
+    SceneTakeoff2DEntry,
+)
 from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from .....domain.dtos.page_render_info_dto import PageRenderInfo
@@ -7,7 +11,15 @@ from .....domain.entities.area import area_group_uid
 from .....domain.entities.condition import Condition
 from .....domain.entities.config import Config
 from .....domain.entities.takeoff import Takeoff
+from .....domain.services.condition_quantity_service import (
+    compute_takeoff_cubic_yards,
+)
 from .....domain.services.coordinate_transformation_service import OSTCoordinateSystem
+from .....domain.services.elevation import (
+    format_structural_elevation,
+    resolve_condition_elevation_bounds,
+)
+from .....domain.services.uom_service import UOM_CUBIC_YARDS, get_uom_label
 from ...core.geometry.ost_linear_geom import (
     gen_curve_pts,
     gen_thick_curve_offsets,
@@ -22,6 +34,72 @@ from ...services.color_service import int_to_hex
 
 Point = Tuple[float, float]
 Ring = List[List[float]]
+
+
+def build_elevation_callouts_for_threejs(
+    takeoffs_2d: List[SceneTakeoff2DEntry],
+    bid_conditions: Dict[str, Condition],
+    bid_takeoffs: List[Takeoff],
+    takeoff_service: ITakeoffDomainService,
+) -> List[SceneElevationCalloutEntry]:
+    _exportable_takeoffs, area_holes_map = (
+        takeoff_service.group_area_takeoffs_with_holes(bid_takeoffs, bid_conditions)
+    )
+    takeoffs_by_uid = {takeoff.uid: takeoff for takeoff in bid_takeoffs}
+    callouts: List[SceneElevationCalloutEntry] = []
+    for entry in takeoffs_2d:
+        condition = bid_conditions.get(entry["condition_uid"])
+        takeoff = takeoffs_by_uid.get(entry["takeoff_uid"])
+        if condition is None or takeoff is None:
+            continue
+        elevations = resolve_condition_elevation_bounds(condition)
+        center = _outer_ring_bounds_center(entry["rings"])
+        if elevations is None or center is None:
+            continue
+        cubic_yards = compute_takeoff_cubic_yards(
+            condition,
+            takeoff,
+            area_holes_map.get(takeoff.uid, []),
+        )
+        callouts.append(
+            {
+                "takeoff_uid": entry["takeoff_uid"],
+                "page_uid": entry["page_uid"],
+                "condition_uid": entry["condition_uid"],
+                "area_uid": entry["area_uid"],
+                "layer_uid": entry["layer_uid"],
+                "visible": entry["visible"],
+                "x": center[0],
+                "y": center[1],
+                "condition_label": elevations.base_name,
+                "top_label": format_structural_elevation(elevations.top),
+                "bottom_label": format_structural_elevation(elevations.bottom),
+                "quantity_label": _format_cubic_yards(cubic_yards),
+            }
+        )
+    return callouts
+
+
+def _outer_ring_bounds_center(rings: List[Ring]) -> Optional[Point]:
+    if not rings or not rings[0]:
+        return None
+    points: List[Point] = []
+    for point in rings[0]:
+        if len(point) < 2:
+            continue
+        x = float(point[0])
+        y = float(point[1])
+        if isfinite(x) and isfinite(y):
+            points.append((x, y))
+    if not points:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return ((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0)
+
+
+def _format_cubic_yards(value: float) -> str:
+    return f"{value:.2f} {get_uom_label(UOM_CUBIC_YARDS)}"
 
 
 def process_takeoffs_2d_for_threejs(

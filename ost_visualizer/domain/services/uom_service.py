@@ -21,6 +21,7 @@ UOM_M3 = 16
 CALC_TOP_BOTTOM = 5
 CALC_TOP_AND_BOTTOM = 6
 CALC_VOLUME = 20
+CALC_AREA_VOLUME = 21
 CALC_COUNT = 23
 CALC_HEIGHT_OR_LENGTH = 24
 CALC_WIDTH_SIDE = 25
@@ -93,7 +94,7 @@ AREA_QUANTITY_OPTIONS: List[Tuple[int, str]] = [
     (17, "Tile count (average)"),
     (18, "Tile count (visible)"),
     (19, "Area counts"),
-    (21, "Volume"),
+    (CALC_AREA_VOLUME, "Volume"),
     (35, "Volume (Ignore Backout Volume)"),
     (22, "Volume (minus Attachments)"),
 ]
@@ -144,7 +145,7 @@ _CALC_AREA = {
     12,
     34,
 }
-_CALC_VOLUME = {CALC_VOLUME, 21, 22, 35}
+_CALC_VOLUME = {CALC_VOLUME, CALC_AREA_VOLUME, 22, 35}
 
 
 def get_valid_uoms_for_calc_type(
@@ -567,7 +568,7 @@ def _calc_raw_for_area(
         return math.floor(bbox_w / unit1) * math.floor(bbox_h / unit2)
     if calc_type == 19:
         return 1.0
-    if calc_type == 21:
+    if calc_type == CALC_AREA_VOLUME:
         return net_area * thickness
     if calc_type == 22:
         return (net_area - attachment_footprint) * thickness

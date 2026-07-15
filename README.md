@@ -1,6 +1,6 @@
 # OST Visualizer
 
-Open your [On-Screen Takeoff](https://www.oncenter.com/products/on-screen-takeoff/) projects and review them in Projects, Takeoff, and Summary views. Upgrade to visualize in 3D, edit conditions, and export to OST/OSP, PDF, CSV, DXF, OBJ, and FBX.
+Open your [On-Screen Takeoff](https://www.oncenter.com/products/on-screen-takeoff/) projects and review them in Projects, Takeoff, and Summary views. Upgrade to visualize in 3D, edit conditions, and export to OST/OSP, HTML, PDF, CSV, DXF, OBJ, and FBX.
 
 Built for estimators and construction teams who work with OST project files daily.
 
@@ -19,7 +19,8 @@ Built for estimators and construction teams who work with OST project files dail
 - **Projects, Takeoff, and Summary Tabs** -- Navigate databases and bids, inspect 2D takeoffs, and review grouped condition quantities
 - **Summary Review** -- Group condition quantities by Area, Type, and Page, with unused conditions hidden from placed-takeoff summaries
 - **3D Visualization** -- See takeoff geometry rendered in full 3D with transparent overlays *(Commercial)*
-- **Import/Export** -- Move data between OST, OSP, PDF, CSV, DXF, OBJ, and FBX formats *(Commercial)*
+- **Import/Export** -- Move data between OST, OSP, HTML, PDF, CSV, DXF, OBJ, and FBX formats *(Commercial)*
+- **HTML Visualization Export** -- Share a single-file 3D and 2D viewer whose plan view includes visibility-aware takeoff callouts with elevations and cubic-yard quantities *(Commercial)*
 - **Condition Management** -- Create, edit, duplicate, and organize conditions across bids *(Commercial)*
 - **Realtime Sync** -- Detects when On-Screen Takeoff is active and picks up changes automatically ([free companion tool](https://fabianhad.com/ost3d/download))
 
@@ -42,7 +43,7 @@ This software is source-available under the [Elastic License 2.0](LICENSE).
 | Summary tab review | Included | Included |
 | 3D visualization | -- | Included |
 | Edit takeoffs, conditions, bids | -- | Included |
-| Import/Export (OST, OSP, PDF, CSV, DXF, OBJ, FBX) | -- | Included |
+| Import/Export (OST, OSP, HTML, PDF, CSV, DXF, OBJ, FBX) | -- | Included |
 | Production use | -- | Included |
 | Support | Community | Email ([fabian@fabianhad.com](mailto:fabian@fabianhad.com)) |
 | Price | Free | [Get a license](https://fabianhad.com/ost3d/download) |

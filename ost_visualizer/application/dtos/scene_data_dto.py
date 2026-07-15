@@ -108,6 +108,21 @@ class SceneTakeoff2DEntry(TypedDict):
     is_negative: bool
 
 
+class SceneElevationCalloutEntry(TypedDict):
+    takeoff_uid: str
+    page_uid: str
+    condition_uid: str
+    area_uid: str
+    layer_uid: str
+    visible: bool
+    x: float
+    y: float
+    condition_label: str
+    top_label: str
+    bottom_label: str
+    quantity_label: str
+
+
 class SceneData(TypedDict, total=False):
     title: str
     geometries: List[SceneGeometryEntry]
@@ -122,4 +137,5 @@ class SceneData(TypedDict, total=False):
     selected_page_uids: List[str]
     pdf_documents: List[ScenePdfDocumentEntry]
     takeoffs_2d: List[SceneTakeoff2DEntry]
+    elevation_callouts: List[SceneElevationCalloutEntry]
     display_modes: SceneDisplayModesConfig

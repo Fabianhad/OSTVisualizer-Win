@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added four-row takeoff elevation callouts with condition name, top and bottom elevations, cubic-yard quantity, and condition/layer/area visibility controls to the 2D plan view in single-file HTML exports.
 - Added a read-only MCP bid comparison tool that matches conditions by reference number, ignores insignificant floating-point quantity noise, and returns bounded condition-type aggregates for metadata, quantities, takeoff counts, and changed pages.
 
 ### Changed

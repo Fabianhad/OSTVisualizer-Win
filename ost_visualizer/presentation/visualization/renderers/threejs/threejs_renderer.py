@@ -22,7 +22,10 @@ from .....domain.entities.takeoff import Takeoff
 from ...exporters import ost_pdf_writer
 from .adapters.threejs_mesh_adapter import ThreejsMeshAdapter
 from .mesh_processor import process_meshes_for_threejs
-from .two_d_takeoff_processor import process_takeoffs_2d_for_threejs
+from .two_d_takeoff_processor import (
+    build_elevation_callouts_for_threejs,
+    process_takeoffs_2d_for_threejs,
+)
 
 
 def visualize_with_threejs(
@@ -97,6 +100,14 @@ def visualize_with_threejs(
             else exported_page_uids[0]
         )
         scene_data["takeoffs_2d"] = takeoffs_2d
+        elevation_callouts = build_elevation_callouts_for_threejs(
+            takeoffs_2d,
+            bid_conditions,
+            bid_takeoffs,
+            takeoff_service,
+        )
+        if elevation_callouts:
+            scene_data["elevation_callouts"] = elevation_callouts
         if pdf_documents:
             scene_data["pdf_documents"] = pdf_documents
     html_content = _generate_html(scene_data, title)

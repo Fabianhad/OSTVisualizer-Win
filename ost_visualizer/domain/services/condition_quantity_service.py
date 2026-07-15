@@ -2,7 +2,45 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 from ..entities.condition import Condition
 from ..entities.takeoff import Takeoff
-from .uom_service import calculate_condition_quantities
+from .uom_service import (
+    CALC_AREA_VOLUME,
+    CALC_VOLUME,
+    UOM_CUBIC_YARDS,
+    UOM_EACH,
+    calculate_condition_quantities,
+)
+
+
+def compute_takeoff_cubic_yards(
+    condition: Condition,
+    takeoff: Takeoff,
+    hole_takeoffs: Optional[List[Takeoff]] = None,
+) -> float:
+    volume_calc_type = CALC_AREA_VOLUME if condition.is_area else CALC_VOLUME
+    cubic_yards, _unused_q2, _unused_q3 = calculate_condition_quantities(
+        condition_type=condition.condition_type,
+        calc_type1=volume_calc_type,
+        calc_type2=0,
+        calc_type3=0,
+        uom1=UOM_CUBIC_YARDS,
+        uom2=UOM_EACH,
+        uom3=UOM_EACH,
+        width=condition.width,
+        height=condition.height,
+        depth=condition.depth,
+        thickness=condition.thickness,
+        position=takeoff.position,
+        hole_positions=[hole.position for hole in (hole_takeoffs or [])],
+        rise=condition.rise,
+        run=condition.run,
+        grid_size1=condition.grid_size1,
+        grid_size2=condition.grid_size2,
+        gap=condition.gap,
+        curve=takeoff.curve,
+        round_quantity=condition.round_quantity,
+        round_up=condition.round_up,
+    )
+    return -cubic_yards if takeoff.is_negative else cubic_yards
 
 
 def compute_page_quantities(

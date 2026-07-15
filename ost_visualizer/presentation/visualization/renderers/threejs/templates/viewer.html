@@ -298,6 +298,21 @@
         pointer-events: none;
       }
 
+      .elevation-callout {
+        color: #111827;
+        pointer-events: none;
+      }
+
+      .elevation-callout text {
+        fill: currentColor;
+        stroke: none;
+        font-family: Arial, sans-serif;
+        font-size: 10px;
+        font-weight: 400;
+        text-anchor: middle;
+        dominant-baseline: middle;
+      }
+
       #layer-panel {
         position: fixed;
         top: calc(12px + var(--viewer-safe-top));
@@ -683,6 +698,14 @@
       const PLAN_MIN_SCALE = 0.05;
       const PLAN_MAX_SCALE = 50.0;
       const PLAN_WHEEL_SENSITIVITY = 0.001;
+      const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+      const ELEVATION_CALLOUT_LABEL_FIELDS = [
+        "condition_label",
+        "top_label",
+        "bottom_label",
+        "quantity_label",
+      ];
+      const ELEVATION_CALLOUT_LINE_SPACING = 12;
 
       function updateThemeToggle(theme) {
         const nextTheme = theme === "light" ? "dark" : "light";
@@ -1188,6 +1211,9 @@
       const takeoffs2D = Array.isArray(sceneData.takeoffs_2d)
         ? sceneData.takeoffs_2d
         : [];
+      const elevationCallouts = Array.isArray(sceneData.elevation_callouts)
+        ? sceneData.elevation_callouts
+        : [];
       const hasPlanData = runtimePages.some(
         (page) => Number(page.width) > 0 && Number(page.height) > 0,
       );
@@ -1251,6 +1277,62 @@
         );
       }
 
+      function createPlanSvgElement(tagName) {
+        return document.createElementNS(SVG_NAMESPACE, tagName);
+      }
+
+      function createPlanCalloutText(value, y) {
+        const text = createPlanSvgElement("text");
+        text.setAttribute("x", "0");
+        text.setAttribute("y", String(y));
+        text.textContent = value || "";
+        return text;
+      }
+
+      function renderPlanElevationCallouts(page) {
+        elevationCallouts.forEach((callout) => {
+          const calloutPageUid =
+            normalizeOptionalUid(callout.page_uid) || page.uid;
+          if (calloutPageUid !== page.uid) return;
+          const x = Number(callout.x);
+          const y = Number(callout.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+          const group = createPlanSvgElement("g");
+          group.classList.add("elevation-callout");
+          group.setAttribute("transform", `translate(${x} ${y})`);
+          group.setAttribute("aria-hidden", "true");
+          group.dataset.takeoffUid = callout.takeoff_uid || "";
+
+          const rowSpan =
+            (ELEVATION_CALLOUT_LABEL_FIELDS.length - 1) *
+            ELEVATION_CALLOUT_LINE_SPACING;
+          const firstRowY = -rowSpan / 2;
+          group.append(
+            ...ELEVATION_CALLOUT_LABEL_FIELDS.map((fieldName, index) =>
+              createPlanCalloutText(
+                callout[fieldName],
+                firstRowY + index * ELEVATION_CALLOUT_LINE_SPACING,
+              ),
+            ),
+          );
+          planOverlay.appendChild(group);
+          registerVisibilityObject(
+            {
+              pageUid: calloutPageUid,
+              pageName: page.label,
+              usesPage3dVisibility: false,
+              layerUid: callout.layer_uid,
+              conditionUid: callout.condition_uid,
+              areaUid: callout.area_uid,
+            },
+            group,
+            callout.visible !== false,
+          );
+          planVisibilityObjects.push(group);
+        });
+      }
+
       function renderPlanTakeoffs() {
         planVisibilityObjects.forEach((object) => {
           const index = visibilityObjects.indexOf(object);
@@ -1270,10 +1352,7 @@
             .filter(Boolean)
             .join(" ");
           if (!pathData) return;
-          const path = document.createElementNS(
-            "http://www.w3.org/2000/svg",
-            "path",
-          );
+          const path = createPlanSvgElement("path");
           const color = normalizeHexColor(takeoff.color) || FALLBACK_HEX_COLOR;
           const opacity = clamp(Number(takeoff.opacity || 0.5), 0.0, 1.0);
           path.setAttribute("d", pathData);
@@ -1307,6 +1386,7 @@
           );
           planVisibilityObjects.push(path);
         });
+        renderPlanElevationCallouts(page);
       }
 
       function setupBlankPlanPage(page) {
