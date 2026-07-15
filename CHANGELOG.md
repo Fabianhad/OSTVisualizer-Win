@@ -15,6 +15,7 @@
 
 ### Fixed
 
+- Fixed OST imports failing on safely recoverable references by skipping orphaned hole/backout takeoffs and clearing stale selected-page or annotation takeoff attachments while continuing to reject other invalid database references.
 - Fixed project-file imports so an existing active bid remains visually selected after importing into its folder, and Import remains available from the Summary tab whenever the current context permits importing.
 - Fixed plan pages with both original and overlay images so hiding the image layer immediately reveals the white page canvas without an unexpected fit-to-page jump.
 - Fixed takeoff clicks after condition sidebar reloads so the clicked takeoff's condition is reselected and highlighted when the previous highlight was cleared.

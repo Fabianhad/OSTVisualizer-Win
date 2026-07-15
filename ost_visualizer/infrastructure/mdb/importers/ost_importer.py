@@ -2,7 +2,13 @@ import logging
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set
 from ....domain.dtos.raw_bid_data_dto import RawBidData
-from ..raw_bid_integrity import format_integrity_issues, validate_raw_bid_integrity
+from ..raw_bid_integrity import (
+    clear_missing_annotation_takeoff_references,
+    clear_missing_selected_page_references,
+    format_integrity_issues,
+    prune_orphaned_takeoffs,
+    validate_raw_bid_integrity,
+)
 from ..schema_contract import (
     BID_SECTIONS,
     BID_TAIL_SECTIONS,
@@ -72,6 +78,31 @@ class OstImporter:
     ) -> bool:
         try:
             raw_data = self._parse_ost_xml(ost_file_path)
+            removed_takeoffs = prune_orphaned_takeoffs(raw_data)
+            if removed_takeoffs:
+                logger.warning(
+                    "Skipping %d orphaned takeoff(s) during OST import: %s",
+                    len(removed_takeoffs),
+                    format_integrity_issues(removed_takeoffs),
+                )
+            cleared_selected_pages = clear_missing_selected_page_references(raw_data)
+            if cleared_selected_pages:
+                logger.warning(
+                    "Cleared %d missing selected-page reference(s) during OST "
+                    "import: %s",
+                    len(cleared_selected_pages),
+                    format_integrity_issues(cleared_selected_pages),
+                )
+            cleared_annotation_refs = clear_missing_annotation_takeoff_references(
+                raw_data
+            )
+            if cleared_annotation_refs:
+                logger.warning(
+                    "Cleared %d missing annotation takeoff attachment reference(s) "
+                    "during OST import: %s",
+                    len(cleared_annotation_refs),
+                    format_integrity_issues(cleared_annotation_refs),
+                )
             if not self._validate_page_references(raw_data):
                 return False
             return self._mdb_writer.import_ost_data(

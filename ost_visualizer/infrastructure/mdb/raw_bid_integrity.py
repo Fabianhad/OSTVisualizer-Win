@@ -142,6 +142,12 @@ _RAW_TABLES = (
 _RAW_TABLE_SET = set(_RAW_TABLES)
 _GLOBAL_TABLE_SET = set(GLOBAL_SECTIONS)
 _CLEARABLE_EXPORT_REFERENCES = {("BidSettings", "BidPageSelectedUID")}
+_NULL_REFERENCE_UID = "0"
+_ANNOTATION_TAKEOFF_REFERENCE_COLUMNS = {
+    "BidDimensions": ("BidTakeoffFromUID", "BidTakeoffToUID"),
+    "BidArrows": ("BidTakeoffFromUID", "BidTakeoffToUID"),
+    "BidALines": ("BidTakeoffFromUID", "BidTakeoffToUID"),
+}
 
 
 def clone_raw_bid_data(raw_data: RawBidData) -> RawBidData:
@@ -228,6 +234,90 @@ def format_integrity_issues(
     return preview
 
 
+def prune_orphaned_takeoffs(raw_data: RawBidData) -> List[RawBidIntegrityIssue]:
+    rows = raw_data.page_tables.get("BidTakeoffs", [])
+    removed: List[RawBidIntegrityIssue] = []
+    while rows:
+        takeoff_uids = _present_uids(rows, "UID")
+        kept: RawTable = []
+        removed_this_pass = False
+        for row in rows:
+            parent_uid = str(row.get("ParentUID", ""))
+            if not is_present_uid(parent_uid) or parent_uid in takeoff_uids:
+                kept.append(row)
+                continue
+            removed.append(
+                RawBidIntegrityIssue(
+                    table="BidTakeoffs",
+                    row_uid=str(row.get("UID", "")),
+                    column="ParentUID",
+                    missing_uid=parent_uid,
+                    parent_table="BidTakeoffs",
+                )
+            )
+            removed_this_pass = True
+        rows = kept
+        if not removed_this_pass:
+            break
+    if removed:
+        raw_data.page_tables["BidTakeoffs"] = rows
+    return removed
+
+
+def clear_missing_selected_page_references(
+    raw_data: RawBidData,
+) -> List[RawBidIntegrityIssue]:
+    page_uids = _present_uids(raw_data.bid_tables.get("BidPages", []), "UID")
+    cleared: List[RawBidIntegrityIssue] = []
+    for row in raw_data.bid_tables.get("BidSettings", []):
+        selected_uid = str(row.get("BidPageSelectedUID", ""))
+        if (
+            not is_present_uid(selected_uid)
+            or selected_uid in page_uids
+            or not selected_uid.isdecimal()
+        ):
+            continue
+        cleared.append(
+            RawBidIntegrityIssue(
+                table="BidSettings",
+                row_uid=str(row.get("UID", "")),
+                column="BidPageSelectedUID",
+                missing_uid=selected_uid,
+                parent_table="BidPages",
+            )
+        )
+        row["BidPageSelectedUID"] = _NULL_REFERENCE_UID
+    return cleared
+
+
+def clear_missing_annotation_takeoff_references(
+    raw_data: RawBidData,
+) -> List[RawBidIntegrityIssue]:
+    takeoff_uids = _present_uids(raw_data.page_tables.get("BidTakeoffs", []), "UID")
+    cleared: List[RawBidIntegrityIssue] = []
+    for table, columns in _ANNOTATION_TAKEOFF_REFERENCE_COLUMNS.items():
+        for row in raw_data.page_tables.get(table, []):
+            for column in columns:
+                takeoff_uid = str(row.get(column, ""))
+                if (
+                    not is_present_uid(takeoff_uid)
+                    or takeoff_uid in takeoff_uids
+                    or not takeoff_uid.isdecimal()
+                ):
+                    continue
+                cleared.append(
+                    RawBidIntegrityIssue(
+                        table=table,
+                        row_uid=str(row.get("UID", "")),
+                        column=column,
+                        missing_uid=takeoff_uid,
+                        parent_table="BidTakeoffs",
+                    )
+                )
+                row[column] = _NULL_REFERENCE_UID
+    return cleared
+
+
 def prepare_raw_bid_data_for_export(raw_data: RawBidData) -> RawBidData:
     prepared = clone_raw_bid_data(raw_data)
     _clear_missing_export_references(prepared)
@@ -242,7 +332,7 @@ def _clear_missing_export_references(raw_data: RawBidData) -> None:
     for row in raw_data.bid_tables.get("BidSettings", []):
         selected_uid = str(row.get("BidPageSelectedUID", ""))
         if is_present_uid(selected_uid) and selected_uid not in page_uids:
-            row["BidPageSelectedUID"] = "0"
+            row["BidPageSelectedUID"] = _NULL_REFERENCE_UID
 
 
 def _prune_export_orphans(raw_data: RawBidData) -> bool:

@@ -532,6 +532,173 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         )
         self.assertEqual(validate_raw_bid_integrity(prepared), [])
 
+    def test_ost_import_skips_orphaned_takeoffs_and_cascading_children(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidConditions>
+              <BidCondition UID="10" BidUID="1" Name="Footing"/>
+            </BidConditions>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1">
+                <BidTakeoffs>
+                  <BidTakeoff UID="30" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" Name="Primary"/>
+                  <BidTakeoff UID="31" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" ParentUID="30"
+                              Name="Valid Child"/>
+                  <BidTakeoff UID="32" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" ParentUID="999"
+                              Name="Orphan"/>
+                  <BidTakeoff UID="33" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" ParentUID="32"
+                              Name="Cascading Orphan"/>
+                </BidTakeoffs>
+              </BidPage>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute(
+            "CREATE TABLE BidConditions ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, Name TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE BidTakeoffs ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, BidPageUID INTEGER, "
+            "BidConditionUID INTEGER, ParentUID INTEGER, Name TEXT)"
+        )
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "orphan_takeoffs.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="WARNING",
+            ) as logs:
+                self.assertTrue(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        takeoffs = connection.execute(
+            "SELECT UID, ParentUID, Name FROM BidTakeoffs ORDER BY Name"
+        ).fetchall()
+        self.assertEqual([row[2] for row in takeoffs], ["Primary", "Valid Child"])
+        takeoff_uids = {row[2]: row[0] for row in takeoffs}
+        parent_uids = {row[2]: row[1] for row in takeoffs}
+        self.assertIsNone(parent_uids["Primary"])
+        self.assertEqual(parent_uids["Valid Child"], takeoff_uids["Primary"])
+        self.assertIn("BidTakeoffs.UID=32 ParentUID=999", logs.output[0])
+        self.assertIn("BidTakeoffs.UID=33 ParentUID=32", logs.output[0])
+
+    def test_ost_import_clears_missing_annotation_takeoff_attachments(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1">
+                <BidDimensions>
+                  <BidDimension UID="31" BidUID="1" BidPageUID="20"
+                                BidTakeoffFromUID="901" BidTakeoffToUID="902"
+                                Position="dimension-geometry"/>
+                </BidDimensions>
+                <BidArrows>
+                  <BidArrow UID="32" BidUID="1" BidPageUID="20"
+                            BidTakeoffFromUID="903" BidTakeoffToUID="904"
+                            Position="arrow-geometry"/>
+                </BidArrows>
+                <BidALines>
+                  <BidALine UID="33" BidUID="1" BidPageUID="20"
+                            BidTakeoffFromUID="905" BidTakeoffToUID="906"
+                            Position="line-geometry"/>
+                </BidALines>
+              </BidPage>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        for table in ("BidDimensions", "BidArrows", "BidALines"):
+            connection.execute(
+                f"CREATE TABLE {table} ("
+                "UID INTEGER PRIMARY KEY, BidUID INTEGER, BidPageUID INTEGER, "
+                "BidTakeoffFromUID INTEGER, BidTakeoffToUID INTEGER, Position TEXT)"
+            )
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "missing_annotation_attachments.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="WARNING",
+            ) as logs:
+                self.assertTrue(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        expected_geometry = {
+            "BidDimensions": "dimension-geometry",
+            "BidArrows": "arrow-geometry",
+            "BidALines": "line-geometry",
+        }
+        for table, geometry in expected_geometry.items():
+            with self.subTest(table=table):
+                row = connection.execute(
+                    f"SELECT BidTakeoffFromUID, BidTakeoffToUID, Position "
+                    f"FROM {table}"
+                ).fetchone()
+                self.assertEqual(row, (None, None, geometry))
+        warning = logs.output[0]
+        self.assertIn("6 missing annotation takeoff attachment reference(s)", warning)
+        for uid in range(901, 907):
+            self.assertIn(f"={uid} missing BidTakeoffs.UID", warning)
+
+    def test_ost_import_still_rejects_takeoff_with_missing_condition(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidConditions/>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet" Sequence="1">
+                <BidTakeoffs>
+                  <BidTakeoff UID="30" BidUID="1" BidPageUID="20"
+                              BidConditionUID="999" Name="Unsafe Orphan"/>
+                </BidTakeoffs>
+              </BidPage>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute(
+            "CREATE TABLE BidConditions ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, Name TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE BidTakeoffs ("
+            "UID INTEGER PRIMARY KEY, BidUID INTEGER, BidPageUID INTEGER, "
+            "BidConditionUID INTEGER, ParentUID INTEGER, Name TEXT)"
+        )
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "missing_condition.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ) as logs:
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        self.assertIn("BidTakeoffs.UID=30 BidConditionUID=999", logs.output[0])
+        bid_count = connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0]
+        self.assertEqual(bid_count, 0)
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM BidTakeoffs").fetchone()[0], 0
+        )
+
     def test_ost_export_includes_referenced_estimator_employee_and_pay_class(self):
         raw_data = RawBidData(
             bid_row={"UID": "1", "EstimatorUID": "7", "JobName": "Bid"},
@@ -728,7 +895,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertEqual(translation, (area_uid, area_uid))
         self.assertEqual(comments[1][1], comments[0][0])
 
-    def test_ost_import_rejects_missing_bid_settings_selected_page(self):
+    def test_ost_import_clears_missing_bid_settings_selected_page(self):
         xml = """
         <XML_ROOT>
           <Bid UID="1" JobName="Imported">
@@ -749,16 +916,17 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             ost_path.write_text(xml, encoding="utf-8")
             with self.assertLogs(
                 "ost_visualizer.infrastructure.mdb.importers.ost_importer",
-                level="ERROR",
+                level="WARNING",
             ) as logs:
-                self.assertFalse(
+                self.assertTrue(
                     OstImporter(writer).import_ost(str(ost_path), "target.mdb")
                 )
+        self.assertIn("missing selected-page reference", logs.output[0])
         self.assertIn("BidSettings.UID=30 BidPageSelectedUID=999", logs.output[0])
-        self.assertEqual(
-            connection.execute("SELECT COUNT(*) FROM BidSettings").fetchone()[0],
-            0,
-        )
+        selected_uid = connection.execute(
+            "SELECT BidPageSelectedUID FROM BidSettings"
+        ).fetchone()[0]
+        self.assertIsNone(selected_uid)
 
     def test_ost_import_clears_zero_and_blank_selected_page(self):
         for selected_value in ("0", ""):
@@ -817,7 +985,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             0,
         )
 
-    def test_access_import_rejects_old_ost_missing_selected_page_reference(self):
+    def test_access_import_clears_old_ost_missing_selected_page_reference(self):
         if not _access_driver_available():
             self.skipTest("Microsoft Access ODBC driver is not available")
         xml = """
@@ -842,7 +1010,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             )
             writer = MdbWriter()
             try:
-                self.assertFalse(
+                self.assertTrue(
                     OstImporter(writer).import_ost(str(ost_path), str(db_path))
                 )
             finally:
