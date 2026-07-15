@@ -3813,12 +3813,7 @@ class TakeoffPlanView(
         height = page.effective_height_pts * self._scene_scale
         if width <= 0.0 or height <= 0.0:
             return
-        self._white_canvas_item = self._scene_builder.create_white_canvas(
-            self._scene,
-            width,
-            height,
-            color=self._page_canvas_color(),
-        )
+        self._ensure_page_canvas(width, height)
         self._apply_page_transform_to_items()
         self._update_scene_rect()
 
@@ -4681,11 +4676,9 @@ class TakeoffPlanView(
         self._pdf_width_pts = pdf_width_pts
         self._pdf_height_pts = pdf_height_pts
         if strategy.show_canvas:
-            self._white_canvas_item = self._scene_builder.create_white_canvas(
-                self._scene,
+            self._ensure_page_canvas(
                 strategy.placeholder_width,
                 strategy.placeholder_height,
-                color=self._page_canvas_color(),
             )
         page_info = self._scene_builder.build_page_info(
             page,

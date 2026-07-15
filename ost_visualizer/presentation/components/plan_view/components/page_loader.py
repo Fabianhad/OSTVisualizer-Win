@@ -363,11 +363,19 @@ class PageLoaderMixin:
             self._remove_overlay_item(item)
         self._overlay_items.clear()
 
-    def _remove_white_canvas_item(self) -> None:
+    def _ensure_page_canvas(self, width: float, height: float) -> None:
+        if width <= 0.0 or height <= 0.0:
+            return
         if self._white_canvas_item is not None and isValid(self._white_canvas_item):
             if self._white_canvas_item.scene() is self._scene:
-                self._scene.removeItem(self._white_canvas_item)
-        self._white_canvas_item = None
+                self._white_canvas_item.setRect(0.0, 0.0, width, height)
+                return
+        self._white_canvas_item = self._scene_builder.create_white_canvas(
+            self._scene,
+            width,
+            height,
+            color=self._page_canvas_color(),
+        )
 
     def _on_composite_loaded(self, result: RenderResult):
         data = self._resolve_pending_render(result, VISUAL_KIND_COMPOSITE)
@@ -379,9 +387,9 @@ class PageLoaderMixin:
 
     def _apply_composite_result(self, data: dict, result: RenderResult) -> None:
         self._clear_missing_page_file_status()
-        self._remove_white_canvas_item()
         self._clear_overlay_items()
         scene_width, scene_height = self._logical_page_scene_dimensions(data, result)
+        self._ensure_page_canvas(scene_width, scene_height)
         background_item = ImageBackgroundItem(
             result.image,
             scene_width,
@@ -408,6 +416,7 @@ class PageLoaderMixin:
         view_scale = data.get("view_scale", 1.0)
         self._clear_overlay_items()
         scene_width, scene_height = self._logical_page_scene_dimensions(data, result)
+        self._ensure_page_canvas(scene_width, scene_height)
         background_item = ImageBackgroundItem(
             result.image,
             scene_width,
@@ -552,11 +561,13 @@ class PageLoaderMixin:
         return any(isValid(item) for item in self._overlay_items)
 
     def _sync_page_image_layer_visibility(self) -> None:
-        visible = self._page_image_layer_visible()
-        self._set_low_res_base_item_visible(visible)
-        self._set_low_res_overlay_items_visible(visible)
+        image_visible = self._page_image_layer_visible()
+        self._set_low_res_base_item_visible(image_visible)
+        self._set_low_res_overlay_items_visible(image_visible)
         if self._visible_frame_item is not None and isValid(self._visible_frame_item):
-            self._visible_frame_item.setVisible(visible)
+            self._visible_frame_item.setVisible(image_visible)
+        if self._white_canvas_item is not None and isValid(self._white_canvas_item):
+            self._white_canvas_item.setVisible(self._current_page is not None)
 
     def _set_low_res_overlay_items_visible(self, visible: bool) -> None:
         for item in self._overlay_items:

@@ -575,6 +575,7 @@ def _visible_frame_lifecycle_view(kind="base"):
     view._overlay_pdf_width_pts = 100.0
     view._overlay_pdf_height_pts = 100.0
     view._overlay_items = []
+    view._white_canvas_item = None
     view._visible_frame_item = None
     view._visible_frame_request_id = None
     view._visible_frame_key = None
@@ -3486,6 +3487,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._visible_frame_item = None
         view._background_item = None
         view._overlay_items = []
+        view._white_canvas_item = None
         view._visible_frame_key = ("base",)
         view._visible_frame_kind = "base"
         view._visible_frame_scale = 0.0
@@ -3738,6 +3740,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._overlay_pdf_width_pts = 100.0
         view._overlay_pdf_height_pts = 100.0
         view._overlay_items = []
+        view._white_canvas_item = None
         view._visible_frame_item = None
         view._visible_frame_request_id = None
         view._visible_frame_key = None
@@ -3808,6 +3811,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         view._pdf_width_pts = 100.0
         view._pdf_height_pts = 100.0
         view._overlay_items = []
+        view._white_canvas_item = None
         view._visible_frame_item = None
         view._visible_frame_request_id = None
         view._visible_frame_key = None

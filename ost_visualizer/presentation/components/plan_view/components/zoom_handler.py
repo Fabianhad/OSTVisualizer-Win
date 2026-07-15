@@ -143,7 +143,7 @@ class ZoomHandlerMixin:
                 return QPointF(converted[0], converted[1])
         return None
 
-    def _restored_view_state_is_page_bounded(self, center: QPointF) -> bool:
+    def _restored_view_state_is_valid(self, center: QPointF) -> bool:
         page_rect = self._page_scene_rect()
         if page_rect.isNull() or not page_rect.isValid():
             return False
@@ -155,10 +155,7 @@ class ZoomHandlerMixin:
         visible_rect = self.mapToScene(viewport.rect()).boundingRect()
         if visible_rect.isNull() or not visible_rect.isValid():
             return False
-        return (
-            visible_rect.width() <= page_rect.width() + 0.001
-            and visible_rect.height() <= page_rect.height() + 0.001
-        )
+        return True
 
     def get_view_state(self) -> Tuple[float, float, float]:
         m11 = self.transform().m11()
@@ -178,7 +175,11 @@ class ZoomHandlerMixin:
         ):
             return False
         target_m11 = zoom_fac / (self._scene_scale * _DISPLAY_ZOOM_RATIO)
-        if target_m11 <= 0 or not math.isfinite(target_m11):
+        if (
+            not math.isfinite(target_m11)
+            or target_m11 < self.MIN_ZOOM
+            or target_m11 > self.MAX_ZOOM
+        ):
             return False
         current = self.transform().m11()
         if current <= 0:
@@ -189,7 +190,7 @@ class ZoomHandlerMixin:
         factor = target_m11 / current
         self.scale(factor, factor)
         self.centerOn(center)
-        if not self._restored_view_state_is_page_bounded(center):
+        if not self._restored_view_state_is_valid(center):
             self.setTransform(original_transform)
             self.horizontalScrollBar().setValue(original_h_scroll)
             self.verticalScrollBar().setValue(original_v_scroll)

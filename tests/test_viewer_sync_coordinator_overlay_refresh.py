@@ -1456,6 +1456,191 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertLess(canvas.zValue(), view._background_item.zValue())
         view.cleanup()
 
+    def test_main_only_image_layer_disable_shows_existing_white_canvas(self):
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        view = self._load_completed_page_visual(page)
+        canvas = view._white_canvas_item
+        background = view._background_item
+        fit_calls = []
+        view.fit_to_page = lambda: fit_calls.append("fit")
+        try:
+            self.assertTrue(
+                view.apply_page_image_layer_visibility(
+                    replace(page, layer_visible=False)
+                )
+            )
+            self.assertFalse(background.isVisible())
+            self.assertTrue(canvas.isVisible())
+            self.assertTrue(view._page_scene_rect().isValid())
+            self.assertTrue(view._scene.sceneRect().isValid())
+            self.assertEqual(fit_calls, [])
+        finally:
+            view.cleanup()
+
+    def test_overlay_only_image_layer_disable_shows_existing_white_canvas(self):
+        page = Page(
+            uid="p1",
+            name="P1",
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+            image_show_mode=1,
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        view = self._load_completed_page_visual(page)
+        canvas = view._white_canvas_item
+        overlay = view._overlay_items[0]
+        fit_calls = []
+        view.fit_to_page = lambda: fit_calls.append("fit")
+        try:
+            self.assertTrue(
+                view.apply_page_image_layer_visibility(
+                    replace(page, layer_visible=False)
+                )
+            )
+            self.assertFalse(overlay.isVisible())
+            self.assertTrue(canvas.isVisible())
+            self.assertTrue(view._page_scene_rect().isValid())
+            self.assertTrue(view._scene.sceneRect().isValid())
+            self.assertEqual(fit_calls, [])
+        finally:
+            view.cleanup()
+
+    def test_main_and_overlay_image_layer_disable_keeps_white_canvas(self):
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        view, canvas = self._load_completed_page_visual(
+            page, return_initial_canvas=True
+        )
+        composite = view._background_item
+        fit_calls = []
+        view.fit_to_page = lambda: fit_calls.append("fit")
+        try:
+            self.assertIs(view._white_canvas_item, canvas)
+            self.assertIs(canvas.scene(), view._scene)
+            self.assertTrue(
+                view.apply_page_image_layer_visibility(
+                    replace(page, layer_visible=False)
+                )
+            )
+            self.assertFalse(composite.isVisible())
+            self.assertTrue(canvas.isVisible())
+            self.assertTrue(view._page_scene_rect().isValid())
+            self.assertTrue(view._scene.sceneRect().isValid())
+            self.assertEqual(
+                sum(item is canvas for item in view._scene.items()),
+                1,
+            )
+            self.assertEqual(fit_calls, [])
+        finally:
+            view.cleanup()
+
+    def test_composite_result_creates_one_canvas_when_dimensions_arrive_late(self):
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+            image_show_mode=2,
+        )
+        view = self._make_plan_view()
+        view._load_coordinator = PageLoadStrategyService(FakePageSizeProvider())
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        self.assertIsNone(view._white_canvas_item)
+        request_id, request = view._rendering_service.composite_requests[-1]
+        request["callback"](
+            RenderResult(
+                request_id,
+                True,
+                QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        try:
+            canvas = view._white_canvas_item
+            self.assertIsNotNone(canvas)
+            self.assertTrue(
+                view.apply_page_image_layer_visibility(
+                    replace(page, layer_visible=False)
+                )
+            )
+            self.assertTrue(canvas.isVisible())
+            self.assertTrue(view._page_scene_rect().isValid())
+            self.assertEqual(
+                sum(item is canvas for item in view._scene.items()),
+                1,
+            )
+        finally:
+            view.cleanup()
+
+    def test_hidden_both_mode_canvas_is_not_late_when_one_image_is_disabled(self):
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="base.pdf",
+            overlay_image_path="overlay.pdf",
+            overlay_rect=(0.0, 0.0, 816.0, 1056.0),
+            image_show_mode=2,
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        view = self._make_plan_view()
+        view._load_coordinator = PageLoadStrategyService(FakePageSizeProvider())
+        view.resize(300, 300)
+        view.show()
+        QApplication.processEvents()
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        request_id, request = view._rendering_service.composite_requests[-1]
+        request["callback"](
+            RenderResult(
+                request_id,
+                True,
+                QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        QApplication.processEvents()
+        try:
+            hidden_page = replace(page, layer_visible=False)
+            self.assertTrue(view.apply_page_image_layer_visibility(hidden_page))
+            self.assertIsNotNone(view._white_canvas_item)
+            self.assertTrue(view._white_canvas_item.isVisible())
+            view._capture_view_state_to_page(page, allow_pending_load=True)
+            self.assertGreater(page.zoom_fac, 0.0)
+            fit_calls = []
+            view.fit_to_page = lambda: fit_calls.append("fit")
+            original_only = replace(
+                page,
+                image_show_mode=0,
+                layer_visible=False,
+            )
+            self.assertTrue(view.load_page(original_only, [], {}, {}))
+            self.assertTrue(view._white_canvas_item.isVisible())
+            self.assertTrue(view._page_scene_rect().isValid())
+            self.assertTrue(view._scene.sceneRect().isValid())
+            self.assertEqual(
+                sum(item is view._white_canvas_item for item in view._scene.items()),
+                1,
+            )
+            self.assertEqual(fit_calls, [])
+        finally:
+            view.cleanup()
+
     def test_move_overlay_hover_handle_uses_move_cursor(self):
         view = self._make_plan_view()
         page = Page(
@@ -2674,6 +2859,26 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             zoom_fac=1.332,
             current_x=99999.0,
             current_y=99999.0,
+        )
+        self._install_page_canvas(view, page)
+        calls = []
+        view.fit_to_page = lambda: calls.append("fit")
+        view._load_initial_view_mode = "restore"
+        view._load_view_applied = False
+        view._apply_current_view_contract(consume_scroll_state=False)
+        self.assertEqual(calls, ["fit"])
+        view.cleanup()
+
+    def test_legacy_out_of_range_page_zoom_fits_to_page(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+            zoom_fac=0.001,
+            current_x=408.0,
+            current_y=528.0,
         )
         self._install_page_canvas(view, page)
         calls = []
@@ -5450,6 +5655,32 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         return view
 
+    def _load_completed_page_visual(self, page, return_initial_canvas=False):
+        view = self._make_plan_view()
+        view.resize(300, 300)
+        view.show()
+        QApplication.processEvents()
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        initial_canvas = view._white_canvas_item
+        if page.image_path and page.overlay_image_path and page.image_show_mode == 2:
+            request_id, request = view._rendering_service.composite_requests[-1]
+        elif page.image_path:
+            request_id, request = view._rendering_service.page_requests[-1]
+        else:
+            request_id, request = view._rendering_service.overlay_requests[-1]
+        request["callback"](
+            RenderResult(
+                request_id,
+                True,
+                QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                None,
+            )
+        )
+        QApplication.processEvents()
+        if return_initial_canvas:
+            return view, initial_canvas
+        return view
+
     def _install_page_canvas(self, view, page, scene_scale=2.0):
         view._current_page = page
         view._current_bid_page_uid = page.uid
@@ -5656,6 +5887,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._background_item = None
         view._visible_frame_item = None
         view._overlay_items = []
+        view._white_canvas_item = None
         view._load_coordinator = FakeLoadCoordinator()
         calls = []
         view._refresh_overlays = lambda *_args: calls.append("refresh_overlays")
