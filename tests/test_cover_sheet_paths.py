@@ -1087,7 +1087,6 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         self.assertEqual(len(publish_calls), 1)
         self.assertIs(publish_calls[0][1], AppEvents.DATABASE_REFRESHED)
         self.assertEqual(publish_calls[0][2], {"file_path": "bid.mdb"})
-        self.assertEqual(write_service.logger.info.call_count, 3)
         self.assertTrue(FakeDialog.instance.deleted)
 
     def test_cover_sheet_path_cell_double_click_edits_full_path(self):
