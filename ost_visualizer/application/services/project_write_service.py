@@ -1053,8 +1053,28 @@ class ProjectWriteService(BaseWriteService):
     def save_cover_sheet(self, db_path: str, bid_uid: str, updates: dict) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
+        deleted_page_count = len(updates.get("deleted_page_uids", []))
+        if deleted_page_count:
+            self.logger.info(
+                "Cover sheet save started for bid %s with %d page deletions",
+                bid_uid,
+                deleted_page_count,
+            )
         success = self._save_cover_sheet.execute(db_path, bid_uid, updates)
-        return self._reload_after_success(db_path, success)
+        if deleted_page_count:
+            self.logger.info(
+                "Cover sheet database commit finished for bid %s: success=%s",
+                bid_uid,
+                success,
+            )
+        reload_success = self._reload_after_success(db_path, success)
+        if deleted_page_count:
+            self.logger.info(
+                "Cover sheet post-commit refresh finished for bid %s: success=%s",
+                bid_uid,
+                reload_success,
+            )
+        return reload_success
 
     def delete_pages(self, db_path: str, page_uids: List[str]) -> bool:
         valid_page_uids = self._unique_page_uids(page_uids)

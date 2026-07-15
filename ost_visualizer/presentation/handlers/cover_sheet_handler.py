@@ -83,15 +83,11 @@ class CoverSheetHandler:
             if result == QtWidgets.QDialog.DialogCode.Accepted:
                 updates = dialog.get_updates()
                 if locked_at_open:
-                    status_changed = self._save_locked_bid_status_change(
+                    self._save_locked_bid_status_change(
                         context, data.job_status_uid, updates
                     )
-                    if status_changed:
-                        context.refresh()
                     return
-                if context.save_cover_sheet(updates):
-                    context.refresh()
-                else:
+                if not context.save_cover_sheet(updates):
                     show_critical(
                         self.window,
                         "Cover Sheet",
@@ -159,7 +155,7 @@ class CoverSheetHandler:
             bid_ref=bid_ref,
             deferred_persistence_manager=self._deferred_persistence,
         )
-        if context.save_cover_sheet(updates) and context.refresh():
+        if context.save_cover_sheet(updates):
             return True
         show_critical(
             self.window,

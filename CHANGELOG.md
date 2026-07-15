@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Changed Cover Sheet commits to perform a single post-save database refresh, reducing UI stalls after large page deletion batches.
 - Changed OST/OSP exports to emit bid layers in ascending sequence order for closer compatibility with original On-Screen Takeoff exports.
 - Updated the main window title to show the selected database and bid alongside the OST Visualizer app name.
 

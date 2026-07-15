@@ -7,13 +7,22 @@ from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
+from ost_visualizer.application.events.app_events import AppEvents
+from ost_visualizer.application.services.project_write_service import (
+    ProjectWriteService,
+)
 from ost_visualizer.domain.entities.cover_sheet import (
     CoverSheetData,
     CoverSheetFolder,
     CoverSheetPage,
 )
 from ost_visualizer.domain.entities.employee import Employee
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.workspace_state import WorkspaceState
+from ost_visualizer.infrastructure.mdb.components.constants import (
+    PAGE_DELETE_CHILD_TABLES,
+    TAKEOFF_REFERENCE_TABLES,
+)
 from ost_visualizer.infrastructure.mdb.components.page_operations import (
     PageOperationsMixin,
 )
@@ -25,6 +34,7 @@ from ost_visualizer.presentation.dialogs.cover_sheet.header_state import (
     load_cover_sheet_plan_header_state,
     save_cover_sheet_plan_header_state,
 )
+from ost_visualizer.presentation.handlers.cover_sheet_handler import CoverSheetHandler
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
 
 
@@ -47,9 +57,11 @@ class _FakeCursor:
     def __init__(self):
         self.connection = object()
         self.last_query = None
+        self.calls = []
 
-    def execute(self, query, *_args):
+    def execute(self, query, *args):
         self.last_query = query
+        self.calls.append((query, args))
         return None
 
     def fetchone(self):
@@ -59,11 +71,15 @@ class _FakeCursor:
 class _FakeConnection:
     def __init__(self):
         self.cursor_obj = _FakeCursor()
+        self.enter_count = 0
+        self.exit_count = 0
 
     def __enter__(self):
+        self.enter_count += 1
         return self
 
     def __exit__(self, *_args):
+        self.exit_count += 1
         return False
 
     def cursor(self):
@@ -144,6 +160,7 @@ class _ScaleCursor(_FakeCursor):
 
 class _ScaleConnection(_FakeConnection):
     def __init__(self, old_sf1, old_sf2):
+        super().__init__()
         self.cursor_obj = _ScaleCursor(old_sf1, old_sf2)
 
 
@@ -181,6 +198,23 @@ class _FakeLogger:
     def exception(self, *_args):
         return None
 
+    def warning(self, *_args):
+        return None
+
+
+class _AllDeleteColumnsSchema:
+    def column_exists(self, _table, _column):
+        return True
+
+    def optional_table_missing(self, _table):
+        return False
+
+
+class _BulkDeleteCoverSheetOps(_CoverSheetSettingsOps):
+    def __init__(self):
+        super().__init__()
+        self.schema = _AllDeleteColumnsSchema()
+
 
 class _OverlayRectSchema:
     def column_exists(self, table, column):
@@ -215,6 +249,7 @@ class _OverlayRectCursor(_FakeCursor):
 
 class _OverlayRectConnection(_FakeConnection):
     def __init__(self):
+        super().__init__()
         self.cursor_obj = _OverlayRectCursor()
 
 
@@ -864,6 +899,196 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         finally:
             dialog.close()
             dialog.deleteLater()
+
+    def test_cover_sheet_bulk_delete_closes_without_modal_or_input_residue(self):
+        data = _cover_sheet_data()
+        data.pages_without_folder = [
+            CoverSheetPage(
+                uid=str(index),
+                sheet_no=f"A{index:03d}",
+                name=f"Page {index}",
+                width=42.0,
+                height=30.0,
+                scale_factor1=0.125,
+                scale_factor2=12.0,
+                image_path=f"C:/Plans/{index}.pdf",
+                overlay_image_path="",
+                index=1,
+                show_mode=0,
+            )
+            for index in range(1, 226)
+        ]
+        parent = QtWidgets.QWidget()
+        parent.show()
+        dialog = CoverSheetDialog(_FakeIconProvider(), parent, data)
+
+        def delete_and_accept():
+            dialog.plan_tree.selectAll()
+            dialog._delete_selected()
+            dialog.accept()
+
+        try:
+            QtCore.QTimer.singleShot(0, delete_and_accept)
+            result = dialog.exec()
+            self.app.processEvents()
+            visible_modals = [
+                widget
+                for widget in self.app.topLevelWidgets()
+                if widget.isModal() and widget.isVisible()
+            ]
+            self.assertEqual(result, QtWidgets.QDialog.DialogCode.Accepted)
+            self.assertEqual(len(dialog._deleted_page_uids), 225)
+            self.assertEqual(dialog.plan_tree.topLevelItemCount(), 1)
+            self.assertTrue(parent.isEnabled())
+            self.assertIsNone(self.app.activeModalWidget())
+            self.assertEqual(visible_modals, [])
+            self.assertIsNone(self.app.overrideCursor())
+        finally:
+            dialog.deleteLater()
+            parent.close()
+            parent.deleteLater()
+
+    def test_cover_sheet_bulk_delete_uses_one_transaction_and_linear_cascade(self):
+        ops = _BulkDeleteCoverSheetOps()
+        page_count = 225
+        success = ops.save_cover_sheet(
+            "bid.mdb",
+            "7",
+            {
+                "measure_base": 0,
+                "deleted_page_uids": [str(index) for index in range(1, page_count + 1)],
+                "pages": [],
+            },
+        )
+        per_page_statement_count = (
+            1  # BidPercents
+            + len(TAKEOFF_REFERENCE_TABLES)
+            + len(PAGE_DELETE_CHILD_TABLES)
+            + 1  # BidTakeoffs
+            + 2  # BidHotLinks
+            + 1  # BidNamedViews
+            + 2  # aggregate tables
+            + 1  # selected-page reference
+            + 1  # BidPages
+        )
+        self.assertTrue(success)
+        self.assertEqual(ops.conn.enter_count, 1)
+        self.assertEqual(ops.conn.exit_count, 1)
+        self.assertEqual(
+            len(ops.conn.cursor_obj.calls),
+            1 + page_count * per_page_statement_count,
+        )
+
+    def test_cover_sheet_close_publishes_one_refresh_for_bulk_delete(self):
+        calls = []
+
+        class WriteGuard:
+            def blocks_active_locked_bid_write(self, *_args):
+                return False
+
+        class SaveCoverSheet:
+            def execute(self, db_path, bid_uid, updates):
+                calls.append(("save", db_path, bid_uid, updates))
+                return True
+
+        class EventBus:
+            def publish(self, event_type, **payload):
+                calls.append(("publish", event_type, payload))
+
+        class ReadService:
+            def get_cover_sheet_data(self, _file_path, _bid_uid):
+                return _cover_sheet_data()
+
+            def get_estimator_uids_in_use(self, _file_path):
+                return set()
+
+            def get_pages_with_takeoffs(self, _file_path, _bid_uid):
+                return set()
+
+            def get_pages_with_delete_content(self, _file_path, _bid_uid):
+                return set()
+
+        class ProjectData:
+            def is_current_bid_locked(self):
+                return False
+
+            def get_assigned_area_uids_with_stored_takeoff(self):
+                return set()
+
+        class UiState:
+            def get_selected_bid_ref(self):
+                return BidRef("bid.mdb", "7")
+
+        class Access:
+            def is_allowed(self, _feature):
+                return True
+
+            def has_license(self):
+                return True
+
+        class DeferredPersistence:
+            def flush_for_file(self, file_path):
+                calls.append(("flush", file_path))
+                return True
+
+        class Infrastructure:
+            def get_pdf_page_sizes(self, _path):
+                return []
+
+        class FakeDialog:
+            instance = None
+
+            def __init__(self, *_args, **_kwargs):
+                self.deleted = False
+                FakeDialog.instance = self
+
+            def get_updates(self):
+                return {"deleted_page_uids": [str(index) for index in range(1, 226)]}
+
+            def deleteLater(self):
+                self.deleted = True
+
+        event_bus = EventBus()
+        write_service = ProjectWriteService.__new__(ProjectWriteService)
+        write_service._bid_write_guard = WriteGuard()
+        write_service._save_cover_sheet = SaveCoverSheet()
+        write_service._reload_database = (
+            lambda file_path: calls.append(("reload", file_path)) or True
+        )
+        write_service._event_bus = event_bus
+        write_service.logger = mock.Mock()
+        handler = CoverSheetHandler(
+            window=object(),
+            icon_provider=_FakeIconProvider(),
+            project_data_service=ProjectData(),
+            project_read_service=ReadService(),
+            project_write_service=write_service,
+            infrastructure_provider=Infrastructure(),
+            event_bus=event_bus,
+            ui_state_manager=UiState(),
+            ui_access_manager=Access(),
+            deferred_persistence_manager=DeferredPersistence(),
+            workspace_state_model=None,
+        )
+        from ost_visualizer.presentation.handlers import cover_sheet_handler as module
+
+        with mock.patch.object(
+            module, "CoverSheetDialog", FakeDialog
+        ), mock.patch.object(
+            module,
+            "exec_with_ost_blocking",
+            return_value=QtWidgets.QDialog.DialogCode.Accepted,
+        ):
+            handler.open_cover_sheet()
+        self.assertEqual([call[0] for call in calls].count("save"), 1)
+        self.assertEqual([call[0] for call in calls].count("flush"), 1)
+        self.assertEqual([call[0] for call in calls].count("reload"), 1)
+        publish_calls = [call for call in calls if call[0] == "publish"]
+        self.assertEqual(len(publish_calls), 1)
+        self.assertIs(publish_calls[0][1], AppEvents.DATABASE_REFRESHED)
+        self.assertEqual(publish_calls[0][2], {"file_path": "bid.mdb"})
+        self.assertEqual(write_service.logger.info.call_count, 3)
+        self.assertTrue(FakeDialog.instance.deleted)
 
     def test_cover_sheet_path_cell_double_click_edits_full_path(self):
         image_path = r"C:\Plans\A101.pdf"
