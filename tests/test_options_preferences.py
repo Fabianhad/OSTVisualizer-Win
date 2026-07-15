@@ -1814,19 +1814,28 @@ class OptionsPreferencesTests(unittest.TestCase):
             ],
         )
 
-    def test_summary_tab_disables_project_tree_creation_and_import_menu_paths(self):
+    def test_summary_tab_disables_project_tree_creation_but_allows_import(self):
         controller = MenuController.__new__(MenuController)
         controller.window = SimpleNamespace(is_summary_tab_active=lambda: True)
         controller.ui_state_manager = SimpleNamespace(selected_project_uid="2")
+        permission_checks = []
         controller.ui_access_manager = SimpleNamespace(
             can_create_project_tree_items=lambda *_args: (_ for _ in ()).throw(
                 AssertionError("project selection should not be queried")
             ),
-            is_allowed=lambda *_args: (_ for _ in ()).throw(
-                AssertionError("import permissions should not be queried")
-            ),
+            is_allowed=lambda feature: permission_checks.append(feature) or True,
         )
         self.assertFalse(controller._should_enable_project_tree_creation())
+        self.assertTrue(controller._should_enable_import())
+        self.assertEqual(permission_checks, [Feature.IMPORT])
+
+    def test_import_stays_disabled_when_context_permission_is_unavailable(self):
+        controller = MenuController.__new__(MenuController)
+        controller.window = SimpleNamespace(is_summary_tab_active=lambda: True)
+        controller.ui_state_manager = SimpleNamespace(selected_project_uid=None)
+        controller.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature != Feature.IMPORT
+        )
         self.assertFalse(controller._should_enable_import())
 
     def test_update_app_options_does_not_publish_when_nothing_changed(self):

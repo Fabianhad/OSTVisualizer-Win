@@ -22,6 +22,7 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyFileEntry,
     HierarchyProjectInfo,
 )
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.project_constants import (
     DELETED_BIDS_PROJECT_NAME,
     DELETED_BIDS_PROJECT_UID,
@@ -118,8 +119,12 @@ class FakeRegistry:
 
 class FakeProjectView:
     def __init__(self):
+        self.bid_selections = []
         self.project_selections = []
         self.file_selections = []
+
+    def restore_bid_selection(self, bid_ref):
+        self.bid_selections.append(bid_ref)
 
     def restore_project_selection(self, project_uid, file_path=None):
         self.project_selections.append((project_uid, file_path))
@@ -566,7 +571,11 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             self.assertEqual(import_service.reloads, [str(target_db)])
 
     def test_main_window_selects_batch_project_or_database_once(self):
-        window = SimpleNamespace(project_view=FakeProjectView())
+        window = SimpleNamespace(
+            project_view=FakeProjectView(),
+            ui_state_manager=SimpleNamespace(get_selected_bid_ref=lambda: None),
+            _project_data_service=SimpleNamespace(get_bid=lambda _bid_ref: None),
+        )
         project_result = import_args_use_case.ProjectFileImportBatchResult(
             target_db_path="target.mdb",
             selected_project_uid="project-1",
@@ -580,6 +589,28 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             window.project_view.project_selections, [("project-1", "target.mdb")]
         )
         self.assertEqual(window.project_view.file_selections, ["target.mdb"])
+
+    def test_main_window_preserves_active_bid_after_import_into_project(self):
+        selected_bid_ref = BidRef("target.mdb", "38")
+        window = SimpleNamespace(
+            project_view=FakeProjectView(),
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: selected_bid_ref
+            ),
+            _project_data_service=SimpleNamespace(
+                get_bid=lambda bid_ref: (
+                    object() if bid_ref == selected_bid_ref else None
+                )
+            ),
+        )
+        result = import_args_use_case.ProjectFileImportBatchResult(
+            target_db_path="target.mdb",
+            selected_project_uid="comparison",
+        )
+        MainWindow._select_project_file_import_result(window, result)
+        self.assertEqual(window.project_view.bid_selections, [selected_bid_ref])
+        self.assertEqual(window.project_view.project_selections, [])
+        self.assertEqual(window.project_view.file_selections, [])
 
     def test_import_use_case_reports_missing_enabled_database(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -766,6 +766,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _select_project_file_import_result(
         self, result: ProjectFileImportBatchResult
     ) -> None:
+        selected_bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if selected_bid_ref and self._project_data_service.get_bid(selected_bid_ref):
+            self.project_view.restore_bid_selection(selected_bid_ref)
+            return
         if result.selected_project_uid and result.target_db_path:
             self.project_view.restore_project_selection(
                 result.selected_project_uid, result.target_db_path

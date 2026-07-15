@@ -37,6 +37,7 @@ class _Access:
 class _UiState:
     def __init__(self, bid_ref=None):
         self._bid_ref = bid_ref
+        self.selected_project_uid = None
         self.active_page_uid = None
 
     def get_selected_bid_ref(self):
@@ -85,7 +86,11 @@ def _controller(ui_state, project_data, csv_calls=None):
         "export_as_ost": _Action(),
         "export_as_osp": _Action(),
     }
-    controller._menus = {"export": _Menu(), "html export options": _Menu()}
+    controller._menus = {
+        "import": _Menu(),
+        "export": _Menu(),
+        "html export options": _Menu(),
+    }
     controller._variable_actions = {}
     controller._tool_action_enabled_state = {}
     controller.window = SimpleNamespace(
@@ -104,6 +109,26 @@ def _controller(ui_state, project_data, csv_calls=None):
 
 
 class ExportMenuStateTests(unittest.TestCase):
+    def test_import_menu_remains_enabled_when_switching_across_all_tabs(self):
+        bid_ref = BidRef("db.mdb", "bid-1")
+        controller = _controller(_UiState(bid_ref), _ProjectData(bid_ref))
+        tab_state = {"takeoff": False, "summary": False}
+        controller.window = SimpleNamespace(
+            is_takeoff_tab_active=lambda: tab_state["takeoff"],
+            is_summary_tab_active=lambda: tab_state["summary"],
+            get_takeoff_plan_view=lambda: None,
+        )
+        for takeoff, summary in ((False, False), (True, False), (False, True)):
+            tab_state.update(takeoff=takeoff, summary=summary)
+            controller.update_menu_states()
+            self.assertTrue(controller._menus["import"].isEnabled())
+
+    def test_import_menu_is_disabled_without_import_capability(self):
+        controller = _controller(_UiState(), _ProjectData())
+        controller.ui_access_manager = _Access(allowed=False)
+        controller.update_menu_states()
+        self.assertFalse(controller._menus["import"].isEnabled())
+
     def test_bid_exports_disable_when_loaded_bid_is_not_selected(self):
         old_bid = BidRef("db.mdb", "old-bid")
         csv_calls = []

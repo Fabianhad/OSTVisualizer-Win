@@ -219,6 +219,22 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         source_project = self._find_item("project-1")
         self.assertTrue(source_project.isExpanded())
 
+    def test_rebuild_preserves_orphan_bid_selection_by_file_and_uid(self):
+        selected_state = {
+            "kind": "bid",
+            "file_path": "C:/jobs/test.mdb",
+            "bid_uid": "orphan-1",
+            "project_uid": None,
+        }
+        self.view.set_selected_node_state(selected_state)
+        self.view.build_complete_structure(
+            self._loaded_file([], orphan_bid_uids=["orphan-1"])
+        )
+        self.view.build_complete_structure(
+            self._loaded_file([], orphan_bid_uids=["orphan-1", "imported-bid"])
+        )
+        self.assertEqual(self.view.get_selected_node_state(), selected_state)
+
     def test_blank_bid_status_displays_unassigned(self):
         self.view.build_complete_structure(self._loaded_file(["bid-1"]))
         bid_item = self._find_item("bid-1")

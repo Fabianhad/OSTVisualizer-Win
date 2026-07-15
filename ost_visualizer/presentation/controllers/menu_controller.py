@@ -298,7 +298,6 @@ class MenuController:
         if not self.menu_bar:
             return
         takeoff_active = self.window.is_takeoff_tab_active()
-        summary_active = self._is_summary_tab_active()
         self._sync_variable_actions(takeoff_active)
         unload_enabled = self.ui_access_manager.is_allowed(Feature.UNLOAD_FILE)
         unload_action = self._actions.get("unload_file")
@@ -318,7 +317,7 @@ class MenuController:
             )
         import_menu = self._menus.get("import")
         if import_menu:
-            import_menu.setEnabled(not summary_active and self._should_enable_import())
+            import_menu.setEnabled(self._should_enable_import())
         export_action_states = self._export_action_enabled_states()
         export_menu = self._menus.get("export")
         if export_menu:
@@ -713,8 +712,6 @@ class MenuController:
         return selected_bid_ref
 
     def _should_enable_import(self) -> bool:
-        if self._is_summary_tab_active():
-            return False
         if self.ui_state_manager.selected_project_uid == "1":
             return False
         return self.ui_access_manager.is_allowed(Feature.IMPORT)
