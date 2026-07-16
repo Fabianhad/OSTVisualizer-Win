@@ -350,7 +350,7 @@ class McpBidComparisonGroupDto:
         default_factory=McpBidComparisonQuantityDto
     )
     takeoffs: Dict[str, int] = field(default_factory=lambda: {"old": 0, "new": 0})
-    compact_page_changes: List[str] = field(default_factory=list)
+    affected_pages: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -364,8 +364,7 @@ class McpBidComparisonDetailDto:
     quantity_changed: bool = False
     takeoff_count_changed: bool = False
     visible_takeoff_count_changed: bool = False
-    page_distribution_changed: bool = False
-    compact_page_changes: List[str] = field(default_factory=list)
+    affected_pages: List[str] = field(default_factory=list)
 
 
 @dataclass

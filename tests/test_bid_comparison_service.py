@@ -151,13 +151,15 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertTrue(details[2].quantity_changed)
         self.assertFalse(details[2].metadata_changed)
         self.assertFalse(details[2].takeoff_count_changed)
-        self.assertFalse(details[2].page_distribution_changed)
+        self.assertEqual(details[2].affected_pages, ["A.pdf"])
         self.assertTrue(details[3].metadata_changed)
         self.assertFalse(details[3].quantity_changed)
-        self.assertTrue(details[4].page_distribution_changed)
+        self.assertEqual(details[4].affected_pages, ["A.pdf", "B.pdf"])
         self.assertFalse(details[4].quantity_changed)
         self.assertEqual(details[5].classification, "added")
+        self.assertEqual(details[5].affected_pages, ["C.pdf"])
         self.assertEqual(details[6].classification, "removed")
+        self.assertEqual(details[6].affected_pages, ["C.pdf"])
 
     def test_aggregates_only_by_type_with_quantities_counts_and_page_names(self):
         result = self._comparison()
@@ -176,10 +178,7 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertAlmostEqual(group.qty3.old, 5.0 / 27.0)
         self.assertAlmostEqual(group.qty3.new, 5.0 / 27.0)
         self.assertEqual(group.takeoffs, {"old": 5, "new": 4})
-        self.assertEqual(group.compact_page_changes, ["A.pdf", "B.pdf", "C.pdf"])
-        self.assertFalse(
-            any(name.startswith(("+", "-")) for name in group.compact_page_changes)
-        )
+        self.assertEqual(group.affected_pages, ["A.pdf", "B.pdf", "C.pdf"])
         self.assertEqual(result.data.details, [])
         self.assertFalse(result.meta.details_included)
 
@@ -247,7 +246,7 @@ class BidComparisonServiceTests(unittest.TestCase):
         )
         self.assertEqual(len(result.data.warnings), 2)
 
-    def test_visibility_change_is_reported_without_changing_page_distribution(self):
+    def test_visibility_change_reports_the_condition_page(self):
         old_condition = _condition("old", 1)
         new_condition = _condition("new", 1)
         new_condition.layer_visible = False
@@ -267,7 +266,7 @@ class BidComparisonServiceTests(unittest.TestCase):
         self.assertTrue(detail.visible_takeoff_count_changed)
         self.assertTrue(detail.metadata_changed)
         self.assertTrue(detail.quantity_changed)
-        self.assertFalse(detail.page_distribution_changed)
+        self.assertEqual(detail.affected_pages, ["A.pdf"])
 
     def test_mixed_uom_warning_uses_target_label(self):
         old_condition = _condition("old", 1)

@@ -44,12 +44,11 @@ class _ComparisonRecord:
     group_name: str
     old: Optional[_ConditionSnapshot]
     new: Optional[_ConditionSnapshot]
-    page_changes: Tuple[str, ...] = ()
+    affected_pages: Tuple[str, ...] = ()
     metadata_changed: bool = False
     quantity_changed: bool = False
     takeoff_count_changed: bool = False
     visible_takeoff_count_changed: bool = False
-    page_distribution_changed: bool = False
 
 
 @dataclass
@@ -61,11 +60,11 @@ class _GroupAccumulator:
     new_takeoff_count: int = 0
     old_labels: List[Set[str]] = field(default_factory=lambda: [set(), set(), set()])
     new_labels: List[Set[str]] = field(default_factory=lambda: [set(), set(), set()])
-    page_changes: Set[str] = field(default_factory=set)
+    affected_pages: Set[str] = field(default_factory=set)
 
     def add(self, record: _ComparisonRecord) -> None:
         self.counts[record.classification] += 1
-        self.page_changes.update(record.page_changes)
+        self.affected_pages.update(record.affected_pages)
         if record.old is not None:
             self.old_takeoff_count += record.old.takeoff_count
             self._add_snapshot(record.old, self.old_quantities, self.old_labels)
@@ -316,7 +315,7 @@ class BidComparisonService:
                         group_name=new.cdn_type_name,
                         old=None,
                         new=new,
-                        page_changes=tuple(sorted(new.page_counts)),
+                        affected_pages=tuple(sorted(new.page_counts)),
                     )
                 )
                 continue
@@ -328,7 +327,7 @@ class BidComparisonService:
                         group_name=old.cdn_type_name,
                         old=old,
                         new=None,
-                        page_changes=tuple(sorted(old.page_counts)),
+                        affected_pages=tuple(sorted(old.page_counts)),
                     )
                 )
                 continue
@@ -346,17 +345,14 @@ class BidComparisonService:
             visible_count_changed = (
                 old.visible_takeoff_count != new.visible_takeoff_count
             )
-            page_changes = BidComparisonService._changed_page_names(
-                old.page_counts, new.page_counts
-            )
-            page_distribution_changed = bool(page_changes)
+            page_placement_changed = old.page_counts != new.page_counts
             changed = any(
                 (
                     metadata_changed,
                     quantity_changed,
                     takeoff_count_changed,
                     visible_count_changed,
-                    page_distribution_changed,
+                    page_placement_changed,
                 )
             )
             records.append(
@@ -366,27 +362,16 @@ class BidComparisonService:
                     group_name=new.cdn_type_name,
                     old=old,
                     new=new,
-                    page_changes=page_changes,
+                    affected_pages=tuple(
+                        sorted(set(old.page_counts) | set(new.page_counts))
+                    ),
                     metadata_changed=metadata_changed,
                     quantity_changed=quantity_changed,
                     takeoff_count_changed=takeoff_count_changed,
                     visible_takeoff_count_changed=visible_count_changed,
-                    page_distribution_changed=page_distribution_changed,
                 )
             )
         return records
-
-    @staticmethod
-    def _changed_page_names(
-        old_counts: Dict[str, int], new_counts: Dict[str, int]
-    ) -> Tuple[str, ...]:
-        return tuple(
-            sorted(
-                page_name
-                for page_name in set(old_counts) | set(new_counts)
-                if old_counts.get(page_name, 0) != new_counts.get(page_name, 0)
-            )
-        )
 
     def _aggregate_groups(
         self, records: List[_ComparisonRecord], page_limit: int
@@ -403,11 +388,11 @@ class BidComparisonService:
                 for index in range(3)
             ]
             counts = accumulator.counts
-            page_changes = sorted(accumulator.page_changes)
-            if len(page_changes) > page_limit:
+            affected_pages = sorted(accumulator.affected_pages)
+            if len(affected_pages) > page_limit:
                 warnings.append(
-                    f"{group_name} compact page changes truncated to "
-                    f"{page_limit} of {len(page_changes)} pages."
+                    f"{group_name} affected pages truncated to "
+                    f"{page_limit} of {len(affected_pages)} pages."
                 )
             groups.append(
                 McpBidComparisonGroupDto(
@@ -425,7 +410,7 @@ class BidComparisonService:
                         "old": accumulator.old_takeoff_count,
                         "new": accumulator.new_takeoff_count,
                     },
-                    compact_page_changes=page_changes[:page_limit],
+                    affected_pages=affected_pages[:page_limit],
                 )
             )
         return groups, warnings
@@ -474,8 +459,7 @@ class BidComparisonService:
             quantity_changed=record.quantity_changed,
             takeoff_count_changed=record.takeoff_count_changed,
             visible_takeoff_count_changed=record.visible_takeoff_count_changed,
-            page_distribution_changed=record.page_distribution_changed,
-            compact_page_changes=list(record.page_changes[:page_limit]),
+            affected_pages=list(record.affected_pages[:page_limit]),
         )
 
     @staticmethod

@@ -103,7 +103,7 @@ condition, takeoff, quantity, and structured Summary context. Summary reads use
 the same grouping concepts as the desktop Summary tab: Area, Type, and Page.
 The `compare_bids_by_ref_no` tool directly compares an old/source bid with a
 new/target bid by condition reference number and returns bounded aggregates by
-condition type; per-condition detail is opt-in.
+condition type with `affected_pages`; per-condition detail is opt-in.
 It also includes bounded PDF text/vector summaries, page-scoped PDF text search,
 page markup summaries, overlay summaries, selected-page and selected-takeoff
 summaries, and lightweight scope-gap review tools. Broad result sets use
