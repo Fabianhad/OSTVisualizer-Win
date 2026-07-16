@@ -21,6 +21,8 @@ Run PowerShell scripts from the repository root.
 .\scripts\setup-cpp.ps1
 .\scripts\run.ps1
 .\scripts\build.ps1
+.\scripts\build-visualizer.ps1
+.\scripts\build-mcp.ps1
 .\build-msi.ps1
 ```
 

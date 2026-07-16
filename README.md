@@ -213,8 +213,13 @@ For release builds:
 New-Item -ItemType Directory -Force .secrets
 # Copy your license_public_key.pem into .secrets\license_public_key.pem first.
 .\scripts\build.ps1           # Nuitka standalone builds -> dist_visualizer/ and dist_mcp/
+.\scripts\build-visualizer.ps1 # Desktop app only -> dist_visualizer/
+.\scripts\build-mcp.ps1        # MCP helper only -> dist_mcp/
 .\build-msi.ps1               # Package into MSI installer
 ```
+
+The combined build copies the MCP helper into the desktop distribution for MSI
+packaging. The component build scripts leave their outputs independent.
 
 For development or manual repair, per-user associations can be managed without
 administrator rights:

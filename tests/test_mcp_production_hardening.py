@@ -37,6 +37,26 @@ class McpProductionHardeningTests(unittest.TestCase):
             "Copy-Item (Join-Path $McpBuildDir '*') -Destination $DesktopBuildDir", text
         )
 
+    def test_component_build_scripts_keep_outputs_independent(self):
+        visualizer_text = (self.root / "scripts" / "build-visualizer.ps1").read_text(
+            encoding="utf-8"
+        )
+        mcp_text = (self.root / "scripts" / "build-mcp.ps1").read_text(encoding="utf-8")
+        self.assertIn(
+            "$MainScript = Join-Path $ProjectRoot 'Visualizer.py'", visualizer_text
+        )
+        self.assertIn(
+            "$OutDir = Join-Path $ProjectRoot 'dist_visualizer'", visualizer_text
+        )
+        self.assertNotIn("McpServer.py", visualizer_text)
+        self.assertNotIn("dist_mcp", visualizer_text)
+        self.assertIn("$McpScript = Join-Path $ProjectRoot 'McpServer.py'", mcp_text)
+        self.assertIn("$McpOutDir = Join-Path $ProjectRoot 'dist_mcp'", mcp_text)
+        self.assertIn("'--output-filename=ostv-mcp.exe'", mcp_text)
+        self.assertNotIn("Visualizer.py", mcp_text)
+        self.assertNotIn("dist_visualizer", mcp_text)
+        self.assertNotIn("Copy-Item", mcp_text)
+
     def test_obsolete_mcp_dependency_files_are_removed(self):
         requirements_name = "-".join(("requirements", "mcp")) + ".txt"
         setup_name = "-".join(("setup", "mcp")) + ".ps1"
@@ -47,6 +67,7 @@ class McpProductionHardeningTests(unittest.TestCase):
         paths = [
             self.root / "McpServer.py",
             self.root / "scripts" / "build.ps1",
+            self.root / "scripts" / "build-mcp.ps1",
         ]
         paths.extend((self.root / "ost_visualizer" / "mcp_server").glob("*.py"))
         forbidden = (
