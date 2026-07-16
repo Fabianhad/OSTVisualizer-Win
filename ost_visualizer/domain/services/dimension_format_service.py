@@ -11,15 +11,15 @@ _EIGHTHS_FRACTIONS = {
     6: "3/4",
     7: "7/8",
 }
-_MM_PER_INCH = 25.4
+MM_PER_INCH = 25.4
 
 
 def mm_to_inches(mm: float) -> float:
-    return mm / _MM_PER_INCH
+    return mm / MM_PER_INCH
 
 
 def inches_to_mm(inches: float) -> float:
-    return inches * _MM_PER_INCH
+    return inches * MM_PER_INCH
 
 
 def inches_to_display(inches: float, metric: bool = False) -> str:

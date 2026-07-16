@@ -3,7 +3,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Optional
 from PySide6 import QtWidgets
-from ....application.dtos.annotation_caption_dto import ANNOTATION_CAPTION_SPECS
 from ....domain.entities.annotation_caption import ANNOTATION_CAPTION_ORDER
 from ....domain.entities.config import Config
 from ...config import (

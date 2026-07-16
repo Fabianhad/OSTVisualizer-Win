@@ -1,6 +1,7 @@
 import math
 from typing import List, Optional, Tuple
 from ..entities.condition import Condition
+from .dimension_format_service import MM_PER_INCH
 
 UOM_EACH = 0
 UOM_INCHES = 1
@@ -187,9 +188,8 @@ def get_quantity_options_for_type(
     return COUNT_QUANTITY_OPTIONS
 
 
-_MM_PER_INCH = 25.4
-_MM2_PER_SQIN = _MM_PER_INCH * _MM_PER_INCH
-_MM3_PER_CUIN = _MM2_PER_SQIN * _MM_PER_INCH
+_MM2_PER_SQIN = MM_PER_INCH * MM_PER_INCH
+_MM3_PER_CUIN = _MM2_PER_SQIN * MM_PER_INCH
 _UOM_DIVISORS = {
     UOM_EACH: 1.0,
     UOM_INCHES: 1.0,
@@ -201,8 +201,8 @@ _UOM_DIVISORS = {
     UOM_SQUARE_ROOFING: 14400.0,
     UOM_CUBIC_FEET: 1728.0,
     UOM_CUBIC_YARDS: 46656.0,
-    UOM_MM: 1.0 / _MM_PER_INCH,
-    UOM_M: 1000.0 / _MM_PER_INCH,
+    UOM_MM: 1.0 / MM_PER_INCH,
+    UOM_M: 1000.0 / MM_PER_INCH,
     UOM_MM2: 1.0 / _MM2_PER_SQIN,
     UOM_M2: 1_000_000.0 / _MM2_PER_SQIN,
     UOM_MM3: 1.0 / _MM3_PER_CUIN,

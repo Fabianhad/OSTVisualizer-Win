@@ -12,6 +12,7 @@ from ost_visualizer.application.services.page_visualization_metadata_service imp
     PageVisualizationMetadataService,
 )
 from ost_visualizer.infrastructure.visualization_provider import (
+    _ExportStrategyAdapter,
     _HtmlExportStrategyAdapter,
 )
 from ost_visualizer.domain.entities.area import BidArea
@@ -377,6 +378,19 @@ class _ProjectData:
 
 
 class ThreejsExportLayerTests(unittest.TestCase):
+    def test_export_strategy_filename_policy_handles_long_single_page_names(self):
+        page_name = "P" * 300
+        html_strategy = _HtmlExportStrategyAdapter(SimpleNamespace())
+        mesh_strategy = _ExportStrategyAdapter("OBJ", "obj", object, None, None, None)
+        self.assertEqual(
+            html_strategy.prepare_filename("Bid", [page_name]),
+            f"{page_name}.html",
+        )
+        self.assertEqual(
+            mesh_strategy.prepare_filename("Bid", [page_name]),
+            f"{page_name}.obj",
+        )
+
     def test_html_strategy_passes_saved_callout_option_to_renderer(self):
         calls = []
         renderer = SimpleNamespace(

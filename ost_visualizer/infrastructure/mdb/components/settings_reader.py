@@ -13,13 +13,14 @@ from ..schema_compatibility import MdbSchemaInspector
 from .constants import LAYER_REFERENCE_TABLES
 
 
+def _clean_optional_text(value):
+    return "" if value in (None, "NULL") else value
+
+
 class SettingsReaderMixin:
     def get_cover_sheet_data(
         self, file_path: str, bid_uid: str
     ) -> Optional[CoverSheetData]:
-        def _clean(val: str) -> str:
-            return "" if val in (None, "NULL") else val
-
         with self._connection(file_path) as connection:
             bid_row = self._select_all_single(connection, "Bids", "UID", bid_uid)
             if not bid_row:
@@ -28,8 +29,8 @@ class SettingsReaderMixin:
             job_statuses = sorted(
                 [
                     JobStatus(
-                        uid=_clean(r.get("UID", "")),
-                        name=_clean(r.get("Name", "")),
+                        uid=_clean_optional_text(r.get("UID", "")),
+                        name=_clean_optional_text(r.get("Name", "")),
                         locked=r.get("Locked", "0") not in ("0", "False", ""),
                         sequence=int(r.get("Sequence") or 0),
                     )
@@ -40,25 +41,28 @@ class SettingsReaderMixin:
             emp_rows = self._select_all_unfiltered(connection, "Employees")
             employees = [
                 Employee(
-                    uid=_clean(r.get("UID", "")),
-                    employee_no=_clean(r.get("EmployeeNo", "")),
-                    first_name=_clean(r.get("FirstName", "")),
-                    last_name=_clean(r.get("LastName", "")),
-                    address1=_clean(r.get("Address1", "")),
-                    address2=_clean(r.get("Address2", "")),
-                    city=_clean(r.get("City", "")),
-                    state=_clean(r.get("State", "")),
-                    zip=_clean(r.get("Zip", "")),
-                    home_phone=_clean(r.get("HomePhone", "")),
-                    mobile_phone=_clean(r.get("MobilePhone", "")),
-                    email=_clean(r.get("EMail", "")),
-                    pay_class_uid=_clean(r.get("PayClassUID", "")),
+                    uid=_clean_optional_text(r.get("UID", "")),
+                    employee_no=_clean_optional_text(r.get("EmployeeNo", "")),
+                    first_name=_clean_optional_text(r.get("FirstName", "")),
+                    last_name=_clean_optional_text(r.get("LastName", "")),
+                    address1=_clean_optional_text(r.get("Address1", "")),
+                    address2=_clean_optional_text(r.get("Address2", "")),
+                    city=_clean_optional_text(r.get("City", "")),
+                    state=_clean_optional_text(r.get("State", "")),
+                    zip=_clean_optional_text(r.get("Zip", "")),
+                    home_phone=_clean_optional_text(r.get("HomePhone", "")),
+                    mobile_phone=_clean_optional_text(r.get("MobilePhone", "")),
+                    email=_clean_optional_text(r.get("EMail", "")),
+                    pay_class_uid=_clean_optional_text(r.get("PayClassUID", "")),
                 )
                 for r in emp_rows
             ]
             pc_rows = self._select_all_unfiltered(connection, "PayClasses")
             pay_classes = [
-                PayClass(uid=_clean(r.get("UID", "")), name=_clean(r.get("Name", "")))
+                PayClass(
+                    uid=_clean_optional_text(r.get("UID", "")),
+                    name=_clean_optional_text(r.get("Name", "")),
+                )
                 for r in pc_rows
             ]
             used_job_status_uids: set = set()
@@ -92,13 +96,13 @@ class SettingsReaderMixin:
 
             return CoverSheetData(
                 bid_uid=bid_uid,
-                job_status_uid=_clean(bid_row.get("JobStatusUID", "")),
-                job_name=_clean(bid_row.get("JobName", "")),
-                estimator_uid=_clean(bid_row.get("EstimatorUID", "")),
-                notes=_clean(bid_row.get("Notes", "")),
-                bid_date=_clean(bid_row.get("BidDate", "")),
-                bid_no=_clean(bid_row.get("BidNo", "")),
-                job_id=_clean(bid_row.get("JobID", "")),
+                job_status_uid=_clean_optional_text(bid_row.get("JobStatusUID", "")),
+                job_name=_clean_optional_text(bid_row.get("JobName", "")),
+                estimator_uid=_clean_optional_text(bid_row.get("EstimatorUID", "")),
+                notes=_clean_optional_text(bid_row.get("Notes", "")),
+                bid_date=_clean_optional_text(bid_row.get("BidDate", "")),
+                bid_no=_clean_optional_text(bid_row.get("BidNo", "")),
+                job_id=_clean_optional_text(bid_row.get("JobID", "")),
                 measure_base=_safe_int(bid_row.get("MeasureBase"), 0),
                 takeoff_increments=_safe_float(bid_row.get("TakeoffIncrements"), 1.0),
                 scale_style=_safe_int(bid_row.get("ScaleStyle"), 1),
@@ -256,17 +260,14 @@ class SettingsReaderMixin:
         return defaults
 
     def get_job_statuses(self, file_path: str) -> List[JobStatus]:
-        def _clean(val):
-            return "" if val in (None, "NULL") else val
-
         try:
             with self._connection(file_path) as conn:
                 rows = self._select_all_unfiltered(conn, "JobStatuses")
             return sorted(
                 [
                     JobStatus(
-                        uid=_clean(r.get("UID", "")),
-                        name=_clean(r.get("Name", "")),
+                        uid=_clean_optional_text(r.get("UID", "")),
+                        name=_clean_optional_text(r.get("Name", "")),
                         locked=r.get("Locked", "0") not in ("0", "False", ""),
                         sequence=int(r.get("Sequence") or 0),
                     )
@@ -281,33 +282,33 @@ class SettingsReaderMixin:
     def get_employees_and_pay_classes(
         self, file_path: str
     ) -> Tuple[List[Employee], List[PayClass]]:
-        def _clean(val):
-            return "" if val in (None, "NULL") else val
-
         try:
             with self._connection(file_path) as conn:
                 emp_rows = self._select_all_unfiltered(conn, "Employees")
                 pc_rows = self._select_all_unfiltered(conn, "PayClasses")
             employees = [
                 Employee(
-                    uid=_clean(r.get("UID", "")),
-                    employee_no=_clean(r.get("EmployeeNo", "")),
-                    first_name=_clean(r.get("FirstName", "")),
-                    last_name=_clean(r.get("LastName", "")),
-                    address1=_clean(r.get("Address1", "")),
-                    address2=_clean(r.get("Address2", "")),
-                    city=_clean(r.get("City", "")),
-                    state=_clean(r.get("State", "")),
-                    zip=_clean(r.get("Zip", "")),
-                    home_phone=_clean(r.get("HomePhone", "")),
-                    mobile_phone=_clean(r.get("MobilePhone", "")),
-                    email=_clean(r.get("EMail", "")),
-                    pay_class_uid=_clean(r.get("PayClassUID", "")),
+                    uid=_clean_optional_text(r.get("UID", "")),
+                    employee_no=_clean_optional_text(r.get("EmployeeNo", "")),
+                    first_name=_clean_optional_text(r.get("FirstName", "")),
+                    last_name=_clean_optional_text(r.get("LastName", "")),
+                    address1=_clean_optional_text(r.get("Address1", "")),
+                    address2=_clean_optional_text(r.get("Address2", "")),
+                    city=_clean_optional_text(r.get("City", "")),
+                    state=_clean_optional_text(r.get("State", "")),
+                    zip=_clean_optional_text(r.get("Zip", "")),
+                    home_phone=_clean_optional_text(r.get("HomePhone", "")),
+                    mobile_phone=_clean_optional_text(r.get("MobilePhone", "")),
+                    email=_clean_optional_text(r.get("EMail", "")),
+                    pay_class_uid=_clean_optional_text(r.get("PayClassUID", "")),
                 )
                 for r in emp_rows
             ]
             pay_classes = [
-                PayClass(uid=_clean(r.get("UID", "")), name=_clean(r.get("Name", "")))
+                PayClass(
+                    uid=_clean_optional_text(r.get("UID", "")),
+                    name=_clean_optional_text(r.get("Name", "")),
+                )
                 for r in pc_rows
             ]
             return employees, pay_classes

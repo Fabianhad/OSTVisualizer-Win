@@ -31,6 +31,44 @@ from ..presentation.visualization.services.color_service import ColorService
 from ..presentation.visualization.utils.mesh import meshes_to_geometries
 from .utils.filename import sanitize_filename
 
+_MAX_EXPORT_FILENAME_LENGTH = 255
+
+
+def _export_dialog_title(format_name: str, page_count: int) -> str:
+    if page_count == 1:
+        return f"Export page as {format_name}"
+    return f"Export {page_count} pages as {format_name}"
+
+
+def _prepare_export_filename(
+    format_extension: str,
+    bid_name: str,
+    page_names: List[str],
+) -> str:
+    clean_names = [sanitize_filename(name) for name in page_names]
+    if len(clean_names) == 1:
+        filename = f"{bid_name} - {clean_names[0]}.{format_extension}"
+    elif len(clean_names) == 2:
+        filename = (
+            f"{bid_name} - {clean_names[0]} + {clean_names[1]}.{format_extension}"
+        )
+    else:
+        remaining = len(clean_names) - 2
+        filename = (
+            f"{bid_name} - {clean_names[0]} + {clean_names[1]} + "
+            f"{remaining} more.{format_extension}"
+        )
+    if len(filename) <= _MAX_EXPORT_FILENAME_LENGTH:
+        return filename
+    overflow = len(filename) - _MAX_EXPORT_FILENAME_LENGTH
+    max_project_length = len(bid_name) - overflow - 3
+    if max_project_length > 10:
+        truncated_project = bid_name[:max_project_length] + "..."
+        return filename.replace(bid_name, truncated_project, 1)
+    if len(clean_names) == 1:
+        return f"{clean_names[0]}.{format_extension}"
+    return f"Export_{len(clean_names)}_pages.{format_extension}"
+
 
 class _MeshGeneratorAdapter(IMeshGenerator):
     def __init__(
@@ -127,8 +165,6 @@ class _HtmlRendererAdapter(IHtmlRenderer):
 
 
 class _ExportStrategyAdapter(IExportStrategy):
-    MAX_FILENAME_LENGTH = 255
-
     def __init__(
         self,
         name: str,
@@ -154,37 +190,10 @@ class _ExportStrategyAdapter(IExportStrategy):
         return self._extension
 
     def get_dialog_title(self, page_count: int) -> str:
-        if page_count == 1:
-            return f"Export page as {self._name}"
-        return f"Export {page_count} pages as {self._name}"
+        return _export_dialog_title(self._name, page_count)
 
     def prepare_filename(self, bid_name: str, page_names: List[str]) -> str:
-        if len(page_names) == 1:
-            clean_name = self._clean_filename(page_names[0])
-            filename = f"{bid_name} - {clean_name}.{self._extension}"
-        elif len(page_names) == 2:
-            clean_names = [self._clean_filename(name) for name in page_names]
-            filename = (
-                f"{bid_name} - {clean_names[0]} + {clean_names[1]}.{self._extension}"
-            )
-        else:
-            clean_names = [self._clean_filename(name) for name in page_names]
-            first_page = clean_names[0]
-            second_page = clean_names[1]
-            remaining = len(clean_names) - 2
-            filename = f"{bid_name} - {first_page} + {second_page} + {remaining} more.{self._extension}"
-        if len(filename) > self.MAX_FILENAME_LENGTH:
-            overflow = len(filename) - self.MAX_FILENAME_LENGTH
-            max_project_length = len(bid_name) - overflow - 3
-            if max_project_length > 10:
-                truncated_project = bid_name[:max_project_length] + "..."
-                filename = filename.replace(bid_name, truncated_project, 1)
-            else:
-                if len(page_names) == 1:
-                    filename = f"{clean_names[0]}.{self._extension}"
-                else:
-                    filename = f"Export_{len(page_names)}_pages.{self._extension}"
-        return filename
+        return _prepare_export_filename(self._extension, bid_name, page_names)
 
     def prepare_title(self, bid_name: str, page_names: List[str]) -> Optional[str]:
         return None
@@ -218,14 +227,8 @@ class _ExportStrategyAdapter(IExportStrategy):
         finally:
             del exporter
 
-    @staticmethod
-    def _clean_filename(filename: str) -> str:
-        return sanitize_filename(filename)
-
 
 class _HtmlExportStrategyAdapter(IExportStrategy):
-    MAX_FILENAME_LENGTH = 255
-
     def __init__(self, html_renderer: IHtmlRenderer):
         self._name = "HTML"
         self._extension = "html"
@@ -240,37 +243,10 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
         return self._extension
 
     def get_dialog_title(self, page_count: int) -> str:
-        if page_count == 1:
-            return f"Export page as {self._name}"
-        return f"Export {page_count} pages as {self._name}"
+        return _export_dialog_title(self._name, page_count)
 
     def prepare_filename(self, bid_name: str, page_names: List[str]) -> str:
-        if len(page_names) == 1:
-            clean_name = sanitize_filename(page_names[0])
-            filename = f"{bid_name} - {clean_name}.{self._extension}"
-        elif len(page_names) == 2:
-            clean_names = [sanitize_filename(name) for name in page_names]
-            filename = (
-                f"{bid_name} - {clean_names[0]} + {clean_names[1]}.{self._extension}"
-            )
-        else:
-            clean_names = [sanitize_filename(name) for name in page_names]
-            first_page = clean_names[0]
-            second_page = clean_names[1]
-            remaining = len(clean_names) - 2
-            filename = f"{bid_name} - {first_page} + {second_page} + {remaining} more.{self._extension}"
-        if len(filename) > self.MAX_FILENAME_LENGTH:
-            overflow = len(filename) - self.MAX_FILENAME_LENGTH
-            max_project_length = len(bid_name) - overflow - 3
-            if max_project_length > 10:
-                truncated_project = bid_name[:max_project_length] + "..."
-                filename = filename.replace(bid_name, truncated_project, 1)
-            else:
-                if len(page_names) == 1:
-                    filename = f"{clean_names[0]}.{self._extension}"
-                else:
-                    filename = f"Export_{len(page_names)}_pages.{self._extension}"
-        return filename
+        return _prepare_export_filename(self._extension, bid_name, page_names)
 
     def get_export_options(self, config: Config, page_area_selections=None):
         export_options = {

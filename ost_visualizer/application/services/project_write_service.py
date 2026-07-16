@@ -1,5 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
+from ...domain.entities.file_state import normalize_path
+from ...domain.services.takeoff_domain_service import (
+    takeoffs_can_reassign_to_condition,
+)
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.update_condition_dto import UpdateConditionDto, UpdateConditionResultDto
@@ -202,6 +206,8 @@ class ProjectWriteService(BaseWriteService):
     ) -> None:
         if bid_write_guard is None:
             raise ValueError("ProjectWriteService requires bid_write_guard")
+        if project_data_service is None:
+            raise ValueError("ProjectWriteService requires project_data_service")
         super().__init__(reload_database, event_bus, logger)
         self._bid_write_guard = bid_write_guard
         self._connection_manager = connection_manager
@@ -661,13 +667,57 @@ class ProjectWriteService(BaseWriteService):
         condition_uid: str,
         publish_database_refreshed_after_write: bool = True,
     ) -> bool:
-        return self._save_takeoffs_assignment(
-            self._save_takeoffs_condition,
-            db_path,
-            takeoff_uids,
-            condition_uid,
-            publish_database_refreshed_after_write,
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
+            return False
+        if takeoff_uids and not self._can_reassign_takeoffs_condition(
+            db_path, takeoff_uids, condition_uid
+        ):
+            return False
+        success = self._save_takeoffs_condition.execute(
+            db_path, takeoff_uids, condition_uid
         )
+        return self._reload_after_success(
+            db_path, success, publish_database_refreshed_after_write
+        )
+
+    def _can_reassign_takeoffs_condition(
+        self,
+        db_path: str,
+        takeoff_uids: List[str],
+        condition_uid: str,
+    ) -> bool:
+        bid_ref = self._project_data.get_current_bid_ref()
+        if bid_ref is None or normalize_path(db_path) != normalize_path(
+            bid_ref.file_path
+        ):
+            self.logger.warning(
+                "Cannot reassign takeoffs outside the active bid: %s", db_path
+            )
+            return False
+        takeoffs_by_uid = {
+            str(takeoff.uid): takeoff
+            for takeoff in self._project_data.get_all_takeoffs()
+        }
+        selected_takeoffs = []
+        for uid in takeoff_uids:
+            takeoff = takeoffs_by_uid.get(str(uid))
+            if takeoff is None:
+                self.logger.warning(
+                    "Cannot reassign unknown takeoff %s in %s", uid, db_path
+                )
+                return False
+            selected_takeoffs.append(takeoff)
+        if not takeoffs_can_reassign_to_condition(
+            selected_takeoffs,
+            self._project_data.get_bid_conditions(),
+            str(condition_uid),
+        ):
+            self.logger.warning(
+                "Rejected incompatible takeoff condition reassignment to %s",
+                condition_uid,
+            )
+            return False
+        return True
 
     def _save_takeoffs_assignment(
         self,

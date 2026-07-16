@@ -45,6 +45,45 @@ def _takeoff(
 
 
 class AreaAssignmentStateTests(unittest.TestCase):
+    def test_direct_condition_update_rejects_incompatible_selection_atomically(self):
+        conditions = {
+            "linear": _condition("linear", Condition.TYPE_LINEAR),
+            "area": _condition("area", Condition.TYPE_AREA),
+        }
+        linear = _takeoff(
+            "linear-takeoff",
+            condition_uid="linear",
+            position=[0.0, 0.0, 10.0, 0.0],
+        )
+        area = _takeoff(
+            "area-takeoff",
+            condition_uid="area",
+            position=[0.0, 0.0, 10.0, 0.0, 10.0, 10.0],
+        )
+        service = ProjectDataService(_AreaUsageModel([linear, area], conditions))
+        page_uids = service.update_takeoffs_condition(
+            ["linear-takeoff", "area-takeoff"], "linear"
+        )
+        self.assertEqual(page_uids, [])
+        self.assertEqual(linear.condition_uid, "linear")
+        self.assertEqual(area.condition_uid, "area")
+        self.assertEqual(
+            service.update_takeoffs_condition(["linear-takeoff", "missing"], "linear"),
+            [],
+        )
+        self.assertEqual(linear.condition_uid, "linear")
+
+    def test_direct_condition_update_allows_compatible_selection(self):
+        conditions = {
+            "linear-a": _condition("linear-a", Condition.TYPE_LINEAR),
+            "linear-b": _condition("linear-b", Condition.TYPE_LINEAR),
+        }
+        takeoff = _takeoff("takeoff", condition_uid="linear-a")
+        service = ProjectDataService(_AreaUsageModel([takeoff], conditions))
+        page_uids = service.update_takeoffs_condition(["takeoff"], "linear-b")
+        self.assertEqual(page_uids, ["page-1"])
+        self.assertEqual(takeoff.condition_uid, "linear-b")
+
     def test_visible_renderable_unassigned_takeoff_bolds_unassigned_area(self):
         conditions = {
             "condition-count": _condition("condition-count", Condition.TYPE_COUNT)

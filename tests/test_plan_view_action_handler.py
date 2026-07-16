@@ -2400,20 +2400,28 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             position=list(position),
         )
         write = FakeWriteService()
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        plan_view = FakePlanView(data)
+        plan_view.selected = {"area"}
         handler = PlanViewActionHandler(
-            plan_view=FakePlanView(data),
+            plan_view=plan_view,
             ui_state_manager=FakeUiState(),
             project_data_svc=data,
             project_write_svc=write,
             annotation_write_svc=None,
             page_settings_bar=FakePageSettingsBar(),
-            undo_svc=FakeUndoService(),
-            event_bus=FakeEventBus(),
+            undo_svc=undo,
+            event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_reassign_condition(["area"], "linear")
         self.assertEqual(write.condition_calls, [])
         self.assertEqual(data.takeoffs["area"].position, position)
+        self.assertEqual(data.takeoffs["area"].condition_uid, "c1")
+        self.assertEqual(plan_view.selected, {"area"})
+        self.assertEqual(undo.count, 0)
+        self.assertEqual(event_bus.events, [])
 
     def test_reassign_condition_rejects_mixed_geometry_selection(self):
         data = FakeProjectData()
@@ -2435,6 +2443,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             position=[5.0, 5.0],
         )
         write = FakeWriteService()
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
         handler = PlanViewActionHandler(
             plan_view=FakePlanView(data),
             ui_state_manager=FakeUiState(),
@@ -2442,12 +2452,16 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             project_write_svc=write,
             annotation_write_svc=None,
             page_settings_bar=FakePageSettingsBar(),
-            undo_svc=FakeUndoService(),
-            event_bus=FakeEventBus(),
+            undo_svc=undo,
+            event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
         )
         handler.on_reassign_condition(["area", "count"], "42")
         self.assertEqual(write.condition_calls, [])
+        self.assertEqual(data.takeoffs["area"].condition_uid, "c1")
+        self.assertEqual(data.takeoffs["count"].condition_uid, "count")
+        self.assertEqual(undo.count, 0)
+        self.assertEqual(event_bus.events, [])
 
     def test_set_curved_batches_targeted_update_after_all_curve_writes(self):
         data = FakeProjectData()

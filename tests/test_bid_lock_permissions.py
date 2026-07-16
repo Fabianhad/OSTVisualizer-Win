@@ -13,6 +13,7 @@ from ost_visualizer.application.services.project_write_service import (
     WriteReloadResult,
 )
 from ost_visualizer.domain.entities.area import BidArea, BidAreaChangeset
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyData,
@@ -20,6 +21,7 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyProjectInfo,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
@@ -74,12 +76,20 @@ class _ProjectData:
         self.bid_ref = BidRef(file_path="C:/jobs/test.mdb", bid_uid="7")
         self.project_uid = "project-1"
         self.annotation_layer_visible = True
+        self.conditions = {}
+        self.takeoffs = []
 
     def is_current_bid_locked(self):
         return self.locked
 
     def get_current_bid_ref(self):
         return self.bid_ref
+
+    def get_bid_conditions(self):
+        return dict(self.conditions)
+
+    def get_all_takeoffs(self):
+        return list(self.takeoffs)
 
     def is_annotation_layer_visible(self):
         return self.annotation_layer_visible
@@ -422,7 +432,11 @@ class _DeferredPersistenceRequiringSelectedPageFileCancel(_FakeDeferredPersisten
         )
 
 
-def _write_service(project_data, reload_success=True):
+def _write_service(
+    project_data,
+    reload_success=True,
+    save_takeoffs_condition=None,
+):
     logger = logging.getLogger(__name__ + ".write_service")
     logger.propagate = False
     if not logger.handlers:
@@ -451,7 +465,7 @@ def _write_service(project_data, reload_success=True):
         save_takeoff_rotations=forbidden,
         save_takeoff_text_properties=forbidden,
         save_takeoffs_area=forbidden,
-        save_takeoffs_condition=forbidden,
+        save_takeoffs_condition=save_takeoffs_condition or forbidden,
         set_takeoffs_negative=forbidden,
         set_takeoff_curve=forbidden,
         insert_takeoffs=forbidden,
@@ -485,6 +499,7 @@ def _write_service(project_data, reload_success=True):
         event_bus=_EventBus(),
         logger=logger,
         bid_write_guard=ActiveBidWriteGuard(project_data, logger),
+        project_data_service=project_data,
     )
     return service, update_bid_job_status, delete_bids, duplicate_bid
 
@@ -1080,6 +1095,103 @@ class BidLockPermissionTests(unittest.TestCase):
             )
         )
         self.assertEqual(1, len(update_bid_job_status.calls))
+
+    def test_write_service_rejects_incompatible_condition_reassignment_atomically(self):
+        project_data = _ProjectData()
+        project_data.conditions = {
+            "linear": Condition(uid="linear", condition_type=Condition.TYPE_LINEAR),
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+        }
+        linear_position = [0.0, 0.0, 10.0, 0.0]
+        area_position = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
+        project_data.takeoffs = [
+            Takeoff(
+                uid="linear-takeoff",
+                condition_uid="linear",
+                position=list(linear_position),
+            ),
+            Takeoff(
+                uid="area-takeoff",
+                condition_uid="area",
+                position=list(area_position),
+            ),
+        ]
+        save_condition = _UseCase(True)
+        service, *_ = _write_service(
+            project_data,
+            save_takeoffs_condition=save_condition,
+        )
+        rejected_requests = (
+            (["linear-takeoff"], "area"),
+            (["area-takeoff"], "linear"),
+            (["linear-takeoff", "area-takeoff"], "linear"),
+            (["missing"], "linear"),
+        )
+        with self.assertLogs(service.logger, level="WARNING") as captured:
+            for takeoff_uids, target_uid in rejected_requests:
+                with self.subTest(takeoff_uids=takeoff_uids, target_uid=target_uid):
+                    self.assertFalse(
+                        service.save_takeoffs_condition(
+                            project_data.bid_ref.file_path,
+                            takeoff_uids,
+                            target_uid,
+                            publish_database_refreshed_after_write=False,
+                        )
+                    )
+            self.assertFalse(
+                service.save_takeoffs_condition(
+                    "C:/jobs/other.mdb",
+                    ["linear-takeoff"],
+                    "linear",
+                    publish_database_refreshed_after_write=False,
+                )
+            )
+        messages = "\n".join(captured.output)
+        self.assertIn("Rejected incompatible", messages)
+        self.assertIn("unknown takeoff", messages)
+        self.assertIn("outside the active bid", messages)
+        self.assertEqual(save_condition.calls, [])
+        self.assertEqual(project_data.takeoffs[0].position, linear_position)
+        self.assertEqual(project_data.takeoffs[1].position, area_position)
+        self.assertEqual(project_data.takeoffs[0].condition_uid, "linear")
+        self.assertEqual(project_data.takeoffs[1].condition_uid, "area")
+
+    def test_write_service_allows_compatible_condition_reassignment(self):
+        project_data = _ProjectData()
+        project_data.conditions = {
+            "linear-source": Condition(
+                uid="linear-source", condition_type=Condition.TYPE_LINEAR
+            ),
+            "linear-target": Condition(
+                uid="linear-target", condition_type=Condition.TYPE_LINEAR
+            ),
+        }
+        project_data.takeoffs = [Takeoff(uid="takeoff", condition_uid="linear-source")]
+        save_condition = _UseCase(True)
+        service, *_ = _write_service(
+            project_data,
+            save_takeoffs_condition=save_condition,
+        )
+        result = service.save_takeoffs_condition(
+            project_data.bid_ref.file_path,
+            ["takeoff"],
+            "linear-target",
+            publish_database_refreshed_after_write=False,
+        )
+        self.assertTrue(result)
+        self.assertEqual(
+            save_condition.calls,
+            [
+                (
+                    (
+                        project_data.bid_ref.file_path,
+                        ["takeoff"],
+                        "linear-target",
+                    ),
+                    {},
+                )
+            ],
+        )
 
     def _delete_project_data(
         self, selected_project_uid="project-2", remaining_uids=None

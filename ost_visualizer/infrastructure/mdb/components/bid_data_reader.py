@@ -16,7 +16,7 @@ from ....domain.entities.layer import (
 from ....domain.entities.page_info import BidPageInfo
 from ....domain.entities.takeoff import Takeoff
 from ...parsers.ost_serializer import serialize_row
-from ...parsers.position_parser import extract_z_value_from_name, parse_position
+from ...parsers.position_parser import extract_z_value_from_name
 from ...parsers.utils.parser import decode_value, parse_float, parse_overlay_rect
 from ..schema_compatibility import MdbSchemaInspector
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES

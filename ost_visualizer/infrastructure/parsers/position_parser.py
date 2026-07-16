@@ -1,9 +1,8 @@
 import re
 from functools import lru_cache
-from typing import List, Tuple
+from typing import Tuple
 from ...domain.services.dimension_format_service import inches_to_display
 from ...domain.services.elevation import parse_elevation, reassemble_elevation
-from ...domain.utils.text_cleanup import strip_xml_newline_entities
 
 _IMPERIAL_FEET_INCHES = re.compile(
     r"^-?\s*\d+\s*[\'′]\s*(?:-?\s*)?\s*\d+(?:\s+\d+/\d+)?\s*\"", re.IGNORECASE
@@ -193,23 +192,5 @@ def convert_elevation_in_name(name: str, metric: bool) -> str:
     return reassemble_elevation(parts.base_name, parts.type, new_text)
 
 
-@lru_cache(maxsize=512)
-def parse_position(position_str: str) -> List[float]:
-    if not position_str:
-        return []
-    clean_str = strip_xml_newline_entities(position_str).strip()
-    if not clean_str:
-        return []
-    parts = [p.strip() for p in clean_str.split(";") if p.strip()]
-    position: List[float] = []
-    for p in parts:
-        try:
-            position.append(float(p))
-        except ValueError:
-            return []
-    return position
-
-
 def clear_caches() -> None:
     extract_z_value_from_name.cache_clear()
-    parse_position.cache_clear()

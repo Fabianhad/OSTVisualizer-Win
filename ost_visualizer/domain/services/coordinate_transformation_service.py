@@ -1,26 +1,10 @@
 from __future__ import annotations
 from typing import List, Optional, Tuple, Union
 from ..dtos.page_render_info_dto import PageRenderInfo
-from ..utils.text_cleanup import strip_xml_newline_entities
+from ..utils.position import parse_position as parse_position_text
 from . import ost_coord_transform as _native
 
 Holes = Optional[List[List[Tuple[float, float]]]]
-
-
-def parse_position_str(position_str: str) -> List[float]:
-    if not position_str:
-        return []
-    clean_str = strip_xml_newline_entities(position_str).strip()
-    if not clean_str:
-        return []
-    parts = [p.strip() for p in clean_str.split(";") if p.strip()]
-    position: List[float] = []
-    for p in parts:
-        try:
-            position.append(float(p))
-        except ValueError:
-            return []
-    return position
 
 
 class OSTCoordinateSystem:
@@ -146,7 +130,7 @@ class OSTCoordinateSystem:
         if isinstance(position, (list, tuple)):
             return [float(x) for x in position]
         if isinstance(position, str):
-            return parse_position_str(position)
+            return parse_position_text(position)
         return []
 
     @staticmethod

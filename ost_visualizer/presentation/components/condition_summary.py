@@ -30,7 +30,7 @@ from ..utils.condition_tree_style import (
     apply_condition_tree_style,
     set_condition_tree_item_row_height,
 )
-from ..utils.quantity_display import format_quantity_number
+from ...application.utils.quantity_display import format_quantity_number
 
 _NODE_ROLE = QtCore.Qt.ItemDataRole.UserRole
 _COL_NUMBER = 0

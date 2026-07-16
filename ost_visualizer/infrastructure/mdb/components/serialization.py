@@ -1,5 +1,5 @@
 from typing import Any, FrozenSet, Iterable, List, Union
-from ...parsers.position_parser import parse_position
+from ....domain.utils.position import parse_position
 
 POSITION_TEXT_ENCODING = "latin-1"
 TEXT_BLOB_ENCODING = "utf-8"

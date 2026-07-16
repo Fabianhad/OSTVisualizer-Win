@@ -10,6 +10,10 @@ from ...domain.entities.annotation import (
     BidAnnotation,
 )
 from ...domain.entities.condition import Condition
+from ...domain.services.takeoff_domain_service import (
+    common_reassign_geometry_type,
+    condition_matches_reassign_geometry,
+)
 from ..actions.action_ids import (
     ACTION_BACKOUT_MODE,
     ACTION_COPY,
@@ -39,10 +43,6 @@ from .compact_context_menu import populate_compact_context_menu
 from .condition_icon import make_condition_color_icon
 from .overlay_context_menu import add_overlay_submenu_with_select
 from .plan_tool_registry import PLAN_ANNOTATION_TOOL_SPECS, PLAN_TOOL_CONTEXT_ACTIONS
-from .takeoff_condition_compatibility import (
-    common_reassign_geometry_type,
-    condition_matches_reassign_geometry,
-)
 
 CONTEXT_TOOLS_ACTIONS = (
     *PLAN_TOOL_CONTEXT_ACTIONS,

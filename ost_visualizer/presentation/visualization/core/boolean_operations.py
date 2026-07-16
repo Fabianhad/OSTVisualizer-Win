@@ -59,20 +59,6 @@ def apply_boolean_operations(
         ]
 
 
-def boolean_difference(
-    positive: MeshData, negative: MeshData, original_metadata: Optional[dict] = None
-) -> Optional[MeshData]:
-    try:
-        result = ost_geometry.boolean_difference(positive, negative)
-        if result is None:
-            return None
-        _flip_manifold_faces(result)
-        return _dict_to_meshdata(result, original_metadata)
-    except Exception as e:
-        logger.error("boolean_difference failed: %s", e)
-        return None
-
-
 def boolean_union(
     mesh1: MeshData, mesh2: MeshData, original_metadata: Optional[dict] = None
 ) -> Optional[MeshData]:
@@ -85,58 +71,3 @@ def boolean_union(
     except Exception as e:
         logger.error("boolean_union failed: %s", e)
         return None
-
-
-def boolean_intersection(
-    mesh1: MeshData, mesh2: MeshData, original_metadata: Optional[dict] = None
-) -> Optional[MeshData]:
-    try:
-        result = ost_geometry.boolean_intersection(mesh1, mesh2)
-        if result is None:
-            return None
-        _flip_manifold_faces(result)
-        return _dict_to_meshdata(result, original_metadata)
-    except Exception as e:
-        logger.error("boolean_intersection failed: %s", e)
-        return None
-
-
-def repair_mesh(mesh: MeshData) -> Optional[MeshData]:
-    try:
-        result = ost_geometry.repair_mesh(mesh)
-        return _dict_to_meshdata(result, mesh.metadata)
-    except Exception as e:
-        logger.error("repair_mesh failed: %s", e)
-        return mesh
-
-
-def extract_feature_edges(
-    mesh: MeshData, angle_threshold: float = 0.1
-) -> Optional[MeshData]:
-    try:
-        result = ost_geometry.extract_feature_edges(mesh, angle_threshold)
-        return _dict_to_meshdata(result, mesh.metadata)
-    except Exception as e:
-        logger.error("extract_feature_edges failed: %s", e)
-        return mesh
-
-
-def is_valid(mesh: MeshData) -> bool:
-    try:
-        return ost_geometry.is_valid(mesh)
-    except Exception:
-        return bool(mesh.vertices and mesh.faces)
-
-
-def is_watertight(mesh: MeshData) -> bool:
-    try:
-        return ost_geometry.is_watertight(mesh)
-    except Exception:
-        return False
-
-
-def is_valid_for_boolean(mesh: MeshData) -> bool:
-    try:
-        return ost_geometry.is_valid_for_boolean(mesh)
-    except Exception:
-        return False

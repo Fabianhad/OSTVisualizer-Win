@@ -26,6 +26,7 @@ from .condition_quantity_service import compute_page_quantities
 from .takeoff_domain_service import (
     is_takeoff_relevant_for_area_usage,
     is_takeoff_visible,
+    takeoffs_can_reassign_to_condition,
 )
 
 
@@ -472,13 +473,28 @@ class ProjectDataService:
         self, takeoff_uids: Iterable[str], condition_uid: str
     ) -> List[str]:
         wanted = {str(uid) for uid in takeoff_uids if uid}
-        page_uids = self.get_page_uids_for_takeoffs(wanted)
         if not wanted:
-            return page_uids
+            return []
+        all_takeoffs = self.model.get_all_takeoffs()
+        selected_takeoffs = [
+            takeoff for takeoff in all_takeoffs if takeoff.uid in wanted
+        ]
+        if {takeoff.uid for takeoff in selected_takeoffs} != wanted:
+            return []
+        if not takeoffs_can_reassign_to_condition(
+            selected_takeoffs,
+            self.model.bid_conditions,
+            str(condition_uid),
+        ):
+            return []
+        page_uids = []
+        seen_page_uids = set()
         target_condition_uid = str(condition_uid)
-        for takeoff in self.model.get_all_takeoffs():
-            if takeoff.uid in wanted:
-                takeoff.condition_uid = target_condition_uid
+        for takeoff in selected_takeoffs:
+            takeoff.condition_uid = target_condition_uid
+            if takeoff.page_uid not in seen_page_uids:
+                page_uids.append(takeoff.page_uid)
+                seen_page_uids.add(takeoff.page_uid)
         return page_uids
 
     def update_takeoffs_negative(

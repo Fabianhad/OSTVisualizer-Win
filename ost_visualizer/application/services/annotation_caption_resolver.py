@@ -5,6 +5,7 @@ from ...domain.entities.annotation_caption import (
 )
 from ...domain.entities.condition import Condition
 from ...domain.entities.takeoff import Takeoff
+from ...domain.services.dimension_format_service import inches_to_mm
 from ...domain.services.uom_service import (
     CALC_AREA,
     CALC_AREA_PERIMETER,
@@ -406,4 +407,4 @@ class AnnotationCaptionResolver:
 
     @staticmethod
     def _format_distance_mm(value_inches: float) -> str:
-        return f"{value_inches * 25.4:,.2f} mm"
+        return f"{inches_to_mm(value_inches):,.2f} mm"

@@ -45,7 +45,9 @@ from ..utils.named_view_validation import (
     named_view_name_exists,
     show_duplicate_named_view_name,
 )
-from ..utils.takeoff_condition_compatibility import takeoffs_can_reassign_to_condition
+from ...domain.services.takeoff_domain_service import (
+    takeoffs_can_reassign_to_condition,
+)
 
 logger = logging.getLogger(__name__)
 _SAME_BID_FAST_TAKEOFF_EXTRA_COLUMNS = frozenset(

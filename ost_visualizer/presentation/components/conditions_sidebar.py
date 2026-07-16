@@ -18,7 +18,7 @@ from ..utils.condition_tree_style import (
     set_condition_tree_item_row_height,
 )
 from ..utils.messagebox import show_warning
-from ..utils.quantity_display import format_quantity_with_uom
+from ...application.utils.quantity_display import format_quantity_with_uom
 
 _ITEM_ROLE = QtCore.Qt.ItemDataRole.UserRole
 _SORT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1

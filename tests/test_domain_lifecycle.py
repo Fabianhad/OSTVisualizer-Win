@@ -1,6 +1,12 @@
 import unittest
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
+from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.services.takeoff_domain_service import (
+    common_reassign_geometry_type,
+    condition_reassign_geometry_type,
+    takeoffs_can_reassign_to_condition,
+)
 from ost_visualizer.domain.entities.workspace_state import (
     WORKSPACE_VALID_ACTIVE_VIEWS,
     TakeoffWorkspaceState,
@@ -9,6 +15,53 @@ from ost_visualizer.domain.entities.workspace_state import (
 
 
 class DomainLifecycleTests(unittest.TestCase):
+    def test_condition_reassignment_preserves_geometry_compatibility_policy(self):
+        conditions = {
+            "linear-a": Condition(uid="linear-a", condition_type=Condition.TYPE_LINEAR),
+            "linear-b": Condition(uid="linear-b", condition_type=Condition.TYPE_LINEAR),
+            "area-a": Condition(uid="area-a", condition_type=Condition.TYPE_AREA),
+            "area-b": Condition(uid="area-b", condition_type=Condition.TYPE_AREA),
+            "count": Condition(uid="count", condition_type=Condition.TYPE_COUNT),
+            "attachment": Condition(
+                uid="attachment", condition_type=Condition.TYPE_ATTACHMENT
+            ),
+        }
+        linear = Takeoff(uid="linear", condition_uid="linear-a")
+        area = Takeoff(uid="area", condition_uid="area-a")
+        hole = Takeoff(uid="hole", condition_uid="area-a", parent_uid="area")
+        count = Takeoff(uid="count", condition_uid="count")
+        attachment = Takeoff(uid="attachment", condition_uid="attachment")
+        self.assertTrue(
+            takeoffs_can_reassign_to_condition([linear], conditions, "linear-b")
+        )
+        self.assertTrue(
+            takeoffs_can_reassign_to_condition([area, hole], conditions, "area-b")
+        )
+        self.assertFalse(
+            takeoffs_can_reassign_to_condition([linear], conditions, "area-b")
+        )
+        self.assertFalse(
+            takeoffs_can_reassign_to_condition([area], conditions, "linear-b")
+        )
+        self.assertTrue(
+            takeoffs_can_reassign_to_condition([count], conditions, "attachment")
+        )
+        self.assertTrue(
+            takeoffs_can_reassign_to_condition([attachment], conditions, "count")
+        )
+        self.assertIsNone(common_reassign_geometry_type([linear, area], conditions))
+        self.assertFalse(
+            takeoffs_can_reassign_to_condition([linear, area], conditions, "linear-b")
+        )
+        self.assertFalse(takeoffs_can_reassign_to_condition([], conditions, "linear-b"))
+        self.assertFalse(
+            takeoffs_can_reassign_to_condition([linear], conditions, "missing")
+        )
+        self.assertEqual(
+            condition_reassign_geometry_type(conditions["attachment"]),
+            Condition.TYPE_COUNT,
+        )
+
     def test_validation_constants_are_immutable_shared_state(self):
         self.assertIsInstance(ConfigAggregate.VALID_DISPLAY_MODES, frozenset)
         self.assertIsInstance(ConfigAggregate.VALID_ROPING_SELECTION_METHODS, frozenset)
