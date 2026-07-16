@@ -20,27 +20,22 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
             },
             "elevation_callouts": [
                 {
-                    "takeoff_uid": "takeoff-1",
                     "page_uid": "page-1",
                     "condition_uid": "condition-1",
                     "area_uid": "area-1",
                     "layer_uid": "layer-1",
-                    "visible": True,
                     "x": 30.0,
                     "y": 40.0,
-                    "condition_label": "F9",
-                    "top_label": "410' - 3\"",
-                    "bottom_label": "406' - 3\"",
-                    "quantity_label": "6.43 CY",
+                    "lines": ["F9", "410' - 3\"", "406' - 3\"", "6.43 CY"],
                 }
             ],
         }
         html = _generate_html(scene_data, "Elevation Callout Test")
         self.assertIn('"elevation_callouts":[', html)
-        self.assertIn('"condition_label":"F9"', html)
-        self.assertIn('"top_label":"410\' - 3\\""', html)
-        self.assertIn('"bottom_label":"406\' - 3\\""', html)
-        self.assertIn('"quantity_label":"6.43 CY"', html)
+        self.assertIn(
+            '"lines":["F9","410\' - 3\\"","406\' - 3\\"","6.43 CY"]',
+            html,
+        )
         self.assertIn(
             "const elevationCallouts = Array.isArray(sceneData.elevation_callouts)",
             html,
@@ -48,22 +43,10 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("function renderPlanElevationCallouts(page)", html)
         self.assertIn('const group = createPlanSvgElement("g")', html)
         self.assertIn("function createPlanCalloutText(value, y)", html)
-        field_list_marker = "const ELEVATION_CALLOUT_LABEL_FIELDS = ["
-        field_list_start = html.index(field_list_marker)
-        field_list_html = html[field_list_start : html.index("];", field_list_start)]
-        label_fields = (
-            "condition_label",
-            "top_label",
-            "bottom_label",
-            "quantity_label",
-        )
-        field_positions = [
-            field_list_html.index(f'"{field_name}"') for field_name in label_fields
-        ]
-        self.assertEqual(field_positions, sorted(field_positions))
         self.assertIn("const ELEVATION_CALLOUT_LINE_SPACING = 12", html)
-        self.assertIn("...ELEVATION_CALLOUT_LABEL_FIELDS.map", html)
-        self.assertIn("callout[fieldName]", html)
+        self.assertIn("const lines = callout.lines", html)
+        self.assertIn("...lines.map", html)
+        self.assertRegex(html, r"createPlanCalloutText\(\s*line,")
         self.assertIn("index * ELEVATION_CALLOUT_LINE_SPACING", html)
         self.assertIn("planOverlay.appendChild(group)", html)
         self.assertIn("usesPage3dVisibility: false", html)
@@ -79,6 +62,20 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertNotIn("CSS2DRenderer", html)
         self.assertNotIn('createPlanSvgElement("circle")', html)
         self.assertNotIn('createPlanSvgElement("line")', html)
+        for obsolete_field in (
+            "condition_label",
+            "top_label",
+            "bottom_label",
+            "quantity_label",
+            "callout.takeoff_uid",
+            "callout.visible",
+        ):
+            self.assertNotIn(obsolete_field, html)
+        self.assertNotIn("Array.isArray(callout.lines)", html)
+        self.assertNotIn(
+            "normalizeOptionalUid(callout.page_uid) || page.uid",
+            html,
+        )
 
     def test_viewer_uses_bounds_aware_dynamic_camera_clipping(self):
         scene_data = {

@@ -45,6 +45,7 @@ from ....domain.entities.condition import Condition
 from ....domain.entities.file_extensions import is_pdf_suffix
 from ....domain.entities.page import Page
 from ....domain.entities.takeoff import Takeoff
+from ....domain.services.elevation_callout_service import resolve_elevation_callout
 from ...utils.image_show_mode import mode_to_flags
 from ..core.geometry.ost_linear_geom import (
     gen_curve_pts,
@@ -75,6 +76,10 @@ _INCHES_TO_FEET = 1.0 / 12.0
 _PDF_POINTS_PER_INCH = 72
 _OVERLAY_DIRECT_FULL_PAGE_TOLERANCE_POINTS = 3.0
 _OVERLAY_DIRECT_ROTATION_TOLERANCE_RADIANS = 1e-6
+_ELEVATION_CALLOUT_BOX_WIDTH = 180.0
+_ELEVATION_CALLOUT_BOX_HEIGHT = 52.0
+_ELEVATION_CALLOUT_FONT_SIZE = 10.0
+_ELEVATION_CALLOUT_COLOR = (17, 24, 39)
 
 
 class PDFExporter:
@@ -102,6 +107,7 @@ class PDFExporter:
         display_mode: str,
         grayscale_enabled: bool,
         caption_settings: AnnotationCaptionSettingsDto,
+        elevation_callouts_enabled: bool,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         bid_annotations: Optional[List[BidAnnotation]] = None,
         on_progress: Optional[ExportProgressCallback] = None,
@@ -120,13 +126,14 @@ class PDFExporter:
                     _, color_map = self._color_service.get_color_mapping(
                         bid_conditions, bid_takeoffs, display_mode, grayscale_enabled
                     )
-                    takeoff_data = self._collect_takeoffs(
+                    takeoff_data, elevation_callout_data = self._collect_takeoffs(
                         bid_takeoffs,
                         bid_conditions,
                         page_info,
                         color_map,
                         page_area_selections,
                         caption_settings=caption_settings,
+                        elevation_callouts_enabled=elevation_callouts_enabled,
                     )
                     arrow_data = self._collect_arrows(
                         page.uid, bid_annotations or [], page_info
@@ -152,6 +159,7 @@ class PDFExporter:
                     text_data = self._collect_texts(
                         page.uid, bid_annotations or [], page_info
                     )
+                    text_data.extend(elevation_callout_data)
                     highlight_data = self._collect_highlights(
                         page.uid, bid_annotations or [], page_info
                     )
@@ -547,8 +555,10 @@ class PDFExporter:
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         *,
         caption_settings: AnnotationCaptionSettingsDto,
-    ) -> List[Any]:
+        elevation_callouts_enabled: bool,
+    ) -> tuple[List[Any], List[Any]]:
         polygons = []
+        elevation_callouts = []
         scale_factor1 = page_info.get("scale_factor1", 1.0)
         scale_factor2 = page_info.get("scale_factor2", 1.0)
         parent_takeoffs, holes_map = (
@@ -625,6 +635,15 @@ class PDFExporter:
                 label,
             )
             polygons.append(polygon_data)
+            if elevation_callouts_enabled:
+                callout = self._build_elevation_callout_text(
+                    condition,
+                    takeoff,
+                    hole_takeoff_list,
+                    pdf_vertices,
+                )
+                if callout is not None:
+                    elevation_callouts.append(callout)
         for takeoff in bid_takeoffs:
             condition_uid = takeoff.condition_uid
             if condition_uid not in bid_conditions:
@@ -741,7 +760,44 @@ class PDFExporter:
                 label,
             )
             polygons.append(polygon_data)
-        return polygons
+            if elevation_callouts_enabled:
+                callout = self._build_elevation_callout_text(
+                    condition,
+                    takeoff,
+                    [],
+                    pdf_vertices,
+                )
+                if callout is not None:
+                    elevation_callouts.append(callout)
+        return polygons, elevation_callouts
+
+    def _build_elevation_callout_text(
+        self,
+        condition: Condition,
+        takeoff: Takeoff,
+        hole_takeoffs: List[Takeoff],
+        outer_ring: List[tuple[float, float]],
+    ) -> Any | None:
+        resolved = resolve_elevation_callout(
+            condition,
+            takeoff,
+            hole_takeoffs,
+            tuple((float(point[0]), float(point[1])) for point in outer_ring),
+        )
+        if resolved is None:
+            return None
+        half_width = _ELEVATION_CALLOUT_BOX_WIDTH / 2.0
+        half_height = _ELEVATION_CALLOUT_BOX_HEIGHT / 2.0
+        text_data = ost_pdf_writer.TextAnnotationData()
+        text_data.min_x = resolved.x - half_width
+        text_data.min_y = resolved.y - half_height
+        text_data.max_x = resolved.x + half_width
+        text_data.max_y = resolved.y + half_height
+        text_data.content = "\n".join(resolved.lines)
+        text_data.font_size = _ELEVATION_CALLOUT_FONT_SIZE
+        text_data.color = list(_ELEVATION_CALLOUT_COLOR)
+        text_data.text_align = "center"
+        return text_data
 
     def _set_resolved_caption(
         self,

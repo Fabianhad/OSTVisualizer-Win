@@ -113,6 +113,7 @@ def _export_single_page(exporter, page):
             display_mode="color",
             grayscale_enabled=False,
             caption_settings=_DISABLED_CAPTION_SETTINGS,
+            elevation_callouts_enabled=False,
         )
 
 
@@ -457,6 +458,7 @@ class PDFOverlayExportTests(unittest.TestCase):
                 display_mode="color",
                 grayscale_enabled=False,
                 caption_settings=_DISABLED_CAPTION_SETTINGS,
+                elevation_callouts_enabled=False,
                 on_progress=lambda current, total, name: progress_calls.append(
                     (current, total, name)
                 ),

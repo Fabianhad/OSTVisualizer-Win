@@ -27,4 +27,6 @@ class IHtmlRenderer(Protocol):
         layers: Optional[List[BidLayer]] = None,
         areas: Optional[List[BidArea]] = None,
         page_image_layer: Optional[ScenePageImageLayer] = None,
+        *,
+        include_elevation_callouts: bool,
     ) -> bool: ...

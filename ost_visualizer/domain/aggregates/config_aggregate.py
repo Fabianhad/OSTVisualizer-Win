@@ -287,6 +287,10 @@ class ConfigAggregate:
                 config.pdf_annotation_captions_enabled
             ),
             pdf_annotation_caption_ids=caption_ids,
+            html_elevation_callouts_enabled=bool(
+                config.html_elevation_callouts_enabled
+            ),
+            pdf_elevation_callouts_enabled=bool(config.pdf_elevation_callouts_enabled),
         )
         self._config = validated
         if config_changed:

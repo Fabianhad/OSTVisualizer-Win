@@ -22,10 +22,7 @@ from .....domain.entities.takeoff import Takeoff
 from ...exporters import ost_pdf_writer
 from .adapters.threejs_mesh_adapter import ThreejsMeshAdapter
 from .mesh_processor import process_meshes_for_threejs
-from .two_d_takeoff_processor import (
-    build_elevation_callouts_for_threejs,
-    process_takeoffs_2d_for_threejs,
-)
+from .two_d_takeoff_processor import process_takeoffs_2d_for_threejs
 
 
 def visualize_with_threejs(
@@ -48,6 +45,8 @@ def visualize_with_threejs(
     layers: Optional[List[BidLayer]] = None,
     areas: Optional[List[BidArea]] = None,
     page_image_layer: Optional[ScenePageImageLayer] = None,
+    *,
+    include_elevation_callouts: bool,
 ) -> Optional[str]:
     start_time = time.time()
     if not bid_conditions or not bid_takeoffs:
@@ -79,16 +78,19 @@ def visualize_with_threejs(
         "mode_3d": display_mode_3d,
         "mode_2d": display_mode_2d,
     }
-    page_entries, pdf_documents, takeoffs_2d = _build_multi_page_data(
-        pages or [],
-        bid_conditions,
-        bid_takeoffs,
-        color_service,
-        takeoff_service,
-        display_mode_2d,
-        grayscale_enabled,
-        page_area_selections,
-        scene_data.get("bounds"),
+    page_entries, pdf_documents, takeoffs_2d, elevation_callouts = (
+        _build_multi_page_data(
+            pages or [],
+            bid_conditions,
+            bid_takeoffs,
+            color_service,
+            takeoff_service,
+            display_mode_2d,
+            grayscale_enabled,
+            page_area_selections,
+            include_elevation_callouts=include_elevation_callouts,
+            scene_bounds=scene_data.get("bounds"),
+        )
     )
     if page_entries:
         exported_page_uids = [page["uid"] for page in page_entries]
@@ -100,12 +102,6 @@ def visualize_with_threejs(
             else exported_page_uids[0]
         )
         scene_data["takeoffs_2d"] = takeoffs_2d
-        elevation_callouts = build_elevation_callouts_for_threejs(
-            takeoffs_2d,
-            bid_conditions,
-            bid_takeoffs,
-            takeoff_service,
-        )
         if elevation_callouts:
             scene_data["elevation_callouts"] = elevation_callouts
         if pdf_documents:
@@ -132,10 +128,13 @@ def _build_multi_page_data(
     display_mode: str,
     grayscale_enabled: bool,
     page_area_selections: Optional[Dict],
+    *,
+    include_elevation_callouts: bool,
     scene_bounds: Optional[dict] = None,
 ):
     page_entries = []
     takeoffs_2d = []
+    elevation_callouts = []
     pdf_documents_by_source_page: Dict[Tuple[str, int], str] = {}
     pdf_documents = []
     takeoffs_by_page: Dict[str, List[Takeoff]] = {}
@@ -204,19 +203,20 @@ def _build_multi_page_data(
                 "height": page["height"],
                 "view_scale": 1.0,
             }
-            takeoffs_2d.extend(
-                process_takeoffs_2d_for_threejs(
-                    bid_conditions,
-                    takeoffs_by_page.get(page_uid, []),
-                    color_service,
-                    takeoff_service,
-                    page_info,
-                    display_mode=display_mode,
-                    grayscale_enabled=grayscale_enabled,
-                    page_area_selections=page_area_selections,
-                )
+            page_takeoffs_2d, page_elevation_callouts = process_takeoffs_2d_for_threejs(
+                bid_conditions,
+                takeoffs_by_page.get(page_uid, []),
+                color_service,
+                takeoff_service,
+                page_info,
+                include_elevation_callouts=include_elevation_callouts,
+                display_mode=display_mode,
+                grayscale_enabled=grayscale_enabled,
+                page_area_selections=page_area_selections,
             )
-    return page_entries, pdf_documents, takeoffs_2d
+            takeoffs_2d.extend(page_takeoffs_2d)
+            elevation_callouts.extend(page_elevation_callouts)
+    return page_entries, pdf_documents, takeoffs_2d, elevation_callouts
 
 
 def _extract_pdf_page_base64(pdf_path: str, page_index: int) -> str:

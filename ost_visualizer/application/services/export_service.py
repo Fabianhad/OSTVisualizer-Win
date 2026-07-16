@@ -1,4 +1,5 @@
 from typing import List
+from ...domain.entities.config import Config
 from ...domain.services.project_data_service import ProjectDataService
 from ..dtos.export_dialog_dto import ExportDialogDto
 from ..dtos.export_dto import ExportErrorCode, ExportRequestDto, ExportResultDto
@@ -60,7 +61,7 @@ class ExportService:
             bid_name=bid_name,
         )
 
-    def export(self, config_model, request: ExportRequestDto) -> ExportResultDto:
+    def export(self, config: Config, request: ExportRequestDto) -> ExportResultDto:
         strategy = self.get_strategy(request.format_key)
         if not strategy:
             return ExportResultDto(
@@ -91,7 +92,7 @@ class ExportService:
             metadata["title"] = title
         try:
             export_options = strategy.get_export_options(
-                config_model, self.project_data.get_page_area_selections()
+                config, self.project_data.get_page_area_selections()
             )
             if strategy.extension == HTML_EXTENSION:
                 layers = self.project_data.get_bid_layer_snapshot()

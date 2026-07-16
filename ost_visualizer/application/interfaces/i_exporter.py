@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Optional, Protocol
+from ...domain.entities.config import Config
 from ...domain.entities.condition import Condition
 from ...domain.entities.takeoff import Takeoff
 
@@ -13,7 +14,7 @@ class IExportStrategy(Protocol):
     def prepare_title(self, bid_name: str, page_names: List[str]) -> Optional[str]: ...
     def get_export_options(
         self,
-        config_model: Any,
+        config: Config,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
     ) -> Dict[str, Any]: ...
     def execute_export(

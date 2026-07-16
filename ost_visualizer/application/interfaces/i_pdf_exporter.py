@@ -13,6 +13,7 @@ class IPDFExporter(Protocol):
         display_mode: str,
         grayscale_enabled: bool,
         caption_settings: AnnotationCaptionSettingsDto,
+        elevation_callouts_enabled: bool,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         bid_annotations: Optional[List[BidAnnotation]] = None,
         on_progress: Optional[ExportProgressCallback] = None,

@@ -146,9 +146,16 @@ OPTIONS_GROUP_SNAP_ANGLE = "Snap Settings"
 OPTIONS_GROUP_CONFIRMATIONS = "Confirmations"
 OPTIONS_GROUP_AUTO_ZOOM = "Default Auto-Zoom Level"
 OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS = "PDF Annotation Captions"
+OPTIONS_GROUP_ELEVATION_CALLOUTS = "Elevation Callouts"
 OPTIONS_DEFERRED_TOOLTIP = "This option is planned but is not available yet."
 OPTIONS_LABEL_RESET_ALL_SETTINGS = "Reset All Settings"
 OPTIONS_LABEL_ENABLE_PDF_ANNOTATION_CAPTIONS = "Enable PDF annotation captions"
+OPTIONS_LABEL_INCLUDE_HTML_ELEVATION_CALLOUTS = (
+    "Include elevation callouts in HTML export"
+)
+OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS = (
+    "Include elevation callouts in PDF export"
+)
 OPTIONS_LABEL_SHOW_TOOLBAR_TEXT = "Show text on selected toolbars"
 OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_SYNC = "Sync 2D/3D display modes"
 OPTIONS_LABEL_TAKEOFF_DISPLAY_MODE_3D = "3D display mode:"

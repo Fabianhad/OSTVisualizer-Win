@@ -94,6 +94,8 @@ class _HtmlRendererAdapter(IHtmlRenderer):
         layers: Optional[List[BidLayer]] = None,
         areas: Optional[List[BidArea]] = None,
         page_image_layer: Optional[ScenePageImageLayer] = None,
+        *,
+        include_elevation_callouts: bool,
     ) -> bool:
         try:
             coord_system = self._coord_factory.create()
@@ -117,6 +119,7 @@ class _HtmlRendererAdapter(IHtmlRenderer):
                 layers=layers,
                 areas=areas,
                 page_image_layer=page_image_layer,
+                include_elevation_callouts=include_elevation_callouts,
             )
             return True
         except Exception:
@@ -186,15 +189,15 @@ class _ExportStrategyAdapter(IExportStrategy):
     def prepare_title(self, bid_name: str, page_names: List[str]) -> Optional[str]:
         return None
 
-    def get_export_options(self, config_model, page_area_selections=None):
+    def get_export_options(self, config: Config, page_area_selections=None):
         display_mode = (
-            config_model.display_mode_2d
+            config.display_mode_2d
             if self._extension == "dxf"
-            else config_model.display_mode_3d
+            else config.display_mode_3d
         )
         export_options = {
             "display_mode": display_mode,
-            "grayscale_enabled": config_model.grayscale_enabled,
+            "grayscale_enabled": config.grayscale_enabled,
         }
         if page_area_selections is not None:
             export_options["page_area_selections"] = page_area_selections
@@ -269,12 +272,13 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
                     filename = f"Export_{len(page_names)}_pages.{self._extension}"
         return filename
 
-    def get_export_options(self, config_model, page_area_selections=None):
+    def get_export_options(self, config: Config, page_area_selections=None):
         export_options = {
-            "display_mode_3d": config_model.display_mode_3d,
-            "display_mode_2d": config_model.display_mode_2d,
-            "display_modes_synced": config_model.display_modes_synced,
-            "grayscale_enabled": config_model.grayscale_enabled,
+            "display_mode_3d": config.display_mode_3d,
+            "display_mode_2d": config.display_mode_2d,
+            "display_modes_synced": config.display_modes_synced,
+            "grayscale_enabled": config.grayscale_enabled,
+            "include_elevation_callouts": config.html_elevation_callouts_enabled,
         }
         if page_area_selections is not None:
             export_options["page_area_selections"] = page_area_selections
@@ -318,6 +322,7 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             layers=export_options.get("layers"),
             areas=export_options.get("areas"),
             page_image_layer=export_options.get("page_image_layer"),
+            include_elevation_callouts=export_options["include_elevation_callouts"],
         )
 
 

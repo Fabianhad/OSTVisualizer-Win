@@ -73,6 +73,12 @@ class OptionsDialog(QtWidgets.QDialog):
         self._export_tab = ExportTab(self._tabs)
         self._caption_master_check = self._export_tab.captions_enabled_check
         self._caption_checks = self._export_tab.caption_checks
+        self._html_elevation_callouts_check = (
+            self._export_tab.html_elevation_callouts_check
+        )
+        self._pdf_elevation_callouts_check = (
+            self._export_tab.pdf_elevation_callouts_check
+        )
         self._tabs.addTab(self._export_tab, OPTIONS_TAB_EXPORT)
         self._mcp_setup_tab = McpSetupTab(
             self._tabs,
@@ -241,6 +247,12 @@ class OptionsDialog(QtWidgets.QDialog):
             self._caption_checks[caption_id].setChecked(
                 caption_id.value in selected_caption_ids
             )
+        self._html_elevation_callouts_check.setChecked(
+            self._applied_config.html_elevation_callouts_enabled
+        )
+        self._pdf_elevation_callouts_check.setChecked(
+            self._applied_config.pdf_elevation_callouts_enabled
+        )
 
     def _connect_change_signals(self) -> None:
         buttons = (
@@ -271,6 +283,8 @@ class OptionsDialog(QtWidgets.QDialog):
             self._snap_to_right_angle_check,
             self._caption_master_check,
             *self._caption_checks.values(),
+            self._html_elevation_callouts_check,
+            self._pdf_elevation_callouts_check,
         )
         for button in buttons:
             button.toggled.connect(self._update_apply_enabled)
@@ -369,6 +383,12 @@ class OptionsDialog(QtWidgets.QDialog):
                 caption_id.value
                 for caption_id in ANNOTATION_CAPTION_ORDER
                 if self._caption_checks[caption_id].isChecked()
+            ),
+            html_elevation_callouts_enabled=(
+                self._html_elevation_callouts_check.isChecked()
+            ),
+            pdf_elevation_callouts_enabled=(
+                self._pdf_elevation_callouts_check.isChecked()
             ),
         )
 

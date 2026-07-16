@@ -11,6 +11,9 @@ from ost_visualizer.application.services.export_service import ExportService
 from ost_visualizer.application.services.page_visualization_metadata_service import (
     PageVisualizationMetadataService,
 )
+from ost_visualizer.infrastructure.visualization_provider import (
+    _HtmlExportStrategyAdapter,
+)
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
@@ -30,7 +33,6 @@ from ost_visualizer.presentation.visualization.renderers.threejs.threejs_rendere
     visualize_with_threejs,
 )
 from ost_visualizer.presentation.visualization.renderers.threejs.two_d_takeoff_processor import (
-    build_elevation_callouts_for_threejs,
     process_takeoffs_2d_for_threejs,
 )
 from ost_visualizer.presentation.visualization.services.color_service import (
@@ -117,6 +119,8 @@ class _ConfigModel:
     display_modes_synced = True
     display_mode_3d = Config.DEFAULT_DISPLAY_MODE
     display_mode_2d = Config.DEFAULT_DISPLAY_MODE
+    grayscale_enabled = False
+    html_elevation_callouts_enabled = True
 
 
 class _TakeoffService:
@@ -125,15 +129,6 @@ class _TakeoffService:
 
     def group_takeoffs_by_type(self, _conditions, takeoffs):
         return {1: list(takeoffs)}
-
-
-def _build_elevation_callouts(entries, conditions, takeoffs):
-    return build_elevation_callouts_for_threejs(
-        entries,
-        conditions,
-        takeoffs,
-        _TakeoffService(),
-    )
 
 
 def _takeoff_2d_entry(condition, rings, **overrides):
@@ -230,7 +225,7 @@ def _page_template(pdf_path: Path, uid: str, page_index: int):
 
 
 def _build_pages_without_takeoffs(pages, scene_bounds=None):
-    return _build_multi_page_data(
+    page_entries, pdf_documents, takeoffs_2d, callouts = _build_multi_page_data(
         pages,
         {},
         [],
@@ -239,8 +234,11 @@ def _build_pages_without_takeoffs(pages, scene_bounds=None):
         Config.DISPLAY_MODE_SOLID,
         True,
         {},
-        scene_bounds,
+        include_elevation_callouts=False,
+        scene_bounds=scene_bounds,
     )
+    assert callouts == []
+    return page_entries, pdf_documents, takeoffs_2d
 
 
 def _decode_pdf_document(pdf_document):
@@ -379,6 +377,24 @@ class _ProjectData:
 
 
 class ThreejsExportLayerTests(unittest.TestCase):
+    def test_html_strategy_passes_saved_callout_option_to_renderer(self):
+        calls = []
+        renderer = SimpleNamespace(
+            render=lambda *_args, **kwargs: calls.append(kwargs) or True
+        )
+        strategy = _HtmlExportStrategyAdapter(renderer)
+        config = Config(html_elevation_callouts_enabled=False)
+        options = strategy.get_export_options(config)
+        result = strategy.execute_export(
+            {"condition-1": Condition(uid="condition-1", condition_type=1)},
+            [Takeoff(uid="takeoff-1", condition_uid="condition-1")],
+            "out.html",
+            **options,
+        )
+        self.assertTrue(result)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(calls[0]["include_elevation_callouts"])
+
     def test_collect_takeoffs_for_pages_can_include_hidden_layer_takeoffs(self):
         service = ProjectDataService(_ProjectModel())
         visible = service.collect_takeoffs_for_pages(["page-1"])
@@ -762,7 +778,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
             area_uid="area-1",
             position=[0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
         )
-        entries = process_takeoffs_2d_for_threejs(
+        entries, callouts = process_takeoffs_2d_for_threejs(
             {"condition-1": condition},
             [takeoff],
             ColorService(),
@@ -777,6 +793,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "height": 72.0,
                 "view_scale": 1.0,
             },
+            include_elevation_callouts=False,
             grayscale_enabled=False,
         )
         self.assertEqual(len(entries), 1)
@@ -792,8 +809,68 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertFalse(entry["is_negative"])
         self.assertEqual(len(entry["rings"]), 1)
         self.assertGreaterEqual(len(entry["rings"][0]), 3)
+        self.assertEqual(callouts, [])
 
-    def test_two_d_takeoff_export_uses_existing_quantity_service_for_cubic_yards(self):
+    def test_two_d_takeoff_export_resolves_callout_in_same_geometry_pass(self):
+        condition = Condition(
+            uid="condition-1",
+            name="F9 @T 410' 3\"",
+            condition_type=Condition.TYPE_AREA,
+            thickness=48.0,
+            z_value=4923.0,
+            is_top=True,
+            layer_uid="layer-1",
+        )
+        takeoff = Takeoff(
+            uid="takeoff-1",
+            condition_uid="condition-1",
+            page_uid="page-2",
+            area_uid="area-1",
+            position=[0.0, 0.0, 100.0, 0.0, 100.0, 125.0, 0.0, 125.0],
+        )
+        takeoff_service = _TakeoffService()
+        with patch.object(
+            takeoff_service,
+            "group_area_takeoffs_with_holes",
+            wraps=takeoff_service.group_area_takeoffs_with_holes,
+        ) as group_takeoffs:
+            entries, callouts = process_takeoffs_2d_for_threejs(
+                {"condition-1": condition},
+                [takeoff],
+                ColorService(),
+                takeoff_service,
+                {
+                    "scale_factor1": 1.0,
+                    "scale_factor2": 1.0,
+                    "width": 500.0,
+                    "height": 500.0,
+                },
+                include_elevation_callouts=True,
+            )
+        group_takeoffs.assert_called_once_with([takeoff], {"condition-1": condition})
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(len(callouts), 1)
+        ring = entries[0]["rings"][0]
+        center_x = (
+            min(point[0] for point in ring) + max(point[0] for point in ring)
+        ) / 2.0
+        center_y = (
+            min(point[1] for point in ring) + max(point[1] for point in ring)
+        ) / 2.0
+        self.assertEqual(
+            callouts[0],
+            {
+                "page_uid": "page-2",
+                "condition_uid": "condition-1",
+                "area_uid": "area-1",
+                "layer_uid": "layer-1",
+                "x": center_x,
+                "y": center_y,
+                "lines": ["F9", "410' - 3\"", "406' - 3\"", "12.86 CY"],
+            },
+        )
+
+    def test_two_d_takeoff_export_skips_callout_resolution_when_disabled(self):
         condition = Condition(
             uid="condition-1",
             name="F9 @T 10' 0\"",
@@ -806,158 +883,29 @@ class ThreejsExportLayerTests(unittest.TestCase):
             uid="takeoff-1",
             condition_uid="condition-1",
             page_uid="page-1",
-            position=[0.0, 0.0, 100.0, 0.0, 100.0, 125.0, 0.0, 125.0],
+            position=[0.0, 0.0, 100.0, 0.0, 100.0, 100.0],
         )
-        entries = process_takeoffs_2d_for_threejs(
-            {"condition-1": condition},
-            [takeoff],
-            ColorService(),
-            _TakeoffService(),
-            {
-                "scale_factor1": 1.0,
-                "scale_factor2": 1.0,
-                "width": 500.0,
-                "height": 500.0,
-            },
+        processor_module = (
+            "ost_visualizer.presentation.visualization.renderers.threejs."
+            "two_d_takeoff_processor"
         )
-        callout = _build_elevation_callouts(
-            entries,
-            {"condition-1": condition},
-            [takeoff],
-        )[0]
-        self.assertEqual(callout["condition_label"], "F9")
-        self.assertEqual(callout["quantity_label"], "6.43 CY")
-
-    def test_elevation_callout_uses_condition_top_and_outer_ring_bounds_center(self):
-        condition = Condition(
-            uid="condition-1",
-            name="F9 @T 410' 3\"",
-            condition_type=Condition.TYPE_AREA,
-            thickness=48.0,
-            height=120.0,
-            z_value=4923.0,
-            is_top=True,
-        )
-        takeoff = Takeoff(
-            uid="takeoff-1",
-            condition_uid="condition-1",
-            page_uid="page-2",
-            area_uid="area-1",
-            position=[0.0, 0.0, 50.0, 0.0, 50.0, 125.0, 0.0, 125.0],
-        )
-        takeoff_entry = _takeoff_2d_entry(
-            condition,
-            [
-                [[10.0, 20.0], [50.0, 20.0], [50.0, 60.0], [10.0, 60.0]],
-                [[500.0, 500.0], [510.0, 500.0], [510.0, 510.0]],
-            ],
-            page_uid="page-2",
-            area_uid="area-1",
-            opacity=0.5,
-        )
-        original_entry = copy.deepcopy(takeoff_entry)
-        callouts = _build_elevation_callouts(
-            [takeoff_entry],
-            {"condition-1": condition},
-            [takeoff],
-        )
-        self.assertEqual(takeoff_entry, original_entry)
-        self.assertEqual(len(callouts), 1)
-        self.assertEqual(
-            callouts[0],
-            {
-                "takeoff_uid": "takeoff-1",
-                "page_uid": "page-2",
-                "condition_uid": "condition-1",
-                "area_uid": "area-1",
-                "layer_uid": "layer-1",
-                "visible": True,
-                "x": 30.0,
-                "y": 40.0,
-                "condition_label": "F9",
-                "top_label": "410' - 3\"",
-                "bottom_label": "406' - 3\"",
-                "quantity_label": "6.43 CY",
-            },
-        )
-
-    def test_elevation_callout_uses_bottom_reference_and_condition_height(self):
-        condition = Condition(
-            uid="condition-1",
-            name="Footing @B 8' 0\"",
-            condition_type=Condition.TYPE_COUNT,
-            width=54.0,
-            height=24.0,
-            depth=45.0,
-            z_value=96.0,
-            is_top=False,
-        )
-        takeoff = Takeoff(
-            uid="takeoff-1",
-            condition_uid="condition-1",
-            page_uid="page-1",
-            position=[30.0, 40.0],
-        )
-        entry = _takeoff_2d_entry(
-            condition,
-            [[[20.0, 30.0], [40.0, 30.0], [40.0, 50.0]]],
-        )
-        callout = _build_elevation_callouts(
-            [entry],
-            {"condition-1": condition},
-            [takeoff],
-        )[0]
-        self.assertEqual(callout["condition_label"], "Footing")
-        self.assertEqual(callout["top_label"], "10' - 0\"")
-        self.assertEqual(callout["bottom_label"], "8' - 0\"")
-        self.assertEqual(callout["quantity_label"], "1.25 CY")
-        self.assertEqual((callout["x"], callout["y"]), (30.0, 40.0))
-
-    def test_elevation_callout_excludes_missing_or_incomplete_elevation_data(self):
-        conditions = (
-            Condition(
-                uid="condition-1",
-                name="Footing",
-                condition_type=Condition.TYPE_COUNT,
-                height=24.0,
-                z_value=96.0,
-            ),
-            Condition(
-                uid="condition-1",
-                name="Footing @B 8' 0\"",
-                condition_type=Condition.TYPE_COUNT,
-                height=0.0,
-                z_value=96.0,
-            ),
-            Condition(
-                uid="condition-1",
-                name="Footing @T 10' 0\"",
-                condition_type=Condition.TYPE_COUNT,
-                height=24.0,
-                z_value=120.0,
-                is_top=False,
-            ),
-        )
-        takeoff = Takeoff(
-            uid="takeoff-1",
-            condition_uid="condition-1",
-            page_uid="page-1",
-            position=[30.0, 40.0],
-        )
-        for condition in conditions:
-            with self.subTest(name=condition.name, height=condition.height):
-                entry = _takeoff_2d_entry(
-                    condition,
-                    [[[20.0, 30.0], [40.0, 30.0], [40.0, 50.0]]],
-                )
-                self.assertEqual(
-                    _build_elevation_callouts(
-                        [entry],
-                        {"condition-1": condition},
-                        [takeoff],
-                    ),
-                    [],
-                )
+        with patch(f"{processor_module}.resolve_elevation_callout") as resolver:
+            entries, callouts = process_takeoffs_2d_for_threejs(
+                {condition.uid: condition},
+                [takeoff],
+                ColorService(),
+                _TakeoffService(),
+                {
+                    "scale_factor1": 1.0,
+                    "scale_factor2": 1.0,
+                    "width": 500.0,
+                    "height": 500.0,
+                },
+                include_elevation_callouts=False,
+            )
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(callouts, [])
+        resolver.assert_not_called()
 
     def test_html_scene_adds_callouts_without_changing_3d_geometry_data(self):
         condition = Condition(
@@ -977,6 +925,15 @@ class ThreejsExportLayerTests(unittest.TestCase):
             condition,
             [[[10.0, 20.0], [50.0, 20.0], [50.0, 60.0]]],
         )
+        callout_entry = {
+            "page_uid": "page-1",
+            "condition_uid": "condition-1",
+            "area_uid": "",
+            "layer_uid": "layer-1",
+            "x": 30.0,
+            "y": 40.0,
+            "lines": ["Footing", "10' - 0\"", "8' - 0\"", "5.14 CY"],
+        }
         geometry_payload = [{"existing_3d_geometry": True}]
         base_scene = {
             "title": "Elevation Scene",
@@ -1016,7 +973,12 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 stack.enter_context(
                     patch(
                         f"{renderer_module}._build_multi_page_data",
-                        return_value=([{"uid": "page-1"}], [], [takeoff_entry]),
+                        return_value=(
+                            [{"uid": "page-1"}],
+                            [],
+                            [takeoff_entry],
+                            [callout_entry],
+                        ),
                     )
                 )
                 stack.enter_context(
@@ -1034,12 +996,93 @@ class ThreejsExportLayerTests(unittest.TestCase):
                     output_path=output_path,
                     auto_open=False,
                     pages=[],
+                    include_elevation_callouts=True,
                 )
         self.assertEqual(result, output_path)
         self.assertEqual(captured_scene["geometries"], geometry_payload)
         self.assertEqual(captured_scene["takeoffs_2d"], [takeoff_entry])
-        self.assertEqual(len(captured_scene["elevation_callouts"]), 1)
-        self.assertEqual(captured_scene["elevation_callouts"][0]["page_uid"], "page-1")
+        self.assertEqual(captured_scene["elevation_callouts"], [callout_entry])
+
+    def test_html_scene_omits_callout_data_and_resolution_when_disabled(self):
+        condition = Condition(
+            uid="condition-1",
+            name="Footing @T 10' 0\"",
+            condition_type=Condition.TYPE_AREA,
+            thickness=24.0,
+            z_value=120.0,
+            is_top=True,
+        )
+        takeoff = Takeoff(
+            uid="takeoff-1",
+            condition_uid="condition-1",
+            page_uid="page-1",
+        )
+        takeoff_entry = _takeoff_2d_entry(
+            condition,
+            [[[10.0, 20.0], [50.0, 20.0], [50.0, 60.0]]],
+        )
+        captured_scene = {}
+
+        def capture_scene(scene_data, _title):
+            captured_scene.update(copy.deepcopy(scene_data))
+            return "<html></html>"
+
+        renderer_module = (
+            "ost_visualizer.presentation.visualization.renderers.threejs."
+            "threejs_renderer"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch(
+                        f"{renderer_module}.process_meshes_for_threejs",
+                        return_value=([object()], (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)),
+                    )
+                )
+                stack.enter_context(
+                    patch.object(
+                        ThreejsMeshAdapter,
+                        "build_scene_data",
+                        return_value={
+                            "title": "Elevation Scene",
+                            "geometries": [],
+                            "camera": {
+                                "position": [0.0, 0.0, 1.0],
+                                "target": [0.0, 0.0, 0.0],
+                            },
+                            "bounds": {
+                                "min": [0.0, 0.0, 0.0],
+                                "max": [1.0, 1.0, 1.0],
+                            },
+                        },
+                    )
+                )
+                build_multi_page_data = stack.enter_context(
+                    patch(
+                        f"{renderer_module}._build_multi_page_data",
+                        return_value=([{"uid": "page-1"}], [], [takeoff_entry], []),
+                    )
+                )
+                stack.enter_context(
+                    patch(
+                        f"{renderer_module}._generate_html", side_effect=capture_scene
+                    )
+                )
+                visualize_with_threejs(
+                    {"condition-1": condition},
+                    [takeoff],
+                    object(),
+                    ColorService(),
+                    _TakeoffService(),
+                    output_path=str(Path(tmpdir) / "scene.html"),
+                    auto_open=False,
+                    pages=[],
+                    include_elevation_callouts=False,
+                )
+        self.assertFalse(
+            build_multi_page_data.call_args.kwargs["include_elevation_callouts"]
+        )
+        self.assertNotIn("elevation_callouts", captured_scene)
 
     def test_two_d_takeoff_export_keeps_unassigned_area_empty(self):
         condition = Condition(
@@ -1056,7 +1099,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
             area_uid="0",
             position=[1.0, 1.0],
         )
-        entries = process_takeoffs_2d_for_threejs(
+        entries, callouts = process_takeoffs_2d_for_threejs(
             {"condition-1": condition},
             [takeoff],
             ColorService(),
@@ -1067,8 +1110,10 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "width": 72.0,
                 "height": 72.0,
             },
+            include_elevation_callouts=False,
         )
         self.assertEqual(entries[0]["area_uid"], "")
+        self.assertEqual(callouts, [])
 
     def test_split_display_modes_control_3d_and_2d_opacity_independently(self):
         condition = Condition(
@@ -1105,7 +1150,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
         )
         self.assertEqual(solid_opacity, 1.0)
         self.assertEqual(transparent_2d_opacity, 0.5)
-        entries = process_takeoffs_2d_for_threejs(
+        entries, callouts = process_takeoffs_2d_for_threejs(
             {"condition-1": condition},
             [takeoff],
             color_service,
@@ -1116,10 +1161,12 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "width": 72.0,
                 "height": 72.0,
             },
+            include_elevation_callouts=False,
             display_mode=Config.DISPLAY_MODE_TRANSPARENT,
             grayscale_enabled=False,
         )
         self.assertEqual(entries[0]["opacity"], 0.5)
+        self.assertEqual(callouts, [])
 
     def test_original_2d_display_mode_uses_2d_pattern_opacity(self):
         condition = Condition(
@@ -1134,7 +1181,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
             page_uid="page-1",
             position=[0.0, 0.0, 1.0, 0.0, 1.0, 1.0],
         )
-        entries = process_takeoffs_2d_for_threejs(
+        entries, callouts = process_takeoffs_2d_for_threejs(
             {"condition-1": condition},
             [takeoff],
             ColorService(),
@@ -1145,10 +1192,12 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "width": 72.0,
                 "height": 72.0,
             },
+            include_elevation_callouts=False,
             display_mode=Config.DISPLAY_MODE_ORIGINAL,
             grayscale_enabled=False,
         )
         self.assertEqual(entries[0]["opacity"], 0.0)
+        self.assertEqual(callouts, [])
 
     def test_multi_page_renderer_data_embeds_only_selected_pdf_page(self):
         with tempfile.TemporaryDirectory() as tmpdir:

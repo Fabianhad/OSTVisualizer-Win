@@ -9,6 +9,7 @@ from ost_visualizer.application.dtos.condition_summary_dtos import (
 from ost_visualizer.application.dtos.export_dto import (
     ExportErrorCode,
     ExportProgressCallback,
+    ExportRequestDto,
     ExportResultDto,
 )
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
@@ -185,6 +186,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             display_mode,
             grayscale_enabled,
             caption_settings,
+            elevation_callouts_enabled,
             page_area_selections,
             bid_annotations,
             on_progress: Optional[ExportProgressCallback] = None,
@@ -195,6 +197,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                     grayscale_enabled,
                     len(pages_data),
                     caption_settings,
+                    elevation_callouts_enabled,
                 )
             )
             return ExportResultDto(success=True, format_name="PDF", page_count=1)
@@ -212,6 +215,7 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                         grayscale_enabled=False,
                         pdf_annotation_captions_enabled=True,
                         pdf_annotation_caption_ids=("area", "volume"),
+                        pdf_elevation_callouts_enabled=True,
                     )
                 ),
                 project_data_service=_FakeProjectData(["A1"]),
@@ -231,6 +235,34 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             tuple(caption_id.value for caption_id in calls[0][3].selected_ids),
             ("area", "volume"),
         )
+        self.assertTrue(calls[0][4])
+
+    def test_general_export_uses_saved_config_snapshot(self):
+        config = Config(html_elevation_callouts_enabled=False)
+        snapshots = []
+        export_calls = []
+
+        def snapshot():
+            snapshots.append(config)
+            return config
+
+        def export(used_config, request):
+            export_calls.append((used_config, request))
+            return ExportResultDto(success=True, format_name="HTML", page_count=1)
+
+        original_show_info = export_handler_module.show_info
+        export_handler_module.show_info = lambda *_args: None
+        try:
+            handler = _make_export_handler(
+                config_model=SimpleNamespace(snapshot=snapshot),
+                export_service=SimpleNamespace(export=export),
+            )
+            request = ExportRequestDto(["page-1"], "html", "out.html")
+            handler._execute_export(request)
+        finally:
+            export_handler_module.show_info = original_show_info
+        self.assertEqual(snapshots, [config])
+        self.assertEqual(export_calls, [(config, request)])
 
     def test_summary_csv_export_uses_current_grouping_and_appends_extension(self):
         grouping = ConditionSummaryGrouping(by_type=True, by_area=True)

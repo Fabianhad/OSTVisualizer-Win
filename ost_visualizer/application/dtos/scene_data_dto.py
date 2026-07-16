@@ -109,18 +109,13 @@ class SceneTakeoff2DEntry(TypedDict):
 
 
 class SceneElevationCalloutEntry(TypedDict):
-    takeoff_uid: str
     page_uid: str
     condition_uid: str
     area_uid: str
     layer_uid: str
-    visible: bool
     x: float
     y: float
-    condition_label: str
-    top_label: str
-    bottom_label: str
-    quantity_label: str
+    lines: List[str]
 
 
 class SceneData(TypedDict, total=False):

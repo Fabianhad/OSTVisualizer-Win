@@ -52,6 +52,8 @@ class Config:
     snap_to_right_angle_threshold_px: int = DEFAULT_SNAP_THRESHOLD_PX
     pdf_annotation_captions_enabled: bool = False
     pdf_annotation_caption_ids: tuple[str, ...] = DEFAULT_ANNOTATION_CAPTION_IDS
+    html_elevation_callouts_enabled: bool = True
+    pdf_elevation_callouts_enabled: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -88,6 +90,8 @@ class Config:
             "snap_to_right_angle_threshold_px": self.snap_to_right_angle_threshold_px,
             "pdf_annotation_captions_enabled": self.pdf_annotation_captions_enabled,
             "pdf_annotation_caption_ids": list(self.pdf_annotation_caption_ids),
+            "html_elevation_callouts_enabled": self.html_elevation_callouts_enabled,
+            "pdf_elevation_callouts_enabled": self.pdf_elevation_callouts_enabled,
         }
 
     @classmethod
@@ -177,5 +181,13 @@ class Config:
                 raise TypeError("pdf_annotation_caption_ids must be a list")
             config.pdf_annotation_caption_ids = tuple(
                 str(value) for value in caption_ids
+            )
+        if "html_elevation_callouts_enabled" in data:
+            config.html_elevation_callouts_enabled = bool(
+                data["html_elevation_callouts_enabled"]
+            )
+        if "pdf_elevation_callouts_enabled" in data:
+            config.pdf_elevation_callouts_enabled = bool(
+                data["pdf_elevation_callouts_enabled"]
             )
         return config

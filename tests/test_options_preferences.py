@@ -1074,6 +1074,67 @@ class OptionsPreferencesTests(unittest.TestCase):
             self.assertFalse(check.isEnabled())
         dialog.close()
 
+    def test_export_tab_callout_defaults_preserve_html_and_leave_pdf_disabled(self):
+        dialog = OptionsDialog(Config())
+        self.assertTrue(dialog._html_elevation_callouts_check.isChecked())
+        self.assertFalse(dialog._pdf_elevation_callouts_check.isChecked())
+        self.assertTrue(dialog._html_elevation_callouts_check.isEnabled())
+        self.assertTrue(dialog._pdf_elevation_callouts_check.isEnabled())
+        self.assertEqual(
+            dialog._html_elevation_callouts_check.text(),
+            "Include elevation callouts in HTML export",
+        )
+        self.assertEqual(
+            dialog._pdf_elevation_callouts_check.text(),
+            "Include elevation callouts in PDF export",
+        )
+        dialog.close()
+
+    def test_export_callout_options_apply_independently_and_cancel_is_nonmutating(self):
+        repo = FakeConfigRepository()
+        aggregate = ConfigAggregate(repo)
+        service = ConfigService(aggregate, FakeEventBus())
+        dialog = OptionsDialog(
+            service.get_config_snapshot(),
+            apply_callback=service.update_app_options,
+        )
+        dialog._html_elevation_callouts_check.setChecked(False)
+        dialog._pdf_elevation_callouts_check.setChecked(True)
+        _apply_button(dialog).click()
+        self.assertFalse(aggregate.snapshot().html_elevation_callouts_enabled)
+        self.assertTrue(aggregate.snapshot().pdf_elevation_callouts_enabled)
+        dialog._html_elevation_callouts_check.setChecked(True)
+        dialog._pdf_elevation_callouts_check.setChecked(False)
+        dialog.reject()
+        self.assertFalse(aggregate.snapshot().html_elevation_callouts_enabled)
+        self.assertTrue(aggregate.snapshot().pdf_elevation_callouts_enabled)
+        dialog.close()
+
+    def test_export_callout_options_ok_and_reset_use_existing_lifecycle(self):
+        saved = []
+        dialog = OptionsDialog(
+            Config(
+                html_elevation_callouts_enabled=False,
+                pdf_elevation_callouts_enabled=True,
+            ),
+            apply_callback=saved.append,
+            reset_callback=Config,
+        )
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.options.dialog.confirm",
+            return_value=True,
+        ):
+            _reset_all_button(dialog).click()
+        self.assertTrue(dialog._html_elevation_callouts_check.isChecked())
+        self.assertFalse(dialog._pdf_elevation_callouts_check.isChecked())
+        dialog._html_elevation_callouts_check.setChecked(False)
+        dialog._pdf_elevation_callouts_check.setChecked(True)
+        dialog.accept()
+        self.assertEqual(len(saved), 1)
+        self.assertFalse(saved[0].html_elevation_callouts_enabled)
+        self.assertTrue(saved[0].pdf_elevation_callouts_enabled)
+        dialog.close()
+
     def test_export_caption_selections_survive_master_disable_and_reenable(self):
         dialog = OptionsDialog(Config())
         dialog._caption_master_check.setChecked(True)
@@ -2254,6 +2315,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             config.pdf_annotation_caption_ids,
             DEFAULT_ANNOTATION_CAPTION_IDS,
         )
+        self.assertTrue(config.html_elevation_callouts_enabled)
+        self.assertFalse(config.pdf_elevation_callouts_enabled)
         self.assertTrue(config.show_toolbar_text)
         self.assertTrue(config.display_modes_synced)
         self.assertEqual(config.display_mode_3d, Config.DISPLAY_MODE_ORIGINAL)

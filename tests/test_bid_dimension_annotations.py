@@ -770,13 +770,15 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             width=12.0,
             layer_visible=False,
         )
-        takeoffs = exporter._collect_takeoffs(
+        takeoffs, callouts = exporter._collect_takeoffs(
             [takeoff],
             {"c1": condition},
             _page_info(),
             caption_settings=AnnotationCaptionSettingsDto(False, ()),
+            elevation_callouts_enabled=False,
         )
         self.assertEqual(takeoffs, [])
+        self.assertEqual(callouts, [])
 
     def test_pdf_export_passes_structured_resolved_caption_to_native_boundary(self):
         exporter = PDFExporter.__new__(PDFExporter)
@@ -803,7 +805,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             condition_type=Condition.TYPE_AREA,
             thickness=12.0,
         )
-        polygons = exporter._collect_takeoffs(
+        polygons, callouts = exporter._collect_takeoffs(
             [takeoff],
             {condition.uid: condition},
             _page_info(),
@@ -811,8 +813,10 @@ class BidDimensionAnnotationTests(unittest.TestCase):
                 enabled=True,
                 selected_ids=(AnnotationCaptionId.AREA, AnnotationCaptionId.VOLUME),
             ),
+            elevation_callouts_enabled=False,
         )
         self.assertEqual(len(polygons), 1)
+        self.assertEqual(callouts, [])
         self.assertEqual(
             polygons[0].caption.lines,
             ["A = 144.00 sf", "V = 5.33 cu yd"],

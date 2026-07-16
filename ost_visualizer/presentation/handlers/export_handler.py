@@ -158,6 +158,7 @@ class ExportHandler:
                     config.display_mode_2d,
                     config.grayscale_enabled,
                     caption_settings=caption_settings,
+                    elevation_callouts_enabled=config.pdf_elevation_callouts_enabled,
                     page_area_selections=(self.project_data.get_page_area_selections()),
                     bid_annotations=bid_annotations,
                     on_progress=_progress_callback(reporter),
@@ -382,7 +383,7 @@ class ExportHandler:
         return filename or None
 
     def _execute_export(self, request: ExportRequestDto) -> None:
-        result = self.export_service.export(self.config_model, request)
+        result = self.export_service.export(self.config_model.snapshot(), request)
         if result.success:
             show_info(
                 self.window,

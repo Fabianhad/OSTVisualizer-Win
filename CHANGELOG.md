@@ -5,7 +5,7 @@
 ### Added
 
 - Added persistent PDF annotation caption options with a global enable switch and Bluebeam-compatible selection, ordering, units, and formatting for all captions supported by exported polygon measurements.
-- Added four-row takeoff elevation callouts with condition name, top and bottom elevations, cubic-yard quantity, and condition/layer/area visibility controls to the 2D plan view in single-file HTML exports.
+- Added persistent, independently configurable four-row elevation callouts to HTML and PDF exports, with condition name, top and bottom elevations, cubic-yard quantity, transformed takeoff placement, and existing visibility behavior.
 - Added a read-only MCP bid comparison tool that matches conditions by reference number, ignores insignificant floating-point quantity noise, and returns bounded condition-type aggregates for metadata, quantities, takeoff counts, and changed pages.
 
 ### Changed

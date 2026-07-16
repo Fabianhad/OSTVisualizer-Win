@@ -18,6 +18,7 @@ from ...config import (
     OPTIONS_DEFERRED_TOOLTIP,
     OPTIONS_GROUP_AUTO_ZOOM,
     OPTIONS_GROUP_CONFIRMATIONS,
+    OPTIONS_GROUP_ELEVATION_CALLOUTS,
     OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS,
     OPTIONS_GROUP_PREFERENCES,
     OPTIONS_GROUP_SNAP_ANGLE,
@@ -37,6 +38,8 @@ from ...config import (
     OPTIONS_LABEL_HOTLINK_MAIN,
     OPTIONS_LABEL_HOTLINK_TARGET,
     OPTIONS_LABEL_HOTLINK_VIEW,
+    OPTIONS_LABEL_INCLUDE_HTML_ELEVATION_CALLOUTS,
+    OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS,
     OPTIONS_LABEL_INTELLIGENT_PASTE,
     OPTIONS_LABEL_PAGE_INDEX,
     OPTIONS_LABEL_ROPING_INCLUSIVE,
@@ -430,6 +433,20 @@ class ExportTab(QtWidgets.QWidget):
             caption_layout.addWidget(check)
         group_layout.addLayout(caption_layout)
         layout.addWidget(group)
+        callout_group = QtWidgets.QGroupBox(OPTIONS_GROUP_ELEVATION_CALLOUTS, self)
+        callout_layout = QtWidgets.QVBoxLayout(callout_group)
+        callout_layout.setSpacing(COMPACT_SPACING)
+        self.html_elevation_callouts_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_INCLUDE_HTML_ELEVATION_CALLOUTS,
+            callout_group,
+        )
+        self.pdf_elevation_callouts_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS,
+            callout_group,
+        )
+        callout_layout.addWidget(self.html_elevation_callouts_check)
+        callout_layout.addWidget(self.pdf_elevation_callouts_check)
+        layout.addWidget(callout_group)
         layout.addStretch(1)
         self.captions_enabled_check.toggled.connect(self._update_caption_checks_enabled)
         self._update_caption_checks_enabled(False)
