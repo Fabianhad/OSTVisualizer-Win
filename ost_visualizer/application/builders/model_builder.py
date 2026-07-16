@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 from ...domain.aggregates.config_aggregate import ConfigAggregate
 from ...domain.aggregates.file_state_aggregate import FileStateAggregate
 from ...domain.aggregates.license_aggregate import LicenseAggregate
@@ -7,6 +8,7 @@ from ...domain.aggregates.workspace_state_aggregate import WorkspaceStateAggrega
 from ...domain.services.file_manager_service import FileManager
 from ...domain.services.project_data_service import ProjectDataService
 from ..interfaces.i_repository_provider import IRepositoryProvider
+from ..interfaces.i_mdb_connection_manager import IMdbConnectionManager
 from ..service_container import ServiceContainer
 
 
@@ -16,7 +18,7 @@ class ModelBuilder:
         container: ServiceContainer,
         logger: logging.Logger,
         repository_provider: IRepositoryProvider,
-        conn_manager=None,
+        conn_manager: Optional[IMdbConnectionManager] = None,
     ) -> None:
         self.container = container
         self.logger = logger

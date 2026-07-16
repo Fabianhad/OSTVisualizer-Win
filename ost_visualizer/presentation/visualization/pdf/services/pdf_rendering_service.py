@@ -520,7 +520,7 @@ class PDFRenderingService:
         with self._lock:
             self._active_requests.pop(request_id, None)
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         if self._shutdown_event.is_set():
             return
         self._shutdown_event.set()

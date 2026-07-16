@@ -3,6 +3,9 @@ from pathlib import Path
 from typing import Callable, Dict, Optional
 from ..application.dtos.plan_view_renderers_dto import PlanViewRenderers
 from ..application.interfaces.i_api_client_provider import IApiClientProvider
+from ..application.interfaces.i_annotation_caption_resolver import (
+    IAnnotationCaptionResolver,
+)
 from ..application.interfaces.i_color_service import IColorService
 from ..application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ..application.interfaces.i_coordinate_transformer_factory import (
@@ -38,6 +41,9 @@ from ..domain.repositories.i_file_parser import IFileParser
 from ..domain.repositories.i_file_state_repository import IFileStateRepository
 from ..domain.repositories.i_license_api_client import ILicenseApiClient
 from ..domain.repositories.i_license_repository import ILicenseRepository
+from ..domain.repositories.i_license_signature_verifier import (
+    ILicenseSignatureVerifier,
+)
 from ..domain.repositories.i_project_repository import IProjectRepository
 from ..domain.repositories.i_workspace_state_repository import IWorkspaceStateRepository
 from ..domain.services.takeoff_service_impl import TakeoffDomainService
@@ -61,7 +67,7 @@ from ..presentation.visualization.pdf.services.pdf_rendering_service import (
     PDFRenderingService,
 )
 from ..presentation.visualization.services.color_service import ColorService
-from .app_paths import get_app_data_dir, get_default_working_dir
+from .app_paths import get_default_working_dir
 from .external.license_api_client import LicenseApiClient
 from .hardware.hwid_generator import HWIDGenerator
 from .mdb.connection_manager import MdbConnectionManager
@@ -108,12 +114,14 @@ class RepositoryProvider(IRepositoryProvider):
     def get_license_repository(self) -> ILicenseRepository:
         return JsonLicenseRepository(logger=self.logger.getChild("LicenseRepository"))
 
-    def get_license_signature_verifier(self) -> LicenseSignatureVerifier:
+    def get_license_signature_verifier(self) -> ILicenseSignatureVerifier:
         return LicenseSignatureVerifier(
             logger=self.logger.getChild("LicenseSignatureVerifier")
         )
 
-    def get_project_repository(self, conn_manager=None) -> IProjectRepository:
+    def get_project_repository(
+        self, conn_manager: Optional[IMdbConnectionManager] = None
+    ) -> IProjectRepository:
         file_manager_logger = self.logger.getChild("FileManager")
         parser_logger = file_manager_logger.getChild("MdbFileParser")
         if conn_manager:
@@ -150,7 +158,6 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
         message_notifier: Optional[IMessageNotifier] = None,
     ):
         self.logger = logger
-        self._hwid_generator = HWIDGenerator()
         self._callback_bridge_factory = callback_bridge_factory
         self._icon_provider = icon_provider
         self._message_notifier = message_notifier
@@ -168,12 +175,6 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
 
     def get_icon_provider(self) -> Optional[IWindowIconProvider]:
         return self._icon_provider
-
-    def get_app_data_dir(self) -> str:
-        return get_app_data_dir()
-
-    def get_hwid_provider(self) -> Callable[[], str]:
-        return self._hwid_generator.get_hwid
 
     def get_thread_callback_bridge(self) -> IThreadCallbackBridge:
         return self._callback_bridge_factory()
@@ -201,8 +202,15 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
         color_service: IColorService,
         takeoff_service: ITakeoffDomainService,
         uom_service: IUOMService,
+        annotation_caption_resolver: IAnnotationCaptionResolver,
     ) -> IPDFExporter:
-        return PDFExporter(coord_system, color_service, takeoff_service, uom_service)
+        return PDFExporter(
+            coord_system,
+            color_service,
+            takeoff_service,
+            uom_service,
+            annotation_caption_resolver,
+        )
 
     def get_ost_exporter(self, uom_service: IUOMService) -> IOstExporter:
         return OstExporter(uom_service)
@@ -220,7 +228,7 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
     def create_connection_manager(self) -> MdbConnectionManager:
         return MdbConnectionManager()
 
-    def get_pdf_page_sizes(self, path: str) -> list:
+    def get_pdf_page_sizes(self, path: str) -> list[tuple[float, float, str]]:
         sizes = []
         renderer = None
         opened = False
@@ -240,8 +248,10 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
         return sizes
 
     def create_plan_view_renderers(
-        self, coord_system, color_service
-    ) -> "PlanViewRenderers":
+        self,
+        coord_system: ICoordinateTransformer,
+        color_service: IColorService,
+    ) -> PlanViewRenderers:
         page_cache = PageCache()
         rendering_service = PDFRenderingService(page_cache, num_workers=1)
         load_coordinator = PageLoadStrategyService(page_cache)
@@ -259,10 +269,14 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
             linear_geometry=LinearGeometry(),
         )
 
-    def get_mdb_reader(self, conn_manager=None) -> IMdbReader:
+    def get_mdb_reader(
+        self, conn_manager: Optional[IMdbConnectionManager] = None
+    ) -> IMdbReader:
         return MdbReader(conn_manager=conn_manager)
 
-    def get_mdb_writer(self, conn_manager=None) -> IMdbWriter:
+    def get_mdb_writer(
+        self, conn_manager: Optional[IMdbConnectionManager] = None
+    ) -> IMdbWriter:
         return MdbWriter(conn_manager=conn_manager)
 
     def get_osp_exporter(self, uom_service: IUOMService, version: str) -> IOspExporter:

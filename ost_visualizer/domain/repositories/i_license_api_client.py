@@ -1,7 +1,6 @@
-from typing import Any, Dict, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, Dict, Optional, Protocol, Tuple
 
 
-@runtime_checkable
 class ILicenseApiClient(Protocol):
     def validate(
         self, license_key: str, hwid: Optional[str]

@@ -1,6 +1,6 @@
-from typing import Protocol
+from typing import Optional, Protocol
 from ...domain.dtos.raw_bid_data_dto import RawBidData
-from ..dtos.export_dto import ExportResultDto
+from ..dtos.export_dto import ExportProgressCallback, ExportResultDto
 
 
 class IOspExporter(Protocol):
@@ -9,5 +9,5 @@ class IOspExporter(Protocol):
         raw_data: RawBidData,
         output_file: str,
         bid_name: str = "Bid",
-        on_progress=None,
+        on_progress: Optional[ExportProgressCallback] = None,
     ) -> ExportResultDto: ...

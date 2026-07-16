@@ -364,7 +364,6 @@ def _base_names(classdef: ast.ClassDef) -> set:
 # ---------------------------------------------------------------------------
 ALLOWED_ABCS = {
     "IShutdownAware",
-    "IStartable",
     "IAnnotationViewManager",
     "BaseExporter",
 }

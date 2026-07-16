@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import List, Optional
+from typing import Callable, List, Optional
+
+ExportProgressCallback = Callable[[int, int, str], None]
 
 
 class ExportErrorCode(Enum):

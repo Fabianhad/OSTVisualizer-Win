@@ -4,6 +4,7 @@ from typing import Callable, Optional
 from ...config.license_config import LICENSE_OFFLINE_GRACE_HOURS
 from ..entities.license import License, LicenseValidationResult
 from ..repositories.i_license_repository import ILicenseRepository
+from ..repositories.i_license_signature_verifier import ILicenseSignatureVerifier
 
 
 class LicenseAggregate:
@@ -11,7 +12,7 @@ class LicenseAggregate:
         self,
         repository: ILicenseRepository,
         hwid_provider: Callable[[], str],
-        signature_verifier=None,
+        signature_verifier: Optional[ILicenseSignatureVerifier] = None,
         offline_grace_hours: int = LICENSE_OFFLINE_GRACE_HOURS,
         logger: Optional[logging.Logger] = None,
     ):

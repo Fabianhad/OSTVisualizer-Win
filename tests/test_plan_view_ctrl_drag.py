@@ -616,7 +616,8 @@ class FakeCoordinateSystem:
     scale_ratio = 1.0
     view_scale = 1.0
 
-    def parse_position(self, position):
+    @staticmethod
+    def parse_position(position):
         return list(position)
 
     def transform_vertices_to_2d(self, pos):

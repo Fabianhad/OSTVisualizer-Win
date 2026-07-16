@@ -1,10 +1,9 @@
-from typing import Dict, Optional, Protocol, runtime_checkable
+from typing import Dict, Optional, Protocol
 from ..dtos.raw_bid_data_dto import RawBidData
 from ..entities.file_results import BidLoadResult, FileLoadResult
 from ..entities.layer import BidLayer
 
 
-@runtime_checkable
 class IFileParser(Protocol):
     def parse(self, file_path: str) -> FileLoadResult: ...
     def load_bid_data(self, file_path: str, bid_uid: str) -> BidLoadResult: ...

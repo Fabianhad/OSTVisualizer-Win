@@ -44,7 +44,7 @@ class OSTCoordinateSystem:
             "view_scale": 1.0,
         }
 
-    def update_page_info(self, page_info: PageRenderInfo):
+    def update_page_info(self, page_info: PageRenderInfo) -> None:
         self._page_info.update(page_info)
         self._validate_page_info()
 

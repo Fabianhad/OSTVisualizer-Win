@@ -1,14 +1,21 @@
 #pragma once
+#include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
-#include <array>
 namespace ost_pdf_writer
 {
+    struct BluebeamCaption
+    {
+        std::vector<std::string> lines;
+        std::string label;
+        uint32_t measurement_types = 0;
+    };
+
     struct BluebeamPolygon
     {
         std::vector<std::array<double, 2>> vertices;
         std::vector<std::vector<std::array<double, 2>>> holes;
-        std::string label;
         std::array<uint8_t, 3> stroke_color;
         std::array<uint8_t, 3> fill_color;
         double fill_opacity;
@@ -19,6 +26,7 @@ namespace ost_pdf_writer
         double scale_factor1;
         double scale_factor2;
         double depth;
+        BluebeamCaption caption;
         BluebeamPolygon()
             : stroke_color{255, 0, 0},
               fill_color{255, 0, 0},
@@ -35,9 +43,7 @@ namespace ost_pdf_writer
     std::string generate_page_measure_dict(double scale_factor1, double scale_factor2);
     std::string generate_annotation_measure_dict(double scale_factor1, double scale_factor2);
     std::string generate_helvetica_font_dict();
-    std::string generate_appearance_stream_content(const BluebeamPolygon &polygon,
-                                                   const std::string &area_text);
-    std::string format_area_text(double area_sf);
+    std::string generate_appearance_stream_content(const BluebeamPolygon &polygon);
     std::string generate_nm();
     struct BluebeamArrow
     {

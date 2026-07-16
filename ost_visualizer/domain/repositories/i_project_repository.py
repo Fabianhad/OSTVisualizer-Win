@@ -1,10 +1,9 @@
-from typing import Dict, Optional, Protocol, runtime_checkable
+from typing import Dict, Optional, Protocol
 from ..entities.cdn_type import CdnType
 from ..entities.file_results import BidLoadResult, FileLoadResult
 from ..entities.hierarchy_data import HierarchyData
 
 
-@runtime_checkable
 class IProjectRepository(Protocol):
     @property
     def active_file_path(self) -> Optional[str]: ...

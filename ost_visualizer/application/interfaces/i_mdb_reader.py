@@ -7,6 +7,7 @@ from ...domain.entities.layer import BidLayer
 
 
 class IMdbReader(Protocol):
+    def close_connection(self, db_path: Optional[str] = None) -> None: ...
     def get_cover_sheet_data(
         self, file_path: str, bid_uid: str
     ) -> Optional[CoverSheetData]: ...

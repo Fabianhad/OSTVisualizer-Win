@@ -4,9 +4,11 @@ from typing import Any, Callable, List, Optional
 from PySide6 import QtWidgets
 from ...application.dtos.export_dto import (
     ExportErrorCode,
+    ExportProgressCallback,
     ExportRequestDto,
     ExportResultDto,
 )
+from ...application.dtos.annotation_caption_dto import AnnotationCaptionSettingsDto
 from ...application.dtos.page_export_data_dto import PageExportData
 from ...domain.entities.file_extensions import (
     CSV_EXTENSION,
@@ -14,13 +16,16 @@ from ...domain.entities.file_extensions import (
     is_csv_suffix,
     is_pdf_suffix,
 )
+from ...domain.entities.annotation_caption import AnnotationCaptionId
 from ..components.progress_dialog import ProgressDialog, ProgressReporter
 from ..utils.messagebox import show_critical, show_info, show_warning
 
 logger = logging.getLogger(__name__)
 
 
-def _progress_callback(reporter: Optional[ProgressReporter]) -> Optional[Callable]:
+def _progress_callback(
+    reporter: Optional[ProgressReporter],
+) -> Optional[ExportProgressCallback]:
     if not reporter:
         return None
     return lambda _current, _total, description: reporter.report(description)
@@ -136,16 +141,25 @@ class ExportHandler:
             return
         try:
             bid_annotations = self.project_data.get_all_annotations()
+            config = self.config_model.snapshot()
+            caption_settings = AnnotationCaptionSettingsDto(
+                enabled=config.pdf_annotation_captions_enabled,
+                selected_ids=tuple(
+                    AnnotationCaptionId(value)
+                    for value in config.pdf_annotation_caption_ids
+                ),
+            )
             reporter = ProgressReporter()
             dialog = ProgressDialog(
                 filename,
                 lambda: self.pdf_exporter.export(
                     pages_data,
                     filename,
-                    self.config_model.display_mode_2d,
-                    self.config_model.grayscale_enabled,
-                    self.project_data.get_page_area_selections(),
-                    bid_annotations,
+                    config.display_mode_2d,
+                    config.grayscale_enabled,
+                    caption_settings=caption_settings,
+                    page_area_selections=(self.project_data.get_page_area_selections()),
+                    bid_annotations=bid_annotations,
                     on_progress=_progress_callback(reporter),
                 ),
                 parent=self.window,

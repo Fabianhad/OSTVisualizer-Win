@@ -17,6 +17,13 @@ from PySide6.QtWidgets import (
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
+from ost_visualizer.application.dtos.annotation_caption_dto import (
+    AnnotationCaptionSettingsDto,
+)
+from ost_visualizer.application.services.annotation_caption_resolver import (
+    AnnotationCaptionResolver,
+)
+from ost_visualizer.domain.entities.annotation_caption import AnnotationCaptionId
 from ost_visualizer.domain.entities.annotation import BidAnnotation
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.layer import Layer
@@ -24,6 +31,7 @@ from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,
 )
+from ost_visualizer.domain.services.uom_service_impl import UOMDomainService
 from ost_visualizer.infrastructure.mdb.components.annotation_operations import (
     AnnotationOperationsMixin,
 )
@@ -766,8 +774,54 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             [takeoff],
             {"c1": condition},
             _page_info(),
+            caption_settings=AnnotationCaptionSettingsDto(False, ()),
         )
         self.assertEqual(takeoffs, [])
+
+    def test_pdf_export_passes_structured_resolved_caption_to_native_boundary(self):
+        exporter = PDFExporter.__new__(PDFExporter)
+        exporter._coord_system = OSTCoordinateSystem()
+        exporter._color_service = _ColorService()
+        exporter._color_service.should_gray_out_takeoff = lambda *_args: False
+        exporter._color_service.get_condition_color = lambda _condition: [255, 0, 0]
+        exporter._takeoff_service = SimpleNamespace(
+            group_area_takeoffs_with_holes=lambda takeoffs, _conditions: (takeoffs, {})
+        )
+        exporter._uom_service = UOMDomainService()
+        exporter._annotation_caption_resolver = AnnotationCaptionResolver(
+            exporter._uom_service
+        )
+        takeoff = Takeoff(
+            uid="t-caption",
+            condition_uid="c-caption",
+            page_uid="p1",
+            position=[0.0, 0.0, 144.0, 0.0, 144.0, 144.0, 0.0, 144.0],
+        )
+        condition = Condition(
+            uid="c-caption",
+            name="Slab",
+            condition_type=Condition.TYPE_AREA,
+            thickness=12.0,
+        )
+        polygons = exporter._collect_takeoffs(
+            [takeoff],
+            {condition.uid: condition},
+            _page_info(),
+            caption_settings=AnnotationCaptionSettingsDto(
+                enabled=True,
+                selected_ids=(AnnotationCaptionId.AREA, AnnotationCaptionId.VOLUME),
+            ),
+        )
+        self.assertEqual(len(polygons), 1)
+        self.assertEqual(
+            polygons[0].caption.lines,
+            ["A = 144.00 sf", "V = 5.33 cu yd"],
+        )
+        self.assertEqual(polygons[0].caption.measurement_types, 5)
+        self.assertEqual(
+            polygons[0].vertices,
+            OSTCoordinateSystem.ost_to_pdf_coordinates(takeoff.position, _page_info()),
+        )
 
     def test_pdf_export_collects_highlights_as_native_highlight_data(self):
         exporter = PDFExporter.__new__(PDFExporter)
@@ -1603,6 +1657,72 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         self.assertIn("text-align:center", text_block)
         self.assertGreaterEqual(pdf_text.count("/AP <<"), 7)
 
+    def test_native_pdf_export_sf_only_caption_preserves_existing_text_and_style(self):
+        takeoff = self._native_takeoff(
+            1234.5,
+            caption_lines=["1,234.50 sf"],
+            measurement_types=1,
+        )
+        pdf_text = self._write_native_pdf(takeoffs=[takeoff])
+        self.assertIn("/Contents (1,234.50 sf)", pdf_text)
+        self.assertIn("/MeasurementTypes 1", pdf_text)
+        self.assertIn(
+            "font: Helvetica 12pt; text-align:center; line-height:13.8pt", pdf_text
+        )
+        self.assertNotIn("<p>cu yd", pdf_text)
+        self.assertNotIn("<p>V = ", pdf_text)
+
+    def test_native_pdf_export_disabled_caption_emits_no_caption_text(self):
+        pdf_text = self._write_native_pdf(takeoffs=[self._native_takeoff(1234.5)])
+        self.assertIn("/Cap false", pdf_text)
+        self.assertIn("/Contents ()", pdf_text)
+        self.assertIn("/Label ()", pdf_text)
+        self.assertIn("/MeasurementTypes 0", pdf_text)
+        self.assertNotIn("1,234.50 sf", pdf_text)
+        self.assertNotIn("/RC (<?xml", pdf_text)
+
+    def test_native_pdf_export_cy_only_caption_uses_resolved_text(self):
+        takeoff = self._native_takeoff(
+            1234.5,
+            caption_lines=["V = 45.72 cu yd"],
+            measurement_types=4,
+        )
+        pdf_text = self._write_native_pdf(takeoffs=[takeoff])
+        self.assertIn("/Contents (V = 45.72 cu yd)", pdf_text)
+        self.assertIn("/MeasurementTypes 4", pdf_text)
+        self.assertIn("<p>V = 45.72 cu yd</p>", pdf_text)
+        self.assertNotIn("1,234.50 sf", pdf_text)
+
+    def test_native_pdf_export_multiple_captions_keep_resolved_order_and_geometry(self):
+        takeoff = self._native_takeoff(
+            1234.5,
+            caption_lines=[
+                "01 - Existing takeoff",
+                "A = 1,234.50 sf",
+                "V = 45.72 cu yd",
+            ],
+            measurement_types=133,
+            caption_label="01 - Existing takeoff",
+        )
+        pdf_text = self._write_native_pdf(takeoffs=[takeoff])
+        self.assertIn(
+            "/Contents (01 - Existing takeoff\\rA = 1,234.50 sf\\rV = 45.72 cu yd)",
+            pdf_text,
+        )
+        self.assertIn("/Label (01 - Existing takeoff)", pdf_text)
+        self.assertLess(
+            pdf_text.index("<p>01 - Existing takeoff</p>"),
+            pdf_text.index("<p>A = 1,234.50 sf</p>"),
+        )
+        self.assertLess(
+            pdf_text.index("<p>A = 1,234.50 sf</p>"),
+            pdf_text.index("<p>V = 45.72 cu yd</p>"),
+        )
+        block = self._annot_block_by_subject(pdf_text, "Area Measurement")
+        self.assertIn("/Vertices [ 30 30 130 30 130 100 30 100 ]", block)
+        self.assertIn("/IC [ 1 0 0 ]", block)
+        self.assertIn("/FillOpacity 0.5", block)
+
     def test_native_pdf_export_writes_cloud_appearance_as_curves(self):
         pdf_text = self._write_native_pdf(polygons=[self._native_cloud()])
         cloud_block = self._annot_block_by_subject(pdf_text, "Cloud")
@@ -1901,11 +2021,40 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         highlight.content = ""
         return highlight
 
+    def _native_takeoff(
+        self,
+        area_sf,
+        caption_lines=None,
+        measurement_types=0,
+        caption_label="",
+    ):
+        takeoff = ost_pdf_writer.PolygonAnnotationData()
+        takeoff.vertices = [
+            [30.0, 30.0],
+            [130.0, 30.0],
+            [130.0, 100.0],
+            [30.0, 100.0],
+        ]
+        takeoff.holes = []
+        takeoff.color = [255, 0, 0]
+        takeoff.fill_opacity = 0.5
+        takeoff.area_sf = area_sf
+        takeoff.scale_factor1 = 1.0
+        takeoff.scale_factor2 = 1.0
+        takeoff.depth = 1.0
+        caption = ost_pdf_writer.AnnotationCaptionData()
+        caption.lines = [] if caption_lines is None else caption_lines
+        caption.label = caption_label
+        caption.measurement_types = measurement_types
+        takeoff.caption = caption
+        return takeoff
+
     def _write_native_pdf_with_dimension(self, dimension):
         return self._write_native_pdf(dimensions=[dimension])
 
     def _write_native_pdf(
         self,
+        takeoffs=None,
         dimensions=None,
         arrows=None,
         rects=None,
@@ -1919,6 +2068,7 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "dimension_export.pdf"
             page = self._blank_page(400.0, 300.0)
+            page.takeoffs = takeoffs or []
             page.dimensions = dimensions or []
             page.arrows = arrows or []
             page.rects = rects or []

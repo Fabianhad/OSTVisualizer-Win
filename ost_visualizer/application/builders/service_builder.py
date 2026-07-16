@@ -8,6 +8,7 @@ from ..interfaces.i_parser_provider import IParserProvider
 from ..interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from ..service_container import ServiceContainer
 from ..services.config_service import ConfigService
+from ..services.annotation_caption_resolver import AnnotationCaptionResolver
 from ..services.export_service import ExportService
 from ..services.file_loading_service import FileLoadingService
 from ..services.import_service import ImportService
@@ -101,6 +102,7 @@ class ServiceBuilder:
         self.container.register_instance("takeoff_domain_service", takeoff_service)
         uom_service = self.infrastructure_provider.get_uom_service()
         self.container.register_instance("uom_service", uom_service)
+        annotation_caption_resolver = AnnotationCaptionResolver(uom_service)
         visualization_provider = (
             self.infrastructure_provider.get_visualization_provider(takeoff_service)
         )
@@ -160,6 +162,7 @@ class ServiceBuilder:
             color_service,
             takeoff_service,
             uom_service,
+            annotation_caption_resolver,
         )
         self.container.register_instance("pdf_exporter", pdf_exporter)
         ost_exporter = self.infrastructure_provider.get_ost_exporter(uom_service)

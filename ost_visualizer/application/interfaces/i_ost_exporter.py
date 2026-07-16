@@ -1,6 +1,6 @@
-from typing import Protocol
+from typing import Optional, Protocol
 from ...domain.dtos.raw_bid_data_dto import RawBidData
-from ..dtos.export_dto import ExportResultDto
+from ..dtos.export_dto import ExportProgressCallback, ExportResultDto
 
 
 class IOstExporter(Protocol):
@@ -8,5 +8,5 @@ class IOstExporter(Protocol):
         self,
         raw_data: RawBidData,
         output_path: str,
-        on_progress=None,
+        on_progress: Optional[ExportProgressCallback] = None,
     ) -> ExportResultDto: ...

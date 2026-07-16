@@ -1255,7 +1255,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
                 visible,
                 *,
                 initial_geometry=None,
-                initial_is_maximized=True,
+                initial_is_maximized=False,
                 initial_is_fullscreen=False,
             ):
                 calls.append(
@@ -1297,7 +1297,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
                 visible,
                 *,
                 initial_geometry=None,
-                initial_is_maximized=True,
+                initial_is_maximized=False,
                 initial_is_fullscreen=False,
             ):
                 calls.append(

@@ -7,6 +7,9 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QColor, QImage
+from ost_visualizer.application.dtos.annotation_caption_dto import (
+    AnnotationCaptionSettingsDto,
+)
 from ost_visualizer.application.dtos.page_export_data_dto import (
     PageExportData as PageExportDto,
 )
@@ -18,6 +21,8 @@ from ost_visualizer.presentation.utils.image_show_mode import (
 )
 from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 from ost_visualizer.presentation.visualization.exporters.pdf_exporter import PDFExporter
+
+_DISABLED_CAPTION_SETTINGS = AnnotationCaptionSettingsDto(False, ())
 
 
 class _FakeWriter:
@@ -78,10 +83,12 @@ class _ImageCache(_Clearable):
 
 
 class _CoordinateSystem:
-    def parse_position(self, _position):
+    @staticmethod
+    def parse_position(_position):
         return []
 
-    def ost_to_pdf_coordinates(self, _position, _page_info):
+    @staticmethod
+    def ost_to_pdf_coordinates(_position, _page_info):
         return []
 
 
@@ -105,6 +112,7 @@ def _export_single_page(exporter, page):
             output_path,
             display_mode="color",
             grayscale_enabled=False,
+            caption_settings=_DISABLED_CAPTION_SETTINGS,
         )
 
 
@@ -448,6 +456,7 @@ class PDFOverlayExportTests(unittest.TestCase):
                 os.path.join(temp_dir, "out.pdf"),
                 display_mode="color",
                 grayscale_enabled=False,
+                caption_settings=_DISABLED_CAPTION_SETTINGS,
                 on_progress=lambda current, total, name: progress_calls.append(
                     (current, total, name)
                 ),

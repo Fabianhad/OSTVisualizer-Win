@@ -9,6 +9,16 @@ using namespace ost_pdf_writer;
 NB_MODULE(ost_pdf_writer, m)
 {
         m.doc() = "High-performance PDF manipulation for OST Visualizer using QPDF";
+        nb::class_<PDFWriter::AnnotationCaptionData>(m, "AnnotationCaptionData",
+                                                     "Resolved text for a measurement annotation caption")
+            .def(nb::init<>())
+            .def_rw("lines", &PDFWriter::AnnotationCaptionData::lines,
+                    "Caption lines in Bluebeam display order")
+            .def_rw("label", &PDFWriter::AnnotationCaptionData::label,
+                    "Resolved Bluebeam annotation label")
+            .def_rw("measurement_types",
+                    &PDFWriter::AnnotationCaptionData::measurement_types,
+                    "Bluebeam MeasurementTypes bit mask");
         nb::class_<PDFWriter::PolygonAnnotationData>(m, "PolygonAnnotationData",
                                                      "Data for a single polygon annotation with measurement")
             .def(nb::init<>())
@@ -29,7 +39,9 @@ NB_MODULE(ost_pdf_writer, m)
             .def_rw("scale_factor2", &PDFWriter::PolygonAnnotationData::scale_factor2,
                     "Inches (e.g., 12)")
             .def_rw("depth", &PDFWriter::PolygonAnnotationData::depth,
-                    "Depth/thickness in feet (0 = none)");
+                    "Depth/thickness in feet (0 = none)")
+            .def_rw("caption", &PDFWriter::PolygonAnnotationData::caption,
+                    "Resolved measurement caption data");
         nb::class_<PDFWriter::ArrowAnnotationData>(m, "ArrowAnnotationData",
                                                    "Data for a single arrow annotation")
             .def(nb::init<>())

@@ -4,6 +4,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Optional
 from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -16,7 +17,10 @@ from test_presentation_chaos_harness import (
     _app,
     action_handler_module,
 )
-from ost_visualizer.application.dtos.export_dto import ExportResultDto
+from ost_visualizer.application.dtos.export_dto import (
+    ExportProgressCallback,
+    ExportResultDto,
+)
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.domain.entities.annotation import (
@@ -116,7 +120,12 @@ class PresentationImportExportWorkflowTests(unittest.TestCase):
             def __init__(self, _uom_service):
                 pass
 
-            def export(self, raw_data, output_path):
+            def export(
+                self,
+                raw_data,
+                output_path,
+                on_progress: Optional[ExportProgressCallback] = None,
+            ):
                 CapturingOstExporter.captured_raw_data = raw_data
                 Path(output_path).write_text("<XML_ROOT />", encoding="utf-8")
                 return ExportResultDto(success=True, format_name="OST")

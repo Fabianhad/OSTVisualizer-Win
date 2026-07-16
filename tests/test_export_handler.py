@@ -2,10 +2,15 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Optional
 from ost_visualizer.application.dtos.condition_summary_dtos import (
     ConditionSummaryGrouping,
 )
-from ost_visualizer.application.dtos.export_dto import ExportErrorCode, ExportResultDto
+from ost_visualizer.application.dtos.export_dto import (
+    ExportErrorCode,
+    ExportProgressCallback,
+    ExportResultDto,
+)
 from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.page import Page
@@ -179,11 +184,19 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             filename,
             display_mode,
             grayscale_enabled,
+            caption_settings,
             page_area_selections,
             bid_annotations,
-            on_progress=None,
+            on_progress: Optional[ExportProgressCallback] = None,
         ):
-            calls.append((display_mode, grayscale_enabled, len(pages_data)))
+            calls.append(
+                (
+                    display_mode,
+                    grayscale_enabled,
+                    len(pages_data),
+                    caption_settings,
+                )
+            )
             return ExportResultDto(success=True, format_name="PDF", page_count=1)
 
         export_handler_module.QtWidgets.QFileDialog.getSaveFileName = (
@@ -194,8 +207,12 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         try:
             handler = _make_export_handler(
                 config_model=SimpleNamespace(
-                    display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
-                    grayscale_enabled=False,
+                    snapshot=lambda: Config(
+                        display_mode_2d=Config.DISPLAY_MODE_TRANSPARENT,
+                        grayscale_enabled=False,
+                        pdf_annotation_captions_enabled=True,
+                        pdf_annotation_caption_ids=("area", "volume"),
+                    )
                 ),
                 project_data_service=_FakeProjectData(["A1"]),
                 pdf_exporter=SimpleNamespace(export=fake_export),
@@ -207,7 +224,13 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             )
             export_handler_module.ProgressDialog = original_progress_dialog
             export_handler_module.show_info = original_show_info
-        self.assertEqual(calls, [(Config.DISPLAY_MODE_TRANSPARENT, False, 1)])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:3], (Config.DISPLAY_MODE_TRANSPARENT, False, 1))
+        self.assertTrue(calls[0][3].enabled)
+        self.assertEqual(
+            tuple(caption_id.value for caption_id in calls[0][3].selected_ids),
+            ("area", "volume"),
+        )
 
     def test_summary_csv_export_uses_current_grouping_and_appends_extension(self):
         grouping = ConditionSummaryGrouping(by_type=True, by_area=True)
@@ -458,7 +481,12 @@ class OspExporterProgressTests(unittest.TestCase):
             def __init__(self, _uom_service):
                 pass
 
-            def export(self, _raw_data, output_path):
+            def export(
+                self,
+                _raw_data,
+                output_path,
+                on_progress: Optional[ExportProgressCallback] = None,
+            ):
                 Path(output_path).write_text("ost", encoding="utf-8")
                 return ExportResultDto(success=True, format_name="OST")
 
@@ -520,7 +548,12 @@ class OspExporterProgressTests(unittest.TestCase):
             def __init__(self, _uom_service):
                 pass
 
-            def export(self, raw_data, output_path):
+            def export(
+                self,
+                raw_data,
+                output_path,
+                on_progress: Optional[ExportProgressCallback] = None,
+            ):
                 self.captured_rows = [
                     dict(row) for row in raw_data.bid_tables.get("BidPages", [])
                 ]

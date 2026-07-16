@@ -38,7 +38,7 @@ class TakeoffRenderer:
     def coordinate_system(self) -> ICoordinateTransformer:
         return self._cs
 
-    def set_page_info(self, page_info: dict[str, Any]):
+    def set_page_info(self, page_info: dict[str, Any]) -> None:
         self._cs.update_page_info(page_info)
 
     def _build_item(

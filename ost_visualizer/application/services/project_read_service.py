@@ -1,5 +1,6 @@
 import logging
 from typing import Dict, List, Optional, Tuple
+from ..interfaces.i_mdb_reader import IMdbReader
 from ...domain.entities.area import BidArea
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.cover_sheet import CoverSheetData, JobStatus
@@ -25,7 +26,11 @@ from ...domain.services.uom_service import (
 
 
 class ProjectReadService:
-    def __init__(self, mdb_reader, logger: Optional[logging.Logger] = None):
+    def __init__(
+        self,
+        mdb_reader: IMdbReader,
+        logger: Optional[logging.Logger] = None,
+    ):
         self._reader = mdb_reader
         self.logger = logger or logging.getLogger(__name__)
 

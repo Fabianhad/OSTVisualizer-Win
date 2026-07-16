@@ -1,9 +1,8 @@
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 from ..entities.license import License
 
 
-@runtime_checkable
 class ILicenseRepository(Protocol):
     license_path: Path
 

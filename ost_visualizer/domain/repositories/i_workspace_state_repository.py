@@ -1,9 +1,8 @@
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 from ..entities.workspace_state import WorkspaceState
 
 
-@runtime_checkable
 class IWorkspaceStateRepository(Protocol):
     workspace_state_path: Path
 

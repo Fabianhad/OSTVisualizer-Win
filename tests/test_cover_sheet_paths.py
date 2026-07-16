@@ -401,6 +401,14 @@ class CoverSheetPathSaveTests(unittest.TestCase):
     def tearDown(self):
         self.app.processEvents()
 
+    def test_empty_pay_class_changes_report_success(self):
+        operations = _CoverSheetSettingsOps()
+        result = operations.save_pay_classes(
+            "test.mdb",
+            {"new": [], "updated": [], "deleted_uids": []},
+        )
+        self.assertIs(result, True)
+
     def test_cover_sheet_plan_header_uses_default_layout_without_saved_state(self):
         dialog = CoverSheetDialog(_FakeIconProvider(), None, _cover_sheet_data())
         try:

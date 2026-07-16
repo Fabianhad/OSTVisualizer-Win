@@ -149,7 +149,8 @@ class FakeCoordinateSystem:
     scale_ratio = 72.0
     view_scale = 1.0
 
-    def parse_position(self, position):
+    @staticmethod
+    def parse_position(position):
         return list(position)
 
     def ost_to_screen_pixels(self, value):

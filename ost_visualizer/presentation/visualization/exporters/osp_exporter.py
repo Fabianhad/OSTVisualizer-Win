@@ -5,8 +5,12 @@ import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List
-from ....application.dtos.export_dto import ExportErrorCode, ExportResultDto
+from typing import Callable, List, Optional
+from ....application.dtos.export_dto import (
+    ExportErrorCode,
+    ExportProgressCallback,
+    ExportResultDto,
+)
 from ....application.interfaces.i_ost_exporter import IOstExporter
 from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
@@ -36,7 +40,7 @@ class OspExporter:
         raw_data: RawBidData,
         output_file: str,
         bid_name: str = "Bid",
-        on_progress=None,
+        on_progress: Optional[ExportProgressCallback] = None,
     ) -> ExportResultDto:
         def _report(current: int, total: int, description: str) -> None:
             if on_progress:

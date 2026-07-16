@@ -3,9 +3,15 @@ from .uom_service import (
     calculate_condition_quantities as _calculate_condition_quantities,
 )
 from .uom_service import calculate_net_area_sf as _calculate_net_area_sf
+from .uom_service import calculate_bounding_box_inches as _calculate_bounding_box_inches
 
 
 class UOMDomainService:
+    def calculate_bounding_box_inches(
+        self, position: List[float]
+    ) -> Tuple[float, float]:
+        return _calculate_bounding_box_inches(position)
+
     def calculate_net_area_sf(
         self,
         position: List[float],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
+from .annotation_caption import DEFAULT_ANNOTATION_CAPTION_IDS
 
 
 @dataclass
@@ -49,6 +50,8 @@ class Config:
     snap_to_takeoffs_threshold_px: int = DEFAULT_SNAP_THRESHOLD_PX
     snap_to_right_angle_enabled: bool = True
     snap_to_right_angle_threshold_px: int = DEFAULT_SNAP_THRESHOLD_PX
+    pdf_annotation_captions_enabled: bool = False
+    pdf_annotation_caption_ids: tuple[str, ...] = DEFAULT_ANNOTATION_CAPTION_IDS
 
     def to_dict(self) -> dict:
         return {
@@ -83,6 +86,8 @@ class Config:
             "snap_to_takeoffs_threshold_px": self.snap_to_takeoffs_threshold_px,
             "snap_to_right_angle_enabled": self.snap_to_right_angle_enabled,
             "snap_to_right_angle_threshold_px": self.snap_to_right_angle_threshold_px,
+            "pdf_annotation_captions_enabled": self.pdf_annotation_captions_enabled,
+            "pdf_annotation_caption_ids": list(self.pdf_annotation_caption_ids),
         }
 
     @classmethod
@@ -161,5 +166,16 @@ class Config:
         if "snap_to_right_angle_threshold_px" in data:
             config.snap_to_right_angle_threshold_px = int(
                 data["snap_to_right_angle_threshold_px"]
+            )
+        if "pdf_annotation_captions_enabled" in data:
+            config.pdf_annotation_captions_enabled = bool(
+                data["pdf_annotation_captions_enabled"]
+            )
+        if "pdf_annotation_caption_ids" in data:
+            caption_ids = data["pdf_annotation_caption_ids"]
+            if not isinstance(caption_ids, (list, tuple)):
+                raise TypeError("pdf_annotation_caption_ids must be a list")
+            config.pdf_annotation_caption_ids = tuple(
+                str(value) for value in caption_ids
             )
         return config

@@ -81,7 +81,8 @@ class FakeCoordinateSystem:
     def update_page_info(self, page_info):
         self.page_info.update(page_info)
 
-    def parse_position(self, position):
+    @staticmethod
+    def parse_position(position):
         return list(position)
 
     def transform_vertices_to_2d(self, position):

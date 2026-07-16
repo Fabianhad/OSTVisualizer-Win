@@ -2,6 +2,9 @@ from typing import List, Optional, Protocol, Tuple
 
 
 class IUOMService(Protocol):
+    def calculate_bounding_box_inches(
+        self, position: List[float]
+    ) -> Tuple[float, float]: ...
     def calculate_net_area_sf(
         self,
         position: List[float],

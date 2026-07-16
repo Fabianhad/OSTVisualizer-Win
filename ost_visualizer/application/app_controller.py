@@ -8,12 +8,24 @@ from .builders.orchestrator_builder import AppOrchestrators, OrchestratorBuilder
 from .builders.service_builder import ServiceBuilder
 from .builders.use_case_builder import UseCaseBuilder
 from .events.app_events import AppEvents
+from .interfaces.i_annotation_view_manager import IAnnotationViewManager
+from .interfaces.i_api_client_provider import IApiClientProvider
 from .interfaces.i_event_bus import IEventBus
+from .interfaces.i_infrastructure_service_provider import (
+    IInfrastructureServiceProvider,
+)
+from .interfaces.i_mdb_connection_manager import IMdbConnectionManager
+from .interfaces.i_parser_provider import IParserProvider
+from .interfaces.i_repository_provider import IRepositoryProvider
+from .interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from .service_container import ServiceContainer
 from .services.project_operations_service import ProjectOperationsService
 from .services.project_read_service import ProjectReadService
 from .use_cases.project.import_project_files_from_args_use_case import (
     ImportProjectFilesFromArgsUseCase,
+)
+from ..domain.repositories.i_annotation_view_repository import (
+    IAnnotationViewRepository,
 )
 
 
@@ -163,14 +175,14 @@ class AppControllerBuilder:
         self,
         container: ServiceContainer,
         logger: logging.Logger,
-        repository_provider,
-        infrastructure_provider,
-        parser_provider,
-        api_client_provider,
-        view_manager_factory,
-        repository_factory,
-        event_bus_factory,
-        scene_notifier,
+        repository_provider: IRepositoryProvider,
+        infrastructure_provider: IInfrastructureServiceProvider,
+        parser_provider: IParserProvider,
+        api_client_provider: IApiClientProvider,
+        view_manager_factory: Callable[..., IAnnotationViewManager],
+        repository_factory: Callable[[], IAnnotationViewRepository],
+        event_bus_factory: Callable[[], IEventBus],
+        scene_notifier: IThreadSceneNotifier,
         ost_signaler=None,
     ):
         self.container = container
@@ -238,12 +250,16 @@ class AppControllerBuilder:
         self.container.register_instance("app_controller", controller)
         return controller
 
-    def _setup_models(self, conn_manager) -> None:
+    def _setup_models(self, conn_manager: IMdbConnectionManager) -> None:
         ModelBuilder(
             self.container, self.logger, self.repository_provider, conn_manager
         ).build()
 
-    def _setup_use_cases(self, conn_manager, event_bus) -> None:
+    def _setup_use_cases(
+        self,
+        conn_manager: IMdbConnectionManager,
+        event_bus: IEventBus,
+    ) -> None:
         mdb_reader = self.infrastructure_provider.get_mdb_reader(
             conn_manager=conn_manager
         )
@@ -270,7 +286,11 @@ class AppControllerBuilder:
             connection_manager=conn_manager,
         )
 
-    def _setup_services(self, event_bus, connection_manager) -> None:
+    def _setup_services(
+        self,
+        event_bus: IEventBus,
+        connection_manager: IMdbConnectionManager,
+    ) -> None:
         project_data_service = self.container.get("project_data_service")
         operations_logger = self.logger.getChild("ProjectOperationsService")
         project_operations_service = ProjectOperationsService(

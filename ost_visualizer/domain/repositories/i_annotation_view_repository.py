@@ -1,9 +1,8 @@
-from typing import Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol
 from ..entities.annotation_view import AnnotationView
 from ..entities.identity_refs import BidRef
 
 
-@runtime_checkable
 class IAnnotationViewRepository(Protocol):
     def get_active_view(self) -> Optional[AnnotationView]: ...
     def create_view(

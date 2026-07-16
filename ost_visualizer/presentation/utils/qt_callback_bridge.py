@@ -31,7 +31,7 @@ class QtCallbackBridge(QObject):
 
     def request_callback(
         self, callback: Callable[[bool, str], None], success: bool, message: str
-    ):
+    ) -> None:
         callback_id = self._next_id
         self._next_id += 1
         self._callbacks[callback_id] = callback

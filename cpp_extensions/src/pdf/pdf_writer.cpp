@@ -296,10 +296,10 @@ namespace ost_pdf_writer
                 BluebeamPolygon polygon;
                 polygon.vertices = annot_data.vertices;
                 polygon.holes = annot_data.holes;
-                polygon.label = annot_data.label;
                 polygon.stroke_color = annot_data.color;
                 polygon.fill_color = annot_data.color;
                 polygon.fill_opacity = annot_data.fill_opacity;
+                polygon.caption = annot_data.caption;
                 std::string annot_dict_str = generate_bluebeam_polygon_dict(polygon);
                 QPDFObjectHandle annot_obj = QPDFObjectHandle::parse(&pdf, annot_dict_str);
                 QPDFObjectHandle annot = pdf.makeIndirectObject(annot_obj);
@@ -355,7 +355,6 @@ namespace ost_pdf_writer
             BluebeamPolygon polygon;
             polygon.vertices = takeoff.vertices;
             polygon.holes = takeoff.holes;
-            polygon.label = takeoff.label;
             polygon.stroke_color = takeoff.color;
             polygon.fill_color = takeoff.color;
             polygon.fill_opacity = takeoff.fill_opacity;
@@ -363,14 +362,15 @@ namespace ost_pdf_writer
             polygon.scale_factor1 = takeoff.scale_factor1;
             polygon.scale_factor2 = takeoff.scale_factor2;
             polygon.depth = takeoff.depth;
+            polygon.caption = takeoff.caption;
             std::string annot_dict_str = generate_bluebeam_polygon_dict(polygon);
             QPDFObjectHandle annot_obj = QPDFObjectHandle::parse(&output, annot_dict_str);
             if (has_measurements && takeoff.area_sf > 0.0)
             {
                 annot_obj.replaceKey("/Measure", annot_measure_ref);
                 annot_obj.replaceKey("/P", page_dict);
-                std::string area_text = format_area_text(takeoff.area_sf);
-                std::string ap_content = generate_appearance_stream_content(polygon, area_text);
+                const std::string ap_content =
+                    generate_appearance_stream_content(polygon);
                 auto bb = compute_bbox_with_holes(polygon.vertices, polygon.holes);
                 double rect_x1 = bb[0] - 5.5, rect_y1 = bb[1] - 5.5;
                 double rect_x2 = bb[2] + 5.5, rect_y2 = bb[3] + 5.5;

@@ -3,10 +3,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Optional
 from PySide6 import QtWidgets
+from ....application.dtos.annotation_caption_dto import ANNOTATION_CAPTION_SPECS
+from ....domain.entities.annotation_caption import ANNOTATION_CAPTION_ORDER
 from ....domain.entities.config import Config
 from ...config import (
     OPTIONS_DIALOG_TITLE,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
+    OPTIONS_TAB_EXPORT,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
     OPTIONS_WINDOW_HEIGHT,
@@ -14,7 +17,7 @@ from ...config import (
 )
 from ...utils.messagebox import confirm
 from ...utils.windows import remove_minimize_maximize
-from .components import McpSetupTab, OptionsTab
+from .components import ExportTab, McpSetupTab, OptionsTab
 
 
 class OptionsDialog(QtWidgets.QDialog):
@@ -44,6 +47,7 @@ class OptionsDialog(QtWidgets.QDialog):
         self._reset_all_button: Optional[QtWidgets.QPushButton] = None
         self._tabs: Optional[QtWidgets.QTabWidget] = None
         self._options_tab: Optional[OptionsTab] = None
+        self._export_tab: Optional[ExportTab] = None
         self._mcp_setup_tab: Optional[McpSetupTab] = None
         self._mcp_helper_path = Path(mcp_helper_path) if mcp_helper_path else None
         self._cleaned_up = False
@@ -66,6 +70,10 @@ class OptionsDialog(QtWidgets.QDialog):
         self._options_tab = OptionsTab(self._tabs)
         self._bind_options_tab_widgets()
         self._tabs.addTab(self._options_tab, OPTIONS_TAB_OPTIONS)
+        self._export_tab = ExportTab(self._tabs)
+        self._caption_master_check = self._export_tab.captions_enabled_check
+        self._caption_checks = self._export_tab.caption_checks
+        self._tabs.addTab(self._export_tab, OPTIONS_TAB_EXPORT)
         self._mcp_setup_tab = McpSetupTab(
             self._tabs,
             helper_path=self._mcp_helper_path,
@@ -225,6 +233,14 @@ class OptionsDialog(QtWidgets.QDialog):
             self._mouse_pressed_snap_angle_combo,
             self._applied_config.mouse_pressed_snap_angle,
         )
+        self._caption_master_check.setChecked(
+            self._applied_config.pdf_annotation_captions_enabled
+        )
+        selected_caption_ids = self._applied_config.pdf_annotation_caption_ids
+        for caption_id in ANNOTATION_CAPTION_ORDER:
+            self._caption_checks[caption_id].setChecked(
+                caption_id.value in selected_caption_ids
+            )
 
     def _connect_change_signals(self) -> None:
         buttons = (
@@ -253,6 +269,8 @@ class OptionsDialog(QtWidgets.QDialog):
             self._snap_to_pdf_lines_check,
             self._snap_to_takeoffs_check,
             self._snap_to_right_angle_check,
+            self._caption_master_check,
+            *self._caption_checks.values(),
         )
         for button in buttons:
             button.toggled.connect(self._update_apply_enabled)
@@ -345,6 +363,12 @@ class OptionsDialog(QtWidgets.QDialog):
             snap_to_right_angle_enabled=self._snap_to_right_angle_check.isChecked(),
             snap_to_right_angle_threshold_px=(
                 self._snap_to_right_angle_threshold_spin.value()
+            ),
+            pdf_annotation_captions_enabled=self._caption_master_check.isChecked(),
+            pdf_annotation_caption_ids=tuple(
+                caption_id.value
+                for caption_id in ANNOTATION_CAPTION_ORDER
+                if self._caption_checks[caption_id].isChecked()
             ),
         )
 
@@ -441,6 +465,7 @@ class OptionsDialog(QtWidgets.QDialog):
         if self._mcp_setup_tab is not None:
             self._mcp_setup_tab.cleanup()
         self._options_tab = None
+        self._export_tab = None
         self._mcp_setup_tab = None
         self._tabs = None
 

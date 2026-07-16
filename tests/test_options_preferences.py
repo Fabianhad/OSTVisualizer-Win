@@ -11,11 +11,19 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
 from single_action import SingleCallRecorder
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
+from ost_visualizer.application.dtos.annotation_caption_dto import (
+    ANNOTATION_CAPTION_SPECS,
+)
 from ost_visualizer.application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.config_service import ConfigService
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.annotation_style import AnnotationStyle
+from ost_visualizer.domain.entities.annotation_caption import (
+    ANNOTATION_CAPTION_ORDER,
+    DEFAULT_ANNOTATION_CAPTION_IDS,
+    AnnotationCaptionId,
+)
 from ost_visualizer.domain.entities.bid import Bid
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
@@ -72,6 +80,7 @@ from ost_visualizer.presentation.config import (
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
+    OPTIONS_TAB_EXPORT,
     OPTIONS_WINDOW_HEIGHT,
     OPTIONS_WINDOW_WIDTH,
     TAB_INDEX_TAKEOFF,
@@ -741,6 +750,8 @@ class OptionsPreferencesTests(unittest.TestCase):
                 snap_to_right_angle_enabled=True,
                 snap_to_right_angle_threshold_px=15,
                 default_auto_zoom_level=150,
+                pdf_annotation_captions_enabled=True,
+                pdf_annotation_caption_ids=("area", "volume"),
             )
         )
         self.assertFalse(dialog._display_modes_sync_check.isChecked())
@@ -772,6 +783,13 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertTrue(dialog._snap_to_right_angle_check.isChecked())
         self.assertEqual(dialog._snap_to_right_angle_threshold_spin.value(), 15)
         self.assertEqual(dialog._auto_zoom_spin.value(), 150)
+        self.assertTrue(dialog._caption_master_check.isChecked())
+        self.assertTrue(dialog._caption_checks[AnnotationCaptionId.AREA].isChecked())
+        self.assertTrue(dialog._caption_checks[AnnotationCaptionId.VOLUME].isChecked())
+        self.assertFalse(dialog._caption_checks[AnnotationCaptionId.LENGTH].isChecked())
+        self.assertTrue(
+            all(check.isEnabled() for check in dialog._caption_checks.values())
+        )
         dialog.close()
 
     def test_options_crosshair_color_preview_is_square_and_not_stylesheet_colored(self):
@@ -964,6 +982,10 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertTrue(dialog._snap_to_right_angle_check.isChecked())
         self.assertFalse(dialog._disable_high_res_check.isChecked())
         self.assertEqual(dialog._auto_zoom_spin.value(), Config.DEFAULT_AUTO_ZOOM_LEVEL)
+        self.assertFalse(dialog._caption_master_check.isChecked())
+        self.assertTrue(
+            all(check.isChecked() for check in dialog._caption_checks.values())
+        )
         dialog.close()
 
     def test_options_dialog_reset_all_settings_no_keeps_pending_changes(self):
@@ -1032,11 +1054,59 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(dialog.maximumHeight(), OPTIONS_WINDOW_HEIGHT)
         dialog.close()
 
-    def test_options_dialog_contains_options_and_mcp_setup_tabs(self):
+    def test_options_dialog_contains_options_export_and_mcp_setup_tabs(self):
         dialog = OptionsDialog(Config())
-        self.assertEqual(dialog._tabs.count(), 2)
+        self.assertEqual(dialog._tabs.count(), 3)
         self.assertEqual(dialog._tabs.tabText(0), OPTIONS_TAB_OPTIONS)
-        self.assertEqual(dialog._tabs.tabText(1), OPTIONS_TAB_MCP_SETUP)
+        self.assertEqual(dialog._tabs.tabText(1), OPTIONS_TAB_EXPORT)
+        self.assertEqual(dialog._tabs.tabText(2), OPTIONS_TAB_MCP_SETUP)
+        dialog.close()
+
+    def test_export_tab_defaults_off_with_every_caption_selected_and_disabled(self):
+        dialog = OptionsDialog(Config())
+        self.assertFalse(dialog._caption_master_check.isChecked())
+        self.assertEqual(len(dialog._caption_checks), len(ANNOTATION_CAPTION_SPECS))
+        for caption_id in ANNOTATION_CAPTION_ORDER:
+            spec = ANNOTATION_CAPTION_SPECS[caption_id]
+            check = dialog._caption_checks[caption_id]
+            self.assertEqual(check.text(), spec.title)
+            self.assertTrue(check.isChecked())
+            self.assertFalse(check.isEnabled())
+        dialog.close()
+
+    def test_export_caption_selections_survive_master_disable_and_reenable(self):
+        dialog = OptionsDialog(Config())
+        dialog._caption_master_check.setChecked(True)
+        area_check = dialog._caption_checks[AnnotationCaptionId.AREA]
+        volume_check = dialog._caption_checks[AnnotationCaptionId.VOLUME]
+        area_check.setChecked(False)
+        volume_check.setChecked(True)
+        dialog._caption_master_check.setChecked(False)
+        self.assertFalse(area_check.isEnabled())
+        self.assertFalse(volume_check.isEnabled())
+        dialog._caption_master_check.setChecked(True)
+        self.assertFalse(area_check.isChecked())
+        self.assertTrue(volume_check.isChecked())
+        self.assertTrue(area_check.isEnabled())
+        dialog.close()
+
+    def test_export_caption_apply_saves_and_cancel_keeps_persisted_config(self):
+        repo = FakeConfigRepository()
+        aggregate = ConfigAggregate(repo)
+        service = ConfigService(aggregate, FakeEventBus())
+        dialog = OptionsDialog(
+            service.get_config_snapshot(),
+            apply_callback=service.update_app_options,
+        )
+        dialog._caption_master_check.setChecked(True)
+        dialog._caption_checks[AnnotationCaptionId.VOLUME].setChecked(False)
+        _apply_button(dialog).click()
+        config = aggregate.snapshot()
+        self.assertTrue(config.pdf_annotation_captions_enabled)
+        self.assertNotIn("volume", config.pdf_annotation_caption_ids)
+        dialog._caption_checks[AnnotationCaptionId.AREA].setChecked(False)
+        dialog.reject()
+        self.assertIn("area", aggregate.snapshot().pdf_annotation_caption_ids)
         dialog.close()
 
     def test_mcp_setup_tab_contains_existing_setup_controls(self):
@@ -2179,6 +2249,11 @@ class OptionsPreferencesTests(unittest.TestCase):
 
     def test_config_defaults_preserve_existing_enabled_behaviors(self):
         config = Config()
+        self.assertFalse(config.pdf_annotation_captions_enabled)
+        self.assertEqual(
+            config.pdf_annotation_caption_ids,
+            DEFAULT_ANNOTATION_CAPTION_IDS,
+        )
         self.assertTrue(config.show_toolbar_text)
         self.assertTrue(config.display_modes_synced)
         self.assertEqual(config.display_mode_3d, Config.DISPLAY_MODE_ORIGINAL)
@@ -2267,7 +2342,8 @@ class OptionsPreferencesTests(unittest.TestCase):
                 return self.index
 
         class FakeCoordinateSystem:
-            def parse_position(self, position):
+            @staticmethod
+            def parse_position(position):
                 return list(position)
 
         class FakeSceneBuilder:

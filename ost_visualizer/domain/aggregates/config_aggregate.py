@@ -1,6 +1,7 @@
 import logging
 from dataclasses import replace
 from typing import Optional
+from ..entities.annotation_caption import DEFAULT_ANNOTATION_CAPTION_IDS
 from ..entities.config import Config
 from ..repositories.i_config_repository import IConfigRepository
 
@@ -231,6 +232,17 @@ class ConfigAggregate:
         )
         if snap_thresholds_changed:
             config_changed = True
+        caption_ids = tuple(
+            caption_id
+            for caption_id in DEFAULT_ANNOTATION_CAPTION_IDS
+            if caption_id in config.pdf_annotation_caption_ids
+        )
+        if caption_ids != config.pdf_annotation_caption_ids:
+            self.logger.warning(
+                "Invalid or duplicate PDF annotation caption identifiers in config; "
+                "using the supported identifiers in canonical order"
+            )
+            config_changed = True
         validated = Config(
             display_modes_synced=display_modes_synced,
             display_mode_3d=display_mode_3d,
@@ -271,6 +283,10 @@ class ConfigAggregate:
             snap_to_right_angle_threshold_px=(
                 snap_thresholds["snap_to_right_angle_threshold_px"]
             ),
+            pdf_annotation_captions_enabled=bool(
+                config.pdf_annotation_captions_enabled
+            ),
+            pdf_annotation_caption_ids=caption_ids,
         )
         self._config = validated
         if config_changed:

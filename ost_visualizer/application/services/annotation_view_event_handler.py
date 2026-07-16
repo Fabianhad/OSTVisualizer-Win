@@ -1,10 +1,9 @@
 import logging
 from ..events.app_events import AppEvents
 from ..interfaces.i_shutdown_aware import IShutdownAware
-from ..interfaces.i_startable import IStartable
 
 
-class AnnotationViewEventHandler(IShutdownAware, IStartable):
+class AnnotationViewEventHandler(IShutdownAware):
     def __init__(self, event_bus, use_case_factory, logger: logging.Logger):
         self._event_bus = event_bus
         self._use_case_factory = use_case_factory

@@ -12,9 +12,17 @@ from PySide6.QtGui import (
     QPdfWriter,
     QTransform,
 )
-from ....application.dtos.export_dto import ExportErrorCode, ExportResultDto
+from ....application.dtos.export_dto import (
+    ExportErrorCode,
+    ExportProgressCallback,
+    ExportResultDto,
+)
+from ....application.dtos.annotation_caption_dto import AnnotationCaptionSettingsDto
 from ....application.dtos.page_export_data_dto import PageExportData
 from ....application.interfaces.i_color_service import IColorService
+from ....application.interfaces.i_annotation_caption_resolver import (
+    IAnnotationCaptionResolver,
+)
 from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from ....application.interfaces.i_uom_service import IUOMService
@@ -76,11 +84,13 @@ class PDFExporter:
         color_service: IColorService,
         takeoff_service: ITakeoffDomainService,
         uom_service: IUOMService,
+        annotation_caption_resolver: IAnnotationCaptionResolver,
     ):
         self._coord_system = coord_system
         self._color_service = color_service
         self._takeoff_service = takeoff_service
         self._uom_service = uom_service
+        self._annotation_caption_resolver = annotation_caption_resolver
         self._writer = ost_pdf_writer.PDFWriter()
         self._export_page_cache = PageCache()
         self._export_composite_renderer = CompositeRenderer(self._export_page_cache)
@@ -91,9 +101,10 @@ class PDFExporter:
         output_path: str,
         display_mode: str,
         grayscale_enabled: bool,
+        caption_settings: AnnotationCaptionSettingsDto,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         bid_annotations: Optional[List[BidAnnotation]] = None,
-        on_progress=None,
+        on_progress: Optional[ExportProgressCallback] = None,
     ) -> ExportResultDto:
         try:
             with tempfile.TemporaryDirectory(prefix="ost_pdf_export_") as temp_dir:
@@ -115,6 +126,7 @@ class PDFExporter:
                         page_info,
                         color_map,
                         page_area_selections,
+                        caption_settings=caption_settings,
                     )
                     arrow_data = self._collect_arrows(
                         page.uid, bid_annotations or [], page_info
@@ -533,6 +545,8 @@ class PDFExporter:
         page_info: PageRenderInfo,
         color_map: Optional[Dict[str, Any]] = None,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+        *,
+        caption_settings: AnnotationCaptionSettingsDto,
     ) -> List[Any]:
         polygons = []
         scale_factor1 = page_info.get("scale_factor1", 1.0)
@@ -596,13 +610,20 @@ class PDFExporter:
             polygon_data = ost_pdf_writer.PolygonAnnotationData()
             polygon_data.vertices = pdf_vertices
             polygon_data.holes = pdf_holes
-            polygon_data.label = label
             polygon_data.color = color_rgb
             polygon_data.fill_opacity = fill_opacity
             polygon_data.area_sf = area_sf
             polygon_data.scale_factor1 = scale_factor1
             polygon_data.scale_factor2 = scale_factor2
             polygon_data.depth = depth_ft
+            self._set_resolved_caption(
+                polygon_data,
+                condition,
+                takeoff,
+                hole_positions,
+                caption_settings,
+                label,
+            )
             polygons.append(polygon_data)
         for takeoff in bid_takeoffs:
             condition_uid = takeoff.condition_uid
@@ -703,7 +724,6 @@ class PDFExporter:
             polygon_data = ost_pdf_writer.PolygonAnnotationData()
             polygon_data.vertices = pdf_vertices
             polygon_data.holes = []
-            polygon_data.label = label
             polygon_data.color = color_rgb
             polygon_data.fill_opacity = fill_opacity
             polygon_data.area_sf = area_sf
@@ -712,8 +732,40 @@ class PDFExporter:
             polygon_data.depth = (
                 depth_inches * _INCHES_TO_FEET if depth_inches > 0 else 0.0
             )
+            self._set_resolved_caption(
+                polygon_data,
+                condition,
+                takeoff,
+                [],
+                caption_settings,
+                label,
+            )
             polygons.append(polygon_data)
         return polygons
+
+    def _set_resolved_caption(
+        self,
+        polygon_data: Any,
+        condition: Condition,
+        takeoff: Takeoff,
+        hole_positions: List[List[float]],
+        settings: AnnotationCaptionSettingsDto,
+        label: str,
+    ) -> None:
+        if not settings.enabled:
+            return
+        resolved = self._annotation_caption_resolver.resolve(
+            condition,
+            takeoff,
+            hole_positions,
+            settings,
+            label,
+        )
+        caption = ost_pdf_writer.AnnotationCaptionData()
+        caption.lines = list(resolved.lines)
+        caption.label = resolved.label
+        caption.measurement_types = resolved.measurement_types
+        polygon_data.caption = caption
 
     def _collect_arrows(
         self,

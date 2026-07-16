@@ -282,18 +282,14 @@ class ColorService:
             color_hex = "#808080"
         return ColorWithOpacity(hex=color_hex, opacity=opacity)
 
-    @staticmethod
-    def int_to_hex(color_fill) -> str:
+    def int_to_hex(self, color_fill: int) -> str:
         return int_to_hex(color_fill)
 
-    @staticmethod
-    def hex_to_rgb_int(hex_color: str) -> List[int]:
+    def hex_to_rgb_int(self, hex_color: str) -> List[int]:
         return hex_to_rgb_int(hex_color)
 
-    @staticmethod
-    def hex_to_rgb(_hex: str) -> Tuple[float, float, float]:
+    def hex_to_rgb(self, _hex: str) -> Tuple[float, float, float]:
         return hex_to_rgb(_hex)
 
-    @staticmethod
-    def parse_hex_color(color: str) -> Tuple[float, float, float]:
+    def parse_hex_color(self, color: str) -> Tuple[float, float, float]:
         return parse_hex_color(color)

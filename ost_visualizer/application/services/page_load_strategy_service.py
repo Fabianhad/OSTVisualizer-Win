@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict
 from ...application.interfaces.i_page_size_provider import IPageSizeProvider
+from ...application.interfaces.i_page_load_strategy_service import ILoadStrategy
 from ...domain.entities.file_extensions import is_pdf_suffix
 from ...domain.entities.page import Page
 
@@ -151,7 +152,7 @@ class PageLoadStrategyService:
     def create_pending_page_data(
         self,
         page: Page,
-        strategy: LoadStrategy,
+        strategy: ILoadStrategy,
         pdf_width_pts: float,
         pdf_height_pts: float,
     ) -> Dict[str, Any]:

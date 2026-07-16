@@ -88,7 +88,7 @@ class IWorkspaceShell(Protocol):
         visible: bool,
         *,
         initial_geometry: QtCore.QByteArray | None = None,
-        initial_is_maximized: bool = True,
+        initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
     ) -> None: ...
     def is_annotation_window_open(self) -> bool: ...
@@ -99,7 +99,7 @@ class IWorkspaceShell(Protocol):
         visible: bool,
         *,
         initial_geometry: QtCore.QByteArray | None = None,
-        initial_is_maximized: bool = True,
+        initial_is_maximized: bool = False,
         initial_is_fullscreen: bool = False,
     ) -> None: ...
     def is_view_window_open(self) -> bool: ...

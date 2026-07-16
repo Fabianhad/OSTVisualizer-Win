@@ -20,6 +20,7 @@ Built for estimators and construction teams who work with OST project files dail
 - **Summary Review** -- Group condition quantities by Area, Type, and Page, with unused conditions hidden from placed-takeoff summaries
 - **3D Visualization** -- See takeoff geometry rendered in full 3D with transparent overlays *(Commercial)*
 - **Import/Export** -- Move data between OST, OSP, HTML, PDF, CSV, DXF, OBJ, and FBX formats *(Commercial)*
+- **PDF Annotation Captions** -- Choose which Bluebeam-compatible measurement captions appear on exported takeoff annotations from the Options dialog *(Commercial)*
 - **HTML Visualization Export** -- Share a single-file 3D and 2D viewer whose plan view includes visibility-aware takeoff callouts with elevations and cubic-yard quantities *(Commercial)*
 - **Condition Management** -- Create, edit, duplicate, and organize conditions across bids *(Commercial)*
 - **Realtime Sync** -- Detects when On-Screen Takeoff is active and picks up changes automatically ([free companion tool](https://fabianhad.com/ost3d/download))

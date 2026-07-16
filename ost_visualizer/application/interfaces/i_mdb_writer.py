@@ -5,6 +5,7 @@ from ..dtos.create_condition_spec_dto import CreateConditionSpec
 from ..dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.paste_ref_remap_dto import PasteRefRemap
+from ..dtos.update_condition_dto import UpdateConditionDto
 
 
 class IMdbWriter(Protocol):
@@ -149,7 +150,7 @@ class IMdbWriter(Protocol):
         db_path: str,
         bid_uid: str,
         condition_uid: str,
-        updates: Any,
+        updates: UpdateConditionDto,
     ) -> bool: ...
     def renumber_conditions(
         self, db_path: str, bid_uid: str, ordered_condition_uids: List[str]
@@ -202,7 +203,9 @@ class IMdbWriter(Protocol):
     def save_condition_types(
         self, db_path: str, changes: Dict[str, Any]
     ) -> Optional[Dict[str, str]]: ...
-    def delete_annotations(self, db_path: str, annotations: List[str]) -> bool: ...
+    def delete_annotations(
+        self, db_path: str, annotations: List[Tuple[str, str]]
+    ) -> bool: ...
     def save_bid_selected_page(
         self, db_path: str, bid_uid: str, page_uid: str
     ) -> bool: ...

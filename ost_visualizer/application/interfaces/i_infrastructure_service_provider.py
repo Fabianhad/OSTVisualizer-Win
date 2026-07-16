@@ -2,11 +2,13 @@ from pathlib import Path
 from typing import List, Optional, Protocol, Tuple
 from ..dtos.plan_view_renderers_dto import PlanViewRenderers
 from .i_color_service import IColorService
+from .i_annotation_caption_resolver import IAnnotationCaptionResolver
 from .i_coordinate_transformer import ICoordinateTransformer
 from .i_coordinate_transformer_factory import ICoordinateTransformerFactory
 from .i_database_creator import IDatabaseCreator
 from .i_license_validation_scheduler import ILicenseValidationScheduler
 from .i_mdb_connection_manager import IMdbConnectionManager
+from .i_mdb_reader import IMdbReader
 from .i_mdb_writer import IMdbWriter
 from .i_osp_exporter import IOspExporter
 from .i_osp_importer import IOspImporter
@@ -26,7 +28,6 @@ class IInfrastructureServiceProvider(Protocol):
         self, interval_seconds: int
     ) -> ILicenseValidationScheduler: ...
     def get_transaction_monitor(self) -> ITransactionMonitor: ...
-    def get_app_data_dir(self) -> str: ...
     def get_thread_callback_bridge(self) -> IThreadCallbackBridge: ...
     def get_icon_provider(self) -> Optional[IWindowIconProvider]: ...
     def get_visualization_provider(
@@ -42,6 +43,7 @@ class IInfrastructureServiceProvider(Protocol):
         color_service: IColorService,
         takeoff_service: ITakeoffDomainService,
         uom_service: IUOMService,
+        annotation_caption_resolver: IAnnotationCaptionResolver,
     ) -> IPDFExporter: ...
     def get_ost_exporter(self, uom_service: IUOMService) -> IOstExporter: ...
     def get_ost_importer(
@@ -50,7 +52,12 @@ class IInfrastructureServiceProvider(Protocol):
     def get_osp_importer(
         self, conn_manager: Optional[IMdbConnectionManager] = None
     ) -> IOspImporter: ...
-    def get_mdb_writer(self, conn_manager=None) -> IMdbWriter: ...
+    def get_mdb_reader(
+        self, conn_manager: Optional[IMdbConnectionManager] = None
+    ) -> IMdbReader: ...
+    def get_mdb_writer(
+        self, conn_manager: Optional[IMdbConnectionManager] = None
+    ) -> IMdbWriter: ...
     def create_connection_manager(self) -> IMdbConnectionManager: ...
     def create_plan_view_renderers(
         self,

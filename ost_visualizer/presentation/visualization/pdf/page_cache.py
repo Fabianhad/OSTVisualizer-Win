@@ -518,7 +518,7 @@ class PageCache:
             self._store_lru(self._page_count_cache, cache_key, count)
         return count
 
-    def get_page_size(self, file_path: str, page_index: int = 0) -> tuple:
+    def get_page_size(self, file_path: str, page_index: int = 0) -> tuple[float, float]:
         file_signature = self._file_signature(file_path)
         normalized_page_index = self._normalize_page_index(
             file_path, page_index, file_signature

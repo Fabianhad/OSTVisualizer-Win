@@ -12,6 +12,8 @@ namespace ost_pdf_writer
     constexpr double CLOUD_SCALLOP_MIN_RADIUS = 15.0;
     constexpr double CLOUD_SCALLOP_MAX_RADIUS = 50.0;
     constexpr double CLOUD_SCALLOP_SIZE_SCALE = 0.25;
+    constexpr double MEASUREMENT_CAPTION_FONT_SIZE = 12.0;
+    constexpr double MEASUREMENT_CAPTION_LINE_HEIGHT = 13.8;
 
     std::string generate_nm()
     {
@@ -56,25 +58,6 @@ namespace ost_pdf_writer
         oss << "'" << std::setw(2) << std::setfill('0') << tz_mins << "'";
         return oss.str();
     }
-    std::string format_area_text(double area_sf)
-    {
-        std::ostringstream oss;
-        oss << std::fixed << std::setprecision(2) << area_sf;
-        std::string num_str = oss.str();
-        auto dot_pos = num_str.find('.');
-        std::string int_part = num_str.substr(0, dot_pos);
-        std::string dec_part = num_str.substr(dot_pos + 1);
-        std::string formatted;
-        int count = 0;
-        for (int i = static_cast<int>(int_part.size()) - 1; i >= 0; --i)
-        {
-            if (count > 0 && count % 3 == 0 && int_part[i] != '-')
-                formatted = "," + formatted;
-            formatted = int_part[i] + formatted;
-            ++count;
-        }
-        return formatted + "." + dec_part + " sf";
-    }
     static std::string rgb_to_hex(const std::array<uint8_t, 3> &color)
     {
         std::ostringstream oss;
@@ -90,6 +73,20 @@ namespace ost_pdf_writer
     }
     static std::string escape_pdf_string(const std::string &s);
     static std::string escape_xml(const std::string &s);
+    static std::string escape_caption_pdf_string(
+        const std::vector<std::string> &lines)
+    {
+        std::ostringstream oss;
+        for (size_t index = 0; index < lines.size(); ++index)
+        {
+            if (index > 0)
+            {
+                oss << "\\r";
+            }
+            oss << escape_pdf_string(lines[index]);
+        }
+        return oss.str();
+    }
     static std::array<double, 4> compute_bbox(
         const std::vector<std::array<double, 2>> &verts)
     {
@@ -189,14 +186,15 @@ namespace ost_pdf_writer
         double rect_x2 = bb[2] + 5.5, rect_y2 = bb[3] + 5.5;
         auto [stroke_r, stroke_g, stroke_b] = color_to_rgb(polygon.stroke_color);
         std::string hex_color = rgb_to_hex(polygon.stroke_color);
-        std::string area_text = format_area_text(polygon.area_sf);
+        const std::string caption_text = escape_caption_pdf_string(polygon.caption.lines);
+        const bool captions_enabled = polygon.caption.measurement_types != 0;
         std::string pdf_date = generate_pdf_date();
         std::string nm = generate_nm();
         oss << "<<\n";
         oss << "/AlignOnSegment true\n";
-        oss << "/Cap true\n";
+        oss << "/Cap " << (captions_enabled ? "true" : "false") << "\n";
         oss << "/C [ " << stroke_r << " " << stroke_g << " " << stroke_b << " ]\n";
-        oss << "/Contents (" << area_text << ")\n";
+        oss << "/Contents (" << caption_text << ")\n";
         oss << "/CreationDate (" << pdf_date << ")\n";
         if (!polygon.holes.empty())
         {
@@ -217,25 +215,37 @@ namespace ost_pdf_writer
             oss << "/Depth " << polygon.depth << "\n";
         }
         oss << "/DepthUnit [ << /Type /NumberFormat /U (') /C 0.001157407 /D 100 /FD true /SS () >> ]\n";
-        oss << "/DS (font: Helvetica 12pt; text-align:center; line-height:13.8pt; color:" << hex_color << ")\n";
+        oss << "/DS (font: Helvetica " << MEASUREMENT_CAPTION_FONT_SIZE
+            << "pt; text-align:center; line-height:"
+            << MEASUREMENT_CAPTION_LINE_HEIGHT << "pt; color:"
+            << hex_color << ")\n";
         oss << "/F 4\n";
         oss << "/FillOpacity " << polygon.fill_opacity << "\n";
         oss << "/IC [ " << stroke_r << " " << stroke_g << " " << stroke_b << " ]\n";
         oss << "/IT /PolygonDimension\n";
-        oss << "/Label ()\n";
+        oss << "/Label (" << escape_pdf_string(polygon.caption.label) << ")\n";
         oss << "/M (" << pdf_date << ")\n";
-        oss << "/MeasurementTypes 129\n";
+        oss << "/MeasurementTypes " << polygon.caption.measurement_types << "\n";
         oss << "/NM (" << nm << ")\n";
         oss << "/PitchRun 12\n";
-        oss << "/RC (<?xml version=\"1.0\"?>"
-            << "<body xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\" "
-            << "xfa:contentType=\"text/html\" "
-            << "xfa:APIVersion=\"BluebeamPDFRevu:2018\" "
-            << "xfa:spec=\"2.2.0\" "
-            << "style=\"font:Helvetica 12pt; text-align:center; line-height:13.8pt; color:" << hex_color << "\" "
-            << "xmlns=\"http://www.w3.org/1999/xhtml\">"
-            << "<p>" << area_text << "</p>"
-            << "</body>)\n";
+        if (!polygon.caption.lines.empty())
+        {
+            oss << "/RC (<?xml version=\"1.0\"?>"
+                << "<body xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\" "
+                << "xfa:contentType=\"text/html\" "
+                << "xfa:APIVersion=\"BluebeamPDFRevu:2018\" "
+                << "xfa:spec=\"2.2.0\" "
+                << "style=\"font:Helvetica " << MEASUREMENT_CAPTION_FONT_SIZE
+                << "pt; text-align:center; line-height:"
+                << MEASUREMENT_CAPTION_LINE_HEIGHT << "pt; color:"
+                << hex_color << "\" "
+                << "xmlns=\"http://www.w3.org/1999/xhtml\">";
+            for (const std::string &line : polygon.caption.lines)
+            {
+                oss << "<p>" << escape_xml(line) << "</p>";
+            }
+            oss << "</body>)\n";
+        }
         oss << "/Rect [ " << rect_x1 << " " << rect_y1 << " " << rect_x2 << " " << rect_y2 << " ]\n";
         oss << "/SlopeType 1\n";
         oss << "/Subj (Area Measurement)\n";
@@ -592,8 +602,7 @@ namespace ost_pdf_writer
         }
         oss << "h ";
     }
-    std::string generate_appearance_stream_content(const BluebeamPolygon &polygon,
-                                                   const std::string &area_text)
+    std::string generate_appearance_stream_content(const BluebeamPolygon &polygon)
     {
         auto bb = compute_bbox_with_holes(polygon.vertices, polygon.holes);
         auto [fill_r, fill_g, fill_b] = color_to_rgb(polygon.fill_color);
@@ -627,16 +636,24 @@ namespace ost_pdf_writer
             }
             oss << "S ";
         }
-        double center_x = (bb[0] + bb[2]) / 2.0;
-        double center_y = (bb[1] + bb[3]) / 2.0;
-        double text_width = area_text.size() * 6.0;
-        double text_x = center_x - text_width / 2.0;
-        double text_y = center_y - 6.0;
-        oss << "q 1 0 0 1 0 0 cm BT "
-            << stroke_r << " " << stroke_g << " " << stroke_b << " rg "
-            << "/Helv 12 Tf "
-            << "1 0 0 1 " << text_x << " " << text_y << " Tm "
-            << "(" << area_text << ") Tj ET Q ";
+        if (!polygon.caption.lines.empty())
+        {
+            double center_x = (bb[0] + bb[2]) / 2.0;
+            double center_y = (bb[1] + bb[3]) / 2.0;
+            double text_y = center_y + (static_cast<double>(polygon.caption.lines.size() - 1) * MEASUREMENT_CAPTION_LINE_HEIGHT / 2.0) - MEASUREMENT_CAPTION_FONT_SIZE / 2.0;
+            oss << "q 1 0 0 1 0 0 cm BT "
+                << stroke_r << " " << stroke_g << " " << stroke_b << " rg "
+                << "/Helv " << MEASUREMENT_CAPTION_FONT_SIZE << " Tf ";
+            for (const std::string &line : polygon.caption.lines)
+            {
+                double text_width = line.size() * MEASUREMENT_CAPTION_FONT_SIZE / 2.0;
+                double text_x = center_x - text_width / 2.0;
+                oss << "1 0 0 1 " << text_x << " " << text_y << " Tm "
+                    << "(" << escape_pdf_string(line) << ") Tj ";
+                text_y -= MEASUREMENT_CAPTION_LINE_HEIGHT;
+            }
+            oss << "ET Q ";
+        }
         return oss.str();
     }
     static void add_bbox_point(std::array<double, 4> &bb, double x, double y)

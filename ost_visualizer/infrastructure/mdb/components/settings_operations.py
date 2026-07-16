@@ -1,4 +1,5 @@
 import uuid
+from typing import Any, Dict
 import pyodbc
 from ....domain.entities.area import BidAreaChangeset
 from ....domain.services.uom_service import normalize_uom_for_system
@@ -627,8 +628,7 @@ class SettingsOperationsMixin:
             self.logger.exception("Failed to save employees in %s", db_path)
             return None
 
-    def save_pay_classes(self, db_path: str, changes: dict) -> dict:
-        uid_map: dict = {}
+    def save_pay_classes(self, db_path: str, changes: Dict[str, Any]) -> bool:
         try:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
@@ -681,7 +681,6 @@ class SettingsOperationsMixin:
                     except (pyodbc.Error, ValueError):
                         pass
                 for pc in changes.get("new", []):
-                    temp_uid = str(pc.get("uid", ""))
                     try:
                         assigned_uid = self._next_uid(cursor, "PayClasses")
                         self._execute_insert_values(
@@ -695,13 +694,12 @@ class SettingsOperationsMixin:
                             ("UID", "Name"),
                             "save_pay_class_new",
                         )
-                        uid_map[temp_uid] = str(assigned_uid)
                     except pyodbc.Error:
                         pass
-                return uid_map
+                return True
         except Exception:
             self.logger.exception("Failed to save pay classes in %s", db_path)
-            return {}
+            return False
 
     def save_condition_types(self, db_path: str, changes: dict) -> dict | None:
         uid_map: dict = {}

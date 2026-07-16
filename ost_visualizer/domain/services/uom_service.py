@@ -20,6 +20,11 @@ UOM_MM3 = 15
 UOM_M3 = 16
 CALC_TOP_BOTTOM = 5
 CALC_TOP_AND_BOTTOM = 6
+CALC_LINEAR_LENGTH = 1
+CALC_LINEAR_BOTH_SIDES = 4
+CALC_LINEAR_BOTH_ENDS = 8
+CALC_AREA = 11
+CALC_AREA_PERIMETER = 15
 CALC_VOLUME = 20
 CALC_AREA_VOLUME = 21
 CALC_COUNT = 23
@@ -72,22 +77,22 @@ COUNT_QUANTITY_OPTIONS: List[Tuple[int, str]] = [
     (CALC_VOLUME, "Volume"),
 ]
 LINEAR_QUANTITY_OPTIONS: List[Tuple[int, str]] = [
-    (1, "Length"),
+    (CALC_LINEAR_LENGTH, "Length"),
     (2, "Segment count"),
     (3, "Surface area (single side)"),
-    (4, "Surface area (both sides)"),
+    (CALC_LINEAR_BOTH_SIDES, "Surface area (both sides)"),
     (CALC_TOP_BOTTOM, "Surface area (top or bottom)"),
     (CALC_TOP_AND_BOTTOM, "Surface area (top and bottom)"),
     (7, "Surface area (single end)"),
-    (8, "Surface area (both ends)"),
+    (CALC_LINEAR_BOTH_ENDS, "Surface area (both ends)"),
     (9, "Surface area (all side/duct)"),
     (CALC_VOLUME, "Volume"),
 ]
 AREA_QUANTITY_OPTIONS: List[Tuple[int, str]] = [
-    (11, "Area"),
+    (CALC_AREA, "Area"),
     (34, "Area (Ignore Backout Areas)"),
     (12, "Area (minus Attachments)"),
-    (15, "Perimeter"),
+    (CALC_AREA_PERIMETER, "Perimeter"),
     (14, "Perimeter (without Backout Perimeters)"),
     (33, "Perimeter (plus Attachments Perimeter)"),
     (16, "Grid length (visible)"),
@@ -126,7 +131,15 @@ _VOLUME_UOMS_METRIC: List[Tuple[int, str]] = [
     (UOM_MM3, "MM³"),
 ]
 _CALC_COUNT = {CALC_COUNT, 2, 17, 18, 19}
-_CALC_LENGTH = {CALC_HEIGHT_OR_LENGTH, 1, 13, 14, 15, 16, 33}
+_CALC_LENGTH = {
+    CALC_LINEAR_LENGTH,
+    CALC_HEIGHT_OR_LENGTH,
+    13,
+    14,
+    CALC_AREA_PERIMETER,
+    16,
+    33,
+}
 _CALC_AREA = {
     CALC_TOP_BOTTOM,
     CALC_TOP_AND_BOTTOM,
@@ -137,11 +150,11 @@ _CALC_AREA = {
     CALC_ALL_SIDES,
     CALC_ALL_SIDES_PLUS_TB,
     3,
-    4,
+    CALC_LINEAR_BOTH_SIDES,
     7,
-    8,
+    CALC_LINEAR_BOTH_ENDS,
     9,
-    11,
+    CALC_AREA,
     12,
     34,
 }
@@ -469,13 +482,13 @@ def _calc_raw_for_linear(
 ) -> float:
     if calc_type == 0:
         return 0.0
-    if calc_type == 1:
+    if calc_type == CALC_LINEAR_LENGTH:
         return length_inches
     if calc_type == 2:
         return 1.0
     if calc_type == 3:
         return length_inches * height
-    if calc_type == 4:
+    if calc_type == CALC_LINEAR_BOTH_SIDES:
         return 2.0 * length_inches * height
     if calc_type == 5:
         return length_inches * thickness
@@ -483,7 +496,7 @@ def _calc_raw_for_linear(
         return 2.0 * length_inches * thickness
     if calc_type == 7:
         return thickness * height
-    if calc_type == 8:
+    if calc_type == CALC_LINEAR_BOTH_ENDS:
         return 2.0 * thickness * height
     if calc_type == 9:
         return 2.0 * length_inches * (height + thickness)
@@ -513,7 +526,7 @@ def _calc_polygon_perimeter(position: List[float]) -> float:
     return perimeter
 
 
-def _calc_bounding_box(position: List[float]) -> Tuple[float, float]:
+def calculate_bounding_box_inches(position: List[float]) -> Tuple[float, float]:
     vertices = vertices_from_position(position)
     if not vertices:
         return (0.0, 0.0)
@@ -540,13 +553,13 @@ def _calc_raw_for_area(
     net_area = polygon_area - hole_area
     if calc_type == 0:
         return 0.0
-    if calc_type == 11:
+    if calc_type == CALC_AREA:
         return net_area
     if calc_type == 12:
         return net_area - attachment_footprint
     if calc_type == 14:
         return polygon_perimeter
-    if calc_type == 15:
+    if calc_type == CALC_AREA_PERIMETER:
         return polygon_perimeter + hole_perimeter
     if calc_type == 16:
         unit1 = grid_size1 + gap
@@ -628,7 +641,7 @@ def calculate_condition_quantities(
     elif condition_type == Condition.TYPE_AREA:
         polygon_area = _calc_polygon_area_sq_inches(pos) * slope
         polygon_perimeter = _calc_polygon_perimeter(pos) * slope
-        bbox_w, bbox_h = _calc_bounding_box(pos)
+        bbox_w, bbox_h = calculate_bounding_box_inches(pos)
         hole_area = 0.0
         hole_perim = 0.0
         if hole_positions:

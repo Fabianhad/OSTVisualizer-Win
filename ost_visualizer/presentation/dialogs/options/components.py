@@ -1,6 +1,11 @@
 from pathlib import Path
 from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
+from ....application.dtos.annotation_caption_dto import ANNOTATION_CAPTION_SPECS
+from ....domain.entities.annotation_caption import (
+    ANNOTATION_CAPTION_ORDER,
+    AnnotationCaptionId,
+)
 from ...config import (
     COMPACT_SPACING,
     NO_MARGINS,
@@ -13,6 +18,7 @@ from ...config import (
     OPTIONS_DEFERRED_TOOLTIP,
     OPTIONS_GROUP_AUTO_ZOOM,
     OPTIONS_GROUP_CONFIRMATIONS,
+    OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS,
     OPTIONS_GROUP_PREFERENCES,
     OPTIONS_GROUP_SNAP_ANGLE,
     OPTIONS_LABEL_ADVANCED_MOUSE_CONTROLS,
@@ -25,6 +31,7 @@ from ...config import (
     OPTIONS_LABEL_DISPLAY_MODE_SOLID,
     OPTIONS_LABEL_DISPLAY_MODE_TRANSPARENT,
     OPTIONS_LABEL_FULL_WINDOW_CROSSHAIRS,
+    OPTIONS_LABEL_ENABLE_PDF_ANNOTATION_CAPTIONS,
     OPTIONS_LABEL_GRAYSCALE,
     OPTIONS_LABEL_HOTLINK_ANNOTATION,
     OPTIONS_LABEL_HOTLINK_MAIN,
@@ -395,6 +402,41 @@ class OptionsTab(QtWidgets.QWidget):
         layout.addWidget(self.auto_zoom_spin)
         layout.addWidget(QtWidgets.QLabel(OPTIONS_LABEL_AUTO_ZOOM_OFF))
         return group
+
+
+class ExportTab(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.caption_checks: dict[AnnotationCaptionId, QtWidgets.QCheckBox] = {}
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QtWidgets.QVBoxLayout(self)
+        group = QtWidgets.QGroupBox(OPTIONS_GROUP_PDF_ANNOTATION_CAPTIONS, self)
+        group_layout = QtWidgets.QVBoxLayout(group)
+        group_layout.setSpacing(COMPACT_SPACING)
+        self.captions_enabled_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_ENABLE_PDF_ANNOTATION_CAPTIONS,
+            group,
+        )
+        group_layout.addWidget(self.captions_enabled_check)
+        caption_layout = QtWidgets.QVBoxLayout()
+        caption_layout.setContentsMargins(24, 0, 0, 0)
+        caption_layout.setSpacing(COMPACT_SPACING)
+        for caption_id in ANNOTATION_CAPTION_ORDER:
+            spec = ANNOTATION_CAPTION_SPECS[caption_id]
+            check = QtWidgets.QCheckBox(spec.title, group)
+            self.caption_checks[caption_id] = check
+            caption_layout.addWidget(check)
+        group_layout.addLayout(caption_layout)
+        layout.addWidget(group)
+        layout.addStretch(1)
+        self.captions_enabled_check.toggled.connect(self._update_caption_checks_enabled)
+        self._update_caption_checks_enabled(False)
+
+    def _update_caption_checks_enabled(self, enabled: bool) -> None:
+        for check in self.caption_checks.values():
+            check.setEnabled(enabled)
 
 
 class McpSetupTab(QtWidgets.QWidget):

@@ -1,8 +1,12 @@
 import logging
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from xml.etree.ElementTree import Element, SubElement
-from ....application.dtos.export_dto import ExportErrorCode, ExportResultDto
+from ....application.dtos.export_dto import (
+    ExportErrorCode,
+    ExportProgressCallback,
+    ExportResultDto,
+)
 from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.area import UNASSIGNED_AREA_UID
@@ -649,7 +653,7 @@ class OstExporter:
         self,
         raw_data: RawBidData,
         output_path: str,
-        on_progress=None,
+        on_progress: Optional[ExportProgressCallback] = None,
     ) -> ExportResultDto:
         try:
             raw_data = prepare_raw_bid_data_for_export(raw_data)

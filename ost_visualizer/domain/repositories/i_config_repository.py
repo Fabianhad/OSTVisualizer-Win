@@ -1,9 +1,8 @@
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 from ..entities.config import Config
 
 
-@runtime_checkable
 class IConfigRepository(Protocol):
     config_path: Path
 

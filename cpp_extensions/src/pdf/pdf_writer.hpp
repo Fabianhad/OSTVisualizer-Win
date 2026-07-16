@@ -2,7 +2,9 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <cstdint>
 #include <optional>
+#include "bluebeam_annotation.hpp"
 namespace ost_pdf_writer
 {
     class PDFWriter
@@ -10,6 +12,7 @@ namespace ost_pdf_writer
     public:
         PDFWriter();
         ~PDFWriter();
+        using AnnotationCaptionData = BluebeamCaption;
         bool copy_page(const std::string &source_pdf,
                        int page_index,
                        const std::string &output_pdf);
@@ -24,6 +27,7 @@ namespace ost_pdf_writer
             double scale_factor1;
             double scale_factor2;
             double depth;
+            AnnotationCaptionData caption;
         };
         bool add_polygon_annotation(const std::string &pdf_path,
                                     const std::vector<std::array<double, 2>> &vertices,

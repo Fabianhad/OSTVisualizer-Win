@@ -20,7 +20,7 @@ arch-fix:
 	@echo "              container should discover it via get_by_interface()."
 	@echo ""
 	@echo "  interface   Protocol classes must start with I (e.g. IFoo). ABC is only allowed"
-	@echo "              for classes discovered at runtime: IShutdownAware, IStartable,"
+	@echo "              for classes discovered at runtime: IShutdownAware and"
 	@echo "              IAnnotationViewManager. To add a new ABC, update ALLOWED_ABCS in"
 	@echo "              tools/check_architecture.py."
 	@echo ""
