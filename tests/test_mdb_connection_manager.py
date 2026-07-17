@@ -1,5 +1,6 @@
 import threading
 import unittest
+from typing import Optional
 from unittest.mock import patch
 import pyodbc
 from ost_visualizer.infrastructure.mdb.connection_manager import (
@@ -20,6 +21,7 @@ class _LifecycleCounts:
         self.cursors_created = 0
         self.cursors_closed = 0
         self.active_cursors = 0
+        self.max_active_cursors = 0
         self.commits = 0
         self.rollbacks = 0
         self.connections = []
@@ -31,6 +33,9 @@ class _FakeCursor:
         self._closed = False
         counts.cursors_created += 1
         counts.active_cursors += 1
+        counts.max_active_cursors = max(
+            counts.max_active_cursors, counts.active_cursors
+        )
 
     def __enter__(self):
         return self
@@ -61,10 +66,12 @@ class _FakeConnection:
         counts: _LifecycleCounts,
         connection_string: str,
         autocommit: bool,
+        max_active_cursors: Optional[int] = None,
     ) -> None:
         self.counts = counts
         self.connection_string = connection_string
         self.autocommit = autocommit
+        self.max_active_cursors = max_active_cursors
         self.closed = False
         self.owner_thread_id = threading.get_ident()
         counts.connections_opened += 1
@@ -74,6 +81,11 @@ class _FakeConnection:
     def cursor(self):
         if self.closed:
             raise pyodbc.OperationalError("connection is closed")
+        if (
+            self.max_active_cursors is not None
+            and self.counts.active_cursors >= self.max_active_cursors
+        ):
+            raise pyodbc.OperationalError("Cannot open any more tables")
         return _FakeCursor(self.counts)
 
     def commit(self) -> None:
@@ -97,6 +109,7 @@ class _FakeConnect:
     def __init__(self) -> None:
         self.counts = _LifecycleCounts()
         self.max_opens = None
+        self.max_active_cursors = None
 
     def __call__(self, connection_string: str, *, autocommit: bool):
         if (
@@ -104,7 +117,12 @@ class _FakeConnect:
             and self.counts.connections_opened >= self.max_opens
         ):
             raise pyodbc.OperationalError("Too many client tasks")
-        return _FakeConnection(self.counts, connection_string, autocommit)
+        return _FakeConnection(
+            self.counts,
+            connection_string,
+            autocommit,
+            max_active_cursors=self.max_active_cursors,
+        )
 
 
 class _MaterializingRawBidReader(MdbReader):
@@ -218,6 +236,39 @@ class MdbConnectionManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(self.connect.counts.connections_opened, 1)
         self.assertEqual(len(manager._read_conns), 1)
         self.assert_cursors_released()
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_cursor_context_closes_before_outer_read_lease_exits(self):
+        manager = MdbConnectionManager()
+        with manager.connection("cursor-scope.mdb") as connection:
+            for _index in range(500):
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT").fetchall()
+                self.assertEqual(self.connect.counts.active_cursors, 0)
+        self.assertEqual(self.connect.counts.max_active_cursors, 1)
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_repeated_inner_queries_do_not_exhaust_access_table_handles(self):
+        self.connect.max_active_cursors = 4
+        manager = MdbConnectionManager()
+        with manager.connection("table-handles.mdb") as connection:
+            for _index in range(500):
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT").fetchall()
+        self.assertEqual(self.connect.counts.max_active_cursors, 1)
+        manager.close()
+        self.assert_all_resources_released()
+
+    def test_cursor_connection_uses_managed_connection_wrapper(self):
+        manager = MdbConnectionManager()
+        with manager.connection("schema-cursor.mdb") as connection:
+            with connection.cursor() as cursor:
+                with cursor.connection.cursor() as schema_cursor:
+                    schema_cursor.execute("SELECT").fetchall()
+                self.assertEqual(self.connect.counts.active_cursors, 1)
+            self.assertEqual(self.connect.counts.active_cursors, 0)
         manager.close()
         self.assert_all_resources_released()
 

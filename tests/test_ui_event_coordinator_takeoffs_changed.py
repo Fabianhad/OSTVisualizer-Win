@@ -268,6 +268,7 @@ class FakeProjectView:
         self.restored_file = None
         self.loaded_files = []
         self.restored_bid = None
+        self.selected_node = None
 
     def build_complete_structure(self, loaded_files):
         self.builds += 1
@@ -284,6 +285,14 @@ class FakeProjectView:
 
     def restore_bid_selection(self, bid_ref):
         self.restored_bid = bid_ref
+        self.selected_node = {
+            "kind": "bid",
+            "file_path": bid_ref.file_path,
+            "bid_uid": bid_ref.bid_uid,
+        }
+
+    def get_selected_node_state(self):
+        return self.selected_node
 
 
 class FakeUnloadMainWindow:
@@ -1311,7 +1320,12 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 self.active.append(bid_ref)
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
-        coordinator.main_window = FakeMainWindow()
+        coordinator.main_window = FakeUnloadMainWindow()
+        coordinator.main_window.project_view.selected_node = {
+            "kind": "bid",
+            "file_path": new_ref.file_path,
+            "bid_uid": new_ref.bid_uid,
+        }
         coordinator.ui_state_manager = UiState()
         coordinator.project_data = ProjectData()
         coordinator.project_operations = ProjectOperations()
@@ -1331,6 +1345,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.project_data.deselects, 0)
         self.assertEqual(coordinator._viewer.clears, 0)
         self.assertEqual(coordinator._undo_service.active, [])
+        self.assertIs(coordinator.main_window.project_view.restored_bid, old_ref)
 
     def test_clearing_bid_selection_clears_undo_owner(self):
         old_ref = BidRef("old.mdb", "old-bid")

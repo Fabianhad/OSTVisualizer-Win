@@ -50,9 +50,6 @@ class MdbConnectionManager:
                 borrowed_write_connection = False
                 conn = pool.get(abs_path)
                 if autocommit and conn is None:
-                    # A post-write refresh closes its stale read connection. The
-                    # committed write connection is already current and avoids
-                    # another ACE ODBC client task for the same database.
                     conn = self._write_conns.get(abs_path)
                     if conn is not None:
                         pool = self._write_conns

@@ -1968,6 +1968,7 @@ class UIEventCoordinator:
                 self.project_data.set_current_file(prev_bid_ref.file_path)
             self.ui_access_manager.refresh()
             self._update_export_menu_state()
+            self._restore_project_tree_bid_selection_if_needed()
             return
         self._placement.force_exit()
         self.ensure_select_mode()
