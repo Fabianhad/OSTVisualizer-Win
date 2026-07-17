@@ -307,6 +307,14 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         if self.viewer:
             self.viewer.set_plan_texture_provider(provider)
 
+    def set_plan_texture_visibility(self, visible: bool) -> None:
+        if self.viewer:
+            self.viewer.set_plan_texture_visibility(visible)
+
+    def update_plan_texture(self) -> None:
+        if self.viewer:
+            self.viewer.update_plan_texture()
+
     def set_selected_takeoffs(self, takeoff_uids: list) -> None:
         if self.viewer:
             self.viewer.set_selected_takeoffs(takeoff_uids)

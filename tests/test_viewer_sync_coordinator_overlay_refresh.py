@@ -3538,14 +3538,14 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(other.color, "#0000ff")
         self.assertEqual(other.width, 5.0)
         self.assertEqual(
-            emitted,
+            [tuple(change) for change in emitted],
             [
-                [
+                (
                     "a1",
                     "rect",
                     {"Color": "#ff0000", "Width": 4.0},
                     {"Color": "#336699", "Width": 7.0},
-                ]
+                )
             ],
         )
         view.cleanup()
@@ -3758,8 +3758,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(edit_states, [True, False])
         self.assertEqual(annotation.properties["Text"], "After")
         self.assertEqual(
-            emitted,
-            [["nv1", "namedview", {"Text": "Before"}, {"Text": "After"}]],
+            [tuple(change) for change in emitted],
+            [("nv1", "namedview", {"Text": "Before"}, {"Text": "After"})],
         )
         self.assertEqual(
             label.textInteractionFlags(),

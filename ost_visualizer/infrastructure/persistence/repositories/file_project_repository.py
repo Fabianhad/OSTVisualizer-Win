@@ -39,6 +39,9 @@ class MdbFileParser(IFileParser):
     def close_connection(self, file_path: Optional[str] = None) -> None:
         self.parser.close_connection(file_path)
 
+    def refresh_connection(self, file_path: str) -> None:
+        self.parser.refresh_connection(file_path)
+
     def parse(self, file_path: str) -> FileLoadResult:
         parsed_hierarchy, cdn_types = self.parser.parse_file(file_path)
         return FileLoadResult(
@@ -195,6 +198,9 @@ class FileProjectRepository(IProjectRepository):
         if not target_path or target_path not in self._loaded_files:
             return False
         _clear_position_caches()
+        parser = self.parsers.get("mdb")
+        if parser:
+            parser.close_connection(target_path)
         del self._loaded_files[target_path]
         if target_path == self._active_file_path:
             if self._loaded_files:
@@ -238,7 +244,7 @@ class FileProjectRepository(IProjectRepository):
             self.logger.error(error_message)
             return FileLoadResult(success=False, error_message=error_message)
         try:
-            parser.close_connection(file_path)
+            parser.refresh_connection(file_path)
             _clear_position_caches()
             result = parser.parse(file_path)
         except Exception as exc:

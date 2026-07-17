@@ -75,7 +75,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             Callable[[Optional[Sequence[float]]], Optional[NativePageImagePlaneData]]
         ] = None
         self._current_plan_texture: Optional[NativePageImagePlaneData] = None
-        self._has_plan_texture = False
+        self._has_visible_plan_texture = False
         self._image_show_mode: int = 0
         self._context_menu_command_trigger = None
         self._context_menu_action_state = None
@@ -635,9 +635,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._renderer.suspend()
 
     def resume_rendering(self) -> None:
-        if not self._renderer or (
-            self._renderer.scene.empty() and not self._has_plan_texture
-        ):
+        if not self._has_renderable_content():
             return
         self._render_suspended = False
         self._renderer.resume()
@@ -650,6 +648,30 @@ class OpenGLViewer(QtWidgets.QWidget):
         ],
     ) -> None:
         self._plan_texture_provider = provider
+
+    def set_plan_texture_visibility(self, visible: bool) -> None:
+        if not self._renderer or self._current_plan_texture is None:
+            return
+        self._renderer.set_plan_texture_visibility(bool(visible))
+        self._has_visible_plan_texture = bool(visible)
+        self._update_after_plan_texture_change()
+
+    def update_plan_texture(self) -> None:
+        if not self._renderer:
+            return
+        scene_bounds = None
+        if not self._renderer.scene.empty():
+            bounds = self._renderer.scene.get_bounds()
+            scene_bounds = (
+                bounds.min.x,
+                bounds.max.x,
+                bounds.min.y,
+                bounds.max.y,
+                bounds.min.z,
+                bounds.max.z,
+            )
+        self._replace_plan_texture(scene_bounds)
+        self._update_after_plan_texture_change()
 
     def apply_mesh_data(
         self,
@@ -763,15 +785,12 @@ class OpenGLViewer(QtWidgets.QWidget):
         )
         if not self._ensure_renderer():
             return
-        is_same_scene = bid_ref is not None and bid_ref == self._current_bid_ref
-        is_new_project = bid_ref is not None and bid_ref != self._current_bid_ref
-        scene_was_empty = self._renderer.scene.empty()
-        preserve_visible_scene = is_same_scene and not scene_was_empty
-        camera_state = self._capture_camera_state() if preserve_visible_scene else None
-        if not preserve_visible_scene:
+        is_same_bid = bid_ref is not None and bid_ref == self._current_bid_ref
+        is_new_bid = bid_ref is not None and bid_ref != self._current_bid_ref
+        if not is_same_bid:
             self.suspend_rendering()
         self._current_bid_ref = bid_ref
-        if is_new_project:
+        if is_new_bid:
             self._selected_takeoff_uids.clear()
         meshes = []
         for i, (verts, norms, idxs, color) in enumerate(
@@ -793,22 +812,22 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._renderer.scene.clear()
         for mesh in meshes:
             self._renderer.scene.add_mesh(mesh)
-        self._sync_plan_texture(scene_bounds)
+        self._replace_plan_texture(scene_bounds)
         self._reconcile_selected_takeoffs_with_scene()
-        if self._renderer.scene.empty() and not self._has_plan_texture:
-            self._renderer.camera.reset()
+        if not self._has_renderable_content():
+            if not is_same_bid:
+                self._renderer.camera.reset()
             self._renderer.suspend()
             self._render_suspended = True
             self.update()
             return
-        if camera_state is not None:
-            self._restore_camera_state(camera_state)
+        if is_same_bid:
             if self._render_suspended:
                 self.resume_rendering()
             else:
                 self.update()
             return
-        if is_new_project or scene_was_empty:
+        if is_new_bid:
             bounds = self._current_view_bounds()
             if bounds is not None:
                 self._renderer.camera.show_object(bounds)
@@ -816,11 +835,9 @@ class OpenGLViewer(QtWidgets.QWidget):
             self.zoom_changed.emit(1.0)
         self.resume_rendering()
 
-    def _sync_plan_texture(self, scene_bounds: Optional[Sequence[float]]) -> None:
+    def _replace_plan_texture(self, scene_bounds: Optional[Sequence[float]]) -> None:
         self._current_plan_texture = None
-        self._has_plan_texture = False
-        if not self._renderer:
-            return
+        self._has_visible_plan_texture = False
         if not self._plan_texture_provider:
             self._renderer.clear_plan_texture()
             return
@@ -843,13 +860,32 @@ class OpenGLViewer(QtWidgets.QWidget):
             data.flip_v,
         )
         self._current_plan_texture = data
-        self._has_plan_texture = data.visible
+        self._has_visible_plan_texture = bool(data.visible)
+
+    def _has_renderable_content(self) -> bool:
+        return bool(
+            self._renderer
+            and (not self._renderer.scene.empty() or self._has_visible_plan_texture)
+        )
+
+    def _update_after_plan_texture_change(self) -> None:
+        if not self._has_renderable_content():
+            self._renderer.suspend()
+            self._render_suspended = True
+            self.update()
+            return
+        if self._render_suspended:
+            self.resume_rendering()
+        else:
+            self.update()
 
     def _current_view_bounds(self):
         if not self._renderer:
             return None
         has_scene = not self._renderer.scene.empty()
-        has_plan = self._has_plan_texture and self._current_plan_texture is not None
+        has_plan = (
+            self._has_visible_plan_texture and self._current_plan_texture is not None
+        )
         if not has_scene and not has_plan:
             return None
         if has_scene:
@@ -881,25 +917,6 @@ class OpenGLViewer(QtWidgets.QWidget):
                 )
         return bounds
 
-    def _capture_camera_state(self) -> tuple[object, object, float, float]:
-        camera = self._renderer.camera
-        position = camera.position
-        target = camera.target
-        return (
-            ost_renderer.Vec3(position.x, position.y, position.z),
-            ost_renderer.Vec3(target.x, target.y, target.z),
-            camera.fov,
-            self._zoom_reference_distance,
-        )
-
-    def _restore_camera_state(self, state: tuple[object, object, float, float]) -> None:
-        position, target, fov, zoom_reference_distance = state
-        camera = self._renderer.camera
-        camera.position = position
-        camera.target = target
-        camera.fov = fov
-        self._zoom_reference_distance = zoom_reference_distance
-
     def clear_scene(self) -> None:
         self._pending_data = None
         if QtCore.QThread.currentThread() != self.thread():
@@ -922,7 +939,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         else:
             self._pending_camera_reset = True
         self._current_plan_texture = None
-        self._has_plan_texture = False
+        self._has_visible_plan_texture = False
         self._render_suspended = True
         self.update()
 
@@ -930,7 +947,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         super().showEvent(event)
         if not self._ensure_renderer():
             return
-        if self._renderer.scene.empty() and not self._has_plan_texture:
+        if not self._has_renderable_content():
             self._render_suspended = True
             self._renderer.suspend()
             return
@@ -956,7 +973,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._selected_context_state_fn = None
         self._plan_texture_provider = None
         self._current_plan_texture = None
-        self._has_plan_texture = False
+        self._has_visible_plan_texture = False
         self._context_menu_command_trigger = None
         self._context_menu_action_state = None
         self._context_menu_conditions_fn = lambda: {}

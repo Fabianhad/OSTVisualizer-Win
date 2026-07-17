@@ -1,7 +1,12 @@
 import unittest
+from types import SimpleNamespace
 from PySide6 import QtCore
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
+from ost_visualizer.presentation.visualization.native_page_plane import (
+    NativePageImagePlaneData,
+)
 from ost_visualizer.presentation.visualization.utils.mesh import meshes_to_geometries
 from ost_visualizer.presentation.windows.mesh_view_window import MeshViewWindow
 
@@ -51,13 +56,26 @@ class FakeMeshScene:
         self.takeoff_uids = []
         self.selected.clear()
 
+    def empty(self):
+        return not self.takeoff_uids
+
 
 class FakeMeshCamera:
     def __init__(self):
         self.reset_calls = 0
+        self.show_object_calls = []
+        self.position = SimpleNamespace(x=10.0, y=20.0, z=30.0)
+        self.target = SimpleNamespace(x=1.0, y=2.0, z=3.0)
+        self.fov = 37.0
 
     def reset(self):
         self.reset_calls += 1
+
+    def show_object(self, bounds):
+        self.show_object_calls.append(bounds)
+        self.position = SimpleNamespace(x=100.0, y=200.0, z=300.0)
+        self.target = SimpleNamespace(x=0.0, y=0.0, z=0.0)
+        self.fov = 45.0
 
 
 class FakeMeshRenderer:
@@ -65,12 +83,24 @@ class FakeMeshRenderer:
         self.scene = scene
         self.camera = FakeMeshCamera()
         self.suspend_calls = 0
+        self.plan_texture_calls = []
+        self.plan_texture_visibility_calls = []
+        self.clear_plan_texture_calls = 0
 
     def suspend(self):
         self.suspend_calls += 1
 
-    def clear_plan_texture(self):
+    def resume(self):
         pass
+
+    def clear_plan_texture(self):
+        self.clear_plan_texture_calls += 1
+
+    def set_plan_texture(self, *args):
+        self.plan_texture_calls.append(args)
+
+    def set_plan_texture_visibility(self, visible):
+        self.plan_texture_visibility_calls.append(bool(visible))
 
 
 class FakePickingMeshRenderer(FakeMeshRenderer):
@@ -88,6 +118,58 @@ class FakeSourceMesh:
 
 
 class TestMeshViewLifecycle(unittest.TestCase):
+    @staticmethod
+    def _page_texture(page_uid="p1", visible=True):
+        return NativePageImagePlaneData(
+            page_uid=page_uid,
+            pixels_rgba=b"\x01\x02\x03\x04",
+            width_px=1,
+            height_px=1,
+            page_width=10.0,
+            page_height=20.0,
+            plane_x=-5.0,
+            plane_y=10.0,
+            plane_z=-0.01,
+            opacity=1.0,
+            visible=visible,
+            flip_u=True,
+            flip_v=False,
+        )
+
+    def _make_page_plane_viewer(self, textures):
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        renderer = FakeMeshRenderer(FakeMeshScene([]))
+        viewer._renderer = renderer
+        viewer._ensure_renderer = lambda: True
+        viewer._current_bid_ref = BidRef("a.mdb", "bid-1")
+        viewer._selected_takeoff_uids = []
+        viewer._current_plan_texture = self._page_texture("existing")
+        viewer._has_visible_plan_texture = True
+        viewer._render_suspended = False
+        viewer._zoom_reference_distance = 77.0
+        viewer._color_service = SimpleNamespace(
+            convert_to_rgba=lambda _color: (1, 1, 1, 1)
+        )
+        texture_iter = iter(textures)
+        viewer._plan_texture_provider = lambda _bounds: next(texture_iter)
+        viewer.mesh_clicked = FakeMeshSignal()
+        viewer.zoom_changed = SimpleNamespace(emit=lambda _value: None)
+        viewer.update = lambda: None
+        return viewer, renderer
+
+    @staticmethod
+    def _camera_state(viewer, renderer):
+        return (
+            renderer.camera.position.x,
+            renderer.camera.position.y,
+            renderer.camera.position.z,
+            renderer.camera.target.x,
+            renderer.camera.target.y,
+            renderer.camera.target.z,
+            renderer.camera.fov,
+            viewer._zoom_reference_distance,
+        )
+
     def test_meshes_to_geometries_returns_typed_mesh_geometry(self):
         geometries, _bounds = meshes_to_geometries(
             [FakeSourceMesh()],
@@ -189,6 +271,69 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual(viewer.mesh_clicked.emitted, [])
         self.assertEqual(renderer.camera.reset_calls, 1)
         self.assertEqual(renderer.suspend_calls, 1)
+
+    def test_visibility_only_update_uses_native_visibility_operation(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        OpenGLViewer.set_plan_texture_visibility(viewer, False)
+        OpenGLViewer.set_plan_texture_visibility(viewer, True)
+        self.assertEqual(renderer.plan_texture_visibility_calls, [False, True])
+        self.assertEqual(renderer.plan_texture_calls, [])
+
+    def test_same_bid_scene_update_preserves_camera_without_fit_or_reset(self):
+        viewer, renderer = self._make_page_plane_viewer([self._page_texture("p2")])
+        before = self._camera_state(viewer, renderer)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], BidRef("a.mdb", "bid-1")
+        )
+        self.assertEqual(self._camera_state(viewer, renderer), before)
+        self.assertEqual(renderer.camera.show_object_calls, [])
+        self.assertEqual(renderer.camera.reset_calls, 0)
+        self.assertEqual(len(renderer.plan_texture_calls), 1)
+
+    def test_page_texture_updates_preserve_camera_and_selected_visibility(self):
+        viewer, renderer = self._make_page_plane_viewer(
+            [self._page_texture("p2", visible=False), self._page_texture("p1")]
+        )
+        before = self._camera_state(viewer, renderer)
+        OpenGLViewer.update_plan_texture(viewer)
+        self.assertFalse(viewer._has_visible_plan_texture)
+        OpenGLViewer.update_plan_texture(viewer)
+        self.assertTrue(viewer._has_visible_plan_texture)
+        self.assertEqual(self._camera_state(viewer, renderer), before)
+        self.assertEqual(renderer.plan_texture_visibility_calls, [])
+        self.assertEqual(
+            [call[9] for call in renderer.plan_texture_calls], [False, True]
+        )
+        self.assertEqual(len(renderer.plan_texture_calls), 2)
+        self.assertEqual(renderer.camera.show_object_calls, [])
+        self.assertEqual(renderer.camera.reset_calls, 0)
+
+    def test_missing_page_texture_update_clears_without_camera_reset(self):
+        viewer, renderer = self._make_page_plane_viewer([None])
+        before = self._camera_state(viewer, renderer)
+        OpenGLViewer.update_plan_texture(viewer)
+        self.assertEqual(self._camera_state(viewer, renderer), before)
+        self.assertEqual(renderer.clear_plan_texture_calls, 1)
+        self.assertEqual(renderer.camera.show_object_calls, [])
+        self.assertEqual(renderer.camera.reset_calls, 0)
+
+    def test_initial_page_plane_creation_still_frames_camera(self):
+        viewer, renderer = self._make_page_plane_viewer([self._page_texture("p1")])
+        viewer._current_bid_ref = None
+        viewer._current_plan_texture = None
+        viewer._has_visible_plan_texture = False
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], BidRef("a.mdb", "bid-1")
+        )
+        self.assertEqual(len(renderer.camera.show_object_calls), 1)
+        self.assertEqual(renderer.camera.reset_calls, 0)
+
+    def test_explicit_reset_view_still_fits_current_content(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._get_camera_distance = lambda: 123.0
+        OpenGLViewer.reset_view(viewer)
+        self.assertEqual(len(renderer.camera.show_object_calls), 1)
+        self.assertEqual(viewer._zoom_reference_distance, 123.0)
 
     def test_user_mesh_pick_broadcasts_selected_takeoff(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)

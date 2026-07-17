@@ -42,9 +42,8 @@ class MdbWriter(
     @contextmanager
     def _connection(self, db_path: str) -> Generator[ConnWrapper, None, None]:
         with self._conn_manager.connection(db_path, autocommit=False) as conn:
-            wrapper = ConnWrapper(conn)
             try:
-                yield wrapper
+                yield conn
                 conn.commit()
             except Exception:
                 try:
@@ -52,8 +51,6 @@ class MdbWriter(
                 except pyodbc.Error:
                     pass
                 raise
-            finally:
-                wrapper.close_cursors()
 
     def _next_uid(self, cursor: pyodbc.Cursor, table: str) -> int:
         cursor.execute(f"SELECT MAX([UID]) FROM [{table}]")

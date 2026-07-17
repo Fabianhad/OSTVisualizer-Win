@@ -16,6 +16,8 @@
 
 ### Fixed
 
+- Fixed long-session MDB task exhaustion by explicitly releasing query cursors and reusing the committed write connection for post-save refreshes and bid exports.
+- Fixed native 3D page planes so image-layer visibility changes apply immediately and ordinary 2D page switches preserve the current 3D camera.
 - Fixed OST imports failing on safely recoverable references by skipping orphaned hole/backout takeoffs and clearing stale selected-page or annotation takeoff attachments while continuing to reject other invalid database references.
 - Fixed project-file imports so an existing active bid remains visually selected after importing into its folder, and Import remains available from the Summary tab whenever the current context permits importing.
 - Fixed plan pages with both original and overlay images so hiding the image layer immediately reveals the white page canvas without an unexpected fit-to-page jump.

@@ -641,6 +641,21 @@ class RecordingPlanView:
         return True
 
 
+class RecordingNativeMeshView:
+    def __init__(self):
+        self.plan_texture_visibility_calls = []
+        self.plan_texture_update_calls = 0
+
+    def set_plan_texture_visibility(self, visible):
+        self.plan_texture_visibility_calls.append(bool(visible))
+
+    def update_plan_texture(self):
+        self.plan_texture_update_calls += 1
+
+    def isVisible(self):
+        return False
+
+
 class FakeIndexWidget:
     def __init__(self, index):
         self.index = index
@@ -667,6 +682,11 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.mesh_refresh_calls = mesh_refresh_calls
         return mesh_refresh_calls
 
+    @staticmethod
+    def _install_native_mesh_recorders(coordinator):
+        coordinator.opengl_viewer = RecordingNativeMeshView()
+        coordinator._mesh_window = RecordingNativeMeshView()
+
     def _make_view_state_coordinator(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = SimpleNamespace(
@@ -687,6 +707,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         )
         coordinator._deferred_persistence = RecordingDeferredPersistence()
         coordinator._nav = SimpleNamespace(is_refreshing=False)
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
         return coordinator, pages
 
     def test_plan_view_state_change_updates_model_and_defers_write(self):
@@ -716,6 +738,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
     def test_active_page_switch_defers_selected_page_and_outgoing_view_state(self):
         coordinator, _pages = self._make_view_state_coordinator()
+        self._install_native_mesh_recorders(coordinator)
         coordinator._update_page_settings_bar = lambda _page_uid: None
         coordinator._sync_overlay_display_mode = lambda _page_uid: None
         coordinator._update_plan_view = lambda _page_uid: None
@@ -738,6 +761,8 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [("a.mdb", "bid-1", "p2")],
         )
         self.assertEqual(coordinator.ui_state_manager.active_page_uid, "p2")
+        self.assertEqual(coordinator.opengl_viewer.plan_texture_update_calls, 1)
+        self.assertEqual(coordinator._mesh_window.plan_texture_update_calls, 1)
 
     def test_missing_selected_page_cancels_pending_bid_selected_page_write(self):
         coordinator, _pages = self._make_view_state_coordinator()
@@ -866,17 +891,22 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         def is_page_layer_uid(layer_uid):
             return page_layer_uid is not None and str(layer_uid) == str(page_layer_uid)
 
+        def update_layer_visibility(layer_uid, show):
+            if not is_page_layer_uid(layer_uid):
+                return []
+            for page in pages.values():
+                page.layer_visible = bool(show)
+            return ["p1", "p2"]
+
+        def update_all_layer_visibility(show):
+            for page in pages.values():
+                page.layer_visible = bool(show)
+            return ["p1", "p2"]
+
         coordinator.project_data = SimpleNamespace(
             is_image_layer_uid=is_page_layer_uid,
-            update_layer_visibility=lambda layer_uid, _show: (
-                [
-                    "p1",
-                    "p2",
-                ]
-                if is_page_layer_uid(layer_uid)
-                else []
-            ),
-            update_all_layer_visibility=lambda _show: ["p1", "p2"],
+            update_layer_visibility=update_layer_visibility,
+            update_all_layer_visibility=update_all_layer_visibility,
             set_bid_layer_visibility=lambda _layers: None,
             get_hidden_layer_uids=lambda: set(),
             is_annotation_layer_visible=lambda: True,
@@ -1028,6 +1058,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             layer_name="Image",
             condition_layer_uid="other-layer",
         )
+        self._install_native_mesh_recorders(coordinator)
         mesh_calls = []
         coordinator._viewer = SimpleNamespace(
             update_viewers=lambda page_uids: mesh_calls.append(page_uids)
@@ -1041,6 +1072,22 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.plan_view.image_visibility_pages, ["p1"])
         self.assertEqual(mesh_calls, [])
         self.assertEqual(coordinator.quantity_update_calls, [])
+        self.assertEqual(
+            coordinator.opengl_viewer.plan_texture_visibility_calls, [False]
+        )
+        self.assertEqual(
+            coordinator._mesh_window.plan_texture_visibility_calls, [False]
+        )
+        self.assertTrue(coordinator.update_layer_visibility_deferred("l1", True))
+        self.assertEqual(
+            coordinator.opengl_viewer.plan_texture_visibility_calls, [False, True]
+        )
+        self.assertEqual(
+            coordinator._mesh_window.plan_texture_visibility_calls, [False, True]
+        )
+        self.assertEqual(mesh_calls, [])
+        self.assertEqual(coordinator.opengl_viewer.plan_texture_update_calls, 0)
+        self.assertEqual(coordinator._mesh_window.plan_texture_update_calls, 0)
 
     def test_condition_layer_visibility_uses_loaded_item_path(self):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
@@ -1203,6 +1250,7 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
     def test_show_all_uses_shared_page_and_layer_visibility_refresh(self):
         coordinator = self._make_visibility_coordinator(layer_name="Image")
+        self._install_native_mesh_recorders(coordinator)
         self.assertTrue(coordinator.update_all_layers_visibility_deferred(False))
         self.assertEqual(coordinator._update_plan_view_calls, [])
         self.assertEqual(coordinator.plan_view.image_visibility_pages, ["p1"])
@@ -1211,6 +1259,16 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [(False, coordinator.project_data.get_bid_conditions())],
         )
         self.assertEqual(coordinator.plan_view.layer_visibility_calls, [])
+        self.assertEqual(
+            coordinator.opengl_viewer.plan_texture_visibility_calls, [False]
+        )
+        self.assertTrue(coordinator.update_all_layers_visibility_deferred(True))
+        self.assertEqual(
+            coordinator.opengl_viewer.plan_texture_visibility_calls, [False, True]
+        )
+        self.assertEqual(
+            coordinator._mesh_window.plan_texture_visibility_calls, [False, True]
+        )
 
     def test_repeated_layer_toggles_coalesce_to_last_write(self):
         service = FakeProjectWriteService()

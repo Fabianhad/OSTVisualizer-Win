@@ -1,7 +1,6 @@
 import logging
 from contextlib import contextmanager
 from typing import Dict, Generator, List, Optional, Tuple
-import pyodbc
 from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
 from ...domain.entities.hierarchy_data import HierarchyFileEntry
@@ -10,6 +9,7 @@ from ...domain.entities.takeoff import Takeoff
 from ..parsers.utils.parser import decode_value
 from .components.annotation_reader import AnnotationReaderMixin
 from .components.bid_data_reader import BidDataReaderMixin
+from .components.connection_wrapper import ConnWrapper
 from .components.hierarchy_reader import HierarchyReaderMixin
 from .components.settings_reader import SettingsReaderMixin
 from .connection_manager import MdbConnectionManager
@@ -38,15 +38,18 @@ class MdbReader(
         self._conn_manager = conn_manager or MdbConnectionManager()
 
     @contextmanager
-    def _connection(self, file_path: str) -> Generator[pyodbc.Connection, None, None]:
+    def _connection(self, file_path: str) -> Generator[ConnWrapper, None, None]:
         with self._conn_manager.connection(file_path, autocommit=True) as conn:
             yield conn
 
     def close_connection(self, db_path: Optional[str] = None) -> None:
         if db_path:
-            self._conn_manager.close_read(db_path)
+            self._conn_manager.close_database(db_path)
         else:
             self._conn_manager.close()
+
+    def refresh_connection(self, db_path: str) -> None:
+        self._conn_manager.close_read(db_path)
 
     def parse_file(self, file_path: str) -> Tuple[ParsedHierarchy, CdnTypes]:
         with self._connection(file_path) as connection:

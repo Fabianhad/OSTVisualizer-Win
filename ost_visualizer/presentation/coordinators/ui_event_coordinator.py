@@ -425,10 +425,26 @@ class UIEventCoordinator:
 
     def set_plan_texture_provider(self, provider) -> None:
         self._plan_texture_provider = provider
-        if self.opengl_viewer:
-            self.opengl_viewer.set_plan_texture_provider(provider)
-        if self._mesh_window:
-            self._mesh_window.set_plan_texture_provider(provider)
+        for view in self._native_3d_views():
+            view.set_plan_texture_provider(provider)
+
+    def _native_3d_views(self) -> tuple:
+        return tuple(
+            view for view in (self.opengl_viewer, self._mesh_window) if view is not None
+        )
+
+    def _update_native_page_visibility(self) -> None:
+        page_uid = self.ui_state_manager.active_page_uid
+        page = self.project_data.get_page(page_uid) if page_uid else None
+        if page is None:
+            return
+        visible = bool(page.layer_visible)
+        for view in self._native_3d_views():
+            view.set_plan_texture_visibility(visible)
+
+    def _update_native_page_textures(self) -> None:
+        for view in self._native_3d_views():
+            view.update_plan_texture()
 
     def set_plan_view_handler(self, handler) -> None:
         self._plan_view_handler = handler
@@ -1995,6 +2011,7 @@ class UIEventCoordinator:
         if active_uid:
             self._update_page_settings_bar(active_uid)
             self._sync_overlay_display_mode(active_uid)
+            self._update_native_page_textures()
         if active_uid and self.ui_access_manager.is_allowed(Feature.VIEW_2D):
             self._update_plan_view(active_uid)
         else:
@@ -2163,10 +2180,8 @@ class UIEventCoordinator:
         mode = page.image_show_mode
         if self.plan_view and self.plan_view.current_page_uid == page_uid:
             self.plan_view.set_overlay_display_mode(mode)
-        if self.opengl_viewer:
-            self.opengl_viewer.set_overlay_display_mode(mode)
-        if self._mesh_window:
-            self._mesh_window.set_overlay_display_mode(mode)
+        for view in self._native_3d_views():
+            view.set_overlay_display_mode(mode)
 
     def _load_takeoff_sidebar(self, bid_ref: BidRef) -> None:
         self._sidebar.load_takeoff_sidebar(bid_ref, self._bid_data_cache)
@@ -2762,6 +2777,8 @@ class UIEventCoordinator:
         if not show and not image_layer:
             self._suspend_active_layer_tool(layer_uid)
         changed_page_uids = self.project_data.update_layer_visibility(layer_uid, show)
+        if image_layer:
+            self._update_native_page_visibility()
         self.event_bus.publish(
             AppEvents.LAYER_VISIBILITY_CHANGED,
             file_path=bid_ref.file_path,
@@ -2888,6 +2905,7 @@ class UIEventCoordinator:
             self._suspend_active_layer_tool()
         self.project_data.set_bid_layer_visibility(layers)
         changed_page_uids = self.project_data.update_all_layer_visibility(show)
+        self._update_native_page_visibility()
         self.event_bus.publish(
             AppEvents.LAYER_VISIBILITY_CHANGED,
             file_path=bid_ref.file_path,
