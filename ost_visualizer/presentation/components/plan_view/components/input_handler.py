@@ -454,15 +454,19 @@ class InputHandlerMixin:
                 self._select_condition_text_label(text_label)
                 event.accept()
                 return
-            self._clear_text_selection()
+            scene_pos = self.mapToScene(vp_pos)
             text_uid = (
-                self.find_text_annotation_at(self.mapToScene(vp_pos))
+                self.find_text_annotation_at(scene_pos)
                 if self._selection_enabled
                 else None
             )
-            if text_uid is not None:
-                self._clear_pdf_text_selection()
-                self._select_text_annotation_label(text_uid)
+            if not self._should_defer_text_annotation_press_side_effects(
+                scene_pos, event, text_uid
+            ):
+                self._clear_text_selection()
+                if text_uid is not None:
+                    self._clear_pdf_text_selection()
+                    self._select_text_annotation_label(text_uid)
         if event.button() == Qt.MouseButton.MiddleButton:
             if not advanced_mouse_controls:
                 super().mousePressEvent(event)
@@ -1417,6 +1421,9 @@ class InputHandlerMixin:
                             self._selected_uids = {uid}
                         self._on_selection_changed()
                         self.update_selection_visuals()
+                        ann = self._current_annotations.get(uid)
+                        if not multi and ann is not None and ann.is_text:
+                            self._select_text_annotation_label(uid)
                     else:
                         selected_pdf_text = self.select_pdf_text_at(scene_pos)
                         if not multi:
@@ -1471,6 +1478,18 @@ class InputHandlerMixin:
             event.accept()
         else:
             super().mouseReleaseEvent(event)
+
+    def _should_defer_text_annotation_press_side_effects(
+        self, scene_pos: QtCore.QPointF, event: QMouseEvent, text_uid: Optional[str]
+    ) -> bool:
+        if text_uid is None or not self._selected_uids:
+            return False
+        if event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+        ):
+            return False
+        hits = self.find_takeoffs_at(scene_pos)
+        return len(hits) > 1 and any(uid in self._selected_uids for uid in hits)
 
     def _unrotate_annotation_for_resize(self, ann, uid: str) -> None:
         pos = list(ann.position)

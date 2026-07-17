@@ -1205,6 +1205,75 @@ class CtrlDragTests(unittest.TestCase):
             [([("area1", old_pos, new_pos)], [])],
         )
 
+    def _make_overlapping_text_cycle_view(self, selected_uid="t1"):
+        view = self._make_view({selected_uid})
+        view._current_annotations = {
+            "a1": BidAnnotation(
+                uid="a1",
+                annotation_type="text",
+                position=[10.0, 10.0, 40.0, 20.0],
+                properties={"Text": "Note"},
+            )
+        }
+        view._current_takeoffs = {
+            "t1": SimpleNamespace(position=[0.0, 0.0, 10.0, 0.0], condition_uid="c"),
+            "t2": SimpleNamespace(position=[20.0, 0.0, 30.0, 0.0], condition_uid="c"),
+        }
+        view._uid_to_items = {
+            "t1": [FakeItem(1.0, 2.0)],
+            "t2": [FakeItem(3.0, 4.0)],
+            "a1": [FakeItem(5.0, 6.0)],
+        }
+        hits = ["a1", "t1", "t2"]
+        view.find_text_annotation_at = lambda _scene_pos: "a1"
+        view.find_takeoffs_at = lambda _scene_pos: list(hits)
+        view.find_selected_movable_at = lambda _scene_pos: (
+            selected_uid if selected_uid in view._selected_uids else None
+        )
+        view.find_takeoff_at = lambda _scene_pos, cycle_from_uid=None: (
+            hits[(hits.index(cycle_from_uid) + 1) % len(hits)]
+            if cycle_from_uid in hits
+            else hits[0]
+        )
+        view._on_selection_changed = lambda: None
+        return view
+
+    def test_text_takeoff_cycle_press_does_not_activate_text_toolbar(self):
+        view = self._make_overlapping_text_cycle_view("t1")
+        press = FakeMouseEvent()
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        self.assertEqual(view.selected_text_annotation_uids, [])
+        self.assertEqual(view._selected_uids, {"t1"})
+        release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(release)
+        self.assertTrue(release.accepted)
+        self.assertEqual(view._selected_uids, {"t2"})
+        self.assertEqual(view.selected_text_annotation_uids, [])
+
+    def test_text_takeoff_cycle_back_to_text_shows_toolbar_after_commit(self):
+        view = self._make_overlapping_text_cycle_view("t2")
+        press = FakeMouseEvent()
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        self.assertEqual(view.selected_text_annotation_uids, [])
+        self.assertEqual(view._selected_uids, {"t2"})
+        release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(release)
+        self.assertTrue(release.accepted)
+        self.assertEqual(view._selected_uids, {"a1"})
+        self.assertEqual(view.selected_text_annotation_uids, ["a1"])
+
+    def test_plain_text_annotation_press_still_shows_toolbar(self):
+        view = self._make_overlapping_text_cycle_view("t1")
+        view._selected_uids = set()
+        view.find_takeoffs_at = lambda _scene_pos: ["a1"]
+        view.find_takeoff_at = lambda _scene_pos, cycle_from_uid=None: "a1"
+        press = FakeMouseEvent()
+        view.mousePressEvent(press)
+        self.assertTrue(press.accepted)
+        self.assertEqual(view.selected_text_annotation_uids, ["a1"])
+
     def _make_selected_text_annotation_view(self):
         view = self._make_view({"a1"})
         view._scene = QGraphicsScene()
