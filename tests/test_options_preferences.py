@@ -983,8 +983,8 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertFalse(dialog._disable_high_res_check.isChecked())
         self.assertEqual(dialog._auto_zoom_spin.value(), Config.DEFAULT_AUTO_ZOOM_LEVEL)
         self.assertFalse(dialog._caption_master_check.isChecked())
-        self.assertTrue(
-            all(check.isChecked() for check in dialog._caption_checks.values())
+        self.assertFalse(
+            any(check.isChecked() for check in dialog._caption_checks.values())
         )
         dialog.close()
 
@@ -1062,7 +1062,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(dialog._tabs.tabText(2), OPTIONS_TAB_MCP_SETUP)
         dialog.close()
 
-    def test_export_tab_defaults_off_with_every_caption_selected_and_disabled(self):
+    def test_export_tab_defaults_off_with_every_caption_unselected_and_disabled(self):
         dialog = OptionsDialog(Config())
         self.assertFalse(dialog._caption_master_check.isChecked())
         self.assertEqual(len(dialog._caption_checks), len(ANNOTATION_CAPTION_SPECS))
@@ -1070,7 +1070,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             spec = ANNOTATION_CAPTION_SPECS[caption_id]
             check = dialog._caption_checks[caption_id]
             self.assertEqual(check.text(), spec.title)
-            self.assertTrue(check.isChecked())
+            self.assertFalse(check.isChecked())
             self.assertFalse(check.isEnabled())
         dialog.close()
 
@@ -1080,6 +1080,15 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertFalse(dialog._pdf_elevation_callouts_check.isChecked())
         self.assertTrue(dialog._html_elevation_callouts_check.isEnabled())
         self.assertTrue(dialog._pdf_elevation_callouts_check.isEnabled())
+        self.assertTrue(dialog._elevation_callout_condition_check.isChecked())
+        self.assertTrue(dialog._elevation_callout_top_check.isChecked())
+        self.assertTrue(dialog._elevation_callout_bottom_check.isChecked())
+        self.assertTrue(dialog._elevation_callout_cubic_yards_check.isChecked())
+        self.assertTrue(dialog._elevation_callout_condition_check.isEnabled())
+        self.assertTrue(dialog._html_elevation_callout_color_button.isEnabled())
+        self.assertFalse(dialog._pdf_elevation_callout_color_button.isEnabled())
+        self.assertEqual(dialog._html_elevation_callout_color_button.color(), "#ff0000")
+        self.assertEqual(dialog._pdf_elevation_callout_color_button.color(), "#ff0000")
         self.assertEqual(
             dialog._html_elevation_callouts_check.text(),
             "Include elevation callouts in HTML export",
@@ -1100,14 +1109,22 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         dialog._html_elevation_callouts_check.setChecked(False)
         dialog._pdf_elevation_callouts_check.setChecked(True)
+        dialog._elevation_callout_top_check.setChecked(False)
+        dialog._html_elevation_callout_color_button.set_color("#123456")
+        dialog._pdf_elevation_callout_color_button.set_color("#abcdef")
         _apply_button(dialog).click()
         self.assertFalse(aggregate.snapshot().html_elevation_callouts_enabled)
         self.assertTrue(aggregate.snapshot().pdf_elevation_callouts_enabled)
+        self.assertFalse(aggregate.snapshot().elevation_callout_include_top)
+        self.assertEqual(aggregate.snapshot().html_elevation_callout_color, "#123456")
+        self.assertEqual(aggregate.snapshot().pdf_elevation_callout_color, "#abcdef")
         dialog._html_elevation_callouts_check.setChecked(True)
         dialog._pdf_elevation_callouts_check.setChecked(False)
+        dialog._elevation_callout_top_check.setChecked(True)
         dialog.reject()
         self.assertFalse(aggregate.snapshot().html_elevation_callouts_enabled)
         self.assertTrue(aggregate.snapshot().pdf_elevation_callouts_enabled)
+        self.assertFalse(aggregate.snapshot().elevation_callout_include_top)
         dialog.close()
 
     def test_export_callout_options_ok_and_reset_use_existing_lifecycle(self):
@@ -1127,12 +1144,30 @@ class OptionsPreferencesTests(unittest.TestCase):
             _reset_all_button(dialog).click()
         self.assertTrue(dialog._html_elevation_callouts_check.isChecked())
         self.assertFalse(dialog._pdf_elevation_callouts_check.isChecked())
+        self.assertTrue(dialog._elevation_callout_condition_check.isEnabled())
+        self.assertTrue(dialog._html_elevation_callout_color_button.isEnabled())
+        self.assertFalse(dialog._pdf_elevation_callout_color_button.isEnabled())
         dialog._html_elevation_callouts_check.setChecked(False)
         dialog._pdf_elevation_callouts_check.setChecked(True)
+        dialog._elevation_callout_cubic_yards_check.setChecked(False)
         dialog.accept()
         self.assertEqual(len(saved), 1)
         self.assertFalse(saved[0].html_elevation_callouts_enabled)
         self.assertTrue(saved[0].pdf_elevation_callouts_enabled)
+        self.assertFalse(saved[0].elevation_callout_include_cubic_yards)
+        dialog.close()
+
+    def test_export_callout_content_preserved_while_both_exports_disabled(self):
+        dialog = OptionsDialog(Config())
+        dialog._elevation_callout_condition_check.setChecked(False)
+        dialog._html_elevation_callouts_check.setChecked(False)
+        dialog._pdf_elevation_callouts_check.setChecked(False)
+        self.assertFalse(dialog._elevation_callout_condition_check.isEnabled())
+        self.assertFalse(dialog._html_elevation_callout_color_button.isEnabled())
+        self.assertFalse(dialog._pdf_elevation_callout_color_button.isEnabled())
+        dialog._pdf_elevation_callouts_check.setChecked(True)
+        self.assertTrue(dialog._elevation_callout_condition_check.isEnabled())
+        self.assertFalse(dialog._elevation_callout_condition_check.isChecked())
         dialog.close()
 
     def test_export_caption_selections_survive_master_disable_and_reenable(self):
@@ -1160,6 +1195,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             apply_callback=service.update_app_options,
         )
         dialog._caption_master_check.setChecked(True)
+        dialog._caption_checks[AnnotationCaptionId.AREA].setChecked(True)
+        dialog._caption_checks[AnnotationCaptionId.VOLUME].setChecked(True)
         dialog._caption_checks[AnnotationCaptionId.VOLUME].setChecked(False)
         _apply_button(dialog).click()
         config = aggregate.snapshot()
@@ -2317,6 +2354,12 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         self.assertTrue(config.html_elevation_callouts_enabled)
         self.assertFalse(config.pdf_elevation_callouts_enabled)
+        self.assertTrue(config.elevation_callout_include_condition)
+        self.assertTrue(config.elevation_callout_include_top)
+        self.assertTrue(config.elevation_callout_include_bottom)
+        self.assertTrue(config.elevation_callout_include_cubic_yards)
+        self.assertEqual(config.html_elevation_callout_color, "#ff0000")
+        self.assertEqual(config.pdf_elevation_callout_color, "#ff0000")
         self.assertTrue(config.show_toolbar_text)
         self.assertTrue(config.display_modes_synced)
         self.assertEqual(config.display_mode_3d, Config.DISPLAY_MODE_ORIGINAL)

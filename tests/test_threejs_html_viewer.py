@@ -27,6 +27,7 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
                     "x": 30.0,
                     "y": 40.0,
                     "lines": ["F9", "410' - 3\"", "406' - 3\"", "6.43 CY"],
+                    "color": "#123456",
                 }
             ],
         }
@@ -45,6 +46,8 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("function createPlanCalloutText(value, y)", html)
         self.assertIn("const ELEVATION_CALLOUT_LINE_SPACING = 12", html)
         self.assertIn("const lines = callout.lines", html)
+        self.assertIn("group.style.color = callout.color", html)
+        self.assertIn('"color":"#123456"', html)
         self.assertIn("...lines.map", html)
         self.assertRegex(html, r"createPlanCalloutText\(\s*line,")
         self.assertIn("index * ELEVATION_CALLOUT_LINE_SPACING", html)
@@ -57,6 +60,7 @@ class ThreejsHtmlViewerTests(unittest.TestCase):
         self.assertIn("font-family: Arial, sans-serif", html)
         self.assertIn("stroke: none", html)
         self.assertIn("pointer-events: none", html)
+        self.assertNotIn("color: #111827", html)
         self.assertIn("body:not(.plan-mode) #plan-view", html)
         self.assertNotIn("Plotly", html)
         self.assertNotIn("CSS2DRenderer", html)

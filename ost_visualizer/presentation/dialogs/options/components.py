@@ -31,6 +31,10 @@ from ...config import (
     OPTIONS_LABEL_DISPLAY_MODE_ORIGINAL,
     OPTIONS_LABEL_DISPLAY_MODE_SOLID,
     OPTIONS_LABEL_DISPLAY_MODE_TRANSPARENT,
+    OPTIONS_LABEL_ELEVATION_CALLOUT_BOTTOM,
+    OPTIONS_LABEL_ELEVATION_CALLOUT_CONDITION,
+    OPTIONS_LABEL_ELEVATION_CALLOUT_CUBIC_YARDS,
+    OPTIONS_LABEL_ELEVATION_CALLOUT_TOP,
     OPTIONS_LABEL_FULL_WINDOW_CROSSHAIRS,
     OPTIONS_LABEL_ENABLE_PDF_ANNOTATION_CAPTIONS,
     OPTIONS_LABEL_GRAYSCALE,
@@ -38,10 +42,12 @@ from ...config import (
     OPTIONS_LABEL_HOTLINK_MAIN,
     OPTIONS_LABEL_HOTLINK_TARGET,
     OPTIONS_LABEL_HOTLINK_VIEW,
+    OPTIONS_LABEL_HTML_ELEVATION_CALLOUT_COLOR,
     OPTIONS_LABEL_INCLUDE_HTML_ELEVATION_CALLOUTS,
     OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS,
     OPTIONS_LABEL_INTELLIGENT_PASTE,
     OPTIONS_LABEL_PAGE_INDEX,
+    OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR,
     OPTIONS_LABEL_ROPING_INCLUSIVE,
     OPTIONS_LABEL_ROPING_METHOD,
     OPTIONS_LABEL_ROPING_TOUCHING,
@@ -86,9 +92,10 @@ def disabled_check(label: str) -> QtWidgets.QCheckBox:
 class _ColorButton(QtWidgets.QPushButton):
     colorChanged = QtCore.Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, dialog_title: str = "Crosshair Color"):
         super().__init__(parent)
         self._color = "#00ff00"
+        self._dialog_title = dialog_title
         self.setFixedSize(_COLOR_PREVIEW_SIZE, _COLOR_PREVIEW_SIZE)
         self.clicked.connect(self._choose_color)
         self.set_color(self._color)
@@ -108,7 +115,7 @@ class _ColorButton(QtWidgets.QPushButton):
 
     def _choose_color(self) -> None:
         dialog = QtWidgets.QColorDialog(QtGui.QColor(self._color), self)
-        dialog.setWindowTitle("Crosshair Color")
+        dialog.setWindowTitle(self._dialog_title)
         remove_minimize_maximize(dialog)
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
             return
@@ -444,16 +451,80 @@ class ExportTab(QtWidgets.QWidget):
             OPTIONS_LABEL_INCLUDE_PDF_ELEVATION_CALLOUTS,
             callout_group,
         )
+        self.elevation_callout_condition_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_ELEVATION_CALLOUT_CONDITION,
+            callout_group,
+        )
+        self.elevation_callout_top_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_ELEVATION_CALLOUT_TOP,
+            callout_group,
+        )
+        self.elevation_callout_bottom_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_ELEVATION_CALLOUT_BOTTOM,
+            callout_group,
+        )
+        self.elevation_callout_cubic_yards_check = QtWidgets.QCheckBox(
+            OPTIONS_LABEL_ELEVATION_CALLOUT_CUBIC_YARDS,
+            callout_group,
+        )
+        self.callout_content_checks = (
+            self.elevation_callout_condition_check,
+            self.elevation_callout_top_check,
+            self.elevation_callout_bottom_check,
+            self.elevation_callout_cubic_yards_check,
+        )
+        self.html_elevation_callout_color_button = _ColorButton(
+            callout_group,
+            dialog_title=OPTIONS_LABEL_HTML_ELEVATION_CALLOUT_COLOR,
+        )
+        self.pdf_elevation_callout_color_button = _ColorButton(
+            callout_group,
+            dialog_title=OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR,
+        )
         callout_layout.addWidget(self.html_elevation_callouts_check)
         callout_layout.addWidget(self.pdf_elevation_callouts_check)
+        content_layout = QtWidgets.QVBoxLayout()
+        content_layout.setContentsMargins(24, 0, 0, 0)
+        content_layout.setSpacing(COMPACT_SPACING)
+        for check in self.callout_content_checks:
+            content_layout.addWidget(check)
+        callout_layout.addLayout(content_layout)
+        color_layout = QtWidgets.QFormLayout()
+        color_layout.setContentsMargins(24, 0, 0, 0)
+        color_layout.setSpacing(COMPACT_SPACING)
+        color_layout.addRow(
+            OPTIONS_LABEL_HTML_ELEVATION_CALLOUT_COLOR,
+            self.html_elevation_callout_color_button,
+        )
+        color_layout.addRow(
+            OPTIONS_LABEL_PDF_ELEVATION_CALLOUT_COLOR,
+            self.pdf_elevation_callout_color_button,
+        )
+        callout_layout.addLayout(color_layout)
         layout.addWidget(callout_group)
         layout.addStretch(1)
         self.captions_enabled_check.toggled.connect(self._update_caption_checks_enabled)
+        self.html_elevation_callouts_check.toggled.connect(
+            self.update_callout_controls_enabled
+        )
+        self.pdf_elevation_callouts_check.toggled.connect(
+            self.update_callout_controls_enabled
+        )
         self._update_caption_checks_enabled(False)
+        self.update_callout_controls_enabled()
 
     def _update_caption_checks_enabled(self, enabled: bool) -> None:
         for check in self.caption_checks.values():
             check.setEnabled(enabled)
+
+    def update_callout_controls_enabled(self, *_args) -> None:
+        html_enabled = self.html_elevation_callouts_check.isChecked()
+        pdf_enabled = self.pdf_elevation_callouts_check.isChecked()
+        content_enabled = html_enabled or pdf_enabled
+        for check in self.callout_content_checks:
+            check.setEnabled(content_enabled)
+        self.html_elevation_callout_color_button.setEnabled(html_enabled)
+        self.pdf_elevation_callout_color_button.setEnabled(pdf_enabled)
 
 
 class McpSetupTab(QtWidgets.QWidget):

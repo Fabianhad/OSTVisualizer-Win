@@ -116,6 +116,7 @@ class SceneElevationCalloutEntry(TypedDict):
     x: float
     y: float
     lines: List[str]
+    color: str
 
 
 class SceneData(TypedDict, total=False):

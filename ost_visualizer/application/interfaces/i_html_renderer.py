@@ -2,6 +2,10 @@ from typing import Dict, List, Optional, Protocol
 from ...domain.entities.area import BidArea
 from ...domain.entities.condition import Condition
 from ...domain.entities.config import Config
+from ...domain.entities.elevation_callout import (
+    DEFAULT_ELEVATION_CALLOUT_SETTINGS,
+    ElevationCalloutSettings,
+)
 from ...domain.entities.layer import BidLayer
 from ...domain.entities.takeoff import Takeoff
 from ..dtos.page_visualization_page_dto import PageVisualizationPageDto
@@ -29,4 +33,8 @@ class IHtmlRenderer(Protocol):
         page_image_layer: Optional[ScenePageImageLayer] = None,
         *,
         include_elevation_callouts: bool,
+        elevation_callout_settings: ElevationCalloutSettings = (
+            DEFAULT_ELEVATION_CALLOUT_SETTINGS
+        ),
+        elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
     ) -> bool: ...

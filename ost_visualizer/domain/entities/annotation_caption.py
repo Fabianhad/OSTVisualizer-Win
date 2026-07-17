@@ -14,6 +14,7 @@ class AnnotationCaptionId(str, Enum):
 
 
 ANNOTATION_CAPTION_ORDER = tuple(AnnotationCaptionId)
-DEFAULT_ANNOTATION_CAPTION_IDS = tuple(
+SUPPORTED_ANNOTATION_CAPTION_IDS = tuple(
     caption_id.value for caption_id in ANNOTATION_CAPTION_ORDER
 )
+DEFAULT_ANNOTATION_CAPTION_IDS: tuple[str, ...] = ()

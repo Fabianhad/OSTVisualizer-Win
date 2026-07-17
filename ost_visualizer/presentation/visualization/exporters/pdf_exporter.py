@@ -42,6 +42,11 @@ from ....domain.entities.annotation import (
     BidAnnotation,
 )
 from ....domain.entities.condition import Condition
+from ....domain.entities.config import Config
+from ....domain.entities.elevation_callout import (
+    DEFAULT_ELEVATION_CALLOUT_SETTINGS,
+    ElevationCalloutSettings,
+)
 from ....domain.entities.file_extensions import is_pdf_suffix
 from ....domain.entities.page import Page
 from ....domain.entities.takeoff import Takeoff
@@ -79,7 +84,6 @@ _OVERLAY_DIRECT_ROTATION_TOLERANCE_RADIANS = 1e-6
 _ELEVATION_CALLOUT_BOX_WIDTH = 180.0
 _ELEVATION_CALLOUT_BOX_HEIGHT = 52.0
 _ELEVATION_CALLOUT_FONT_SIZE = 10.0
-_ELEVATION_CALLOUT_COLOR = (17, 24, 39)
 
 
 class PDFExporter:
@@ -108,6 +112,10 @@ class PDFExporter:
         grayscale_enabled: bool,
         caption_settings: AnnotationCaptionSettingsDto,
         elevation_callouts_enabled: bool,
+        elevation_callout_settings: ElevationCalloutSettings = (
+            DEFAULT_ELEVATION_CALLOUT_SETTINGS
+        ),
+        elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         bid_annotations: Optional[List[BidAnnotation]] = None,
         on_progress: Optional[ExportProgressCallback] = None,
@@ -134,6 +142,8 @@ class PDFExporter:
                         page_area_selections,
                         caption_settings=caption_settings,
                         elevation_callouts_enabled=elevation_callouts_enabled,
+                        elevation_callout_settings=elevation_callout_settings,
+                        elevation_callout_color=elevation_callout_color,
                     )
                     arrow_data = self._collect_arrows(
                         page.uid, bid_annotations or [], page_info
@@ -556,6 +566,10 @@ class PDFExporter:
         *,
         caption_settings: AnnotationCaptionSettingsDto,
         elevation_callouts_enabled: bool,
+        elevation_callout_settings: ElevationCalloutSettings = (
+            DEFAULT_ELEVATION_CALLOUT_SETTINGS
+        ),
+        elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
     ) -> tuple[List[Any], List[Any]]:
         polygons = []
         elevation_callouts = []
@@ -641,6 +655,8 @@ class PDFExporter:
                     takeoff,
                     hole_takeoff_list,
                     pdf_vertices,
+                    elevation_callout_settings,
+                    elevation_callout_color,
                 )
                 if callout is not None:
                     elevation_callouts.append(callout)
@@ -766,6 +782,8 @@ class PDFExporter:
                     takeoff,
                     [],
                     pdf_vertices,
+                    elevation_callout_settings,
+                    elevation_callout_color,
                 )
                 if callout is not None:
                     elevation_callouts.append(callout)
@@ -777,12 +795,15 @@ class PDFExporter:
         takeoff: Takeoff,
         hole_takeoffs: List[Takeoff],
         outer_ring: List[tuple[float, float]],
+        settings: ElevationCalloutSettings = DEFAULT_ELEVATION_CALLOUT_SETTINGS,
+        color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
     ) -> Any | None:
         resolved = resolve_elevation_callout(
             condition,
             takeoff,
             hole_takeoffs,
             tuple((float(point[0]), float(point[1])) for point in outer_ring),
+            settings,
         )
         if resolved is None:
             return None
@@ -795,7 +816,7 @@ class PDFExporter:
         text_data.max_y = resolved.y + half_height
         text_data.content = "\n".join(resolved.lines)
         text_data.font_size = _ELEVATION_CALLOUT_FONT_SIZE
-        text_data.color = list(_ELEVATION_CALLOUT_COLOR)
+        text_data.color = self._color_service.hex_to_rgb_int(color)
         text_data.text_align = "center"
         return text_data
 

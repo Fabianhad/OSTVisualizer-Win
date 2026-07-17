@@ -12,9 +12,13 @@ from ost_visualizer.application.dtos.page_export_data_dto import PageExportData
 from ost_visualizer.application.services.annotation_caption_resolver import (
     AnnotationCaptionResolver,
 )
+from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
-from ost_visualizer.domain.entities.elevation_callout import ElevationCallout
+from ost_visualizer.domain.entities.elevation_callout import (
+    ElevationCallout,
+    ElevationCalloutSettings,
+)
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.coordinate_transformation_service import (
@@ -176,22 +180,69 @@ class ElevationCalloutResolverTests(unittest.TestCase):
             {"x", "y", "lines"},
         )
 
+    def test_content_settings_select_lines_in_canonical_order(self):
+        result = resolve_elevation_callout(
+            _area_condition(name="F9 @T 410' 3\"", thickness=48.0, z_value=4923.0),
+            _area_takeoff(),
+            [],
+            _outer_ring(),
+            ElevationCalloutSettings(
+                include_condition=False,
+                include_top=True,
+                include_bottom=False,
+                include_cubic_yards=True,
+            ),
+        )
+        self.assertEqual(result.lines, ("410' - 3\"", "10.29 CY"))
+
+    def test_empty_content_settings_return_no_callout_without_quantity_work(self):
+        with mock.patch(
+            "ost_visualizer.domain.services.elevation_callout_service.compute_takeoff_cubic_yards"
+        ) as quantity:
+            result = resolve_elevation_callout(
+                _area_condition(name="F9 @T 410' 3\"", thickness=48.0, z_value=4923.0),
+                _area_takeoff(),
+                [],
+                _outer_ring(),
+                ElevationCalloutSettings(
+                    include_condition=False,
+                    include_top=False,
+                    include_bottom=False,
+                    include_cubic_yards=False,
+                ),
+            )
+        self.assertIsNone(result)
+        quantity.assert_not_called()
+
 
 class ElevationCalloutConfigTests(unittest.TestCase):
     def test_defaults_preserve_html_behavior_and_leave_pdf_unchanged(self):
         config = Config()
         self.assertTrue(config.html_elevation_callouts_enabled)
         self.assertFalse(config.pdf_elevation_callouts_enabled)
+        self.assertTrue(config.elevation_callout_include_condition)
+        self.assertTrue(config.elevation_callout_include_top)
+        self.assertTrue(config.elevation_callout_include_bottom)
+        self.assertTrue(config.elevation_callout_include_cubic_yards)
+        self.assertEqual(config.html_elevation_callout_color, "#ff0000")
+        self.assertEqual(config.pdf_elevation_callout_color, "#ff0000")
 
     def test_legacy_config_uses_canonical_callout_defaults(self):
         config = Config.from_dict({"show_toolbar_text": False})
         self.assertTrue(config.html_elevation_callouts_enabled)
         self.assertFalse(config.pdf_elevation_callouts_enabled)
+        self.assertTrue(config.elevation_callout_settings().has_content)
 
     def test_independent_callout_settings_round_trip_in_existing_config_payload(self):
         expected = Config(
             html_elevation_callouts_enabled=False,
             pdf_elevation_callouts_enabled=True,
+            elevation_callout_include_condition=False,
+            elevation_callout_include_top=True,
+            elevation_callout_include_bottom=False,
+            elevation_callout_include_cubic_yards=True,
+            html_elevation_callout_color="#123456",
+            pdf_elevation_callout_color="#abcdef",
         )
         loaded = Config.from_dict(expected.to_dict())
         self.assertEqual(loaded, expected)
@@ -204,9 +255,30 @@ class ElevationCalloutConfigTests(unittest.TestCase):
             expected = Config(
                 html_elevation_callouts_enabled=False,
                 pdf_elevation_callouts_enabled=True,
+                elevation_callout_include_condition=False,
+                elevation_callout_include_top=False,
+                elevation_callout_include_bottom=True,
+                elevation_callout_include_cubic_yards=False,
+                html_elevation_callout_color="#123456",
+                pdf_elevation_callout_color="#abcdef",
             )
             repository.save(expected)
             self.assertEqual(repository.load(), expected)
+
+    def test_invalid_callout_colors_reset_to_canonical_defaults(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = JsonConfigRepository(
+                config_path=Path(temp_dir) / "config.json"
+            )
+            repository.save(
+                Config(
+                    html_elevation_callout_color="not-a-color",
+                    pdf_elevation_callout_color="#12345g",
+                )
+            )
+            config = ConfigAggregate(repository).snapshot()
+        self.assertEqual(config.html_elevation_callout_color, "#ff0000")
+        self.assertEqual(config.pdf_elevation_callout_color, "#ff0000")
 
 
 class _CapturingPdfWriter:
@@ -266,6 +338,7 @@ class PdfElevationCalloutTests(unittest.TestCase):
             self.page_info,
             caption_settings=AnnotationCaptionSettingsDto(False, ()),
             elevation_callouts_enabled=True,
+            elevation_callout_color="#abcdef",
         )
         self.assertEqual(len(polygons), 1)
         self.assertEqual(len(callouts), 1)
@@ -277,6 +350,7 @@ class PdfElevationCalloutTests(unittest.TestCase):
         )
         self.assertEqual(callout.text_align, "center")
         self.assertEqual(callout.font_size, 10.0)
+        self.assertEqual(callout.color, [171, 205, 239])
         vertices = polygons[0].vertices
         center_x = (
             min(point[0] for point in vertices) + max(point[0] for point in vertices)
@@ -317,6 +391,39 @@ class PdfElevationCalloutTests(unittest.TestCase):
             writer.pages[0].texts[0].content.splitlines(),
             _EXPECTED_PDF_CALLOUT_LINES,
         )
+
+    def test_configured_pdf_callout_lines_only_create_selected_text(self):
+        _polygons, callouts = self.exporter._collect_takeoffs(
+            [self.takeoff],
+            {self.condition.uid: self.condition},
+            self.page_info,
+            caption_settings=AnnotationCaptionSettingsDto(False, ()),
+            elevation_callouts_enabled=True,
+            elevation_callout_settings=ElevationCalloutSettings(
+                include_condition=True,
+                include_top=False,
+                include_bottom=False,
+                include_cubic_yards=False,
+            ),
+        )
+        self.assertEqual(len(callouts), 1)
+        self.assertEqual(callouts[0].content, "F9")
+
+    def test_empty_pdf_callout_selection_creates_no_textbox(self):
+        _polygons, callouts = self.exporter._collect_takeoffs(
+            [self.takeoff],
+            {self.condition.uid: self.condition},
+            self.page_info,
+            caption_settings=AnnotationCaptionSettingsDto(False, ()),
+            elevation_callouts_enabled=True,
+            elevation_callout_settings=ElevationCalloutSettings(
+                include_condition=False,
+                include_top=False,
+                include_bottom=False,
+                include_cubic_yards=False,
+            ),
+        )
+        self.assertEqual(callouts, [])
 
     def test_native_textbox_pipeline_writes_all_four_callout_lines(self):
         _polygons, callouts = self.exporter._collect_takeoffs(

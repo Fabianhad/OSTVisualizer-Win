@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 from .annotation_caption import DEFAULT_ANNOTATION_CAPTION_IDS
+from .elevation_callout import ElevationCalloutSettings
 
 
 @dataclass
@@ -23,6 +24,7 @@ class Config:
     DEFAULT_MOUSE_UNPRESSED_SNAP_ANGLE: ClassVar[int] = 15
     DEFAULT_MOUSE_PRESSED_SNAP_ANGLE: ClassVar[int] = 0
     DEFAULT_SNAP_THRESHOLD_PX: ClassVar[int] = 8
+    DEFAULT_ELEVATION_CALLOUT_COLOR: ClassVar[str] = "#ff0000"
     display_modes_synced: bool = True
     display_mode_3d: str = DEFAULT_DISPLAY_MODE
     display_mode_2d: str = DEFAULT_DISPLAY_MODE
@@ -54,6 +56,12 @@ class Config:
     pdf_annotation_caption_ids: tuple[str, ...] = DEFAULT_ANNOTATION_CAPTION_IDS
     html_elevation_callouts_enabled: bool = True
     pdf_elevation_callouts_enabled: bool = False
+    elevation_callout_include_condition: bool = True
+    elevation_callout_include_top: bool = True
+    elevation_callout_include_bottom: bool = True
+    elevation_callout_include_cubic_yards: bool = True
+    html_elevation_callout_color: str = DEFAULT_ELEVATION_CALLOUT_COLOR
+    pdf_elevation_callout_color: str = DEFAULT_ELEVATION_CALLOUT_COLOR
 
     def to_dict(self) -> dict:
         return {
@@ -92,7 +100,25 @@ class Config:
             "pdf_annotation_caption_ids": list(self.pdf_annotation_caption_ids),
             "html_elevation_callouts_enabled": self.html_elevation_callouts_enabled,
             "pdf_elevation_callouts_enabled": self.pdf_elevation_callouts_enabled,
+            "elevation_callout_include_condition": (
+                self.elevation_callout_include_condition
+            ),
+            "elevation_callout_include_top": self.elevation_callout_include_top,
+            "elevation_callout_include_bottom": self.elevation_callout_include_bottom,
+            "elevation_callout_include_cubic_yards": (
+                self.elevation_callout_include_cubic_yards
+            ),
+            "html_elevation_callout_color": self.html_elevation_callout_color,
+            "pdf_elevation_callout_color": self.pdf_elevation_callout_color,
         }
+
+    def elevation_callout_settings(self) -> ElevationCalloutSettings:
+        return ElevationCalloutSettings(
+            include_condition=self.elevation_callout_include_condition,
+            include_top=self.elevation_callout_include_top,
+            include_bottom=self.elevation_callout_include_bottom,
+            include_cubic_yards=self.elevation_callout_include_cubic_yards,
+        )
 
     @classmethod
     def from_dict(cls, data: dict) -> Config:
@@ -189,5 +215,29 @@ class Config:
         if "pdf_elevation_callouts_enabled" in data:
             config.pdf_elevation_callouts_enabled = bool(
                 data["pdf_elevation_callouts_enabled"]
+            )
+        if "elevation_callout_include_condition" in data:
+            config.elevation_callout_include_condition = bool(
+                data["elevation_callout_include_condition"]
+            )
+        if "elevation_callout_include_top" in data:
+            config.elevation_callout_include_top = bool(
+                data["elevation_callout_include_top"]
+            )
+        if "elevation_callout_include_bottom" in data:
+            config.elevation_callout_include_bottom = bool(
+                data["elevation_callout_include_bottom"]
+            )
+        if "elevation_callout_include_cubic_yards" in data:
+            config.elevation_callout_include_cubic_yards = bool(
+                data["elevation_callout_include_cubic_yards"]
+            )
+        if "html_elevation_callout_color" in data:
+            config.html_elevation_callout_color = str(
+                data["html_elevation_callout_color"]
+            )
+        if "pdf_elevation_callout_color" in data:
+            config.pdf_elevation_callout_color = str(
+                data["pdf_elevation_callout_color"]
             )
         return config

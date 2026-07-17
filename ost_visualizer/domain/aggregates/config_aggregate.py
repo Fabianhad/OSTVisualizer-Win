@@ -1,7 +1,7 @@
 import logging
 from dataclasses import replace
 from typing import Optional
-from ..entities.annotation_caption import DEFAULT_ANNOTATION_CAPTION_IDS
+from ..entities.annotation_caption import SUPPORTED_ANNOTATION_CAPTION_IDS
 from ..entities.config import Config
 from ..repositories.i_config_repository import IConfigRepository
 
@@ -205,8 +205,8 @@ class ConfigAggregate:
         elif auto_zoom_level > self.MAX_AUTO_ZOOM_LEVEL:
             auto_zoom_level = self.MAX_AUTO_ZOOM_LEVEL
             config_changed = True
-        crosshair_color = self._validated_crosshair_color(config.crosshair_color)
-        if crosshair_color != config.crosshair_color:
+        colors, colors_changed = self._validated_color_fields(config)
+        if colors_changed:
             config_changed = True
         crosshair_line_thickness = int(config.crosshair_line_thickness)
         if crosshair_line_thickness < self.MIN_CROSSHAIR_LINE_THICKNESS:
@@ -234,7 +234,7 @@ class ConfigAggregate:
             config_changed = True
         caption_ids = tuple(
             caption_id
-            for caption_id in DEFAULT_ANNOTATION_CAPTION_IDS
+            for caption_id in SUPPORTED_ANNOTATION_CAPTION_IDS
             if caption_id in config.pdf_annotation_caption_ids
         )
         if caption_ids != config.pdf_annotation_caption_ids:
@@ -262,7 +262,7 @@ class ConfigAggregate:
             enable_advanced_mouse_controls=bool(config.enable_advanced_mouse_controls),
             default_auto_zoom_level=auto_zoom_level,
             use_full_window_crosshairs=bool(config.use_full_window_crosshairs),
-            crosshair_color=crosshair_color,
+            crosshair_color=colors["crosshair_color"],
             crosshair_line_thickness=crosshair_line_thickness,
             allow_add_page_from_takeoff_tab=bool(
                 config.allow_add_page_from_takeoff_tab
@@ -291,6 +291,18 @@ class ConfigAggregate:
                 config.html_elevation_callouts_enabled
             ),
             pdf_elevation_callouts_enabled=bool(config.pdf_elevation_callouts_enabled),
+            elevation_callout_include_condition=bool(
+                config.elevation_callout_include_condition
+            ),
+            elevation_callout_include_top=bool(config.elevation_callout_include_top),
+            elevation_callout_include_bottom=bool(
+                config.elevation_callout_include_bottom
+            ),
+            elevation_callout_include_cubic_yards=bool(
+                config.elevation_callout_include_cubic_yards
+            ),
+            html_elevation_callout_color=colors["html_elevation_callout_color"],
+            pdf_elevation_callout_color=colors["pdf_elevation_callout_color"],
         )
         self._config = validated
         if config_changed:
@@ -386,7 +398,34 @@ class ConfigAggregate:
                 changed = True
         return validated, changed
 
-    def _validated_crosshair_color(self, value: str) -> str:
+    def _validated_color_fields(self, config: Config) -> tuple[dict[str, str], bool]:
+        color_fields = (
+            (
+                "crosshair_color",
+                config.crosshair_color,
+                Config.DEFAULT_CROSSHAIR_COLOR,
+            ),
+            (
+                "html_elevation_callout_color",
+                config.html_elevation_callout_color,
+                Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
+            ),
+            (
+                "pdf_elevation_callout_color",
+                config.pdf_elevation_callout_color,
+                Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
+            ),
+        )
+        colors = {}
+        changed = False
+        for field_name, raw_color, default in color_fields:
+            color = self._validated_hex_color(raw_color, default, field_name)
+            colors[field_name] = color
+            if color != raw_color:
+                changed = True
+        return colors, changed
+
+    def _validated_hex_color(self, value: str, default: str, field_name: str) -> str:
         color = str(value or "").strip()
         if (
             len(color) == 7
@@ -395,8 +434,9 @@ class ConfigAggregate:
         ):
             return color.lower()
         self.logger.warning(
-            "Invalid crosshair_color '%s' in config; using default '%s'",
+            "Invalid %s '%s' in config; using default '%s'",
+            field_name,
             value,
-            Config.DEFAULT_CROSSHAIR_COLOR,
+            default,
         )
-        return Config.DEFAULT_CROSSHAIR_COLOR
+        return default

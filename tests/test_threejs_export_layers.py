@@ -18,6 +18,7 @@ from ost_visualizer.infrastructure.visualization_provider import (
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.config import Config
+from ost_visualizer.domain.entities.elevation_callout import ElevationCalloutSettings
 from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.page_image_plane_transform import (
@@ -391,13 +392,17 @@ class ThreejsExportLayerTests(unittest.TestCase):
             f"{page_name}.obj",
         )
 
-    def test_html_strategy_passes_saved_callout_option_to_renderer(self):
+    def test_html_strategy_passes_saved_callout_options_to_renderer(self):
         calls = []
         renderer = SimpleNamespace(
             render=lambda *_args, **kwargs: calls.append(kwargs) or True
         )
         strategy = _HtmlExportStrategyAdapter(renderer)
-        config = Config(html_elevation_callouts_enabled=False)
+        config = Config(
+            html_elevation_callouts_enabled=False,
+            elevation_callout_include_bottom=False,
+            html_elevation_callout_color="#123456",
+        )
         options = strategy.get_export_options(config)
         result = strategy.execute_export(
             {"condition-1": Condition(uid="condition-1", condition_type=1)},
@@ -408,6 +413,8 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(len(calls), 1)
         self.assertFalse(calls[0]["include_elevation_callouts"])
+        self.assertFalse(calls[0]["elevation_callout_settings"].include_bottom)
+        self.assertEqual(calls[0]["elevation_callout_color"], "#123456")
 
     def test_collect_takeoffs_for_pages_can_include_hidden_layer_takeoffs(self):
         service = ProjectDataService(_ProjectModel())
@@ -860,6 +867,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
                     "height": 500.0,
                 },
                 include_elevation_callouts=True,
+                elevation_callout_color="#abcdef",
             )
         group_takeoffs.assert_called_once_with([takeoff], {"condition-1": condition})
         self.assertEqual(len(entries), 1)
@@ -881,8 +889,47 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "x": center_x,
                 "y": center_y,
                 "lines": ["F9", "410' - 3\"", "406' - 3\"", "12.86 CY"],
+                "color": "#abcdef",
             },
         )
+
+    def test_two_d_takeoff_export_uses_configured_callout_content(self):
+        condition = Condition(
+            uid="condition-1",
+            name="F9 @T 410' 3\"",
+            condition_type=Condition.TYPE_AREA,
+            thickness=48.0,
+            z_value=4923.0,
+            is_top=True,
+            layer_uid="layer-1",
+        )
+        takeoff = Takeoff(
+            uid="takeoff-1",
+            condition_uid="condition-1",
+            page_uid="page-2",
+            area_uid="area-1",
+            position=[0.0, 0.0, 100.0, 0.0, 100.0, 125.0, 0.0, 125.0],
+        )
+        _entries, callouts = process_takeoffs_2d_for_threejs(
+            {"condition-1": condition},
+            [takeoff],
+            ColorService(),
+            _TakeoffService(),
+            {
+                "scale_factor1": 1.0,
+                "scale_factor2": 1.0,
+                "width": 500.0,
+                "height": 500.0,
+            },
+            include_elevation_callouts=True,
+            elevation_callout_settings=ElevationCalloutSettings(
+                include_condition=False,
+                include_top=True,
+                include_bottom=False,
+                include_cubic_yards=False,
+            ),
+        )
+        self.assertEqual(callouts[0]["lines"], ["410' - 3\""])
 
     def test_two_d_takeoff_export_skips_callout_resolution_when_disabled(self):
         condition = Condition(
@@ -947,6 +994,7 @@ class ThreejsExportLayerTests(unittest.TestCase):
             "x": 30.0,
             "y": 40.0,
             "lines": ["Footing", "10' - 0\"", "8' - 0\"", "5.14 CY"],
+            "color": "#ff0000",
         }
         geometry_payload = [{"existing_3d_geometry": True}]
         base_scene = {

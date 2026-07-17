@@ -9,6 +9,10 @@ from .....domain.dtos.page_render_info_dto import PageRenderInfo
 from .....domain.entities.area import area_group_uid
 from .....domain.entities.condition import Condition
 from .....domain.entities.config import Config
+from .....domain.entities.elevation_callout import (
+    DEFAULT_ELEVATION_CALLOUT_SETTINGS,
+    ElevationCalloutSettings,
+)
 from .....domain.entities.takeoff import Takeoff
 from .....domain.services.coordinate_transformation_service import OSTCoordinateSystem
 from .....domain.services.elevation_callout_service import resolve_elevation_callout
@@ -39,6 +43,10 @@ def process_takeoffs_2d_for_threejs(
     display_mode: str = Config.DISPLAY_MODE_SOLID,
     grayscale_enabled: bool = True,
     page_area_selections: Optional[Dict[str, Optional[str]]] = None,
+    elevation_callout_settings: ElevationCalloutSettings = (
+        DEFAULT_ELEVATION_CALLOUT_SETTINGS
+    ),
+    elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
 ) -> tuple[List[SceneTakeoff2DEntry], List[SceneElevationCalloutEntry]]:
     _hierarchy_map, color_map = color_service.get_color_mapping(
         bid_conditions, bid_takeoffs, display_mode, grayscale_enabled
@@ -81,6 +89,7 @@ def process_takeoffs_2d_for_threejs(
             takeoff,
             area_holes_map.get(takeoff.uid, []),
             tuple((float(point[0]), float(point[1])) for point in rings[0]),
+            elevation_callout_settings,
         )
         if resolved is None:
             continue
@@ -93,6 +102,7 @@ def process_takeoffs_2d_for_threejs(
                 "x": resolved.x,
                 "y": resolved.y,
                 "lines": list(resolved.lines),
+                "color": elevation_callout_color,
             }
         )
     return entries, callouts

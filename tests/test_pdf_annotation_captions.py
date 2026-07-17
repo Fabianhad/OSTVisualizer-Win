@@ -51,7 +51,7 @@ def _area_fixture(thickness=12.0):
 
 
 class PdfAnnotationCaptionSettingsTests(unittest.TestCase):
-    def test_missing_caption_configuration_uses_canonical_defaults(self):
+    def test_missing_caption_configuration_uses_disabled_empty_defaults(self):
         config = Config.from_dict({"show_toolbar_text": False})
         self.assertFalse(config.pdf_annotation_captions_enabled)
         self.assertEqual(

@@ -17,6 +17,10 @@ from .....domain.services.page_image_plane_transform import (
 from .....domain.entities.area import BidArea
 from .....domain.entities.condition import Condition
 from .....domain.entities.config import Config
+from .....domain.entities.elevation_callout import (
+    DEFAULT_ELEVATION_CALLOUT_SETTINGS,
+    ElevationCalloutSettings,
+)
 from .....domain.entities.layer import BidLayer
 from .....domain.entities.takeoff import Takeoff
 from ...exporters import ost_pdf_writer
@@ -47,6 +51,10 @@ def visualize_with_threejs(
     page_image_layer: Optional[ScenePageImageLayer] = None,
     *,
     include_elevation_callouts: bool,
+    elevation_callout_settings: ElevationCalloutSettings = (
+        DEFAULT_ELEVATION_CALLOUT_SETTINGS
+    ),
+    elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
 ) -> Optional[str]:
     start_time = time.time()
     if not bid_conditions or not bid_takeoffs:
@@ -89,6 +97,8 @@ def visualize_with_threejs(
             grayscale_enabled,
             page_area_selections,
             include_elevation_callouts=include_elevation_callouts,
+            elevation_callout_settings=elevation_callout_settings,
+            elevation_callout_color=elevation_callout_color,
             scene_bounds=scene_data.get("bounds"),
         )
     )
@@ -130,6 +140,10 @@ def _build_multi_page_data(
     page_area_selections: Optional[Dict],
     *,
     include_elevation_callouts: bool,
+    elevation_callout_settings: ElevationCalloutSettings = (
+        DEFAULT_ELEVATION_CALLOUT_SETTINGS
+    ),
+    elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
     scene_bounds: Optional[dict] = None,
 ):
     page_entries = []
@@ -213,6 +227,8 @@ def _build_multi_page_data(
                 display_mode=display_mode,
                 grayscale_enabled=grayscale_enabled,
                 page_area_selections=page_area_selections,
+                elevation_callout_settings=elevation_callout_settings,
+                elevation_callout_color=elevation_callout_color,
             )
             takeoffs_2d.extend(page_takeoffs_2d)
             elevation_callouts.extend(page_elevation_callouts)

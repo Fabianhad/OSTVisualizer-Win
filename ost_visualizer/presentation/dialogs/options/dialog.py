@@ -78,6 +78,22 @@ class OptionsDialog(QtWidgets.QDialog):
         self._pdf_elevation_callouts_check = (
             self._export_tab.pdf_elevation_callouts_check
         )
+        self._elevation_callout_condition_check = (
+            self._export_tab.elevation_callout_condition_check
+        )
+        self._elevation_callout_top_check = self._export_tab.elevation_callout_top_check
+        self._elevation_callout_bottom_check = (
+            self._export_tab.elevation_callout_bottom_check
+        )
+        self._elevation_callout_cubic_yards_check = (
+            self._export_tab.elevation_callout_cubic_yards_check
+        )
+        self._html_elevation_callout_color_button = (
+            self._export_tab.html_elevation_callout_color_button
+        )
+        self._pdf_elevation_callout_color_button = (
+            self._export_tab.pdf_elevation_callout_color_button
+        )
         self._tabs.addTab(self._export_tab, OPTIONS_TAB_EXPORT)
         self._mcp_setup_tab = McpSetupTab(
             self._tabs,
@@ -252,6 +268,25 @@ class OptionsDialog(QtWidgets.QDialog):
         self._pdf_elevation_callouts_check.setChecked(
             self._applied_config.pdf_elevation_callouts_enabled
         )
+        self._elevation_callout_condition_check.setChecked(
+            self._applied_config.elevation_callout_include_condition
+        )
+        self._elevation_callout_top_check.setChecked(
+            self._applied_config.elevation_callout_include_top
+        )
+        self._elevation_callout_bottom_check.setChecked(
+            self._applied_config.elevation_callout_include_bottom
+        )
+        self._elevation_callout_cubic_yards_check.setChecked(
+            self._applied_config.elevation_callout_include_cubic_yards
+        )
+        self._html_elevation_callout_color_button.set_color(
+            self._applied_config.html_elevation_callout_color
+        )
+        self._pdf_elevation_callout_color_button.set_color(
+            self._applied_config.pdf_elevation_callout_color
+        )
+        self._export_tab.update_callout_controls_enabled()
 
     def _connect_change_signals(self) -> None:
         buttons = (
@@ -284,6 +319,7 @@ class OptionsDialog(QtWidgets.QDialog):
             *self._caption_checks.values(),
             self._html_elevation_callouts_check,
             self._pdf_elevation_callouts_check,
+            *self._export_tab.callout_content_checks,
         )
         for button in buttons:
             button.toggled.connect(self._update_apply_enabled)
@@ -303,6 +339,12 @@ class OptionsDialog(QtWidgets.QDialog):
         ):
             button.toggled.connect(self._sync_3d_display_mode_when_synced)
         self._crosshair_color_button.colorChanged.connect(self._update_apply_enabled)
+        self._html_elevation_callout_color_button.colorChanged.connect(
+            self._update_apply_enabled
+        )
+        self._pdf_elevation_callout_color_button.colorChanged.connect(
+            self._update_apply_enabled
+        )
         self._crosshair_line_thickness_spin.valueChanged.connect(
             self._update_apply_enabled
         )
@@ -388,6 +430,24 @@ class OptionsDialog(QtWidgets.QDialog):
             ),
             pdf_elevation_callouts_enabled=(
                 self._pdf_elevation_callouts_check.isChecked()
+            ),
+            elevation_callout_include_condition=(
+                self._elevation_callout_condition_check.isChecked()
+            ),
+            elevation_callout_include_top=(
+                self._elevation_callout_top_check.isChecked()
+            ),
+            elevation_callout_include_bottom=(
+                self._elevation_callout_bottom_check.isChecked()
+            ),
+            elevation_callout_include_cubic_yards=(
+                self._elevation_callout_cubic_yards_check.isChecked()
+            ),
+            html_elevation_callout_color=(
+                self._html_elevation_callout_color_button.color()
+            ),
+            pdf_elevation_callout_color=(
+                self._pdf_elevation_callout_color_button.color()
             ),
         )
 

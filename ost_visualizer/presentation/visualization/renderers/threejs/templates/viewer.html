@@ -296,7 +296,6 @@
     }
 
     .elevation-callout {
-      color: #111827;
       pointer-events: none;
     }
 
@@ -1271,6 +1270,7 @@
 
         const group = createPlanSvgElement("g");
         group.classList.add("elevation-callout");
+        group.style.color = callout.color;
         group.setAttribute(
           "transform",
           `translate(${callout.x} ${callout.y})`,

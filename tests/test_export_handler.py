@@ -187,6 +187,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             grayscale_enabled,
             caption_settings,
             elevation_callouts_enabled,
+            elevation_callout_settings,
+            elevation_callout_color,
             page_area_selections,
             bid_annotations,
             on_progress: Optional[ExportProgressCallback] = None,
@@ -198,6 +200,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                     len(pages_data),
                     caption_settings,
                     elevation_callouts_enabled,
+                    elevation_callout_settings,
+                    elevation_callout_color,
                 )
             )
             return ExportResultDto(success=True, format_name="PDF", page_count=1)
@@ -216,6 +220,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                         pdf_annotation_captions_enabled=True,
                         pdf_annotation_caption_ids=("area", "volume"),
                         pdf_elevation_callouts_enabled=True,
+                        elevation_callout_include_top=False,
+                        pdf_elevation_callout_color="#abcdef",
                     )
                 ),
                 project_data_service=_FakeProjectData(["A1"]),
@@ -236,6 +242,8 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
             ("area", "volume"),
         )
         self.assertTrue(calls[0][4])
+        self.assertFalse(calls[0][5].include_top)
+        self.assertEqual(calls[0][6], "#abcdef")
 
     def test_general_export_uses_saved_config_snapshot(self):
         config = Config(html_elevation_callouts_enabled=False)

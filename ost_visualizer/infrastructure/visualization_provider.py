@@ -16,6 +16,10 @@ from ..application.interfaces.i_visualization_provider import (
 )
 from ..domain.entities.area import BidArea
 from ..domain.entities.config import Config
+from ..domain.entities.elevation_callout import (
+    DEFAULT_ELEVATION_CALLOUT_SETTINGS,
+    ElevationCalloutSettings,
+)
 from ..domain.entities.layer import BidLayer
 from ..presentation.visualization.exporters.dxf_exporter import DXFExporter
 from ..presentation.visualization.exporters.fbx_exporter import FBXExporter
@@ -134,6 +138,10 @@ class _HtmlRendererAdapter(IHtmlRenderer):
         page_image_layer: Optional[ScenePageImageLayer] = None,
         *,
         include_elevation_callouts: bool,
+        elevation_callout_settings: ElevationCalloutSettings = (
+            DEFAULT_ELEVATION_CALLOUT_SETTINGS
+        ),
+        elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
     ) -> bool:
         try:
             coord_system = self._coord_factory.create()
@@ -158,6 +166,8 @@ class _HtmlRendererAdapter(IHtmlRenderer):
                 areas=areas,
                 page_image_layer=page_image_layer,
                 include_elevation_callouts=include_elevation_callouts,
+                elevation_callout_settings=elevation_callout_settings,
+                elevation_callout_color=elevation_callout_color,
             )
             return True
         except Exception:
@@ -255,6 +265,8 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             "display_modes_synced": config.display_modes_synced,
             "grayscale_enabled": config.grayscale_enabled,
             "include_elevation_callouts": config.html_elevation_callouts_enabled,
+            "elevation_callout_settings": config.elevation_callout_settings(),
+            "elevation_callout_color": config.html_elevation_callout_color,
         }
         if page_area_selections is not None:
             export_options["page_area_selections"] = page_area_selections
@@ -299,6 +311,8 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             areas=export_options.get("areas"),
             page_image_layer=export_options.get("page_image_layer"),
             include_elevation_callouts=export_options["include_elevation_callouts"],
+            elevation_callout_settings=export_options["elevation_callout_settings"],
+            elevation_callout_color=export_options["elevation_callout_color"],
         )
 
 
