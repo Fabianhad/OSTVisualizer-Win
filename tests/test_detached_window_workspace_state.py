@@ -38,6 +38,7 @@ from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.detached_page_view_manager import (
     DetachedPageViewManager,
 )
+from ost_visualizer.presentation.managers.ui_access_manager import Feature
 from ost_visualizer.presentation.modes.cursor import (
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_SELECT,
@@ -1699,6 +1700,9 @@ class FakeToolbarPlanView(QtWidgets.QWidget):
     def set_selection_enabled(self, _enabled):
         pass
 
+    def set_editing_enabled(self, _enabled):
+        pass
+
     def set_annotation_only_selection(self, _enabled):
         pass
 
@@ -2618,12 +2622,33 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
         manager._write_service = write_service
+        manager._ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature is Feature.EDIT_PAGE_SETTINGS
+        )
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
         manager.project_data = SimpleNamespace(get_current_bid_file_path=lambda: None)
         manager._refresh_window = lambda: calls.append("refresh")
         manager.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
         manager._on_window_scale_changed("page-1", 0.25, 12.0)
         self.assertEqual(calls, [("save", "file.mdb", "page-1", 0.25, 12.0), "refresh"])
+        manager._ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: False)
+        manager._on_window_scale_changed("page-1", 0.5, 12.0)
+        self.assertEqual(calls, [("save", "file.mdb", "page-1", 0.25, 12.0), "refresh"])
+
+    def test_detached_view_is_read_only_without_complete_write_access(self):
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._ui_access_manager = None
+        self.assertTrue(manager._is_read_only())
+        allowed = {Feature.EDIT_PLAN_ITEMS, Feature.EDIT_PAGE_SETTINGS}
+        manager._ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature in allowed
+        )
+        self.assertFalse(manager._is_read_only())
+        allowed.remove(Feature.EDIT_PLAN_ITEMS)
+        self.assertTrue(manager._is_read_only())
+        allowed.add(Feature.EDIT_PLAN_ITEMS)
+        allowed.remove(Feature.EDIT_PAGE_SETTINGS)
+        self.assertTrue(manager._is_read_only())
 
     def test_open_existing_detached_view_rebuilds_navigation_before_load(self):
         calls = []
@@ -3261,6 +3286,17 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
         window._on_annotation_created("dimension", [1.0, 2.0, 3.0, 4.0], "p1")
         self.assertEqual(write_service.insert_calls, [])
+
+    def test_detached_read_only_window_preserves_selection_but_denies_editing(self):
+        from ost_visualizer.presentation.windows.components.window import (
+            DetachedPageViewWindow,
+        )
+
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window._config = SimpleNamespace(allow_annotation_editing=True)
+        window._read_only = True
+        self.assertTrue(window._selection_enabled())
+        self.assertFalse(window._editing_enabled())
 
     def test_detached_annotation_creation_blocks_when_annotation_layer_hidden(self):
         from ost_visualizer.presentation.windows.components.window import (

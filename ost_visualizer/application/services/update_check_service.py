@@ -1,10 +1,11 @@
 import logging
 from typing import Optional, Tuple
+from ..dtos.application_info import APPLICATION_VERSION
 from ...domain.entities.version_info import ChangelogSections, VersionInfo
 
 
 class UpdateCheckService:
-    CURRENT_VERSION = "1.2.4.3"
+    CURRENT_VERSION = APPLICATION_VERSION
 
     def __init__(
         self,

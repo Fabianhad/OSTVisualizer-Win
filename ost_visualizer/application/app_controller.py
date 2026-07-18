@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 from typing import Any, Callable, List, Optional
+from ..domain.entities.database_descriptor import DatabaseBackend
 from ..domain.entities.file_state import FileEntry, normalize_path
 from .builders.annotation_view_builder import AnnotationViewBuilder
 from .builders.model_builder import ModelBuilder
@@ -15,7 +16,6 @@ from .interfaces.i_infrastructure_service_provider import (
     IInfrastructureServiceProvider,
 )
 from .interfaces.i_mdb_connection_manager import IMdbConnectionManager
-from .interfaces.i_parser_provider import IParserProvider
 from .interfaces.i_repository_provider import IRepositoryProvider
 from .interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from .service_container import ServiceContainer
@@ -41,6 +41,7 @@ class AppController:
         load_files_from_config_use_case,
         working_directory_service,
         file_state_model,
+        database_descriptor_registry=None,
         cleanup_hooks: Optional[List[Callable[[], None]]] = None,
     ):
         self.container = container
@@ -52,6 +53,7 @@ class AppController:
         self._load_files_from_config_use_case = load_files_from_config_use_case
         self._working_directory_service = working_directory_service
         self._file_state_model = file_state_model
+        self._database_descriptor_registry = database_descriptor_registry
         self._cleanup_hooks: List[Callable[[], None]] = list(cleanup_hooks or [])
         self._subscriptions = []
         self._cleaned_up = False
@@ -91,7 +93,18 @@ class AppController:
     def load_files_from_config(self) -> List[str]:
         try:
             self._auto_discover_databases()
-            return self._load_files_from_config_use_case.execute()
+            if self._database_descriptor_registry is not None:
+                self._database_descriptor_registry.register_all(
+                    entry.descriptor for entry in self._file_state_model.file_entries
+                )
+            loaded = self._load_files_from_config_use_case.execute()
+            capability_service = self.container.get("database_capability_service")
+            loaded_set = set(loaded)
+            for entry in self._file_state_model.file_entries:
+                if entry.runtime_locator not in loaded_set:
+                    continue
+                capability_service.mark_connected(entry.database_id)
+            return loaded
         except Exception as exc:
             self.logger.exception("Error loading files from config: %s", exc)
             return []
@@ -110,7 +123,11 @@ class AppController:
     def has_any_databases(self) -> bool:
         try:
             return any(
-                entry.is_checked and Path(entry.file_path).exists()
+                entry.is_checked
+                and (
+                    entry.backend == DatabaseBackend.SQL_SERVER
+                    or Path(entry.file_path).exists()
+                )
                 for entry in self._file_state_model.file_entries
             )
         except OSError:
@@ -163,6 +180,7 @@ class AppController:
         self._load_files_from_config_use_case = None
         self._working_directory_service = None
         self._file_state_model = None
+        self._database_descriptor_registry = None
         self.orchestrators = None
         self.event_bus = None
         if self.container is not None:
@@ -177,7 +195,6 @@ class AppControllerBuilder:
         logger: logging.Logger,
         repository_provider: IRepositoryProvider,
         infrastructure_provider: IInfrastructureServiceProvider,
-        parser_provider: IParserProvider,
         api_client_provider: IApiClientProvider,
         view_manager_factory: Callable[..., IAnnotationViewManager],
         repository_factory: Callable[[], IAnnotationViewRepository],
@@ -189,7 +206,6 @@ class AppControllerBuilder:
         self.logger = logger
         self.repository_provider = repository_provider
         self.infrastructure_provider = infrastructure_provider
-        self.parser_provider = parser_provider
         self.api_client_provider = api_client_provider
         self.view_manager_factory = view_manager_factory
         self.repository_factory = repository_factory
@@ -225,12 +241,9 @@ class AppControllerBuilder:
         self._setup_services(event_bus, shared_conn_manager)
         visualization_service = self.container.get("visualization_service")
         orchestrators.visualization.set_visualization_service(visualization_service)
-        mdb_reader = self.container.get("mdb_reader")
         cleanup_hooks: List[Callable[[], None]] = []
         if shared_conn_manager is not None:
             cleanup_hooks.append(shared_conn_manager.close)
-        if mdb_reader is not None:
-            cleanup_hooks.append(mdb_reader.close_connection)
         controller = AppController(
             container=self.container,
             event_bus=event_bus,
@@ -243,6 +256,9 @@ class AppControllerBuilder:
             ),
             working_directory_service=self.container.get("working_directory_service"),
             file_state_model=self.container.get("file_state_model"),
+            database_descriptor_registry=(
+                self.infrastructure_provider.get_database_descriptor_registry()
+            ),
             cleanup_hooks=cleanup_hooks,
         )
         orchestrators.lifecycle.set_app_controller(controller)
@@ -315,7 +331,6 @@ class AppControllerBuilder:
             self.container,
             self.logger,
             self.infrastructure_provider,
-            self.parser_provider,
             self.scene_notifier,
             self.ost_signaler,
         ).build(

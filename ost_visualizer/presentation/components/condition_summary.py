@@ -84,9 +84,15 @@ class ConditionSummaryTab(QtWidgets.QWidget):
     summary_ui_state_changed = Signal()
     summary_action_state_changed = Signal()
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None, uom_label_fn=None):
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None = None,
+        uom_label_fn=None,
+        delete_allowed_fn=None,
+    ):
         super().__init__(parent)
         self._uom_label_fn = uom_label_fn or (lambda _: "")
+        self._delete_allowed_fn = delete_allowed_fn
         self._root_node: ConditionSummaryNode | None = None
         self._condition_items: dict[str, list[QtWidgets.QTreeWidgetItem]] = {}
         self._grouping = ConditionSummaryGrouping(by_type=True, by_area=True)
@@ -448,7 +454,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         delete_action = menu.addAction("Delete")
         ShortcutManager.apply_to_action(delete_action, ACTION_DELETE)
         IconManager.apply_to_action(delete_action, ACTION_DELETE)
-        delete_action.setEnabled(self._can_delete_node(node))
+        delete_action.setEnabled(self._can_delete_node(node) and self._delete_allowed())
         delete_action.triggered.connect(lambda _checked=False: self._delete_node(node))
         menu.addSeparator()
         self._add_group_action(
@@ -503,7 +509,9 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         return self._can_copy_item(self.tree.currentItem())
 
     def can_delete_current_row(self) -> bool:
-        return self._can_delete_node(self._node_for_item(self.tree.currentItem()))
+        return self._delete_allowed() and self._can_delete_node(
+            self._node_for_item(self.tree.currentItem())
+        )
 
     def copy_current_row(self) -> None:
         item = self.tree.currentItem()
@@ -534,8 +542,11 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         return bool(node and node.deletable and node.condition_uid)
 
     def _delete_node(self, node: ConditionSummaryNode | None) -> None:
-        if self._can_delete_node(node):
+        if self._delete_allowed() and self._can_delete_node(node):
             self.delete_requested.emit([node.condition_uid])
+
+    def _delete_allowed(self) -> bool:
+        return bool(self._delete_allowed_fn and self._delete_allowed_fn())
 
     def _node_for_item(
         self, item: QtWidgets.QTreeWidgetItem | None

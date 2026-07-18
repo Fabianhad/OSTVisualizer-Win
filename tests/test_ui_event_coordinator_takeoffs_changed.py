@@ -168,6 +168,12 @@ class FakeConstructedMeshWindow:
     def set_context_menu_command_handlers(self, *args):
         pass
 
+    def set_pick_enabled(self, _enabled):
+        pass
+
+    def set_editing_enabled(self, _enabled):
+        pass
+
     def show_initial_window(self):
         self.visible = True
 

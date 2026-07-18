@@ -340,7 +340,7 @@ class ConditionActionHandler:
             return
         is_cut = bool(target.get("cut"))
         required_feature = (
-            Feature.EDIT_CONDITION if is_cut else Feature.DUPLICATE_CONDITION
+            Feature.EDIT_CONDITION_STRUCTURE if is_cut else Feature.DUPLICATE_CONDITION
         )
         if not self._coordinator.ui_access_manager.is_allowed(required_feature):
             return

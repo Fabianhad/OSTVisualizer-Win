@@ -53,7 +53,7 @@ def create_read_service(
     reader = MdbReader(logger=reader_logger)
     parser = MdbFileParser(logger=reader_logger.getChild("Parser"), parser=reader)
     repository = FileProjectRepository(
-        parsers={"mdb": parser},
+        parser=parser,
         logger=reader_logger.getChild("Repository"),
     )
     return McpReadService(

@@ -183,6 +183,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         )
         self.plan_view: Optional[TakeoffPlanView] = None
         self._read_only: bool = False
+        if self._undo_svc is not None:
+            self._undo_svc.set_write_guard(self._editing_enabled)
         self._is_closing: bool = False
         self._show_timer: Optional[QtCore.QTimer] = None
         self._initial_show_requested: bool = False
@@ -472,12 +474,11 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._renderers.prefetch_coordinator,
         )
         self.plan_view.set_selection_enabled(self._selection_enabled())
+        self.plan_view.set_editing_enabled(self._editing_enabled())
         self.plan_view.set_annotation_only_selection(
             self._config.allow_annotation_editing
         )
-        self.plan_view.set_text_annotation_inline_edit_enabled(
-            self._selection_enabled()
-        )
+        self.plan_view.set_text_annotation_inline_edit_enabled(self._editing_enabled())
         self.plan_view.set_annotation_placement_allowed_fn(
             self._annotation_placement_enabled
         )
@@ -602,10 +603,13 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             next(iter(self._annotation_tool_buttons.values())).setChecked(True)
 
     def _selection_enabled(self) -> bool:
+        return self._config.allow_annotation_editing
+
+    def _editing_enabled(self) -> bool:
         return self._config.allow_annotation_editing and not self._read_only
 
     def _annotation_placement_enabled(self) -> bool:
-        return self._selection_enabled() and bool(
+        return self._editing_enabled() and bool(
             self.page_data
             and self.page_data.is_layer_visible(self.page_data.annotation_layer_uid)
         )
@@ -1034,8 +1038,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._refresh_annotation_tool_access()
         if self.plan_view:
             self.plan_view.set_selection_enabled(self._selection_enabled())
+            self.plan_view.set_editing_enabled(self._editing_enabled())
             self.plan_view.set_text_annotation_inline_edit_enabled(
-                self._selection_enabled()
+                self._editing_enabled()
             )
 
     def apply_config_preferences(
@@ -1395,7 +1400,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
     def _can_paste_annotations(self) -> bool:
         if (
-            not self._selection_enabled()
+            not self._editing_enabled()
             or self._is_closing
             or self._ann_write_svc is None
             or self.plan_view is None

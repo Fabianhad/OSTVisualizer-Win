@@ -1,6 +1,7 @@
 import logging
 import os
 from typing import List, Optional
+from ....domain.entities.database_descriptor import DatabaseBackend
 from ....domain.repositories.i_file_state_repository import IFileStateRepository
 from .load_file_use_case import LoadFileUseCase
 
@@ -26,25 +27,23 @@ class LoadFilesFromConfigUseCase:
             return []
         if not file_state.file_entries:
             return []
-        files_to_load = [
-            entry.file_path for entry in file_state.file_entries if entry.is_checked
+        entries_to_load = [
+            entry for entry in file_state.file_entries if entry.is_checked
         ]
-        if not files_to_load:
+        if not entries_to_load:
             return []
         successfully_loaded = []
-        failed_files = []
-        for file_path in files_to_load:
-            if not os.path.exists(file_path):
-                self.logger.warning("File not found, skipping: %s", file_path)
-                failed_files.append(file_path)
+        for entry in entries_to_load:
+            locator = entry.runtime_locator
+            if entry.backend == DatabaseBackend.ACCESS and not os.path.exists(
+                entry.file_path
+            ):
+                self.logger.warning("File not found, skipping: %s", entry.file_path)
                 continue
             try:
-                success = self.load_file_use_case.execute(file_path)
+                success = self.load_file_use_case.execute(locator)
                 if success:
-                    successfully_loaded.append(file_path)
-                else:
-                    failed_files.append(file_path)
+                    successfully_loaded.append(locator)
             except Exception as exc:
-                self.logger.exception("Error loading file %s: %s", file_path, exc)
-                failed_files.append(file_path)
+                self.logger.exception("Error loading database %s: %s", locator, exc)
         return successfully_loaded

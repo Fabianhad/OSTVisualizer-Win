@@ -366,6 +366,7 @@ class TakeoffPlanView(
         self._saved_scroll_state: Optional[Tuple[int, int]] = None
         self._zoom_press_ctrl: bool = False
         self._selection_enabled: bool = False
+        self._editing_enabled: bool = False
         self._annotation_only_selection: bool = False
         self._selected_uids: Set[str] = set()
         self._selection_items: List = []
@@ -3203,6 +3204,41 @@ class TakeoffPlanView(
             if had_selection:
                 self.takeoff_selection_changed.emit([])
 
+    def set_editing_enabled(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if self._editing_enabled == enabled:
+            return
+        self._editing_enabled = enabled
+        if enabled:
+            return
+        self._cancel_active_drag_interaction(restore_preview=True)
+        if self._rotation_drag_active:
+            self._rotation_drag_active = False
+            self._rotation_drag_uid = None
+            self._rotation_drag_preview_items = []
+            self._rotation_drag_handle_origins = []
+            self._rebuild_current_overlays_from_model()
+        self._remove_rotate_handle()
+        for uid, position in self._position_before_edit.items():
+            takeoff = self._current_takeoffs.get(uid)
+            if takeoff is not None:
+                takeoff.position = list(position)
+                continue
+            annotation = self._current_annotations.get(uid)
+            if annotation is not None:
+                annotation.position = list(position)
+        for uid, rotation in self._rotation_before_edit.items():
+            takeoff = self._current_takeoffs.get(uid)
+            if takeoff is not None:
+                takeoff.rotation = rotation
+        self._dirty_positions.clear()
+        self._dirty_ann_positions.clear()
+        self._position_before_edit.clear()
+        self._dirty_rotations.clear()
+        self._rotation_before_edit.clear()
+        self._keyboard_move_dirty = False
+        self._rebuild_current_overlays_from_model()
+
     def set_roping_selection_method(self, method: str) -> None:
         self._roping_selection_method = (
             "inclusive" if method == "inclusive" else "touching"
@@ -3570,7 +3606,7 @@ class TakeoffPlanView(
         return takeoff.condition_uid
 
     def delete_selected(self) -> None:
-        if not self._selection_enabled or not self._selected_uids:
+        if not self._editing_enabled or not self._selected_uids:
             return
         uids = list(self._selected_uids)
         self._selected_uids.clear()
@@ -3580,7 +3616,7 @@ class TakeoffPlanView(
         self._update_cursor()
 
     def duplicate_selected(self) -> None:
-        if not self._selection_enabled or not self._selected_uids:
+        if not self._editing_enabled or not self._selected_uids:
             return
         self.copy_requested.emit(list(self._selected_uids))
         self.paste_requested.emit()
@@ -3593,7 +3629,7 @@ class TakeoffPlanView(
         self.copy_requested.emit(list(self._selected_uids))
 
     def paste_clipboard(self) -> None:
-        if not self._selection_enabled:
+        if not self._editing_enabled:
             return
         self.paste_requested.emit()
 

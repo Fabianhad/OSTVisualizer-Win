@@ -70,6 +70,32 @@ Persistence:
 - Durable preferences belong in `config.json`.
 - Restorable workspace shell state belongs in `workspace_state.json`.
 - New JSON persistence should use `JsonRepositoryBase` for atomic writes.
+- Saved databases use stable backend-aware descriptors in `file_state.json`.
+  SQL passwords belong only in Windows Credential Manager; never place them in
+  JSON, logs, exception text, labels, command lines, snapshots, or `repr` output.
+
+Database backends:
+
+- Backend selection occurs at the descriptor/adapter registry boundary. Shared
+  application and domain workflows use stable database IDs and neutral ports.
+- Microsoft Access implementation remains under `infrastructure/mdb`; Microsoft
+  SQL Server implementation remains under `infrastructure/sql`. Shared schema
+  semantics and explicit adapter routing live under `infrastructure/database`.
+- SQL connections and cursors are per-operation leases and must not cross
+  threads or escape a transaction. Never retry an uncertain SQL write.
+- The unreleased SQL schema has one checksummed version-1 definition. Creation is
+  serialized with `sp_getapplock`, transactional, and recorded under `ostv`;
+  do not add migrations for unreleased intermediate layouts. `SchemaRegistry`
+  remains product data and is not the SQL schema ledger.
+- External unversioned databases may be adopted only after strict core-schema
+  validation. Adoption transactionally adds the canonical `ostv` extension and
+  metadata without recreating or rewriting external `dbo` tables or rows.
+- Presence is informational and separate from locks. SQL write authorization
+  must be enforced at the mutation boundary; toolbar/menu state is only a
+  projection of the shared capability service.
+- Phase 4 polling and heartbeat workers are not implemented. When introduced,
+  they must stop on unload/shutdown and return through a Qt bridge before
+  EventBus publication or UI changes.
 
 State and identity:
 

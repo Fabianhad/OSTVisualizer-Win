@@ -1,6 +1,7 @@
 import logging
 import os
 from typing import List, Optional, Tuple
+from ....domain.entities.database_descriptor import DatabaseBackend
 from ....domain.entities.file_state import FileEntry
 from ....domain.repositories.i_file_state_repository import IFileStateRepository
 
@@ -16,9 +17,7 @@ class CleanupDeletedFilesUseCase:
 
     def execute(self, file_entries: List[FileEntry]) -> Tuple[List[FileEntry], int]:
         original_count = len(file_entries)
-        cleaned_entries = [
-            entry for entry in file_entries if os.path.exists(entry.file_path)
-        ]
+        cleaned_entries = [entry for entry in file_entries if _entry_exists(entry)]
         removed_count = original_count - len(cleaned_entries)
         return cleaned_entries, removed_count
 
@@ -32,9 +31,7 @@ class CleanupDeletedFilesUseCase:
             return 0
         original_count = len(file_state.file_entries)
         file_state.file_entries = [
-            entry
-            for entry in file_state.file_entries
-            if os.path.exists(entry.file_path)
+            entry for entry in file_state.file_entries if _entry_exists(entry)
         ]
         removed_count = original_count - len(file_state.file_entries)
         if removed_count > 0:
@@ -44,3 +41,9 @@ class CleanupDeletedFilesUseCase:
                 self.logger.error("Failed to save file state after cleanup: %s", exc)
                 return 0
         return removed_count
+
+
+def _entry_exists(entry: FileEntry) -> bool:
+    return entry.backend == DatabaseBackend.SQL_SERVER or os.path.exists(
+        entry.file_path
+    )

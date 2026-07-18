@@ -6,6 +6,7 @@ from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.config import Config
 from ...domain.entities.cover_sheet import CoverSheetData, CoverSheetPage
 from ...domain.entities.file_extensions import is_tiff_suffix
+from ...domain.entities.database_descriptor import DatabaseBackend
 from ..actions.action_ids import (
     ACTION_ADJUST_IMAGES,
     ACTION_ANNOTATION_WINDOW,
@@ -42,6 +43,7 @@ from ..actions.action_ids import (
 from ..components.menu_builder import MenuBuilder
 from ..dialogs.about_dialog import AboutDialog
 from ..dialogs.cover_sheet.dialog import CoverSheetDialog
+from ..dialogs.new_database_type_dialog import NewDatabaseTypeDialog
 from ..dialogs.options.dialog import OptionsDialog
 from ..managers.ui_access_manager import Feature
 from ..utils.image_show_mode import mode_to_flags
@@ -406,7 +408,7 @@ class MenuController:
         can_transform_takeoffs = (
             takeoff_active
             and has_selected_takeoffs
-            and self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS)
+            and self.ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS)
         )
         for action_key in (
             "rotate_takeoff_left",
@@ -822,18 +824,21 @@ class MenuController:
             data,
             has_license=self.ui_access_manager.has_license(),
             save_job_statuses_fn=lambda ch: (
-                self._flush_deferred_for_file(file_path)
+                self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA)
+                and self._flush_deferred_for_file(file_path)
                 and self._project_write_service.save_job_statuses(file_path, ch)
             ),
             reload_job_statuses_fn=lambda: self._project_read_service.get_job_statuses(
                 file_path
             ),
             save_employees_fn=lambda ch: (
-                self._flush_deferred_for_file(file_path)
+                self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA)
+                and self._flush_deferred_for_file(file_path)
                 and self._project_write_service.save_employees_result(file_path, ch)
             ),
             save_pay_classes_fn=lambda ch: (
-                self._flush_deferred_for_file(file_path)
+                self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA)
+                and self._flush_deferred_for_file(file_path)
                 and self._project_write_service.save_pay_classes(file_path, ch)
             ),
             reload_employees_fn=lambda: self._project_read_service.get_employees_and_pay_classes(
@@ -846,6 +851,10 @@ class MenuController:
         try:
             result = exec_with_ost_blocking(dialog, self._event_bus)
             if result != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            if not self.ui_access_manager.can_create_project_tree_items(
+                file_path is not None
+            ):
                 return
             updates = dialog.get_updates()
             if not self._flush_deferred_for_file(file_path):
@@ -918,6 +927,19 @@ class MenuController:
 
     def _new_database(self) -> None:
         if not self.ui_access_manager.is_allowed(Feature.CREATE_DATABASE):
+            return
+        type_dialog = NewDatabaseTypeDialog(self.icon_provider, self.window)
+        selected_backend = None
+        try:
+            if type_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+                selected_backend = type_dialog.selected_backend()
+        finally:
+            type_dialog.cleanup()
+            type_dialog.deleteLater()
+        if selected_backend is None:
+            return
+        if selected_backend == DatabaseBackend.SQL_SERVER:
+            self.handlers.file_ops.create_sql_database()
             return
         dialog = QtWidgets.QInputDialog(self.window)
         dialog.setWindowTitle("New Database")

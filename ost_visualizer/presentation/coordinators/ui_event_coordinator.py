@@ -228,6 +228,17 @@ class UIEventCoordinator:
         if self._is_cleaning_up or self._toolbar is None:
             return
         self._toolbar.refresh()
+        self._refresh_mesh_window_access()
+
+    def _refresh_mesh_window_access(self) -> None:
+        if self._mesh_window is None:
+            return
+        self._mesh_window.set_pick_enabled(
+            self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS)
+        )
+        self._mesh_window.set_editing_enabled(
+            self.ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS)
+        )
 
     def set_delete_action(self, action: QtGui.QAction) -> None:
         self._toolbar.set_delete_action(action)
@@ -508,6 +519,7 @@ class UIEventCoordinator:
                 )
             window.destroyed.connect(self._on_mesh_window_destroyed)
             self._mesh_window = window
+            self._refresh_mesh_window_access()
             if self._plan_texture_provider:
                 window.set_plan_texture_provider(self._plan_texture_provider)
             self._sync_overlay_display_mode(self.ui_state_manager.active_page_uid)
@@ -888,6 +900,8 @@ class UIEventCoordinator:
             page.zoom_fac = zoom_fac
             page.current_x = current_x
             page.current_y = current_y
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            return
         self._deferred_persistence.schedule_page_view_state(
             bid_ref.file_path, page_uid, zoom_fac, current_x, current_y
         )
@@ -1101,6 +1115,10 @@ class UIEventCoordinator:
     def _setup_event_subscriptions(self) -> None:
         self._subscribe(AppEvents.FILE_OPENED, self._on_file_opened)
         self._subscribe(AppEvents.DATABASE_REFRESHED, self._on_database_refreshed)
+        self._subscribe(
+            AppEvents.DATABASE_CAPABILITIES_CHANGED,
+            self._on_database_capabilities_changed,
+        )
         self._subscribe(AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed)
         self._subscribe(AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed)
         self._subscribe(AppEvents.FILE_UNLOADED, self._on_file_unloaded)
@@ -1320,27 +1338,19 @@ class UIEventCoordinator:
                 self._insert_default_layer_from_dialog(file_path, name, after_sequence)
             ),
             delete_many_fn=lambda layer_uids: (
-                self._project_write_service.delete_default_layers(file_path, layer_uids)
+                self._delete_default_layers_from_dialog(file_path, layer_uids)
             ),
             update_show_fn=lambda layer_uid, show: (
-                self._project_write_service.update_default_layer_show(
-                    file_path, layer_uid, show
-                )
+                self._update_default_layer_show_from_dialog(file_path, layer_uid, show)
             ),
             update_all_show_fn=lambda show: (
-                self._project_write_service.update_all_default_layers_show(
-                    file_path, show
-                )
+                self._update_all_default_layers_show_from_dialog(file_path, show)
             ),
             update_name_fn=lambda layer_uid, name: (
-                self._project_write_service.update_default_layer_name(
-                    file_path, layer_uid, name
-                )
+                self._update_default_layer_name_from_dialog(file_path, layer_uid, name)
             ),
             move_fn=lambda layer_uid, neighbor_uid: (
-                self._project_write_service.swap_default_layer_sequence(
-                    file_path, layer_uid, neighbor_uid
-                )
+                self._move_default_layer_from_dialog(file_path, layer_uid, neighbor_uid)
             ),
             has_license=True,
             mode=LayersDialogMode.DEFAULT_LAYERS,
@@ -1426,6 +1436,47 @@ class UIEventCoordinator:
                 "be refreshed. Reopen the database to see the latest default layers.",
             )
         return str(result.value)
+
+    def _delete_default_layers_from_dialog(self, file_path: str, layer_uids: list):
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
+            return None
+        return self._project_write_service.delete_default_layers(file_path, layer_uids)
+
+    def _update_default_layer_show_from_dialog(
+        self, file_path: str, layer_uid: str, show: bool
+    ) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
+            return False
+        return self._project_write_service.update_default_layer_show(
+            file_path, layer_uid, show
+        )
+
+    def _update_all_default_layers_show_from_dialog(
+        self, file_path: str, show: bool
+    ) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
+            return False
+        return self._project_write_service.update_all_default_layers_show(
+            file_path, show
+        )
+
+    def _update_default_layer_name_from_dialog(
+        self, file_path: str, layer_uid: str, name: str
+    ) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
+            return False
+        return self._project_write_service.update_default_layer_name(
+            file_path, layer_uid, name
+        )
+
+    def _move_default_layer_from_dialog(
+        self, file_path: str, layer_uid: str, neighbor_uid: str
+    ) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
+            return False
+        return self._project_write_service.swap_default_layer_sequence(
+            file_path, layer_uid, neighbor_uid
+        )
 
     def _resolve_master_data_file_path(self) -> Optional[str]:
         return self.main_window.get_selected_database_context_file_path()
@@ -1575,6 +1626,11 @@ class UIEventCoordinator:
             self._do_file_refresh()
         finally:
             self._finish_refresh()
+
+    def _on_database_capabilities_changed(self, file_path: str = "") -> None:
+        if not file_path or file_path == self.ui_state_manager.selected_file_path:
+            self.ui_access_manager.refresh()
+            self._update_export_menu_state()
 
     def _is_summary_tab_active(self) -> bool:
         return bool(
@@ -2142,6 +2198,7 @@ class UIEventCoordinator:
             return
         active_page_uid = self.ui_state_manager.active_page_uid
         page_uid = self.plan_view.current_page_uid if self.plan_view else None
+        can_persist = self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS)
         if page_uid and self.plan_view.is_view_state_stable:
             zoom_fac, cx, cy = self.plan_view.get_view_state()
             if zoom_fac > 0:
@@ -2150,9 +2207,12 @@ class UIEventCoordinator:
                     page.zoom_fac = zoom_fac
                     page.current_x = cx
                     page.current_y = cy
-                self._deferred_persistence.schedule_page_view_state(
-                    bid_ref.file_path, page_uid, zoom_fac, cx, cy
-                )
+                if can_persist:
+                    self._deferred_persistence.schedule_page_view_state(
+                        bid_ref.file_path, page_uid, zoom_fac, cx, cy
+                    )
+        if not can_persist:
+            return
         page_to_save = selected_page_override or page_uid or active_page_uid
         if page_to_save:
             if not self.project_data.get_page(page_to_save):
@@ -2323,7 +2383,7 @@ class UIEventCoordinator:
             self.plan_view.flip_selected_takeoffs(horizontal=False)
 
     def _can_transform_selected_takeoffs(self) -> bool:
-        if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS):
             return False
         return bool(self.plan_view and self.plan_view.has_selected_takeoffs)
 
@@ -2673,6 +2733,8 @@ class UIEventCoordinator:
     def _on_page_area_changed(
         self, file_path: str, page_uid: str, area_uid: str
     ) -> None:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            return
         page_area_selections = self.project_data.get_page_area_selections()
         page_area_selections[page_uid] = area_uid if area_uid else None
         self.ui_state_manager.selected_area_uid = area_uid or ""
@@ -2770,6 +2832,8 @@ class UIEventCoordinator:
         )
 
     def update_layer_visibility_deferred(self, layer_uid: str, show: bool) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            return False
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return False
@@ -2845,6 +2909,8 @@ class UIEventCoordinator:
         self._update_plan_view(active_page_uid)
 
     def _on_layer_added(self, name: str, after_sequence: int) -> None:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            return
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return
@@ -2874,6 +2940,8 @@ class UIEventCoordinator:
             self._sidebar.load_bid_layers_sidebar()
 
     def _on_layer_deleted(self, layer_uid: str) -> None:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            return
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return
@@ -2892,6 +2960,8 @@ class UIEventCoordinator:
         self.update_all_layers_visibility_deferred(show)
 
     def update_all_layers_visibility_deferred(self, show: bool) -> bool:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            return False
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return False
@@ -2959,6 +3029,8 @@ class UIEventCoordinator:
             )
 
     def _on_layer_moved(self, layer_uid: str, direction: int) -> None:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            return
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return
@@ -2978,6 +3050,8 @@ class UIEventCoordinator:
             logger.warning("Failed to move layer", exc_info=True)
 
     def _on_layer_renamed(self, layer_uid: str, new_name: str) -> None:
+        if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+            return
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
         if not bid_ref:
             return

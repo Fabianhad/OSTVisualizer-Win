@@ -9,6 +9,7 @@ from .constants import (
     TAKEOFF_REFERENCE_TABLES,
 )
 from .serialization import coerce_binary_column_value, encode_text_blob
+from .identity_allocation import AccessIdentityAllocationMixin
 from .sql_helpers import placeholders
 
 _BID_SCOPED_PRE = (
@@ -49,7 +50,7 @@ _BID_SCOPED_POST = (
 )
 
 
-class BidOperationsMixin:
+class BidOperationsMixin(AccessIdentityAllocationMixin):
     def delete_bids(self, db_path: str, bid_uids: List[str]) -> bool:
         if not bid_uids:
             return True
@@ -235,10 +236,10 @@ class BidOperationsMixin:
                     )
                 now = datetime.datetime.now()
                 new_guid = "{" + str(uuid.uuid4()).upper() + "}"
-                new_bid_uid = str(self._next_uid(cursor, "Bids"))
+                new_bid_uid_int = self._next_uid(cursor, "Bids")
                 insert_cols = list(cols)
                 overrides = {
-                    "UID": int(new_bid_uid),
+                    "UID": new_bid_uid_int,
                     "BidNo": next_bid_no,
                     "GUID": new_guid,
                     "CopyFromBidNO": bid_data.get("BidNo"),
@@ -253,6 +254,7 @@ class BidOperationsMixin:
                     ("UID",),
                     "duplicate_bid",
                 )
+                new_bid_uid = str(new_bid_uid_int)
                 _uid_map_tables = {
                     "BidConditions",
                     "BidConditionFolders",
@@ -314,7 +316,6 @@ class BidOperationsMixin:
                     page_data = dict(zip(page_cols, page_row))
                     old_page_uid = str(int(page_data["UID"]))
                     new_page_uid_int = self._next_uid(cursor, "BidPages")
-                    new_page_uid = str(new_page_uid_int)
                     page_values = [
                         (
                             new_page_uid_int
@@ -331,6 +332,7 @@ class BidOperationsMixin:
                         ("UID", "BidUID"),
                         "duplicate_bid_page",
                     )
+                    new_page_uid = str(new_page_uid_int)
                     page_uid_map[old_page_uid] = new_page_uid
                 for table in PAGE_SECTIONS:
                     for old_page_uid, new_page_uid in page_uid_map.items():
@@ -762,11 +764,7 @@ class BidOperationsMixin:
                 if extra_overrides:
                     row_data.update(extra_overrides)
                 if has_uid:
-                    cursor.execute(f"SELECT MAX([UID]) FROM [{table}]")
-                    max_uid_result = cursor.fetchone()[0]
-                    row_data["UID"] = (
-                        int(max_uid_result) + 1 if max_uid_result is not None else 1
-                    )
+                    row_data["UID"] = self._next_uid(cursor, table)
                 values = []
                 for c in insert_cols:
                     val = row_data[c]

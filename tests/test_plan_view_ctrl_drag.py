@@ -287,6 +287,7 @@ class InputHandlerHarness(
     InputHandlerMixin, DragHandlerMixin, SelectionManagerMixin, BaseKeyHandler
 ):
     def __init__(self):
+        self._editing_enabled = True
         self.selected_text_annotation_uids = []
         self.editing_text_annotation_uids = []
         self.editing_named_view_uids = []
@@ -943,6 +944,7 @@ class CtrlDragTests(unittest.TestCase):
     def test_area_control_point_target_respects_selection_edit_gate(self):
         view = self._make_area_control_point_view()
         view._selection_enabled = False
+        view._editing_enabled = False
         self.assertIsNone(view.area_control_point_target_at(QtCore.QPointF(50.0, 0.0)))
         target = AreaControlPointTarget(
             takeoff_uid="area1",

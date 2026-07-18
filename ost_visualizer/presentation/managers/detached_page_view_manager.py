@@ -103,6 +103,9 @@ class DetachedPageViewManager(IShutdownAware):
             AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
         )
         self.event_bus.subscribe(
+            AppEvents.DATABASE_CAPABILITIES_CHANGED, self._on_database_refreshed
+        )
+        self.event_bus.subscribe(
             AppEvents.NATIVE_SCENE_UPDATED, self._on_native_scene_updated
         )
         self.event_bus.subscribe(
@@ -125,6 +128,10 @@ class DetachedPageViewManager(IShutdownAware):
         if self.event_bus is not None:
             self.event_bus.unsubscribe(
                 AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
+            )
+            self.event_bus.unsubscribe(
+                AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                self._on_database_refreshed,
             )
             self.event_bus.unsubscribe(
                 AppEvents.NATIVE_SCENE_UPDATED, self._on_native_scene_updated
@@ -272,8 +279,11 @@ class DetachedPageViewManager(IShutdownAware):
 
     def _is_read_only(self) -> bool:
         if not self._ui_access_manager:
-            return False
-        return not self._ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+            return True
+        return not (
+            self._ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS)
+            and self._ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+        )
 
     def _refresh_window(self) -> None:
         if not self.is_view_open():
@@ -451,7 +461,11 @@ class DetachedPageViewManager(IShutdownAware):
         self._window.load_view(view, page_data, navigation_source="combobox")
 
     def _on_window_scale_changed(self, page_uid: str, sf1: float, sf2: float) -> None:
-        if not self._write_service:
+        if (
+            not self._write_service
+            or not self._ui_access_manager
+            or not self._ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+        ):
             return
         view = self.repository.get_active_view()
         db_path = (

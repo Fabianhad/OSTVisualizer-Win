@@ -4,7 +4,6 @@ from ..interfaces.i_color_service import IColorService
 from ..interfaces.i_infrastructure_service_provider import (
     IInfrastructureServiceProvider,
 )
-from ..interfaces.i_parser_provider import IParserProvider
 from ..interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from ..service_container import ServiceContainer
 from ..services.config_service import ConfigService
@@ -27,14 +26,12 @@ class ServiceBuilder:
         container: ServiceContainer,
         logger: logging.Logger,
         infrastructure_provider: IInfrastructureServiceProvider,
-        parser_provider: IParserProvider,
         scene_notifier: IThreadSceneNotifier,
         ost_signaler=None,
     ) -> None:
         self.container = container
         self.logger = logger
         self.infrastructure_provider = infrastructure_provider
-        self.parser_provider = parser_provider
         self.scene_notifier = scene_notifier
         self.ost_signaler = ost_signaler
 
@@ -71,10 +68,6 @@ class ServiceBuilder:
         connection_manager,
         license_api_client,
     ) -> None:
-        parsers = self.parser_provider.get_parsers()
-        mdb_parser = parsers.get("mdb")
-        if mdb_parser:
-            self.container.register_instance("mdb_file_parser", mdb_parser)
         self.container.register_singleton(
             "file_loading_service",
             lambda: FileLoadingService(

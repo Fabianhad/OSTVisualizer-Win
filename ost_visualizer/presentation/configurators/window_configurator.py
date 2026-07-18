@@ -2,12 +2,11 @@ import ctypes
 import sys
 from pathlib import Path
 from PySide6 import QtGui, QtWidgets
-from ...application.services.update_check_service import UpdateCheckService
+from ...application.dtos.application_info import APPLICATION_VERSION
 from ..config import MAIN_WINDOW_TITLE
 from ..utils.windows import set_initial_window_size
 
-APP_VERSION = UpdateCheckService.CURRENT_VERSION
-MY_APP_ID = f"fabian.ost.3d.v{APP_VERSION}"
+MY_APP_ID = f"fabian.ost.3d.v{APPLICATION_VERSION}"
 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(MY_APP_ID)
 
 

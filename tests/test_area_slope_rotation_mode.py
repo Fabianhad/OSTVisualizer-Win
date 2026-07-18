@@ -13,6 +13,7 @@ from ost_visualizer.presentation.components.plan_view.components.input_handler i
 class SlopeRotationHarness(InputHandlerMixin):
     def __init__(self):
         self._selection_enabled = True
+        self._editing_enabled = True
         self._selected_uids = {"a1"}
         self._current_conditions = {
             "area": Condition(

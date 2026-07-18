@@ -1,17 +1,21 @@
 from pathlib import Path
 from typing import Optional
 from ..application.app_controller import AppControllerBuilder
+from ..application.services.database_capability_service import (
+    DatabaseCapabilityService,
+)
 from ..application.service_container import ServiceContainer
 from ..infrastructure.app_paths import get_app_data_dir
 from ..infrastructure.events.event_bus import EventBus
+from ..infrastructure.database.descriptor_registry import DatabaseDescriptorRegistry
 from ..infrastructure.logging.logger_factory import LoggerFactory
+from ..infrastructure.sql.credential_store import WindowsCredentialStore
 from ..infrastructure.persistence.repositories.memory_annotation_view_repository import (
     MemoryAnnotationViewRepository,
 )
 from ..infrastructure.providers import (
     ApiClientProvider,
     InfrastructureServiceProvider,
-    ParserProvider,
     RepositoryProvider,
 )
 from ..presentation.managers.annotation_view_manager import QtAnnotationViewManager
@@ -30,7 +34,8 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
     LoggerFactory.configure(log_dir)
     logger = LoggerFactory.get_logger("ost_visualizer")
     container.register_instance("logger", logger)
-    repository_provider = RepositoryProvider(logger)
+    descriptor_registry = DatabaseDescriptorRegistry()
+    credential_store = WindowsCredentialStore()
     icon_provider = QtWindowIconProvider()
     message_notifier = QtMessageNotifier(icon_provider=icon_provider)
     infrastructure_provider = InfrastructureServiceProvider(
@@ -38,8 +43,21 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         callback_bridge_factory=QtCallbackBridge,
         icon_provider=icon_provider,
         message_notifier=message_notifier,
+        descriptor_registry=descriptor_registry,
+        credential_store=credential_store,
     )
-    parser_provider = ParserProvider(logger)
+    database_capability_service = DatabaseCapabilityService(
+        descriptor_registry,
+        infrastructure_provider.get_database_permission_probe(),
+    )
+    container.register_instance(
+        "database_capability_service", database_capability_service
+    )
+    repository_provider = RepositoryProvider(
+        logger,
+        descriptor_registry=descriptor_registry,
+        project_reader_factory=infrastructure_provider.get_mdb_reader,
+    )
     api_client_provider = ApiClientProvider(logger)
 
     def event_bus_factory():
@@ -94,7 +112,6 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         logger=logger,
         repository_provider=repository_provider,
         infrastructure_provider=infrastructure_provider,
-        parser_provider=parser_provider,
         api_client_provider=api_client_provider,
         view_manager_factory=view_manager_factory,
         repository_factory=repository_factory,

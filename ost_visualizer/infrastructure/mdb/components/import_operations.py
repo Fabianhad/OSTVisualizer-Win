@@ -3,7 +3,7 @@ from typing import Any, Callable, Dict, Optional, Set, Tuple
 import pyodbc
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES
-from .connection_wrapper import ConnWrapper
+from ...database.connection_wrapper import ConnectionWrapper
 from .constants import BID_TABLES_WRITE_ORDER, NUMERIC_TYPE_SUBSTRINGS
 from .serialization import encode_text_blob
 
@@ -60,7 +60,7 @@ class ImportOperationsMixin:
             self.logger.exception("Failed to write imported OST data to %s", db_path)
             return False
 
-    def _get_max_uid(self, connection: ConnWrapper) -> int:
+    def _get_max_uid(self, connection: ConnectionWrapper) -> int:
         max_uid = 0
         tables_to_check = (
             ["Bids", "CdnTypes", "JobStatuses"] + RAW_BID_TABLES + list(PAGE_SECTIONS)
@@ -82,7 +82,7 @@ class ImportOperationsMixin:
         return max_uid
 
     def _assign_next_bid_no(
-        self, connection: ConnWrapper, remapped: RawBidData
+        self, connection: ConnectionWrapper, remapped: RawBidData
     ) -> None:
         next_bid_no = 1
         schema = self._schema(connection)
@@ -110,7 +110,7 @@ class ImportOperationsMixin:
 
     def _resolve_cdn_types(
         self,
-        connection: ConnWrapper,
+        connection: ConnectionWrapper,
         raw_data: RawBidData,
         max_uid: int,
     ) -> Tuple[Dict[str, str], int]:
@@ -138,7 +138,7 @@ class ImportOperationsMixin:
 
     def _resolve_job_statuses(
         self,
-        connection: ConnWrapper,
+        connection: ConnectionWrapper,
         raw_data: RawBidData,
         max_uid: int,
     ) -> Tuple[Dict[str, str], int]:
@@ -166,7 +166,7 @@ class ImportOperationsMixin:
 
     def _resolve_access_levels(
         self,
-        connection: ConnWrapper,
+        connection: ConnectionWrapper,
         raw_data: RawBidData,
     ) -> Dict[str, str]:
         access_level_uid_map: Dict[str, str] = {}
@@ -199,7 +199,7 @@ class ImportOperationsMixin:
 
     def _resolve_pay_classes(
         self,
-        connection: ConnWrapper,
+        connection: ConnectionWrapper,
         raw_data: RawBidData,
     ) -> Dict[str, str]:
         pay_class_uid_map: Dict[str, str] = {}
@@ -230,7 +230,7 @@ class ImportOperationsMixin:
 
     def _resolve_employees(
         self,
-        connection: ConnWrapper,
+        connection: ConnectionWrapper,
         raw_data: RawBidData,
         pay_class_uid_map: Dict[str, str],
         access_level_uid_map: Dict[str, str],
@@ -271,7 +271,7 @@ class ImportOperationsMixin:
 
     def _write_to_db(
         self,
-        connection: ConnWrapper,
+        connection: ConnectionWrapper,
         remapped: RawBidData,
     ) -> None:
         table_info = self._get_table_info(connection, "Bids")
@@ -312,12 +312,12 @@ class ImportOperationsMixin:
                     raise
 
     def _load_existing_uid_by_name(
-        self, connection: ConnWrapper, table: str
+        self, connection: ConnectionWrapper, table: str
     ) -> Dict[str, str]:
         return self._load_existing_uid_by_column(connection, table, "Name")
 
     def _load_existing_uid_by_column(
-        self, connection: ConnWrapper, table: str, column: str
+        self, connection: ConnectionWrapper, table: str, column: str
     ) -> Dict[str, str]:
         schema = self._schema(connection)
         if schema.optional_table_missing(table):
@@ -341,7 +341,7 @@ class ImportOperationsMixin:
         return existing_by_value
 
     def _load_existing_employee_uid_by_key(
-        self, connection: ConnWrapper
+        self, connection: ConnectionWrapper
     ) -> Dict[str, str]:
         schema = self._schema(connection)
         if schema.optional_table_missing("Employees"):
@@ -387,7 +387,7 @@ class ImportOperationsMixin:
             return f"name:{first_name}|{last_name}|{email}"
         return ""
 
-    def _next_table_uid(self, connection: ConnWrapper, table: str) -> int:
+    def _next_table_uid(self, connection: ConnectionWrapper, table: str) -> int:
         cursor = connection.cursor()
         try:
             cursor.execute(f"SELECT MAX([UID]) FROM [{table}]")
@@ -401,14 +401,14 @@ class ImportOperationsMixin:
         return 1
 
     def _get_table_info(
-        self, connection: ConnWrapper, table: str
+        self, connection: ConnectionWrapper, table: str
     ) -> Tuple[Set[str], Dict[str, str]]:
         return (
             self._get_table_columns(connection, table),
             self._get_column_types(connection, table),
         )
 
-    def _get_table_columns(self, connection: ConnWrapper, table: str) -> Set[str]:
+    def _get_table_columns(self, connection: ConnectionWrapper, table: str) -> Set[str]:
         cols: Set[str] = set()
         cursor = connection.cursor()
         try:
@@ -421,7 +421,9 @@ class ImportOperationsMixin:
             cursor.close()
         return cols
 
-    def _get_column_types(self, connection: ConnWrapper, table: str) -> Dict[str, str]:
+    def _get_column_types(
+        self, connection: ConnectionWrapper, table: str
+    ) -> Dict[str, str]:
         types: Dict[str, str] = {}
         cursor = connection.cursor()
         try:
@@ -436,7 +438,7 @@ class ImportOperationsMixin:
 
     def _insert_raw_row(
         self,
-        connection: ConnWrapper,
+        connection: ConnectionWrapper,
         table: str,
         row: Dict[str, str],
         table_info: Tuple[Set[str], Dict[str, str]],

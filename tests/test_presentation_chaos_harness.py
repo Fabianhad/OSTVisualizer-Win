@@ -773,6 +773,7 @@ class PlanViewActionHandlerChaosHarness:
         self.access = FakeAccess(
             {
                 Feature.SELECT_PLAN_ITEMS,
+                Feature.EDIT_PLAN_ITEMS,
                 Feature.PLACE_PLAN_ITEMS,
                 Feature.PLACE_ANNOTATIONS,
                 Feature.EDIT_PAGE_SETTINGS,

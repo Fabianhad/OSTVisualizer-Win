@@ -1,5 +1,6 @@
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -746,6 +747,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             load_areas_fn=load_areas,
             save_areas_fn=save_areas,
             refresh_areas_fn=refresh_areas,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
         )
         area_changes = []
         bar.area_change_requested.connect(
@@ -1314,8 +1316,10 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 self.current_file = file_path
 
         class AccessManager:
+            allowed = True
+
             def is_allowed(self, _feature):
-                return True
+                return self.allowed
 
         class MainWindow(QtWidgets.QWidget):
             def get_selected_database_context_file_path(self):
@@ -1324,9 +1328,10 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         read_service = ReadService()
         project_data = ProjectData()
         main_window = MainWindow()
+        access_manager = AccessManager()
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = main_window
-        coordinator.ui_access_manager = AccessManager()
+        coordinator.ui_access_manager = access_manager
         coordinator.project_data = project_data
         coordinator._icon_provider = FakeIconProvider()
         coordinator._project_read_service = read_service
@@ -1338,6 +1343,12 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             observed["cancel_button"] = dialog.btn_cancel
             observed["layer_names"] = [layer.name for layer in dialog._layers]
             observed["new_uid"] = dialog._insert_fn("Added", 1)
+            access_manager.allowed = False
+            dialog._delete_many_fn(["default-1"])
+            dialog._update_show_fn("default-1", False)
+            dialog._update_all_show_fn(False)
+            dialog._update_name_fn("default-1", "Renamed")
+            dialog._move_fn("default-1", "default-2")
 
         try:
             with patch(
@@ -1356,6 +1367,11 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         self.assertEqual(observed["layer_names"], ["Default 1"])
         self.assertEqual(observed["insert"], ("defaults.mdb", "Added", 1))
         self.assertEqual(observed["new_uid"], "default-new")
+        self.assertNotIn("delete", observed)
+        self.assertNotIn("show", observed)
+        self.assertNotIn("show_all", observed)
+        self.assertNotIn("name", observed)
+        self.assertNotIn("move", observed)
 
     def test_layers_dialog_multi_delete_uses_batch_callback_once(self):
         delete_many_calls = []

@@ -44,7 +44,7 @@ class MdbFileParserTests(unittest.TestCase):
 
     def test_unload_closes_all_connections_owned_for_database(self):
         parser = FakeLifecycleParser()
-        repository = FileProjectRepository({"mdb": parser})
+        repository = FileProjectRepository(parser)
         repository._loaded_files["old.mdb"] = SimpleNamespace()
         repository._active_file_path = "old.mdb"
         self.assertTrue(repository.unload_file("old.mdb"))
@@ -52,7 +52,7 @@ class MdbFileParserTests(unittest.TestCase):
 
     def test_reload_refreshes_read_connection_without_closing_write_connection(self):
         parser = FakeLifecycleParser()
-        repository = FileProjectRepository({"mdb": parser})
+        repository = FileProjectRepository(parser)
         repository._loaded_files["active.mdb"] = SimpleNamespace()
         result = repository.reload_database("active.mdb")
         self.assertFalse(result.success)

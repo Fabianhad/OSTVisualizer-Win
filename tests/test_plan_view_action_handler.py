@@ -913,6 +913,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
 
     def _copied_takeoff(self, position=None):
@@ -1039,6 +1040,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_set_curved(["t1", "t2"], True)
         self.assertEqual(len(write.curve_calls), 2)
@@ -1307,6 +1309,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_annotation_styles_flushed(
             [("missing", "rect", {"Color": "#000000"}, {"Color": "#ffffff"})]
@@ -1762,7 +1765,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
         handler.on_annotation_text_properties_flushed(
             [("a1", "text", {"Text": "Old"}, {"Text": "New"})]
@@ -1787,7 +1790,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
         changes = [
             (
@@ -1848,7 +1851,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
         handler.on_annotation_styles_flushed(
             [("a1", "rect", {"Color": "#ff0000"}, {"Color": "#336699"})]
@@ -1990,6 +1993,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_takeoff_created("42", [1.0, 2.0], "9")
         self.assertEqual(write.calls[0][3], False)
@@ -2017,6 +2021,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         position = [0.0, 0.0, 10.0, 0.0, 10.0, 8.0, 0.0, 8.0]
         handler.on_takeoff_created("42", position, "9")
@@ -2045,6 +2050,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         position = [0.0, 0.0, 10.0, 0.0, 5.0, 5.0]
         handler.on_takeoff_created("linear", position, "9")
@@ -2074,6 +2080,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_takeoff_created("c2", [1.0, 2.0], "9")
         specs = write.calls[0][2]
@@ -2100,6 +2107,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_hole_created("c1", [2.0, 2.0, 4.0, 4.0], "p1", "parent")
         self.assertEqual(write.calls[0][3], False)
@@ -2131,6 +2139,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard([])
         handler.on_paste_backouts_placed(
@@ -2238,6 +2247,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=SyncEventBus(on_takeoffs_changed),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_takeoff_created("42", [1.0, 2.0], "p2")
         self.assertEqual(plan_view.selected, {"100"})
@@ -2260,6 +2270,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         spec = InsertTakeoffSpec(
             condition_uid="42",
@@ -2295,6 +2306,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         event_bus = handler._event_bus
         handler.on_reassign_condition(["t1", "missing"], "42")
@@ -2332,6 +2344,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_assign_to_area(["t1"])
         self.assertEqual(write.area_calls, [("bid.mdb", ["t1"], "0", False)])
@@ -2367,6 +2380,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_set_negative(["t1"], True)
         self.assertEqual(write.negative_calls, [("bid.mdb", ["t1"], True, False)])
@@ -2414,6 +2428,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_reassign_condition(["area"], "linear")
         self.assertEqual(write.condition_calls, [])
@@ -2455,6 +2470,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_reassign_condition(["area", "count"], "42")
         self.assertEqual(write.condition_calls, [])
@@ -2485,6 +2501,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_set_curved(["t1", "t2", "t3"], True)
         self.assertEqual(len(write.curve_calls), 3)
@@ -2522,6 +2539,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_positions_flushed([("t1", [0.0, 0.0], [5.0, 6.0])], [])
         self.assertEqual(write.position_calls[0][2], False)
@@ -2558,6 +2576,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_positions_flushed([("t1", [0.0, 0.0], [5.0, 6.0])], [])
         undo.undo()
@@ -2595,6 +2614,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         old_position = [0.0, 0.0, 96.0, 0.0, 96.0, 96.0, 0.0, 96.0]
         edited_position = [0.0, 0.0, 120.0, 0.0, 120.0, 120.0, 0.0, 120.0]
@@ -2665,6 +2685,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_positions_flushed(
             [("t1", [0.0, 0.0], [5.0, 6.0])],
@@ -2718,6 +2739,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_positions_flushed(
             [],
@@ -2772,6 +2794,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         takeoff_changes = [("t1", [0.0, 0.0], [5.0, 6.0])]
         ann_changes = [("a1", "annotation", [1.0, 1.0], [2.0, 2.0])]
@@ -2813,6 +2836,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_annotation_text_properties_flushed(
             [
@@ -2875,6 +2899,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_annotation_text_and_positions_flushed(
             [
@@ -2955,6 +2980,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_annotation_text_properties_flushed(
             [("nv1", "namedview", {"Text": "Old"}, {"Text": "New"})]
@@ -2995,6 +3021,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_annotation_text_and_positions_flushed(
             [
@@ -3079,6 +3106,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_rotations_flushed([("t1", 0.0, 90.0)])
         self.assertEqual(write.rotation_calls[0][2], False)
@@ -3116,6 +3144,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_group_rotation_flushed(
             [("t1", [0.0, 0.0], [3.0, 4.0])],
@@ -3154,6 +3183,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_group_rotation_flushed(
             [("t1", [0.0, 0.0, 96.0, 0.0], [0.0, 0.0, 120.0, 0.0])],
@@ -3205,6 +3235,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         position_changes = [("t1", [0.0, 0.0], [3.0, 4.0])]
         rotation_changes = [("t1", 0.0, 45.0)]
@@ -3238,6 +3269,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_group_rotation_flushed(
             [("t1", [0.0, 0.0], [3.0, 4.0])],
@@ -3279,6 +3311,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_elements_deleted(["t1"])
         self.assertEqual(write.delete_calls[0][2], False)
@@ -3312,6 +3345,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_elements_deleted(["t1"])
         undo.undo()
@@ -3356,6 +3390,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_elements_deleted(["hole"])
         self.assertEqual(write.delete_calls, [("bid.mdb", ["hole"], False)])
@@ -3405,6 +3440,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_elements_deleted(["parent"])
         self.assertEqual(len(write.delete_calls), 1)
@@ -3431,6 +3467,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_elements_deleted(["t1"])
         self.assertEqual(write.delete_calls, [("bid.mdb", ["t1"], True)])
@@ -3463,6 +3500,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_elements_deleted(["t1"])
         self.assertEqual(plan_view.selected, {"t1"})
@@ -3488,6 +3526,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_elements_deleted(["t1"])
         undo.undo()
@@ -3524,6 +3563,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_elements_deleted(["t1"])
         data.pages["p1"].scale_factor1 = 0.1875
@@ -3557,6 +3597,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_elements_deleted(["rect-item"])
         data.pages["p1"].scale_factor1 = 0.1875
@@ -3599,7 +3640,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     undo_svc=FakeUndoService(),
                     event_bus=FakeEventBus(),
                     deferred_persistence_manager=FakeDeferredPersistence(),
-                    ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+                    ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
                 )
                 with patch.object(
                     handler_module, "confirm", return_value=response
@@ -3639,7 +3680,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
         handler.on_elements_deleted(["a1"])
         undo.undo()
@@ -3688,7 +3729,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
         handler.on_elements_deleted(["rect-item"])
         self.assertEqual(
@@ -3745,7 +3786,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
         with patch.object(handler_module, "confirm", return_value=True) as confirm:
             handler.on_elements_deleted(["nv1"])
@@ -3799,7 +3840,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
         with patch.object(handler_module, "confirm", side_effect=[False, True]):
             handler.on_elements_deleted(["nv1", "nv2", "r1"])
@@ -3846,7 +3887,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
         with patch.object(handler_module, "confirm", side_effect=[False, False]):
             handler.on_elements_deleted(["nv1", "nv2"])
@@ -3893,6 +3934,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard(
             [parent, hole],
@@ -3946,6 +3988,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard(
             [parent, hole],
@@ -3977,6 +4020,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard([source])
         handler.on_paste_requested()
@@ -4008,6 +4052,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard(
             [source],
@@ -4063,6 +4108,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=undo,
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard([source])
         handler.on_paste_requested()
@@ -4095,6 +4141,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard(
             [source], extras={"source": {"UnsupportedColumn": "value"}}
@@ -4119,6 +4166,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=event_bus,
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard(
             [source],
@@ -4156,6 +4204,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard([source])
         handler.on_paste_requested()
@@ -4319,6 +4368,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard([hole])
         handler.on_paste_requested()
@@ -4345,6 +4395,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
         )
         handler._clipboard_svc = FakeClipboard([hole])
         handler.on_paste_requested()
@@ -4371,7 +4422,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
             deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess({Feature.SELECT_PLAN_ITEMS}),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
         )
         handler._clipboard_svc = FakeClipboard([hole])
         handler.on_paste_requested()

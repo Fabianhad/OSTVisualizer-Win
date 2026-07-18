@@ -33,7 +33,11 @@ from .....domain.entities.annotation import (
     ANNOTATION_TYPE_TEXT,
 )
 from .....domain.entities.config import Config
-from ....actions.action_ids import ACTION_SHOW_ORIGINAL_IMAGE, ACTION_SHOW_OVERLAY_IMAGE
+from ....actions.action_ids import (
+    ACTION_DELETE,
+    ACTION_SHOW_ORIGINAL_IMAGE,
+    ACTION_SHOW_OVERLAY_IMAGE,
+)
 from ....config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ....managers.context_menu_manager import ContextMenuManager
 from ....modes.cursor import (
@@ -433,6 +437,7 @@ class InputHandlerMixin:
             return
         rotate_handle_press = (
             event.button() == Qt.MouseButton.LeftButton
+            and self._editing_enabled
             and self._cursor_mode in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE)
             and self._is_over_rotate_handle(vp_pos)
         )
@@ -541,6 +546,7 @@ class InputHandlerMixin:
             self.handle_paste_backout_press(event)
         elif (
             self._cursor_mode in (CURSOR_MODE_ROTATE, CURSOR_MODE_SLOPE_ROTATE)
+            and self._editing_enabled
             and event.button() == Qt.MouseButton.LeftButton
         ):
             if self._is_over_rotate_handle(vp_pos):
@@ -660,13 +666,17 @@ class InputHandlerMixin:
                     )
                 )
                 _can_start_drag = False
-                if len(self._selected_uids) == 1:
+                if self._editing_enabled and len(self._selected_uids) == 1:
                     for info in self._handle_infos:
                         if self._is_handle_info_at_viewport_pos(info, vp_pos):
                             _can_start_drag = True
                             break
                 if not _can_start_drag:
-                    hit_uid = self.find_selected_movable_at(scene_pos)
+                    hit_uid = (
+                        self.find_selected_movable_at(scene_pos)
+                        if self._editing_enabled
+                        else None
+                    )
                     if not hit_uid:
                         hit_uid = self.find_takeoff_at(scene_pos)
                     hit_ann = (
@@ -1747,7 +1757,7 @@ class InputHandlerMixin:
         self._rotate_line_outline_item.setLine(cx, cy, new_hx, new_hy)
 
     def _selected_area_slope_uid(self) -> str:
-        if not self._selection_enabled or len(self._selected_uids) != 1:
+        if not self._editing_enabled or len(self._selected_uids) != 1:
             return ""
         uid = next(iter(self._selected_uids))
         takeoff = self._current_takeoffs.get(uid)
@@ -1932,7 +1942,7 @@ class InputHandlerMixin:
         self._transform_selected_takeoffs("flip", horizontal=horizontal)
 
     def _selected_takeoff_uids_for_transform(self) -> set:
-        if not self._selection_enabled:
+        if not self._editing_enabled:
             return set()
         return {
             uid
@@ -2045,11 +2055,11 @@ class InputHandlerMixin:
             self._ctrl_held = True
             self._update_cursor()
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            if event.key() == Qt.Key.Key_Z and self._selection_enabled:
+            if event.key() == Qt.Key.Key_Z and self._editing_enabled:
                 self.undo_requested.emit()
                 event.accept()
                 return
-            if event.key() == Qt.Key.Key_Y and self._selection_enabled:
+            if event.key() == Qt.Key.Key_Y and self._editing_enabled:
                 self.redo_requested.emit()
                 event.accept()
                 return
@@ -2060,13 +2070,14 @@ class InputHandlerMixin:
                 self.copy_requested.emit(list(self._selected_uids))
                 event.accept()
                 return
-            if event.key() == Qt.Key.Key_V and self._selection_enabled:
+            if event.key() == Qt.Key.Key_V and self._editing_enabled:
                 self.paste_requested.emit()
                 event.accept()
                 return
             if (
                 event.key() == Qt.Key.Key_R
                 and self._selection_enabled
+                and self._editing_enabled
                 and self._selected_uids
             ):
                 if self._cursor_mode == CURSOR_MODE_PLACE:
@@ -2158,7 +2169,7 @@ class InputHandlerMixin:
             event.accept()
             return
         if (
-            self._selection_enabled
+            self._editing_enabled
             and self._selected_uids
             and event.key() == Qt.Key.Key_Delete
         ):
@@ -2188,6 +2199,7 @@ class InputHandlerMixin:
         }
         if (
             self._selection_enabled
+            and self._editing_enabled
             and self._cursor_mode
             in (CURSOR_MODE_SELECT, CURSOR_MODE_PLACE, CURSOR_MODE_ROTATE)
             and self._selected_uids
@@ -2401,7 +2413,7 @@ class InputHandlerMixin:
         )
 
     def _area_control_point_position(self, target) -> Optional[List[float]]:
-        if not self._selection_enabled:
+        if not self._editing_enabled:
             return None
         takeoff = self._current_takeoffs.get(target.takeoff_uid)
         if takeoff is None:
@@ -2506,13 +2518,13 @@ class InputHandlerMixin:
             self._current_annotations.get,
         )
 
-    def _selected_annotation_style_actions_enabled(self) -> bool:
+    def _plan_item_edit_actions_enabled(self) -> bool:
         if self._context_menu_action_state is None:
-            return True
+            return False
         return bool(
-            context_command_state(self._context_menu_action_state, "copy", "Copy")[
-                "enabled"
-            ]
+            context_command_state(
+                self._context_menu_action_state, ACTION_DELETE, "Delete"
+            )["enabled"]
         )
 
     def _select_context_annotation_color(self, annotation_uids: list[str]) -> None:
@@ -2537,7 +2549,7 @@ class InputHandlerMixin:
             line_width_callback=lambda width: (
                 self.apply_annotation_style_to_selection(width=width)
             ),
-            enabled=self._selected_annotation_style_actions_enabled(),
+            enabled=self._plan_item_edit_actions_enabled(),
         )
         if style_actions.color_action or style_actions.width_actions:
             menu.addSeparator()
@@ -2629,6 +2641,7 @@ class InputHandlerMixin:
             event.accept()
             return
         menu = QMenu(self)
+        edit_enabled = self._plan_item_edit_actions_enabled()
         assign_action = None
         negative_action = None
         curved_action = None
@@ -2642,6 +2655,7 @@ class InputHandlerMixin:
                 ContextMenuManager.action_spec(
                     None,
                     "Set as Curved Segment",
+                    enabled=edit_enabled,
                     checkable=True,
                     checked=selected_state.all_curved,
                 ),
@@ -2649,7 +2663,9 @@ class InputHandlerMixin:
         if selected_state.show_assign:
             assign_action = ContextMenuManager.add_action(
                 menu,
-                ContextMenuManager.action_spec(None, "Assign to Current Area"),
+                ContextMenuManager.action_spec(
+                    None, "Assign to Current Area", enabled=edit_enabled
+                ),
             )
         if selected_state.show_negative:
             negative_action = ContextMenuManager.add_action(
@@ -2657,6 +2673,7 @@ class InputHandlerMixin:
                 ContextMenuManager.action_spec(
                     None,
                     "Count as Negative Quantity",
+                    enabled=edit_enabled,
                     checkable=True,
                     checked=selected_state.all_negative,
                 ),
@@ -2677,6 +2694,7 @@ class InputHandlerMixin:
                 menu,
                 self._current_conditions,
                 selected_state.reassign_geometry_type,
+                enabled=edit_enabled,
             )
         menu.addSeparator()
         self._add_context_clipboard_actions(menu)

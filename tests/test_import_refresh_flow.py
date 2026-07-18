@@ -376,6 +376,7 @@ class ImportRefreshFlowTests(unittest.TestCase):
                 self.data = data
 
         repository._current_hierarchy = FakeHierarchy()
+        repository._descriptor_registry = None
         repository._loaded_files = {
             "z.mdb": _LoadedFileCache(
                 file_path="z.mdb",
@@ -409,6 +410,7 @@ class ImportRefreshFlowTests(unittest.TestCase):
             import_service=service,
             ui_state_manager=FakeUiState(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(),
         )
         original_dialog = import_handler_module.ProgressDialog
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
@@ -447,6 +449,30 @@ class ImportRefreshFlowTests(unittest.TestCase):
             ],
         )
 
+    def test_import_handler_denies_direct_call_when_import_access_is_read_only(self):
+        service = FakeImportService()
+        handler = ImportHandler(
+            window=None,
+            project_data_service=FakeProjectData(),
+            import_service=service,
+            ui_state_manager=FakeUiState(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(False),
+        )
+        original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
+        try:
+            import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
+                lambda *_args, **_call_options: self.fail(
+                    "denied import must not open the file picker"
+                )
+            )
+            handler.import_ost()
+        finally:
+            import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
+                original_get_open
+            )
+        self.assertEqual(service.import_calls, [])
+
     def test_import_handler_stops_when_deferred_flush_fails(self):
         service = FakeImportService()
         deferred = FakeDeferredPersistence(result=False)
@@ -456,6 +482,7 @@ class ImportRefreshFlowTests(unittest.TestCase):
             import_service=service,
             ui_state_manager=FakeUiState(),
             deferred_persistence_manager=deferred,
+            ui_access_manager=FakeAccess(),
         )
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
         try:
@@ -479,6 +506,7 @@ class ImportRefreshFlowTests(unittest.TestCase):
             import_service=service,
             ui_state_manager=FakeUiState(),
             deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(),
         )
         original_dialog = import_handler_module.ProgressDialog
         original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
@@ -507,3 +535,11 @@ class ImportRefreshFlowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeAccess:
+    def __init__(self, allowed=True):
+        self.allowed = allowed
+
+    def is_allowed(self, _feature):
+        return self.allowed

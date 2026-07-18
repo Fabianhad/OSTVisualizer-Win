@@ -102,7 +102,7 @@ class PlanViewActionHandler:
         undo_svc,
         event_bus,
         deferred_persistence_manager,
-        ui_access_manager=None,
+        ui_access_manager,
     ):
         self._plan_view = plan_view
         self._ui_state = ui_state_manager
@@ -120,10 +120,7 @@ class PlanViewActionHandler:
         )
 
     def _is_allowed(self, feature: Feature) -> bool:
-        return bool(
-            self._ui_access_manager is None
-            or self._ui_access_manager.is_allowed(feature)
-        )
+        return self._ui_access_manager.is_allowed(feature)
 
     def connect_signals(self) -> None:
         pv = self._plan_view
@@ -176,7 +173,7 @@ class PlanViewActionHandler:
         return _DeferredWriteResult()
 
     def can_paste_to_current_bid(self) -> bool:
-        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
             return False
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not self._clipboard_svc.has_content():
@@ -583,7 +580,7 @@ class PlanViewActionHandler:
         return True
 
     def on_assign_to_area(self, uids: list) -> None:
-        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
@@ -603,7 +600,7 @@ class PlanViewActionHandler:
         )
 
     def on_reassign_condition(self, uids: list, condition_uid: str) -> None:
-        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = []
@@ -646,7 +643,7 @@ class PlanViewActionHandler:
         )
 
     def on_set_negative(self, uids: list, is_negative: bool) -> None:
-        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
@@ -666,7 +663,7 @@ class PlanViewActionHandler:
         )
 
     def on_set_curved(self, uids: list, make_curved: bool) -> None:
-        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         takeoff_uids = self._takeoff_uids_only(uids)
@@ -711,7 +708,7 @@ class PlanViewActionHandler:
 
     def on_positions_flushed(self, takeoff_changes: list, ann_changes: list) -> None:
         if (takeoff_changes or ann_changes) and not self._is_allowed(
-            Feature.SELECT_PLAN_ITEMS
+            Feature.EDIT_PLAN_ITEMS
         ):
             return
         db_path = self._data_svc.get_current_bid_file_path()
@@ -797,7 +794,7 @@ class PlanViewActionHandler:
         self._undo_svc.push(_undo_text_properties, _redo_text_properties)
 
     def on_annotation_styles_flushed(self, changes: list) -> None:
-        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path or not changes:
@@ -890,7 +887,7 @@ class PlanViewActionHandler:
         self._undo_svc.push(_undo_text_and_position, _redo_text_and_position)
 
     def on_rotations_flushed(self, rotation_changes: list) -> None:
-        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path or not rotation_changes:
@@ -917,7 +914,7 @@ class PlanViewActionHandler:
     ) -> None:
         if (
             takeoff_changes or ann_changes or rotation_changes
-        ) and not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+        ) and not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
             return
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path:
@@ -1433,7 +1430,7 @@ class PlanViewActionHandler:
         takeoff.name_font_underline = bool(extras.get("NameFontUnderline", False))
 
     def on_elements_deleted(self, uids: list) -> None:
-        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
             return
         bid_ref = self._ui_state.get_selected_bid_ref()
         if not bid_ref or not uids:
@@ -1691,7 +1688,7 @@ class PlanViewActionHandler:
         return uid_map
 
     def on_paste_requested(self) -> None:
-        if not self._is_allowed(Feature.SELECT_PLAN_ITEMS):
+        if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):
             return
         if not self._clipboard_svc.has_content():
             return

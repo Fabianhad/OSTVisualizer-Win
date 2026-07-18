@@ -42,7 +42,7 @@ class ExportHandler:
         pdf_exporter,
         ost_exporter,
         osp_exporter,
-        mdb_file_parser,
+        database_reader,
         deferred_persistence_manager,
     ):
         self.window = window
@@ -53,7 +53,7 @@ class ExportHandler:
         self.pdf_exporter = pdf_exporter
         self.ost_exporter = ost_exporter
         self.osp_exporter = osp_exporter
-        self._mdb_file_parser = mdb_file_parser
+        self._database_reader = database_reader
         self._deferred_persistence = deferred_persistence_manager
 
     def _flush_deferred_persistence(self) -> bool:
@@ -300,7 +300,7 @@ class ExportHandler:
         if not filename:
             return
         try:
-            raw_data = self._mdb_file_parser.get_raw_bid_data(
+            raw_data = self._database_reader.get_raw_bid_data(
                 bid_ref.file_path, bid_ref.bid_uid
             )
             reporter = ProgressReporter()

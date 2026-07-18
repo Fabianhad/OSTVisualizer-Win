@@ -3,7 +3,7 @@ import threading
 from contextlib import contextmanager
 from typing import Dict, Generator
 import pyodbc
-from .components.connection_wrapper import ConnWrapper
+from ..database.connection_wrapper import ConnectionWrapper
 
 
 class WriteBlockedError(Exception):
@@ -32,7 +32,7 @@ class MdbConnectionManager:
     @contextmanager
     def connection(
         self, db_path: str, autocommit: bool = True
-    ) -> Generator[ConnWrapper, None, None]:
+    ) -> Generator[ConnectionWrapper, None, None]:
         abs_path = os.path.abspath(db_path)
         path_lock = self._get_path_lock(abs_path)
         with path_lock:
@@ -72,7 +72,7 @@ class MdbConnectionManager:
                     pool[abs_path] = conn
                 lease_depth = active_lease[1] + 1 if active_lease is not None else 1
                 self._active_leases[abs_path] = (autocommit, lease_depth)
-            wrapper = ConnWrapper(conn)
+            wrapper = ConnectionWrapper(conn)
             try:
                 try:
                     yield wrapper

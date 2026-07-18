@@ -15,6 +15,7 @@ from ost_visualizer.domain.entities.annotation import (
 )
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
@@ -553,7 +554,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         deferred = RecordingDeferredPersistence()
         unload_calls = []
         updates = []
-        entries = [SimpleNamespace(normalized_path="a.mdb", is_checked=True)]
+        entries = [FileEntry("a.mdb", is_checked=True)]
         handler = FileOperationHandler(
             window=None,
             icon_provider=None,
@@ -567,6 +568,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             working_directory_service=None,
             unload_file_fn=lambda file_path: unload_calls.append(file_path) or True,
             deferred_persistence_manager=deferred,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
             ui_state_manager=SimpleNamespace(selected_file_path="a.mdb"),
         )
         handler.unload_file()
@@ -592,6 +594,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             working_directory_service=None,
             unload_file_fn=lambda file_path: unload_calls.append(file_path) or True,
             deferred_persistence_manager=deferred,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
             ui_state_manager=SimpleNamespace(selected_file_path="a.mdb"),
         )
         handler.unload_file()
@@ -706,6 +709,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             get_view_state=lambda: (2.5, 10.0, 20.0),
         )
         coordinator._deferred_persistence = RecordingDeferredPersistence()
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
         coordinator._nav = SimpleNamespace(is_refreshing=False)
         coordinator.opengl_viewer = None
         coordinator._mesh_window = None
@@ -872,6 +878,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             "l1" if page_layer_uid is None and layer_name == "Image" else page_layer_uid
         )
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
         coordinator.ui_state_manager = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
             active_page_uid=active_page_uid,
@@ -986,6 +995,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
     def test_show_all_without_sidebar_queues_all_layers_from_read_service(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
         coordinator.ui_state_manager = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
             active_page_uid="p1",
@@ -1288,6 +1300,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_database_refresh_flushes_pending_visual_state_before_reload(self):
         calls = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
         coordinator._deferred_persistence = SimpleNamespace(
             flush_for_file=lambda file_path: calls.append(("flush", file_path)) or True
         )
@@ -1372,6 +1387,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         area_selections = {"p1": None}
         direct_writes = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
         selected_page_reads = []
 
         def selected_page_uids():
@@ -1418,6 +1436,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
     def test_page_area_clear_updates_model_to_no_filter(self):
         area_selections = {"p1": "2"}
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
         coordinator.project_data = SimpleNamespace(
             get_page_area_selections=lambda: area_selections,
             get_selected_page_uids=lambda: ["p1"],

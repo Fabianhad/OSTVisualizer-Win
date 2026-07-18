@@ -445,7 +445,7 @@ class ComponentBuilder:
         _undo_svc = UndoRedoService()
         if ui_access_manager:
             _undo_svc.set_write_guard(
-                lambda: ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS)
+                lambda: ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS)
             )
         _plan_view_handler = PlanViewActionHandler(
             plan_view=plan_view,
@@ -905,7 +905,12 @@ class ComponentBuilder:
         summary_layout.setContentsMargins(*NO_MARGINS)
         summary_layout.setSpacing(NO_SPACING)
         condition_summary_tab = ConditionSummaryTab(
-            summary_tab, uom_label_fn=project_read_service.get_uom_label
+            summary_tab,
+            uom_label_fn=project_read_service.get_uom_label,
+            delete_allowed_fn=lambda: bool(
+                ui_access_manager
+                and ui_access_manager.is_allowed(Feature.DELETE_CONDITION)
+            ),
         )
         summary_layout.addWidget(condition_summary_tab)
         tab_widget.addTab(summary_tab, "Summary")

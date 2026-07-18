@@ -9,7 +9,7 @@ from ...domain.entities.takeoff import Takeoff
 from ..parsers.utils.parser import decode_value
 from .components.annotation_reader import AnnotationReaderMixin
 from .components.bid_data_reader import BidDataReaderMixin
-from .components.connection_wrapper import ConnWrapper
+from ..database.connection_wrapper import ConnectionWrapper
 from .components.hierarchy_reader import HierarchyReaderMixin
 from .components.settings_reader import SettingsReaderMixin
 from .connection_manager import MdbConnectionManager
@@ -38,7 +38,7 @@ class MdbReader(
         self._conn_manager = conn_manager or MdbConnectionManager()
 
     @contextmanager
-    def _connection(self, file_path: str) -> Generator[ConnWrapper, None, None]:
+    def _connection(self, file_path: str) -> Generator[ConnectionWrapper, None, None]:
         with self._conn_manager.connection(file_path, autocommit=True) as conn:
             yield conn
 

@@ -6,12 +6,14 @@ from ...application.events.app_events import AppEvents
 class Feature(Enum):
     DELETE_BID = auto()
     DUPLICATE_BID = auto()
+    COPY_BID = auto()
     EDIT_PROJECT_TREE_STRUCTURE = auto()
     EDIT_CONDITION_STRUCTURE = auto()
     IMPORT = auto()
     COVER_SHEET = auto()
     EDIT_PAGE_SETTINGS = auto()
     SELECT_PLAN_ITEMS = auto()
+    EDIT_PLAN_ITEMS = auto()
     EXPORT = auto()
     VIEW_3D = auto()
     VIEW_2D = auto()
@@ -19,6 +21,7 @@ class Feature(Enum):
     PLACE_PLAN_ITEMS = auto()
     PLACE_ANNOTATIONS = auto()
     DUPLICATE_CONDITION = auto()
+    COPY_CONDITION = auto()
     DELETE_CONDITION = auto()
     EDIT_CONDITION = auto()
     UNLOAD_FILE = auto()
@@ -32,15 +35,18 @@ _OST_BLOCKED: FrozenSet[Feature] = frozenset(
     {
         Feature.DELETE_BID,
         Feature.DUPLICATE_BID,
+        Feature.COPY_BID,
         Feature.EDIT_PROJECT_TREE_STRUCTURE,
         Feature.EDIT_CONDITION_STRUCTURE,
         Feature.IMPORT,
         Feature.COVER_SHEET,
         Feature.EDIT_PAGE_SETTINGS,
         Feature.SELECT_PLAN_ITEMS,
+        Feature.EDIT_PLAN_ITEMS,
         Feature.PLACE_PLAN_ITEMS,
         Feature.PLACE_ANNOTATIONS,
         Feature.DUPLICATE_CONDITION,
+        Feature.COPY_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
         Feature.EDIT_BID_JOB_STATUS,
@@ -52,6 +58,7 @@ _LOCK_BLOCKED: FrozenSet[Feature] = frozenset(
     {
         Feature.EDIT_PAGE_SETTINGS,
         Feature.SELECT_PLAN_ITEMS,
+        Feature.EDIT_PLAN_ITEMS,
         Feature.PLACE_PLAN_ITEMS,
         Feature.PLACE_ANNOTATIONS,
         Feature.DUPLICATE_CONDITION,
@@ -64,16 +71,19 @@ _LICENSE_REQUIRED: FrozenSet[Feature] = frozenset(
     {
         Feature.VIEW_3D,
         Feature.SELECT_PLAN_ITEMS,
+        Feature.EDIT_PLAN_ITEMS,
         Feature.EXPORT,
         Feature.EXPORT_BID_FILE,
         Feature.IMPORT,
         Feature.DELETE_BID,
         Feature.DUPLICATE_BID,
+        Feature.COPY_BID,
         Feature.EDIT_PROJECT_TREE_STRUCTURE,
         Feature.EDIT_CONDITION_STRUCTURE,
         Feature.PLACE_PLAN_ITEMS,
         Feature.PLACE_ANNOTATIONS,
         Feature.DUPLICATE_CONDITION,
+        Feature.COPY_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
         Feature.EDIT_PAGE_SETTINGS,
@@ -88,12 +98,15 @@ _REQUIRES_BID: FrozenSet[Feature] = frozenset(
     {
         Feature.COVER_SHEET,
         Feature.DUPLICATE_BID,
+        Feature.COPY_BID,
         Feature.EDIT_PAGE_SETTINGS,
         Feature.SELECT_PLAN_ITEMS,
+        Feature.EDIT_PLAN_ITEMS,
         Feature.PLACE_PLAN_ITEMS,
         Feature.PLACE_ANNOTATIONS,
         Feature.EXPORT_BID_FILE,
         Feature.DUPLICATE_CONDITION,
+        Feature.COPY_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
         Feature.EDIT_BID_JOB_STATUS,
@@ -116,16 +129,19 @@ _PLACEMENT_BLOCKED: FrozenSet[Feature] = frozenset(
     {
         Feature.DELETE_BID,
         Feature.DUPLICATE_BID,
+        Feature.COPY_BID,
         Feature.EDIT_PROJECT_TREE_STRUCTURE,
         Feature.EDIT_CONDITION_STRUCTURE,
         Feature.IMPORT,
         Feature.COVER_SHEET,
         Feature.EDIT_PAGE_SETTINGS,
         Feature.SELECT_PLAN_ITEMS,
+        Feature.EDIT_PLAN_ITEMS,
         Feature.PLACE_ANNOTATIONS,
         Feature.EXPORT,
         Feature.EXPORT_BID_FILE,
         Feature.DUPLICATE_CONDITION,
+        Feature.COPY_CONDITION,
         Feature.DELETE_CONDITION,
         Feature.EDIT_CONDITION,
         Feature.UNLOAD_FILE,
@@ -145,6 +161,7 @@ _TEXT_EDIT_BLOCKED: FrozenSet[Feature] = frozenset(
         Feature.COVER_SHEET,
         Feature.EDIT_PAGE_SETTINGS,
         Feature.SELECT_PLAN_ITEMS,
+        Feature.EDIT_PLAN_ITEMS,
         Feature.EXPORT,
         Feature.EXPORT_BID_FILE,
         Feature.PLACE_PLAN_ITEMS,
@@ -158,6 +175,27 @@ _TEXT_EDIT_BLOCKED: FrozenSet[Feature] = frozenset(
         Feature.EDIT_MASTER_DATA,
     }
 )
+_DATABASE_EDIT_FEATURES: FrozenSet[Feature] = frozenset(
+    {
+        Feature.DELETE_BID,
+        Feature.DUPLICATE_BID,
+        Feature.EDIT_PROJECT_TREE_STRUCTURE,
+        Feature.EDIT_CONDITION_STRUCTURE,
+        Feature.IMPORT,
+        Feature.COVER_SHEET,
+        Feature.EDIT_PAGE_SETTINGS,
+        Feature.EDIT_PLAN_ITEMS,
+        Feature.PLACE_PLAN_ITEMS,
+        Feature.PLACE_ANNOTATIONS,
+        Feature.DUPLICATE_CONDITION,
+        Feature.DELETE_CONDITION,
+        Feature.EDIT_CONDITION,
+        Feature.EDIT_BID_JOB_STATUS,
+        Feature.CREATE_DATABASE,
+        Feature.EDIT_MASTER_DATA,
+        Feature.EDIT_ANNOTATION_TEXT,
+    }
+)
 
 
 class UIAccessManager:
@@ -168,12 +206,14 @@ class UIAccessManager:
         transaction_monitor,
         project_data,
         ui_state_manager,
+        database_capability_service,
     ):
         self._event_bus = event_bus
         self._license_orchestrator = license_orchestrator
         self._transaction_monitor = transaction_monitor
         self._project_data = project_data
         self._ui_state_manager = ui_state_manager
+        self._database_capability_service = database_capability_service
         self._ost_active: bool = False
         self._area_placement_active: bool = False
         self._text_annotation_edit_active: bool = False
@@ -246,6 +286,8 @@ class UIAccessManager:
     def _feature_blocked(
         self, feature: Feature, *, require_current_selection: bool
     ) -> bool:
+        if not isinstance(feature, Feature):
+            return True
         if self._text_annotation_edit_active and feature in _TEXT_EDIT_BLOCKED:
             return True
         if self._area_placement_active and feature in _PLACEMENT_BLOCKED:
@@ -256,6 +298,19 @@ class UIAccessManager:
             return True
         if not self.has_license() and feature in _LICENSE_REQUIRED:
             return True
+        if (
+            feature in _DATABASE_EDIT_FEATURES
+            and feature is not Feature.CREATE_DATABASE
+        ):
+            locator = (
+                self._ui_state_manager.selected_file_path
+                if self._ui_state_manager is not None
+                else None
+            )
+            if not locator or not self._database_capability_service.is_editable(
+                locator
+            ):
+                return True
         if (
             feature == Feature.PLACE_ANNOTATIONS
             and self._project_data
@@ -300,4 +355,5 @@ class UIAccessManager:
         self._transaction_monitor = None
         self._project_data = None
         self._ui_state_manager = None
+        self._database_capability_service = None
         self._placement_coordinator = None

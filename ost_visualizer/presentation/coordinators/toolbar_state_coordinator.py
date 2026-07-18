@@ -204,7 +204,7 @@ class ToolbarStateCoordinator:
                 self._copy_action.setEnabled(
                     bool(selected_bid_refs)
                     and selected_bids_same_file
-                    and self._access.is_allowed(Feature.DUPLICATE_BID)
+                    and self._access.is_allowed(Feature.COPY_BID)
                 )
         if self._cut_action:
             if on_takeoff_tab:
@@ -220,7 +220,7 @@ class ToolbarStateCoordinator:
         if self._paste_action:
             if on_takeoff_tab:
                 self._paste_action.setEnabled(
-                    self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
+                    self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
                     and bool(
                         self.plan_view_handler
                         and self.plan_view_handler.can_paste_to_current_bid()
@@ -233,30 +233,33 @@ class ToolbarStateCoordinator:
         if self._delete_action:
             if on_takeoff_tab:
                 self._delete_action.setEnabled(
-                    self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
+                    self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
                     and bool(self.plan_view and self.plan_view.has_selection)
                 )
             elif on_summary_tab:
                 self._delete_action.setEnabled(
-                    bool(
+                    self._access.is_allowed(Feature.DELETE_CONDITION)
+                    and bool(
                         self.condition_summary_tab
                         and self.condition_summary_tab.can_delete_current_row()
                     )
                 )
-            elif not self._access.is_allowed(Feature.DELETE_BID):
-                self._delete_action.setEnabled(False)
             elif self._ui_state.get_selected_bid_ref():
-                self._delete_action.setEnabled(True)
+                self._delete_action.setEnabled(
+                    self._access.is_allowed(Feature.DELETE_BID)
+                )
             elif self._ui_state.selected_project_uid:
                 uid = self._ui_state.selected_project_uid
                 self._delete_action.setEnabled(
-                    uid != "1" and not self._project_data.project_has_bids(uid)
+                    self._access.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+                    and uid != "1"
+                    and not self._project_data.project_has_bids(uid)
                 )
             else:
                 self._delete_action.setEnabled(False)
         undo_redo_allowed = (
             on_takeoff_tab
-            and self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
+            and self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
             and bool(self.undo_service)
         )
         if self._undo_action:
@@ -270,7 +273,7 @@ class ToolbarStateCoordinator:
         if self._duplicate_action:
             if on_takeoff_tab:
                 self._duplicate_action.setEnabled(
-                    self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
+                    self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
                     and bool(self.plan_view and self.plan_view.has_selection)
                 )
             elif on_summary_tab:
@@ -362,10 +365,13 @@ class ToolbarStateCoordinator:
         if self._move_overlay_action:
             self._move_overlay_action.setEnabled(can_move_overlay)
         select_allowed = self._access.is_allowed(Feature.SELECT_PLAN_ITEMS)
+        edit_allowed = self._access.is_allowed(Feature.EDIT_PLAN_ITEMS)
         if self.plan_view:
             self.plan_view.set_selection_enabled(select_allowed)
+            self.plan_view.set_editing_enabled(edit_allowed)
         if self.opengl_viewer:
             self.opengl_viewer.set_pick_enabled(select_allowed)
+            self.opengl_viewer.set_editing_enabled(edit_allowed)
         if self._bid_layers_sidebar:
             self._bid_layers_sidebar.set_interactive(
                 self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
@@ -376,6 +382,9 @@ class ToolbarStateCoordinator:
             )
             self.conditions_sidebar.set_duplicate_enabled(
                 self._access.is_allowed(Feature.DUPLICATE_CONDITION)
+            )
+            self.conditions_sidebar.set_copy_enabled(
+                self._access.is_allowed(Feature.COPY_CONDITION)
             )
             self.conditions_sidebar.set_delete_enabled(
                 self._access.is_allowed(Feature.DELETE_CONDITION)

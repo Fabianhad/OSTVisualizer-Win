@@ -4,10 +4,11 @@ from ....application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ....domain.entities.area import is_unassigned_area_uid
 from .bulk_write_helpers import ACCESS_BULK_CHUNK_SIZE
 from .constants import TAKEOFF_REFERENCE_TABLES
+from .identity_allocation import AccessIdentityAllocationMixin
 from .serialization import encode_position
 
 
-class TakeoffOperationsMixin:
+class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
     _TAKEOFF_TYPED_COLUMNS = frozenset(
         {
             "UID",
@@ -383,9 +384,7 @@ class TakeoffOperationsMixin:
                         if spec.parent_uid and spec.parent_uid not in ("0", "")
                         else 0
                     )
-                    cursor.execute("SELECT MAX([UID]) FROM [BidTakeoffs]")
-                    row = cursor.fetchone()
-                    new_uid = (int(row[0]) + 1) if row and row[0] is not None else 1
+                    new_uid = self._next_uid(cursor, "BidTakeoffs")
                     typed_values = {
                         "UID": new_uid,
                         "BidUID": int(bid_uid),

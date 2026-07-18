@@ -2,6 +2,7 @@ from typing import Optional, Sequence
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.identity_refs import BidRef
+from ..actions.action_ids import ACTION_REDO, ACTION_UNDO
 from ..components.mesh_view import OpenGLViewer
 from ..components.popup_tracking_combo import PopupTrackingComboBox
 from ..components.viewer_cursors import make_zoom_cursor
@@ -84,8 +85,22 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             selected_context_state_fn,
             context_menu_conditions_fn,
         )
-        ShortcutManager.register_shortcut(self, "undo", self.undo_requested.emit)
-        ShortcutManager.register_shortcut(self, "redo", self.redo_requested.emit)
+        ShortcutManager.register_shortcut(self, "undo", self._request_undo)
+        ShortcutManager.register_shortcut(self, "redo", self._request_redo)
+
+    def _context_action_enabled(self, action_key: str) -> bool:
+        if self._context_menu_action_state is None:
+            return False
+        state = self._context_menu_action_state(action_key) or {}
+        return bool(state.get("enabled", False))
+
+    def _request_undo(self) -> None:
+        if self._context_action_enabled(ACTION_UNDO):
+            self.undo_requested.emit()
+
+    def _request_redo(self) -> None:
+        if self._context_action_enabled(ACTION_REDO):
+            self.redo_requested.emit()
 
     def set_initial_window_state(
         self, geometry: QtCore.QByteArray, is_maximized: bool
@@ -325,6 +340,10 @@ class MeshViewWindow(QtWidgets.QMainWindow):
     def set_pick_enabled(self, enabled: bool) -> None:
         if self.viewer:
             self.viewer.set_pick_enabled(enabled)
+
+    def set_editing_enabled(self, enabled: bool) -> None:
+        if self.viewer:
+            self.viewer.set_editing_enabled(enabled)
 
     def set_overlay_display_mode(self, mode: int) -> None:
         if self.viewer:

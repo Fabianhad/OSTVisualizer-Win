@@ -7,7 +7,7 @@ from .components.bid_operations import BidOperationsMixin
 from .components.bulk_write_helpers import AccessBulkWriteMixin
 from .components.condition_folder_operations import ConditionFolderOperationsMixin
 from .components.condition_operations import ConditionOperationsMixin
-from .components.connection_wrapper import ConnWrapper
+from ..database.connection_wrapper import ConnectionWrapper
 from .components.import_operations import ImportOperationsMixin
 from .components.layer_operations import LayerOperationsMixin
 from .components.page_operations import PageOperationsMixin
@@ -40,7 +40,7 @@ class MdbWriter(
         self._conn_manager = conn_manager or MdbConnectionManager()
 
     @contextmanager
-    def _connection(self, db_path: str) -> Generator[ConnWrapper, None, None]:
+    def _connection(self, db_path: str) -> Generator[ConnectionWrapper, None, None]:
         with self._conn_manager.connection(db_path, autocommit=False) as conn:
             try:
                 yield conn
@@ -51,11 +51,6 @@ class MdbWriter(
                 except pyodbc.Error:
                     pass
                 raise
-
-    def _next_uid(self, cursor: pyodbc.Cursor, table: str) -> int:
-        cursor.execute(f"SELECT MAX([UID]) FROM [{table}]")
-        result = cursor.fetchone()[0]
-        return int(result) + 1 if result is not None else 1
 
     def _schema(self, connection) -> MdbSchemaInspector:
         return MdbSchemaInspector(connection, self.logger)

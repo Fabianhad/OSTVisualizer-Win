@@ -1,5 +1,6 @@
 import os
 import unittest
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtTest, QtWidgets
@@ -36,6 +37,9 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
 
     def setUp(self):
         self.view = ProjectView(None, _EventBus())
+        self.view.set_ui_access_manager(
+            SimpleNamespace(is_allowed=lambda _feature: True)
+        )
 
     def _loaded_file(
         self,

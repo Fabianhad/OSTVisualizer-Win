@@ -334,6 +334,8 @@ def add_reassign_condition_submenu(
     menu: QtWidgets.QMenu,
     conditions: dict[str, Condition],
     reassign_geometry_type: int,
+    *,
+    enabled: bool = True,
 ) -> ReassignConditionSubmenu:
     submenu = QtWidgets.QMenu("Reassign Condition", menu)
     actions: dict[QtGui.QAction, str] = {}
@@ -352,6 +354,7 @@ def add_reassign_condition_submenu(
     if not ordered:
         return ReassignConditionSubmenu(submenu, actions)
     menu.addMenu(submenu)
+    submenu.setEnabled(enabled)
 
     def _add_condition_action(
         target_menu: QtWidgets.QMenu, condition: Condition

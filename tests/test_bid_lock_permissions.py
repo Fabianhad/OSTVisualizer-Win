@@ -37,9 +37,11 @@ from ost_visualizer.presentation.handlers.project_write_handler import (
     ProjectWriteHandler,
 )
 from ost_visualizer.presentation.main_window import MainWindow
+from ost_visualizer.presentation.components.project_tree_view import _BidTreeWidget
 from ost_visualizer.presentation.managers.ui_access_manager import (
     Feature,
     UIAccessManager,
+    _DATABASE_EDIT_FEATURES,
 )
 from ost_visualizer.presentation.services.bid_clipboard_service import (
     BidClipboardService,
@@ -68,6 +70,16 @@ class _License:
 class _TransactionMonitor:
     def is_ost_active(self):
         return False
+
+
+class _DatabaseCapability:
+    def __init__(self, editable=True):
+        self.editable = editable
+        self.locators = []
+
+    def is_editable(self, locator):
+        self.locators.append(locator)
+        return self.editable
 
 
 class _ProjectData:
@@ -163,6 +175,9 @@ class _FakeConditionsSidebar:
     def set_duplicate_enabled(self, _enabled):
         pass
 
+    def set_copy_enabled(self, _enabled):
+        pass
+
     def set_delete_enabled(self, _enabled):
         pass
 
@@ -194,6 +209,9 @@ class _FakePlanView:
         return None
 
     def set_selection_enabled(self, _enabled):
+        pass
+
+    def set_editing_enabled(self, _enabled):
         pass
 
     def can_move_overlay_image(self):
@@ -505,14 +523,77 @@ def _write_service(
 
 
 class BidLockPermissionTests(unittest.TestCase):
-    def _access_manager(self, project_data, ui_state=None):
+    def _access_manager(self, project_data, ui_state=None, capability=None):
         return UIAccessManager(
             _EventBus(),
             _License(),
             _TransactionMonitor(),
             project_data,
             ui_state or _UiState(project_data.bid_ref),
+            capability or _DatabaseCapability(),
         )
+
+    def test_database_edit_features_are_complete_and_selection_is_read_only(self):
+        self.assertEqual(
+            _DATABASE_EDIT_FEATURES,
+            frozenset(
+                {
+                    Feature.DELETE_BID,
+                    Feature.DUPLICATE_BID,
+                    Feature.EDIT_PROJECT_TREE_STRUCTURE,
+                    Feature.EDIT_CONDITION_STRUCTURE,
+                    Feature.IMPORT,
+                    Feature.COVER_SHEET,
+                    Feature.EDIT_PAGE_SETTINGS,
+                    Feature.EDIT_PLAN_ITEMS,
+                    Feature.PLACE_PLAN_ITEMS,
+                    Feature.PLACE_ANNOTATIONS,
+                    Feature.DUPLICATE_CONDITION,
+                    Feature.DELETE_CONDITION,
+                    Feature.EDIT_CONDITION,
+                    Feature.EDIT_BID_JOB_STATUS,
+                    Feature.CREATE_DATABASE,
+                    Feature.EDIT_MASTER_DATA,
+                    Feature.EDIT_ANNOTATION_TEXT,
+                }
+            ),
+        )
+        self.assertNotIn(Feature.SELECT_PLAN_ITEMS, _DATABASE_EDIT_FEATURES)
+
+    def test_read_only_database_allows_selection_but_denies_plan_item_edits(self):
+        project_data = _ProjectData()
+        manager = self._access_manager(
+            project_data, capability=_DatabaseCapability(editable=False)
+        )
+        self.assertTrue(manager.is_allowed(Feature.SELECT_PLAN_ITEMS))
+        self.assertTrue(manager.is_allowed(Feature.COPY_BID))
+        self.assertTrue(manager.is_allowed(Feature.COPY_CONDITION))
+        self.assertTrue(manager.is_allowed(Feature.VIEW_2D))
+        self.assertTrue(manager.is_allowed(Feature.EXPORT))
+        self.assertFalse(manager.is_allowed(Feature.EDIT_PLAN_ITEMS))
+        self.assertFalse(manager.is_allowed(Feature.DUPLICATE_BID))
+        self.assertFalse(manager.is_allowed(Feature.DUPLICATE_CONDITION))
+        self.assertFalse(manager.is_allowed(Feature.EDIT_PAGE_SETTINGS))
+
+    def test_unknown_feature_and_edit_without_database_are_denied(self):
+        project_data = _ProjectData()
+        manager = self._access_manager(project_data)
+        self.assertFalse(manager.is_allowed(object()))
+        manager._ui_state_manager.selected_file_path = None
+        self.assertFalse(manager.is_allowed(Feature.EDIT_PLAN_ITEMS))
+
+    def test_capability_change_refreshes_access_before_projecting_controls(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(selected_file_path="sql-db-1")
+        coordinator.ui_access_manager = SimpleNamespace(
+            refresh=lambda: calls.append("refresh")
+        )
+        coordinator._update_export_menu_state = lambda: calls.append("project")
+        coordinator._on_database_capabilities_changed("other-db")
+        self.assertEqual(calls, [])
+        coordinator._on_database_capabilities_changed("sql-db-1")
+        self.assertEqual(calls, ["refresh", "project"])
 
     def test_bid_lock_applies_and_unlocks_immediately_in_access_manager(self):
         project_data = _ProjectData()
@@ -868,6 +949,29 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertEqual(window.plan_view.deleted, 0)
         self.assertEqual(window.plan_view.selected_all, 0)
 
+    def test_project_tree_drag_restore_and_move_use_structure_permission(self):
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.assertIsNotNone(app)
+        access = _FakeAccess({Feature.EDIT_PROJECT_TREE_STRUCTURE})
+        tree = _BidTreeWidget()
+        tree.set_ui_access_manager(access)
+        tree._drag_items = [object()]
+        self.assertTrue(tree._move_bids_allowed())
+        self.assertEqual(access.checked, [Feature.EDIT_PROJECT_TREE_STRUCTURE])
+        tree.deleteLater()
+        calls = []
+        window = MainWindow.__new__(MainWindow)
+        window.ui_access_manager = _FakeAccess(set())
+        window.handlers = SimpleNamespace(
+            delete=SimpleNamespace(
+                restore_bids=lambda refs: calls.append(("restore", refs)),
+                move_bids=lambda refs, target: calls.append(("move", refs, target)),
+            )
+        )
+        MainWindow._restore_project_bids(window, ["bid-1"])
+        MainWindow._move_project_bids(window, ["bid-1"], "project-2")
+        self.assertEqual(calls, [])
+
     def test_shared_menu_callback_respects_enabled_state(self):
         controller = MenuController.__new__(MenuController)
         calls = []
@@ -889,6 +993,7 @@ class BidLockPermissionTests(unittest.TestCase):
 
     def test_context_copy_stores_bid_clipboard_with_normalized_same_database_refs(self):
         window = MainWindow.__new__(MainWindow)
+        window.ui_access_manager = _FakeAccess({Feature.COPY_BID})
         window._bid_clipboard = BidClipboardService()
         refresh_calls = []
         window.handlers = SimpleNamespace(

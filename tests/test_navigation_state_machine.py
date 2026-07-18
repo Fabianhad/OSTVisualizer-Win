@@ -393,6 +393,9 @@ class NavigationStateMachineTests(unittest.TestCase):
             def set_selection_enabled(self, _enabled):
                 pass
 
+            def set_editing_enabled(self, _enabled):
+                pass
+
             def can_move_overlay_image(self):
                 return False
 

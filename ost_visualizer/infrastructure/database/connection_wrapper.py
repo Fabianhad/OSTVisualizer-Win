@@ -1,27 +1,31 @@
+from __future__ import annotations
 import pyodbc
+from typing import Protocol
 
 
-class _CursorLease:
-    def __init__(self, owner: "ConnWrapper", cursor: pyodbc.Cursor) -> None:
+class _CursorOwner(Protocol):
+    def _unregister_cursor(self, cursor: "CursorLease") -> None: ...
+class CursorLease:
+    def __init__(self, owner: _CursorOwner, cursor: pyodbc.Cursor) -> None:
         self._owner = owner
         self._cursor = cursor
         self._closed = False
 
-    def __enter__(self) -> "_CursorLease":
+    def __enter__(self) -> "CursorLease":
         return self
 
     def __exit__(self, _exc_type, _exc_value, _traceback) -> None:
         self.close()
 
-    def execute(self, *args, **kwargs) -> "_CursorLease":
+    def execute(self, *args, **kwargs) -> "CursorLease":
         self._cursor.execute(*args, **kwargs)
         return self
 
-    def columns(self, *args, **kwargs) -> "_CursorLease":
+    def columns(self, *args, **kwargs) -> "CursorLease":
         self._cursor.columns(*args, **kwargs)
         return self
 
-    def tables(self, *args, **kwargs) -> "_CursorLease":
+    def tables(self, *args, **kwargs) -> "CursorLease":
         self._cursor.tables(*args, **kwargs)
         return self
 
@@ -41,7 +45,7 @@ class _CursorLease:
             self._owner._unregister_cursor(self)
 
     @property
-    def connection(self):
+    def connection(self) -> _CursorOwner:
         return self._owner
 
     @property
@@ -53,17 +57,25 @@ class _CursorLease:
         return self._cursor.rowcount
 
 
-class ConnWrapper:
-    def __init__(self, conn: pyodbc.Connection) -> None:
-        self._conn = conn
-        self._open_cursors: list[_CursorLease] = []
+class ConnectionWrapper:
+    def __init__(self, connection, *, accepts_cursor_options: bool = True) -> None:
+        self._conn = connection
+        self._accepts_cursor_options = accepts_cursor_options
+        self._open_cursors: list[CursorLease] = []
 
-    def cursor(self, *args, **cursor_options) -> _CursorLease:
-        cursor = _CursorLease(self, self._conn.cursor(*args, **cursor_options))
+    def cursor(self, *args, **cursor_options) -> CursorLease:
+        if not self._accepts_cursor_options and (args or cursor_options):
+            raise TypeError("This database cursor does not accept cursor options")
+        raw_cursor = (
+            self._conn.cursor(*args, **cursor_options)
+            if self._accepts_cursor_options
+            else self._conn.cursor()
+        )
+        cursor = CursorLease(self, raw_cursor)
         self._open_cursors.append(cursor)
         return cursor
 
-    def _unregister_cursor(self, cursor: _CursorLease) -> None:
+    def _unregister_cursor(self, cursor: CursorLease) -> None:
         if cursor in self._open_cursors:
             self._open_cursors.remove(cursor)
 

@@ -30,10 +30,10 @@ class PageSettingsBar(QtWidgets.QWidget):
         icon_provider,
         event_bus,
         refresh_areas_fn: Callable,
+        ui_access_manager,
         load_areas_fn: Optional[Callable] = None,
         save_areas_fn: Optional[Callable] = None,
         parent=None,
-        ui_access_manager=None,
     ):
         super().__init__(parent)
         self._icon_provider = icon_provider
@@ -187,7 +187,12 @@ class PageSettingsBar(QtWidgets.QWidget):
             self._sync_interactive_controls()
 
     def _on_area_browse(self) -> None:
-        if not self._bid_ref or not self._load_areas_fn or not self._save_areas_fn:
+        if (
+            not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+            or not self._bid_ref
+            or not self._load_areas_fn
+            or not self._save_areas_fn
+        ):
             return
         areas = []
         try:
@@ -198,6 +203,8 @@ class PageSettingsBar(QtWidgets.QWidget):
         prev_area_uid = self.area_combo.get_current_area_uid()
 
         def _save_fn(changes: dict):
+            if not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS):
+                return None
             return self._save_areas_fn(
                 self._bid_ref.file_path,
                 self._bid_ref.bid_uid,
@@ -221,8 +228,6 @@ class PageSettingsBar(QtWidgets.QWidget):
             on_saved_fn=_on_saved,
             bid_ref=self._bid_ref,
         )
-        if self._access and not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS):
-            dlg.set_interactive(False)
         selected_uid = None
         try:
             if (
@@ -245,7 +250,12 @@ class PageSettingsBar(QtWidgets.QWidget):
             self._on_area_activated(target_uid)
 
     def _on_scale_activated(self, index: int) -> None:
-        if not self._interactive or not self._bid_ref or not self._page_uid:
+        if (
+            not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+            or not self._interactive
+            or not self._bid_ref
+            or not self._page_uid
+        ):
             return
         data = self.scale_combo.itemData(index)
         if data == _CUSTOM_SCALE_DATA:
@@ -267,7 +277,12 @@ class PageSettingsBar(QtWidgets.QWidget):
         return self.area_combo.get_current_area_uid()
 
     def _on_area_activated(self, area_uid: str) -> None:
-        if not self._interactive or not self._bid_ref or not self._page_uid:
+        if (
+            not self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
+            or not self._interactive
+            or not self._bid_ref
+            or not self._page_uid
+        ):
             return
         self.area_change_requested.emit(
             self._bid_ref.file_path, self._page_uid, area_uid or ""

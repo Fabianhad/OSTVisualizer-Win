@@ -5,7 +5,11 @@ from typing import Callable, Optional, Sequence, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QTimer, Signal
 from ...domain.entities.identity_refs import BidRef
-from ..actions.action_ids import ACTION_SHOW_ORIGINAL_IMAGE, ACTION_SHOW_OVERLAY_IMAGE
+from ..actions.action_ids import (
+    ACTION_DELETE,
+    ACTION_SHOW_ORIGINAL_IMAGE,
+    ACTION_SHOW_OVERLAY_IMAGE,
+)
 from ..config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ..managers.context_menu_manager import ContextMenuManager
 from ..modes.cursor import CURSOR_MODE_DEFAULT, CURSOR_MODE_PAN, CURSOR_MODE_ZOOM
@@ -68,6 +72,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._suppress_next_context_menu = False
         self._selected_takeoff_uids: list = []
         self._pick_enabled: bool = True
+        self._editing_enabled: bool = False
         self._negative_check_fn = lambda _uids: False
         self._curved_check_fn = lambda _uids: (False, False)
         self._selected_context_state_fn = None
@@ -263,6 +268,9 @@ class OpenGLViewer(QtWidgets.QWidget):
     def set_pick_enabled(self, enabled: bool) -> None:
         self._pick_enabled = enabled
 
+    def set_editing_enabled(self, enabled: bool) -> None:
+        self._editing_enabled = bool(enabled)
+
     def _handle_pick(self, pos: QtCore.QPoint, ctrl: bool) -> None:
         if not self._renderer or not self._pick_enabled:
             return
@@ -375,7 +383,7 @@ class OpenGLViewer(QtWidgets.QWidget):
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if (
-            self._pick_enabled
+            self._editing_enabled
             and self._selected_takeoff_uids
             and event.key() == QtCore.Qt.Key.Key_Delete
         ):
@@ -403,6 +411,12 @@ class OpenGLViewer(QtWidgets.QWidget):
             self._context_menu_command_trigger,
             self._context_menu_action_state,
         )
+
+    def _plan_item_edit_actions_enabled(self) -> bool:
+        if self._context_menu_action_state is None:
+            return False
+        state = self._context_menu_action_state(ACTION_DELETE) or {}
+        return bool(state.get("enabled", False))
 
     def _add_common_context_submenus(self, menu: QtWidgets.QMenu):
         return add_common_context_submenus(
@@ -483,6 +497,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             else None
         )
         has_selected_takeoffs = bool(selected_state and selected_state.takeoff_uids)
+        edit_enabled = self._plan_item_edit_actions_enabled()
         assign_action = None
         negative_action = None
         curved_action = None
@@ -494,6 +509,7 @@ class OpenGLViewer(QtWidgets.QWidget):
                     ContextMenuManager.action_spec(
                         None,
                         "Set as Curved Segment",
+                        enabled=edit_enabled,
                         checkable=True,
                         checked=selected_state.all_curved,
                     ),
@@ -501,7 +517,9 @@ class OpenGLViewer(QtWidgets.QWidget):
             if selected_state.show_assign:
                 assign_action = ContextMenuManager.add_action(
                     menu,
-                    ContextMenuManager.action_spec(None, "Assign to Current Area"),
+                    ContextMenuManager.action_spec(
+                        None, "Assign to Current Area", enabled=edit_enabled
+                    ),
                 )
             if selected_state.show_negative:
                 negative_action = ContextMenuManager.add_action(
@@ -509,6 +527,7 @@ class OpenGLViewer(QtWidgets.QWidget):
                     ContextMenuManager.action_spec(
                         None,
                         "Count as Negative Quantity",
+                        enabled=edit_enabled,
                         checkable=True,
                         checked=selected_state.all_negative,
                     ),
@@ -522,6 +541,7 @@ class OpenGLViewer(QtWidgets.QWidget):
                     menu,
                     dict(self._context_menu_conditions_fn() or {}),
                     selected_state.reassign_geometry_type,
+                    enabled=edit_enabled,
                 )
         menu.addSeparator()
         if has_selected_takeoffs:

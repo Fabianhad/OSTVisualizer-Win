@@ -701,7 +701,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         )
         self.assertEqual([uid for uid, _item in rendered], ["t1"])
 
-    def test_condition_cut_paste_to_root_and_folder_uses_edit_permission(self):
+    def test_condition_cut_paste_to_root_and_folder_uses_structure_permission(self):
         sidebar = ConditionsSidebar(None)
         pasted = []
         sidebar.paste_requested.connect(
@@ -713,7 +713,9 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             "Project",
         )
         sidebar.set_duplicate_enabled(False)
-        sidebar.set_edit_enabled(True)
+        sidebar.set_copy_enabled(True)
+        sidebar.set_edit_enabled(False)
+        sidebar.set_create_folder_enabled(True)
         sidebar.highlight_conditions({"c1"})
         sidebar._cut_selected_conditions()
         root = sidebar.tree.topLevelItem(0)
@@ -725,6 +727,29 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertEqual(pasted[0][1]["kind"], "folder")
         self.assertEqual(pasted[0][1]["folder_uid"], "f1")
         self.assertTrue(pasted[0][1]["cut"])
+
+    def test_condition_folder_delete_uses_structure_not_condition_delete(self):
+        sidebar = ConditionsSidebar(None)
+        deleted = []
+        sidebar.folder_delete_requested.connect(lambda uids: deleted.append(list(uids)))
+        sidebar.load_conditions(
+            {},
+            {"f1": BidConditionFolder(uid="f1", name="Folder")},
+            "Project",
+        )
+        sidebar.set_delete_enabled(False)
+        sidebar.set_create_folder_enabled(True)
+        folder = sidebar._folder_items["f1"]
+        sidebar.tree.setCurrentItem(folder)
+        folder.setSelected(True)
+        sidebar._sync_button_states()
+        self.assertTrue(sidebar._delete_btn.isEnabled())
+        sidebar._request_folder_delete()
+        self.assertEqual(deleted, [["f1"]])
+        sidebar.set_create_folder_enabled(False)
+        sidebar.set_delete_enabled(True)
+        sidebar._request_folder_delete()
+        self.assertEqual(deleted, [["f1"]])
 
     def test_condition_folder_nodes_use_folder_icon(self):
         sidebar = ConditionsSidebar(None)

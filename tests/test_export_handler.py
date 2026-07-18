@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -72,7 +73,7 @@ def _make_export_handler(**overrides):
         "pdf_exporter": SimpleNamespace(),
         "ost_exporter": SimpleNamespace(),
         "osp_exporter": SimpleNamespace(),
-        "mdb_file_parser": SimpleNamespace(),
+        "database_reader": SimpleNamespace(),
         "deferred_persistence_manager": _FakeDeferredPersistence(),
     }
     constructor_options.update(overrides)
@@ -103,6 +104,55 @@ def _capture_pdf_default_filename(page_names):
 
 
 class ExportHandlerPdfFilenameTests(unittest.TestCase):
+    def test_bid_file_export_reads_through_backend_neutral_reader(self):
+        calls = []
+        database_reader = SimpleNamespace(
+            get_raw_bid_data=lambda locator, bid_uid: calls.append((locator, bid_uid))
+            or RawBidData()
+        )
+        handler = _make_export_handler(
+            database_reader=database_reader,
+            project_data_service=SimpleNamespace(
+                get_current_bid_ref=lambda: SimpleNamespace(
+                    file_path="sql-database-id", bid_uid="42"
+                ),
+                get_current_bid=lambda: SimpleNamespace(name="Bid"),
+            ),
+        )
+
+        class _ProgressDialog:
+            def __init__(self, _filename, run, **_kwargs):
+                self.result = run()
+                self.error = None
+
+            def exec(self):
+                return export_handler_module.QtWidgets.QDialog.DialogCode.Accepted
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        with patch.object(
+            export_handler_module.QtWidgets.QFileDialog,
+            "getSaveFileName",
+            return_value=("output.ost", ""),
+        ), patch.object(
+            export_handler_module, "ProgressDialog", _ProgressDialog
+        ), patch.object(
+            export_handler_module, "show_info"
+        ):
+            handler._export_bid_file(
+                "OST",
+                "ost",
+                "Export",
+                lambda _raw, _filename, _name, _reporter: lambda: SimpleNamespace(
+                    success=True
+                ),
+            )
+        self.assertEqual(calls, [("sql-database-id", "42")])
+
     def test_pdf_export_stops_when_deferred_persistence_flush_fails(self):
         deferred = _FakeDeferredPersistence(result=False)
         handler = _make_export_handler(

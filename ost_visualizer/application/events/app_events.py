@@ -14,6 +14,11 @@ class DatabaseRefreshedEvent:
 
 
 @dataclass
+class DatabaseCapabilitiesChangedEvent:
+    file_path: str = ""
+
+
+@dataclass
 class TakeoffsChangedEvent:
     page_uid: str = ""
     takeoff_uids: list = field(default_factory=list)
@@ -107,6 +112,7 @@ class OstStatusChangedEvent:
 class AppEvents:
     FILE_OPENED = FileOpenedEvent
     DATABASE_REFRESHED = DatabaseRefreshedEvent
+    DATABASE_CAPABILITIES_CHANGED = DatabaseCapabilitiesChangedEvent
     TAKEOFFS_CHANGED = TakeoffsChangedEvent
     ANNOTATIONS_CHANGED = AnnotationsChangedEvent
     FILE_UNLOADED = FileUnloadedEvent

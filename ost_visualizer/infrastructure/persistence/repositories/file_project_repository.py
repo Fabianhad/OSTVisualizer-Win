@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 import pyodbc
+from ....application.interfaces.i_database_descriptor_registry import (
+    IDatabaseDescriptorRegistry,
+)
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.cdn_type import CdnType
 from ....domain.entities.file_results import BidLoadResult, FileLoadResult
@@ -104,11 +107,13 @@ class MdbFileParser(IFileParser):
 class FileProjectRepository(IProjectRepository):
     def __init__(
         self,
-        parsers: Dict[str, IFileParser],
+        parser: IFileParser,
         logger: Optional[logging.Logger] = None,
+        descriptor_registry: Optional[IDatabaseDescriptorRegistry] = None,
     ):
-        self.parsers = parsers
+        self.parser = parser
         self.logger = logger or logging.getLogger(__name__)
+        self._descriptor_registry = descriptor_registry
         self._active_file_path: Optional[str] = None
         self._current_hierarchy = Hierarchy()
         self._loaded_files: Dict[str, _LoadedFileCache] = {}
@@ -128,10 +133,6 @@ class FileProjectRepository(IProjectRepository):
         return merged
 
     def load_file(self, file_path: str) -> FileLoadResult:
-        if Path(file_path).suffix.lower() != ".mdb":
-            error_message = "Unsupported file extension"
-            self.logger.error("Load failed for %s: %s", file_path, error_message)
-            return FileLoadResult(success=False, error_message=error_message)
         if file_path in self._loaded_files:
             self._active_file_path = file_path
             cache = self._loaded_files[file_path]
@@ -141,13 +142,8 @@ class FileProjectRepository(IProjectRepository):
                 cdn_types=cache.cdn_types,
                 pages=cache.pages,
             )
-        parser = self.parsers.get("mdb")
-        if not parser:
-            error_message = "No MDB parser registered"
-            self.logger.error("Load failed for %s: %s", file_path, error_message)
-            return FileLoadResult(success=False, error_message=error_message)
         try:
-            result = parser.parse(file_path)
+            result = self.parser.parse(file_path)
         except UnsupportedMdbSchemaError as exc:
             error_message = (
                 f"{exc} If this is an older OST database, test only on a backup copy."
@@ -161,7 +157,8 @@ class FileProjectRepository(IProjectRepository):
         if result.success:
             created_at = (
                 os.path.getctime(file_path)
-                if os.path.exists(file_path)
+                if Path(file_path).suffix.casefold() == ".mdb"
+                and os.path.exists(file_path)
                 else time.time()
             )
             self._loaded_files[file_path] = _LoadedFileCache(
@@ -187,8 +184,15 @@ class FileProjectRepository(IProjectRepository):
             entry.file_path = cache.file_path
             entry.created_at = cache.created_at
             if not entry.display_name:
-                entry.display_name = entry.database_name or os.path.basename(
-                    cache.file_path
+                descriptor = (
+                    self._descriptor_registry.resolve(cache.file_path)
+                    if self._descriptor_registry is not None
+                    else None
+                )
+                entry.display_name = (
+                    descriptor.display_name
+                    if descriptor is not None
+                    else entry.database_name or os.path.basename(cache.file_path)
                 )
             file_entries.append(entry)
         self._current_hierarchy.set(HierarchyData(loaded_files=file_entries))
@@ -198,9 +202,7 @@ class FileProjectRepository(IProjectRepository):
         if not target_path or target_path not in self._loaded_files:
             return False
         _clear_position_caches()
-        parser = self.parsers.get("mdb")
-        if parser:
-            parser.close_connection(target_path)
+        self.parser.close_connection(target_path)
         del self._loaded_files[target_path]
         if target_path == self._active_file_path:
             if self._loaded_files:
@@ -222,12 +224,8 @@ class FileProjectRepository(IProjectRepository):
         if file_path not in self._loaded_files:
             self.logger.warning("File not loaded: %s (bid_uid=%s)", file_path, bid_uid)
             return BidLoadResult()
-        parser = self.parsers.get("mdb")
-        if not parser:
-            self.logger.warning("MDB parser not available for bid data")
-            return BidLoadResult()
         self._active_file_path = file_path
-        return parser.load_bid_data(file_path, bid_uid)
+        return self.parser.load_bid_data(file_path, bid_uid)
 
     def reload_database(self, file_path: Optional[str] = None) -> FileLoadResult:
         if not file_path:
@@ -238,15 +236,10 @@ class FileProjectRepository(IProjectRepository):
             error_message = f"File not found in loaded files: {file_path}"
             self.logger.error(error_message)
             return FileLoadResult(success=False, error_message=error_message)
-        parser = self.parsers.get("mdb")
-        if not parser:
-            error_message = "MDB parser not available"
-            self.logger.error(error_message)
-            return FileLoadResult(success=False, error_message=error_message)
         try:
-            parser.refresh_connection(file_path)
+            self.parser.refresh_connection(file_path)
             _clear_position_caches()
-            result = parser.parse(file_path)
+            result = self.parser.parse(file_path)
         except Exception as exc:
             error_message = f"Failed to refresh database file: {exc}"
             self.logger.exception("Error refreshing database %s: %s", file_path, exc)

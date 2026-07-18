@@ -3,6 +3,7 @@ import logging
 import tempfile
 import unittest
 from pathlib import Path
+from ost_visualizer.domain.entities.database_descriptor import DatabaseDescriptor
 from ost_visualizer.domain.entities.workspace_state import (
     WORKSPACE_ACTIVE_VIEW_2D,
     WORKSPACE_KEY_ACTIVE_VIEW,
@@ -18,6 +19,30 @@ from ost_visualizer.mcp_server.registry import DatabaseRegistry
 
 
 class DatabaseRegistryTests(unittest.TestCase):
+    def test_reads_checked_access_descriptor_from_version_two_file_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app_data_dir = Path(temp_dir)
+            db_path = app_data_dir / "canonical.mdb"
+            db_path.touch()
+            descriptor = DatabaseDescriptor.for_access(str(db_path))
+            (app_data_dir / "file_state.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "database_entries": [
+                            {
+                                "descriptor": descriptor.to_dict(),
+                                "is_checked": True,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            registry = DatabaseRegistry(app_data_dir=app_data_dir)
+            self.assertEqual(len(registry.databases), 1)
+            self.assertEqual(registry.databases[0].file_path, str(db_path))
+
     def _quiet_logger(self):
         logger = logging.getLogger("test_mcp_registry")
         logger.handlers.clear()

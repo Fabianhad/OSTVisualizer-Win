@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 from PySide6 import QtWidgets
+from ..managers.ui_access_manager import Feature
 from ..components.progress_dialog import ProgressDialog
 from ..utils.messagebox import show_critical, show_info, show_warning
 
@@ -15,12 +16,14 @@ class ImportHandler:
         import_service,
         ui_state_manager,
         deferred_persistence_manager,
+        ui_access_manager,
     ):
         self.window = window
         self.ui_state_manager = ui_state_manager
         self.project_data = project_data_service
         self._import_service = import_service
         self._deferred_persistence = deferred_persistence_manager
+        self._ui_access_manager = ui_access_manager
 
     def import_ost(self) -> None:
         self._import_file(
@@ -37,6 +40,8 @@ class ImportHandler:
         )
 
     def _import_file(self, format_name: str, extension: str, import_fn) -> None:
+        if not self._ui_access_manager.is_allowed(Feature.IMPORT):
+            return
         target_db = self._resolve_target_db()
         if not target_db:
             show_warning(

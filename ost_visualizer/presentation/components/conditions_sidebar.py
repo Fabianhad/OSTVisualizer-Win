@@ -45,7 +45,7 @@ class _ConditionsTree(QtWidgets.QTreeWidget):
         self.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.DragDrop)
 
     def startDrag(self, supported_actions) -> None:
-        if not self._sidebar._edit_allowed:
+        if not self._sidebar._structure_edit_allowed:
             return
         items = self.selectedItems()
         if len(items) != 1:
@@ -65,13 +65,17 @@ class _ConditionsTree(QtWidgets.QTreeWidget):
 
     def dragMoveEvent(self, event) -> None:
         target = self.itemAt(event.position().toPoint())
-        if self._drag_uid and self._is_valid_drop_target(target):
+        if (
+            self._drag_uid
+            and self._sidebar._structure_edit_allowed
+            and self._is_valid_drop_target(target)
+        ):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event) -> None:
-        if not self._drag_uid:
+        if not self._drag_uid or not self._sidebar._structure_edit_allowed:
             event.ignore()
             return
         target = self.itemAt(event.position().toPoint())
@@ -132,11 +136,13 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._copied_condition_uids: List[str] = []
         self._condition_clipboard_cut: bool = False
         self._duplicate_allowed: bool = False
+        self._copy_allowed: bool = False
         self._delete_allowed: bool = False
         self._edit_allowed: bool = False
         self._properties_allowed: bool = False
         self._create_allowed: bool = False
         self._create_folder_allowed: bool = False
+        self._structure_edit_allowed: bool = False
         self._folder_items: Dict[str, QtWidgets.QTreeWidgetItem] = {}
         self._folders: Dict[str, BidConditionFolder] = {}
         self._project_name: str = ""
@@ -292,7 +298,10 @@ class ConditionsSidebar(QtWidgets.QWidget):
             selected_cond_uids[0]
         )
         self._duplicate_btn.setEnabled(has_cond and self._duplicate_allowed)
-        self._delete_btn.setEnabled((has_cond or has_folder) and self._delete_allowed)
+        self._delete_btn.setEnabled(
+            (has_cond and self._delete_allowed)
+            or (has_folder and self._structure_edit_allowed)
+        )
         self._edit_btn.setEnabled(can_edit_selected and self._properties_allowed)
 
     def get_selected_condition_uids(self) -> List[str]:
@@ -747,13 +756,18 @@ class ConditionsSidebar(QtWidgets.QWidget):
 
     def set_create_folder_enabled(self, enabled: bool) -> None:
         self._create_folder_allowed = enabled
+        self._structure_edit_allowed = enabled
         self._new_folder_btn.setEnabled(enabled)
+        self._sync_button_states()
 
     def set_duplicate_enabled(self, enabled: bool) -> None:
         self._duplicate_allowed = enabled
         self._duplicate_btn.setEnabled(
             enabled and len(self._selected_condition_uids) > 0
         )
+
+    def set_copy_enabled(self, enabled: bool) -> None:
+        self._copy_allowed = enabled
 
     def set_edit_enabled(self, enabled: bool, read_only_enabled: bool = False) -> None:
         self._edit_allowed = enabled
@@ -980,7 +994,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
 
     def _can_delete_context_target(self, kind: Optional[str]) -> bool:
         if kind == _TYPE_FOLDER:
-            return bool(self._selected_folder_uids) and self._delete_allowed
+            return bool(self._selected_folder_uids) and self._structure_edit_allowed
         if kind == _TYPE_CONDITION:
             return bool(self._selected_condition_uids) and self._delete_allowed
         return False
@@ -1171,10 +1185,10 @@ class ConditionsSidebar(QtWidgets.QWidget):
 
     def set_delete_enabled(self, enabled: bool) -> None:
         self._delete_allowed = enabled
-        has_any = bool(self._selected_condition_uids) or bool(
-            self._selected_folder_uids
+        self._delete_btn.setEnabled(
+            (bool(self._selected_condition_uids) and enabled)
+            or (bool(self._selected_folder_uids) and self._structure_edit_allowed)
         )
-        self._delete_btn.setEnabled(enabled and has_any)
 
     def _on_new_clicked(self) -> None:
         if not self._create_allowed:
@@ -1331,16 +1345,16 @@ class ConditionsSidebar(QtWidgets.QWidget):
         return None
 
     def _can_copy_selected_conditions(self) -> bool:
-        return bool(self._selected_condition_uids) and self._duplicate_allowed
+        return bool(self._selected_condition_uids) and self._copy_allowed
 
     def _can_cut_selected_conditions(self) -> bool:
-        return bool(self._selected_condition_uids) and self._edit_allowed
+        return bool(self._selected_condition_uids) and self._structure_edit_allowed
 
     def _can_paste_to_item(
         self, item: Optional[QtWidgets.QTreeWidgetItem] = None
     ) -> bool:
         can_write = (
-            self._edit_allowed
+            self._structure_edit_allowed
             if self._condition_clipboard_cut
             else self._duplicate_allowed
         )
@@ -1372,7 +1386,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         if self._text_editor_has_focus():
             return
         can_write = (
-            self._edit_allowed
+            self._structure_edit_allowed
             if self._condition_clipboard_cut
             else self._duplicate_allowed
         )
@@ -1439,7 +1453,7 @@ class ConditionsSidebar(QtWidgets.QWidget):
         return None
 
     def _request_folder_delete(self) -> None:
-        if not self._delete_allowed:
+        if not self._structure_edit_allowed:
             return
         folder_uids = [
             uid for uid in self._selected_folder_uids if uid in self._folder_items
@@ -1449,7 +1463,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self.folder_delete_requested.emit(folder_uids)
 
     def _on_condition_folder_move(self, condition_uid: str, folder_uid: str) -> None:
-        self.condition_folder_move_requested.emit(condition_uid, folder_uid)
+        if self._structure_edit_allowed:
+            self.condition_folder_move_requested.emit(condition_uid, folder_uid)
 
     def clear(self) -> None:
         if self._editing_folder is not None:
@@ -1471,7 +1486,9 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._condition_clipboard_cut = False
         self._create_allowed = False
         self._create_folder_allowed = False
+        self._structure_edit_allowed = False
         self._duplicate_allowed = False
+        self._copy_allowed = False
         self._delete_allowed = False
         self._edit_allowed = False
         self._properties_allowed = False

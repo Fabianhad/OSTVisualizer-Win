@@ -178,6 +178,7 @@ def _project_file_args(*paths):
 
 def _startup_import_window():
     window = MainWindow.__new__(MainWindow)
+    window.ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: True)
     window._pending_project_file_args = []
     window._startup_load_complete = False
     window._main_window_ready = False

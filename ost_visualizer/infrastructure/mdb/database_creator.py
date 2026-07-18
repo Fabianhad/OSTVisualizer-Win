@@ -12,6 +12,10 @@ from .reference_schema_metadata import (
     UID_REQUIRED_TABLES,
 )
 from .schema_contract import DEFAULT_LAYER_ROWS
+from ..database.schema_model import (
+    DatabaseSchemaModel,
+    schema_model_from_access_ddl,
+)
 
 _TABLE_DDL = [
     """CREATE TABLE [AccessLevels] (
@@ -839,6 +843,23 @@ _SCHEMA_VERSIONS = [
     112,
     113,
 ]
+
+
+def get_reference_schema_model() -> DatabaseSchemaModel:
+    """Return the shared semantic model used by Access and SQL Server."""
+    return schema_model_from_access_ddl(
+        _TABLE_DDL,
+        required_uid_tables=UID_REQUIRED_TABLES,
+        field_defaults=FIELD_DEFAULTS,
+        indexes=EXPLICIT_INDEXES,
+        relationships=REFERENCE_RELATIONSHIPS,
+    )
+
+
+def get_reference_seed_data():
+    return tuple(_SCHEMA_VERSIONS), tuple(DEFAULT_LAYER_ROWS)
+
+
 _DEFAULT_LAYERS = DEFAULT_LAYER_ROWS
 
 

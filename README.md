@@ -15,7 +15,7 @@ Built for estimators and construction teams who work with OST project files dail
 
 - **2D Plan View** -- Interactive view with annotations overlaid on project pages, including BidDimension placement and detached Annotation/View windows
 - **PDF Plan Sheets** -- View PDF drawings at any scale
-- **Multi-database** -- Open and browse multiple project files at the same time
+- **Multi-database** -- Open and browse Microsoft Access and Microsoft SQL Server databases together
 - **Projects, Takeoff, and Summary Tabs** -- Navigate databases and bids, inspect 2D takeoffs, and review grouped condition quantities
 - **Summary Review** -- Group condition quantities by Area, Type, and Page, with unused conditions hidden from placed-takeoff summaries
 - **3D Visualization** -- See takeoff geometry rendered in full 3D with transparent overlays *(Commercial)*
@@ -85,10 +85,44 @@ For licensing questions, contact [fabian@fabianhad.com](mailto:fabian@fabianhad.
 | 3D Rendering | OpenGL via custom C++ renderer |
 | Geometry | Manifold, Earcut |
 | PDF | PDFium, QPDF |
-| Database | Microsoft Access (.mdb) via pyodbc |
+| Database | Microsoft Access (.mdb) and Microsoft SQL Server via pyodbc |
 | Build | Nuitka, CMake |
 | C++ Bindings | nanobind v2.4.0 (13 extension modules) |
 | Local AI Context | Model Context Protocol via stdlib stdio helper |
+
+## Microsoft SQL Server
+
+Choose **Find...** in Open Files, select **Microsoft SQL Server**, and enter a
+local server, named instance (`server\instance`), or host and port
+(`host,port`). Windows authentication is the default. SQL Server authentication
+is also supported; its password is stored in Windows Credential Manager and is
+never written to `config.json` or `file_state.json`. After the server connection
+is authenticated, **Database Properties (SQL Server)** lists the accessible
+databases; the descriptor and credential are saved only after its final **OK**.
+
+Microsoft ODBC Driver 18 for SQL Server is required. Connections use encryption
+and trust the certificate presented by the configured SQL Server by default.
+Only configure SQL Server connections to servers you control or otherwise trust.
+
+**New Database** first offers Microsoft Access and Microsoft SQL Server. The
+Access option keeps the existing local database-name workflow. The SQL Server
+option uses **Database Properties (SQL Server)** to authenticate, create, and
+initialize a new OST Visualizer database when the login has server
+database-creation permission.
+Removing a saved SQL entry removes only the local entry and its saved credential.
+It never drops or deletes the SQL Server database. Unchecking an entry closes the
+runtime connection while keeping it available for reconnect.
+
+Existing unversioned SQL databases whose 64-table schema matches the Access
+model can be browsed read-only. On final connection confirmation, a structurally
+compatible external database can be enabled for editing after explicit
+confirmation. This transaction adds only the `ostv` metadata and collaboration
+tables; it does not recreate or rewrite the external application's core tables
+or rows. Databases created or adopted by OST Visualizer carry an independent,
+checksummed schema version and collaboration-table foundation. Schema
+initialization requires additional database permissions; ordinary readers and
+editors do not need server-administrator rights. Desktop presence, resource
+locks, optimistic-concurrency tokens, and real-time polling remain planned work.
 
 ## Local MCP Server
 

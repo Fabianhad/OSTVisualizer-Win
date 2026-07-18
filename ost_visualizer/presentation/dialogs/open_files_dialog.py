@@ -1,9 +1,21 @@
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from PySide6 import QtCore, QtWidgets
+from ...application.interfaces.i_credential_store import ICredentialStore
+from ...application.interfaces.i_database_catalog import (
+    DatabaseCatalogError,
+    IDatabaseCatalog,
+)
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
+from ...application.interfaces.i_sql_database_creator import ISqlDatabaseCreator
+from ...domain.entities.database_descriptor import (
+    DatabaseBackend,
+    DatabaseDescriptor,
+    SqlAuthenticationMode,
+    credential_target_for,
+)
 from ...domain.entities.file_state import FileEntry, normalize_path
 from ..config import (
     COMPACT_SPACING,
@@ -14,9 +26,16 @@ from ..config import (
     RELAXED_SPACING,
 )
 from ..utils.condition_tree_style import apply_tree_indentation
-from ..utils.messagebox import confirm, show_info
+from ..utils.messagebox import confirm, show_info, show_warning
 from ..utils.tree_widget import set_tree_item_row_height
 from ..utils.windows import remove_minimize
+from .select_database_type_dialog import SelectDatabaseTypeDialog
+from .sql_connection_dialog import SqlConnectionDialog
+from .sql_database_dialog import (
+    SqlDatabasePropertiesDialog,
+    SqlDatabasePropertiesMode,
+    SqlDatabasePropertiesResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +47,19 @@ class OpenFilesDialog(QtWidgets.QDialog):
         parent,
         file_entries: List[FileEntry],
         working_directory_service,
+        sql_catalog: Optional[IDatabaseCatalog] = None,
+        credential_store: Optional[ICredentialStore] = None,
+        sql_database_creator: Optional[ISqlDatabaseCreator] = None,
+        schema_change_allowed_fn=None,
     ):
         super().__init__(parent)
         self.icon_provider = icon_provider
         self._working_directory_service = working_directory_service
-        self.file_entries = [FileEntry(e.file_path, e.is_checked) for e in file_entries]
+        self._sql_catalog = sql_catalog
+        self._credential_store = credential_store
+        self._sql_database_creator = sql_database_creator
+        self._schema_change_allowed_fn = schema_change_allowed_fn
+        self.file_entries = [e.with_checked(e.is_checked) for e in file_entries]
         self._setup_ui()
         self._populate_table()
         self._update_remove_button_state()
@@ -46,8 +73,10 @@ class OpenFilesDialog(QtWidgets.QDialog):
         main_layout.setContentsMargins(*RELAXED_MARGINS)
         main_layout.setSpacing(RELAXED_SPACING)
         self.table = QtWidgets.QTreeWidget(self)
-        self.table.setColumnCount(4)
-        self.table.setHeaderLabels(["Open", "File Name", "Date Modified", "Size"])
+        self.table.setColumnCount(6)
+        self.table.setHeaderLabels(
+            ["Open", "Type", "Database", "Location", "Date Modified", "Size"]
+        )
         self.table.setRootIsDecorated(False)
         apply_tree_indentation(self.table)
         self.table.setSelectionBehavior(
@@ -67,11 +96,13 @@ class OpenFilesDialog(QtWidgets.QDialog):
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Fixed)
         header.resizeSection(0, 50)
         header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        header.resizeSection(1, 300)
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        header.resizeSection(2, 150)
-        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        header.resizeSection(3, 100)
+        header.resizeSection(1, 120)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(4, 150)
+        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(5, 100)
         content_layout = QtWidgets.QHBoxLayout()
         content_layout.addWidget(self.table)
         right_buttons = QtWidgets.QVBoxLayout()
@@ -96,18 +127,30 @@ class OpenFilesDialog(QtWidgets.QDialog):
             self.table.clear()
             self._checkboxes = []
             for row, entry in enumerate(self.file_entries):
-                file_name = self._format_file_name(entry.file_path)
-                date_modified = self._get_file_date(entry.file_path)
-                size_text = self._get_file_size(entry.file_path)
+                backend_name, database_name, location = self._display_values(entry)
+                date_modified = ""
+                size_text = ""
+                if entry.backend == DatabaseBackend.ACCESS:
+                    date_modified = self._get_file_date(entry.file_path)
+                    size_text = self._get_file_size(entry.file_path)
                 item = QtWidgets.QTreeWidgetItem(
-                    ["", file_name, date_modified, size_text]
+                    [
+                        "",
+                        backend_name,
+                        database_name,
+                        location,
+                        date_modified,
+                        size_text,
+                    ]
                 )
                 flags = item.flags()
                 flags &= ~QtCore.Qt.ItemFlag.ItemIsUserCheckable
                 flags &= ~QtCore.Qt.ItemFlag.ItemIsEditable
                 item.setFlags(flags)
-                item.setTextAlignment(2, QtCore.Qt.AlignmentFlag.AlignCenter)
-                item.setTextAlignment(3, QtCore.Qt.AlignmentFlag.AlignCenter)
+                item.setData(0, QtCore.Qt.ItemDataRole.UserRole, entry.database_id)
+                item.setTextAlignment(1, QtCore.Qt.AlignmentFlag.AlignCenter)
+                item.setTextAlignment(4, QtCore.Qt.AlignmentFlag.AlignCenter)
+                item.setTextAlignment(5, QtCore.Qt.AlignmentFlag.AlignCenter)
                 set_tree_item_row_height(item, self.table.columnCount())
                 self.table.addTopLevelItem(item)
                 cb = QtWidgets.QCheckBox()
@@ -124,11 +167,12 @@ class OpenFilesDialog(QtWidgets.QDialog):
             self.table.blockSignals(False)
         self._update_remove_button_state()
 
-    def _format_file_name(self, file_path: str) -> str:
-        path = Path(file_path)
-        name_no_ext = path.stem
-        full_path = str(path.absolute())
-        return f"{name_no_ext} ({full_path})"
+    def _display_values(self, entry: FileEntry) -> tuple[str, str, str]:
+        descriptor = entry.descriptor
+        if entry.backend == DatabaseBackend.SQL_SERVER:
+            location = descriptor.sql_location
+            return "SQL Server", descriptor.display_name, location.server
+        return "Access", descriptor.display_name, str(Path(entry.file_path).absolute())
 
     def _get_file_date(self, file_path: str) -> str:
         try:
@@ -136,7 +180,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
             mtime = path.stat().st_mtime
             dt = datetime.fromtimestamp(mtime)
             return dt.strftime("%m/%d/%Y %I:%M:%S %p")
-        except Exception as exc:
+        except (OSError, ValueError, OverflowError) as exc:
             logger.warning("Error getting file date for %s: %s", file_path, exc)
             return "N/A"
 
@@ -149,7 +193,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
                 return f"{int(size_kb):,} KB"
             else:
                 return f"{size_kb:,.2f} KB"
-        except Exception as exc:
+        except OSError as exc:
             logger.warning("Error getting file size for %s: %s", file_path, exc)
             return "N/A"
 
@@ -161,6 +205,20 @@ class OpenFilesDialog(QtWidgets.QDialog):
         return handler
 
     def _on_find(self) -> None:
+        dialog = SelectDatabaseTypeDialog(self.icon_provider, self)
+        try:
+            if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            backend = dialog.selected_backend()
+        finally:
+            dialog.cleanup()
+            dialog.deleteLater()
+        if backend == DatabaseBackend.ACCESS:
+            self._open_access_file_picker()
+        else:
+            self._open_sql_server_connection()
+
+    def _open_access_file_picker(self) -> None:
         file_filter = "Microsoft Access Database (*.mdb)"
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Select Database File", "", file_filter
@@ -176,15 +234,116 @@ class OpenFilesDialog(QtWidgets.QDialog):
             self.file_entries.append(new_entry)
             self._populate_table()
 
+    def _open_sql_server_connection(self) -> None:
+        if (
+            self._sql_catalog is None
+            or self._credential_store is None
+            or self._sql_database_creator is None
+        ):
+            show_warning(
+                self,
+                "SQL Server",
+                "SQL Server support is unavailable in this installation.",
+            )
+            return
+        connection_dialog = SqlConnectionDialog(self.icon_provider, self)
+        connection_result = None
+        try:
+            if connection_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+                connection_result = connection_dialog.result_data()
+        finally:
+            connection_dialog.cleanup()
+            connection_dialog.deleteLater()
+        if connection_result is None:
+            return
+        try:
+            databases = self._sql_catalog.list_databases(
+                connection_result.location, connection_result.password
+            )
+            properties_dialog = SqlDatabasePropertiesDialog(
+                self.icon_provider,
+                SqlDatabasePropertiesMode.OPEN,
+                self._sql_catalog,
+                self._sql_database_creator,
+                self,
+                connection=connection_result,
+                databases=databases,
+                schema_change_allowed_fn=self._schema_change_allowed_fn,
+            )
+            properties_result = None
+            try:
+                if properties_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+                    properties_result = properties_dialog.result_data()
+            finally:
+                properties_dialog.cleanup()
+                properties_dialog.deleteLater()
+            if properties_result is None:
+                return
+            self._save_sql_result(properties_result)
+        except DatabaseCatalogError as exc:
+            show_warning(self, "SQL Server", str(exc))
+        except (OSError, ValueError):
+            show_warning(
+                self,
+                "SQL Server",
+                "The SQL Server connection could not be saved.",
+            )
+
+    def _save_sql_result(self, result: SqlDatabasePropertiesResult) -> None:
+        descriptor = DatabaseDescriptor.for_sql_server(
+            result.location, schema_version=result.schema_version
+        )
+        new_entry = FileEntry.for_descriptor(descriptor)
+        target = credential_target_for(descriptor.database_id)
+        existing_index = next(
+            (
+                index
+                for index, entry in enumerate(self.file_entries)
+                if entry.identity_key == new_entry.identity_key
+            ),
+            None,
+        )
+        if (
+            result.location.authentication_mode == SqlAuthenticationMode.SQL_SERVER
+            and result.password
+        ):
+            self._credential_store.write_password(
+                target, result.location.username, result.password
+            )
+        elif existing_index is not None:
+            existing = self.file_entries[existing_index]
+            if (
+                existing.descriptor.sql_location.authentication_mode
+                == SqlAuthenticationMode.SQL_SERVER
+            ):
+                self._credential_store.delete_password(target)
+        if existing_index is not None:
+            self.file_entries[existing_index] = new_entry
+            self._populate_table()
+            show_info(
+                self,
+                "Database Connection Updated",
+                "The saved SQL Server connection was updated.",
+            )
+            return
+        self.file_entries.append(new_entry)
+        self._populate_table()
+
     def _on_remove(self) -> None:
         current_item = self.table.currentItem()
         row = self.table.indexOfTopLevelItem(current_item)
-        file_path = self.file_entries[row].file_path
-        file_name = Path(file_path).name
+        if row < 0 or row >= len(self.file_entries):
+            return
+        entry = self.file_entries[row]
+        descriptor = entry.descriptor
+        item_name = descriptor.display_name
+        message = f"Are you sure you want to remove '{item_name}' from the list?"
+        if entry.backend == DatabaseBackend.SQL_SERVER:
+            message += "\n\nThis removes only the saved connection. The server database will not be deleted."
         if confirm(
             self,
             "Confirm Removal",
-            f"Are you sure you want to remove '{file_name}' from the list?",
+            message,
         ):
             del self.file_entries[row]
             self._populate_table()
@@ -217,6 +376,9 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self.remove_button = None
         self.table = None
         self._working_directory_service = None
+        self._sql_catalog = None
+        self._credential_store = None
+        self._sql_database_creator = None
         self.icon_provider = None
 
     def showEvent(self, event) -> None:
@@ -228,7 +390,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self.accept()
 
     def get_file_entries(self) -> List[FileEntry]:
-        return [FileEntry(e.file_path, e.is_checked) for e in self.file_entries]
+        return [e.with_checked(e.is_checked) for e in self.file_entries]
 
     def _is_in_working_dir(self, file_path: str) -> bool:
         if self._working_directory_service is None:
@@ -246,7 +408,9 @@ class OpenFilesDialog(QtWidgets.QDialog):
         if has_selection:
             row = self.table.indexOfTopLevelItem(self.table.currentItem())
             if 0 <= row < len(self.file_entries):
-                has_selection = not self._is_in_working_dir(
-                    self.file_entries[row].file_path
+                entry = self.file_entries[row]
+                has_selection = (
+                    entry.backend == DatabaseBackend.SQL_SERVER
+                    or not self._is_in_working_dir(entry.file_path)
                 )
         self.remove_button.setEnabled(has_selection)

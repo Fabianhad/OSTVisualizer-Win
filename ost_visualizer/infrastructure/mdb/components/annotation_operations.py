@@ -20,9 +20,10 @@ from ....domain.entities.annotation import (
 from ....domain.entities.named_view import normalize_named_view_position
 from .constants import hex_to_color_int
 from .serialization import encode_annotation_text, serialize_position_for_table
+from .identity_allocation import AccessIdentityAllocationMixin
 
 
-class AnnotationOperationsMixin:
+class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
     _TEXT_PROPERTY_COLUMNS = (
         "UID",
         "Name",
@@ -318,9 +319,7 @@ class AnnotationOperationsMixin:
                     width_int = int(width) if width else 0
                     layer_int = int(layer_uid) if layer_uid else None
                     try:
-                        cursor.execute(f"SELECT MAX([UID]) FROM [{table}]")
-                        row = cursor.fetchone()
-                        new_uid = (int(row[0]) + 1) if row and row[0] is not None else 1
+                        new_uid = self._next_uid(cursor, table)
                         self._execute_annotation_insert(
                             cursor,
                             schema,

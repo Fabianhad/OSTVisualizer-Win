@@ -18,6 +18,7 @@ from ..domain.entities.workspace_state import (
     WORKSPACE_KEY_TAKEOFF_WORKSPACE,
     WORKSPACE_VALID_ACTIVE_VIEWS,
 )
+from ..domain.entities.database_descriptor import DatabaseBackend, DatabaseDescriptor
 from ..infrastructure.app_paths import get_app_data_dir
 from .output_artifacts import MCP_OUTPUT_DIR_NAME
 
@@ -77,6 +78,9 @@ class DatabaseRegistry:
 
     def _read_file_state_paths(self) -> List[str]:
         payload = self._read_json(self._app_data_dir / "file_state.json")
+        entries = payload.get("database_entries") if isinstance(payload, dict) else None
+        if isinstance(entries, list):
+            return self._read_descriptor_paths(entries)
         entries = payload.get("file_entries") if isinstance(payload, dict) else None
         if not isinstance(entries, list):
             return []
@@ -89,6 +93,23 @@ class DatabaseRegistry:
             file_path = entry.get("file_path")
             if file_path:
                 paths.append(str(file_path))
+        return paths
+
+    @staticmethod
+    def _read_descriptor_paths(entries: list) -> List[str]:
+        paths = []
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("is_checked") is not True:
+                continue
+            descriptor_data = entry.get("descriptor")
+            if not isinstance(descriptor_data, dict):
+                continue
+            try:
+                descriptor = DatabaseDescriptor.from_dict(descriptor_data)
+            except (TypeError, ValueError):
+                continue
+            if descriptor.backend == DatabaseBackend.ACCESS:
+                paths.append(descriptor.access_path)
         return paths
 
     def _read_workspace_selection(self) -> McpWorkspaceSelection:

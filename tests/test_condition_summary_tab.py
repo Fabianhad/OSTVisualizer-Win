@@ -402,7 +402,9 @@ class ConditionSummaryTabTests(unittest.TestCase):
             Takeoff(uid="tk2", condition_uid="c1", page_uid="p1", area_uid="a2"),
         ]
         self.tab = ConditionSummaryTab(
-            None, uom_label_fn=lambda code: "EA" if code == UOM_EACH else ""
+            None,
+            uom_label_fn=lambda code: "EA" if code == UOM_EACH else "",
+            delete_allowed_fn=lambda: True,
         )
 
     def tearDown(self):
@@ -880,9 +882,7 @@ class ConditionSummaryTabTests(unittest.TestCase):
             delete_current_row=lambda: calls.append("summary-delete")
         )
         window.ui_access_manager = SimpleNamespace(
-            is_allowed=lambda _feature: (_ for _ in ()).throw(
-                AssertionError("project delete should not be queried")
-            )
+            is_allowed=lambda feature: feature == Feature.DELETE_CONDITION
         )
         window.project_view = SimpleNamespace(
             get_delete_replacement_selection_state=lambda: (_ for _ in ()).throw(
@@ -1019,6 +1019,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         conditions_sidebar = FakeConditionsSidebar()
         summary_tab = FakeSummaryTab()
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: True
+        )
         coordinator.project_data = FakeProjectData()
         coordinator.ui_state_manager = SimpleNamespace(
             active_page_uid="",
@@ -1093,7 +1096,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
 
     def test_ost_status_path_does_not_clear_populated_summary_tree(self):
         _app()
-        tab = ConditionSummaryTab(None, uom_label_fn=lambda _code: "EA")
+        tab = ConditionSummaryTab(
+            None, uom_label_fn=lambda _code: "EA", delete_allowed_fn=lambda: True
+        )
         service = ConditionSummaryService()
         grouping = ConditionSummaryGrouping(by_page=True, by_type=True)
         root = service.build_summary(
@@ -1160,7 +1165,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
 
     def test_database_refresh_after_ost_status_keeps_summary_tree_visible(self):
         _app()
-        tab = ConditionSummaryTab(None, uom_label_fn=lambda _code: "EA")
+        tab = ConditionSummaryTab(
+            None, uom_label_fn=lambda _code: "EA", delete_allowed_fn=lambda: True
+        )
         service = ConditionSummaryService()
         grouping = ConditionSummaryGrouping(by_type=True, by_area=True)
         root = service.build_summary(
@@ -1216,7 +1223,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
     def test_database_refresh_while_summary_tab_active_reloads_cleared_summary(self):
         _app()
         bid_ref = BidRef("a.mdb", "bid-1")
-        tab = ConditionSummaryTab(None, uom_label_fn=lambda _code: "EA")
+        tab = ConditionSummaryTab(
+            None, uom_label_fn=lambda _code: "EA", delete_allowed_fn=lambda: True
+        )
         service = ConditionSummaryService()
         grouping = ConditionSummaryGrouping(by_type=True, by_area=True)
         conditions = {
@@ -1335,7 +1344,9 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
             "c2": Condition(uid="c2", name="Fdn2"),
         }
         takeoffs = [Takeoff(uid="tk1", condition_uid="c1", page_uid="p1")]
-        tab = ConditionSummaryTab(None, uom_label_fn=lambda _code: "EA")
+        tab = ConditionSummaryTab(
+            None, uom_label_fn=lambda _code: "EA", delete_allowed_fn=lambda: True
+        )
         service = ConditionSummaryService()
 
         def reload_summary():

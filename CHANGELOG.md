@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added Microsoft SQL Server database selection through server connection and database-properties dialogs, encrypted Windows or SQL authentication that trusts the configured server certificate by default, password storage in Windows Credential Manager only after final confirmation, saved connection descriptors, compatible-schema browsing, transactional adoption of structurally matching databases created by another application, and client-side creation of versioned SQL databases from the new database-type chooser without changing the existing Microsoft Access workflow.
 - Added persistent PDF annotation caption options with disabled-by-default global and per-caption controls plus Bluebeam-compatible selection, ordering, units, and formatting for all captions supported by exported polygon measurements.
 - Added persistent elevation callout options for HTML and PDF exports, including independent export enablement, red default text colors, and shared condition, top elevation, bottom elevation, and cubic-yard line selection.
 - Added a read-only MCP bid comparison tool that matches conditions by reference number, ignores insignificant floating-point quantity noise, and returns bounded condition-type aggregates for metadata, quantities, takeoff counts, and the pages containing affected conditions.

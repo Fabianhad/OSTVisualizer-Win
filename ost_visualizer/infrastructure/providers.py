@@ -12,6 +12,15 @@ from ..application.interfaces.i_coordinate_transformer_factory import (
     ICoordinateTransformerFactory,
 )
 from ..application.interfaces.i_database_creator import IDatabaseCreator
+from ..application.interfaces.i_credential_store import ICredentialStore
+from ..application.interfaces.i_database_catalog import IDatabaseCatalog
+from ..application.interfaces.i_database_descriptor_registry import (
+    IDatabaseDescriptorRegistry,
+)
+from ..application.interfaces.i_database_permission_probe import (
+    IDatabasePermissionProbe,
+)
+from ..application.interfaces.i_sql_database_creator import ISqlDatabaseCreator
 from ..application.interfaces.i_infrastructure_service_provider import (
     IInfrastructureServiceProvider,
 )
@@ -26,7 +35,6 @@ from ..application.interfaces.i_osp_exporter import IOspExporter
 from ..application.interfaces.i_osp_importer import IOspImporter
 from ..application.interfaces.i_ost_exporter import IOstExporter
 from ..application.interfaces.i_ost_importer import IOstImporter
-from ..application.interfaces.i_parser_provider import IParserProvider
 from ..application.interfaces.i_pdf_exporter import IPDFExporter
 from ..application.interfaces.i_repository_provider import IRepositoryProvider
 from ..application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
@@ -37,7 +45,6 @@ from ..application.interfaces.i_visualization_provider import IVisualizationProv
 from ..application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ..application.services.page_load_strategy_service import PageLoadStrategyService
 from ..domain.repositories.i_config_repository import IConfigRepository
-from ..domain.repositories.i_file_parser import IFileParser
 from ..domain.repositories.i_file_state_repository import IFileStateRepository
 from ..domain.repositories.i_license_api_client import ILicenseApiClient
 from ..domain.repositories.i_license_repository import ILicenseRepository
@@ -68,6 +75,9 @@ from ..presentation.visualization.pdf.services.pdf_rendering_service import (
 )
 from ..presentation.visualization.services.color_service import ColorService
 from .app_paths import get_default_working_dir
+from .database.descriptor_registry import DatabaseDescriptorRegistry
+from .database.reader_router import DatabaseProjectReader
+from .database.writer_router import DatabaseProjectWriter
 from .external.license_api_client import LicenseApiClient
 from .hardware.hwid_generator import HWIDGenerator
 from .mdb.connection_manager import MdbConnectionManager
@@ -76,7 +86,6 @@ from .mdb.exporters.ost_exporter import OstExporter
 from .mdb.importers.osp_importer import OspImporter
 from .mdb.importers.ost_importer import OstImporter
 from .mdb.mdb_reader import MdbReader
-from .mdb.mdb_writer import MdbWriter
 from .monitoring.transaction_monitor import TransactionMonitor
 from .persistence.repositories.file_project_repository import (
     FileProjectRepository,
@@ -90,13 +99,26 @@ from .persistence.repositories.json_workspace_state_repository import (
 )
 from .security.license_signature_verifier import LicenseSignatureVerifier
 from .services.license_validation_scheduler import LicenseValidationScheduler
+from .sql.catalog import SqlDatabaseCatalog
+from .sql.credential_store import WindowsCredentialStore
+from .sql.database_creator import SqlDatabaseCreator
+from .sql.permissions import SqlDatabasePermissionProbe
 from .visualization_provider import VisualizationProvider
 
 
 class RepositoryProvider(IRepositoryProvider):
-    def __init__(self, logger: logging.Logger):
+    def __init__(
+        self,
+        logger: logging.Logger,
+        descriptor_registry: Optional[IDatabaseDescriptorRegistry] = None,
+        project_reader_factory: Optional[
+            Callable[[Optional[IMdbConnectionManager]], IMdbReader]
+        ] = None,
+    ):
         self.logger = logger
         self._hwid_generator = HWIDGenerator()
+        self._descriptor_registry = descriptor_registry
+        self._project_reader_factory = project_reader_factory
 
     def get_config_repository(self) -> IConfigRepository:
         return JsonConfigRepository(logger=self.logger.getChild("ConfigRepository"))
@@ -124,29 +146,19 @@ class RepositoryProvider(IRepositoryProvider):
     ) -> IProjectRepository:
         file_manager_logger = self.logger.getChild("FileManager")
         parser_logger = file_manager_logger.getChild("MdbFileParser")
-        if conn_manager:
-            reader = MdbReader(conn_manager=conn_manager, logger=parser_logger)
-            parser = MdbFileParser(logger=parser_logger, parser=reader)
+        if self._project_reader_factory is not None:
+            reader = self._project_reader_factory(conn_manager)
         else:
-            parser = MdbFileParser(logger=parser_logger)
+            reader = MdbReader(conn_manager=conn_manager, logger=parser_logger)
+        parser = MdbFileParser(logger=parser_logger, parser=reader)
         return FileProjectRepository(
-            parsers={"mdb": parser},
+            parser=parser,
             logger=file_manager_logger.getChild("Repository"),
+            descriptor_registry=self._descriptor_registry,
         )
 
     def get_hwid_provider(self) -> Callable[[], str]:
         return self._hwid_generator.get_hwid
-
-
-class ParserProvider(IParserProvider):
-    def __init__(self, logger: logging.Logger):
-        self.logger = logger
-        self._parsers: Dict[str, IFileParser] = {
-            "mdb": MdbFileParser(logger.getChild("MdbFileParser"))
-        }
-
-    def get_parsers(self) -> Dict[str, IFileParser]:
-        return self._parsers.copy()
 
 
 class InfrastructureServiceProvider(IInfrastructureServiceProvider):
@@ -156,11 +168,23 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
         callback_bridge_factory: Callable[[], IThreadCallbackBridge],
         icon_provider: Optional[IWindowIconProvider] = None,
         message_notifier: Optional[IMessageNotifier] = None,
+        descriptor_registry: Optional[IDatabaseDescriptorRegistry] = None,
+        credential_store: Optional[ICredentialStore] = None,
     ):
         self.logger = logger
         self._callback_bridge_factory = callback_bridge_factory
         self._icon_provider = icon_provider
         self._message_notifier = message_notifier
+        self._descriptor_registry = (
+            DatabaseDescriptorRegistry()
+            if descriptor_registry is None
+            else descriptor_registry
+        )
+        self._credential_store = (
+            WindowsCredentialStore() if credential_store is None else credential_store
+        )
+        self._database_readers: dict[int, IMdbReader] = {}
+        self._database_writers: dict[int, IMdbWriter] = {}
 
     def create_license_validation_scheduler(
         self, interval_seconds: int
@@ -272,18 +296,57 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
     def get_mdb_reader(
         self, conn_manager: Optional[IMdbConnectionManager] = None
     ) -> IMdbReader:
-        return MdbReader(conn_manager=conn_manager)
+        resolved_manager = conn_manager or MdbConnectionManager()
+        key = id(resolved_manager)
+        reader = self._database_readers.get(key)
+        if reader is None:
+            reader = DatabaseProjectReader(
+                resolved_manager,
+                self._descriptor_registry,
+                self._credential_store,
+                logger=self.logger.getChild("DatabaseProjectReader"),
+            )
+            self._database_readers[key] = reader
+        return reader
 
     def get_mdb_writer(
         self, conn_manager: Optional[IMdbConnectionManager] = None
     ) -> IMdbWriter:
-        return MdbWriter(conn_manager=conn_manager)
+        resolved_manager = conn_manager or MdbConnectionManager()
+        key = id(resolved_manager)
+        writer = self._database_writers.get(key)
+        if writer is None:
+            writer = DatabaseProjectWriter(
+                resolved_manager,
+                self._descriptor_registry,
+                self._credential_store,
+                logger=self.logger.getChild("DatabaseProjectWriter"),
+            )
+            self._database_writers[key] = writer
+        return writer
 
     def get_osp_exporter(self, uom_service: IUOMService, version: str) -> IOspExporter:
         return OspExporter(uom_service, version, self.get_ost_exporter)
 
     def get_database_creator(self) -> IDatabaseCreator:
         return DatabaseCreator()
+
+    def get_database_catalog(self) -> IDatabaseCatalog:
+        return SqlDatabaseCatalog()
+
+    def get_credential_store(self) -> ICredentialStore:
+        return self._credential_store
+
+    def get_database_descriptor_registry(self) -> IDatabaseDescriptorRegistry:
+        return self._descriptor_registry
+
+    def get_sql_database_creator(self) -> ISqlDatabaseCreator:
+        return SqlDatabaseCreator()
+
+    def get_database_permission_probe(self) -> IDatabasePermissionProbe:
+        return SqlDatabasePermissionProbe(
+            self._descriptor_registry, self._credential_store
+        )
 
     def get_default_working_dir(self) -> Path:
         return get_default_working_dir()

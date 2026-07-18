@@ -159,7 +159,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._pdf_exporter = app_controller.get_service("pdf_exporter")
         self._ost_exporter = app_controller.get_service("ost_exporter")
         self._osp_exporter = app_controller.get_service("osp_exporter")
-        self._mdb_file_parser = app_controller.get_service("mdb_file_parser")
+        self._database_reader = app_controller.get_service("mdb_reader")
         self._import_service = app_controller.get_service("import_service")
         self._import_project_files_from_args = app_controller.get_service(
             "import_project_files_from_args_use_case"
@@ -186,6 +186,9 @@ class MainWindow(QtWidgets.QMainWindow):
             transaction_monitor=app_controller.get_service("transaction_monitor"),
             project_data=self._project_data_service,
             ui_state_manager=self.ui_state_manager,
+            database_capability_service=self.app_controller.get_service(
+                "database_capability_service"
+            ),
         )
         self._deferred_persistence_manager = DeferredPersistenceManager(
             self._project_write_service,
@@ -367,8 +370,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handlers.ui_event.set_status_panel(self.status_panel)
         self._plan_view_handler = components.plan_view_handler
         self.project_view = components.project_view
-        self.project_view.on_restore_bid = self.handlers.delete.restore_bids
-        self.project_view.set_on_move_bids(self.handlers.delete.move_bids)
+        self.project_view.on_restore_bid = self._restore_project_bids
+        self.project_view.set_on_move_bids(self._move_project_bids)
         self.project_view.on_copy_bids = self._copy_project_bids
         self.project_view.on_paste_bids = self._paste_project_bids
         self.project_view.on_can_paste_bids = self._can_paste_project_bids
@@ -560,6 +563,18 @@ class MainWindow(QtWidgets.QMainWindow):
             unload_file_fn=self.app_controller.unload_file,
             ui_state_manager=self.ui_state_manager,
             deferred_persistence_manager=self._deferred_persistence_manager,
+            ui_access_manager=self.ui_access_manager,
+            database_catalog=self._infrastructure_provider.get_database_catalog(),
+            credential_store=self._infrastructure_provider.get_credential_store(),
+            database_descriptor_registry=(
+                self._infrastructure_provider.get_database_descriptor_registry()
+            ),
+            sql_database_creator=(
+                self._infrastructure_provider.get_sql_database_creator()
+            ),
+            database_capability_service=self.app_controller.get_service(
+                "database_capability_service"
+            ),
         )
         handlers.export = ExportHandler(
             window=self,
@@ -570,7 +585,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pdf_exporter=self._pdf_exporter,
             ost_exporter=self._ost_exporter,
             osp_exporter=self._osp_exporter,
-            mdb_file_parser=self._mdb_file_parser,
+            database_reader=self._database_reader,
             deferred_persistence_manager=self._deferred_persistence_manager,
         )
         handlers.import_ = ImportHandler(
@@ -579,6 +594,7 @@ class MainWindow(QtWidgets.QMainWindow):
             import_service=self._import_service,
             ui_state_manager=self.ui_state_manager,
             deferred_persistence_manager=self._deferred_persistence_manager,
+            ui_access_manager=self.ui_access_manager,
         )
         handlers.delete = ProjectWriteHandler(
             window=self,
@@ -672,6 +688,18 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> ProjectFileImportBatchResult:
         if not args.files:
             return ProjectFileImportBatchResult(rejected=list(args.rejected))
+        if not self.ui_access_manager.is_allowed(Feature.IMPORT):
+            return ProjectFileImportBatchResult(
+                results=[
+                    ProjectFileImportResult(
+                        source_path=item.path,
+                        success=False,
+                        message="Import is not available for the selected database.",
+                    )
+                    for item in args.files
+                ],
+                rejected=list(args.rejected),
+            )
         current_target = self._current_project_import_target()
         target = self._import_project_files_from_args.resolve_target(current_target)
         if target is None:
@@ -927,13 +955,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._handle_inline_text_shortcut("delete"):
             return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
-            if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
+            if not self.ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS):
                 return
             self.plan_view.delete_selected()
         elif self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY:
-            self._condition_summary_tab.delete_current_row()
+            if self.ui_access_manager.is_allowed(Feature.DELETE_CONDITION):
+                self._condition_summary_tab.delete_current_row()
         else:
-            if not self.ui_access_manager.is_allowed(Feature.DELETE_BID):
+            feature = (
+                Feature.DELETE_BID
+                if self.ui_state_manager.get_selected_bid_refs()
+                else Feature.EDIT_PROJECT_TREE_STRUCTURE
+            )
+            if not self.ui_access_manager.is_allowed(feature):
                 return
             selection_after_delete = (
                 self.project_view.get_delete_replacement_selection_state()
@@ -942,7 +976,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _duplicate_selected(self) -> None:
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
-            if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
+            if not self.ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS):
                 return
             self.plan_view.duplicate_selected()
         elif self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY:
@@ -963,7 +997,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.tab_widget.currentIndex() == TAB_INDEX_SUMMARY:
             self._condition_summary_tab.copy_current_row()
             return
-        if not self.ui_access_manager.is_allowed(Feature.DUPLICATE_BID):
+        if not self.ui_access_manager.is_allowed(Feature.COPY_BID):
             return
         bid_refs = self.ui_state_manager.get_selected_bid_refs()
         if not self._same_file_bid_refs(bid_refs):
@@ -990,7 +1024,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._handle_inline_text_shortcut("paste"):
             return
         if self.tab_widget.currentIndex() == TAB_INDEX_TAKEOFF:
-            if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
+            if not self.ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS):
                 return
             if not self._plan_view_handler.can_paste_to_current_bid():
                 return
@@ -1005,6 +1039,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._paste_project_bids(file_path, target_project_uid)
 
     def _copy_project_bids(self, bid_refs) -> None:
+        if not self.ui_access_manager.is_allowed(Feature.COPY_BID):
+            return
         if not self._same_file_bid_refs(bid_refs):
             return
         self._bid_clipboard.copy(bid_refs)
@@ -1105,6 +1141,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.ui_access_manager.is_allowed(Feature.EDIT_BID_JOB_STATUS):
             return
         self.handlers.delete.update_bid_job_status(bid_ref, job_status_uid)
+
+    def _restore_project_bids(self, bid_refs) -> None:
+        if self.ui_access_manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE):
+            self.handlers.delete.restore_bids(bid_refs)
+
+    def _move_project_bids(self, bid_refs, target_project_uid) -> None:
+        if self.ui_access_manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE):
+            self.handlers.delete.move_bids(bid_refs, target_project_uid)
 
     def _on_tab_changed(self, index: int) -> None:
         self._apply_workspace_toolbar_visibility()

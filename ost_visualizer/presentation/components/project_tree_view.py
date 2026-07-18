@@ -144,8 +144,8 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
         return out
 
     def startDrag(self, supported_actions) -> None:
-        if self._ui_access_manager and not self._ui_access_manager.is_allowed(
-            Feature.DELETE_BID
+        if not self._ui_access_manager or not self._ui_access_manager.is_allowed(
+            Feature.EDIT_PROJECT_TREE_STRUCTURE
         ):
             return
         items = self._eligible_drag_items()
@@ -165,13 +165,13 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
 
     def dragMoveEvent(self, event) -> None:
         target = self.itemAt(event.position().toPoint())
-        if self._drag_items and self._is_valid_target(target):
+        if self._move_bids_allowed() and self._is_valid_target(target):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event) -> None:
-        if not self._drag_items:
+        if not self._move_bids_allowed():
             event.ignore()
             return
         target = self.itemAt(event.position().toPoint())
@@ -192,6 +192,13 @@ class _BidTreeWidget(QtWidgets.QTreeWidget):
             for item in self._drag_items
         ]
         self.on_move_bids(refs, target_project_uid)
+
+    def _move_bids_allowed(self) -> bool:
+        return bool(
+            self._drag_items
+            and self._ui_access_manager
+            and self._ui_access_manager.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+        )
 
     def _is_valid_target(self, target: Optional[QtWidgets.QTreeWidgetItem]) -> bool:
         if target is None or not self._drag_items:
@@ -1219,9 +1226,12 @@ class ProjectView(QtWidgets.QWidget):
                 else f"Restore {len(context.selected_deleted_refs)} bids"
             )
             restore_action = menu.addAction(label)
+            restore_action.setEnabled(
+                self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+            )
             restore_action.triggered.connect(
-                lambda _checked=False, refs=context.selected_deleted_refs: (
-                    self.on_restore_bid(refs) if self.on_restore_bid else None
+                lambda _checked=False, refs=context.selected_deleted_refs: self._restore_bids(
+                    refs
                 )
             )
 
@@ -1312,8 +1322,14 @@ class ProjectView(QtWidgets.QWidget):
         return self._project_tree_write_allowed(Feature.EDIT_BID_JOB_STATUS)
 
     def _can_delete_context(self, context: ProjectTreeContext) -> bool:
-        if context.kind in ("bid", "project"):
-            return self._command_enabled(ACTION_DELETE)
+        if context.kind == "bid":
+            return self._command_enabled(
+                ACTION_DELETE
+            ) and self._project_tree_write_allowed(Feature.DELETE_BID)
+        if context.kind == "project":
+            return self._command_enabled(
+                ACTION_DELETE
+            ) and self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
         return False
 
     def _can_rename_context(self, context: ProjectTreeContext) -> bool:
@@ -1342,6 +1358,14 @@ class ProjectView(QtWidgets.QWidget):
             and self.on_empty_deleted_bids
         ):
             self.on_empty_deleted_bids(refs)
+
+    def _restore_bids(self, refs: List[BidRef]) -> None:
+        if (
+            refs
+            and self._project_tree_write_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
+            and self.on_restore_bid
+        ):
+            self.on_restore_bid(refs)
 
     def _project_tree_write_allowed(self, feature: Feature) -> bool:
         access_manager = self.top_tree._ui_access_manager
@@ -1417,7 +1441,7 @@ class ProjectView(QtWidgets.QWidget):
                 return []
             refs.append(BidRef(file_path=file_path, bid_uid=uid))
         access_manager = self.top_tree._ui_access_manager
-        if access_manager and not access_manager.is_allowed(Feature.DUPLICATE_BID):
+        if not access_manager or not access_manager.is_allowed(Feature.COPY_BID):
             return []
         return refs
 
@@ -1430,7 +1454,7 @@ class ProjectView(QtWidgets.QWidget):
         if not refs:
             return []
         access_manager = self.top_tree._ui_access_manager
-        if access_manager and not access_manager.is_allowed(Feature.DUPLICATE_BID):
+        if not access_manager or not access_manager.is_allowed(Feature.COPY_BID):
             return []
         return refs
 

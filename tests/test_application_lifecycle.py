@@ -1,5 +1,6 @@
 import logging
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from ost_visualizer.application.app_controller import AppController
 from ost_visualizer.application.builders.orchestrator_builder import AppOrchestrators
@@ -60,11 +61,6 @@ class FakeCleanupObject:
         self.cleanup_calls += 1
 
 
-class FakeParserProvider:
-    def get_parsers(self):
-        return {}
-
-
 class FakeInfrastructureProvider:
     def get_icon_provider(self):
         return None
@@ -110,6 +106,16 @@ class FakeInfrastructureProvider:
 
 
 class ApplicationLifecycleTests(unittest.TestCase):
+    def test_main_window_handler_factory_uses_owned_app_controller(self):
+        source = Path("ost_visualizer/presentation/main_window.py").read_text(
+            encoding="utf-8"
+        )
+        handler_factory = source.split("    def _create_handlers", maxsplit=1)[1].split(
+            "\n    def ", maxsplit=1
+        )[0]
+        self.assertNotIn("=app_controller.get_service", handler_factory)
+        self.assertIn("=self.app_controller.get_service", handler_factory)
+
     def test_annotation_view_event_handler_shutdown_releases_cached_use_case_graph(
         self,
     ):
@@ -193,7 +199,6 @@ class ApplicationLifecycleTests(unittest.TestCase):
             container=container,
             logger=logging.getLogger("test"),
             infrastructure_provider=FakeInfrastructureProvider(),
-            parser_provider=FakeParserProvider(),
             scene_notifier=object(),
         ).build(
             config_model=SimpleNamespace(),
