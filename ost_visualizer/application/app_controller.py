@@ -146,11 +146,14 @@ class AppController:
             if db_path is None:
                 return None
             db_str = str(db_path)
+            entry = FileEntry(file_path=db_str, is_checked=True)
             if not self._file_state_model.contains_path(db_str):
                 entries = list(self._file_state_model.file_entries)
-                entries.append(FileEntry(file_path=db_str, is_checked=True))
+                entries.append(entry)
                 self._file_state_model.update_entries(entries)
-            return str(db_path)
+            if self._database_descriptor_registry is not None:
+                self._database_descriptor_registry.register(entry.descriptor)
+            return db_str
         except Exception as exc:
             self.logger.exception("Error creating database: %s", exc)
             return None

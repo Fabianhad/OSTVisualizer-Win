@@ -1630,7 +1630,11 @@ class UIEventCoordinator:
     def _on_database_capabilities_changed(self, file_path: str = "") -> None:
         if not file_path or file_path == self.ui_state_manager.selected_file_path:
             self.ui_access_manager.refresh()
+            selected_file_path = self.ui_state_manager.selected_file_path
+            if selected_file_path and not self.ui_access_manager.is_database_editable():
+                self._deferred_persistence.cancel_for_file(selected_file_path)
             self._update_export_menu_state()
+            self._refresh_mesh_window_access()
 
     def _is_summary_tab_active(self) -> bool:
         return bool(

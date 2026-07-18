@@ -109,6 +109,9 @@ class _PlanView:
     def set_editing_enabled(self, enabled: bool):
         self.editing_enabled = bool(enabled)
 
+    def set_text_annotation_inline_edit_enabled(self, _enabled: bool):
+        pass
+
     def backout_parent_candidate_uid(self):
         return None
 

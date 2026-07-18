@@ -1722,7 +1722,7 @@ class TakeoffPlanView(
     def set_text_annotation_inline_edit_enabled(self, enabled: bool) -> None:
         self._text_annotation_inline_edit_enabled = bool(enabled)
         if not enabled:
-            self._finish_active_inline_text_edit(commit=True)
+            self._finish_active_inline_text_edit(commit=False)
 
     def set_text_annotation_inline_edit_allowed_fn(self, allowed_fn) -> None:
         self._text_annotation_inline_edit_allowed_fn = allowed_fn

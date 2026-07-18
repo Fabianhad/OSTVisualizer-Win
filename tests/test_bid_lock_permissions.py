@@ -204,6 +204,7 @@ class _FakePlanView:
     def __init__(self):
         self.deleted = 0
         self.selected_all = 0
+        self.inline_edit_enabled = []
 
     def selected_takeoff_condition_uid(self):
         return None
@@ -213,6 +214,9 @@ class _FakePlanView:
 
     def set_editing_enabled(self, _enabled):
         pass
+
+    def set_text_annotation_inline_edit_enabled(self, enabled):
+        self.inline_edit_enabled.append(bool(enabled))
 
     def can_move_overlay_image(self):
         return False
@@ -587,12 +591,70 @@ class BidLockPermissionTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.ui_state_manager = SimpleNamespace(selected_file_path="sql-db-1")
         coordinator.ui_access_manager = SimpleNamespace(
-            refresh=lambda: calls.append("refresh")
+            refresh=lambda: calls.append("refresh"),
+            is_allowed=lambda feature: feature == Feature.SELECT_PLAN_ITEMS,
+            is_database_editable=lambda: False,
         )
-        coordinator._update_export_menu_state = lambda: calls.append("project")
+        coordinator._deferred_persistence = SimpleNamespace(
+            cancel_for_file=lambda file_path: calls.append(("cancel", file_path))
+        )
+        coordinator.main_window = SimpleNamespace(
+            menu_controller=SimpleNamespace(
+                update_menu_states=lambda: calls.append("menu")
+            )
+        )
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: calls.append("toolbar"))
+        coordinator._mesh_window = SimpleNamespace(
+            set_pick_enabled=lambda enabled: calls.append(("mesh-pick", enabled)),
+            set_editing_enabled=lambda enabled: calls.append(("mesh-edit", enabled)),
+        )
         coordinator._on_database_capabilities_changed("other-db")
         self.assertEqual(calls, [])
         coordinator._on_database_capabilities_changed("sql-db-1")
+        self.assertEqual(
+            calls,
+            [
+                "refresh",
+                ("cancel", "sql-db-1"),
+                "menu",
+                "toolbar",
+                ("mesh-pick", True),
+                ("mesh-edit", False),
+            ],
+        )
+
+    def test_toolbar_revokes_active_inline_text_editing_with_database_access(self):
+        project_data = _ProjectData()
+        ui_state = _ToolbarUiState(project_data.bid_ref)
+        capability = _DatabaseCapability(editable=True)
+        manager = self._access_manager(project_data, ui_state, capability)
+        plan_view = _FakePlanView()
+        coordinator = ToolbarStateCoordinator(ui_state, manager, project_data)
+        coordinator.set_plan_view(plan_view)
+        coordinator.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
+
+        coordinator.refresh()
+        capability.editable = False
+        coordinator.refresh()
+
+        self.assertEqual(plan_view.inline_edit_enabled, [True, False])
+
+    def test_writable_capability_refresh_does_not_discard_deferred_state(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(selected_file_path="sql-db-1")
+        coordinator.ui_access_manager = SimpleNamespace(
+            refresh=lambda: calls.append("refresh"),
+            is_database_editable=lambda: True,
+        )
+        coordinator._deferred_persistence = SimpleNamespace(
+            cancel_for_file=lambda file_path: calls.append(("cancel", file_path))
+        )
+        coordinator._mesh_window = None
+        coordinator._update_export_menu_state = lambda: calls.append("project")
+
+        coordinator._on_database_capabilities_changed("sql-db-1")
+
         self.assertEqual(calls, ["refresh", "project"])
 
     def test_bid_lock_applies_and_unlocks_immediately_in_access_manager(self):

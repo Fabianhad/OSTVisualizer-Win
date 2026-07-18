@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
+from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
     SqlServerDatabaseLocation,
@@ -677,6 +678,84 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         ):
             handler.open_files()
         self.assertEqual(updates[-1], [entry])
+
+    def test_retained_sql_descriptor_is_reprobed_after_reconnect(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        entry = FileEntry.for_descriptor(descriptor)
+
+        class _State:
+            file_entries = [entry]
+
+            def reload(self):
+                pass
+
+            def update_entries(self, entries):
+                self.file_entries = list(entries)
+
+        class _Dialog:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def get_file_entries(self):
+                return [entry]
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        connected = []
+        published = []
+        capability_state = {entry.database_id: False}
+
+        def mark_connected(database_id):
+            connected.append(database_id)
+            capability_state[database_id] = True
+
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=SimpleNamespace(
+                publish=lambda event, **kwargs: published.append((event, kwargs))
+            ),
+            file_state_model=_State(),
+            cleanup_deleted_files_use_case=SimpleNamespace(
+                execute_and_save=lambda: None
+            ),
+            file_loading_service=None,
+            working_directory_service=None,
+            unload_file_fn=lambda _locator: True,
+            deferred_persistence_manager=SimpleNamespace(),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            database_capability_service=SimpleNamespace(
+                is_editable=lambda database_id: capability_state[database_id],
+                mark_connected=mark_connected,
+            ),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler."
+            "OpenFilesDialog",
+            _Dialog,
+        ):
+            handler.open_files()
+            handler.open_files()
+
+        self.assertEqual(connected, [entry.database_id, entry.database_id])
+        self.assertEqual(
+            published,
+            [
+                (
+                    AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                    {"file_path": entry.database_id},
+                )
+            ],
+        )
 
     def test_connection_dialog_cleanup_releases_result_secret(self):
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])

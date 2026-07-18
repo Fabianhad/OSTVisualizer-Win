@@ -5535,6 +5535,19 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertFalse(view.is_text_annotation_inline_edit_active())
         view.cleanup()
 
+    def test_disabling_inline_text_edit_cancels_uncommitted_changes(self):
+        view = self._make_plan_view()
+        annotation, item = self._add_text_annotation(view, text="Before")
+        self.assertTrue(view._begin_text_annotation_edit("a1"))
+        item.setPlainText("After")
+
+        view.set_text_annotation_inline_edit_enabled(False)
+
+        self.assertFalse(view.is_text_annotation_inline_edit_active())
+        self.assertEqual(item.toPlainText(), "Before")
+        self.assertEqual(annotation.properties["Text"], "Before")
+        view.cleanup()
+
     def test_inline_text_annotation_edit_respects_access_callback(self):
         view = self._make_plan_view()
         annotation = BidAnnotation(

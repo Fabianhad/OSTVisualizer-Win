@@ -278,6 +278,18 @@ class UIAccessManager:
     def is_allowed(self, feature: Feature) -> bool:
         return not self._feature_blocked(feature, require_current_selection=True)
 
+    def is_database_editable(self) -> bool:
+        locator = (
+            self._ui_state_manager.selected_file_path
+            if self._ui_state_manager is not None
+            else None
+        )
+        return bool(
+            locator
+            and self._database_capability_service
+            and self._database_capability_service.is_editable(locator)
+        )
+
     def is_project_bid_clipboard_allowed(self, feature: Feature) -> bool:
         if feature not in (Feature.DELETE_BID, Feature.DUPLICATE_BID):
             return self.is_allowed(feature)
@@ -302,14 +314,7 @@ class UIAccessManager:
             feature in _DATABASE_EDIT_FEATURES
             and feature is not Feature.CREATE_DATABASE
         ):
-            locator = (
-                self._ui_state_manager.selected_file_path
-                if self._ui_state_manager is not None
-                else None
-            )
-            if not locator or not self._database_capability_service.is_editable(
-                locator
-            ):
+            if not self.is_database_editable():
                 return True
         if (
             feature == Feature.PLACE_ANNOTATIONS

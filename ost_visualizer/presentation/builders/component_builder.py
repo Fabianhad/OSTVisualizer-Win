@@ -907,6 +907,10 @@ class ComponentBuilder:
         condition_summary_tab = ConditionSummaryTab(
             summary_tab,
             uom_label_fn=project_read_service.get_uom_label,
+            copy_allowed_fn=lambda: bool(
+                ui_access_manager
+                and ui_access_manager.is_allowed(Feature.COPY_CONDITION)
+            ),
             delete_allowed_fn=lambda: bool(
                 ui_access_manager
                 and ui_access_manager.is_allowed(Feature.DELETE_CONDITION)

@@ -404,6 +404,7 @@ class ConditionSummaryTabTests(unittest.TestCase):
         self.tab = ConditionSummaryTab(
             None,
             uom_label_fn=lambda code: "EA" if code == UOM_EACH else "",
+            copy_allowed_fn=lambda: True,
             delete_allowed_fn=lambda: True,
         )
 
@@ -856,6 +857,42 @@ class ConditionSummaryTabTests(unittest.TestCase):
         self.assertEqual(
             self._action_by_text(detail_menu, "Delete").isEnabled(),
             self.tab.can_delete_current_row(),
+        )
+
+    def test_summary_copy_respects_shared_copy_condition_permission(self):
+        tab = ConditionSummaryTab(
+            None,
+            uom_label_fn=lambda code: "EA" if code == UOM_EACH else "",
+            copy_allowed_fn=lambda: False,
+            delete_allowed_fn=lambda: True,
+        )
+        self.addCleanup(tab.deleteLater)
+        root = self.service.build_summary(
+            conditions=self.conditions,
+            folders={},
+            takeoffs=self.takeoffs,
+            pages=self.pages,
+            areas=self.areas,
+            grouping=ConditionSummaryGrouping(),
+        )
+        tab.load_summary(root, ConditionSummaryGrouping())
+        detail_item = next(
+            item
+            for root_item in _top_level_items(tab.tree)
+            for item in _tree_items(root_item)
+            if (
+                item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+                and item.data(0, QtCore.Qt.ItemDataRole.UserRole).kind
+                == SUMMARY_NODE_AREA_DETAIL
+            )
+        )
+        tab.tree.setCurrentItem(detail_item)
+
+        self.assertFalse(tab.can_copy_current_row())
+        self.assertFalse(
+            self._action_by_text(
+                tab.build_context_menu(detail_item), "Copy"
+            ).isEnabled()
         )
 
     def test_copy_uses_only_visible_non_empty_cells(self):

@@ -2613,7 +2613,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
 
     def test_failed_detached_scale_save_refreshes_window_state(self):
         calls = []
-        view = SimpleNamespace(file_path="file.mdb")
+        bid_ref = BidRef("file.mdb", "bid-1")
+        view = SimpleNamespace(file_path="file.mdb", bid_ref=bid_ref)
         write_service = SimpleNamespace(
             save_page_scale=lambda db_path, page_uid, sf1, sf2: calls.append(
                 ("save", db_path, page_uid, sf1, sf2)
@@ -2626,7 +2627,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             is_allowed=lambda feature: feature is Feature.EDIT_PAGE_SETTINGS
         )
         manager.repository = SimpleNamespace(get_active_view=lambda: view)
-        manager.project_data = SimpleNamespace(get_current_bid_file_path=lambda: None)
+        manager.project_data = SimpleNamespace(get_current_bid_ref=lambda: bid_ref)
         manager._refresh_window = lambda: calls.append("refresh")
         manager.logger = SimpleNamespace(exception=lambda *args, **_log_options: None)
         manager._on_window_scale_changed("page-1", 0.25, 12.0)
@@ -2637,6 +2638,11 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
 
     def test_detached_view_is_read_only_without_complete_write_access(self):
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        bid_ref = BidRef("file.mdb", "bid-1")
+        manager.repository = SimpleNamespace(
+            get_active_view=lambda: SimpleNamespace(bid_ref=bid_ref)
+        )
+        manager.project_data = SimpleNamespace(get_current_bid_ref=lambda: bid_ref)
         manager._ui_access_manager = None
         self.assertTrue(manager._is_read_only())
         allowed = {Feature.EDIT_PLAN_ITEMS, Feature.EDIT_PAGE_SETTINGS}
@@ -2649,6 +2655,27 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         allowed.add(Feature.EDIT_PLAN_ITEMS)
         allowed.remove(Feature.EDIT_PAGE_SETTINGS)
         self.assertTrue(manager._is_read_only())
+
+    def test_detached_view_cannot_write_after_active_database_switch(self):
+        calls = []
+        old_ref = BidRef("old.mdb", "old-bid")
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.repository = SimpleNamespace(
+            get_active_view=lambda: SimpleNamespace(
+                file_path=old_ref.file_path, bid_ref=old_ref
+            )
+        )
+        manager.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("new.mdb", "new-bid"),
+        )
+        manager._ui_access_manager = SimpleNamespace(is_allowed=lambda _feature: True)
+        manager._write_service = SimpleNamespace(
+            save_page_scale=lambda *_args: calls.append("write") or True
+        )
+
+        self.assertTrue(manager._is_read_only())
+        manager._on_window_scale_changed("page-1", 1.0, 1.0)
+        self.assertEqual(calls, [])
 
     def test_open_existing_detached_view_rebuilds_navigation_before_load(self):
         calls = []

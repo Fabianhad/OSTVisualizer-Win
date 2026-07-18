@@ -426,6 +426,7 @@ class MenuController:
         if select_current_area_action:
             select_current_area_action.setEnabled(
                 takeoff_active
+                and self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS)
                 and bool(
                     plan_view
                     and plan_view.current_page_uid
@@ -722,7 +723,10 @@ class MenuController:
         return self.window.is_summary_tab_active()
 
     def _select_objects_in_current_area(self) -> None:
-        if not self.window.is_takeoff_tab_active():
+        if (
+            not self.window.is_takeoff_tab_active()
+            or not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS)
+        ):
             return
         plan_view = self.window.get_takeoff_plan_view()
         page_settings_bar = self.window.get_page_settings_bar()

@@ -88,10 +88,12 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         self,
         parent: QtWidgets.QWidget | None = None,
         uom_label_fn=None,
+        copy_allowed_fn=None,
         delete_allowed_fn=None,
     ):
         super().__init__(parent)
         self._uom_label_fn = uom_label_fn or (lambda _: "")
+        self._copy_allowed_fn = copy_allowed_fn
         self._delete_allowed_fn = delete_allowed_fn
         self._root_node: ConditionSummaryNode | None = None
         self._condition_items: dict[str, list[QtWidgets.QTreeWidgetItem]] = {}
@@ -449,7 +451,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         copy_action = menu.addAction("Copy")
         ShortcutManager.apply_to_action(copy_action, ACTION_COPY)
         IconManager.apply_to_action(copy_action, ACTION_COPY)
-        copy_action.setEnabled(self._can_copy_item(item))
+        copy_action.setEnabled(self._copy_allowed() and self._can_copy_item(item))
         copy_action.triggered.connect(lambda _checked=False: self.copy_current_row())
         delete_action = menu.addAction("Delete")
         ShortcutManager.apply_to_action(delete_action, ACTION_DELETE)
@@ -506,7 +508,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
         action.toggled.connect(callback)
 
     def can_copy_current_row(self) -> bool:
-        return self._can_copy_item(self.tree.currentItem())
+        return self._copy_allowed() and self._can_copy_item(self.tree.currentItem())
 
     def can_delete_current_row(self) -> bool:
         return self._delete_allowed() and self._can_delete_node(
@@ -515,7 +517,7 @@ class ConditionSummaryTab(QtWidgets.QWidget):
 
     def copy_current_row(self) -> None:
         item = self.tree.currentItem()
-        if not self._can_copy_item(item):
+        if not self._copy_allowed() or not self._can_copy_item(item):
             return
         text = self._copyable_text(item)
         QtWidgets.QApplication.clipboard().setText(text)
@@ -526,6 +528,9 @@ class ConditionSummaryTab(QtWidgets.QWidget):
     def _can_copy_item(self, item: QtWidgets.QTreeWidgetItem | None) -> bool:
         node = self._node_for_item(item)
         return bool(node and node.copyable and self._copyable_text(item))
+
+    def _copy_allowed(self) -> bool:
+        return bool(self._copy_allowed_fn and self._copy_allowed_fn())
 
     def _copyable_text(self, item: QtWidgets.QTreeWidgetItem | None) -> str:
         if item is None:

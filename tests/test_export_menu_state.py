@@ -156,6 +156,38 @@ class ExportMenuStateTests(unittest.TestCase):
         self.assertTrue(controller._actions["export_as_osp"].isEnabled())
         self.assertTrue(controller._menus["export"].isEnabled())
 
+    def test_select_current_area_menu_and_handler_require_selection_access(self):
+        bid_ref = BidRef("db.mdb", "bid-1")
+        controller = _controller(_UiState(bid_ref), _ProjectData(bid_ref))
+        selected = []
+        plan_view = SimpleNamespace(
+            current_page_uid="page-1",
+            has_takeoff_objects=True,
+            has_selected_takeoffs=False,
+            select_takeoffs_in_area=lambda area_uid: selected.append(area_uid),
+        )
+        controller._actions["select_objects_in_current_area"] = _Action()
+        controller.window = SimpleNamespace(
+            is_takeoff_tab_active=lambda: True,
+            is_summary_tab_active=lambda: False,
+            get_takeoff_plan_view=lambda: plan_view,
+            get_page_settings_bar=lambda: SimpleNamespace(
+                get_selected_area_uid=lambda: "area-1"
+            ),
+        )
+        controller.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(refresh_toolbar=lambda: None)
+        )
+        controller.ui_access_manager = _Access(allowed=False)
+
+        controller.update_menu_states()
+        controller._select_objects_in_current_area()
+
+        self.assertFalse(
+            controller._actions["select_objects_in_current_area"].isEnabled()
+        )
+        self.assertEqual(selected, [])
+
 
 if __name__ == "__main__":
     unittest.main()
