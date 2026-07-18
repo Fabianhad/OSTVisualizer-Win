@@ -39,8 +39,11 @@ class SqlConnectionLease:
         self._connection = connection
         self._command_timeout = command_timeout
         self._cursors: list[CursorLease] = []
+        self._closed = False
 
     def cursor(self) -> CursorLease:
+        if self._closed:
+            raise RuntimeError("SQL connection lease is closed")
         raw_cursor = self._connection.cursor()
         try:
             raw_cursor.timeout = self._command_timeout
@@ -64,6 +67,9 @@ class SqlConnectionLease:
         return self._connection.getinfo(info_type)
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         for cursor in reversed(tuple(self._cursors)):
             try:
                 cursor.close()

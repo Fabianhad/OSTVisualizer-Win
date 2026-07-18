@@ -445,6 +445,28 @@ class DatabaseDescriptorTests(unittest.TestCase):
         self.assertEqual(partial_ostv.compatibility, SqlSchemaCompatibility.INVALID)
         self.assertIn("ostv.partial_schema", partial_ostv.problems)
 
+    def test_schema_validator_rejects_core_table_name_shadowing(self):
+        schema = get_reference_schema_model()
+        inventory = SqlSchemaInventory(
+            database_guid="",
+            schema_version=0,
+            schema_checksum="",
+            tables=frozenset(
+                [("dbo", table.name) for table in schema.tables] + [("custom", "Bids")]
+            ),
+            columns=(),
+            foreign_keys=(),
+            indexes=(),
+            views=(),
+            triggers=(),
+            procedures=(),
+            functions=(),
+        )
+
+        report = SqlSchemaValidator(schema).validate_adoption_candidate(inventory)
+
+        self.assertIn("custom.Bids.shadows_dbo", report.problems)
+
     def test_latest_schema_is_one_initial_version_with_stable_checksum(self):
         self.assertEqual(LATEST_SQL_SCHEMA.version, 1)
         self.assertEqual(len(LATEST_SQL_SCHEMA.checksum), 64)

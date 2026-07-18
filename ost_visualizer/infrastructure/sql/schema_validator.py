@@ -114,6 +114,11 @@ class SqlSchemaValidator:
         expected_tables = self._shared_schema.table_names
         problems = [f"dbo.{table}" for table in sorted(expected_tables - actual_tables)]
         problems.extend(
+            f"{schema}.{table}.shadows_dbo"
+            for schema, table in sorted(inventory.tables)
+            if schema != "dbo" and table in expected_tables
+        )
+        problems.extend(
             f"dbo.{table}.unexpected"
             for table in sorted(actual_tables - expected_tables)
         )

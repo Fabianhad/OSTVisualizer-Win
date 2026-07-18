@@ -435,6 +435,17 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(raw_connection.raw_cursor.close_count, 1)
         self.assertEqual(raw_connection.close_count, 1)
 
+    def test_sql_connection_lease_close_is_idempotent(self):
+        raw_connection = _RawConnection()
+        lease = SqlConnectionLease(raw_connection, 30)
+
+        lease.close()
+        lease.close()
+
+        self.assertEqual(raw_connection.close_count, 1)
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            lease.cursor()
+
     def test_repeated_sql_connection_cycles_close_every_resource_once(self):
         connections = []
 
