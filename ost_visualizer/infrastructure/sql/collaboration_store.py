@@ -5,6 +5,7 @@ from typing import Optional
 import pyodbc
 from ...application.dtos.collaboration_dtos import (
     ChangeOperation,
+    ChangeSourceKind,
     COLLABORATION_LOCK_SECONDS,
     COLLABORATION_STALE_SECONDS,
     ConcurrencyToken,
@@ -408,11 +409,14 @@ class SqlCollaborationStore(ICollaborationStore):
                     raise _session_error("SQL change-feed metadata is missing.")
                 cursor.execute(
                     f"SELECT TOP ({batch_limit + 1}) [Sequence], "
-                    "CONVERT(nvarchar(36), [TransactionId]), "
+                    "CASE WHEN [SourceKind]=N'external' AND "
+                    "[ExternalTransactionKey] IS NOT NULL THEN "
+                    "[ExternalTransactionKey] ELSE "
+                    "CONVERT(nvarchar(36), [TransactionId]) END, "
                     "CONVERT(nvarchar(36), [SourceSessionId]), "
                     "[BidUID], "
                     "[ResourceType], [ResourceId], [Operation], [ResultVersion], "
-                    "[ChangedFields], [Payload] "
+                    "[ChangedFields], [Payload], [SourceKind] "
                     "FROM [ostv].[ChangeLog] WHERE [Sequence] > ? "
                     "ORDER BY [Sequence]",
                     after_sequence,
@@ -512,6 +516,7 @@ def _change_from_row(row) -> DatabaseChange:
         ),
         changed_fields=changed_fields,
         payload=str(row[9] or ""),
+        source_kind=ChangeSourceKind(str(row[10])),
     )
 
 

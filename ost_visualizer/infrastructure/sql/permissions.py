@@ -1,5 +1,8 @@
 from __future__ import annotations
 from typing import Optional
+from ...application.dtos.collaboration_resource_catalog import (
+    COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
+)
 from ...application.interfaces.i_credential_store import ICredentialStore
 from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
@@ -57,10 +60,14 @@ class SqlDatabasePermissionProbe:
                         return False
                     cursor.execute(
                         "SELECT m.[SchemaVersion], sm.[Checksum], "
-                        "DATABASEPROPERTYEX(DB_NAME(), N'Updateability') "
+                        "DATABASEPROPERTYEX(DB_NAME(), N'Updateability'), "
+                        "m.[WriterMode], a.[AdapterState], "
+                        "a.[ResourceCatalogChecksum] "
                         "FROM [ostv].[DatabaseMetadata] m "
                         "JOIN [ostv].[SchemaMigrations] sm "
-                        "ON sm.[Version]=m.[SchemaVersion]"
+                        "ON sm.[Version]=m.[SchemaVersion] "
+                        "JOIN [ostv].[ExternalAdapterState] a "
+                        "ON a.[SingletonId]=1"
                     )
                     row = cursor.fetchone()
                     collaboration_tables = (
@@ -96,6 +103,14 @@ class SqlDatabasePermissionProbe:
             row is not None
             and schema_record_is_current(row[0], row[1])
             and str(row[2]).casefold() == "read_write"
+            and (
+                str(row[3]) == "ost_visualizer_only"
+                or (
+                    str(row[3]) == "mixed_application"
+                    and str(row[4]) == "validated"
+                    and str(row[5]) == COLLABORATION_RESOURCE_CATALOG_CHECKSUM
+                )
+            )
             and collaboration_row is not None
             and int(collaboration_row[0]) == len(collaboration_tables)
             and int(collaboration_row[1]) == 0

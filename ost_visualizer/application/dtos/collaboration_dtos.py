@@ -1,40 +1,14 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
-from types import MappingProxyType
 from typing import Generic, Optional, TypeVar
+from .collaboration_resource_catalog import resource_definition
 from ...domain.entities.area import BidArea
 from ...domain.entities.condition import Condition
 from ...domain.entities.condition_folder import BidConditionFolder
 from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.hierarchy_data import HierarchyFileEntry
 
-CONDITION_RESOURCE_TYPES = frozenset(
-    {"condition", "condition_folder", "conditions_collection"}
-)
-AREA_RESOURCE_TYPES = frozenset({"area", "areas_collection"})
-BID_CONTENT_FAMILY_BY_RESOURCE_TYPE = MappingProxyType(
-    {
-        "takeoff": "takeoffs",
-        "takeoffs_collection": "takeoffs",
-        "annotation": "annotations",
-        "annotations_collection": "annotations",
-        "page": "pages",
-        "pages_collection": "pages",
-        "layer": "layers",
-        "layers_collection": "layers",
-    }
-)
-BID_CONTENT_RESOURCE_TYPES = frozenset(BID_CONTENT_FAMILY_BY_RESOURCE_TYPE)
-HIERARCHY_RESOURCE_TYPES = frozenset(
-    {"database", "project", "project_bids", "bid", "folder", "folders_collection"}
-)
-SUPPORTED_REMOTE_RESOURCE_TYPES = (
-    CONDITION_RESOURCE_TYPES
-    | AREA_RESOURCE_TYPES
-    | BID_CONTENT_RESOURCE_TYPES
-    | HIERARCHY_RESOURCE_TYPES
-)
 COLLABORATION_STALE_SECONDS = 45
 COLLABORATION_LOCK_SECONDS = 45
 
@@ -51,6 +25,11 @@ class ChangeOperation(str, Enum):
     MOVE = "move"
     REORDER = "reorder"
     BULK_REFRESH = "bulk_refresh"
+
+
+class ChangeSourceKind(str, Enum):
+    OST_VISUALIZER = "ost_visualizer"
+    EXTERNAL = "external"
 
 
 class SynchronizationState(str, Enum):
@@ -76,6 +55,7 @@ class ResourceRef:
             raise ValueError("Resource type must contain 1 to 64 characters")
         if not self.resource_id or len(self.resource_id) > 128:
             raise ValueError("Resource ID must contain 1 to 128 characters")
+        resource_definition(self.resource_type)
 
 
 @dataclass(frozen=True)
@@ -137,6 +117,7 @@ class DatabaseChange:
     resulting_version: Optional[ConcurrencyToken] = None
     changed_fields: tuple[str, ...] = ()
     payload: str = ""
+    source_kind: ChangeSourceKind = ChangeSourceKind.OST_VISUALIZER
 
 
 @dataclass(frozen=True)
@@ -192,7 +173,6 @@ class DatabaseMutationResult(Generic[T]):
         default_factory=dict
     )
     conflict: Optional[SynchronizationConflict] = None
-    error_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -202,3 +182,14 @@ class CollaborationStatus:
     message: str = ""
     locked_resources: frozenset[ResourceRef] = frozenset()
     conflicted_resources: frozenset[ResourceRef] = frozenset()
+
+
+@dataclass(frozen=True)
+class CollaborationPollingPolicy:
+    selected_database_seconds: float = 1.0
+    active_edit_seconds: float = 0.5
+    inactive_database_seconds: float = 5.0
+    heartbeat_seconds: float = 10.0
+    jitter_ratio: float = 0.1
+    maximum_batch_size: int = 500
+    reconnect_backoff_seconds: tuple[float, ...] = (1.0, 2.0, 5.0, 10.0, 30.0)

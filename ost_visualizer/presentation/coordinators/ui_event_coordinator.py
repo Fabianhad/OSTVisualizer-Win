@@ -5,6 +5,11 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QObject, Signal
 from ...application.dtos.mesh_geometry_dto import MeshGeometry
 from ...application.dtos.collaboration_dtos import ResourceRef
+from ...application.dtos.collaboration_resource_catalog import (
+    CollaborationResourceFamily,
+    CollaborationResourceType,
+)
+from ...application.dtos.conflict_resolution_dtos import ConflictResolutionAction
 from ...application.events.app_events import AppEvents
 from ...domain.entities.bid import Bid
 from ...domain.entities.file_state import normalize_path
@@ -22,6 +27,7 @@ from ..dialogs.layers_dialog import LayersDialog, LayersDialogMode
 from ..dialogs.payroll_class_dialog import PayrollClassListDialog
 from ..dialogs.rename_page_dialog import PageRenameTarget, RenamePageDialog
 from ..dialogs.set_scale_dialog import ScaleSettings, SetScaleDialog
+from ..dialogs.synchronization_conflict_dialog import SynchronizationConflictDialog
 from ..handlers.condition_action_handler import ConditionActionHandler
 from ..managers.app_config_presentation_manager import AppConfigPresentationManager
 from ..managers.ui_access_manager import Feature
@@ -1180,6 +1186,20 @@ class UIEventCoordinator:
     ) -> None:
         self._sql_collaboration.end_local_edit(database_id, resources)
 
+    def _exec_with_collaboration_lease(
+        self,
+        dialog: QtWidgets.QDialog,
+        database_id: str,
+        resources: tuple[ResourceRef, ...],
+    ) -> bool:
+        if not self.begin_collaboration_edit(database_id, resources):
+            return False
+        try:
+            exec_with_ost_blocking(dialog, self.event_bus)
+            return True
+        finally:
+            self.end_collaboration_edit(database_id, resources)
+
     def can_renumber_conditions(self) -> bool:
         return self._condition_handler.can_renumber_conditions()
 
@@ -1212,7 +1232,11 @@ class UIEventCoordinator:
         area_bid_uid = (
             int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
         )
-        area_resource = ResourceRef("areas_collection", bid_ref.bid_uid, area_bid_uid)
+        area_resource = ResourceRef(
+            CollaborationResourceType.AREAS_COLLECTION.value,
+            bid_ref.bid_uid,
+            area_bid_uid,
+        )
         if not self.begin_collaboration_edit(bid_ref.file_path, (area_resource,)):
             dialog.cleanup()
             dialog.deleteLater()
@@ -1278,8 +1302,16 @@ class UIEventCoordinator:
             ),
             menu_mode=True,
         )
+        resources = (
+            ResourceRef(
+                CollaborationResourceType.EMPLOYEES_COLLECTION.value, "database"
+            ),
+            ResourceRef(
+                CollaborationResourceType.PAY_CLASSES_COLLECTION.value, "database"
+            ),
+        )
         try:
-            exec_with_ost_blocking(dialog, self.event_bus)
+            self._exec_with_collaboration_lease(dialog, file_path, resources)
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -1310,7 +1342,16 @@ class UIEventCoordinator:
             menu_mode=True,
         )
         try:
-            exec_with_ost_blocking(dialog, self.event_bus)
+            self._exec_with_collaboration_lease(
+                dialog,
+                file_path,
+                (
+                    ResourceRef(
+                        CollaborationResourceType.JOB_STATUSES_COLLECTION.value,
+                        "database",
+                    ),
+                ),
+            )
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -1342,7 +1383,16 @@ class UIEventCoordinator:
             menu_mode=True,
         )
         try:
-            exec_with_ost_blocking(dialog, self.event_bus)
+            self._exec_with_collaboration_lease(
+                dialog,
+                file_path,
+                (
+                    ResourceRef(
+                        CollaborationResourceType.CONDITION_TYPES_COLLECTION.value,
+                        "database",
+                    ),
+                ),
+            )
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -1368,7 +1418,16 @@ class UIEventCoordinator:
             menu_mode=True,
         )
         try:
-            exec_with_ost_blocking(dialog, self.event_bus)
+            self._exec_with_collaboration_lease(
+                dialog,
+                file_path,
+                (
+                    ResourceRef(
+                        CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
+                        "database",
+                    ),
+                ),
+            )
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -1404,7 +1463,16 @@ class UIEventCoordinator:
             mode=LayersDialogMode.DEFAULT_LAYERS,
         )
         try:
-            exec_with_ost_blocking(dialog, self.event_bus)
+            self._exec_with_collaboration_lease(
+                dialog,
+                file_path,
+                (
+                    ResourceRef(
+                        CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value,
+                        "database",
+                    ),
+                ),
+            )
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -1734,21 +1802,26 @@ class UIEventCoordinator:
             return
         changed_families = set(families or [])
         changed_uids = resource_uids_by_family or {}
-        if self._undo_service and changed_families & {"takeoffs", "annotations"}:
+        if self._undo_service and changed_families:
             self._undo_service.clear()
-        if "takeoffs" in changed_families:
+        if CollaborationResourceFamily.TAKEOFFS.value in changed_families:
             self._on_takeoffs_changed(
                 page_uid=self.ui_state_manager.active_page_uid,
-                takeoff_uids=changed_uids.get("takeoffs") or None,
+                takeoff_uids=(
+                    changed_uids.get(CollaborationResourceFamily.TAKEOFFS.value) or None
+                ),
                 update_shell=False,
             )
-        if "annotations" in changed_families:
+        if CollaborationResourceFamily.ANNOTATIONS.value in changed_families:
             self._on_annotations_changed(
                 page_uid=self.ui_state_manager.active_page_uid,
-                annotation_uids=changed_uids.get("annotations") or None,
+                annotation_uids=(
+                    changed_uids.get(CollaborationResourceFamily.ANNOTATIONS.value)
+                    or None
+                ),
                 update_shell=False,
             )
-        if "pages" in changed_families:
+        if CollaborationResourceFamily.PAGES.value in changed_families:
             valid_pages = [
                 uid
                 for uid in self.ui_state_manager.selected_page_uids
@@ -1771,7 +1844,10 @@ class UIEventCoordinator:
                 self._update_plan_view(active_page)
             else:
                 self._viewer.clear_viewer()
-        if "layers" in changed_families and self._sidebar.bid_layers_sidebar:
+        if (
+            CollaborationResourceFamily.LAYERS.value in changed_families
+            and self._sidebar.bid_layers_sidebar
+        ):
             self._sidebar.bid_layers_sidebar.load_layers(
                 self.project_data.get_bid_layer_snapshot(),
                 used_uids=self.project_data.get_layer_uids_in_use(),
@@ -1827,6 +1903,8 @@ class UIEventCoordinator:
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid) or not self._page_settings_bar:
             return
+        if self._undo_service:
+            self._undo_service.clear()
         selected_area_uid = self._page_settings_bar.get_selected_area_uid()
         self._page_settings_bar.load_bid_areas(
             selected,
@@ -1899,6 +1977,8 @@ class UIEventCoordinator:
         bid_uid: str = "",
         message: str = "",
         blocks_database: bool = True,
+        draft_id: str = "",
+        allowed_actions: Optional[List[str]] = None,
     ) -> None:
         if blocks_database:
             self._sql_collaboration.enter_conflict(database_id, message)
@@ -1911,13 +1991,34 @@ class UIEventCoordinator:
                     int(bid_uid) if bid_uid else None,
                 ),
             )
-        show_warning(
-            self.main_window,
-            "SQL Edit Conflict",
+        actions = tuple(
+            ConflictResolutionAction(action) for action in (allowed_actions or ())
+        )
+        if not actions:
+            actions = (
+                ConflictResolutionAction.RELOAD,
+                ConflictResolutionAction.CANCEL_READ_ONLY,
+            )
+        dialog = SynchronizationConflictDialog(
+            self._icon_provider,
             message
             or f"{resource_type} {resource_id} changed in another session. "
             "Reload the database before saving again.",
+            actions,
+            self.main_window,
         )
+        try:
+            exec_with_ost_blocking(dialog, self.event_bus)
+            action = dialog.selected_action()
+        finally:
+            dialog.deleteLater()
+        if action in {
+            ConflictResolutionAction.RELOAD,
+            ConflictResolutionAction.DISCARD_DRAFT,
+        }:
+            if draft_id:
+                self._sql_collaboration.discard_local_draft(database_id, draft_id)
+            self._on_full_reconciliation_required(database_id, message)
 
     def _restore_project_tree_bid_selection_if_needed(self) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()

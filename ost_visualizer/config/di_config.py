@@ -5,6 +5,10 @@ from ..application.services.database_capability_service import (
     DatabaseCapabilityService,
 )
 from ..application.services.database_session_registry import DatabaseSessionRegistry
+from ..application.services.local_draft_registry import LocalDraftRegistry
+from ..application.services.conflict_resolution_service import (
+    ConflictResolutionService,
+)
 from ..application.services.database_concurrency_token_service import (
     DatabaseConcurrencyTokenService,
 )
@@ -54,14 +58,18 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
     descriptor_registry = DatabaseDescriptorRegistry()
     credential_store = WindowsCredentialStore()
     session_registry = DatabaseSessionRegistry()
+    local_drafts = LocalDraftRegistry()
+    conflict_resolution = ConflictResolutionService()
     sql_connections = SqlConnectionManager()
     concurrency_tokens = DatabaseConcurrencyTokenService(
         DatabaseEntityVersionReader(
             descriptor_registry, credential_store, sql_connections
-        )
+        ),
+        local_drafts,
     )
     container.register_instance("database_session_registry", session_registry)
     container.register_instance("database_concurrency_tokens", concurrency_tokens)
+    container.register_instance("local_draft_registry", local_drafts)
     icon_provider = QtWindowIconProvider()
     message_notifier = QtMessageNotifier(icon_provider=icon_provider)
     infrastructure_provider = InfrastructureServiceProvider(
@@ -148,7 +156,11 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
     ).build()
     event_bus = container.get("event_bus")
     reconciliation = RemoteChangeReconciliationService(
-        container.get("project_data_service"), event_bus, concurrency_tokens
+        container.get("project_data_service"),
+        event_bus,
+        concurrency_tokens,
+        local_drafts,
+        conflict_resolution,
     )
     collaboration = SqlCollaborationCoordinator(
         descriptor_registry=descriptor_registry,
@@ -163,6 +175,7 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         capability_service=database_capability_service,
         session_registry=session_registry,
         concurrency_tokens=concurrency_tokens,
+        local_drafts=local_drafts,
         event_bus=event_bus,
         supported_schema_version=LATEST_SQL_SCHEMA.version,
     )

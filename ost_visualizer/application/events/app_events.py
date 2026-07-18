@@ -67,6 +67,8 @@ class SynchronizationConflictEvent:
     bid_uid: str = ""
     message: str = ""
     blocks_database: bool = True
+    draft_id: str = ""
+    allowed_actions: list[str] = field(default_factory=list)
 
 
 @dataclass

@@ -60,6 +60,10 @@ from ost_visualizer.infrastructure.sql.errors import (
     classify_pyodbc_error,
 )
 from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ost_visualizer.infrastructure.sql.schema_migrator import (
+    SQL_SCHEMA_V2,
+    SQL_SCHEMA_V2_TO_V3,
+)
 from ost_visualizer.infrastructure.sql.schema_inspector import (
     SqlColumnInventory,
     SqlSchemaInventory,
@@ -334,19 +338,22 @@ class DatabaseDescriptorTests(unittest.TestCase):
         store.delete_password(target)
         self.assertNotIn(target, api._records)
 
-    def test_final_sql_schema_has_no_runtime_migration_package(self):
+    def test_schema_has_isolated_version_2_to_3_support_migration(self):
         root = Path(__file__).resolve().parents[1]
-        removed = (
+        obsolete = (
             "ost_visualizer/infrastructure/database/__init__.py",
             "ost_visualizer/infrastructure/sql/__init__.py",
             "ost_visualizer/infrastructure/sql/schema/__init__.py",
             "ost_visualizer/infrastructure/sql/schema/migrations/__init__.py",
             "ost_visualizer/infrastructure/sql/migrator.py",
-            "ost_visualizer/infrastructure/sql/schema_migrator.py",
             "ost_visualizer/infrastructure/sql/schema/migrations/"
             "v0002_collaboration.py",
         )
-        self.assertTrue(all(not (root / path).exists() for path in removed))
+        self.assertTrue(all(not (root / path).exists() for path in obsolete))
+        self.assertEqual(SQL_SCHEMA_V2_TO_V3.source_version, 2)
+        self.assertEqual(SQL_SCHEMA_V2_TO_V3.target_version, 3)
+        self.assertTrue(SQL_SCHEMA_V2_TO_V3.statements)
+        self.assertEqual(len(SQL_SCHEMA_V2_TO_V3.checksum), 64)
 
     def test_registry_resolves_stable_database_id(self):
         registry = DatabaseDescriptorRegistry()
@@ -419,7 +426,7 @@ class DatabaseDescriptorTests(unittest.TestCase):
             unsupported.compatibility,
             SqlSchemaCompatibility.UNSUPPORTED_VERSION,
         )
-        older = validator.validate(inventory(1, "obsolete"))
+        older = validator.validate(inventory(2, SQL_SCHEMA_V2.checksum))
         self.assertEqual(
             older.compatibility,
             SqlSchemaCompatibility.UNSUPPORTED_VERSION,
@@ -484,8 +491,13 @@ class DatabaseDescriptorTests(unittest.TestCase):
         report = SqlSchemaValidator(schema).validate_adoption_candidate(inventory)
         self.assertIn("custom.Bids.shadows_dbo", report.problems)
 
-    def test_latest_schema_is_version_2_with_stable_checksum(self):
-        self.assertEqual(LATEST_SQL_SCHEMA.version, 2)
+    def test_latest_schema_is_version_3_and_version_2_is_immutable(self):
+        self.assertEqual(SQL_SCHEMA_V2.version, 2)
+        self.assertEqual(
+            SQL_SCHEMA_V2.checksum,
+            "5b07b73baa89c3ed4c1dd41388e760d00cd09774007afe9062dc13987f098ce3",
+        )
+        self.assertEqual(LATEST_SQL_SCHEMA.version, 3)
         self.assertEqual(len(LATEST_SQL_SCHEMA.checksum), 64)
         self.assertEqual(
             sum(
@@ -505,8 +517,15 @@ class DatabaseDescriptorTests(unittest.TestCase):
                 "EntityVersions",
                 "ChangeLog",
                 "ChangeFeedState",
+                "ExternalAdapterState",
             },
         )
+        metadata = next(
+            table
+            for table in LATEST_SQL_SCHEMA.tables
+            if table.name == "DatabaseMetadata"
+        )
+        self.assertIn("WriterMode", {column.name for column in metadata.columns})
         self.assertFalse(
             any(
                 "\nGO\n" in statement.upper()
@@ -926,7 +945,7 @@ class SqlDialogTests(unittest.TestCase):
 
             def initialize_compatible_database(self, location, password="", **_kwargs):
                 self.calls.append((location, password))
-                return SqlDatabaseCreationResult(location, 1)
+                return SqlDatabaseCreationResult(location, LATEST_SQL_SCHEMA.version)
 
         creator = _AdoptingCreator()
         connection = SqlConnectionDialogResult(
@@ -948,7 +967,9 @@ class SqlDialogTests(unittest.TestCase):
             ):
                 dialog._accept_if_valid()
             self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
-            self.assertEqual(dialog.result_data().schema_version, 1)
+            self.assertEqual(
+                dialog.result_data().schema_version, LATEST_SQL_SCHEMA.version
+            )
             self.assertEqual(len(creator.calls), 1)
             self.assertEqual(creator.calls[0][0].database, selected.name)
         finally:

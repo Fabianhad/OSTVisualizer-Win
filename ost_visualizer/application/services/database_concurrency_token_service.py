@@ -7,14 +7,17 @@ from ..dtos.collaboration_dtos import (
     ResourceRef,
 )
 from ..interfaces.i_entity_version_reader import IEntityVersionReader
+from .local_draft_registry import LocalDraftRegistry
 
 
 class DatabaseConcurrencyTokenService:
-    def __init__(self, reader: IEntityVersionReader) -> None:
+    def __init__(
+        self, reader: IEntityVersionReader, drafts: LocalDraftRegistry
+    ) -> None:
         self._reader = reader
+        self._drafts = drafts
         self._tokens: dict[tuple[str, ResourceRef], ConcurrencyToken] = {}
         self._loaded_bids: set[tuple[str, int]] = set()
-        self._edit_tokens: dict[tuple[str, ResourceRef], ConcurrencyToken] = {}
         self._lock = threading.Lock()
 
     def load_database(self, database_id: str) -> None:
@@ -27,13 +30,6 @@ class DatabaseConcurrencyTokenService:
             ]
             for key in stale:
                 del self._tokens[key]
-            stale_edits = [
-                key
-                for key in self._edit_tokens
-                if key[0] == database_id and key[1].bid_uid is None
-            ]
-            for key in stale_edits:
-                del self._edit_tokens[key]
             for resource, token in loaded.items():
                 self._tokens[(database_id, resource)] = token
 
@@ -48,13 +44,6 @@ class DatabaseConcurrencyTokenService:
             ]
             for key in stale:
                 del self._tokens[key]
-            stale_edits = [
-                key
-                for key in self._edit_tokens
-                if key[0] == database_id and key[1].bid_uid == parsed_bid_uid
-            ]
-            for key in stale_edits:
-                del self._edit_tokens[key]
             for resource, token in loaded.items():
                 self._tokens[(database_id, resource)] = token
             self._loaded_bids.add((database_id, parsed_bid_uid))
@@ -81,10 +70,8 @@ class DatabaseConcurrencyTokenService:
             return tuple(
                 ExpectedResourceVersion(
                     resource,
-                    self._edit_tokens.get(
-                        (database_id, resource),
-                        self._tokens[(database_id, resource)],
-                    ),
+                    self._drafts.base_token(database_id, resource)
+                    or self._tokens[(database_id, resource)],
                 )
                 for resource in resources
                 if (database_id, resource) in self._tokens
@@ -98,48 +85,32 @@ class DatabaseConcurrencyTokenService:
         with self._lock:
             for resource, token in resulting_versions.items():
                 self._tokens[(database_id, resource)] = token
-                edit_key = (database_id, resource)
-                if edit_key in self._edit_tokens:
-                    self._edit_tokens[edit_key] = token
+        self._drafts.apply_local_versions(database_id, resulting_versions)
 
     def apply_remote_changes(
         self, database_id: str, changes: tuple[DatabaseChange, ...]
-    ) -> tuple[ResourceRef, ...]:
-        conflicts = []
+    ) -> None:
         with self._lock:
             for change in changes:
                 if change.resulting_version is not None:
                     key = (database_id, change.resource)
-                    edit_token = self._edit_tokens.get(key)
-                    if (
-                        edit_token is not None
-                        and edit_token != change.resulting_version
-                    ):
-                        conflicts.append(change.resource)
                     self._tokens[key] = change.resulting_version
-        return tuple(conflicts)
 
-    def begin_edit(self, database_id: str, resources: tuple[ResourceRef, ...]) -> None:
+    def tokens_for_resources(
+        self, database_id: str, resources: tuple[ResourceRef, ...]
+    ) -> tuple[tuple[ResourceRef, ConcurrencyToken], ...]:
         with self._lock:
-            for resource in resources:
-                key = (database_id, resource)
-                token = self._tokens.get(key)
-                if token is not None:
-                    self._edit_tokens[key] = token
-
-    def end_edit(self, database_id: str, resources: tuple[ResourceRef, ...]) -> None:
-        with self._lock:
-            for resource in resources:
-                self._edit_tokens.pop((database_id, resource), None)
+            return tuple(
+                (resource, self._tokens[(database_id, resource)])
+                for resource in resources
+                if (database_id, resource) in self._tokens
+            )
 
     def clear_database(self, database_id: str) -> None:
         with self._lock:
             stale = [key for key in self._tokens if key[0] == database_id]
             for key in stale:
                 del self._tokens[key]
-            stale_edits = [key for key in self._edit_tokens if key[0] == database_id]
-            for key in stale_edits:
-                del self._edit_tokens[key]
             self._loaded_bids = {
                 key for key in self._loaded_bids if key[0] != database_id
             }

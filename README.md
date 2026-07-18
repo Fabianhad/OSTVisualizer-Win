@@ -119,9 +119,11 @@ compatible external database can be enabled for editing after explicit
 confirmation. This transaction adds only the `ostv` metadata and collaboration
 tables; it does not recreate or rewrite the external application's core tables
 or rows. Databases created or adopted by OST Visualizer carry an independent,
-checksummed schema version and collaboration-table foundation. Schema
-initialization requires additional database permissions; ordinary readers and
-editors do not need server-administrator rights.
+checksummed schema version and collaboration-table foundation. An exact schema
+version 3 database is required by the desktop client; older versioned databases
+are rejected explicitly instead of being upgraded during ordinary connection.
+Schema initialization requires additional database permissions; ordinary readers
+and editors do not need server-administrator rights.
 
 Current-schema SQL databases use one desktop session per loaded database,
 server-timestamped heartbeats and bid presence, expiring resource edit locks,
@@ -130,8 +132,10 @@ change feed in the same transaction. A background worker polls ordered deltas
 and returns them through the Qt main thread so conditions, areas, takeoffs,
 annotations, pages, layers, and the project tree can refresh without repeatedly
 reloading the whole database. Remote changes preserve valid selection and the
-same-bid 3D camera and do not enter the local undo history. Conflicting resources
-become read-only until their authoritative SQL state is deliberately reloaded.
+same-bid 3D camera and do not enter the local undo history. Local draft metadata
+prevents a failed or conflicting merge from advancing the draft's row-version
+baseline. Conflicting resources become read-only until their authoritative SQL
+state is deliberately reloaded.
 If the session or feed becomes unhealthy, SQL editing is disabled while cached
 data remains viewable.
 
@@ -140,10 +144,12 @@ area editors. Other integrated writes use transaction-scoped resource locks and
 row-version checks; richer in-place conflict choices and long-lived locks for
 additional editing gestures remain Phase 4 work.
 
-Collaboration covers OST Visualizer clients writing through this schema. Direct
-writes by another application do not create OST Visualizer change records and
-require a controlled reload or reconnect. Microsoft Access continues to use its
-existing single-client workflow and starts no SQL session or polling worker.
+Collaboration covers OST Visualizer clients writing through this schema. Schema
+version 3 includes an explicit writer-mode gate: mixed-application editing remains
+disabled unless an external-write adapter has been validated against the canonical
+resource catalog. Direct writes by another application therefore still require a
+controlled reload or reconnect. Microsoft Access continues to use its existing
+single-client workflow and starts no SQL session or polling worker.
 
 ## Local MCP Server
 

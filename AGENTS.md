@@ -83,10 +83,14 @@ Database backends:
   semantics and explicit adapter routing live under `infrastructure/database`.
 - SQL connections and cursors are per-operation leases and must not cross
   threads or escape a transaction. Never retry an uncertain SQL write.
-- The only writable SQL schema is checksummed version 2. Fresh and externally
-  adopted compatible databases are initialized directly at version 2; older
-  versioned schemas are rejected explicitly. Schema initialization is serialized
-  with `sp_getapplock`, transactional, and recorded under `ostv`.
+- The only writable SQL schema is checksummed version 3. Fresh and externally
+  adopted compatible databases are initialized directly at version 3. Ordinary
+  open/create/adopt flows reject every older versioned schema. Because version 2
+  existed in committed builds, `schema_migrator.py` retains the exact immutable
+  version-2 snapshot and an explicit support-only transactional 2-to-3 migration;
+  it is not registered with the desktop runtime. Schema initialization and the
+  isolated support migration are serialized with `sp_getapplock` and recorded
+  under `ostv`.
   `SchemaRegistry` remains product data and is not the SQL schema ledger.
 - External unversioned databases may be adopted only after strict core-schema
   validation. Adoption transactionally adds the canonical `ostv` extension and
@@ -109,6 +113,9 @@ Database backends:
   history, reset a same-bid 3D camera, or acknowledge a batch until main-thread
   reconciliation succeeds. External writers that bypass OST Visualizer are not
   represented in this change feed.
+- Version 3 distinguishes OST Visualizer-only and mixed-application writer
+  modes. Mixed-application editing must remain disabled unless the external
+  change adapter and canonical resource-catalog checksum are validated.
 
 State and identity:
 

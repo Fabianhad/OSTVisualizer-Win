@@ -1,15 +1,18 @@
 from __future__ import annotations
 import getpass
 import platform
+import random
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 from ...domain.entities.database_descriptor import DatabaseBackend
+from ..dtos.collaboration_resource_catalog import resource_definition
 from ..dtos.application_info import APPLICATION_VERSION
 from ..dtos.collaboration_dtos import (
     CollaborationStatus,
+    CollaborationPollingPolicy,
     DatabaseSession,
     PresenceMode,
     ResourceLock,
@@ -25,11 +28,8 @@ from ..interfaces.i_remote_change_reader import IRemoteChangeReader
 from ..interfaces.i_shutdown_aware import IShutdownAware
 from ..interfaces.i_thread_callback_bridge import IThreadCallbackBridge
 from .database_capability_service import DatabaseCapabilityService
+from .local_draft_registry import LocalDraftRegistry
 from .remote_change_reconciliation_service import RemoteChangeReconciliationService
-
-_POLL_INTERVAL_SECONDS = 2.0
-_HEARTBEAT_INTERVAL_SECONDS = 10.0
-_RECONNECT_BACKOFF_SECONDS = (1.0, 2.0, 5.0, 10.0, 30.0)
 
 
 @dataclass
@@ -48,6 +48,7 @@ class _DatabaseRuntime:
     healthy: bool = False
     edit_depth: int = 0
     owned_locks: dict[ResourceRef, ResourceLock] = field(default_factory=dict)
+    draft_ids: dict[frozenset[ResourceRef], str] = field(default_factory=dict)
     pending_delivery: bool = False
     bid_uid: Optional[int] = None
     page_uid: Optional[int] = None
@@ -67,8 +68,10 @@ class SqlCollaborationCoordinator(IShutdownAware):
         capability_service: DatabaseCapabilityService,
         session_registry: IDatabaseSessionRegistry,
         concurrency_tokens,
+        local_drafts: LocalDraftRegistry,
         event_bus,
         supported_schema_version: int,
+        polling_policy: CollaborationPollingPolicy = CollaborationPollingPolicy(),
     ) -> None:
         self._registry = descriptor_registry
         self._store = store
@@ -78,8 +81,10 @@ class SqlCollaborationCoordinator(IShutdownAware):
         self._capabilities = capability_service
         self._sessions = session_registry
         self._concurrency_tokens = concurrency_tokens
+        self._local_drafts = local_drafts
         self._event_bus = event_bus
         self._supported_schema_version = supported_schema_version
+        self._polling_policy = polling_policy
         self._client_instance_id = str(uuid.uuid4())
         self._runtimes: dict[str, _DatabaseRuntime] = {}
         self._lock = threading.Lock()
@@ -191,6 +196,7 @@ class SqlCollaborationCoordinator(IShutdownAware):
         if session is not None:
             self._sessions.remove(database_id, session.session_id)
         self._concurrency_tokens.clear_database(database_id)
+        self._local_drafts.clear_database(database_id)
         self._capabilities.set_collaboration_state(
             database_id, SynchronizationState.STOPPED
         )
@@ -242,6 +248,8 @@ class SqlCollaborationCoordinator(IShutdownAware):
         )
 
     def begin_local_edit(self, database_id: str, resources: tuple) -> bool:
+        if not resources:
+            return False
         runtime = self._runtime(database_id)
         if runtime is None:
             descriptor = self._registry.resolve(database_id)
@@ -257,7 +265,29 @@ class SqlCollaborationCoordinator(IShutdownAware):
             return False
         if session is None:
             return False
-        self._concurrency_tokens.begin_edit(database_id, resources)
+        self._concurrency_tokens.ensure_resources_loaded(database_id, resources)
+        first_resource = resources[0]
+        draft = self._local_drafts.begin(
+            draft_type=(
+                resource_definition(first_resource.resource_type).family.value
+                + "_editor"
+            ),
+            database_id=database_id,
+            bid_uid=next(
+                (resource.bid_uid for resource in resources if resource.bid_uid), None
+            ),
+            page_uid=(
+                int(first_resource.resource_id)
+                if first_resource.resource_type == "page"
+                and first_resource.resource_id.isdecimal()
+                else None
+            ),
+            owning_surface="desktop",
+            affected_resources=resources,
+            base_tokens=self._concurrency_tokens.tokens_for_resources(
+                database_id, resources
+            ),
+        )
         acquired = []
         try:
             for resource in sorted(resources):
@@ -276,7 +306,7 @@ class SqlCollaborationCoordinator(IShutdownAware):
                     )
                 except (DatabaseCatalogError, OSError, ValueError):
                     pass
-            self._concurrency_tokens.end_edit(database_id, resources)
+            self._local_drafts.finish(draft.draft_id)
             blocked_resource = resources[0] if resources else None
             self._event_bus.publish(
                 AppEvents.SYNCHRONIZATION_CONFLICT,
@@ -300,10 +330,13 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 )
             runtime.edit_depth += 1
             runtime.mode = PresenceMode.EDITING
+            runtime.draft_ids[frozenset(resources)] = draft.draft_id
+        self._local_drafts.activate(
+            draft.draft_id, acquired[0] if len(acquired) == 1 else None
+        )
         return True
 
     def end_local_edit(self, database_id: str, resources: tuple) -> None:
-        self._concurrency_tokens.end_edit(database_id, resources)
         runtime = self._runtime(database_id)
         if runtime is not None:
             with runtime.lock:
@@ -318,6 +351,9 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 runtime.edit_depth = max(0, runtime.edit_depth - 1)
                 if runtime.edit_depth == 0:
                     runtime.mode = PresenceMode.VIEWING
+                draft_id = runtime.draft_ids.pop(frozenset(resources), None)
+            if draft_id is not None:
+                self._local_drafts.finish(draft_id)
             if session is not None:
                 for lock in locks:
                     try:
@@ -332,6 +368,12 @@ class SqlCollaborationCoordinator(IShutdownAware):
                             "An SQL edit lock could not be released cleanly.",
                         )
                         break
+
+    def discard_local_draft(self, database_id: str, draft_id: str) -> None:
+        draft = self._local_drafts.get(draft_id)
+        if draft is None or draft.database_id != database_id:
+            return
+        self.end_local_edit(database_id, draft.affected_resources)
 
     def shutdown(self) -> None:
         with self._lock:
@@ -393,7 +435,7 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 now = time.monotonic()
                 if now >= next_heartbeat:
                     self._heartbeat(runtime)
-                    next_heartbeat = now + _HEARTBEAT_INTERVAL_SECONDS
+                    next_heartbeat = now + self._polling_policy.heartbeat_seconds
                 self._poll_locks(runtime)
                 self._poll(runtime)
                 with runtime.lock:
@@ -405,6 +447,19 @@ class SqlCollaborationCoordinator(IShutdownAware):
                     runtime.healthy = caught_up
                     active_session = runtime.session
                 if needs_restored_event and active_session is not None:
+                    if not self._capabilities.mark_connected(runtime.database_id):
+                        with runtime.lock:
+                            runtime.healthy = False
+                        self._dispatcher.dispatch(
+                            self._on_disconnected,
+                            (
+                                runtime.database_id,
+                                runtime.generation,
+                                SynchronizationState.READ_ONLY,
+                                "SQL edit permissions or schema trust changed.",
+                            ),
+                        )
+                        break
                     self._sessions.register(
                         runtime.database_id, active_session.session_id
                     )
@@ -416,7 +471,7 @@ class SqlCollaborationCoordinator(IShutdownAware):
                             active_session.session_id,
                         ),
                     )
-                runtime.stop_event.wait(_POLL_INTERVAL_SECONDS)
+                runtime.stop_event.wait(self._next_poll_interval(runtime))
             except DatabaseCatalogError as exc:
                 failure_state = (
                     SynchronizationState.CREDENTIAL_REQUIRED
@@ -429,30 +484,28 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 )
                 self._handle_worker_failure(runtime, str(exc), failure_state)
                 if exc.session_expired:
-                    expired_session, abandoned_resources = self._abandon_session(
-                        runtime
-                    )
+                    expired_session = self._abandon_session(runtime)
                     if expired_session is not None:
                         self._sessions.remove(
                             runtime.database_id,
                             expired_session.session_id,
                         )
-                    self._concurrency_tokens.end_edit(
-                        runtime.database_id, abandoned_resources
-                    )
+                    self._local_drafts.clear_database(runtime.database_id)
                     runtime.ready_event.clear()
                 elif not exc.retryable:
                     break
-                delay = _RECONNECT_BACKOFF_SECONDS[reconnect_attempt]
+                delay = self._reconnect_delay(reconnect_attempt)
                 reconnect_attempt = min(
-                    reconnect_attempt + 1, len(_RECONNECT_BACKOFF_SECONDS) - 1
+                    reconnect_attempt + 1,
+                    len(self._polling_policy.reconnect_backoff_seconds) - 1,
                 )
                 runtime.stop_event.wait(delay)
             except OSError as exc:
                 self._handle_worker_failure(runtime, str(exc))
-                delay = _RECONNECT_BACKOFF_SECONDS[reconnect_attempt]
+                delay = self._reconnect_delay(reconnect_attempt)
                 reconnect_attempt = min(
-                    reconnect_attempt + 1, len(_RECONNECT_BACKOFF_SECONDS) - 1
+                    reconnect_attempt + 1,
+                    len(self._polling_policy.reconnect_backoff_seconds) - 1,
                 )
                 runtime.stop_event.wait(delay)
             except ValueError as exc:
@@ -526,16 +579,16 @@ class SqlCollaborationCoordinator(IShutdownAware):
     @staticmethod
     def _abandon_session(
         runtime: _DatabaseRuntime,
-    ) -> tuple[Optional[DatabaseSession], tuple[ResourceRef, ...]]:
+    ) -> Optional[DatabaseSession]:
         with runtime.lock:
             session = runtime.session
-            resources = tuple(runtime.owned_locks)
             runtime.session = None
             runtime.owned_locks.clear()
+            runtime.draft_ids.clear()
             runtime.edit_depth = 0
             runtime.mode = PresenceMode.VIEWING
             runtime.healthy = False
-        return session, resources
+        return session
 
     def _poll_locks(self, runtime: _DatabaseRuntime) -> None:
         with runtime.lock:
@@ -563,7 +616,11 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 return
             acknowledged = runtime.acknowledged_sequence
             session_id = runtime.session.session_id
-        batch = self._store.poll_changes(runtime.database_id, acknowledged, 500)
+        batch = self._store.poll_changes(
+            runtime.database_id,
+            acknowledged,
+            self._polling_policy.maximum_batch_size,
+        )
         with runtime.lock:
             runtime.observed_high_water = batch.high_water_sequence
             previous_epoch = runtime.feed_epoch
@@ -622,6 +679,22 @@ class SqlCollaborationCoordinator(IShutdownAware):
             self._on_remote_batch,
             (runtime.database_id, runtime.generation, hydrated),
         )
+
+    def _next_poll_interval(self, runtime: _DatabaseRuntime) -> float:
+        with runtime.lock:
+            if runtime.edit_depth:
+                base = self._polling_policy.active_edit_seconds
+            elif runtime.bid_uid is not None:
+                base = self._polling_policy.selected_database_seconds
+            else:
+                base = self._polling_policy.inactive_database_seconds
+        jitter = base * self._polling_policy.jitter_ratio
+        return max(0.05, base + random.uniform(-jitter, jitter))
+
+    def _reconnect_delay(self, attempt: int) -> float:
+        base = self._polling_policy.reconnect_backoff_seconds[attempt]
+        jitter = base * self._polling_policy.jitter_ratio
+        return max(0.05, base + random.uniform(-jitter, jitter))
 
     def _on_session_started(self, payload) -> None:
         database_id, generation, session, hydrated = payload
@@ -749,7 +822,7 @@ class SqlCollaborationCoordinator(IShutdownAware):
             runtime.owned_locks.clear()
             runtime.edit_depth = 0
             runtime.mode = PresenceMode.VIEWING
-        self._concurrency_tokens.end_edit(runtime.database_id, resources)
+        self._local_drafts.clear_database(runtime.database_id)
         for resource in resources:
             self._sessions.remove_lock(runtime.database_id, resource)
         return session, locks

@@ -169,7 +169,12 @@ class _CreationCursor:
             "[ostv].[DatabaseMetadata]" in self._last_sql
             and "[ostv].[SchemaMigrations]" in self._last_sql
         ):
-            return self.schema_record
+            return (
+                *self.schema_record,
+                "ost_visualizer_only",
+                "disabled",
+                None,
+            )
         return (0,)
 
     def close(self):
@@ -209,7 +214,13 @@ class _WriterCursor(_CreationCursor):
 
     def fetchone(self):
         if "SchemaMigrations" in self._last_sql:
-            return (LATEST_SQL_SCHEMA.version, LATEST_SQL_SCHEMA.checksum)
+            return (
+                LATEST_SQL_SCHEMA.version,
+                LATEST_SQL_SCHEMA.checksum,
+                "ost_visualizer_only",
+                "disabled",
+                None,
+            )
         if "sp_getapplock" in self._last_sql:
             return (0,)
         if "FROM [ostv].[Sessions]" in self._last_sql:
@@ -319,6 +330,9 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             LATEST_SQL_SCHEMA.version,
             LATEST_SQL_SCHEMA.checksum,
             "READ_WRITE",
+            "ost_visualizer_only",
+            "disabled",
+            None,
         )
         table_count = len(LATEST_SQL_SCHEMA.core_schema.tables)
         complete = SqlDatabasePermissionProbe(
@@ -530,11 +544,43 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             all(cursor.close_count == 1 for cursor in manager.lease.cursors)
         )
 
+    def test_sql_write_without_record_fails_and_rolls_back(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+        with self.assertRaisesRegex(RuntimeError, "did not record"):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                lambda _recorder: True,
+            )
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
     def test_writer_guard_rejects_stale_database_metadata(self):
         class _StaleMetadataCursor(_WriterCursor):
             def fetchone(self):
                 if "DatabaseMetadata" in self._last_sql:
-                    return (1, LATEST_SQL_SCHEMA.checksum)
+                    return (
+                        1,
+                        LATEST_SQL_SCHEMA.checksum,
+                        "ost_visualizer_only",
+                        "disabled",
+                        None,
+                    )
                 return super().fetchone()
 
         class _StaleMetadataLease(_WriterLease):

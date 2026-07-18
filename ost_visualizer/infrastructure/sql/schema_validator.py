@@ -9,6 +9,7 @@ from ..database.schema_model import (
 from .schema_definition import (
     LATEST_SQL_SCHEMA,
     SqlColumnDefinition,
+    SqlSchemaDefinition,
     SqlTableDefinition,
 )
 from .schema_inspector import SqlColumnInventory, SqlSchemaInventory
@@ -70,8 +71,32 @@ class SqlSchemaValidator:
                 0,
                 tuple(problems),
             )
-        problems.extend(self._validate_ostv_tables(inventory))
+        problems.extend(self._validate_ostv_tables(inventory, LATEST_SQL_SCHEMA))
         if inventory.schema_checksum != LATEST_SQL_SCHEMA.checksum:
+            problems.append("ostv.SchemaMigrations.Checksum")
+        return SqlSchemaValidationReport(
+            (
+                SqlSchemaCompatibility.CURRENT
+                if not problems
+                else SqlSchemaCompatibility.INVALID
+            ),
+            inventory.schema_version,
+            tuple(problems),
+        )
+
+    def validate_versioned_schema(
+        self,
+        inventory: SqlSchemaInventory,
+        schema: SqlSchemaDefinition,
+    ) -> SqlSchemaValidationReport:
+        if inventory.schema_version != schema.version:
+            return SqlSchemaValidationReport(
+                SqlSchemaCompatibility.UNSUPPORTED_VERSION,
+                inventory.schema_version,
+            )
+        problems = self._validate_core_tables(inventory, require_constraints=True)
+        problems.extend(self._validate_ostv_tables(inventory, schema))
+        if inventory.schema_checksum != schema.checksum:
             problems.append("ostv.SchemaMigrations.Checksum")
         return SqlSchemaValidationReport(
             (
@@ -237,7 +262,9 @@ class SqlSchemaValidator:
         return problems
 
     @staticmethod
-    def _validate_ostv_tables(inventory: SqlSchemaInventory) -> list[str]:
+    def _validate_ostv_tables(
+        inventory: SqlSchemaInventory, schema: SqlSchemaDefinition
+    ) -> list[str]:
         actual_tables = set(inventory.tables)
         actual_columns: dict[tuple[str, str], dict[str, SqlColumnInventory]] = {}
         for column in inventory.columns:
@@ -245,7 +272,7 @@ class SqlSchemaValidator:
                 column.column_name
             ] = column
         problems: list[str] = []
-        for table in LATEST_SQL_SCHEMA.tables:
+        for table in schema.tables:
             table_key = (table.schema, table.name)
             if table_key not in actual_tables:
                 problems.append(f"{table.schema}.{table.name}")

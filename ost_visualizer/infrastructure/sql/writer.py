@@ -9,6 +9,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Generator, Optional, TypeVar
 import pyodbc
+from ...application.dtos.collaboration_resource_catalog import (
+    COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
+    CollaborationResourceType,
+    coalesced_resource_type,
+    resource_definition,
+)
 from ...application.interfaces.i_credential_store import ICredentialStore
 from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
@@ -17,9 +23,7 @@ from ...application.interfaces.i_database_session_registry import (
     IDatabaseSessionRegistry,
 )
 from ...application.dtos.collaboration_dtos import (
-    AREA_RESOURCE_TYPES,
     COLLABORATION_STALE_SECONDS,
-    CONDITION_RESOURCE_TYPES,
     ChangeOperation,
     ConcurrencyToken,
     DatabaseMutationRequest,
@@ -100,6 +104,7 @@ class _SqlMutationState(IMutationRecorder):
     database_id: str
     lease: SqlConnectionLease
     request: DatabaseMutationRequest
+    transaction_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     records: list[_RecordedMutation] = field(default_factory=list)
 
     def record(
@@ -176,7 +181,10 @@ class SqlProjectWriter(MdbWriter):
                 else (
                     request.resources[0]
                     if request.resources
-                    else ResourceRef("database", request.database_id)
+                    else ResourceRef(
+                        CollaborationResourceType.DATABASE.value,
+                        request.database_id,
+                    )
                 )
             )
             return DatabaseMutationResult(
@@ -192,7 +200,6 @@ class SqlProjectWriter(MdbWriter):
                         exc.actual if isinstance(exc, _OptimisticConflict) else None
                     ),
                 ),
-                error_message=str(exc),
             )
 
     def _execute_mutation_transaction(
@@ -204,7 +211,10 @@ class SqlProjectWriter(MdbWriter):
         if request.session_id != registered_session:
             conflict = SynchronizationConflict(
                 database_id=request.database_id,
-                resource=ResourceRef("database", request.database_id),
+                resource=ResourceRef(
+                    CollaborationResourceType.DATABASE.value,
+                    request.database_id,
+                ),
                 reason="The SQL collaboration session changed before the write.",
             )
             return DatabaseMutationResult(success=False, conflict=conflict)
@@ -218,6 +228,7 @@ class SqlProjectWriter(MdbWriter):
             try:
                 self._require_current_schema(lease)
                 state = _SqlMutationState(request.database_id, lease, request)
+                self._set_session_context(state)
                 self._prepare_mutation(state)
                 token = self._active_mutation.set(state)
                 try:
@@ -225,13 +236,8 @@ class SqlProjectWriter(MdbWriter):
                 finally:
                     self._active_mutation.reset(token)
                 if not state.records:
-                    lease.rollback()
-                    committed = True
-                    return DatabaseMutationResult(
-                        success=False,
-                        error_message=(
-                            "The SQL mutation did not record an affected resource."
-                        ),
+                    raise RuntimeError(
+                        "The SQL mutation did not record an affected resource."
                     )
                 versions = self._finish_mutation(state)
                 lease.commit()
@@ -247,6 +253,34 @@ class SqlProjectWriter(MdbWriter):
                         lease.rollback()
                     except pyodbc.Error:
                         pass
+                self._clear_session_context(lease)
+
+    @staticmethod
+    def _set_session_context(state: _SqlMutationState) -> None:
+        with state.lease.cursor() as cursor:
+            cursor.execute(
+                "EXEC sys.sp_set_session_context @key=N'ostv_session_id', @value=?",
+                state.request.session_id,
+            )
+            cursor.execute(
+                "EXEC sys.sp_set_session_context @key=N'ostv_transaction_id', @value=?",
+                state.transaction_id,
+            )
+
+    @staticmethod
+    def _clear_session_context(lease: SqlConnectionLease) -> None:
+        try:
+            with lease.cursor() as cursor:
+                cursor.execute(
+                    "EXEC sys.sp_set_session_context "
+                    "@key=N'ostv_session_id', @value=NULL"
+                )
+                cursor.execute(
+                    "EXEC sys.sp_set_session_context "
+                    "@key=N'ostv_transaction_id', @value=NULL"
+                )
+        except pyodbc.Error:
+            return
 
     def _prepare_mutation(self, state: _SqlMutationState) -> None:
         cursor = state.lease.cursor()
@@ -272,17 +306,23 @@ class SqlProjectWriter(MdbWriter):
                 lock_modes[resource] = "Exclusive"
                 if resource.bid_uid is not None:
                     bid_resource = ResourceRef(
-                        "bid", str(resource.bid_uid), resource.bid_uid
+                        CollaborationResourceType.BID.value,
+                        str(resource.bid_uid),
+                        resource.bid_uid,
                     )
                     if bid_resource not in lock_modes:
                         lock_modes[bid_resource] = "Shared"
             for resource in resources:
-                if resource.resource_type == "bid":
+                if resource.resource_type == CollaborationResourceType.BID.value:
                     lock_modes[resource] = "Exclusive"
             for resource in sorted(
                 lock_modes,
                 key=lambda item: (
-                    0 if item.resource_type == "bid" else 1,
+                    (
+                        0
+                        if item.resource_type == CollaborationResourceType.BID.value
+                        else 1
+                    ),
                     item.resource_type,
                     item.resource_id,
                 ),
@@ -308,14 +348,18 @@ class SqlProjectWriter(MdbWriter):
                             f"This item is being edited by {lock_owner[0]}.",
                         )
                     )
-                if resource.bid_uid is not None and resource.resource_type != "bid":
+                if (
+                    resource.bid_uid is not None
+                    and resource.resource_type != CollaborationResourceType.BID.value
+                ):
                     cursor.execute(
                         "SELECT s.[DisplayName] FROM [ostv].[Locks] l JOIN "
                         "[ostv].[Sessions] s ON "
                         "s.[SessionId]=l.[OwnerSessionId] WHERE "
-                        "l.[ResourceType]=N'bid' AND l.[ResourceId]=? AND "
+                        "l.[ResourceType]=? AND l.[ResourceId]=? AND "
                         "l.[OwnerSessionId]<>? AND "
                         "l.[ExpiresAt] > SYSUTCDATETIME()",
+                        CollaborationResourceType.BID.value,
                         str(resource.bid_uid),
                         state.request.session_id,
                     )
@@ -329,7 +373,7 @@ class SqlProjectWriter(MdbWriter):
                         )
                 if (
                     state.request.block_bid_child_locks
-                    and resource.resource_type == "bid"
+                    and resource.resource_type == CollaborationResourceType.BID.value
                 ):
                     cursor.execute(
                         "SELECT TOP (1) s.[DisplayName] FROM [ostv].[Locks] l "
@@ -351,7 +395,7 @@ class SqlProjectWriter(MdbWriter):
                         )
                 if (
                     state.request.block_bid_active_editors
-                    and resource.resource_type == "bid"
+                    and resource.resource_type == CollaborationResourceType.BID.value
                 ):
                     cursor.execute(
                         "SELECT TOP (1) s.[DisplayName] FROM [ostv].[Presence] p "
@@ -438,7 +482,6 @@ class SqlProjectWriter(MdbWriter):
             cursor.close()
 
     def _finish_mutation(self, state: _SqlMutationState):
-        transaction_id = str(uuid.uuid4())
         versions = {}
         cursor = state.lease.cursor()
         try:
@@ -474,9 +517,9 @@ class SqlProjectWriter(MdbWriter):
                     "INSERT INTO [ostv].[ChangeLog] ([TransactionId], "
                     "[SourceSessionId], [DatabaseGuid], [BidUID], [ResourceType], "
                     "[ResourceId], [Operation], [ResultVersion], [ChangedFields], "
-                    "[Payload]) VALUES "
-                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    transaction_id,
+                    "[Payload], [SourceKind]) VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, N'ost_visualizer')",
+                    state.transaction_id,
                     state.request.session_id,
                     database_guid,
                     record.resource.bid_uid,
@@ -505,25 +548,33 @@ class SqlProjectWriter(MdbWriter):
             return coalesced
         families = {}
         for record in coalesced:
-            resource_type = record.resource.resource_type
-            if resource_type in CONDITION_RESOURCE_TYPES:
-                family = "conditions_collection"
-            elif resource_type in AREA_RESOURCE_TYPES:
-                family = "areas_collection"
-            else:
-                family = resource_type
-            key = (family, record.resource.bid_uid)
+            family = coalesced_resource_type(record.resource.resource_type)
+            family_definition = resource_definition(family)
+            bid_uid = record.resource.bid_uid if family_definition.bid_scoped else None
+            resource_id = str(bid_uid) if bid_uid is not None else "database"
+            key = (family, bid_uid)
             families[key] = _RecordedMutation(
                 ResourceRef(
                     family,
-                    str(record.resource.bid_uid or "database"),
-                    record.resource.bid_uid,
+                    resource_id,
+                    bid_uid,
                 ),
                 ChangeOperation.BULK_REFRESH,
             )
-        return tuple(
+        family_records = tuple(
             families[key]
             for key in sorted(families, key=lambda item: (item[0], str(item[1])))
+        )
+        if len(family_records) <= 450:
+            return family_records
+        return tuple(
+            _RecordedMutation(
+                ResourceRef(resource_type, "database"),
+                ChangeOperation.BULK_REFRESH,
+            )
+            for resource_type in sorted(
+                {record.resource.resource_type for record in family_records}
+            )
         )
 
     def _require_active_session(self, database_id: str) -> str:
@@ -539,9 +590,11 @@ class SqlProjectWriter(MdbWriter):
         cursor = lease.cursor()
         try:
             cursor.execute(
-                "SELECT m.[SchemaVersion], sm.[Checksum] FROM "
+                "SELECT m.[SchemaVersion], sm.[Checksum], m.[WriterMode], "
+                "a.[AdapterState], a.[ResourceCatalogChecksum] FROM "
                 "[ostv].[DatabaseMetadata] m JOIN [ostv].[SchemaMigrations] sm "
                 "ON sm.[Version]=m.[SchemaVersion] "
+                "JOIN [ostv].[ExternalAdapterState] a ON a.[SingletonId]=1 "
                 "WHERE m.[Product]=N'OST Visualizer'",
             )
             row = cursor.fetchone()
@@ -554,7 +607,22 @@ class SqlProjectWriter(MdbWriter):
             ) from None
         finally:
             cursor.close()
-        if row is None or not schema_record_is_current(row[0], row[1]):
+        writer_mode_valid = bool(
+            row is not None
+            and (
+                str(row[2]) == "ost_visualizer_only"
+                or (
+                    str(row[2]) == "mixed_application"
+                    and str(row[3]) == "validated"
+                    and str(row[4]) == COLLABORATION_RESOURCE_CATALOG_CHECKSUM
+                )
+            )
+        )
+        if (
+            row is None
+            or not schema_record_is_current(row[0], row[1])
+            or not writer_mode_valid
+        ):
             raise SqlInfrastructureError(
                 SqlErrorDetails(
                     SqlErrorCode.UNSUPPORTED_SCHEMA,

@@ -1,13 +1,20 @@
 from __future__ import annotations
 from ...domain.entities.identity_refs import BidRef
 from ...domain.services.project_data_service import ProjectDataService
-from ..dtos.collaboration_dtos import (
+from ..dtos.collaboration_resource_catalog import (
+    AREA_RESOURCE_TYPES,
+    BID_CONTENT_ENTITY_RESOURCE_TYPES,
     BID_CONTENT_FAMILY_BY_RESOURCE_TYPE,
+    CONDITION_RESOURCE_TYPES,
     SUPPORTED_REMOTE_RESOURCE_TYPES,
+)
+from ..dtos.collaboration_dtos import (
     HydratedDatabaseChangeBatch,
 )
 from ..events.app_events import AppEvents
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
+from .conflict_resolution_service import ConflictResolutionService
+from .local_draft_registry import LocalDraftRegistry
 
 
 class RemoteChangeReconciliationService:
@@ -16,18 +23,22 @@ class RemoteChangeReconciliationService:
         project_data: ProjectDataService,
         event_bus,
         concurrency_tokens: DatabaseConcurrencyTokenService,
+        drafts: LocalDraftRegistry,
+        conflict_resolution: ConflictResolutionService,
     ) -> None:
         self._project_data = project_data
         self._event_bus = event_bus
         self._concurrency_tokens = concurrency_tokens
+        self._drafts = drafts
+        self._conflict_resolution = conflict_resolution
 
     def apply(self, hydrated: HydratedDatabaseChangeBatch) -> bool:
         batch = hydrated.batch
-        conflicts = self._concurrency_tokens.apply_remote_changes(
-            batch.database_id, batch.changes
-        )
+        conflicts = self._drafts.conflicts_for_changes(batch.database_id, batch.changes)
         if conflicts:
-            for resource in conflicts:
+            for conflict in conflicts:
+                resource = conflict.changed_resource
+                plan = self._conflict_resolution.plan(conflict)
                 self._event_bus.publish(
                     AppEvents.SYNCHRONIZATION_CONFLICT,
                     database_id=batch.database_id,
@@ -39,16 +50,24 @@ class RemoteChangeReconciliationService:
                         "Reload it before saving again."
                     ),
                     blocks_database=False,
+                    draft_id=plan.draft_id,
+                    allowed_actions=[action.value for action in plan.actions],
                 )
             return False
-        if hydrated.hierarchy_file is not None:
-            self._project_data.replace_database_hierarchy(hydrated.hierarchy_file)
-            self._event_bus.publish(
-                AppEvents.REMOTE_HIERARCHY_CHANGED,
-                database_id=batch.database_id,
-            )
         active_ref = self._project_data.get_current_bid_ref()
+        if not self._is_complete_for_active_bid(hydrated, active_ref):
+            return False
         if active_ref is None or active_ref.file_path != batch.database_id:
+            if hydrated.hierarchy_file is not None:
+                self._project_data.replace_database_hierarchy(hydrated.hierarchy_file)
+            self._concurrency_tokens.apply_remote_changes(
+                batch.database_id, batch.changes
+            )
+            if hydrated.hierarchy_file is not None:
+                self._event_bus.publish(
+                    AppEvents.REMOTE_HIERARCHY_CHANGED,
+                    database_id=batch.database_id,
+                )
             return True
         bid_uid = int(active_ref.bid_uid)
         active_changes = tuple(
@@ -68,25 +87,14 @@ class RemoteChangeReconciliationService:
                 BidRef(batch.database_id, str(bid_uid)), conditions, folders
             ):
                 return False
-            self._event_bus.publish(
-                AppEvents.REMOTE_CONDITIONS_CHANGED,
-                database_id=batch.database_id,
-                bid_uid=str(bid_uid),
-                condition_uids=sorted(conditions),
-            )
         areas = hydrated.areas_by_bid.get(bid_uid)
         if areas is not None:
             if not self._project_data.replace_bid_areas(
                 BidRef(batch.database_id, str(bid_uid)), areas
             ):
                 return False
-            self._event_bus.publish(
-                AppEvents.REMOTE_AREAS_CHANGED,
-                database_id=batch.database_id,
-                bid_uid=str(bid_uid),
-                area_uids=sorted(str(area.uid) for area in areas),
-            )
         bid_data = hydrated.bid_data_by_bid.get(bid_uid)
+        families = set()
         if bid_data is not None:
             families = {
                 BID_CONTENT_FAMILY_BY_RESOURCE_TYPE[change.resource.resource_type]
@@ -97,26 +105,78 @@ class RemoteChangeReconciliationService:
                 BidRef(batch.database_id, str(bid_uid)), bid_data, families
             ):
                 return False
-            if families:
-                self._event_bus.publish(
-                    AppEvents.REMOTE_BID_CONTENT_CHANGED,
-                    database_id=batch.database_id,
-                    bid_uid=str(bid_uid),
-                    families=sorted(families),
-                    resource_uids_by_family={
-                        family: sorted(
-                            {
-                                change.resource.resource_id
-                                for change in active_changes
-                                if BID_CONTENT_FAMILY_BY_RESOURCE_TYPE.get(
-                                    change.resource.resource_type
-                                )
-                                == family
-                                and change.resource.resource_type
-                                in {"takeoff", "annotation", "page", "layer"}
-                            }
-                        )
-                        for family in families
-                    },
-                )
+        if hydrated.hierarchy_file is not None:
+            self._project_data.replace_database_hierarchy(hydrated.hierarchy_file)
+        self._concurrency_tokens.apply_remote_changes(batch.database_id, batch.changes)
+        if hydrated.hierarchy_file is not None:
+            self._event_bus.publish(
+                AppEvents.REMOTE_HIERARCHY_CHANGED,
+                database_id=batch.database_id,
+            )
+        if conditions is not None and folders is not None:
+            self._event_bus.publish(
+                AppEvents.REMOTE_CONDITIONS_CHANGED,
+                database_id=batch.database_id,
+                bid_uid=str(bid_uid),
+                condition_uids=sorted(conditions),
+            )
+        if areas is not None:
+            self._event_bus.publish(
+                AppEvents.REMOTE_AREAS_CHANGED,
+                database_id=batch.database_id,
+                bid_uid=str(bid_uid),
+                area_uids=sorted(str(area.uid) for area in areas),
+            )
+        if families:
+            self._event_bus.publish(
+                AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                database_id=batch.database_id,
+                bid_uid=str(bid_uid),
+                families=sorted(families),
+                resource_uids_by_family={
+                    family: sorted(
+                        {
+                            change.resource.resource_id
+                            for change in active_changes
+                            if BID_CONTENT_FAMILY_BY_RESOURCE_TYPE.get(
+                                change.resource.resource_type
+                            )
+                            == family
+                            and change.resource.resource_type
+                            in BID_CONTENT_ENTITY_RESOURCE_TYPES
+                        }
+                    )
+                    for family in families
+                },
+            )
+        return True
+
+    @staticmethod
+    def _is_complete_for_active_bid(hydrated, active_ref) -> bool:
+        if active_ref is None or active_ref.file_path != hydrated.batch.database_id:
+            return True
+        bid_uid = int(active_ref.bid_uid)
+        active_changes = tuple(
+            change
+            for change in hydrated.batch.changes
+            if change.resource.bid_uid in {None, bid_uid}
+        )
+        if any(
+            change.resource.resource_type not in SUPPORTED_REMOTE_RESOURCE_TYPES
+            for change in active_changes
+        ):
+            return False
+        resource_types = {change.resource.resource_type for change in active_changes}
+        if resource_types.intersection(CONDITION_RESOURCE_TYPES):
+            if (
+                bid_uid not in hydrated.conditions_by_bid
+                or bid_uid not in hydrated.condition_folders_by_bid
+            ):
+                return False
+        if resource_types.intersection(AREA_RESOURCE_TYPES):
+            if bid_uid not in hydrated.areas_by_bid:
+                return False
+        if resource_types.intersection(BID_CONTENT_FAMILY_BY_RESOURCE_TYPE):
+            if bid_uid not in hydrated.bid_data_by_bid:
+                return False
         return True

@@ -1,6 +1,10 @@
 from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
+from ...application.dtos.collaboration_resource_catalog import (
+    COLLABORATION_RESOURCE_CATALOG,
+    CollaborationResourceType,
+)
 from ..database.schema_model import DatabaseSchemaModel, render_sql_server_schema
 from ..database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
 from ..mdb.database_creator import get_reference_schema_model
@@ -63,8 +67,8 @@ class SqlSchemaDefinition:
         statements = []
         statements.append("CREATE SCHEMA [ostv] AUTHORIZATION [dbo]")
         for table in self.tables:
-            statements.append(_render_table(table))
-            statements.extend(_render_index(table, index) for index in table.indexes)
+            statements.append(render_sql_table(table))
+            statements.extend(render_sql_index(table, index) for index in table.indexes)
         return tuple(statements)
 
     @property
@@ -76,6 +80,7 @@ class SqlSchemaDefinition:
     def collaboration_initialization_statements(self) -> tuple[str, ...]:
         return _entity_version_seed_statements() + (
             "INSERT INTO [ostv].[ChangeFeedState] ([SingletonId]) VALUES (1)",
+            "INSERT INTO [ostv].[ExternalAdapterState] ([SingletonId]) VALUES (1)",
         )
 
 
@@ -109,8 +114,8 @@ def _foreign_key(
 
 
 LATEST_SQL_SCHEMA = SqlSchemaDefinition(
-    version=2,
-    migration_name="multi-user collaboration schema",
+    version=3,
+    migration_name="writer mode and external change adapter gate",
     core_schema=get_reference_schema_model(),
     tables=(
         SqlTableDefinition(
@@ -124,8 +129,20 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
                 _column("CreatedBy", "nvarchar(256)"),
                 _column("LastMigratedAt", "datetime2(3)"),
                 _column("LastMigratedBy", "nvarchar(256)"),
+                _column(
+                    "WriterMode",
+                    "nvarchar(32)",
+                    default="N'ost_visualizer_only'",
+                ),
             ),
             ("DatabaseGuid",),
+            check_constraints=(
+                (
+                    "CK_ostv_DatabaseMetadata_WriterMode",
+                    "[WriterMode]=N'mixed_application' OR "
+                    "[WriterMode]=N'ost_visualizer_only'",
+                ),
+            ),
         ),
         SqlTableDefinition(
             "ostv",
@@ -311,6 +328,12 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
                 _column("ChangedAt", "datetime2(3)", default="SYSUTCDATETIME()"),
                 _column("ChangedFields", "nvarchar(1024)", nullable=True),
                 _column("Payload", "nvarchar(4000)", nullable=True),
+                _column(
+                    "SourceKind",
+                    "nvarchar(32)",
+                    default="N'ost_visualizer'",
+                ),
+                _column("ExternalTransactionKey", "nvarchar(128)", nullable=True),
             ),
             ("Sequence",),
             foreign_keys=(
@@ -345,6 +368,10 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
                     "IX_ostv_ChangeLog_TransactionSequence",
                     ("TransactionId", "Sequence"),
                 ),
+                SqlIndexDefinition(
+                    "IX_ostv_ChangeLog_SourceKindSequence",
+                    ("SourceKind", "Sequence"),
+                ),
             ),
             check_constraints=(
                 (
@@ -361,6 +388,10 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
                     "CK_ostv_ChangeLog_PayloadJson",
                     "[Payload] IS NULL OR ISJSON([Payload])=(1)",
                 ),
+                (
+                    "CK_ostv_ChangeLog_SourceKind",
+                    "[SourceKind]=N'external' OR [SourceKind]=N'ost_visualizer'",
+                ),
             ),
         ),
         SqlTableDefinition(
@@ -375,6 +406,36 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
             ("SingletonId",),
             check_constraints=(
                 ("CK_ostv_ChangeFeedState_Singleton", "[SingletonId]=(1)"),
+            ),
+        ),
+        SqlTableDefinition(
+            "ostv",
+            "ExternalAdapterState",
+            (
+                _column("SingletonId", "tinyint"),
+                _column("AdapterType", "nvarchar(32)", default="N'none'"),
+                _column("AdapterVersion", "nvarchar(64)", nullable=True),
+                _column("AdapterState", "nvarchar(32)", default="N'disabled'"),
+                _column("AdapterEpoch", "uniqueidentifier", default="NEWID()"),
+                _column("ResourceCatalogChecksum", "char(64)", nullable=True),
+                _column("ValidatedAt", "datetime2(3)", nullable=True),
+                _column("LastCheckedAt", "datetime2(3)", nullable=True),
+                _column("FailureCode", "nvarchar(128)", nullable=True),
+                _column("Version", "rowversion"),
+            ),
+            ("SingletonId",),
+            check_constraints=(
+                (
+                    "CK_ostv_ExternalAdapterState_Singleton",
+                    "[SingletonId]=(1)",
+                ),
+                (
+                    "CK_ostv_ExternalAdapterState_State",
+                    "[AdapterState]=N'invalid' OR "
+                    "[AdapterState]=N'validated' OR "
+                    "[AdapterState]=N'validating' OR "
+                    "[AdapterState]=N'disabled'",
+                ),
             ),
         ),
     ),
@@ -394,41 +455,42 @@ def schema_record_is_current(version: object, checksum: object) -> bool:
 
 def _entity_version_seed_statements() -> tuple[str, ...]:
     statements = [
-        _seed_entity_version("bid", "Bids", "UID", "UID"),
-        _seed_entity_version("project", "BidProjects", "UID"),
-        _seed_entity_version("page", "BidPages", "UID", "BidUID"),
-        _seed_entity_version("condition", "BidConditions", "UID", "BidUID"),
         _seed_entity_version(
-            "condition_folder", "BidConditionFolders", "UID", "BidUID"
-        ),
-        _seed_entity_version("takeoff", "BidTakeoffs", "UID", "BidUID"),
-        _seed_entity_version("area", "BidAreas", "UID", "BidUID"),
-        _seed_entity_version("layer", "BidLayers", "UID", "BidUID", "[IsTemplate]=0"),
-        _seed_entity_version("cover_sheet", "Bids", "UID", "UID"),
-        _seed_entity_version("job_status", "JobStatuses", "UID"),
-        _seed_entity_version("employee", "Employees", "UID"),
-        _seed_entity_version("pay_class", "PayClasses", "UID"),
-        _seed_entity_version("condition_type", "CdnTypes", "UID"),
-        _seed_static_collection("projects_collection", "database"),
-        _seed_static_collection("project_bids", "orphan"),
-        _seed_static_collection("job_statuses_collection", "database"),
-        _seed_static_collection("employees_collection", "database"),
-        _seed_static_collection("pay_classes_collection", "database"),
-        _seed_static_collection("condition_types_collection", "database"),
-        _seed_static_collection("default_layers_collection", "database"),
+            definition.resource_type.value,
+            definition.entity_table,
+            definition.entity_uid_column,
+            definition.entity_bid_column,
+            definition.seed_filter,
+        )
+        for definition in COLLABORATION_RESOURCE_CATALOG.values()
+        if definition.entity_table
     ]
+    static_collections = (
+        CollaborationResourceType.PROJECTS_COLLECTION,
+        CollaborationResourceType.JOB_STATUSES_COLLECTION,
+        CollaborationResourceType.EMPLOYEES_COLLECTION,
+        CollaborationResourceType.PAY_CLASSES_COLLECTION,
+        CollaborationResourceType.CONDITION_TYPES_COLLECTION,
+        CollaborationResourceType.DEFAULT_LAYERS_COLLECTION,
+    )
+    statements.extend(
+        _seed_static_collection(resource_type.value, "database")
+        for resource_type in static_collections
+    )
+    statements.append(
+        _seed_static_collection(CollaborationResourceType.PROJECT_BIDS.value, "orphan")
+    )
     statements.extend(
         _seed_annotation(table, annotation_type)
         for table, annotation_type in ANNOTATION_TYPE_BY_TABLE.items()
     )
     statements.extend(
         (
-            _seed_bid_collection("pages"),
-            _seed_bid_collection("conditions"),
-            _seed_bid_collection("areas"),
-            _seed_bid_collection("layers"),
-            _seed_bid_collection("takeoffs"),
-            _seed_bid_collection("annotations"),
+            *(
+                _seed_bid_collection(definition.resource_type.value)
+                for definition in COLLABORATION_RESOURCE_CATALOG.values()
+                if definition.collection and definition.bid_scoped
+            ),
             "INSERT INTO [ostv].[EntityVersions] "
             "([ResourceType], [ResourceId], [BidUID]) "
             "SELECT N'project_bids', CONVERT(nvarchar(128), [UID]), NULL "
@@ -473,16 +535,16 @@ def _seed_static_collection(resource_type: str, resource_id: str) -> str:
     )
 
 
-def _seed_bid_collection(name: str) -> str:
+def _seed_bid_collection(resource_type: str) -> str:
     return (
         "INSERT INTO [ostv].[EntityVersions] "
         "([ResourceType], [ResourceId], [BidUID]) "
-        f"SELECT N'{name}_collection', CONVERT(nvarchar(128), [UID]), "
+        f"SELECT N'{resource_type}', CONVERT(nvarchar(128), [UID]), "
         "CONVERT(int, [UID]) FROM [dbo].[Bids]"
     )
 
 
-def _render_table(table: SqlTableDefinition) -> str:
+def render_sql_table(table: SqlTableDefinition) -> str:
     definitions = []
     for column in table.columns:
         identity = " IDENTITY(1,1)" if column.identity else ""
@@ -520,7 +582,7 @@ def _render_table(table: SqlTableDefinition) -> str:
     )
 
 
-def _render_index(table: SqlTableDefinition, index: SqlIndexDefinition) -> str:
+def render_sql_index(table: SqlTableDefinition, index: SqlIndexDefinition) -> str:
     unique = "UNIQUE " if index.unique else ""
     columns = ", ".join(f"[{column}]" for column in index.columns)
     filter_sql = f" WHERE {index.filter_expression}" if index.filter_expression else ""

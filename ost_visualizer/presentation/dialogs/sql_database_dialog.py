@@ -168,6 +168,11 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
         if not selected.is_compatible:
             show_warning(self, "SQL Server", selected.compatibility_message)
             return None
+        selected_location = replace(
+            connection.location,
+            database=selected.name,
+            database_guid=selected.database_guid,
+        )
         if selected.schema_version == 0:
             if not (
                 self._schema_change_allowed_fn and self._schema_change_allowed_fn()
@@ -203,13 +208,8 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
                 initialized.schema_version,
                 connection.password,
             )
-        location = replace(
-            connection.location,
-            database=selected.name,
-            database_guid=selected.database_guid,
-        )
         return SqlDatabasePropertiesResult(
-            location, selected.schema_version, connection.password
+            selected_location, selected.schema_version, connection.password
         )
 
     def _create_database(

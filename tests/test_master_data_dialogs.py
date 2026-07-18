@@ -1340,6 +1340,10 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         coordinator._icon_provider = FakeIconProvider()
         coordinator._project_read_service = read_service
         coordinator._project_write_service = WriteService()
+        coordinator._sql_collaboration = SimpleNamespace(
+            begin_local_edit=lambda _database_id, _resources: True,
+            end_local_edit=lambda _database_id, _resources: None,
+        )
         coordinator.event_bus = object()
 
         def capture_dialog(dialog, _event_bus):

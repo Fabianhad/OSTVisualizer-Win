@@ -132,6 +132,10 @@ class DetachedPageViewManager(IShutdownAware):
             AppEvents.REMOTE_CONDITIONS_CHANGED,
             self._on_remote_conditions_changed,
         )
+        self.event_bus.subscribe(
+            AppEvents.REMOTE_AREAS_CHANGED,
+            self._on_remote_areas_changed,
+        )
 
     def shutdown(self) -> None:
         if self.event_bus is not None:
@@ -167,6 +171,10 @@ class DetachedPageViewManager(IShutdownAware):
             self.event_bus.unsubscribe(
                 AppEvents.REMOTE_CONDITIONS_CHANGED,
                 self._on_remote_conditions_changed,
+            )
+            self.event_bus.unsubscribe(
+                AppEvents.REMOTE_AREAS_CHANGED,
+                self._on_remote_areas_changed,
             )
         if self._refresh_signaler is not None:
             self._refresh_signaler.cleanup()
@@ -284,10 +292,7 @@ class DetachedPageViewManager(IShutdownAware):
             or view.bid_ref.bid_uid != bid_uid
         ):
             return
-        if self._window_undo_service is not None and set(families or ()) & {
-            "takeoffs",
-            "annotations",
-        }:
+        if self._window_undo_service is not None and families:
             self._window_undo_service.clear()
 
     def _on_remote_conditions_changed(
@@ -305,6 +310,14 @@ class DetachedPageViewManager(IShutdownAware):
             and view.bid_ref.bid_uid == bid_uid
         ):
             self._window_undo_service.clear()
+
+    def _on_remote_areas_changed(
+        self,
+        database_id: str = "",
+        bid_uid: str = "",
+        **_event_data,
+    ) -> None:
+        self._on_remote_conditions_changed(database_id, bid_uid)
 
     def _get_bid_for_view(self, view: AnnotationView):
         bid_ref = view.bid_ref if view else None

@@ -1,16 +1,24 @@
 import threading
 import unittest
-import uuid
+from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+    COLLABORATION_RESOURCE_CATALOG,
+    COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
+    CollaborationResourceFamily,
+    coalesced_resource_type,
+)
+from ost_visualizer.application.dtos.conflict_resolution_dtos import (
+    ConflictResolutionAction,
+)
+from ost_visualizer.application.dtos.local_draft_dtos import LocalDraftConflict
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
-    CollaborationStatus,
+    CollaborationPollingPolicy,
     ConcurrencyToken,
     DatabaseChange,
     DatabaseChangeBatch,
     DatabaseMutationResult,
     DatabaseSession,
     HydratedDatabaseChangeBatch,
-    PresenceMode,
     ResourceLock,
     ResourceRef,
     SynchronizationConflict,
@@ -26,6 +34,10 @@ from ost_visualizer.application.services.database_concurrency_token_service impo
 from ost_visualizer.application.services.database_session_registry import (
     DatabaseSessionRegistry,
 )
+from ost_visualizer.application.services.conflict_resolution_service import (
+    ConflictResolutionService,
+)
+from ost_visualizer.application.services.local_draft_registry import LocalDraftRegistry
 from ost_visualizer.application.services.remote_change_reconciliation_service import (
     RemoteChangeReconciliationService,
 )
@@ -52,6 +64,7 @@ from ost_visualizer.application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
 )
 from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter, _RecordedMutation
 from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
     SqlErrorDetails,
@@ -106,6 +119,11 @@ class _TokenReader:
             for resource, token in self.resources.items()
             if resource.bid_uid == int(bid_uid)
         }
+
+
+def _token_service(reader=None):
+    drafts = LocalDraftRegistry()
+    return DatabaseConcurrencyTokenService(reader or _TokenReader(), drafts), drafts
 
 
 class _Dispatcher:
@@ -281,6 +299,69 @@ def _change(database_id, resource, sequence=1, source="other-session"):
 
 
 class SqlCollaborationPhase4Tests(unittest.TestCase):
+    def test_resource_catalog_is_canonical_and_rejects_removed_aliases(self):
+        self.assertEqual(len(COLLABORATION_RESOURCE_CATALOG_CHECKSUM), 64)
+        self.assertNotIn("folder", COLLABORATION_RESOURCE_CATALOG)
+        self.assertNotIn("folders_collection", COLLABORATION_RESOURCE_CATALOG)
+        self.assertEqual(
+            COLLABORATION_RESOURCE_CATALOG["condition"].family,
+            CollaborationResourceFamily.CONDITIONS,
+        )
+        self.assertEqual(coalesced_resource_type("condition"), "conditions_collection")
+        with self.assertRaisesRegex(ValueError, "Unknown collaboration resource"):
+            ResourceRef("obsolete_resource", "1")
+
+    def test_large_hierarchy_change_coalesces_to_global_hierarchy_resource(self):
+        records = [
+            _RecordedMutation(ResourceRef("project", str(uid)), ChangeOperation.UPDATE)
+            for uid in range(451)
+        ]
+        self.assertEqual(
+            SqlProjectWriter._coalesce_records(records),
+            (
+                _RecordedMutation(
+                    ResourceRef("projects_collection", "database"),
+                    ChangeOperation.BULK_REFRESH,
+                ),
+            ),
+        )
+
+    def test_cross_bid_bulk_change_remains_bounded(self):
+        records = [
+            _RecordedMutation(
+                ResourceRef("condition", str(uid), uid),
+                ChangeOperation.UPDATE,
+            )
+            for uid in range(451)
+        ]
+        self.assertEqual(
+            SqlProjectWriter._coalesce_records(records),
+            (
+                _RecordedMutation(
+                    ResourceRef("conditions_collection", "database"),
+                    ChangeOperation.BULK_REFRESH,
+                ),
+            ),
+        )
+
+    def test_first_release_conflict_plan_never_auto_merges_geometry(self):
+        plan = ConflictResolutionService().plan(
+            LocalDraftConflict(
+                draft_id="draft",
+                changed_resource=ResourceRef("takeoff", "42", 8),
+                draft_type="vertex_drag",
+                owning_surface="plan",
+            )
+        )
+        self.assertEqual(
+            plan.actions,
+            (
+                ConflictResolutionAction.RELOAD,
+                ConflictResolutionAction.DISCARD_DRAFT,
+                ConflictResolutionAction.CANCEL_READ_ONLY,
+            ),
+        )
+
     def test_collaboration_failures_classify_credentials_and_schema_read_only(self):
         credential = SqlInfrastructureError(
             SqlErrorDetails(SqlErrorCode.AUTHENTICATION_FAILED, "Sign in again.")
@@ -293,8 +374,8 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertTrue(schema.read_only_required)
         self.assertFalse(schema.credential_required)
 
-    def test_schema_v2_has_canonical_collaboration_objects(self):
-        self.assertEqual(LATEST_SQL_SCHEMA.version, 2)
+    def test_latest_schema_has_canonical_collaboration_objects(self):
+        self.assertEqual(LATEST_SQL_SCHEMA.version, 3)
         tables = {table.name: table for table in LATEST_SQL_SCHEMA.tables}
         self.assertEqual(
             set(tables),
@@ -307,6 +388,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 "EntityVersions",
                 "ChangeLog",
                 "ChangeFeedState",
+                "ExternalAdapterState",
             },
         )
         self.assertIn(
@@ -335,30 +417,92 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
     def test_remote_change_during_local_edit_returns_conflict(self):
         resource = ResourceRef("condition", "42", 8)
         initial = ConcurrencyToken(b"\x00" * 7 + b"\x01")
-        tokens = DatabaseConcurrencyTokenService(_TokenReader({resource: initial}))
+        tokens, drafts = _token_service(_TokenReader({resource: initial}))
         tokens.load_bid("database", "8")
-        tokens.begin_edit("database", (resource,))
-        conflict = tokens.apply_remote_changes(
+        draft = drafts.begin(
+            draft_type="condition",
+            database_id="database",
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="test",
+            affected_resources=(resource,),
+            base_tokens=tokens.tokens_for_resources("database", (resource,)),
+        )
+        conflicts = drafts.conflicts_for_changes(
             "database", (_change("database", resource, 2),)
         )
-        self.assertEqual(conflict, (resource,))
+        self.assertEqual(conflicts[0].draft_id, draft.draft_id)
         self.assertEqual(
             tokens.expected_versions("database", (resource,))[0].expected,
             initial,
         )
 
-    def test_authoritative_bid_reload_clears_stale_local_edit_token(self):
+    def test_local_drafts_cannot_overlap_an_existing_dependency(self):
+        condition = ResourceRef("condition", "42", 8)
+        takeoff = ResourceRef("takeoff", "395", 8)
+        drafts = LocalDraftRegistry()
+        drafts.begin(
+            draft_type="takeoff-geometry",
+            database_id="database",
+            bid_uid=8,
+            page_uid=3,
+            owning_surface="plan-view",
+            affected_resources=(takeoff,),
+            dependency_resources=(condition,),
+        )
+        with self.assertRaisesRegex(ValueError, "already owns"):
+            drafts.begin(
+                draft_type="condition-properties",
+                database_id="database",
+                bid_uid=8,
+                page_uid=None,
+                owning_surface="condition-dialog",
+                affected_resources=(condition,),
+            )
+
+    def test_authoritative_reload_uses_current_token_after_drafts_are_cancelled(self):
         resource = ResourceRef("condition", "42", 8)
         initial = ConcurrencyToken(b"\x00" * 7 + b"\x01")
         current = ConcurrencyToken(b"\x00" * 7 + b"\x02")
         reader = _TokenReader({resource: initial})
-        tokens = DatabaseConcurrencyTokenService(reader)
+        tokens, drafts = _token_service(reader)
         tokens.load_bid("database", "8")
-        tokens.begin_edit("database", (resource,))
+        drafts.begin(
+            draft_type="condition",
+            database_id="database",
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="test",
+            affected_resources=(resource,),
+            base_tokens=tokens.tokens_for_resources("database", (resource,)),
+        )
         reader.resources[resource] = current
+        drafts.clear_database("database")
         tokens.load_bid("database", "8")
         self.assertEqual(
             tokens.expected_versions("database", (resource,))[0].expected,
+            current,
+        )
+
+    def test_successful_local_save_advances_active_draft_base_token(self):
+        database_id = "database"
+        resource = ResourceRef("condition", "42", 8)
+        initial = ConcurrencyToken(b"\x00" * 7 + b"\x01")
+        current = ConcurrencyToken(b"\x00" * 7 + b"\x02")
+        tokens, drafts = _token_service(_TokenReader({resource: initial}))
+        tokens.load_bid(database_id, "8")
+        drafts.begin(
+            draft_type="condition",
+            database_id=database_id,
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="test",
+            affected_resources=(resource,),
+            base_tokens=tokens.tokens_for_resources(database_id, (resource,)),
+        )
+        tokens.apply_result(database_id, {resource: current})
+        self.assertEqual(
+            tokens.expected_versions(database_id, (resource,))[0].expected,
             current,
         )
 
@@ -413,8 +557,9 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         database_id = "database"
         events = _EventBus()
         project_data = _ProjectData(database_id)
+        tokens, drafts = _token_service()
         service = RemoteChangeReconciliationService(
-            project_data, events, DatabaseConcurrencyTokenService(_TokenReader())
+            project_data, events, tokens, drafts, ConflictResolutionService()
         )
         condition_resource = ResourceRef("condition", "42", 8)
         area_resource = ResourceRef("area", "6", 8)
@@ -451,13 +596,85 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(names.count(AppEvents.REMOTE_CONDITIONS_CHANGED), 1)
         self.assertEqual(names.count(AppEvents.REMOTE_AREAS_CHANGED), 1)
 
+    def test_remote_events_publish_only_after_all_model_merges(self):
+        database_id = "database"
+        events = _EventBus()
+        project_data = _ProjectData(database_id)
+
+        def switch_active_bid(**_payload):
+            project_data.bid_ref = BidRef(database_id, "9")
+
+        events.subscribe(AppEvents.REMOTE_CONDITIONS_CHANGED, switch_active_bid)
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, events, tokens, drafts, ConflictResolutionService()
+        )
+        batch = DatabaseChangeBatch(
+            database_id,
+            "epoch",
+            1,
+            2,
+            (
+                _change(database_id, ResourceRef("condition", "42", 8), 1),
+                _change(database_id, ResourceRef("area", "6", 8), 2),
+            ),
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            batch,
+            conditions_by_bid={8: {"42": Condition(uid="42", name="Remote")}},
+            condition_folders_by_bid={8: {}},
+            areas_by_bid={
+                8: (
+                    BidArea(
+                        uid="6",
+                        bid_uid="8",
+                        parent_uid="0",
+                        name="Remote Area",
+                        sequence=1,
+                    ),
+                )
+            },
+        )
+        self.assertTrue(service.apply(hydrated))
+        self.assertEqual([area.uid for area in project_data.areas], ["6"])
+
+    def test_incomplete_remote_batch_does_not_advance_tokens_or_partial_merge(self):
+        database_id = "database"
+        resource = ResourceRef("condition", "42", 8)
+        initial = ConcurrencyToken(b"\x00" * 7 + b"\x01")
+        tokens, drafts = _token_service(_TokenReader({resource: initial}))
+        tokens.load_bid(database_id, "8")
+        project_data = _ProjectData(database_id)
+        project_data.conditions = {"old": Condition(uid="old", name="Old")}
+        service = RemoteChangeReconciliationService(
+            project_data,
+            _EventBus(),
+            tokens,
+            drafts,
+            ConflictResolutionService(),
+        )
+        batch = DatabaseChangeBatch(
+            database_id,
+            "epoch",
+            1,
+            2,
+            (_change(database_id, resource, 2),),
+        )
+        self.assertFalse(service.apply(HydratedDatabaseChangeBatch(batch)))
+        self.assertEqual(set(project_data.conditions), {"old"})
+        self.assertEqual(
+            tokens.expected_versions(database_id, (resource,))[0].expected,
+            initial,
+        )
+
     def test_remote_bid_change_is_acknowledged_when_no_bid_is_active(self):
         database_id = "database"
         events = _EventBus()
         project_data = _ProjectData(database_id)
         project_data.bid_ref = None
+        tokens, drafts = _token_service()
         service = RemoteChangeReconciliationService(
-            project_data, events, DatabaseConcurrencyTokenService(_TokenReader())
+            project_data, events, tokens, drafts, ConflictResolutionService()
         )
         batch = DatabaseChangeBatch(
             database_id,
@@ -469,16 +686,49 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertTrue(service.apply(HydratedDatabaseChangeBatch(batch)))
         self.assertEqual(events.published, [])
 
+    def test_default_layer_change_requires_controlled_reconciliation(self):
+        database_id = "database"
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            _ProjectData(database_id),
+            _EventBus(),
+            tokens,
+            drafts,
+            ConflictResolutionService(),
+        )
+        resource = ResourceRef("default_layers_collection", "database")
+        batch = DatabaseChangeBatch(
+            database_id,
+            "epoch",
+            1,
+            2,
+            (_change(database_id, resource, 2),),
+        )
+        self.assertFalse(service.apply(HydratedDatabaseChangeBatch(batch)))
+        self.assertEqual(tokens.expected_versions(database_id, (resource,)), ())
+
     def test_remote_local_edit_conflict_is_resource_scoped(self):
         database_id = "database"
         resource = ResourceRef("condition", "42", 8)
         initial = ConcurrencyToken(b"\x00" * 7 + b"\x01")
-        tokens = DatabaseConcurrencyTokenService(_TokenReader({resource: initial}))
+        tokens, drafts = _token_service(_TokenReader({resource: initial}))
         tokens.load_bid(database_id, "8")
-        tokens.begin_edit(database_id, (resource,))
+        drafts.begin(
+            draft_type="condition",
+            database_id=database_id,
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="test",
+            affected_resources=(resource,),
+            base_tokens=tokens.tokens_for_resources(database_id, (resource,)),
+        )
         events = _EventBus()
         service = RemoteChangeReconciliationService(
-            _ProjectData(database_id), events, tokens
+            _ProjectData(database_id),
+            events,
+            tokens,
+            drafts,
+            ConflictResolutionService(),
         )
         batch = DatabaseChangeBatch(
             database_id,
@@ -503,7 +753,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             SynchronizationConflict(database_id, resource, "stale update")
         )
         service._session_registry = DatabaseSessionRegistry()
-        service._concurrency_tokens = DatabaseConcurrencyTokenService(_TokenReader())
+        service._concurrency_tokens, _drafts = _token_service()
         result = service._execute_database_mutation(
             database_id, (resource,), lambda _recorder: True
         )
@@ -516,7 +766,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         descriptors = DatabaseDescriptorRegistry()
         sql_descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=2,
+            schema_version=LATEST_SQL_SCHEMA.version,
         )
         access_descriptor = DatabaseDescriptor.for_access("C:/test.mdb")
         unversioned_descriptor = DatabaseDescriptor.for_sql_server(
@@ -538,7 +788,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         capabilities.mark_connected(sql_descriptor.database_id)
         store = _CollaborationStore()
         sessions = DatabaseSessionRegistry()
-        tokens = DatabaseConcurrencyTokenService(_TokenReader())
+        tokens, drafts = _token_service()
         events = _EventBus()
         healthy = threading.Event()
 
@@ -556,8 +806,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             capabilities,
             sessions,
             tokens,
+            drafts,
             events,
             LATEST_SQL_SCHEMA.version,
+            CollaborationPollingPolicy(
+                inactive_database_seconds=0.05,
+                jitter_ratio=0.0,
+            ),
         )
         self.assertFalse(coordinator.start_database(access_descriptor.database_id))
         self.assertFalse(coordinator.start_database(unversioned_descriptor.database_id))
@@ -600,7 +855,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=2,
+            schema_version=LATEST_SQL_SCHEMA.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -609,6 +864,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         reconciliation = _Reconciliation()
         sessions = DatabaseSessionRegistry()
         events = _EventBus()
+        tokens, drafts = _token_service()
         coordinator = SqlCollaborationCoordinator(
             descriptors,
             store,
@@ -617,9 +873,14 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             reconciliation,
             capabilities,
             sessions,
-            DatabaseConcurrencyTokenService(_TokenReader()),
+            tokens,
+            drafts,
             events,
             LATEST_SQL_SCHEMA.version,
+            CollaborationPollingPolicy(
+                inactive_database_seconds=0.05,
+                jitter_ratio=0.0,
+            ),
         )
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(store.started.wait(2))
@@ -637,7 +898,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=2,
+            schema_version=LATEST_SQL_SCHEMA.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -651,6 +912,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 healthy.set()
 
         events.subscribe(AppEvents.COLLABORATION_STATE_CHANGED, observe)
+        tokens, drafts = _token_service()
         coordinator = SqlCollaborationCoordinator(
             descriptors,
             store,
@@ -659,7 +921,8 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             _Reconciliation(),
             capabilities,
             DatabaseSessionRegistry(),
-            DatabaseConcurrencyTokenService(_TokenReader()),
+            tokens,
+            drafts,
             events,
             LATEST_SQL_SCHEMA.version,
         )
@@ -682,7 +945,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=2,
+            schema_version=LATEST_SQL_SCHEMA.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -699,6 +962,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 else None
             ),
         )
+        tokens, drafts = _token_service()
         coordinator = SqlCollaborationCoordinator(
             descriptors,
             store,
@@ -707,7 +971,8 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             _Reconciliation(),
             capabilities,
             sessions,
-            DatabaseConcurrencyTokenService(_TokenReader()),
+            tokens,
+            drafts,
             events,
             LATEST_SQL_SCHEMA.version,
         )
@@ -733,13 +998,14 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=2,
+            schema_version=LATEST_SQL_SCHEMA.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
         capabilities.mark_connected(descriptor.database_id)
         store = _CredentialRecoveryStore()
         events = _EventBus()
+        tokens, drafts = _token_service()
         coordinator = SqlCollaborationCoordinator(
             descriptors,
             store,
@@ -748,7 +1014,8 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             _Reconciliation(),
             capabilities,
             DatabaseSessionRegistry(),
-            DatabaseConcurrencyTokenService(_TokenReader()),
+            tokens,
+            drafts,
             events,
             LATEST_SQL_SCHEMA.version,
         )

@@ -1,10 +1,15 @@
 from __future__ import annotations
 from typing import Optional
-from ...application.dtos.collaboration_dtos import (
+from ...application.dtos.collaboration_resource_catalog import (
     AREA_RESOURCE_TYPES,
     BID_CONTENT_RESOURCE_TYPES,
     CONDITION_RESOURCE_TYPES,
     HIERARCHY_RESOURCE_TYPES,
+    BID_CONTENT_FAMILY_BY_RESOURCE_TYPE,
+    CollaborationResourceFamily,
+    CollaborationResourceType,
+)
+from ...application.dtos.collaboration_dtos import (
     DatabaseChangeBatch,
     DatabaseChange,
     HydratedDatabaseChangeBatch,
@@ -18,6 +23,7 @@ from ...application.interfaces.i_database_descriptor_registry import (
 from ...application.interfaces.i_remote_change_reader import IRemoteChangeReader
 from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.page import build_pages_from_bid_data
+from ..mdb.schema_compatibility import MdbSchemaInspector
 from .connection_manager import SqlConnectionManager
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .reader import SqlProjectReader
@@ -43,17 +49,17 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
     def initial_reconciliation(
         self, database_id: str, bid_uid: int | None, checkpoint: int
     ) -> HydratedDatabaseChangeBatch:
-        resources = [ResourceRef("database", database_id)]
+        resources = [ResourceRef(CollaborationResourceType.DATABASE.value, database_id)]
         if bid_uid is not None:
             resources.extend(
                 ResourceRef(resource_type, str(bid_uid), bid_uid)
                 for resource_type in (
-                    "conditions_collection",
-                    "areas_collection",
-                    "takeoffs_collection",
-                    "annotations_collection",
-                    "pages_collection",
-                    "layers_collection",
+                    CollaborationResourceType.CONDITIONS_COLLECTION.value,
+                    CollaborationResourceType.AREAS_COLLECTION.value,
+                    CollaborationResourceType.TAKEOFFS_COLLECTION.value,
+                    CollaborationResourceType.ANNOTATIONS_COLLECTION.value,
+                    CollaborationResourceType.PAGES_COLLECTION.value,
+                    CollaborationResourceType.LAYERS_COLLECTION.value,
                 )
             )
         batch = DatabaseChangeBatch(
@@ -128,35 +134,82 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
                     areas_by_bid[bid_uid] = tuple(
                         self._reader._parse_bid_areas_for_bid(connection, str(bid_uid))
                     )
-        for bid_uid in sorted(bid_data_bids):
-            (
-                conditions,
-                takeoffs,
-                areas,
-                pages,
-                page_area_selections,
-                _cdn_types,
-                annotations,
-                condition_folders,
-                selected_page_uid,
-                takeoff_extras,
-            ) = self._reader.get_bid_data(batch.database_id, str(bid_uid))
-            layers = self._reader.get_bid_layers_for_sidebar(
-                batch.database_id, str(bid_uid)
-            )
-            bid_data_by_bid[bid_uid] = BidLoadResult(
-                bid_conditions=conditions,
-                bid_takeoffs=takeoffs,
-                bid_areas=areas,
-                bid_pages=pages,
-                pages=build_pages_from_bid_data(pages, takeoffs),
-                page_area_selections=page_area_selections,
-                bid_annotations=annotations,
-                bid_layers=layers,
-                bid_condition_folders=condition_folders,
-                selected_page_uid=selected_page_uid,
-                takeoff_extras=takeoff_extras,
-            )
+        families_by_bid = {
+            bid_uid: {
+                BID_CONTENT_FAMILY_BY_RESOURCE_TYPE[change.resource.resource_type]
+                for change in batch.changes
+                if change.resource.bid_uid == bid_uid
+                and change.resource.resource_type in BID_CONTENT_FAMILY_BY_RESOURCE_TYPE
+            }
+            for bid_uid in bid_data_bids
+        }
+        if bid_data_bids:
+            request = self._requests.request(batch.database_id, read_only=True)
+            with self._connections.connection(request, autocommit=True) as connection:
+                schema = MdbSchemaInspector(connection, self._reader.logger)
+                for bid_uid in sorted(bid_data_bids):
+                    bid_key = str(bid_uid)
+                    families = families_by_bid[bid_uid]
+                    needs_page_graph = bool(
+                        families
+                        & {
+                            CollaborationResourceFamily.PAGES.value,
+                            CollaborationResourceFamily.TAKEOFFS.value,
+                        }
+                    )
+                    raw_layers = (
+                        self._reader._parse_bid_layers_for_bid(connection, bid_key)
+                        if families
+                        & {
+                            CollaborationResourceFamily.PAGES.value,
+                            CollaborationResourceFamily.ANNOTATIONS.value,
+                        }
+                        else {}
+                    )
+                    takeoffs, takeoff_extras = (
+                        self._reader._parse_bid_takeoffs_for_bid(
+                            connection, bid_key, schema
+                        )
+                        if needs_page_graph
+                        else ([], {})
+                    )
+                    pages = (
+                        self._reader._parse_bid_pages_for_bid(
+                            connection, bid_key, raw_layers, schema
+                        )
+                        if needs_page_graph
+                        else {}
+                    )
+                    annotations = (
+                        self._reader._parse_bid_annotations_for_bid(
+                            connection, bid_key, raw_layers, schema
+                        )
+                        if CollaborationResourceFamily.ANNOTATIONS.value in families
+                        else []
+                    )
+                    page_area_selections = (
+                        self._reader._parse_page_area_selections_for_bid(
+                            connection, pages, schema
+                        )
+                        if CollaborationResourceFamily.PAGES.value in families
+                        else {}
+                    )
+                    layers = (
+                        self._reader.get_bid_layers_for_sidebar(
+                            batch.database_id, bid_key
+                        )
+                        if CollaborationResourceFamily.LAYERS.value in families
+                        else []
+                    )
+                    bid_data_by_bid[bid_uid] = BidLoadResult(
+                        bid_takeoffs=takeoffs,
+                        bid_pages=pages,
+                        pages=build_pages_from_bid_data(pages, takeoffs),
+                        page_area_selections=page_area_selections,
+                        bid_annotations=annotations,
+                        bid_layers=layers,
+                        takeoff_extras=takeoff_extras,
+                    )
         return HydratedDatabaseChangeBatch(
             batch=batch,
             conditions_by_bid=conditions_by_bid,
