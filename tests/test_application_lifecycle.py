@@ -23,6 +23,9 @@ from ost_visualizer.application.services.annotation_view_event_handler import (
 from ost_visualizer.application.services.visualization_service import (
     VisualizationService,
 )
+from ost_visualizer.infrastructure.database.descriptor_registry import (
+    DatabaseDescriptorRegistry,
+)
 
 
 class FakeEventBus:
@@ -106,6 +109,40 @@ class FakeInfrastructureProvider:
 
 
 class ApplicationLifecycleTests(unittest.TestCase):
+    def test_new_access_database_is_registered_before_first_open(self):
+        created_path = Path("C:/jobs/new-project.mdb")
+
+        class _FileState:
+            def __init__(self):
+                self.file_entries = []
+
+            def contains_path(self, _path):
+                return False
+
+            def update_entries(self, entries):
+                self.file_entries = list(entries)
+
+        state = _FileState()
+        registry = DatabaseDescriptorRegistry()
+        controller = AppController(
+            container=SimpleNamespace(),
+            event_bus=FakeEventBus(),
+            logger=logging.getLogger("test"),
+            orchestrators=None,
+            project_data_service=None,
+            file_loading_service=None,
+            load_files_from_config_use_case=None,
+            working_directory_service=SimpleNamespace(
+                create_database=lambda *_args, **_kwargs: created_path
+            ),
+            file_state_model=state,
+            database_descriptor_registry=registry,
+        )
+
+        self.assertEqual(controller.create_new_database(), str(created_path))
+        self.assertEqual(len(state.file_entries), 1)
+        self.assertIsNotNone(registry.resolve(str(created_path)))
+
     def test_main_window_handler_factory_uses_owned_app_controller(self):
         source = Path("ost_visualizer/presentation/main_window.py").read_text(
             encoding="utf-8"

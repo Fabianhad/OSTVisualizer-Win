@@ -278,7 +278,12 @@ class DetachedPageViewManager(IShutdownAware):
             self._visibility_changed_callback(self.is_view_open())
 
     def _is_read_only(self) -> bool:
-        if not self._ui_access_manager:
+        view = self.repository.get_active_view()
+        if (
+            not self._ui_access_manager
+            or view is None
+            or view.bid_ref != self.project_data.get_current_bid_ref()
+        ):
             return True
         return not (
             self._ui_access_manager.is_allowed(Feature.EDIT_PLAN_ITEMS)
@@ -461,16 +466,16 @@ class DetachedPageViewManager(IShutdownAware):
         self._window.load_view(view, page_data, navigation_source="combobox")
 
     def _on_window_scale_changed(self, page_uid: str, sf1: float, sf2: float) -> None:
+        view = self.repository.get_active_view()
         if (
             not self._write_service
             or not self._ui_access_manager
+            or view is None
+            or view.bid_ref != self.project_data.get_current_bid_ref()
             or not self._ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS)
         ):
             return
-        view = self.repository.get_active_view()
-        db_path = (
-            view.file_path if view else self.project_data.get_current_bid_file_path()
-        )
+        db_path = view.file_path
         if not db_path:
             return
         try:

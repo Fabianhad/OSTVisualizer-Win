@@ -369,6 +369,9 @@ class ToolbarStateCoordinator:
         if self.plan_view:
             self.plan_view.set_selection_enabled(select_allowed)
             self.plan_view.set_editing_enabled(edit_allowed)
+            self.plan_view.set_text_annotation_inline_edit_enabled(
+                self._access.is_allowed(Feature.EDIT_ANNOTATION_TEXT)
+            )
         if self.opengl_viewer:
             self.opengl_viewer.set_pick_enabled(select_allowed)
             self.opengl_viewer.set_editing_enabled(edit_allowed)

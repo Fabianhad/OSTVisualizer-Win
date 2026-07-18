@@ -120,15 +120,28 @@ class FileOperationHandler:
                 for database_id in (
                     old_checked_files.keys() & new_checked_entries.keys()
                 ):
-                    if (
+                    descriptor_changed = (
                         old_checked_files[database_id].descriptor
                         != new_checked_entries[database_id].descriptor
+                    )
+                    if descriptor_changed or (
+                        new_checked_entries[database_id].backend
+                        == DatabaseBackend.SQL_SERVER
                     ):
-                        self._database_capability_service.mark_connected(database_id)
-                        self.event_bus.publish(
-                            AppEvents.DATABASE_CAPABILITIES_CHANGED,
-                            file_path=database_id,
+                        was_editable = self._database_capability_service.is_editable(
+                            database_id
                         )
+                        self._database_capability_service.mark_connected(database_id)
+                        if descriptor_changed or (
+                            was_editable
+                            != self._database_capability_service.is_editable(
+                                database_id
+                            )
+                        ):
+                            self.event_bus.publish(
+                                AppEvents.DATABASE_CAPABILITIES_CHANGED,
+                                file_path=database_id,
+                            )
             retained_ids = {entry.database_id for entry in final_entries}
             if self._database_descriptor_registry is not None:
                 for entry in original_entries:
