@@ -1,8 +1,9 @@
 import logging
-from typing import Callable
-from PySide6.QtCore import QObject, Signal
+from typing import Callable, TypeVar
+from PySide6.QtCore import QObject, Signal, Slot
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 class OstSignaler(QObject):
@@ -14,12 +15,18 @@ class OstSignaler(QObject):
 
 class QtCallbackBridge(QObject):
     callback_ready = Signal(int, bool, str)
+    dispatch_ready = Signal(object, object)
 
     def __init__(self):
         super().__init__()
         self._callbacks: dict[int, Callable] = {}
         self._next_id = 0
         self.callback_ready.connect(self._on_callback_ready)
+        self.dispatch_ready.connect(self._on_dispatch_ready)
+
+    @Slot(object, object)
+    def _on_dispatch_ready(self, callback: Callable, payload) -> None:
+        callback(payload)
 
     def _on_callback_ready(self, callback_id: int, success: bool, message: str):
         callback = self._callbacks.pop(callback_id, None)
@@ -36,3 +43,6 @@ class QtCallbackBridge(QObject):
         self._next_id += 1
         self._callbacks[callback_id] = callback
         self.callback_ready.emit(callback_id, success, message)
+
+    def dispatch(self, callback: Callable[[T], None], payload: T) -> None:
+        self.dispatch_ready.emit(callback, payload)

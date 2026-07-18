@@ -5,8 +5,6 @@ from typing import Protocol
 
 class ICursorOwner(Protocol):
     def _unregister_cursor(self, cursor: "CursorLease") -> None: ...
-
-
 class CursorLease:
     def __init__(self, owner: ICursorOwner, cursor: pyodbc.Cursor) -> None:
         self._owner = owner

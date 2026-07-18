@@ -1786,6 +1786,11 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
+    @classmethod
+    def tearDownClass(cls):
+        cls.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+        cls.app.processEvents()
+
     def _make_toolbar_window(self, window_cls):
         with patch(
             "ost_visualizer.presentation.windows.components.window.TakeoffPlanView",
@@ -2672,7 +2677,6 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._write_service = SimpleNamespace(
             save_page_scale=lambda *_args: calls.append("write") or True
         )
-
         self.assertTrue(manager._is_read_only())
         manager._on_window_scale_changed("page-1", 1.0, 1.0)
         self.assertEqual(calls, [])

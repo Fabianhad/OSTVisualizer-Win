@@ -2,6 +2,7 @@ import contextlib
 import logging
 import os
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -40,6 +41,10 @@ from ost_visualizer.infrastructure.sql.schema_inspector import (
     SqlSchemaInventory,
 )
 from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ost_visualizer.application.dtos.collaboration_dtos import DatabaseMutationRequest
+from ost_visualizer.application.services.database_session_registry import (
+    DatabaseSessionRegistry,
+)
 from ost_visualizer.infrastructure.sql.schema_validator import (
     SqlSchemaCompatibility,
     SqlSchemaValidationReport,
@@ -154,11 +159,16 @@ class _CreationCursor:
     def fetchone(self):
         if "sp_getapplock" in self._last_sql:
             return (0,)
+        if "FROM [ostv].[Sessions]" in self._last_sql:
+            return (1,)
         if "COUNT(*) FROM sys.tables" in self._last_sql:
             return (0,)
         if "database_guid" in self._last_sql:
             return ("00000000-0000-0000-0000-000000000001",)
-        if "SELECT [Version], [Checksum]" in self._last_sql:
+        if (
+            "[ostv].[DatabaseMetadata]" in self._last_sql
+            and "[ostv].[SchemaMigrations]" in self._last_sql
+        ):
             return self.schema_record
         return (0,)
 
@@ -202,6 +212,8 @@ class _WriterCursor(_CreationCursor):
             return (LATEST_SQL_SCHEMA.version, LATEST_SQL_SCHEMA.checksum)
         if "sp_getapplock" in self._last_sql:
             return (0,)
+        if "FROM [ostv].[Sessions]" in self._last_sql:
+            return (1,)
         return None
 
     def close(self):
@@ -253,11 +265,19 @@ def _empty_inventory():
 
 
 class SqlCleanupCorrectnessTests(unittest.TestCase):
+    def test_sql_mutation_uses_canonical_entity_version_token_column(self):
+        source = Path("ost_visualizer/infrastructure/sql/writer.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("OUTPUT INSERTED.[Token]", source)
+        self.assertNotIn("OUTPUT INSERTED.[Version]", source)
+
     def test_sql_edit_probe_requires_every_core_table_and_change_log_permission(self):
         class _PermissionCursor:
-            def __init__(self, core_result, metadata_result):
+            def __init__(self, core_result, metadata_result, collaboration_result):
                 self._core_result = core_result
                 self._metadata_result = metadata_result
+                self._collaboration_result = collaboration_result
                 self._last_sql = ""
 
             def execute(self, sql, *_params):
@@ -265,8 +285,10 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 return self
 
             def fetchone(self):
-                if "FROM sys.tables" in self._last_sql:
+                if "s.[name]=N'dbo'" in self._last_sql:
                     return self._core_result
+                if "s.[name]=N'ostv'" in self._last_sql:
+                    return self._collaboration_result
                 return self._metadata_result
 
             def __enter__(self):
@@ -276,8 +298,12 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 return None
 
         class _PermissionManager:
-            def __init__(self, core_result, metadata_result):
-                self._cursor = _PermissionCursor(core_result, metadata_result)
+            def __init__(
+                self, core_result, metadata_result, collaboration_result=(6, 0)
+            ):
+                self._cursor = _PermissionCursor(
+                    core_result, metadata_result, collaboration_result
+                )
 
             @contextlib.contextmanager
             def connection(self, _request, *, autocommit=False):
@@ -292,7 +318,6 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         current = (
             LATEST_SQL_SCHEMA.version,
             LATEST_SQL_SCHEMA.checksum,
-            1,
             "READ_WRITE",
         )
         table_count = len(LATEST_SQL_SCHEMA.core_schema.tables)
@@ -319,12 +344,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             _CredentialStore(),
             connection_manager=_PermissionManager(
                 (table_count, 0),
-                (
-                    LATEST_SQL_SCHEMA.version,
-                    LATEST_SQL_SCHEMA.checksum,
-                    0,
-                    "READ_WRITE",
-                ),
+                current,
+                (6, 1),
             ),
         )
         self.assertFalse(denied_change_log.can_edit(descriptor.database_id))
@@ -336,7 +357,6 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 (
                     LATEST_SQL_SCHEMA.version,
                     LATEST_SQL_SCHEMA.checksum,
-                    1,
                     "READ_ONLY",
                 ),
             ),
@@ -382,21 +402,29 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
     def test_access_writer_uses_access_schema_inspector(self):
         writer = DatabaseProjectWriter(
-            object(), DatabaseDescriptorRegistry(), _CredentialStore()
+            object(),
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
         )
         with writer._backend_scope("example.mdb"):
             self.assertIsInstance(writer._schema(object()), MdbSchemaInspector)
 
     def test_writer_requires_an_explicit_backend_scope(self):
         writer = DatabaseProjectWriter(
-            object(), DatabaseDescriptorRegistry(), _CredentialStore()
+            object(),
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
         )
         with self.assertRaisesRegex(RuntimeError, "backend scope"):
             writer._current_backend()
 
     def test_missing_sql_descriptor_never_falls_through_to_access(self):
         registry = DatabaseDescriptorRegistry()
-        writer = DatabaseProjectWriter(object(), registry, _CredentialStore())
+        writer = DatabaseProjectWriter(
+            object(), registry, _CredentialStore(), DatabaseSessionRegistry()
+        )
         with self.assertRaisesRegex(LookupError, "not registered"):
             writer._is_sql("unregistered-database-id")
         reader = DatabaseProjectReader(object(), registry, _CredentialStore())
@@ -439,10 +467,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_connection_lease_close_is_idempotent(self):
         raw_connection = _RawConnection()
         lease = SqlConnectionLease(raw_connection, 30)
-
         lease.close()
         lease.close()
-
         self.assertEqual(raw_connection.close_count, 1)
         with self.assertRaisesRegex(RuntimeError, "closed"):
             lease.cursor()
@@ -478,21 +504,56 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         registry.register(descriptor)
         manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
         writer = SqlProjectWriter(
-            registry, _CredentialStore(), connection_manager=manager
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
         )
         with self.assertRaisesRegex(RuntimeError, "mid-operation"):
-            with writer._connection(descriptor.database_id):
+
+            def fail(_recorder):
                 raise RuntimeError("mid-operation failure")
+
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                fail,
+            )
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
         self.assertTrue(
             all(cursor.close_count == 1 for cursor in manager.lease.cursors)
         )
 
+    def test_writer_guard_rejects_stale_database_metadata(self):
+        class _StaleMetadataCursor(_WriterCursor):
+            def fetchone(self):
+                if "DatabaseMetadata" in self._last_sql:
+                    return (1, LATEST_SQL_SCHEMA.checksum)
+                return super().fetchone()
+
+        class _StaleMetadataLease(_WriterLease):
+            def cursor(self):
+                cursor = _StaleMetadataCursor()
+                self.cursors.append(cursor)
+                return cursor
+
+        lease = _StaleMetadataLease()
+        with self.assertRaisesRegex(Exception, "unsupported schema version"):
+            SqlProjectWriter._require_current_schema(lease)
+        self.assertTrue(all(cursor.close_count == 1 for cursor in lease.cursors))
+
     def test_sql_import_table_metadata_comes_from_canonical_schema(self):
         writer = DatabaseProjectWriter(
-            object(), DatabaseDescriptorRegistry(), _CredentialStore()
+            object(),
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
         )
 
         class _NoMetadataConnection:
@@ -745,7 +806,6 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         ):
             handler.open_files()
             handler.open_files()
-
         self.assertEqual(connected, [entry.database_id, entry.database_id])
         self.assertEqual(
             published,

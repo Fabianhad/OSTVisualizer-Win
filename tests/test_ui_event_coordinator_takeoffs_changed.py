@@ -33,6 +33,11 @@ class FakeUiState:
         self.place_condition_uid = None
 
 
+class FakeSqlCollaboration:
+    def update_presence(self, *_args):
+        return None
+
+
 class FakeProjectData:
     def __init__(self):
         self.selected_page_uids = ["page-1"]
@@ -1327,6 +1332,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator.main_window.project_view.selected_node = {
             "kind": "bid",
             "file_path": new_ref.file_path,
@@ -1374,6 +1381,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeMainWindow()
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator.ui_state_manager = UiState()
         clear_bid_calls = []
         coordinator.project_data = type(
@@ -1424,6 +1433,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeMainWindow()
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator.ui_state_manager = UiState()
         clear_bid_calls = []
         coordinator.project_data = type(
@@ -1559,6 +1570,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self, selected_file="active.mdb", current_file="active.mdb"
     ):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator.ui_state_manager = FakeUnloadUiState(selected_file)
         coordinator.project_data = FakeUnloadProjectData(current_file)
         coordinator.main_window = FakeUnloadMainWindow()
@@ -1623,6 +1636,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.project_data = FakeUnloadProjectData("active.mdb")
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator.ui_access_manager = FakeAccess()
         coordinator._toolbar = FakeToolbar()
         coordinator._tab_widget = FakeTabWidget(index=1)
@@ -1663,6 +1678,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.project_data = ProjectData()
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator._cache_bid_data = lambda _loaded_files: None
         coordinator._do_file_refresh()
         loaded_file = coordinator.main_window.project_view.loaded_files[0]
@@ -1674,6 +1691,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.project_data = FakeUnloadProjectData("active.mdb", ["project-1"])
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator.ui_access_manager = FakeAccess()
         coordinator._toolbar = FakeToolbar()
         coordinator._tab_widget = FakeTabWidget(index=0)
@@ -1748,6 +1767,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.ui_state_manager = UiState()
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator.project_data = ProjectData()
         coordinator.ui_access_manager = FakeAccess()
         coordinator._toolbar = FakeToolbar()
@@ -1774,6 +1795,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.project_data = FakeUnloadProjectData("active.mdb", [])
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator.ui_state_manager = FakeRefreshUiState()
         coordinator.ui_access_manager = FakeAccess()
         coordinator._toolbar = FakeToolbar()
@@ -1814,6 +1837,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.project_data = ProjectData()
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator.ui_state_manager = FakeRefreshUiState()
         deleted_bid_ref = BidRef("active.mdb", "deleted-bid")
         coordinator.ui_state_manager.bid_ref = deleted_bid_ref
@@ -1909,6 +1934,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.ui_state_manager = UiState()
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._status_panel = None
         coordinator.project_data = ProjectData()
         coordinator.project_operations = ProjectOperations(coordinator.project_data)
         coordinator.ui_access_manager = FakeAccess()

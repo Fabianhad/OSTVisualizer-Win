@@ -1,23 +1,19 @@
-from types import MappingProxyType
 from typing import Dict, List, Optional, Tuple
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ....domain.entities.annotation import (
     ANNOTATION_TYPE_ARROW,
     ANNOTATION_TYPE_CALLOUT,
-    ANNOTATION_TYPE_CLOUD,
     ANNOTATION_TYPE_DIMENSION,
     ANNOTATION_TYPE_HIGHLIGHT,
     ANNOTATION_TYPE_HOTLINK,
     ANNOTATION_TYPE_INK,
     ANNOTATION_TYPE_LINE,
     ANNOTATION_TYPE_NAMED_VIEW,
-    ANNOTATION_TYPE_OVAL,
-    ANNOTATION_TYPE_POLYGON,
-    ANNOTATION_TYPE_RECT,
     ANNOTATION_TYPE_TEXT,
 )
 from ....domain.entities.named_view import normalize_named_view_position
+from ...database.annotation_storage import ANNOTATION_TABLE_BY_TYPE
 from .constants import hex_to_color_int
 from .serialization import encode_annotation_text, serialize_position_for_table
 from .identity_allocation import AccessIdentityAllocationMixin
@@ -44,23 +40,7 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
         "FontItalic",
         "FontUnderline",
     )
-    _ANNOTATION_TABLE = MappingProxyType(
-        {
-            ANNOTATION_TYPE_LINE: "BidALines",
-            ANNOTATION_TYPE_ARROW: "BidArrows",
-            ANNOTATION_TYPE_DIMENSION: "BidDimensions",
-            ANNOTATION_TYPE_CLOUD: "BidAnnotationClouds",
-            ANNOTATION_TYPE_POLYGON: "BidAnnotationPolygons",
-            ANNOTATION_TYPE_RECT: "BidAnnotationRects",
-            ANNOTATION_TYPE_OVAL: "BidAnnotationOvals",
-            ANNOTATION_TYPE_INK: "BidAnnoInk",
-            ANNOTATION_TYPE_TEXT: "BidTexts",
-            ANNOTATION_TYPE_HIGHLIGHT: "BidHighlights",
-            ANNOTATION_TYPE_NAMED_VIEW: "BidNamedViews",
-            ANNOTATION_TYPE_HOTLINK: "BidHotLinks",
-            ANNOTATION_TYPE_CALLOUT: "BidCallOuts",
-        }
-    )
+    _ANNOTATION_TABLE = ANNOTATION_TABLE_BY_TYPE
 
     def save_annotation_positions(
         self, db_path: str, positions: List[Tuple[str, str, List[float]]]

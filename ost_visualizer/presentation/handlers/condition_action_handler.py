@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Optional
 from PySide6.QtCore import QSignalBlocker
 from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
+from ...application.dtos.collaboration_dtos import ResourceRef
 from ...application.dtos.update_condition_dto import (
     UpdateConditionDto,
     UpdateConditionResultDto,
@@ -811,7 +812,17 @@ class ConditionActionHandler:
                 self._coordinator.placement.enter(uid, [uid])
 
         dialog.condition_navigated.connect(_on_navigated)
+        bid_uid = int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
+        edit_resources = tuple(
+            ResourceRef("condition", uid, bid_uid) for uid in condition_uids
+        )
+        if not self._coordinator.begin_collaboration_edit(
+            bid_ref.file_path, edit_resources
+        ):
+            dialog.deleteLater()
+            return
         try:
             exec_with_ost_blocking(dialog, self._coordinator.event_bus)
         finally:
+            self._coordinator.end_collaboration_edit(bid_ref.file_path, edit_resources)
             dialog.deleteLater()

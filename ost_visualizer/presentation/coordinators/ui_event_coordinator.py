@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QObject, Signal
 from ...application.dtos.mesh_geometry_dto import MeshGeometry
+from ...application.dtos.collaboration_dtos import ResourceRef
 from ...application.events.app_events import AppEvents
 from ...domain.entities.bid import Bid
 from ...domain.entities.file_state import normalize_path
@@ -123,6 +124,7 @@ class UIEventCoordinator:
         project_write_service,
         project_read_service,
         deferred_persistence_manager,
+        sql_collaboration_coordinator,
     ):
         self.main_window = main_window
         self.ui_state_manager = ui_state_manager
@@ -136,6 +138,7 @@ class UIEventCoordinator:
         self._project_write_service = project_write_service
         self._project_read_service = project_read_service
         self._deferred_persistence = deferred_persistence_manager
+        self._sql_collaboration = sql_collaboration_coordinator
         self._plan_texture_provider = None
         self.conditions_sidebar = None
         self.condition_summary_tab = None
@@ -1121,6 +1124,32 @@ class UIEventCoordinator:
         )
         self._subscribe(AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed)
         self._subscribe(AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed)
+        self._subscribe(
+            AppEvents.REMOTE_CONDITIONS_CHANGED,
+            self._on_remote_conditions_changed,
+        )
+        self._subscribe(AppEvents.REMOTE_AREAS_CHANGED, self._on_remote_areas_changed)
+        self._subscribe(
+            AppEvents.REMOTE_BID_CONTENT_CHANGED,
+            self._on_remote_bid_content_changed,
+        )
+        self._subscribe(
+            AppEvents.REMOTE_HIERARCHY_CHANGED,
+            self._on_remote_hierarchy_changed,
+        )
+        self._subscribe(
+            AppEvents.COLLABORATION_STATE_CHANGED,
+            self._on_collaboration_state_changed,
+        )
+        self._subscribe(AppEvents.PRESENCE_CHANGED, self._on_presence_changed)
+        self._subscribe(
+            AppEvents.FULL_RECONCILIATION_REQUIRED,
+            self._on_full_reconciliation_required,
+        )
+        self._subscribe(
+            AppEvents.SYNCHRONIZATION_CONFLICT,
+            self._on_synchronization_conflict,
+        )
         self._subscribe(AppEvents.FILE_UNLOADED, self._on_file_unloaded)
         self._subscribe(AppEvents.FILE_SELECTED, self._on_file_selected)
         self._subscribe(AppEvents.APP_CONFIG_UPDATED, self._on_app_config_updated)
@@ -1139,7 +1168,17 @@ class UIEventCoordinator:
         self._toolbar.refresh()
 
     def refresh_conditions_ui(self) -> None:
-        self._sidebar.refresh_conditions_ui()
+        self._sidebar.refresh_conditions_from_memory()
+
+    def begin_collaboration_edit(
+        self, database_id: str, resources: tuple[ResourceRef, ...]
+    ) -> bool:
+        return self._sql_collaboration.begin_local_edit(database_id, resources)
+
+    def end_collaboration_edit(
+        self, database_id: str, resources: tuple[ResourceRef, ...]
+    ) -> None:
+        self._sql_collaboration.end_local_edit(database_id, resources)
 
     def can_renumber_conditions(self) -> bool:
         return self._condition_handler.can_renumber_conditions()
@@ -1170,9 +1209,18 @@ class UIEventCoordinator:
             has_license=True,
             bid_ref=bid_ref,
         )
+        area_bid_uid = (
+            int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
+        )
+        area_resource = ResourceRef("areas_collection", bid_ref.bid_uid, area_bid_uid)
+        if not self.begin_collaboration_edit(bid_ref.file_path, (area_resource,)):
+            dialog.cleanup()
+            dialog.deleteLater()
+            return
         try:
             exec_with_ost_blocking(dialog, self.event_bus)
         finally:
+            self.end_collaboration_edit(bid_ref.file_path, (area_resource,))
             dialog.cleanup()
             saved_changes = dialog.has_saved_changes()
             dialog.deleteLater()
@@ -1648,6 +1696,7 @@ class UIEventCoordinator:
         page_uid: str = "",
         takeoff_uids: list | None = None,
         condition_uids: list | None = None,
+        update_shell: bool = True,
     ) -> None:
         page_uid = page_uid or self.ui_state_manager.active_page_uid
         if page_uid:
@@ -1669,6 +1718,66 @@ class UIEventCoordinator:
         )
         if self._is_summary_tab_active():
             self._load_condition_summary()
+        if update_shell:
+            self._update_export_menu_state()
+            self._restore_project_tree_bid_selection_if_needed()
+
+    def _on_remote_bid_content_changed(
+        self,
+        database_id: str = "",
+        bid_uid: str = "",
+        families: Optional[List[str]] = None,
+        resource_uids_by_family: Optional[Dict[str, List[str]]] = None,
+    ) -> None:
+        selected = self.ui_state_manager.get_selected_bid_ref()
+        if selected != BidRef(database_id, bid_uid):
+            return
+        changed_families = set(families or [])
+        changed_uids = resource_uids_by_family or {}
+        if self._undo_service and changed_families & {"takeoffs", "annotations"}:
+            self._undo_service.clear()
+        if "takeoffs" in changed_families:
+            self._on_takeoffs_changed(
+                page_uid=self.ui_state_manager.active_page_uid,
+                takeoff_uids=changed_uids.get("takeoffs") or None,
+                update_shell=False,
+            )
+        if "annotations" in changed_families:
+            self._on_annotations_changed(
+                page_uid=self.ui_state_manager.active_page_uid,
+                annotation_uids=changed_uids.get("annotations") or None,
+                update_shell=False,
+            )
+        if "pages" in changed_families:
+            valid_pages = [
+                uid
+                for uid in self.ui_state_manager.selected_page_uids
+                if self.project_data.get_page(uid)
+            ]
+            active_page = self.ui_state_manager.active_page_uid
+            if active_page and not self.project_data.get_page(active_page):
+                ordered_pages = sorted(
+                    self.project_data.get_all_pages(), key=lambda page: page.sequence
+                )
+                active_page = ordered_pages[0].uid if ordered_pages else None
+            self.ui_state_manager.set_page_selection(valid_pages)
+            self.ui_state_manager.active_page_uid = active_page
+            self.project_data.select_pages(valid_pages)
+            self._sidebar.load_takeoff_sidebar_from_memory(
+                selected, self._bid_data_cache
+            )
+            if active_page:
+                self._update_page_settings_bar(active_page)
+                self._update_plan_view(active_page)
+            else:
+                self._viewer.clear_viewer()
+        if "layers" in changed_families and self._sidebar.bid_layers_sidebar:
+            self._sidebar.bid_layers_sidebar.load_layers(
+                self.project_data.get_bid_layer_snapshot(),
+                used_uids=self.project_data.get_layer_uids_in_use(),
+            )
+            self._sidebar.refresh_conditions_from_memory()
+            self._update_plan_view_for_active()
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
 
@@ -1677,14 +1786,138 @@ class UIEventCoordinator:
         page_uid: str = "",
         annotation_uids: Optional[List[str]] = None,
         annotation_types: Optional[List[str]] = None,
+        update_shell: bool = True,
     ) -> None:
         self._update_plan_view_annotations(
             page_uid,
             annotation_uids=annotation_uids,
             annotation_types=annotation_types,
         )
+        if update_shell:
+            self._update_export_menu_state()
+            self._restore_project_tree_bid_selection_if_needed()
+
+    def _on_remote_conditions_changed(
+        self,
+        database_id: str = "",
+        bid_uid: str = "",
+        condition_uids: Optional[List[str]] = None,
+    ) -> None:
+        selected = self.ui_state_manager.get_selected_bid_ref()
+        if selected != BidRef(database_id, bid_uid):
+            return
+        if self._undo_service:
+            self._undo_service.clear()
+        valid_highlights = self._validate_condition_uids(
+            self.ui_state_manager.highlighted_condition_uids
+        )
+        self.ui_state_manager.highlighted_condition_uids = valid_highlights
+        self._sidebar.refresh_conditions_from_memory()
+        self.highlight_sidebar(valid_highlights, reveal=False)
+        self._update_plan_view_for_active(condition_uids=condition_uids)
         self._update_export_menu_state()
-        self._restore_project_tree_bid_selection_if_needed()
+
+    def _on_remote_areas_changed(
+        self,
+        database_id: str = "",
+        bid_uid: str = "",
+        area_uids: Optional[List[str]] = None,
+    ) -> None:
+        del area_uids
+        selected = self.ui_state_manager.get_selected_bid_ref()
+        if selected != BidRef(database_id, bid_uid) or not self._page_settings_bar:
+            return
+        selected_area_uid = self._page_settings_bar.get_selected_area_uid()
+        self._page_settings_bar.load_bid_areas(
+            selected,
+            areas=self.project_data.get_bid_area_snapshot(),
+            areas_with_takeoff=self.project_data.get_area_uids_with_takeoff(),
+            selected_uid=selected_area_uid,
+        )
+        self._refresh_takeoff_dependent_page_controls(
+            self.ui_state_manager.active_page_uid
+        )
+        if self._is_summary_tab_active():
+            self._sidebar.load_condition_summary_from_memory()
+
+    def _on_collaboration_state_changed(
+        self,
+        database_id: str = "",
+        state: str = "",
+        message: str = "",
+    ) -> None:
+        selected = self.ui_state_manager.selected_file_path or ""
+        if self._status_panel and database_id == selected:
+            self._status_panel.set_collaboration_state(state, message)
+        self.ui_access_manager.refresh()
+        self._update_export_menu_state()
+
+    def _on_presence_changed(
+        self,
+        database_id: str = "",
+        bid_uid: str = "",
+        users: Optional[List] = None,
+    ) -> None:
+        if not self._status_panel:
+            return
+        selected = self.ui_state_manager.get_selected_bid_ref()
+        if selected == BidRef(database_id, bid_uid):
+            self._status_panel.set_collaboration_presence(users or [])
+
+    def _on_full_reconciliation_required(
+        self, database_id: str = "", reason: str = ""
+    ) -> None:
+        if database_id != self.project_data.get_current_file_path():
+            return
+        if not self._flush_deferred_for_file(database_id):
+            return
+        if self.project_operations.reload_database(database_id):
+            self.event_bus.publish(AppEvents.DATABASE_REFRESHED, file_path=database_id)
+            return
+        show_warning(
+            self.main_window,
+            "SQL Synchronization",
+            reason or "The SQL database could not be reconciled safely.",
+        )
+
+    def _on_remote_hierarchy_changed(self, database_id: str = "") -> None:
+        active_bid = self.project_data.get_current_bid_ref()
+        self._do_file_refresh()
+        if active_bid is None or active_bid.file_path != database_id:
+            return
+        if self.project_data.get_bid(active_bid) is not None:
+            self.main_window.project_view.restore_bid_selection(active_bid)
+            return
+        self._on_file_selected(database_id, is_database_root=True)
+        self.main_window.project_view.restore_file_selection(database_id)
+
+    def _on_synchronization_conflict(
+        self,
+        database_id: str = "",
+        resource_type: str = "",
+        resource_id: str = "",
+        bid_uid: str = "",
+        message: str = "",
+        blocks_database: bool = True,
+    ) -> None:
+        if blocks_database:
+            self._sql_collaboration.enter_conflict(database_id, message)
+        else:
+            self._sql_collaboration.enter_resource_conflict(
+                database_id,
+                ResourceRef(
+                    resource_type,
+                    resource_id,
+                    int(bid_uid) if bid_uid else None,
+                ),
+            )
+        show_warning(
+            self.main_window,
+            "SQL Edit Conflict",
+            message
+            or f"{resource_type} {resource_id} changed in another session. "
+            "Reload the database before saving again.",
+        )
 
     def _restore_project_tree_bid_selection_if_needed(self) -> None:
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
@@ -1875,6 +2108,8 @@ class UIEventCoordinator:
         self._set_takeoff_tab_visible(False)
         self._refresh_project_tree_after_file_unload()
         self._update_export_menu_state()
+        if self._status_panel:
+            self._status_panel.set_collaboration_state("stopped")
         self.main_window.refresh_window_title()
 
     def _refresh_project_tree_after_file_unload(self) -> None:
@@ -1913,6 +2148,12 @@ class UIEventCoordinator:
         self._clear_mesh_views_for_scene_update(clear_embedded=False)
         self.visualization_service.refresh_mesh_view([])
         self._update_export_menu_state()
+        if self._status_panel and file_path:
+            collaboration_status = self._sql_collaboration.status(file_path)
+            self._status_panel.set_collaboration_state(
+                collaboration_status.state.value,
+                collaboration_status.message,
+            )
 
     def _on_app_config_updated(self, setting: str = "", value=None) -> None:
         _ = setting
@@ -2000,6 +2241,10 @@ class UIEventCoordinator:
         if bid_ref and prev_bid_ref and bid_ref == prev_bid_ref and not force:
             return
         self._save_current_page_view_state()
+        if prev_bid_ref and (
+            bid_ref is None or bid_ref.file_path != prev_bid_ref.file_path
+        ):
+            self._sql_collaboration.update_presence(prev_bid_ref.file_path, None, None)
         if not bid_ref:
             self._placement.force_exit()
             self.ui_state_manager.set_bid_selection(None)
@@ -2033,6 +2278,9 @@ class UIEventCoordinator:
         self._placement.force_exit()
         self.ensure_select_mode()
         self.ui_state_manager.set_bid_selection(bid_ref)
+        self._sql_collaboration.update_presence(
+            bid_ref.file_path, bid_ref.bid_uid, None
+        )
         self._sync_undo_bid()
         self.project_data.deselect_pages()
         self.ui_state_manager.set_page_selection([])
@@ -2069,6 +2317,11 @@ class UIEventCoordinator:
             return
         self._save_current_page_view_state(selected_page_override=active_uid)
         self.ui_state_manager.active_page_uid = active_uid
+        bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        if bid_ref:
+            self._sql_collaboration.update_presence(
+                bid_ref.file_path, bid_ref.bid_uid, active_uid
+            )
         if active_uid:
             self._update_page_settings_bar(active_uid)
             self._sync_overlay_display_mode(active_uid)

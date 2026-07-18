@@ -1,5 +1,6 @@
 from enum import Enum, auto
 from typing import FrozenSet, List, Tuple
+from ...application.dtos.collaboration_dtos import ResourceRef
 from ...application.events.app_events import AppEvents
 
 
@@ -275,28 +276,72 @@ class UIAccessManager:
     def set_text_annotation_edit_active(self, active: bool) -> None:
         self._text_annotation_edit_active = bool(active)
 
-    def is_allowed(self, feature: Feature) -> bool:
-        return not self._feature_blocked(feature, require_current_selection=True)
+    def is_allowed(self, feature: Feature, resource: ResourceRef | None = None) -> bool:
+        if resource is None:
+            resource = self._current_resource_context(feature)
+        return not self._feature_blocked(
+            feature,
+            require_current_selection=True,
+            resource=resource,
+        )
 
-    def is_database_editable(self) -> bool:
+    def _current_resource_context(self, feature: Feature) -> ResourceRef | None:
+        if self._ui_state_manager is None:
+            return None
+        bid_ref = self._ui_state_manager.get_selected_bid_ref()
+        if bid_ref is None:
+            project_uid = self._ui_state_manager.selected_project_uid
+            if feature == Feature.EDIT_PROJECT_TREE_STRUCTURE and project_uid:
+                return ResourceRef("project", str(project_uid))
+            return None
+        bid_uid = int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
+        if feature in {Feature.DELETE_BID, Feature.DUPLICATE_BID}:
+            return ResourceRef("bid", str(bid_ref.bid_uid), bid_uid)
+        if feature == Feature.COVER_SHEET:
+            return ResourceRef("cover_sheet", str(bid_ref.bid_uid), bid_uid)
+        if feature == Feature.EDIT_PAGE_SETTINGS:
+            page_uid = self._ui_state_manager.active_page_uid
+            if page_uid:
+                return ResourceRef("page", str(page_uid), bid_uid)
+        if feature in {
+            Feature.EDIT_CONDITION,
+            Feature.DELETE_CONDITION,
+            Feature.DUPLICATE_CONDITION,
+        }:
+            highlighted = sorted(self._ui_state_manager.highlighted_condition_uids)
+            if len(highlighted) == 1:
+                return ResourceRef("condition", highlighted[0], bid_uid)
+        if feature == Feature.EDIT_CONDITION_STRUCTURE:
+            return ResourceRef("conditions_collection", str(bid_ref.bid_uid), bid_uid)
+        return None
+
+    def is_database_editable(self, resource: ResourceRef | None = None) -> bool:
         locator = (
             self._ui_state_manager.selected_file_path
             if self._ui_state_manager is not None
             else None
         )
-        return bool(
-            locator
-            and self._database_capability_service
-            and self._database_capability_service.is_editable(locator)
-        )
+        if not locator or self._database_capability_service is None:
+            return False
+        if resource is None:
+            return self._database_capability_service.is_editable(locator)
+        return self._database_capability_service.is_editable(locator, resource)
 
     def is_project_bid_clipboard_allowed(self, feature: Feature) -> bool:
         if feature not in (Feature.DELETE_BID, Feature.DUPLICATE_BID):
             return self.is_allowed(feature)
-        return not self._feature_blocked(feature, require_current_selection=False)
+        return not self._feature_blocked(
+            feature,
+            require_current_selection=False,
+            resource=None,
+        )
 
     def _feature_blocked(
-        self, feature: Feature, *, require_current_selection: bool
+        self,
+        feature: Feature,
+        *,
+        require_current_selection: bool,
+        resource: ResourceRef | None,
     ) -> bool:
         if not isinstance(feature, Feature):
             return True
@@ -314,7 +359,7 @@ class UIAccessManager:
             feature in _DATABASE_EDIT_FEATURES
             and feature is not Feature.CREATE_DATABASE
         ):
-            if not self.is_database_editable():
+            if not self.is_database_editable(resource):
                 return True
         if (
             feature == Feature.PLACE_ANNOTATIONS

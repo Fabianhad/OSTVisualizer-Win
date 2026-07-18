@@ -2,6 +2,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from ..database.schema_model import DatabaseSchemaModel, render_sql_server_schema
+from ..database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
 from ..mdb.database_creator import get_reference_schema_model
 
 
@@ -21,6 +22,7 @@ class SqlForeignKeyDefinition:
     referenced_schema: str
     referenced_table: str
     referenced_columns: tuple[str, ...]
+    on_delete: str = ""
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ class SqlTableDefinition:
     foreign_keys: tuple[SqlForeignKeyDefinition, ...] = ()
     unique_constraints: tuple[tuple[str, tuple[str, ...]], ...] = ()
     indexes: tuple[SqlIndexDefinition, ...] = ()
+    check_constraints: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,12 @@ class SqlSchemaDefinition:
         source = "\n-- statement --\n".join(self.statements).encode("utf-8")
         return hashlib.sha256(source).hexdigest()
 
+    @property
+    def collaboration_initialization_statements(self) -> tuple[str, ...]:
+        return _entity_version_seed_statements() + (
+            "INSERT INTO [ostv].[ChangeFeedState] ([SingletonId]) VALUES (1)",
+        )
+
 
 def _column(
     name: str,
@@ -86,6 +95,8 @@ def _foreign_key(
     column: str,
     referenced_table: str,
     referenced_column: str,
+    *,
+    on_delete: str = "",
 ) -> SqlForeignKeyDefinition:
     return SqlForeignKeyDefinition(
         name,
@@ -93,12 +104,13 @@ def _foreign_key(
         "ostv",
         referenced_table,
         (referenced_column,),
+        on_delete,
     )
 
 
 LATEST_SQL_SCHEMA = SqlSchemaDefinition(
-    version=1,
-    migration_name="initial OST Visualizer SQL schema",
+    version=2,
+    migration_name="multi-user collaboration schema",
     core_schema=get_reference_schema_model(),
     tables=(
         SqlTableDefinition(
@@ -133,20 +145,42 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
             "Sessions",
             (
                 _column("SessionId", "uniqueidentifier"),
-                _column("UserIdentity", "nvarchar(256)"),
+                _column("DatabaseGuid", "uniqueidentifier"),
                 _column("ClientInstanceId", "uniqueidentifier"),
+                _column("SqlPrincipal", "nvarchar(256)"),
+                _column("DisplayName", "nvarchar(256)"),
+                _column("MachineName", "nvarchar(256)"),
                 _column("ApplicationVersion", "nvarchar(64)"),
                 _column("ConnectedAt", "datetime2(3)", default="SYSUTCDATETIME()"),
                 _column("LastHeartbeatAt", "datetime2(3)"),
                 _column("DisconnectedAt", "datetime2(3)", nullable=True),
+                _column("LastAcknowledgedSequence", "bigint", default="0"),
+                _column("CloseReason", "nvarchar(64)", nullable=True),
                 _column("Version", "rowversion"),
             ),
             ("SessionId",),
+            foreign_keys=(
+                SqlForeignKeyDefinition(
+                    "FK_ostv_Sessions_DatabaseMetadata",
+                    ("DatabaseGuid",),
+                    "ostv",
+                    "DatabaseMetadata",
+                    ("DatabaseGuid",),
+                ),
+            ),
             indexes=(
                 SqlIndexDefinition(
                     "IX_ostv_Sessions_Heartbeat",
                     ("LastHeartbeatAt",),
                     filter_expression="[DisconnectedAt] IS NULL",
+                ),
+                SqlIndexDefinition(
+                    "IX_ostv_Sessions_ClientHeartbeat",
+                    ("ClientInstanceId", "LastHeartbeatAt"),
+                ),
+                SqlIndexDefinition(
+                    "IX_ostv_Sessions_DatabaseHeartbeat",
+                    ("DatabaseGuid", "LastHeartbeatAt"),
                 ),
             ),
         ),
@@ -154,14 +188,15 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
             "ostv",
             "Presence",
             (
-                _column("PresenceId", "bigint", identity=True),
                 _column("SessionId", "uniqueidentifier"),
-                _column("BidUID", "int"),
+                _column("BidUID", "int", nullable=True),
                 _column("CurrentPageUID", "int", nullable=True),
+                _column("ActivityMode", "nvarchar(16)", default="N'viewing'"),
                 _column("EnteredAt", "datetime2(3)", default="SYSUTCDATETIME()"),
                 _column("LastHeartbeatAt", "datetime2(3)"),
+                _column("Version", "rowversion"),
             ),
-            ("PresenceId",),
+            ("SessionId",),
             foreign_keys=(
                 _foreign_key(
                     "FK_ostv_Presence_Sessions",
@@ -170,13 +205,17 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
                     "SessionId",
                 ),
             ),
-            unique_constraints=(
-                ("UQ_ostv_Presence_SessionBid", ("SessionId", "BidUID")),
-            ),
             indexes=(
                 SqlIndexDefinition(
                     "IX_ostv_Presence_BidHeartbeat",
                     ("BidUID", "LastHeartbeatAt"),
+                    filter_expression="[BidUID] IS NOT NULL",
+                ),
+            ),
+            check_constraints=(
+                (
+                    "CK_ostv_Presence_ActivityMode",
+                    "[ActivityMode]=N'editing' OR [ActivityMode]=N'viewing'",
                 ),
             ),
         ),
@@ -187,11 +226,15 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
                 _column("LockId", "bigint", identity=True),
                 _column("ResourceType", "nvarchar(64)"),
                 _column("ResourceId", "nvarchar(128)"),
+                _column("BidUID", "int", nullable=True),
                 _column("OwnerSessionId", "uniqueidentifier"),
-                _column("LockMode", "nvarchar(32)"),
+                _column("LockToken", "uniqueidentifier"),
+                _column("LockMode", "nvarchar(32)", default="N'exclusive'"),
                 _column("OperationDescription", "nvarchar(256)", nullable=True),
                 _column("AcquiredAt", "datetime2(3)", default="SYSUTCDATETIME()"),
+                _column("LastRenewedAt", "datetime2(3)"),
                 _column("ExpiresAt", "datetime2(3)"),
+                _column("Version", "rowversion"),
             ),
             ("LockId",),
             foreign_keys=(
@@ -204,8 +247,24 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
             ),
             unique_constraints=(
                 ("UQ_ostv_Locks_Resource", ("ResourceType", "ResourceId")),
+                ("UQ_ostv_Locks_Token", ("LockToken",)),
             ),
-            indexes=(SqlIndexDefinition("IX_ostv_Locks_Expiry", ("ExpiresAt",)),),
+            indexes=(
+                SqlIndexDefinition("IX_ostv_Locks_Expiry", ("ExpiresAt",)),
+                SqlIndexDefinition(
+                    "IX_ostv_Locks_OwnerExpiry",
+                    ("OwnerSessionId", "ExpiresAt"),
+                ),
+                SqlIndexDefinition(
+                    "IX_ostv_Locks_BidExpiry",
+                    ("BidUID", "ExpiresAt"),
+                    filter_expression="[BidUID] IS NOT NULL",
+                ),
+            ),
+            check_constraints=(
+                ("CK_ostv_Locks_Mode", "[LockMode] = N'exclusive'"),
+                ("CK_ostv_Locks_Expiry", "[ExpiresAt] > [AcquiredAt]"),
+            ),
         ),
         SqlTableDefinition(
             "ostv",
@@ -216,6 +275,7 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
                 _column("BidUID", "int", nullable=True),
                 _column("ModifiedAt", "datetime2(3)", default="SYSUTCDATETIME()"),
                 _column("ModifiedBySessionId", "uniqueidentifier", nullable=True),
+                _column("IsDeleted", "bit", default="0"),
                 _column("Token", "rowversion"),
             ),
             ("ResourceType", "ResourceId"),
@@ -225,6 +285,13 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
                     "ModifiedBySessionId",
                     "Sessions",
                     "SessionId",
+                    on_delete="SET NULL",
+                ),
+            ),
+            indexes=(
+                SqlIndexDefinition(
+                    "IX_ostv_EntityVersions_BidType",
+                    ("BidUID", "ResourceType"),
                 ),
             ),
         ),
@@ -234,21 +301,32 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
             (
                 _column("Sequence", "bigint", identity=True),
                 _column("TransactionId", "uniqueidentifier"),
-                _column("SessionId", "uniqueidentifier", nullable=True),
+                _column("SourceSessionId", "uniqueidentifier", nullable=True),
+                _column("DatabaseGuid", "uniqueidentifier"),
                 _column("ResourceType", "nvarchar(64)"),
                 _column("ResourceId", "nvarchar(128)"),
                 _column("BidUID", "int", nullable=True),
                 _column("Operation", "nvarchar(32)"),
+                _column("ResultVersion", "varbinary(8)", nullable=True),
                 _column("ChangedAt", "datetime2(3)", default="SYSUTCDATETIME()"),
-                _column("Payload", "nvarchar(max)", nullable=True),
+                _column("ChangedFields", "nvarchar(1024)", nullable=True),
+                _column("Payload", "nvarchar(4000)", nullable=True),
             ),
             ("Sequence",),
             foreign_keys=(
                 _foreign_key(
                     "FK_ostv_ChangeLog_Sessions",
-                    "SessionId",
+                    "SourceSessionId",
                     "Sessions",
                     "SessionId",
+                    on_delete="SET NULL",
+                ),
+                SqlForeignKeyDefinition(
+                    "FK_ostv_ChangeLog_DatabaseMetadata",
+                    ("DatabaseGuid",),
+                    "ostv",
+                    "DatabaseMetadata",
+                    ("DatabaseGuid",),
                 ),
             ),
             indexes=(
@@ -259,6 +337,44 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
                     "IX_ostv_ChangeLog_ResourceSequence",
                     ("ResourceType", "ResourceId", "Sequence"),
                 ),
+                SqlIndexDefinition(
+                    "IX_ostv_ChangeLog_SourceSequence",
+                    ("SourceSessionId", "Sequence"),
+                ),
+                SqlIndexDefinition(
+                    "IX_ostv_ChangeLog_TransactionSequence",
+                    ("TransactionId", "Sequence"),
+                ),
+            ),
+            check_constraints=(
+                (
+                    "CK_ostv_ChangeLog_Operation",
+                    "[Operation]=N'bulk_refresh' OR [Operation]=N'reorder' OR "
+                    "[Operation]=N'move' OR [Operation]=N'delete' OR "
+                    "[Operation]=N'update' OR [Operation]=N'create'",
+                ),
+                (
+                    "CK_ostv_ChangeLog_ChangedFieldsJson",
+                    "[ChangedFields] IS NULL OR ISJSON([ChangedFields])=(1)",
+                ),
+                (
+                    "CK_ostv_ChangeLog_PayloadJson",
+                    "[Payload] IS NULL OR ISJSON([Payload])=(1)",
+                ),
+            ),
+        ),
+        SqlTableDefinition(
+            "ostv",
+            "ChangeFeedState",
+            (
+                _column("SingletonId", "tinyint"),
+                _column("FeedEpoch", "uniqueidentifier", default="NEWID()"),
+                _column("OldestAvailableSequence", "bigint", default="0"),
+                _column("LastPrunedAt", "datetime2(3)", nullable=True),
+            ),
+            ("SingletonId",),
+            check_constraints=(
+                ("CK_ostv_ChangeFeedState_Singleton", "[SingletonId]=(1)"),
             ),
         ),
     ),
@@ -273,6 +389,96 @@ def schema_record_is_current(version: object, checksum: object) -> bool:
     return (
         parsed_version == LATEST_SQL_SCHEMA.version
         and str(checksum) == LATEST_SQL_SCHEMA.checksum
+    )
+
+
+def _entity_version_seed_statements() -> tuple[str, ...]:
+    statements = [
+        _seed_entity_version("bid", "Bids", "UID", "UID"),
+        _seed_entity_version("project", "BidProjects", "UID"),
+        _seed_entity_version("page", "BidPages", "UID", "BidUID"),
+        _seed_entity_version("condition", "BidConditions", "UID", "BidUID"),
+        _seed_entity_version(
+            "condition_folder", "BidConditionFolders", "UID", "BidUID"
+        ),
+        _seed_entity_version("takeoff", "BidTakeoffs", "UID", "BidUID"),
+        _seed_entity_version("area", "BidAreas", "UID", "BidUID"),
+        _seed_entity_version("layer", "BidLayers", "UID", "BidUID", "[IsTemplate]=0"),
+        _seed_entity_version("cover_sheet", "Bids", "UID", "UID"),
+        _seed_entity_version("job_status", "JobStatuses", "UID"),
+        _seed_entity_version("employee", "Employees", "UID"),
+        _seed_entity_version("pay_class", "PayClasses", "UID"),
+        _seed_entity_version("condition_type", "CdnTypes", "UID"),
+        _seed_static_collection("projects_collection", "database"),
+        _seed_static_collection("project_bids", "orphan"),
+        _seed_static_collection("job_statuses_collection", "database"),
+        _seed_static_collection("employees_collection", "database"),
+        _seed_static_collection("pay_classes_collection", "database"),
+        _seed_static_collection("condition_types_collection", "database"),
+        _seed_static_collection("default_layers_collection", "database"),
+    ]
+    statements.extend(
+        _seed_annotation(table, annotation_type)
+        for table, annotation_type in ANNOTATION_TYPE_BY_TABLE.items()
+    )
+    statements.extend(
+        (
+            _seed_bid_collection("pages"),
+            _seed_bid_collection("conditions"),
+            _seed_bid_collection("areas"),
+            _seed_bid_collection("layers"),
+            _seed_bid_collection("takeoffs"),
+            _seed_bid_collection("annotations"),
+            "INSERT INTO [ostv].[EntityVersions] "
+            "([ResourceType], [ResourceId], [BidUID]) "
+            "SELECT N'project_bids', CONVERT(nvarchar(128), [UID]), NULL "
+            "FROM [dbo].[BidProjects]",
+        )
+    )
+    return tuple(statements)
+
+
+def _seed_entity_version(
+    resource_type: str,
+    table: str,
+    uid_column: str,
+    bid_column: str = "",
+    where: str = "",
+) -> str:
+    bid_sql = f"CONVERT(int, [{bid_column}])" if bid_column else "NULL"
+    where_sql = f" WHERE {where}" if where else ""
+    return (
+        "INSERT INTO [ostv].[EntityVersions] "
+        "([ResourceType], [ResourceId], [BidUID]) "
+        f"SELECT N'{resource_type}', CONVERT(nvarchar(128), [{uid_column}]), "
+        f"{bid_sql} FROM [dbo].[{table}]{where_sql}"
+    )
+
+
+def _seed_annotation(table: str, annotation_type: str) -> str:
+    return (
+        "INSERT INTO [ostv].[EntityVersions] "
+        "([ResourceType], [ResourceId], [BidUID]) "
+        f"SELECT N'annotation', N'{annotation_type}/' + "
+        "CONVERT(nvarchar(100), [UID]), "
+        f"CONVERT(int, [BidUID]) FROM [dbo].[{table}]"
+    )
+
+
+def _seed_static_collection(resource_type: str, resource_id: str) -> str:
+    return (
+        "INSERT INTO [ostv].[EntityVersions] "
+        "([ResourceType], [ResourceId], [BidUID]) VALUES "
+        f"(N'{resource_type}', N'{resource_id}', NULL)"
+    )
+
+
+def _seed_bid_collection(name: str) -> str:
+    return (
+        "INSERT INTO [ostv].[EntityVersions] "
+        "([ResourceType], [ResourceId], [BidUID]) "
+        f"SELECT N'{name}_collection', CONVERT(nvarchar(128), [UID]), "
+        "CONVERT(int, [UID]) FROM [dbo].[Bids]"
     )
 
 
@@ -297,11 +503,16 @@ def _render_table(table: SqlTableDefinition) -> str:
         referenced = ", ".join(
             f"[{column}]" for column in foreign_key.referenced_columns
         )
+        on_delete = (
+            f" ON DELETE {foreign_key.on_delete}" if foreign_key.on_delete else ""
+        )
         definitions.append(
             f"CONSTRAINT [{foreign_key.name}] FOREIGN KEY ({columns}) REFERENCES "
             f"[{foreign_key.referenced_schema}].[{foreign_key.referenced_table}] "
-            f"({referenced})"
+            f"({referenced}){on_delete}"
         )
+    for name, expression in table.check_constraints:
+        definitions.append(f"CONSTRAINT [{name}] CHECK ({expression})")
     return (
         f"CREATE TABLE [{table.schema}].[{table.name}] (\n    "
         + ",\n    ".join(definitions)

@@ -179,10 +179,8 @@ class ExportMenuStateTests(unittest.TestCase):
             ui_event=SimpleNamespace(refresh_toolbar=lambda: None)
         )
         controller.ui_access_manager = _Access(allowed=False)
-
         controller.update_menu_states()
         controller._select_objects_in_current_area()
-
         self.assertFalse(
             controller._actions["select_objects_in_current_area"].isEnabled()
         )

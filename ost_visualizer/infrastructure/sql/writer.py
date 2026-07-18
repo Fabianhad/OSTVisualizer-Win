@@ -1,15 +1,33 @@
 from __future__ import annotations
 import itertools
+import contextvars
+import json
 import logging
 import threading
 import uuid
 from contextlib import contextmanager
-from typing import Generator, Optional
+from dataclasses import dataclass, field
+from typing import Callable, Generator, Optional, TypeVar
 import pyodbc
 from ...application.interfaces.i_credential_store import ICredentialStore
 from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
 )
+from ...application.interfaces.i_database_session_registry import (
+    IDatabaseSessionRegistry,
+)
+from ...application.dtos.collaboration_dtos import (
+    AREA_RESOURCE_TYPES,
+    COLLABORATION_STALE_SECONDS,
+    CONDITION_RESOURCE_TYPES,
+    ChangeOperation,
+    ConcurrencyToken,
+    DatabaseMutationRequest,
+    DatabaseMutationResult,
+    ResourceRef,
+    SynchronizationConflict,
+)
+from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
 from ...domain.dtos.raw_bid_data_dto import RawBidData
 from ..mdb.components.constants import BID_TABLES_WRITE_ORDER
 from ..mdb.schema_contract import PAGE_SECTIONS
@@ -23,7 +41,10 @@ from .errors import (
     sql_schema_mismatch,
 )
 from .schema_definition import LATEST_SQL_SCHEMA, schema_record_is_current
+from .schema_lock import acquire_resource_transaction_lock
 from .write_schema import CurrentSqlWriteSchema
+
+T = TypeVar("T")
 
 
 class _DeferredIdentity(int):
@@ -48,13 +69,58 @@ class _DeferredIdentity(int):
         return str(self.resolved)
 
 
-class SqlProjectWriter(MdbWriter):
-    """SQL transaction adapter reusing backend-neutral operation semantics."""
+class _OptimisticConflict(SqlInfrastructureError):
+    def __init__(
+        self,
+        resource: ResourceRef,
+        expected: ConcurrencyToken,
+        actual: Optional[ConcurrencyToken],
+    ) -> None:
+        super().__init__(
+            SqlErrorDetails(
+                SqlErrorCode.CONFLICT,
+                "This SQL item changed in another session. Reload it before saving.",
+            )
+        )
+        self.resource = resource
+        self.expected = expected
+        self.actual = actual
 
+
+@dataclass
+class _RecordedMutation:
+    resource: ResourceRef
+    operation: ChangeOperation
+    changed_fields: tuple[str, ...] = ()
+    payload: str = ""
+
+
+@dataclass
+class _SqlMutationState(IMutationRecorder):
+    database_id: str
+    lease: SqlConnectionLease
+    request: DatabaseMutationRequest
+    records: list[_RecordedMutation] = field(default_factory=list)
+
+    def record(
+        self,
+        resource: ResourceRef,
+        operation: ChangeOperation,
+        *,
+        changed_fields: tuple[str, ...] = (),
+        payload: str = "",
+    ) -> None:
+        self.records.append(
+            _RecordedMutation(resource, operation, changed_fields, payload)
+        )
+
+
+class SqlProjectWriter(MdbWriter):
     def __init__(
         self,
         descriptor_registry: IDatabaseDescriptorRegistry,
         credential_store: ICredentialStore,
+        session_registry: IDatabaseSessionRegistry,
         connection_manager: Optional[SqlConnectionManager] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -63,24 +129,118 @@ class SqlProjectWriter(MdbWriter):
             descriptor_registry, credential_store
         )
         self._sql_connections = connection_manager or SqlConnectionManager()
+        self._session_registry = session_registry
         self._identity_lock = threading.Lock()
         self._identity_placeholders = itertools.count(start=-1, step=-1)
         self._write_schema = CurrentSqlWriteSchema(LATEST_SQL_SCHEMA.core_schema)
+        self._active_mutation = contextvars.ContextVar(
+            "sql_database_mutation", default=None
+        )
 
     @contextmanager
     def _connection(
         self, database_id: str
     ) -> Generator[SqlConnectionLease, None, None]:
-        request = self._requests.request(database_id, read_only=False)
-        with self._sql_connections.connection(request, autocommit=False) as lease:
+        active = self._active_mutation.get()
+        if active is not None:
+            if active.database_id != database_id:
+                raise RuntimeError(
+                    "A SQL mutation cannot switch databases inside its transaction."
+                )
+            yield active.lease
+            return
+        raise SqlInfrastructureError(
+            SqlErrorDetails(
+                SqlErrorCode.SESSION_EXPIRED,
+                "SQL writes must run through a collaboration mutation transaction.",
+            )
+        )
+
+    def execute(
+        self,
+        request: DatabaseMutationRequest,
+        operation: Callable[[IMutationRecorder], T],
+    ) -> DatabaseMutationResult[T]:
+        try:
+            return self._execute_mutation_transaction(request, operation)
+        except SqlInfrastructureError as exc:
+            if exc.details.code not in {
+                SqlErrorCode.CONFLICT,
+                SqlErrorCode.LOCKED,
+                SqlErrorCode.SESSION_EXPIRED,
+            }:
+                raise
+            resource = (
+                exc.resource
+                if isinstance(exc, _OptimisticConflict)
+                else (
+                    request.resources[0]
+                    if request.resources
+                    else ResourceRef("database", request.database_id)
+                )
+            )
+            return DatabaseMutationResult(
+                success=False,
+                conflict=SynchronizationConflict(
+                    database_id=request.database_id,
+                    resource=resource,
+                    reason=str(exc),
+                    expected=(
+                        exc.expected if isinstance(exc, _OptimisticConflict) else None
+                    ),
+                    actual=(
+                        exc.actual if isinstance(exc, _OptimisticConflict) else None
+                    ),
+                ),
+                error_message=str(exc),
+            )
+
+    def _execute_mutation_transaction(
+        self,
+        request: DatabaseMutationRequest,
+        operation: Callable[[IMutationRecorder], T],
+    ) -> DatabaseMutationResult[T]:
+        registered_session = self._require_active_session(request.database_id)
+        if request.session_id != registered_session:
+            conflict = SynchronizationConflict(
+                database_id=request.database_id,
+                resource=ResourceRef("database", request.database_id),
+                reason="The SQL collaboration session changed before the write.",
+            )
+            return DatabaseMutationResult(success=False, conflict=conflict)
+        connection_request = self._requests.request(
+            request.database_id, read_only=False
+        )
+        with self._sql_connections.connection(
+            connection_request, autocommit=False
+        ) as lease:
             committed = False
             try:
                 self._require_current_schema(lease)
-                self._acquire_write_transaction_lock(lease)
-                yield lease
-                self._append_database_change(lease, database_id)
+                state = _SqlMutationState(request.database_id, lease, request)
+                self._prepare_mutation(state)
+                token = self._active_mutation.set(state)
+                try:
+                    value = operation(state)
+                finally:
+                    self._active_mutation.reset(token)
+                if not state.records:
+                    lease.rollback()
+                    committed = True
+                    return DatabaseMutationResult(
+                        success=False,
+                        error_message=(
+                            "The SQL mutation did not record an affected resource."
+                        ),
+                    )
+                versions = self._finish_mutation(state)
                 lease.commit()
                 committed = True
+                return DatabaseMutationResult(
+                    success=True,
+                    value=value,
+                    resulting_versions=versions,
+                )
             finally:
                 if not committed:
                     try:
@@ -88,14 +248,301 @@ class SqlProjectWriter(MdbWriter):
                     except pyodbc.Error:
                         pass
 
+    def _prepare_mutation(self, state: _SqlMutationState) -> None:
+        cursor = state.lease.cursor()
+        try:
+            cursor.execute(
+                "SELECT 1 FROM [ostv].[Sessions] WHERE [SessionId]=? AND "
+                "[DisconnectedAt] IS NULL AND [LastHeartbeatAt] >= "
+                "DATEADD(second, ?, SYSUTCDATETIME())",
+                state.request.session_id,
+                -COLLABORATION_STALE_SECONDS,
+            )
+            if cursor.fetchone() is None:
+                raise SqlInfrastructureError(
+                    SqlErrorDetails(
+                        SqlErrorCode.SESSION_EXPIRED,
+                        "The SQL collaboration session expired before the write.",
+                    )
+                )
+            resources = set(state.request.resources)
+            resources.update(item.resource for item in state.request.expected_versions)
+            lock_modes: dict[ResourceRef, str] = {}
+            for resource in resources:
+                lock_modes[resource] = "Exclusive"
+                if resource.bid_uid is not None:
+                    bid_resource = ResourceRef(
+                        "bid", str(resource.bid_uid), resource.bid_uid
+                    )
+                    if bid_resource not in lock_modes:
+                        lock_modes[bid_resource] = "Shared"
+            for resource in resources:
+                if resource.resource_type == "bid":
+                    lock_modes[resource] = "Exclusive"
+            for resource in sorted(
+                lock_modes,
+                key=lambda item: (
+                    0 if item.resource_type == "bid" else 1,
+                    item.resource_type,
+                    item.resource_id,
+                ),
+            ):
+                acquire_resource_transaction_lock(
+                    cursor, resource, lock_modes[resource]
+                )
+            for resource in sorted(resources):
+                cursor.execute(
+                    "SELECT s.[DisplayName] FROM [ostv].[Locks] l JOIN "
+                    "[ostv].[Sessions] s ON s.[SessionId]=l.[OwnerSessionId] "
+                    "WHERE l.[ResourceType]=? AND l.[ResourceId]=? AND "
+                    "l.[OwnerSessionId]<>? AND l.[ExpiresAt] > SYSUTCDATETIME()",
+                    resource.resource_type,
+                    resource.resource_id,
+                    state.request.session_id,
+                )
+                lock_owner = cursor.fetchone()
+                if lock_owner is not None:
+                    raise SqlInfrastructureError(
+                        SqlErrorDetails(
+                            SqlErrorCode.LOCKED,
+                            f"This item is being edited by {lock_owner[0]}.",
+                        )
+                    )
+                if resource.bid_uid is not None and resource.resource_type != "bid":
+                    cursor.execute(
+                        "SELECT s.[DisplayName] FROM [ostv].[Locks] l JOIN "
+                        "[ostv].[Sessions] s ON "
+                        "s.[SessionId]=l.[OwnerSessionId] WHERE "
+                        "l.[ResourceType]=N'bid' AND l.[ResourceId]=? AND "
+                        "l.[OwnerSessionId]<>? AND "
+                        "l.[ExpiresAt] > SYSUTCDATETIME()",
+                        str(resource.bid_uid),
+                        state.request.session_id,
+                    )
+                    bid_lock_owner = cursor.fetchone()
+                    if bid_lock_owner is not None:
+                        raise SqlInfrastructureError(
+                            SqlErrorDetails(
+                                SqlErrorCode.LOCKED,
+                                f"This bid is being changed by {bid_lock_owner[0]}.",
+                            )
+                        )
+                if (
+                    state.request.block_bid_child_locks
+                    and resource.resource_type == "bid"
+                ):
+                    cursor.execute(
+                        "SELECT TOP (1) s.[DisplayName] FROM [ostv].[Locks] l "
+                        "JOIN [ostv].[Sessions] s ON "
+                        "s.[SessionId]=l.[OwnerSessionId] WHERE l.[BidUID]=? "
+                        "AND l.[OwnerSessionId]<>? AND "
+                        "l.[ExpiresAt] > SYSUTCDATETIME()",
+                        resource.bid_uid,
+                        state.request.session_id,
+                    )
+                    child_lock_owner = cursor.fetchone()
+                    if child_lock_owner is not None:
+                        raise SqlInfrastructureError(
+                            SqlErrorDetails(
+                                SqlErrorCode.LOCKED,
+                                "This bid contains an item being edited by "
+                                f"{child_lock_owner[0]}.",
+                            )
+                        )
+                if (
+                    state.request.block_bid_active_editors
+                    and resource.resource_type == "bid"
+                ):
+                    cursor.execute(
+                        "SELECT TOP (1) s.[DisplayName] FROM [ostv].[Presence] p "
+                        "JOIN [ostv].[Sessions] s ON "
+                        "s.[SessionId]=p.[SessionId] WHERE p.[BidUID]=? AND "
+                        "p.[ActivityMode]=N'editing' AND p.[SessionId]<>? AND "
+                        "s.[DisconnectedAt] IS NULL AND s.[LastHeartbeatAt] >= "
+                        "DATEADD(second, ?, SYSUTCDATETIME())",
+                        resource.bid_uid,
+                        state.request.session_id,
+                        -COLLABORATION_STALE_SECONDS,
+                    )
+                    active_editor = cursor.fetchone()
+                    if active_editor is not None:
+                        raise SqlInfrastructureError(
+                            SqlErrorDetails(
+                                SqlErrorCode.LOCKED,
+                                "This bid is actively being edited by "
+                                f"{active_editor[0]}.",
+                            )
+                        )
+            requested_keys = {
+                (resource.resource_type, resource.resource_id) for resource in resources
+            }
+            required_tokens = set(state.request.required_lock_tokens)
+            for lock_token in required_tokens:
+                cursor.execute(
+                    "SELECT [ResourceType], [ResourceId] FROM [ostv].[Locks] "
+                    "WHERE [LockToken]=? AND "
+                    "[OwnerSessionId]=? AND [ExpiresAt] > SYSUTCDATETIME()",
+                    lock_token,
+                    state.request.session_id,
+                )
+                lock_row = cursor.fetchone()
+                if lock_row is None:
+                    raise SqlInfrastructureError(
+                        SqlErrorDetails(
+                            SqlErrorCode.LOCKED,
+                            "A required SQL edit lock expired before the write.",
+                        )
+                    )
+                if (str(lock_row[0]), str(lock_row[1])) not in requested_keys:
+                    raise SqlInfrastructureError(
+                        SqlErrorDetails(
+                            SqlErrorCode.LOCKED,
+                            "A SQL edit lock does not belong to this mutation.",
+                        )
+                    )
+            for resource in sorted(resources):
+                cursor.execute(
+                    "SELECT CONVERT(nvarchar(36), [LockToken]) FROM "
+                    "[ostv].[Locks] WHERE [ResourceType]=? AND [ResourceId]=? "
+                    "AND [OwnerSessionId]=? AND [ExpiresAt] > SYSUTCDATETIME()",
+                    resource.resource_type,
+                    resource.resource_id,
+                    state.request.session_id,
+                )
+                owned_lock = cursor.fetchone()
+                if owned_lock is not None and str(owned_lock[0]) not in required_tokens:
+                    raise SqlInfrastructureError(
+                        SqlErrorDetails(
+                            SqlErrorCode.LOCKED,
+                            "The mutation did not present its owned SQL edit lock.",
+                        )
+                    )
+            for expected in state.request.expected_versions:
+                cursor.execute(
+                    "SELECT [Token] FROM [ostv].[EntityVersions] WITH "
+                    "(UPDLOCK, HOLDLOCK) WHERE [ResourceType]=? AND [ResourceId]=?",
+                    expected.resource.resource_type,
+                    expected.resource.resource_id,
+                )
+                row = cursor.fetchone()
+                actual = (
+                    ConcurrencyToken.from_database(row[0]) if row is not None else None
+                )
+                if actual != expected.expected:
+                    raise _OptimisticConflict(
+                        expected.resource,
+                        expected.expected,
+                        actual,
+                    )
+        finally:
+            cursor.close()
+
+    def _finish_mutation(self, state: _SqlMutationState):
+        transaction_id = str(uuid.uuid4())
+        versions = {}
+        cursor = state.lease.cursor()
+        try:
+            cursor.execute(
+                "SELECT TOP (1) [DatabaseGuid] " "FROM [ostv].[DatabaseMetadata]"
+            )
+            database_guid = cursor.fetchone()[0]
+            for record in self._coalesce_records(state.records):
+                cursor.execute(
+                    "MERGE [ostv].[EntityVersions] WITH (HOLDLOCK) AS target "
+                    "USING (SELECT ? AS [ResourceType], ? AS [ResourceId]) AS source "
+                    "ON target.[ResourceType]=source.[ResourceType] AND "
+                    "target.[ResourceId]=source.[ResourceId] "
+                    "WHEN MATCHED THEN UPDATE SET [BidUID]=?, [IsDeleted]=?, "
+                    "[ModifiedAt]=SYSUTCDATETIME(), [ModifiedBySessionId]=? "
+                    "WHEN NOT MATCHED THEN INSERT ([ResourceType], [ResourceId], "
+                    "[BidUID], [IsDeleted], [ModifiedBySessionId]) "
+                    "VALUES (?, ?, ?, ?, ?) OUTPUT INSERTED.[Token];",
+                    record.resource.resource_type,
+                    record.resource.resource_id,
+                    record.resource.bid_uid,
+                    record.operation == ChangeOperation.DELETE,
+                    state.request.session_id,
+                    record.resource.resource_type,
+                    record.resource.resource_id,
+                    record.resource.bid_uid,
+                    record.operation == ChangeOperation.DELETE,
+                    state.request.session_id,
+                )
+                version = ConcurrencyToken.from_database(cursor.fetchone()[0])
+                versions[record.resource] = version
+                cursor.execute(
+                    "INSERT INTO [ostv].[ChangeLog] ([TransactionId], "
+                    "[SourceSessionId], [DatabaseGuid], [BidUID], [ResourceType], "
+                    "[ResourceId], [Operation], [ResultVersion], [ChangedFields], "
+                    "[Payload]) VALUES "
+                    "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    transaction_id,
+                    state.request.session_id,
+                    database_guid,
+                    record.resource.bid_uid,
+                    record.resource.resource_type,
+                    record.resource.resource_id,
+                    record.operation.value,
+                    version.value,
+                    (
+                        json.dumps(record.changed_fields)
+                        if record.changed_fields
+                        else None
+                    ),
+                    record.payload or None,
+                )
+        finally:
+            cursor.close()
+        return versions
+
+    @staticmethod
+    def _coalesce_records(records: list[_RecordedMutation]):
+        by_resource = {}
+        for record in records:
+            by_resource[record.resource] = record
+        coalesced = tuple(by_resource[key] for key in sorted(by_resource))
+        if len(coalesced) <= 450:
+            return coalesced
+        families = {}
+        for record in coalesced:
+            resource_type = record.resource.resource_type
+            if resource_type in CONDITION_RESOURCE_TYPES:
+                family = "conditions_collection"
+            elif resource_type in AREA_RESOURCE_TYPES:
+                family = "areas_collection"
+            else:
+                family = resource_type
+            key = (family, record.resource.bid_uid)
+            families[key] = _RecordedMutation(
+                ResourceRef(
+                    family,
+                    str(record.resource.bid_uid or "database"),
+                    record.resource.bid_uid,
+                ),
+                ChangeOperation.BULK_REFRESH,
+            )
+        return tuple(
+            families[key]
+            for key in sorted(families, key=lambda item: (item[0], str(item[1])))
+        )
+
+    def _require_active_session(self, database_id: str) -> str:
+        try:
+            return self._session_registry.require(database_id)
+        except RuntimeError as exc:
+            raise SqlInfrastructureError(
+                SqlErrorDetails(SqlErrorCode.SESSION_EXPIRED, str(exc))
+            ) from None
+
     @staticmethod
     def _require_current_schema(lease) -> None:
         cursor = lease.cursor()
         try:
             cursor.execute(
-                "SELECT [Version], [Checksum] FROM [ostv].[SchemaMigrations] "
-                "WHERE [Version]=?",
-                LATEST_SQL_SCHEMA.version,
+                "SELECT m.[SchemaVersion], sm.[Checksum] FROM "
+                "[ostv].[DatabaseMetadata] m JOIN [ostv].[SchemaMigrations] sm "
+                "ON sm.[Version]=m.[SchemaVersion] "
+                "WHERE m.[Product]=N'OST Visualizer'",
             )
             row = cursor.fetchone()
         except pyodbc.Error:
@@ -114,43 +561,6 @@ class SqlProjectWriter(MdbWriter):
                     "This SQL database uses an unsupported schema version.",
                 )
             )
-
-    @staticmethod
-    def _acquire_write_transaction_lock(lease) -> None:
-        """Serialize client writes without relying on UI action state.
-        The lock is transaction-owned, so SQL Server releases it on commit,
-        rollback, connection loss, or process failure. Entity-level optimistic
-        tokens are layered on top by collaboration-aware operations.
-        """
-        cursor = lease.cursor()
-        try:
-            cursor.execute(
-                "DECLARE @result int; EXEC @result=sys.sp_getapplock "
-                "@Resource=N'OSTVisualizer.DatabaseWrite', "
-                "@LockMode=N'Exclusive', @LockOwner=N'Transaction', "
-                "@LockTimeout=30000; SELECT @result;"
-            )
-            row = cursor.fetchone()
-            if row is None or int(row[0]) < 0:
-                raise RuntimeError(
-                    "Another database operation is still in progress. Try again."
-                )
-        finally:
-            cursor.close()
-
-    @staticmethod
-    def _append_database_change(lease, database_id: str) -> None:
-        """Record one coalescible delta for every writable transaction."""
-        cursor = lease.cursor()
-        try:
-            cursor.execute(
-                "INSERT INTO [ostv].[ChangeLog] ([TransactionId], [ResourceType], "
-                "[ResourceId], [Operation]) VALUES (?, N'database', ?, N'write')",
-                str(uuid.uuid4()),
-                database_id,
-            )
-        finally:
-            cursor.close()
 
     def _next_uid(self, cursor, table: str) -> int:
         del cursor, table

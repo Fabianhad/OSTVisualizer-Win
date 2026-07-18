@@ -10,10 +10,8 @@ class SqlColumnInventory:
     schema_name: str
     table_name: str
     column_name: str
-    ordinal: int
     data_type: str
     max_length: int
-    precision: int
     scale: int
     nullable: bool
     identity: bool
@@ -30,6 +28,15 @@ class SqlForeignKeyInventory:
     parent_schema: str
     parent_table: str
     parent_column: str
+    on_delete_action: str = "NO_ACTION"
+
+
+@dataclass(frozen=True)
+class SqlCheckConstraintInventory:
+    schema_name: str
+    table_name: str
+    name: str
+    definition: str
 
 
 @dataclass(frozen=True)
@@ -47,7 +54,6 @@ class SqlIndexInventory:
 class SqlModuleInventory:
     schema_name: str
     name: str
-    module_type: str
 
 
 @dataclass(frozen=True)
@@ -63,6 +69,7 @@ class SqlSchemaInventory:
     triggers: tuple[SqlModuleInventory, ...]
     procedures: tuple[SqlModuleInventory, ...]
     functions: tuple[SqlModuleInventory, ...]
+    check_constraints: tuple[SqlCheckConstraintInventory, ...] = ()
 
     def dbo_columns(self) -> dict[str, dict[str, SqlColumnInventory]]:
         result: dict[str, dict[str, SqlColumnInventory]] = {}
@@ -129,8 +136,8 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
             checksum_row = cursor.fetchone()
             schema_checksum = str(checksum_row[0]) if checksum_row is not None else ""
     cursor.execute(
-        "SELECT s.name, t.name, c.name, c.column_id, ty.name, "
-        "c.max_length, c.precision, c.scale, c.is_nullable, "
+        "SELECT s.name, t.name, c.name, ty.name, "
+        "c.max_length, c.scale, c.is_nullable, "
         "c.is_identity, c.is_computed, COALESCE(dc.definition, N'') "
         "FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id "
         "JOIN sys.columns c ON c.object_id=t.object_id "
@@ -144,20 +151,19 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
             str(row[0]),
             str(row[1]),
             str(row[2]),
-            int(row[3]),
-            str(row[4]),
+            str(row[3]),
+            int(row[4]),
             int(row[5]),
-            int(row[6]),
-            int(row[7]),
+            bool(row[6]),
+            bool(row[7]),
             bool(row[8]),
-            bool(row[9]),
-            bool(row[10]),
-            str(row[11] or ""),
+            str(row[9] or ""),
         )
         for row in cursor.fetchall()
     )
     cursor.execute(
-        "SELECT fk.name, cs.name, ct.name, cc.name, ps.name, pt.name, pc.name "
+        "SELECT fk.name, cs.name, ct.name, cc.name, ps.name, pt.name, pc.name, "
+        "fk.delete_referential_action_desc "
         "FROM sys.foreign_keys fk "
         "JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id=fk.object_id "
         "JOIN sys.tables ct ON ct.object_id=fkc.parent_object_id "
@@ -190,13 +196,23 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
     procedures = _modules(cursor, "P")
     functions = _modules(cursor, "FN", "IF", "TF", "FS", "FT")
     cursor.execute(
-        "SELECT s.name, tr.name, 'TR' FROM sys.triggers tr "
+        "SELECT s.name, tr.name FROM sys.triggers tr "
         "JOIN sys.objects parent ON parent.object_id=tr.parent_id "
         "JOIN sys.schemas s ON s.schema_id=parent.schema_id "
         "WHERE tr.parent_class=1 ORDER BY s.name, tr.name"
     )
     triggers = tuple(
-        SqlModuleInventory(str(row[0]), str(row[1]), str(row[2]))
+        SqlModuleInventory(str(row[0]), str(row[1])) for row in cursor.fetchall()
+    )
+    cursor.execute(
+        "SELECT s.name, t.name, cc.name, cc.definition "
+        "FROM sys.check_constraints cc "
+        "JOIN sys.tables t ON t.object_id=cc.parent_object_id "
+        "JOIN sys.schemas s ON s.schema_id=t.schema_id "
+        "ORDER BY s.name, t.name, cc.name"
+    )
+    check_constraints = tuple(
+        SqlCheckConstraintInventory(*(str(value) for value in row))
         for row in cursor.fetchall()
     )
     return SqlSchemaInventory(
@@ -211,6 +227,7 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
         triggers=triggers,
         procedures=procedures,
         functions=functions,
+        check_constraints=check_constraints,
     )
 
 
@@ -243,12 +260,11 @@ def _group_indexes(rows) -> tuple[SqlIndexInventory, ...]:
 def _modules(cursor, *module_types: str) -> tuple[SqlModuleInventory, ...]:
     placeholders = ",".join("?" for _ in module_types)
     cursor.execute(
-        "SELECT s.name, o.name, o.type FROM sys.objects o "
+        "SELECT s.name, o.name FROM sys.objects o "
         "JOIN sys.schemas s ON s.schema_id=o.schema_id "
         f"WHERE o.type IN ({placeholders}) ORDER BY s.name, o.name",
         *module_types,
     )
     return tuple(
-        SqlModuleInventory(str(row[0]), str(row[1]), str(row[2]))
-        for row in cursor.fetchall()
+        SqlModuleInventory(str(row[0]), str(row[1])) for row in cursor.fetchall()
     )

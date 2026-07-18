@@ -13,17 +13,20 @@ class LoadBidUseCase:
         self,
         model: OstAggregate,
         file_manager: FileManager,
+        concurrency_tokens,
         logger: Optional[logging.Logger] = None,
     ):
         self.model = model
         self.file_manager = file_manager
         self.logger = logger or logging.getLogger(__name__)
+        self._concurrency_tokens = concurrency_tokens
 
     def execute(self, bid_ref: BidRef) -> bool:
         if not bid_ref.bid_uid:
             self.logger.warning("Cannot load bid: empty bid UID")
             return False
         bid_data = self.file_manager.load_bid(bid_ref.bid_uid, bid_ref.file_path)
+        self._concurrency_tokens.load_bid(bid_ref.file_path, bid_ref.bid_uid)
         self.model.bid_conditions = bid_data.bid_conditions
         self.model.bid_takeoffs = bid_data.bid_takeoffs
         self.model.bid_areas = dict(bid_data.bid_areas or {})

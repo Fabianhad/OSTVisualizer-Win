@@ -827,6 +827,10 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         coordinator._project_read_service = ReadService()
         coordinator._project_write_service = WriteService()
         coordinator._icon_provider = FakeIconProvider()
+        coordinator._sql_collaboration = SimpleNamespace(
+            begin_local_edit=lambda _database_id, _resources: True,
+            end_local_edit=lambda _database_id, _resources: None,
+        )
         coordinator.main_window = None
         coordinator.event_bus = object()
         from ost_visualizer.presentation.coordinators import ui_event_coordinator

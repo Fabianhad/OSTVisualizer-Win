@@ -629,6 +629,9 @@ class MainWindow(QtWidgets.QMainWindow):
             project_write_service=self._project_write_service,
             project_read_service=self._project_read_service,
             deferred_persistence_manager=self._deferred_persistence_manager,
+            sql_collaboration_coordinator=self.app_controller.get_service(
+                "sql_collaboration_coordinator"
+            ),
         )
         return handlers
 

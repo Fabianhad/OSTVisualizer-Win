@@ -15,8 +15,6 @@ from .descriptor_registry import resolve_database_backend
 
 
 class DatabaseProjectReader(SqlProjectReader):
-    """One project-reader path with backend-specific connection ownership."""
-
     def __init__(
         self,
         access_connections: MdbConnectionManager,

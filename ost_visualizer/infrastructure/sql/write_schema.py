@@ -8,8 +8,6 @@ from .errors import sql_schema_mismatch
 
 
 class CurrentSqlWriteSchema:
-    """Exact write-time view of the one supported SQL schema."""
-
     def __init__(self, schema: DatabaseSchemaModel) -> None:
         self._columns = {
             table.name: frozenset(column.name for column in table.columns)

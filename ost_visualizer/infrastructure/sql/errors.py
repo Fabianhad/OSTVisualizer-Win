@@ -16,6 +16,8 @@ class SqlErrorCode(str, Enum):
     UNSUPPORTED_SCHEMA = "unsupported_schema"
     CREDENTIAL_MISSING = "credential_missing"
     LOCKED = "locked"
+    SESSION_EXPIRED = "session_expired"
+    CONFLICT = "conflict"
     UNKNOWN = "unknown"
 
 
@@ -29,7 +31,26 @@ class SqlErrorDetails:
 
 class SqlInfrastructureError(DatabaseCatalogError):
     def __init__(self, details: SqlErrorDetails) -> None:
-        super().__init__(details.user_message)
+        super().__init__(
+            details.user_message,
+            retryable=details.code
+            in {
+                SqlErrorCode.CONNECTION_FAILED,
+                SqlErrorCode.TIMEOUT,
+                SqlErrorCode.UNKNOWN,
+            },
+            session_expired=details.code == SqlErrorCode.SESSION_EXPIRED,
+            credential_required=details.code
+            in {
+                SqlErrorCode.AUTHENTICATION_FAILED,
+                SqlErrorCode.CREDENTIAL_MISSING,
+            },
+            read_only_required=details.code
+            in {
+                SqlErrorCode.SCHEMA_MISMATCH,
+                SqlErrorCode.UNSUPPORTED_SCHEMA,
+            },
+        )
         self.details = details
 
 

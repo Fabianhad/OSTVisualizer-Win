@@ -5,10 +5,11 @@ from ...domain.aggregates.ost_aggregate import OstAggregate
 from ...domain.entities.area import BidArea, is_unassigned_area_uid, normalize_area_uid
 from ...domain.entities.bid import Bid
 from ...domain.entities.condition import Condition
-from ...domain.entities.hierarchy_data import HierarchyData
+from ...domain.entities.hierarchy_data import HierarchyData, HierarchyFileEntry
 from ...domain.entities.identity_refs import BidRef
+from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.page import Page
-from ...domain.entities.project_factory import build_bid
+from ...domain.entities.project_factory import build_bid, build_projects
 from ...domain.entities.takeoff import Takeoff
 from ..entities.annotation import BidAnnotation
 from ..entities.condition_folder import BidConditionFolder
@@ -94,6 +95,21 @@ class ProjectDataService:
     def get_hierarchy(self) -> HierarchyData:
         return self.model.get_hierarchy_data()
 
+    def replace_database_hierarchy(self, file_entry: HierarchyFileEntry) -> None:
+        current = self.model.get_hierarchy_data()
+        loaded_files = [
+            file_entry if existing.file_path == file_entry.file_path else existing
+            for existing in current.loaded_files
+        ]
+        if all(
+            existing.file_path != file_entry.file_path
+            for existing in current.loaded_files
+        ):
+            loaded_files.append(file_entry)
+        hierarchy = HierarchyData(loaded_files=loaded_files)
+        self.model.set_hierarchy(hierarchy)
+        self.model.projects = build_projects(hierarchy)
+
     def get_current_file_path(self) -> Optional[str]:
         return self.model.get_current_file_path()
 
@@ -125,6 +141,47 @@ class ProjectDataService:
 
     def get_bid_conditions(self) -> Dict[str, Condition]:
         return self.model.bid_conditions
+
+    def replace_condition_family(
+        self,
+        bid_ref: BidRef,
+        conditions: Dict[str, Condition],
+        folders: Dict[str, BidConditionFolder],
+    ) -> bool:
+        if self.model.current_bid_ref != bid_ref:
+            return False
+        self.model.bid_conditions = dict(conditions)
+        self.model.bid_condition_folders = dict(folders)
+        return True
+
+    def replace_bid_areas(self, bid_ref: BidRef, areas: Iterable[BidArea]) -> bool:
+        if self.model.current_bid_ref != bid_ref:
+            return False
+        self.model.bid_areas = {str(area.uid): area for area in areas}
+        return True
+
+    def replace_remote_bid_families(
+        self,
+        bid_ref: BidRef,
+        bid_data: BidLoadResult,
+        families: set[str],
+    ) -> bool:
+        if self.model.current_bid_ref != bid_ref:
+            return False
+        if "takeoffs" in families:
+            self.model.bid_takeoffs = list(bid_data.bid_takeoffs)
+            self.model.bid_takeoff_extras = dict(bid_data.takeoff_extras)
+            for page in self.model.get_all_pages():
+                refreshed = bid_data.pages.get(page.uid)
+                page.takeoffs = list(refreshed.takeoffs) if refreshed else []
+        if "annotations" in families:
+            self.model.set_annotations(list(bid_data.bid_annotations))
+        if "pages" in families:
+            self.model.set_pages(dict(bid_data.pages))
+            self.model.page_area_selections = dict(bid_data.page_area_selections)
+        if "layers" in families:
+            self.set_bid_layer_visibility(bid_data.bid_layers)
+        return True
 
     def set_bid_layer_visibility(self, layers: Iterable[BidLayer]) -> None:
         layer_list = list(layers)
@@ -176,6 +233,19 @@ class ProjectDataService:
                 )
             )
         return snapshot
+
+    def get_layer_uids_in_use(self) -> set[str]:
+        used = {
+            str(takeoff.layer_uid)
+            for takeoff in self.model.get_all_takeoffs()
+            if takeoff.layer_uid
+        }
+        used.update(
+            str(annotation.layer_uid)
+            for annotation in self.model.get_all_annotations()
+            if annotation.layer_uid
+        )
+        return used
 
     def get_bid_area_snapshot(
         self, takeoffs: Optional[Iterable[Takeoff]] = None
@@ -668,3 +738,19 @@ class ProjectDataService:
             if project_info is not None:
                 return len(project_info.bids) > 0
         return False
+
+    def get_project_bid_uids(
+        self, file_path: str, project_uids: Iterable[str]
+    ) -> List[str]:
+        wanted = set(project_uids)
+        hierarchy = self.model.get_hierarchy_data()
+        for file_entry in hierarchy.loaded_files:
+            if file_entry.file_path != file_path:
+                continue
+            return [
+                bid.uid
+                for project_uid, project in file_entry.bid_projects.items()
+                if project_uid in wanted
+                for bid in project.bids
+            ]
+        return []

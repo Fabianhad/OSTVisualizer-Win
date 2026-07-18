@@ -1,15 +1,28 @@
 import inspect
 import os
 import unittest
-from typing import get_type_hints
+from typing import TypeVar, get_args, get_origin, get_type_hints
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ost_visualizer.application.interfaces.i_annotation_caption_resolver import (
     IAnnotationCaptionResolver,
 )
 from ost_visualizer.application.interfaces.i_color_service import IColorService
+from ost_visualizer.application.interfaces.i_collaboration_store import (
+    ICollaborationStore,
+)
 from ost_visualizer.application.interfaces.i_coordinate_transformer import (
     ICoordinateTransformer,
+)
+from ost_visualizer.application.interfaces.i_database_catalog import IDatabaseCatalog
+from ost_visualizer.application.interfaces.i_database_mutation_executor import (
+    IDatabaseMutationExecutor,
+)
+from ost_visualizer.application.interfaces.i_database_session_registry import (
+    IDatabaseSessionRegistry,
+)
+from ost_visualizer.application.interfaces.i_entity_version_reader import (
+    IEntityVersionReader,
 )
 from ost_visualizer.application.interfaces.i_infrastructure_service_provider import (
     IInfrastructureServiceProvider,
@@ -29,6 +42,12 @@ from ost_visualizer.application.interfaces.i_ost_exporter import IOstExporter
 from ost_visualizer.application.interfaces.i_repository_provider import (
     IRepositoryProvider,
 )
+from ost_visualizer.application.interfaces.i_remote_change_reader import (
+    IRemoteChangeReader,
+)
+from ost_visualizer.application.interfaces.i_sql_database_creator import (
+    ISqlDatabaseCreator,
+)
 from ost_visualizer.application.interfaces.i_shutdown_aware import IShutdownAware
 from ost_visualizer.application.interfaces.i_thread_callback_bridge import (
     IThreadCallbackBridge,
@@ -36,6 +55,9 @@ from ost_visualizer.application.interfaces.i_thread_callback_bridge import (
 from ost_visualizer.application.interfaces.i_uom_service import IUOMService
 from ost_visualizer.application.services.annotation_caption_resolver import (
     AnnotationCaptionResolver,
+)
+from ost_visualizer.application.services.database_session_registry import (
+    DatabaseSessionRegistry,
 )
 from ost_visualizer.application.services.page_load_strategy_service import (
     PageLoadStrategyService,
@@ -46,11 +68,20 @@ from ost_visualizer.domain.services.coordinate_transformation_service import (
 from ost_visualizer.domain.services.uom_service_impl import UOMDomainService
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+from ost_visualizer.infrastructure.database.entity_version_reader import (
+    DatabaseEntityVersionReader,
+)
+from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
 from ost_visualizer.infrastructure.providers import (
     InfrastructureServiceProvider,
     RepositoryProvider,
 )
+from ost_visualizer.infrastructure.sql.catalog import SqlDatabaseCatalog
+from ost_visualizer.infrastructure.sql.collaboration_store import SqlCollaborationStore
+from ost_visualizer.infrastructure.sql.database_creator import SqlDatabaseCreator
+from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
+from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
 from ost_visualizer.presentation.interfaces.i_workspace_shell import IWorkspaceShell
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.utils.qt_callback_bridge import QtCallbackBridge
@@ -78,6 +109,24 @@ def _public_methods(cls):
         name
         for name, member in inspect.getmembers(cls, predicate=inspect.isfunction)
         if not name.startswith("_")
+    }
+
+
+def _type_shape(annotation):
+    if isinstance(annotation, TypeVar):
+        return TypeVar
+    if isinstance(annotation, list):
+        return tuple(_type_shape(item) for item in annotation)
+    origin = get_origin(annotation)
+    if origin is None:
+        return annotation
+    return origin, tuple(_type_shape(item) for item in get_args(annotation))
+
+
+def _hint_shapes(member):
+    return {
+        name: _type_shape(annotation)
+        for name, annotation in get_type_hints(member).items()
     }
 
 
@@ -155,6 +204,52 @@ class ProviderInterfaceContractTests(unittest.TestCase):
             ],
             get_type_hints(RepositoryProvider.get_license_signature_verifier)["return"],
         )
+
+
+class CollaborationInterfaceContractTests(unittest.TestCase):
+    def test_collaboration_protocol_call_shapes_match_implementations(self):
+        pairs = (
+            (ICollaborationStore, SqlCollaborationStore),
+            (IDatabaseMutationExecutor, DatabaseProjectWriter),
+            (IDatabaseSessionRegistry, DatabaseSessionRegistry),
+            (IEntityVersionReader, DatabaseEntityVersionReader),
+            (IRemoteChangeReader, SqlRemoteChangeReader),
+            (IDatabaseCatalog, SqlDatabaseCatalog),
+            (ISqlDatabaseCreator, SqlDatabaseCreator),
+            (IThreadCallbackBridge, QtCallbackBridge),
+        )
+        for interface, implementation in pairs:
+            implementation_methods = _public_methods(implementation)
+            for name in _public_methods(interface):
+                self.assertIn(name, implementation_methods)
+                self.assertEqual(
+                    _call_shape(getattr(interface, name)),
+                    _call_shape(getattr(implementation, name)),
+                    f"{implementation.__name__}.{name}",
+                )
+                self.assertEqual(
+                    _hint_shapes(getattr(interface, name)),
+                    _hint_shapes(getattr(implementation, name)),
+                    f"{implementation.__name__}.{name} annotations",
+                )
+
+    def test_phase4_implementation_contracts_are_fully_annotated(self):
+        members = (
+            DatabaseProjectWriter.execute,
+            SqlProjectWriter.execute,
+            QtCallbackBridge.dispatch,
+        )
+        for member in members:
+            signature = inspect.signature(member)
+            self.assertIsNot(signature.return_annotation, inspect.Signature.empty)
+            for parameter in signature.parameters.values():
+                if parameter.name == "self":
+                    continue
+                self.assertIsNot(
+                    parameter.annotation,
+                    inspect.Signature.empty,
+                    f"{member.__qualname__}.{parameter.name}",
+                )
 
 
 class InterfaceShapeContractTests(unittest.TestCase):

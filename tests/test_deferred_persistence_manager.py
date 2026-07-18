@@ -9,6 +9,7 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
 )
+from ost_visualizer.application.dtos.collaboration_dtos import DatabaseMutationResult
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_RECT,
     ANNOTATION_TYPE_TEXT,
@@ -692,6 +693,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 
     def _make_view_state_coordinator(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._sql_collaboration = SimpleNamespace(
+            update_presence=lambda *_args: None
+        )
         coordinator.ui_state_manager = SimpleNamespace(
             get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
             active_page_uid="p1",
@@ -1490,6 +1494,9 @@ class DeferredPersistenceBoundaryTests(unittest.TestCase):
     def test_page_area_write_can_skip_database_refresh(self):
         calls = []
         service = ProjectWriteService.__new__(ProjectWriteService)
+        service._project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: BidRef("a.mdb", "1")
+        )
         service._bid_write_guard = SimpleNamespace(
             blocks_active_locked_bid_write=lambda *_args: False
         )
@@ -1502,6 +1509,22 @@ class DeferredPersistenceBoundaryTests(unittest.TestCase):
         service._reload_after_success = lambda db_path, success, publish=True: (
             calls.append(("reload_after_success", db_path, success, publish)) or success
         )
+        service._mutation_executor = SimpleNamespace(
+            execute=lambda _request, operation: DatabaseMutationResult(
+                success=True,
+                value=operation(SimpleNamespace(record=lambda *_args, **_kwargs: None)),
+            )
+        )
+        service._session_registry = SimpleNamespace(
+            get=lambda _database_id: "",
+            lock_tokens=lambda _database_id, _resources: (),
+        )
+        service._concurrency_tokens = SimpleNamespace(
+            ensure_resources_loaded=lambda _database_id, _resources: None,
+            expected_versions=lambda _database_id, _resources: (),
+            apply_result=lambda _database_id, _versions: None,
+        )
+        service._event_bus = SimpleNamespace(publish=lambda *_args, **_kwargs: None)
         self.assertTrue(
             service.save_page_area(
                 "a.mdb",

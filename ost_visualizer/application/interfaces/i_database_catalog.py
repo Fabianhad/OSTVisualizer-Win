@@ -4,7 +4,20 @@ from ...domain.entities.database_descriptor import SqlServerDatabaseLocation
 
 
 class DatabaseCatalogError(RuntimeError):
-    """A safe, user-displayable database discovery failure."""
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        session_expired: bool = False,
+        credential_required: bool = False,
+        read_only_required: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+        self.session_expired = session_expired
+        self.credential_required = credential_required
+        self.read_only_required = read_only_required
 
 
 @dataclass(frozen=True)

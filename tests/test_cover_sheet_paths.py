@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from copy import deepcopy
 from pathlib import Path
 from unittest import mock
@@ -11,6 +12,7 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
 )
+from ost_visualizer.application.dtos.collaboration_dtos import DatabaseMutationResult
 from ost_visualizer.domain.entities.cover_sheet import (
     CoverSheetData,
     CoverSheetFolder,
@@ -1065,6 +1067,21 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         )
         write_service._event_bus = event_bus
         write_service.logger = mock.Mock()
+        write_service._mutation_executor = SimpleNamespace(
+            execute=lambda _request, operation: DatabaseMutationResult(
+                success=True,
+                value=operation(SimpleNamespace(record=lambda *_args, **_kwargs: None)),
+            )
+        )
+        write_service._session_registry = SimpleNamespace(
+            get=lambda _database_id: "",
+            lock_tokens=lambda _database_id, _resources: (),
+        )
+        write_service._concurrency_tokens = SimpleNamespace(
+            ensure_resources_loaded=lambda _database_id, _resources: None,
+            expected_versions=lambda _database_id, _resources: (),
+            apply_result=lambda _database_id, _versions: None,
+        )
         handler = CoverSheetHandler(
             window=object(),
             icon_provider=_FakeIconProvider(),

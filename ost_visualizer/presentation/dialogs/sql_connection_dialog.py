@@ -31,8 +31,6 @@ class SqlConnectionDialogResult:
 
 
 class SqlConnectionFormMixin:
-    """Shared SQL Server authentication controls and validation."""
-
     def _build_connection_form(
         self,
         layout: QtWidgets.QVBoxLayout,

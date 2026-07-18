@@ -104,6 +104,10 @@ class AppController:
                 if entry.runtime_locator not in loaded_set:
                     continue
                 capability_service.mark_connected(entry.database_id)
+                if entry.backend == DatabaseBackend.SQL_SERVER:
+                    self.container.get("sql_collaboration_coordinator").start_database(
+                        entry.database_id
+                    )
             return loaded
         except Exception as exc:
             self.logger.exception("Error loading files from config: %s", exc)

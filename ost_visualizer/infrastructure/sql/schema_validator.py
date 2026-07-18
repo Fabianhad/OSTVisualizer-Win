@@ -55,7 +55,7 @@ class SqlSchemaValidator:
             )
         problems = self._validate_core_tables(
             inventory,
-            current_schema=inventory.schema_version == LATEST_SQL_SCHEMA.version,
+            require_constraints=(inventory.schema_version == LATEST_SQL_SCHEMA.version),
         )
         if inventory.schema_version == 0:
             if any(schema == "ostv" for schema, _table in inventory.tables):
@@ -91,7 +91,7 @@ class SqlSchemaValidator:
                 SqlSchemaCompatibility.UNSUPPORTED_VERSION,
                 inventory.schema_version,
             )
-        problems = self._validate_core_tables(inventory, current_schema=True)
+        problems = self._validate_core_tables(inventory, require_constraints=True)
         if any(schema == "ostv" for schema, _table in inventory.tables):
             problems.append("ostv.partial_schema")
         return SqlSchemaValidationReport(
@@ -108,7 +108,7 @@ class SqlSchemaValidator:
         self,
         inventory: SqlSchemaInventory,
         *,
-        current_schema: bool,
+        require_constraints: bool,
     ) -> list[str]:
         actual_tables = {name for schema, name in inventory.tables if schema == "dbo"}
         expected_tables = self._shared_schema.table_names
@@ -138,11 +138,11 @@ class SqlSchemaValidator:
                 if actual is None:
                     problems.append(label)
                     continue
-                if current_schema:
+                if require_constraints:
                     expected_type = sql_server_type_for_access(column.access_type)
                     if not (
                         _matches_type(actual, expected_type)
-                        or _matches_unversioned_type(actual, column.access_type)
+                        or _matches_core_storage_type(actual, column.access_type)
                     ):
                         problems.append(label)
                     if actual.nullable == column.required:
@@ -154,9 +154,9 @@ class SqlSchemaValidator:
                         problems.append(label + ".computed")
                     if not _matches_default(actual.default_definition, column.default):
                         problems.append(label + ".default")
-                elif not _matches_unversioned_type(actual, column.access_type):
+                elif not _matches_core_storage_type(actual, column.access_type):
                     problems.append(label)
-        if current_schema:
+        if require_constraints:
             problems.extend(self._validate_core_constraints(inventory))
         return problems
 
@@ -313,6 +313,7 @@ def _validate_table_constraints(
             foreign_key.parent_schema,
             foreign_key.parent_table,
             foreign_key.parent_column,
+            foreign_key.on_delete_action,
         )
         for foreign_key in inventory.foreign_keys
         if foreign_key.child_schema == table.schema
@@ -326,9 +327,22 @@ def _validate_table_constraints(
                 expected.referenced_schema,
                 expected.referenced_table,
                 parent,
+                (
+                    expected.on_delete.replace(" ", "_")
+                    if expected.on_delete
+                    else "NO_ACTION"
+                ),
             )
             if key not in actual_foreign_keys:
                 problems.append(f"{table.schema}.{table.name}.{expected.name}")
+    actual_checks = {
+        check.name: _normalize_filter(check.definition)
+        for check in inventory.check_constraints
+        if check.schema_name == table.schema and check.table_name == table.name
+    }
+    for name, expression in table.check_constraints:
+        if actual_checks.get(name) != _normalize_filter(expression):
+            problems.append(f"{table.schema}.{table.name}.{name}")
     return problems
 
 
@@ -373,7 +387,7 @@ def _matches_type(actual: SqlColumnInventory, expected_type: str) -> bool:
     return actual.data_type.casefold() == normalized
 
 
-def _matches_unversioned_type(
+def _matches_core_storage_type(
     actual: SqlColumnInventory,
     access_type: str,
 ) -> bool:

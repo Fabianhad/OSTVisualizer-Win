@@ -2,10 +2,20 @@ from __future__ import annotations
 import contextvars
 import logging
 from contextlib import contextmanager
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 from ...application.interfaces.i_credential_store import ICredentialStore
 from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
+)
+from ...application.interfaces.i_database_session_registry import (
+    IDatabaseSessionRegistry,
+)
+from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
+from ...application.dtos.collaboration_dtos import (
+    ChangeOperation,
+    DatabaseMutationRequest,
+    DatabaseMutationResult,
+    ResourceRef,
 )
 from ...domain.entities.database_descriptor import DatabaseBackend
 from ..mdb.connection_manager import MdbConnectionManager
@@ -13,20 +23,22 @@ from ..mdb.mdb_writer import MdbWriter
 from ..sql.writer import SqlProjectWriter
 from .descriptor_registry import resolve_database_backend
 
+T = TypeVar("T")
+
 
 class DatabaseProjectWriter(SqlProjectWriter):
-    """Shared writer operations with one backend-specific primitive boundary."""
-
     def __init__(
         self,
         access_connections: MdbConnectionManager,
         descriptor_registry: IDatabaseDescriptorRegistry,
         credential_store: ICredentialStore,
+        session_registry: IDatabaseSessionRegistry,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         super().__init__(
             descriptor_registry,
             credential_store,
+            session_registry,
             logger=logger,
         )
         self._conn_manager = access_connections
@@ -77,6 +89,19 @@ class DatabaseProjectWriter(SqlProjectWriter):
         if backend is None:
             raise RuntimeError("Database writer operation has no active backend scope.")
         return backend
+
+    def execute(
+        self,
+        request: DatabaseMutationRequest,
+        operation: Callable[[IMutationRecorder], T],
+    ) -> DatabaseMutationResult[T]:
+        backend = resolve_database_backend(
+            self._descriptor_registry, request.database_id
+        )
+        if backend == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter.execute(self, request, operation)
+        value = operation(_AccessMutationRecorder())
+        return DatabaseMutationResult(success=True, value=value)
 
     def _next_uid(self, cursor, table: str) -> int:
         if self._current_backend() == DatabaseBackend.SQL_SERVER:
@@ -172,3 +197,40 @@ class DatabaseProjectWriter(SqlProjectWriter):
                 transform_fn,
                 target_project_uid,
             )
+
+    def save_page_view_state(
+        self,
+        locator: str,
+        page_uid: str,
+        zoom_fac: float,
+        current_x: float,
+        current_y: float,
+    ) -> bool:
+        if (
+            resolve_database_backend(self._descriptor_registry, locator)
+            == DatabaseBackend.SQL_SERVER
+        ):
+            return True
+        return MdbWriter.save_page_view_state(
+            self, locator, page_uid, zoom_fac, current_x, current_y
+        )
+
+    def save_bid_selected_page(self, locator: str, bid_uid: str, page_uid: str) -> bool:
+        if (
+            resolve_database_backend(self._descriptor_registry, locator)
+            == DatabaseBackend.SQL_SERVER
+        ):
+            return True
+        return MdbWriter.save_bid_selected_page(self, locator, bid_uid, page_uid)
+
+
+class _AccessMutationRecorder:
+    def record(
+        self,
+        resource: ResourceRef,
+        operation: ChangeOperation,
+        *,
+        changed_fields: tuple[str, ...] = (),
+        payload: str = "",
+    ) -> None:
+        del resource, operation, changed_fields, payload

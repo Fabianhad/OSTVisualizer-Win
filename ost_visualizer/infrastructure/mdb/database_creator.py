@@ -846,7 +846,6 @@ _SCHEMA_VERSIONS = [
 
 
 def get_reference_schema_model() -> DatabaseSchemaModel:
-    """Return the shared semantic model used by Access and SQL Server."""
     return schema_model_from_access_ddl(
         _TABLE_DDL,
         required_uid_tables=UID_REQUIRED_TABLES,

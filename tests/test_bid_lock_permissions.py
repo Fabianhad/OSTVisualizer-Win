@@ -1,9 +1,11 @@
 import logging
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
+from ost_visualizer.application.dtos.collaboration_dtos import DatabaseMutationResult
 from ost_visualizer.application.services.active_bid_write_guard import (
     ActiveBidWriteGuard,
 )
@@ -77,9 +79,40 @@ class _DatabaseCapability:
         self.editable = editable
         self.locators = []
 
-    def is_editable(self, locator):
+    def is_editable(self, locator, _resource=None):
         self.locators.append(locator)
         return self.editable
+
+
+class _MutationRecorder:
+    def record(self, *_args, **_kwargs):
+        pass
+
+
+class _MutationExecutor:
+    def execute(self, _request, operation):
+        return DatabaseMutationResult(
+            success=True, value=operation(_MutationRecorder())
+        )
+
+
+class _SessionRegistry:
+    def get(self, _database_id):
+        return ""
+
+    def lock_tokens(self, _database_id, _resources):
+        return ()
+
+
+class _ConcurrencyTokens:
+    def ensure_resources_loaded(self, _database_id, _resources):
+        pass
+
+    def expected_versions(self, _database_id, _resources):
+        return ()
+
+    def apply_result(self, _database_id, _versions):
+        pass
 
 
 class _ProjectData:
@@ -120,6 +153,7 @@ class _UiState:
         self.place_condition_uid = None
         self.selected_page_uids = ["page-1"]
         self.active_page_uid = "page-1"
+        self.highlighted_condition_uids = set()
 
     def get_selected_bid_ref(self):
         return self._bid_ref
@@ -522,11 +556,23 @@ def _write_service(
         logger=logger,
         bid_write_guard=ActiveBidWriteGuard(project_data, logger),
         project_data_service=project_data,
+        mutation_executor=_MutationExecutor(),
+        session_registry=_SessionRegistry(),
+        concurrency_tokens=_ConcurrencyTokens(),
     )
     return service, update_bid_job_status, delete_bids, duplicate_bid
 
 
 class BidLockPermissionTests(unittest.TestCase):
+    def test_area_dialog_without_selected_bid_has_no_stale_presence_reference(self):
+        source = Path(
+            "ost_visualizer/presentation/coordinators/ui_event_coordinator.py"
+        ).read_text(encoding="utf-8")
+        method = source.split("    def open_areas_dialog", 1)[1].split(
+            "    def _save_bid_areas_from_dialog", 1
+        )[0]
+        self.assertNotIn("prev_bid_ref", method)
+
     def _access_manager(self, project_data, ui_state=None, capability=None):
         return UIAccessManager(
             _EventBus(),
@@ -632,11 +678,9 @@ class BidLockPermissionTests(unittest.TestCase):
         coordinator = ToolbarStateCoordinator(ui_state, manager, project_data)
         coordinator.set_plan_view(plan_view)
         coordinator.set_tab_widget(_FakeTabWidget(TAB_INDEX_TAKEOFF))
-
         coordinator.refresh()
         capability.editable = False
         coordinator.refresh()
-
         self.assertEqual(plan_view.inline_edit_enabled, [True, False])
 
     def test_writable_capability_refresh_does_not_discard_deferred_state(self):
@@ -652,9 +696,7 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         coordinator._mesh_window = None
         coordinator._update_export_menu_state = lambda: calls.append("project")
-
         coordinator._on_database_capabilities_changed("sql-db-1")
-
         self.assertEqual(calls, ["refresh", "project"])
 
     def test_bid_lock_applies_and_unlocks_immediately_in_access_manager(self):

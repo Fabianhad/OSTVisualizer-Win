@@ -57,18 +57,46 @@ class SqlDatabasePermissionProbe:
                         return False
                     cursor.execute(
                         "SELECT m.[SchemaVersion], sm.[Checksum], "
-                        "HAS_PERMS_BY_NAME(N'ostv.ChangeLog', N'OBJECT', N'INSERT'), "
                         "DATABASEPROPERTYEX(DB_NAME(), N'Updateability') "
                         "FROM [ostv].[DatabaseMetadata] m "
                         "JOIN [ostv].[SchemaMigrations] sm "
                         "ON sm.[Version]=m.[SchemaVersion]"
                     )
                     row = cursor.fetchone()
+                    collaboration_tables = (
+                        "Sessions",
+                        "Presence",
+                        "Locks",
+                        "EntityVersions",
+                        "ChangeLog",
+                        "ChangeFeedState",
+                    )
+                    collaboration_placeholders = ", ".join(
+                        "?" for _ in collaboration_tables
+                    )
+                    cursor.execute(
+                        "SELECT COUNT_BIG(*), COALESCE(SUM(CASE WHEN "
+                        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+                        "N'OBJECT', N'SELECT'), 0)=1 AND "
+                        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+                        "N'OBJECT', N'INSERT'), 0)=1 AND "
+                        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+                        "N'OBJECT', N'UPDATE'), 0)=1 AND "
+                        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+                        "N'OBJECT', N'DELETE'), 0)=1 THEN 0 ELSE 1 END), 0) "
+                        "FROM sys.tables t JOIN sys.schemas s ON "
+                        "s.[schema_id]=t.[schema_id] WHERE s.[name]=N'ostv' "
+                        f"AND t.[name] IN ({collaboration_placeholders})",
+                        *collaboration_tables,
+                    )
+                    collaboration_row = cursor.fetchone()
         except SqlInfrastructureError:
             return False
         return bool(
             row is not None
             and schema_record_is_current(row[0], row[1])
-            and bool(row[2])
-            and str(row[3]).casefold() == "read_write"
+            and str(row[2]).casefold() == "read_write"
+            and collaboration_row is not None
+            and int(collaboration_row[0]) == len(collaboration_tables)
+            and int(collaboration_row[1]) == 0
         )

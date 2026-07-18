@@ -4,6 +4,7 @@ import os
 import re
 import secrets
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtTest import QTest
 from ost_visualizer.application.dtos.application_info import APPLICATION_VERSION
+from ost_visualizer.application.dtos.collaboration_dtos import SynchronizationState
+from ost_visualizer.application.services.database_session_registry import (
+    DatabaseSessionRegistry,
+)
 from ost_visualizer.application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
     SqlDatabaseCatalogEntry,
@@ -34,6 +39,7 @@ from ost_visualizer.domain.entities.file_state import FileEntry, FileState
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
+from ost_visualizer.presentation.utils.qt_callback_bridge import QtCallbackBridge
 from ost_visualizer.infrastructure.database.schema_model import (
     render_sql_server_schema,
 )
@@ -328,7 +334,7 @@ class DatabaseDescriptorTests(unittest.TestCase):
         store.delete_password(target)
         self.assertNotIn(target, api._records)
 
-    def test_experimental_migration_packages_and_initializers_are_absent(self):
+    def test_final_sql_schema_has_no_runtime_migration_package(self):
         root = Path(__file__).resolve().parents[1]
         removed = (
             "ost_visualizer/infrastructure/database/__init__.py",
@@ -336,6 +342,9 @@ class DatabaseDescriptorTests(unittest.TestCase):
             "ost_visualizer/infrastructure/sql/schema/__init__.py",
             "ost_visualizer/infrastructure/sql/schema/migrations/__init__.py",
             "ost_visualizer/infrastructure/sql/migrator.py",
+            "ost_visualizer/infrastructure/sql/schema_migrator.py",
+            "ost_visualizer/infrastructure/sql/schema/migrations/"
+            "v0002_collaboration.py",
         )
         self.assertTrue(all(not (root / path).exists() for path in removed))
 
@@ -410,6 +419,16 @@ class DatabaseDescriptorTests(unittest.TestCase):
             unsupported.compatibility,
             SqlSchemaCompatibility.UNSUPPORTED_VERSION,
         )
+        older = validator.validate(inventory(1, "obsolete"))
+        self.assertEqual(
+            older.compatibility,
+            SqlSchemaCompatibility.UNSUPPORTED_VERSION,
+        )
+        self.assertFalse(older.is_read_compatible)
+        self.assertEqual(
+            older.user_message,
+            "Database uses an unsupported OST Visualizer schema version.",
+        )
         unexpected = validator.validate_adoption_candidate(
             SqlSchemaInventory(
                 database_guid="",
@@ -462,13 +481,11 @@ class DatabaseDescriptorTests(unittest.TestCase):
             procedures=(),
             functions=(),
         )
-
         report = SqlSchemaValidator(schema).validate_adoption_candidate(inventory)
-
         self.assertIn("custom.Bids.shadows_dbo", report.problems)
 
-    def test_latest_schema_is_one_initial_version_with_stable_checksum(self):
-        self.assertEqual(LATEST_SQL_SCHEMA.version, 1)
+    def test_latest_schema_is_version_2_with_stable_checksum(self):
+        self.assertEqual(LATEST_SQL_SCHEMA.version, 2)
         self.assertEqual(len(LATEST_SQL_SCHEMA.checksum), 64)
         self.assertEqual(
             sum(
@@ -487,6 +504,7 @@ class DatabaseDescriptorTests(unittest.TestCase):
                 "Locks",
                 "EntityVersions",
                 "ChangeLog",
+                "ChangeFeedState",
             },
         )
         self.assertFalse(
@@ -501,10 +519,8 @@ class DatabaseDescriptorTests(unittest.TestCase):
             "ostv",
             "Sessions",
             "Version",
-            1,
             "timestamp",
             8,
-            0,
             0,
             False,
             False,
@@ -516,6 +532,34 @@ class DatabaseDescriptorTests(unittest.TestCase):
             _normalize_filter("([DisconnectedAt] IS NULL)"),
             _normalize_filter("[DisconnectedAt] IS NULL"),
         )
+        expected_checks = {
+            name: expression
+            for table in LATEST_SQL_SCHEMA.tables
+            for name, expression in table.check_constraints
+        }
+        server_checks = {
+            "CK_ostv_Presence_ActivityMode": (
+                "([ActivityMode]=N'editing' OR [ActivityMode]=N'viewing')"
+            ),
+            "CK_ostv_ChangeLog_Operation": (
+                "([Operation]=N'bulk_refresh' OR [Operation]=N'reorder' OR "
+                "[Operation]=N'move' OR [Operation]=N'delete' OR "
+                "[Operation]=N'update' OR [Operation]=N'create')"
+            ),
+            "CK_ostv_ChangeLog_ChangedFieldsJson": (
+                "([ChangedFields] IS NULL OR isjson([ChangedFields])=(1))"
+            ),
+            "CK_ostv_ChangeLog_PayloadJson": (
+                "([Payload] IS NULL OR isjson([Payload])=(1))"
+            ),
+            "CK_ostv_ChangeFeedState_Singleton": "([SingletonId]=(1))",
+        }
+        for name, actual in server_checks.items():
+            self.assertEqual(
+                _normalize_filter(actual),
+                _normalize_filter(expected_checks[name]),
+                name,
+            )
 
     def test_capability_service_keeps_unversioned_sql_read_only(self):
         class _ReadOnlyPermissionProbe:
@@ -551,6 +595,9 @@ class DatabaseDescriptorTests(unittest.TestCase):
         self.assertFalse(service.is_editable(descriptor.database_id))
         probe.editable = True
         service.mark_connected(descriptor.database_id)
+        service.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
         self.assertTrue(service.is_editable(descriptor.database_id))
         service.mark_disconnected(descriptor.database_id)
         self.assertFalse(service.is_editable(descriptor.database_id))
@@ -575,7 +622,9 @@ class DatabaseDescriptorTests(unittest.TestCase):
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
         )
         registry.register(descriptor)
-        writer = DatabaseProjectWriter(object(), registry, _CredentialStore())
+        writer = DatabaseProjectWriter(
+            object(), registry, _CredentialStore(), DatabaseSessionRegistry()
+        )
         self.assertFalse(writer._is_sql("sample.mdb"))
         self.assertTrue(writer._is_sql(descriptor.database_id))
         self.assertNotIn("delete_bids", DatabaseProjectWriter.__dict__)
@@ -583,7 +632,10 @@ class DatabaseDescriptorTests(unittest.TestCase):
 
     def test_sql_import_conversion_rejects_noncanonical_values(self):
         writer = DatabaseProjectWriter(
-            object(), DatabaseDescriptorRegistry(), _CredentialStore()
+            object(),
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
         )
         self.assertEqual(writer._convert_sql_import_value("12", "int"), 12)
         self.assertIs(writer._convert_sql_import_value("True", "bit"), True)
@@ -598,6 +650,27 @@ class SqlDialogTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = _app()
         cls.icon_provider = _IconProvider()
+
+    def test_thread_callback_dispatch_returns_to_qt_main_thread(self):
+        bridge = QtCallbackBridge()
+        callback_thread = []
+        delivered = threading.Event()
+
+        def receive(_payload):
+            callback_thread.append(QtCore.QThread.currentThread())
+            delivered.set()
+
+        worker = threading.Thread(target=lambda: bridge.dispatch(receive, ()))
+        worker.start()
+        worker.join()
+        for _ in range(20):
+            self.app.processEvents()
+            if delivered.is_set():
+                break
+            QTest.qWait(1)
+        self.assertTrue(delivered.is_set())
+        self.assertIs(callback_thread[0], self.app.thread())
+        bridge.deleteLater()
 
     def test_database_type_defaults_to_access(self):
         self.assertEqual(
@@ -681,7 +754,7 @@ class SqlDialogTests(unittest.TestCase):
             database_guid="00000000-0000-0000-0000-000000000123",
             state="ONLINE",
             is_compatible=True,
-            schema_version=1,
+            schema_version=LATEST_SQL_SCHEMA.version,
         )
         dialog = SqlDatabasePropertiesDialog(
             self.icon_provider,
@@ -791,7 +864,7 @@ class SqlDialogTests(unittest.TestCase):
             database_guid="00000000-0000-0000-0000-000000000123",
             state="ONLINE",
             is_compatible=True,
-            schema_version=1,
+            schema_version=LATEST_SQL_SCHEMA.version,
         )
         catalog = _Catalog([selected])
         connection = SqlConnectionDialogResult(

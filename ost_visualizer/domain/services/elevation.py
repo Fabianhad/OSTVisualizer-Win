@@ -76,7 +76,6 @@ def format_structural_elevation(value: float) -> str:
 def resolve_condition_elevation_bounds(
     condition: Condition,
 ) -> Optional[ConditionElevationBounds]:
-    """Resolve both faces from the condition's parsed elevation and vertical size."""
     parts = parse_elevation(condition.name)
     if not parts.value.strip():
         return None

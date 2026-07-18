@@ -23,6 +23,7 @@ from .errors import (
 from .schema_definition import LATEST_SQL_SCHEMA
 from .schema_inspector import SqlSchemaInspector
 from .schema_validator import SqlSchemaCompatibility, SqlSchemaValidator
+from .schema_lock import acquire_schema_transaction_lock
 
 
 class SqlDatabaseCreator:
@@ -117,7 +118,7 @@ class SqlDatabaseCreator:
             committed = False
             try:
                 with lease.cursor() as cursor:
-                    self._acquire_schema_lock(cursor)
+                    acquire_schema_transaction_lock(cursor)
                     cursor.execute(
                         "SELECT COUNT(*) FROM sys.tables t "
                         "JOIN sys.schemas s ON s.schema_id=t.schema_id "
@@ -134,6 +135,7 @@ class SqlDatabaseCreator:
                     for statement in LATEST_SQL_SCHEMA.statements:
                         cursor.execute(statement)
                     self._insert_seed_data(cursor, location.database)
+                    self._initialize_collaboration_state(cursor)
                     self._record_schema(
                         cursor,
                         application_version=application_version,
@@ -178,7 +180,7 @@ class SqlDatabaseCreator:
             committed = False
             try:
                 with lease.cursor() as cursor:
-                    self._acquire_schema_lock(cursor)
+                    acquire_schema_transaction_lock(cursor)
                 inventory = self._inspector.inspect_connection(lease)
                 if inventory.schema_version == LATEST_SQL_SCHEMA.version:
                     report = self._validator.validate(inventory)
@@ -207,6 +209,7 @@ class SqlDatabaseCreator:
                     with lease.cursor() as cursor:
                         for statement in LATEST_SQL_SCHEMA.extension_statements:
                             cursor.execute(statement)
+                        self._initialize_collaboration_state(cursor)
                         self._record_schema(
                             cursor,
                             application_version=application_version,
@@ -236,22 +239,6 @@ class SqlDatabaseCreator:
         return SqlDatabaseCreationResult(final_location, LATEST_SQL_SCHEMA.version)
 
     @staticmethod
-    def _acquire_schema_lock(cursor) -> None:
-        cursor.execute(
-            "DECLARE @result int; EXEC @result=sys.sp_getapplock "
-            "@Resource=N'OSTVisualizer.SchemaInitialization', "
-            "@LockMode=N'Exclusive', @LockOwner=N'Transaction', "
-            "@LockTimeout=10000; SELECT @result"
-        )
-        if int(cursor.fetchone()[0]) < 0:
-            raise SqlInfrastructureError(
-                SqlErrorDetails(
-                    SqlErrorCode.LOCKED,
-                    "Another client is initializing this database schema.",
-                )
-            )
-
-    @staticmethod
     def _record_schema(cursor, *, application_version: str, actor: str) -> None:
         cursor.execute(
             "SELECT CONVERT(uniqueidentifier, database_guid) "
@@ -278,6 +265,11 @@ class SqlDatabaseCreator:
             actor,
             application_version,
         )
+
+    @staticmethod
+    def _initialize_collaboration_state(cursor) -> None:
+        for statement in LATEST_SQL_SCHEMA.collaboration_initialization_statements:
+            cursor.execute(statement)
 
     def _insert_seed_data(self, cursor, database_name: str) -> None:
         cursor.execute(

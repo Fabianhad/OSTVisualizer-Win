@@ -19,6 +19,63 @@ class DatabaseCapabilitiesChangedEvent:
 
 
 @dataclass
+class RemoteConditionsChangedEvent:
+    database_id: str = ""
+    bid_uid: str = ""
+    condition_uids: list = field(default_factory=list)
+
+
+@dataclass
+class RemoteAreasChangedEvent:
+    database_id: str = ""
+    bid_uid: str = ""
+    area_uids: list = field(default_factory=list)
+
+
+@dataclass
+class RemoteBidContentChangedEvent:
+    database_id: str = ""
+    bid_uid: str = ""
+    families: list = field(default_factory=list)
+    resource_uids_by_family: dict = field(default_factory=dict)
+
+
+@dataclass
+class RemoteHierarchyChangedEvent:
+    database_id: str = ""
+
+
+@dataclass
+class CollaborationStateChangedEvent:
+    database_id: str = ""
+    state: str = ""
+    message: str = ""
+
+
+@dataclass
+class PresenceChangedEvent:
+    database_id: str = ""
+    bid_uid: str = ""
+    users: list = field(default_factory=list)
+
+
+@dataclass
+class SynchronizationConflictEvent:
+    database_id: str = ""
+    resource_type: str = ""
+    resource_id: str = ""
+    bid_uid: str = ""
+    message: str = ""
+    blocks_database: bool = True
+
+
+@dataclass
+class FullReconciliationRequiredEvent:
+    database_id: str = ""
+    reason: str = ""
+
+
+@dataclass
 class TakeoffsChangedEvent:
     page_uid: str = ""
     takeoff_uids: list = field(default_factory=list)
@@ -113,6 +170,14 @@ class AppEvents:
     FILE_OPENED = FileOpenedEvent
     DATABASE_REFRESHED = DatabaseRefreshedEvent
     DATABASE_CAPABILITIES_CHANGED = DatabaseCapabilitiesChangedEvent
+    REMOTE_CONDITIONS_CHANGED = RemoteConditionsChangedEvent
+    REMOTE_AREAS_CHANGED = RemoteAreasChangedEvent
+    REMOTE_BID_CONTENT_CHANGED = RemoteBidContentChangedEvent
+    REMOTE_HIERARCHY_CHANGED = RemoteHierarchyChangedEvent
+    COLLABORATION_STATE_CHANGED = CollaborationStateChangedEvent
+    PRESENCE_CHANGED = PresenceChangedEvent
+    SYNCHRONIZATION_CONFLICT = SynchronizationConflictEvent
+    FULL_RECONCILIATION_REQUIRED = FullReconciliationRequiredEvent
     TAKEOFFS_CHANGED = TakeoffsChangedEvent
     ANNOTATIONS_CHANGED = AnnotationsChangedEvent
     FILE_UNLOADED = FileUnloadedEvent

@@ -16,8 +16,6 @@ from .schema_validator import SqlSchemaValidator
 
 
 class SqlProjectReader(MdbReader):
-    """Reads SQL Server through the canonical project DTO reader."""
-
     def __init__(
         self,
         descriptor_registry: IDatabaseDescriptorRegistry,

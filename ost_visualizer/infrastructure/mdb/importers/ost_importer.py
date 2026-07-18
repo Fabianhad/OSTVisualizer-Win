@@ -1,6 +1,11 @@
 import logging
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set
+from ....application.dtos.collaboration_dtos import (
+    ChangeOperation,
+    DatabaseMutationRequest,
+    ResourceRef,
+)
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ..raw_bid_integrity import (
     clear_missing_annotation_takeoff_references,
@@ -67,8 +72,12 @@ def _matches_section_child(section: str, tag: str) -> bool:
 
 
 class OstImporter:
-    def __init__(self, mdb_writer) -> None:
+    def __init__(
+        self, mdb_writer, mutation_executor=None, session_registry=None
+    ) -> None:
         self._mdb_writer = mdb_writer
+        self._mutation_executor = mutation_executor
+        self._session_registry = session_registry
 
     def import_ost(
         self,
@@ -105,9 +114,42 @@ class OstImporter:
                 )
             if not self._validate_page_references(raw_data):
                 return False
-            return self._mdb_writer.import_ost_data(
-                target_db_path, raw_data, self._transform, target_project_uid
+            collection = ResourceRef("project_bids", target_project_uid or "orphan")
+            if self._mutation_executor is None:
+                return self._mdb_writer.import_ost_data(
+                    target_db_path,
+                    raw_data,
+                    self._transform,
+                    target_project_uid,
+                )
+
+            def import_data(recorder):
+                success = self._mdb_writer.import_ost_data(
+                    target_db_path,
+                    raw_data,
+                    self._transform,
+                    target_project_uid,
+                )
+                if success:
+                    recorder.record(
+                        collection,
+                        ChangeOperation.BULK_REFRESH,
+                    )
+                return success
+
+            result = self._mutation_executor.execute(
+                DatabaseMutationRequest(
+                    database_id=target_db_path,
+                    session_id=(
+                        self._session_registry.get(target_db_path)
+                        if self._session_registry is not None
+                        else ""
+                    ),
+                    resources=(collection,),
+                ),
+                import_data,
             )
+            return bool(result.success and result.value)
         except Exception:
             logger.exception("Failed to import OST file %s", ost_file_path)
             return False

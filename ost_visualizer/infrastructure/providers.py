@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Callable, Optional
 from ..application.dtos.plan_view_renderers_dto import PlanViewRenderers
 from ..application.interfaces.i_api_client_provider import IApiClientProvider
 from ..application.interfaces.i_annotation_caption_resolver import (
@@ -19,6 +19,9 @@ from ..application.interfaces.i_database_descriptor_registry import (
 )
 from ..application.interfaces.i_database_permission_probe import (
     IDatabasePermissionProbe,
+)
+from ..application.interfaces.i_database_session_registry import (
+    IDatabaseSessionRegistry,
 )
 from ..application.interfaces.i_sql_database_creator import ISqlDatabaseCreator
 from ..application.interfaces.i_infrastructure_service_provider import (
@@ -166,6 +169,7 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
         self,
         logger: logging.Logger,
         callback_bridge_factory: Callable[[], IThreadCallbackBridge],
+        database_session_registry: IDatabaseSessionRegistry,
         icon_provider: Optional[IWindowIconProvider] = None,
         message_notifier: Optional[IMessageNotifier] = None,
         descriptor_registry: Optional[IDatabaseDescriptorRegistry] = None,
@@ -183,6 +187,7 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
         self._credential_store = (
             WindowsCredentialStore() if credential_store is None else credential_store
         )
+        self._database_session_registry = database_session_registry
         self._database_readers: dict[int, IMdbReader] = {}
         self._database_writers: dict[int, IMdbWriter] = {}
 
@@ -242,7 +247,12 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
     def get_ost_importer(
         self, conn_manager: Optional[IMdbConnectionManager] = None
     ) -> IOstImporter:
-        return OstImporter(self.get_mdb_writer(conn_manager=conn_manager))
+        writer = self.get_mdb_writer(conn_manager=conn_manager)
+        return OstImporter(
+            writer,
+            mutation_executor=writer,
+            session_registry=self._database_session_registry,
+        )
 
     def get_osp_importer(
         self, conn_manager: Optional[IMdbConnectionManager] = None
@@ -320,6 +330,7 @@ class InfrastructureServiceProvider(IInfrastructureServiceProvider):
                 resolved_manager,
                 self._descriptor_registry,
                 self._credential_store,
+                self._database_session_registry,
                 logger=self.logger.getChild("DatabaseProjectWriter"),
             )
             self._database_writers[key] = writer

@@ -138,7 +138,6 @@ class ApplicationLifecycleTests(unittest.TestCase):
             file_state_model=state,
             database_descriptor_registry=registry,
         )
-
         self.assertEqual(controller.create_new_database(), str(created_path))
         self.assertEqual(len(state.file_entries), 1)
         self.assertIsNotNone(registry.resolve(str(created_path)))

@@ -1,6 +1,17 @@
 import logging
 from typing import Callable, Optional
+from ..dtos.collaboration_dtos import (
+    DatabaseMutationRequest,
+    DatabaseMutationResult,
+    ResourceRef,
+)
 from ..events.app_events import AppEvents
+from ..interfaces.i_database_mutation_executor import (
+    IDatabaseMutationExecutor,
+    IMutationRecorder,
+)
+from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
+from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 
 
 class BaseWriteService:
@@ -29,3 +40,63 @@ class BaseWriteService:
 
     def notify_database_refreshed(self, file_path: str) -> None:
         self._event_bus.publish(AppEvents.DATABASE_REFRESHED, file_path=file_path)
+
+
+class DatabaseMutationWriteService(BaseWriteService):
+    def __init__(
+        self,
+        reload_database: Callable[[str], bool],
+        event_bus,
+        mutation_executor: IDatabaseMutationExecutor,
+        session_registry: IDatabaseSessionRegistry,
+        concurrency_tokens: DatabaseConcurrencyTokenService,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        super().__init__(reload_database, event_bus, logger)
+        self._mutation_executor = mutation_executor
+        self._session_registry = session_registry
+        self._concurrency_tokens = concurrency_tokens
+
+    def _execute_database_mutation(
+        self,
+        database_id: str,
+        resources: tuple[ResourceRef, ...],
+        operation: Callable[[IMutationRecorder], object],
+        *,
+        block_bid_child_locks: bool = False,
+        block_bid_active_editors: bool = False,
+    ) -> DatabaseMutationResult:
+        session_id = self._session_registry.get(database_id)
+        self._concurrency_tokens.ensure_resources_loaded(database_id, resources)
+        expected_versions = self._concurrency_tokens.expected_versions(
+            database_id, resources
+        )
+        result = self._mutation_executor.execute(
+            DatabaseMutationRequest(
+                database_id=database_id,
+                session_id=session_id,
+                resources=resources,
+                expected_versions=expected_versions,
+                required_lock_tokens=self._session_registry.lock_tokens(
+                    database_id, resources
+                ),
+                block_bid_child_locks=block_bid_child_locks,
+                block_bid_active_editors=block_bid_active_editors,
+            ),
+            operation,
+        )
+        if result.success:
+            self._concurrency_tokens.apply_result(
+                database_id, result.resulting_versions
+            )
+        if result.conflict is not None:
+            self._event_bus.publish(
+                AppEvents.SYNCHRONIZATION_CONFLICT,
+                database_id=database_id,
+                resource_type=result.conflict.resource.resource_type,
+                resource_id=result.conflict.resource.resource_id,
+                bid_uid=str(result.conflict.resource.bid_uid or ""),
+                message=result.conflict.reason,
+                blocks_database=False,
+            )
+        return result

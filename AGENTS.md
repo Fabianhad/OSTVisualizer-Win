@@ -83,19 +83,32 @@ Database backends:
   semantics and explicit adapter routing live under `infrastructure/database`.
 - SQL connections and cursors are per-operation leases and must not cross
   threads or escape a transaction. Never retry an uncertain SQL write.
-- The unreleased SQL schema has one checksummed version-1 definition. Creation is
-  serialized with `sp_getapplock`, transactional, and recorded under `ostv`;
-  do not add migrations for unreleased intermediate layouts. `SchemaRegistry`
-  remains product data and is not the SQL schema ledger.
+- The only writable SQL schema is checksummed version 2. Fresh and externally
+  adopted compatible databases are initialized directly at version 2; older
+  versioned schemas are rejected explicitly. Schema initialization is serialized
+  with `sp_getapplock`, transactional, and recorded under `ostv`.
+  `SchemaRegistry` remains product data and is not the SQL schema ledger.
 - External unversioned databases may be adopted only after strict core-schema
   validation. Adoption transactionally adds the canonical `ostv` extension and
   metadata without recreating or rewriting external `dbo` tables or rows.
 - Presence is informational and separate from locks. SQL write authorization
   must be enforced at the mutation boundary; toolbar/menu state is only a
   projection of the shared capability service.
-- Phase 4 polling and heartbeat workers are not implemented. When introduced,
-  they must stop on unload/shutdown and return through a Qt bridge before
-  EventBus publication or UI changes.
+- `SqlCollaborationCoordinator` owns SQL sessions, heartbeat, presence, lock
+  renewal, polling, checkpoints, reconnect, and shutdown. It runs only for SQL
+  descriptors, uses server UTC, stops and joins workers on unload/shutdown, and
+  crosses `QtCallbackBridge` before EventBus publication or UI changes.
+- SQL mutations must use `DatabaseMutationRequest`: validate the active session,
+  acquire sorted resource application locks, verify owned edit-lock tokens and
+  expected entity versions, change core rows, advance `EntityVersions`, and add
+  operation-specific `ChangeLog` records in one transaction. Access mutation
+  execution preserves the existing MDB behavior and creates no collaboration
+  session.
+- Remote application merges are targeted by entity family. Do not publish
+  EventBus events from polling workers, add remote commands to local undo
+  history, reset a same-bid 3D camera, or acknowledge a batch until main-thread
+  reconciliation succeeds. External writers that bypass OST Visualizer are not
+  represented in this change feed.
 
 State and identity:
 

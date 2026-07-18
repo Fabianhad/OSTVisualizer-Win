@@ -4,12 +4,29 @@ from ..application.app_controller import AppControllerBuilder
 from ..application.services.database_capability_service import (
     DatabaseCapabilityService,
 )
+from ..application.services.database_session_registry import DatabaseSessionRegistry
+from ..application.services.database_concurrency_token_service import (
+    DatabaseConcurrencyTokenService,
+)
+from ..application.services.remote_change_reconciliation_service import (
+    RemoteChangeReconciliationService,
+)
+from ..application.services.sql_collaboration_coordinator import (
+    SqlCollaborationCoordinator,
+)
 from ..application.service_container import ServiceContainer
 from ..infrastructure.app_paths import get_app_data_dir
 from ..infrastructure.events.event_bus import EventBus
 from ..infrastructure.database.descriptor_registry import DatabaseDescriptorRegistry
 from ..infrastructure.logging.logger_factory import LoggerFactory
 from ..infrastructure.sql.credential_store import WindowsCredentialStore
+from ..infrastructure.sql.collaboration_store import SqlCollaborationStore
+from ..infrastructure.sql.connection_manager import SqlConnectionManager
+from ..infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
+from ..infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ..infrastructure.database.entity_version_reader import (
+    DatabaseEntityVersionReader,
+)
 from ..infrastructure.persistence.repositories.memory_annotation_view_repository import (
     MemoryAnnotationViewRepository,
 )
@@ -36,6 +53,15 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
     container.register_instance("logger", logger)
     descriptor_registry = DatabaseDescriptorRegistry()
     credential_store = WindowsCredentialStore()
+    session_registry = DatabaseSessionRegistry()
+    sql_connections = SqlConnectionManager()
+    concurrency_tokens = DatabaseConcurrencyTokenService(
+        DatabaseEntityVersionReader(
+            descriptor_registry, credential_store, sql_connections
+        )
+    )
+    container.register_instance("database_session_registry", session_registry)
+    container.register_instance("database_concurrency_tokens", concurrency_tokens)
     icon_provider = QtWindowIconProvider()
     message_notifier = QtMessageNotifier(icon_provider=icon_provider)
     infrastructure_provider = InfrastructureServiceProvider(
@@ -45,6 +71,7 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         message_notifier=message_notifier,
         descriptor_registry=descriptor_registry,
         credential_store=credential_store,
+        database_session_registry=session_registry,
     )
     database_capability_service = DatabaseCapabilityService(
         descriptor_registry,
@@ -119,4 +146,25 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         scene_notifier=scene_notifier,
         ost_signaler=ost_signaler,
     ).build()
+    event_bus = container.get("event_bus")
+    reconciliation = RemoteChangeReconciliationService(
+        container.get("project_data_service"), event_bus, concurrency_tokens
+    )
+    collaboration = SqlCollaborationCoordinator(
+        descriptor_registry=descriptor_registry,
+        store=SqlCollaborationStore(
+            descriptor_registry, credential_store, sql_connections
+        ),
+        remote_reader=SqlRemoteChangeReader(
+            descriptor_registry, credential_store, sql_connections
+        ),
+        dispatcher=QtCallbackBridge(),
+        reconciliation=reconciliation,
+        capability_service=database_capability_service,
+        session_registry=session_registry,
+        concurrency_tokens=concurrency_tokens,
+        event_bus=event_bus,
+        supported_schema_version=LATEST_SQL_SCHEMA.version,
+    )
+    container.register_instance("sql_collaboration_coordinator", collaboration)
     return container

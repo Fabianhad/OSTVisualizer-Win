@@ -65,6 +65,68 @@ class SidebarCoordinator:
         )
         self._sync_sidebar_highlight_from_ui_state(conditions)
 
+    def refresh_conditions_from_memory(self) -> None:
+        if not self.conditions_sidebar:
+            return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if not bid_ref:
+            self.conditions_sidebar.clear()
+            return
+        conditions = self._project_data.get_bid_conditions()
+        folders = self._project_data.get_bid_condition_folders()
+        bid = self._project_data.get_bid(bid_ref)
+        layers = self._project_data.get_bid_layer_snapshot()
+        self.conditions_sidebar.set_available_layers(layers)
+        self.conditions_sidebar.set_available_condition_types(
+            list(self._project_data.get_cdn_types().values())
+        )
+        self.conditions_sidebar.load_conditions(
+            conditions,
+            folders,
+            (bid.name or "") if bid else "",
+            self._ui_state.state.grayscale_enabled,
+        )
+        self._sync_sidebar_highlight_from_ui_state(conditions)
+        self.update_conditions_quantities()
+        self.load_condition_summary_from_memory()
+
+    def load_condition_summary_from_memory(self) -> None:
+        if not self.condition_summary_tab:
+            return
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if not bid_ref:
+            self.condition_summary_tab.clear()
+            return
+        bid = self._project_data.get_bid(bid_ref)
+        grouping = self.condition_summary_tab.grouping
+        root = self._condition_summary_service.build_summary(
+            conditions=self._project_data.get_bid_conditions(),
+            folders=self._project_data.get_bid_condition_folders(),
+            takeoffs=self._project_data.get_all_takeoffs(),
+            pages=self._project_data.get_all_pages(),
+            areas=self._project_data.get_bid_area_snapshot(),
+            project_name=(bid.name or "") if bid else "",
+            grouping=grouping,
+            metric=bool(bid.measure_base) if bid else False,
+        )
+        self.condition_summary_tab.load_summary(
+            root, grouping, self._ui_state.state.grayscale_enabled
+        )
+
+    def load_takeoff_sidebar_from_memory(
+        self, bid_ref: BidRef, bid_data_cache: Dict[BidRef, Bid]
+    ) -> None:
+        if not self.takeoff_sidebar:
+            return
+        bid = bid_data_cache.get(bid_ref)
+        if not bid:
+            self.takeoff_sidebar.clear()
+            return
+        pages_with_takeoffs = {
+            page.uid for page in self._project_data.get_all_pages() if page.takeoffs
+        }
+        self.takeoff_sidebar.load_bid(bid, pages_with_takeoffs=pages_with_takeoffs)
+
     def _sync_sidebar_highlight_from_ui_state(
         self, conditions: Mapping[str, object]
     ) -> None:

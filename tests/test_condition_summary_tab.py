@@ -887,7 +887,6 @@ class ConditionSummaryTabTests(unittest.TestCase):
             )
         )
         tab.tree.setCurrentItem(detail_item)
-
         self.assertFalse(tab.can_copy_current_row())
         self.assertFalse(
             self._action_by_text(

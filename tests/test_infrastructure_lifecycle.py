@@ -267,6 +267,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             service_provider = providers.InfrastructureServiceProvider(
                 logger=logging.getLogger("test"),
                 callback_bridge_factory=lambda: None,
+                database_session_registry=object(),
             )
             with self.assertLogs("test", level="ERROR"):
                 self.assertEqual(service_provider.get_pdf_page_sizes("bad.pdf"), [])

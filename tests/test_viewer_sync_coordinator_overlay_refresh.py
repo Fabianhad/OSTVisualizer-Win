@@ -5540,9 +5540,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         annotation, item = self._add_text_annotation(view, text="Before")
         self.assertTrue(view._begin_text_annotation_edit("a1"))
         item.setPlainText("After")
-
         view.set_text_annotation_inline_edit_enabled(False)
-
         self.assertFalse(view.is_text_annotation_inline_edit_active())
         self.assertEqual(item.toPlainText(), "Before")
         self.assertEqual(annotation.properties["Text"], "Before")

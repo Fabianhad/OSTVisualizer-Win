@@ -5,9 +5,15 @@ from ...domain.services.takeoff_domain_service import (
     takeoffs_can_reassign_to_condition,
 )
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
+from ..dtos.collaboration_dtos import (
+    ChangeOperation,
+    ResourceRef,
+)
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ..dtos.update_condition_dto import UpdateConditionDto, UpdateConditionResultDto
 from ..interfaces.i_mdb_connection_manager import IMdbConnectionManager
+from ..interfaces.i_database_mutation_executor import IDatabaseMutationExecutor
+from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
 from ..use_cases.project.create_bid_use_case import CreateBidUseCase
 from ..use_cases.project.create_project_use_case import CreateProjectUseCase
 from ..use_cases.project.delete_bids_use_case import DeleteBidsUseCase
@@ -84,7 +90,8 @@ from ..use_cases.project.update_condition_use_case import UpdateConditionUseCase
 from ..use_cases.project.update_layer_name_use_case import UpdateLayerNameUseCase
 from ..use_cases.project.update_layer_show_use_case import UpdateLayerShowUseCase
 from .active_bid_write_guard import ActiveBidWriteGuard
-from .base_write_service import BaseWriteService
+from .base_write_service import DatabaseMutationWriteService
+from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 
 
 @dataclass
@@ -144,7 +151,7 @@ class DeleteValidationResult:
     failure_reason: Optional[str] = None
 
 
-class ProjectWriteService(BaseWriteService):
+class ProjectWriteService(DatabaseMutationWriteService):
     def __init__(
         self,
         delete_bids: DeleteBidsUseCase,
@@ -196,6 +203,9 @@ class ProjectWriteService(BaseWriteService):
         swap_layer_sequence: SwapLayerSequenceUseCase,
         save_bid_selected_page: SaveBidSelectedPageUseCase,
         save_page_view_state: SavePageViewStateUseCase,
+        mutation_executor: IDatabaseMutationExecutor,
+        session_registry: IDatabaseSessionRegistry,
+        concurrency_tokens: DatabaseConcurrencyTokenService,
         connection_manager: Optional[IMdbConnectionManager] = None,
         reload_database=None,
         event_bus=None,
@@ -208,7 +218,20 @@ class ProjectWriteService(BaseWriteService):
             raise ValueError("ProjectWriteService requires bid_write_guard")
         if project_data_service is None:
             raise ValueError("ProjectWriteService requires project_data_service")
-        super().__init__(reload_database, event_bus, logger)
+        if mutation_executor is None:
+            raise ValueError("ProjectWriteService requires mutation_executor")
+        if session_registry is None:
+            raise ValueError("ProjectWriteService requires session_registry")
+        if concurrency_tokens is None:
+            raise ValueError("ProjectWriteService requires concurrency_tokens")
+        super().__init__(
+            reload_database=reload_database,
+            event_bus=event_bus,
+            mutation_executor=mutation_executor,
+            session_registry=session_registry,
+            concurrency_tokens=concurrency_tokens,
+            logger=logger,
+        )
         self._bid_write_guard = bid_write_guard
         self._connection_manager = connection_manager
         self._project_data = project_data_service
@@ -268,6 +291,48 @@ class ProjectWriteService(BaseWriteService):
             self._connection_manager and self._connection_manager.is_write_blocked()
         )
 
+    def _active_bid_uid_for(self, db_path: str) -> Optional[int]:
+        bid_ref = self._project_data.get_current_bid_ref()
+        if bid_ref is None or normalize_path(db_path) != normalize_path(
+            bid_ref.file_path
+        ):
+            return None
+        return int(bid_ref.bid_uid)
+
+    def _execute_boolean_resource_mutation(
+        self,
+        db_path: str,
+        resources: tuple[ResourceRef, ...],
+        change_operation: ChangeOperation,
+        operation,
+        changed_fields: tuple[str, ...] = (),
+        *,
+        block_bid_child_locks: bool = False,
+        block_bid_active_editors: bool = False,
+    ) -> bool:
+        if not resources:
+            return False
+
+        def execute(recorder):
+            success = bool(operation())
+            if success:
+                for resource in resources:
+                    recorder.record(
+                        resource,
+                        change_operation,
+                        changed_fields=changed_fields,
+                    )
+            return success
+
+        result = self._execute_database_mutation(
+            db_path,
+            resources,
+            execute,
+            block_bid_child_locks=block_bid_child_locks,
+            block_bid_active_editors=block_bid_active_editors,
+        )
+        return bool(result.success and result.value)
+
     def is_expected_deferred_write_blocked(
         self, db_path: str, bid_uid: Optional[str] = None
     ) -> bool:
@@ -297,7 +362,15 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if not bid_uids:
             return True
-        success = self._delete_bids.execute(db_path, bid_uids)
+        resources = tuple(ResourceRef("bid", str(uid), int(uid)) for uid in bid_uids)
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.DELETE,
+            lambda: self._delete_bids.execute(db_path, bid_uids),
+            block_bid_child_locks=True,
+            block_bid_active_editors=True,
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -309,7 +382,38 @@ class ProjectWriteService(BaseWriteService):
             db_path, project_uids
         ):
             return False
-        success = self._delete_projects.execute(db_path, project_uids)
+        project_resources = tuple(
+            ResourceRef("project", str(uid)) for uid in project_uids
+        )
+        bid_resources = tuple(
+            ResourceRef("bid", uid, int(uid))
+            for uid in self._project_data.get_project_bid_uids(db_path, project_uids)
+        )
+        collection = ResourceRef("projects_collection", "database")
+        resources = project_resources + bid_resources + (collection,)
+
+        def delete(recorder):
+            success = self._delete_projects.execute(db_path, project_uids)
+            if success:
+                for resource in project_resources:
+                    recorder.record(resource, ChangeOperation.DELETE)
+                for resource in bid_resources:
+                    recorder.record(
+                        resource,
+                        ChangeOperation.MOVE,
+                        changed_fields=("project_uid",),
+                    )
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return success
+
+        mutation = self._execute_database_mutation(
+            db_path,
+            resources,
+            delete,
+            block_bid_child_locks=True,
+            block_bid_active_editors=True,
+        )
+        success = bool(mutation.success and mutation.value)
         return self._reload_after_success(db_path, success)
 
     def create_project(self, db_path: str, name: str) -> Optional[str]:
@@ -317,9 +421,23 @@ class ProjectWriteService(BaseWriteService):
         return str(result.value) if result.success and result.value else None
 
     def create_project_result(self, db_path: str, name: str) -> WriteReloadResult:
-        new_uid = self._create_project.execute(db_path, name)
-        if new_uid is None:
+        collection = ResourceRef("projects_collection", "database")
+
+        def create(recorder):
+            new_uid = self._create_project.execute(db_path, name)
+            if new_uid is not None:
+                recorder.record(
+                    ResourceRef("project", str(new_uid)),
+                    ChangeOperation.CREATE,
+                    changed_fields=("name",),
+                )
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return new_uid
+
+        mutation = self._execute_database_mutation(db_path, (collection,), create)
+        if not mutation.success or mutation.value is None:
             return WriteReloadResult(None, write_success=False, reload_success=False)
+        new_uid = mutation.value
         return WriteReloadResult(
             new_uid,
             write_success=True,
@@ -327,7 +445,13 @@ class ProjectWriteService(BaseWriteService):
         )
 
     def rename_project(self, db_path: str, project_uid: str, new_name: str) -> bool:
-        success = self._rename_project.execute(db_path, project_uid, new_name)
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (ResourceRef("project", project_uid),),
+            ChangeOperation.UPDATE,
+            lambda: self._rename_project.execute(db_path, project_uid, new_name),
+            ("name",),
+        )
         return self._reload_after_success(db_path, success)
 
     def move_bids(
@@ -345,8 +469,25 @@ class ProjectWriteService(BaseWriteService):
             for uid in bid_uids
         ):
             return False
-        success = self._move_bids.execute(
-            db_path, bid_uids, target_project_uid, orig_project_uid
+        resources = tuple(
+            ResourceRef("bid", str(uid), int(uid)) for uid in bid_uids
+        ) + tuple(
+            ResourceRef("project_bids", project_uid)
+            for project_uid in sorted(
+                {
+                    target_project_uid or "orphan",
+                    orig_project_uid or "orphan",
+                }
+            )
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.MOVE,
+            lambda: self._move_bids.execute(
+                db_path, bid_uids, target_project_uid, orig_project_uid
+            ),
+            ("project_uid",),
         )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
@@ -361,9 +502,26 @@ class ProjectWriteService(BaseWriteService):
     def duplicate_bid_result(
         self, db_path: str, bid_uid: str, reload: bool = True
     ) -> WriteReloadResult:
-        new_uid = self._duplicate_bid.execute(db_path, bid_uid)
-        if new_uid is None:
+        source = ResourceRef("bid", bid_uid, int(bid_uid))
+
+        def duplicate(recorder):
+            new_uid = self._duplicate_bid.execute(db_path, bid_uid)
+            if new_uid is not None:
+                recorder.record(
+                    ResourceRef("bid", str(new_uid)),
+                    ChangeOperation.CREATE,
+                )
+            return new_uid
+
+        mutation = self._execute_database_mutation(
+            db_path,
+            (source,),
+            duplicate,
+            block_bid_child_locks=True,
+        )
+        if not mutation.success or mutation.value is None:
             return WriteReloadResult(None, write_success=False, reload_success=False)
+        new_uid = mutation.value
         reload_success = self.reload_and_notify(db_path) if reload else True
         return WriteReloadResult(
             new_uid,
@@ -380,9 +538,22 @@ class ProjectWriteService(BaseWriteService):
     def create_bid_result(
         self, db_path: str, project_uid: Optional[str], updates: dict
     ) -> WriteReloadResult:
-        new_uid = self._create_bid.execute(db_path, project_uid, updates)
-        if new_uid is None:
+        collection = ResourceRef("project_bids", project_uid or "orphan")
+
+        def create(recorder):
+            new_uid = self._create_bid.execute(db_path, project_uid, updates)
+            if new_uid is not None:
+                recorder.record(
+                    ResourceRef("bid", str(new_uid)),
+                    ChangeOperation.CREATE,
+                )
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return new_uid
+
+        mutation = self._execute_database_mutation(db_path, (collection,), create)
+        if not mutation.success or mutation.value is None:
             return WriteReloadResult(None, write_success=False, reload_success=False)
+        new_uid = mutation.value
         return WriteReloadResult(
             new_uid,
             write_success=True,
@@ -396,7 +567,23 @@ class ProjectWriteService(BaseWriteService):
             return True
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
-        success = self._delete_conditions.execute(db_path, bid_uid, condition_uids)
+        parsed_bid_uid = int(bid_uid) if bid_uid else None
+        collection = ResourceRef(
+            "conditions_collection", bid_uid or "unknown", parsed_bid_uid
+        )
+
+        def delete(recorder):
+            success = self._delete_conditions.execute(db_path, bid_uid, condition_uids)
+            if success:
+                for condition_uid in condition_uids:
+                    recorder.record(
+                        ResourceRef("condition", str(condition_uid), parsed_bid_uid),
+                        ChangeOperation.DELETE,
+                    )
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return success
+
+        success = self._execute_database_mutation(db_path, (collection,), delete).value
         return self._reload_after_success(db_path, success)
 
     def create_condition_result(
@@ -404,7 +591,23 @@ class ProjectWriteService(BaseWriteService):
     ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult(None, write_success=False, reload_success=False)
-        new_uid = self._insert_condition.execute(db_path, bid_uid, spec)
+        parsed_bid_uid = int(bid_uid) if bid_uid else None
+        collection = ResourceRef(
+            "conditions_collection", bid_uid or "unknown", parsed_bid_uid
+        )
+
+        def create(recorder):
+            new_uid = self._insert_condition.execute(db_path, bid_uid, spec)
+            if new_uid is not None:
+                recorder.record(
+                    ResourceRef("condition", str(new_uid), int(bid_uid)),
+                    ChangeOperation.CREATE,
+                )
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return new_uid
+
+        mutation = self._execute_database_mutation(db_path, (collection,), create)
+        new_uid = mutation.value if mutation.success else None
         if new_uid is None:
             return WriteReloadResult(None, write_success=False, reload_success=False)
         return WriteReloadResult(
@@ -422,9 +625,24 @@ class ProjectWriteService(BaseWriteService):
     ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult(None, write_success=False, reload_success=False)
-        new_uid = self._insert_condition_folder.execute(
-            db_path, bid_uid, name, parent_uid
+        collection = ResourceRef("conditions_collection", bid_uid, int(bid_uid))
+
+        def create_folder(recorder):
+            new_uid = self._insert_condition_folder.execute(
+                db_path, bid_uid, name, parent_uid
+            )
+            if new_uid is not None:
+                recorder.record(
+                    ResourceRef("condition_folder", str(new_uid), int(bid_uid)),
+                    ChangeOperation.CREATE,
+                )
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return new_uid
+
+        mutation = self._execute_database_mutation(
+            db_path, (collection,), create_folder
         )
+        new_uid = mutation.value if mutation.success else None
         if new_uid is None:
             return WriteReloadResult(None, write_success=False, reload_success=False)
         return WriteReloadResult(
@@ -436,7 +654,17 @@ class ProjectWriteService(BaseWriteService):
     def rename_condition_folder(self, db_path: str, folder_uid: str, name: str) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._rename_condition_folder.execute(db_path, folder_uid, name)
+        bid_ref = self._project_data.get_current_bid_ref()
+        bid_uid = int(bid_ref.bid_uid) if bid_ref else None
+        resource = ResourceRef("condition_folder", folder_uid, bid_uid)
+
+        def rename(recorder):
+            success = self._rename_condition_folder.execute(db_path, folder_uid, name)
+            if success:
+                recorder.record(resource, ChangeOperation.UPDATE)
+            return success
+
+        success = self._execute_database_mutation(db_path, (resource,), rename).value
         return self._reload_after_success(db_path, success)
 
     def validate_condition_folder_delete(
@@ -472,7 +700,25 @@ class ProjectWriteService(BaseWriteService):
                 failure_reason=validation.failure_reason,
                 blocked_uids=validation.blocked_uids,
             )
-        success = self._delete_condition_folders.execute(db_path, deletable_uids)
+        parsed_bid_uid = int(bid_uid) if bid_uid else None
+        collection = ResourceRef(
+            "conditions_collection", bid_uid or "unknown", parsed_bid_uid
+        )
+
+        def delete_folders(recorder):
+            success = self._delete_condition_folders.execute(db_path, deletable_uids)
+            if success:
+                for folder_uid in deletable_uids:
+                    recorder.record(
+                        ResourceRef("condition_folder", folder_uid, parsed_bid_uid),
+                        ChangeOperation.DELETE,
+                    )
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return success
+
+        success = self._execute_database_mutation(
+            db_path, (collection,), delete_folders
+        ).value
         reload_success = self.reload_and_notify(db_path) if success else False
         return WriteReloadResult(
             deletable_uids,
@@ -483,16 +729,12 @@ class ProjectWriteService(BaseWriteService):
         )
 
     def delete_condition_folders(self, db_path: str, folder_uids: List[str]) -> bool:
-        bid_uid = ""
-        if self._project_data is not None:
-            bid_ref = self._project_data.get_current_bid_ref()
-            bid_uid = bid_ref.bid_uid if bid_ref else ""
+        bid_ref = self._project_data.get_current_bid_ref()
+        bid_uid = bid_ref.bid_uid if bid_ref else ""
         result = self.delete_condition_folders_result(db_path, bid_uid, folder_uids)
         return result.success
 
     def _condition_folder_uids_in_use(self, folder_uids: List[str]) -> List[str]:
-        if self._project_data is None:
-            return []
         folders = self._project_data.get_bid_condition_folders()
         folder_keys = {str(uid) for uid in folders}
         selected = {str(uid) for uid in folder_uids}
@@ -522,7 +764,23 @@ class ProjectWriteService(BaseWriteService):
     ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult([], write_success=False, reload_success=False)
-        new_uids = self._duplicate_conditions.execute(db_path, bid_uid, condition_uids)
+        collection = ResourceRef("conditions_collection", bid_uid, int(bid_uid))
+
+        def duplicate(recorder):
+            new_uids = self._duplicate_conditions.execute(
+                db_path, bid_uid, condition_uids
+            )
+            for new_uid in new_uids or ():
+                recorder.record(
+                    ResourceRef("condition", str(new_uid), int(bid_uid)),
+                    ChangeOperation.CREATE,
+                )
+            if new_uids:
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return new_uids
+
+        mutation = self._execute_database_mutation(db_path, (collection,), duplicate)
+        new_uids = mutation.value if mutation.success else None
         if not new_uids:
             return WriteReloadResult([], write_success=False, reload_success=False)
         return WriteReloadResult(
@@ -543,9 +801,27 @@ class ProjectWriteService(BaseWriteService):
             db_path, destination_bid_uid
         ):
             return {}
-        uid_map = self._duplicate_conditions.execute_to_bid(
-            db_path, source_bid_uid, destination_bid_uid, condition_uids
+        collection = ResourceRef(
+            "conditions_collection", destination_bid_uid, int(destination_bid_uid)
         )
+
+        def duplicate_to_bid(recorder):
+            uid_map = self._duplicate_conditions.execute_to_bid(
+                db_path, source_bid_uid, destination_bid_uid, condition_uids
+            )
+            for new_uid in uid_map.values():
+                recorder.record(
+                    ResourceRef("condition", str(new_uid), int(destination_bid_uid)),
+                    ChangeOperation.CREATE,
+                )
+            if uid_map:
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return uid_map
+
+        mutation = self._execute_database_mutation(
+            db_path, (collection,), duplicate_to_bid
+        )
+        uid_map = mutation.value if mutation.success else {}
         if (
             uid_map
             and publish_database_refreshed_after_write
@@ -567,9 +843,22 @@ class ProjectWriteService(BaseWriteService):
             return UpdateConditionResultDto(
                 success=False, error="The active bid is locked"
             )
-        result = self._update_condition.execute(
-            db_path, bid_uid, condition_uid, updates, all_conditions
-        )
+        resource = ResourceRef("condition", condition_uid, int(bid_uid))
+
+        def update(recorder):
+            result = self._update_condition.execute(
+                db_path, bid_uid, condition_uid, updates, all_conditions
+            )
+            if result.success:
+                recorder.record(resource, ChangeOperation.UPDATE)
+            return result
+
+        mutation = self._execute_database_mutation(db_path, (resource,), update)
+        if not mutation.success or mutation.value is None:
+            return UpdateConditionResultDto(
+                success=False, error="The SQL condition changed in another session"
+            )
+        result = mutation.value
         if (
             result.success
             and publish_database_refreshed_after_write
@@ -586,9 +875,17 @@ class ProjectWriteService(BaseWriteService):
             return True
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
-        success = self._renumber_conditions.execute(
-            db_path, bid_uid, ordered_condition_uids
-        )
+        collection = ResourceRef("conditions_collection", bid_uid, int(bid_uid))
+
+        def reorder(recorder):
+            success = self._renumber_conditions.execute(
+                db_path, bid_uid, ordered_condition_uids
+            )
+            if success:
+                recorder.record(collection, ChangeOperation.REORDER)
+            return success
+
+        success = self._execute_database_mutation(db_path, (collection,), reorder).value
         return self._reload_after_success(db_path, success)
 
     def set_takeoff_curve(
@@ -601,7 +898,18 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._set_takeoff_curve.execute(db_path, takeoff_uid, position, curve)
+        resource = ResourceRef(
+            "takeoff", takeoff_uid, self._active_bid_uid_for(db_path)
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._set_takeoff_curve.execute(
+                db_path, takeoff_uid, position, curve
+            ),
+            ("position", "curve"),
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -614,7 +922,17 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._save_takeoff_positions.execute(db_path, positions)
+        resources = tuple(
+            ResourceRef("takeoff", str(uid), self._active_bid_uid_for(db_path))
+            for uid, _position in positions
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.UPDATE,
+            lambda: self._save_takeoff_positions.execute(db_path, positions),
+            ("position",),
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -627,7 +945,17 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._save_takeoff_rotations.execute(db_path, rotations)
+        resources = tuple(
+            ResourceRef("takeoff", str(uid), self._active_bid_uid_for(db_path))
+            for uid, _rotation in rotations
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.UPDATE,
+            lambda: self._save_takeoff_rotations.execute(db_path, rotations),
+            ("rotation",),
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -640,7 +968,17 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._save_takeoff_text_properties.execute(db_path, updates)
+        resources = tuple(
+            ResourceRef("takeoff", str(uid), self._active_bid_uid_for(db_path))
+            for uid, _properties in updates
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.UPDATE,
+            lambda: self._save_takeoff_text_properties.execute(db_path, updates),
+            ("text_properties",),
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -673,8 +1011,18 @@ class ProjectWriteService(BaseWriteService):
             db_path, takeoff_uids, condition_uid
         ):
             return False
-        success = self._save_takeoffs_condition.execute(
-            db_path, takeoff_uids, condition_uid
+        resources = tuple(
+            ResourceRef("takeoff", str(uid), self._active_bid_uid_for(db_path))
+            for uid in takeoff_uids
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.UPDATE,
+            lambda: self._save_takeoffs_condition.execute(
+                db_path, takeoff_uids, condition_uid
+            ),
+            ("condition",),
         )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
@@ -729,7 +1077,17 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = use_case.execute(db_path, takeoff_uids, target_uid)
+        resources = tuple(
+            ResourceRef("takeoff", str(uid), self._active_bid_uid_for(db_path))
+            for uid in takeoff_uids
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.UPDATE,
+            lambda: use_case.execute(db_path, takeoff_uids, target_uid),
+            ("assignment",),
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -743,8 +1101,18 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._set_takeoffs_negative.execute(
-            db_path, takeoff_uids, is_negative
+        resources = tuple(
+            ResourceRef("takeoff", str(uid), self._active_bid_uid_for(db_path))
+            for uid in takeoff_uids
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.UPDATE,
+            lambda: self._set_takeoffs_negative.execute(
+                db_path, takeoff_uids, is_negative
+            ),
+            ("negative",),
         )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
@@ -759,7 +1127,21 @@ class ProjectWriteService(BaseWriteService):
     ) -> List[str]:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return []
-        new_uids = self._insert_takeoffs.execute(db_path, bid_uid, takeoff_specs)
+        collection = ResourceRef("takeoffs_collection", bid_uid, int(bid_uid))
+
+        def insert(recorder):
+            new_uids = self._insert_takeoffs.execute(db_path, bid_uid, takeoff_specs)
+            for new_uid in new_uids:
+                recorder.record(
+                    ResourceRef("takeoff", str(new_uid), int(bid_uid)),
+                    ChangeOperation.CREATE,
+                )
+            if new_uids:
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return new_uids
+
+        mutation = self._execute_database_mutation(db_path, (collection,), insert)
+        new_uids = mutation.value if mutation.success else []
         if (
             new_uids
             and publish_database_refreshed_after_write
@@ -776,7 +1158,16 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._delete_takeoffs.execute(db_path, takeoff_uids)
+        resources = tuple(
+            ResourceRef("takeoff", str(uid), self._active_bid_uid_for(db_path))
+            for uid in takeoff_uids
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.DELETE,
+            lambda: self._delete_takeoffs.execute(db_path, takeoff_uids),
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -786,13 +1177,27 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._save_page_scale.execute(db_path, page_uid, sf1, sf2)
+        resource = ResourceRef("page", page_uid, self._active_bid_uid_for(db_path))
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._save_page_scale.execute(db_path, page_uid, sf1, sf2),
+            ("scale",),
+        )
         return self._reload_after_success(db_path, success)
 
     def save_page_name(self, db_path: str, page_uid: str, name: str) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._save_page_name.execute(db_path, page_uid, name)
+        resource = ResourceRef("page", page_uid, self._active_bid_uid_for(db_path))
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._save_page_name.execute(db_path, page_uid, name),
+            ("name",),
+        )
         return self._reload_after_success(db_path, success)
 
     def save_page_scales(
@@ -803,12 +1208,31 @@ class ProjectWriteService(BaseWriteService):
         valid_page_uids = self._unique_page_uids(page_uids)
         if not valid_page_uids:
             return False
-        any_success = False
-        all_success = True
-        for page_uid in valid_page_uids:
-            success = self._save_page_scale.execute(db_path, page_uid, sf1, sf2)
-            any_success = any_success or success
-            all_success = all_success and success
+        bid_uid = self._active_bid_uid_for(db_path)
+
+        def save_all(recorder):
+            all_saved = True
+            any_saved = False
+            for page_uid in valid_page_uids:
+                saved = self._save_page_scale.execute(db_path, page_uid, sf1, sf2)
+                if saved:
+                    any_saved = True
+                    recorder.record(
+                        ResourceRef("page", page_uid, bid_uid),
+                        ChangeOperation.UPDATE,
+                        changed_fields=("scale",),
+                    )
+                all_saved = saved and all_saved
+            return any_saved, all_saved
+
+        mutation = self._execute_database_mutation(
+            db_path,
+            tuple(ResourceRef("page", uid, bid_uid) for uid in valid_page_uids),
+            save_all,
+        )
+        any_success, all_success = (
+            mutation.value if mutation.success and mutation.value else (False, False)
+        )
         if any_success and not self.reload_and_notify(db_path):
             return False
         return all_success
@@ -822,7 +1246,14 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._save_page_show_mode.execute(db_path, page_uid, show_mode)
+        resource = ResourceRef("page", page_uid, self._active_bid_uid_for(db_path))
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._save_page_show_mode.execute(db_path, page_uid, show_mode),
+            ("show_mode",),
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -832,8 +1263,15 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._save_page_overlay_image.execute(
-            db_path, page_uid, overlay_image_path
+        resource = ResourceRef("page", page_uid, self._active_bid_uid_for(db_path))
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._save_page_overlay_image.execute(
+                db_path, page_uid, overlay_image_path
+            ),
+            ("overlay_image",),
         )
         return self._reload_after_success(db_path, success)
 
@@ -846,7 +1284,16 @@ class ProjectWriteService(BaseWriteService):
     ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return WriteReloadResult(None, write_success=False, reload_success=False)
-        success = self._save_page_overlay_rect.execute(db_path, page_uid, overlay_rect)
+        resource = ResourceRef("page", page_uid, self._active_bid_uid_for(db_path))
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._save_page_overlay_rect.execute(
+                db_path, page_uid, overlay_rect
+            ),
+            ("overlay_rect",),
+        )
         if not success:
             return WriteReloadResult(None, write_success=False, reload_success=False)
         reload_success = True
@@ -861,12 +1308,26 @@ class ProjectWriteService(BaseWriteService):
     def save_page_invert(self, db_path: str, page_uid: str, invert: bool) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        return self._save_page_invert.execute(db_path, page_uid, invert)
+        resource = ResourceRef("page", page_uid, self._active_bid_uid_for(db_path))
+        return self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._save_page_invert.execute(db_path, page_uid, invert),
+            ("invert",),
+        )
 
     def save_page_bitonal(self, db_path: str, page_uid: str, bitonal: bool) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        return self._save_page_bitonal.execute(db_path, page_uid, bitonal)
+        resource = ResourceRef("page", page_uid, self._active_bid_uid_for(db_path))
+        return self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._save_page_bitonal.execute(db_path, page_uid, bitonal),
+            ("bitonal",),
+        )
 
     def save_page_image_adjustments(
         self,
@@ -883,8 +1344,24 @@ class ProjectWriteService(BaseWriteService):
         valid_page_uids = self._unique_page_uids(page_uids)
         if not valid_page_uids:
             return False
-        success = self._save_page_image_adjustments.execute(
-            db_path, valid_page_uids, rotation, flip_x, flip_y, invert, bitonal
+        resources = tuple(
+            ResourceRef("page", uid, self._active_bid_uid_for(db_path))
+            for uid in valid_page_uids
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.UPDATE,
+            lambda: self._save_page_image_adjustments.execute(
+                db_path,
+                valid_page_uids,
+                rotation,
+                flip_x,
+                flip_y,
+                invert,
+                bitonal,
+            ),
+            ("image_adjustments",),
         )
         return self._reload_after_success(db_path, success)
 
@@ -907,7 +1384,14 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._save_page_area.execute(db_path, page_uid, area_uid)
+        resource = ResourceRef("page", page_uid, self._active_bid_uid_for(db_path))
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._save_page_area.execute(db_path, page_uid, area_uid),
+            ("area",),
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -921,7 +1405,14 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._update_layer_show.execute(db_path, layer_uid, show)
+        resource = ResourceRef("layer", layer_uid, self._active_bid_uid_for(db_path))
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._update_layer_show.execute(db_path, layer_uid, show),
+            ("show",),
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -937,7 +1428,20 @@ class ProjectWriteService(BaseWriteService):
     ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult(None, write_success=False, reload_success=False)
-        new_uid = self._insert_layer.execute(db_path, bid_uid, name, after_sequence)
+        collection = ResourceRef("layers_collection", bid_uid, int(bid_uid))
+
+        def insert(recorder):
+            new_uid = self._insert_layer.execute(db_path, bid_uid, name, after_sequence)
+            if new_uid is not None:
+                recorder.record(
+                    ResourceRef("layer", str(new_uid), int(bid_uid)),
+                    ChangeOperation.CREATE,
+                )
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return new_uid
+
+        mutation = self._execute_database_mutation(db_path, (collection,), insert)
+        new_uid = mutation.value if mutation.success else None
         if new_uid is None:
             return WriteReloadResult(None, write_success=False, reload_success=False)
         return WriteReloadResult(
@@ -951,9 +1455,18 @@ class ProjectWriteService(BaseWriteService):
     ) -> WriteReloadResult:
         if self._is_write_blocked():
             return WriteReloadResult(None, write_success=False, reload_success=False)
-        new_uid = self._insert_layer.execute_default(db_path, name, after_sequence)
-        if new_uid is None:
+        collection = ResourceRef("default_layers_collection", "database")
+
+        def insert(recorder):
+            new_uid = self._insert_layer.execute_default(db_path, name, after_sequence)
+            if new_uid is not None:
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return new_uid
+
+        mutation = self._execute_database_mutation(db_path, (collection,), insert)
+        if not mutation.success or mutation.value is None:
             return WriteReloadResult(None, write_success=False, reload_success=False)
+        new_uid = mutation.value
         return WriteReloadResult(
             new_uid,
             write_success=True,
@@ -968,7 +1481,13 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._delete_layer.execute(db_path, layer_uid)
+        resource = ResourceRef("layer", layer_uid, self._active_bid_uid_for(db_path))
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.DELETE,
+            lambda: self._delete_layer.execute(db_path, layer_uid),
+        )
         return self._reload_after_success(
             db_path, success, publish_database_refreshed_after_write
         )
@@ -982,13 +1501,27 @@ class ProjectWriteService(BaseWriteService):
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             result.failed_uids = list(unique_uids)
             return result
-        for uid in unique_uids:
-            success = self._delete_layer.execute(db_path, uid)
-            if success:
-                result.succeeded_uids.append(uid)
-            else:
-                result.failed_uids.append(uid)
-                break
+        bid_uid = self._active_bid_uid_for(db_path)
+
+        def delete_all(recorder):
+            for uid in unique_uids:
+                success = self._delete_layer.execute(db_path, uid)
+                if success:
+                    result.succeeded_uids.append(uid)
+                    recorder.record(
+                        ResourceRef("layer", uid, bid_uid),
+                        ChangeOperation.DELETE,
+                    )
+                else:
+                    result.failed_uids.append(uid)
+                    break
+            return result.any_success
+
+        self._execute_database_mutation(
+            db_path,
+            tuple(ResourceRef("layer", uid, bid_uid) for uid in unique_uids),
+            delete_all,
+        )
         if result.any_success:
             result.reload_success = self.reload_and_notify(db_path)
         return result
@@ -1004,13 +1537,21 @@ class ProjectWriteService(BaseWriteService):
         if self._is_write_blocked():
             result.failed_uids = list(unique_uids)
             return result
-        for uid in unique_uids:
-            success = self._delete_layer.execute_default(db_path, uid)
-            if success:
-                result.succeeded_uids.append(uid)
-            else:
-                result.failed_uids.append(uid)
-                break
+        collection = ResourceRef("default_layers_collection", "database")
+
+        def delete_all(recorder):
+            for uid in unique_uids:
+                success = self._delete_layer.execute_default(db_path, uid)
+                if success:
+                    result.succeeded_uids.append(uid)
+                else:
+                    result.failed_uids.append(uid)
+                    break
+            if result.any_success:
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return result.any_success
+
+        self._execute_database_mutation(db_path, (collection,), delete_all)
         if result.any_success:
             result.reload_success = self.reload_and_notify(db_path)
         return result
@@ -1018,13 +1559,26 @@ class ProjectWriteService(BaseWriteService):
     def update_all_layers_show(self, db_path: str, bid_uid: str, show: bool) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
-        success = self._update_all_layers_show.execute(db_path, bid_uid, show)
+        collection = ResourceRef("layers_collection", bid_uid, int(bid_uid))
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (collection,),
+            ChangeOperation.UPDATE,
+            lambda: self._update_all_layers_show.execute(db_path, bid_uid, show),
+            ("show",),
+        )
         return self._reload_after_success(db_path, success)
 
     def update_all_default_layers_show(self, db_path: str, show: bool) -> bool:
         if self._is_write_blocked():
             return False
-        success = self._update_all_layers_show.execute_default(db_path, show)
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (ResourceRef("default_layers_collection", "database"),),
+            ChangeOperation.UPDATE,
+            lambda: self._update_all_layers_show.execute_default(db_path, show),
+            ("show",),
+        )
         return self._reload_after_success(db_path, success)
 
     def swap_layer_sequence(
@@ -1032,7 +1586,19 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._swap_layer_sequence.execute(db_path, layer_uid_a, layer_uid_b)
+        collection = ResourceRef(
+            "layers_collection",
+            str(self._active_bid_uid_for(db_path) or "database"),
+            self._active_bid_uid_for(db_path),
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (collection,),
+            ChangeOperation.REORDER,
+            lambda: self._swap_layer_sequence.execute(
+                db_path, layer_uid_a, layer_uid_b
+            ),
+        )
         return self._reload_after_success(db_path, success)
 
     def swap_default_layer_sequence(
@@ -1040,15 +1606,27 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._is_write_blocked():
             return False
-        success = self._swap_layer_sequence.execute_default(
-            db_path, layer_uid_a, layer_uid_b
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (ResourceRef("default_layers_collection", "database"),),
+            ChangeOperation.REORDER,
+            lambda: self._swap_layer_sequence.execute_default(
+                db_path, layer_uid_a, layer_uid_b
+            ),
         )
         return self._reload_after_success(db_path, success)
 
     def update_layer_name(self, db_path: str, layer_uid: str, name: str) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._update_layer_name.execute(db_path, layer_uid, name)
+        resource = ResourceRef("layer", layer_uid, self._active_bid_uid_for(db_path))
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (resource,),
+            ChangeOperation.UPDATE,
+            lambda: self._update_layer_name.execute(db_path, layer_uid, name),
+            ("name",),
+        )
         return self._reload_after_success(db_path, success)
 
     def update_default_layer_name(
@@ -1056,7 +1634,13 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._is_write_blocked():
             return False
-        success = self._update_layer_name.execute_default(db_path, layer_uid, name)
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (ResourceRef("default_layers_collection", "database"),),
+            ChangeOperation.UPDATE,
+            lambda: self._update_layer_name.execute_default(db_path, layer_uid, name),
+            ("name",),
+        )
         return self._reload_after_success(db_path, success)
 
     def update_default_layer_show(
@@ -1064,7 +1648,13 @@ class ProjectWriteService(BaseWriteService):
     ) -> bool:
         if self._is_write_blocked():
             return False
-        success = self._update_layer_show.execute_default(db_path, layer_uid, show)
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (ResourceRef("default_layers_collection", "database"),),
+            ChangeOperation.UPDATE,
+            lambda: self._update_layer_show.execute_default(db_path, layer_uid, show),
+            ("show",),
+        )
         return self._reload_after_success(db_path, success)
 
     @staticmethod
@@ -1103,7 +1693,13 @@ class ProjectWriteService(BaseWriteService):
     def save_cover_sheet(self, db_path: str, bid_uid: str, updates: dict) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return False
-        success = self._save_cover_sheet.execute(db_path, bid_uid, updates)
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (ResourceRef("cover_sheet", bid_uid, int(bid_uid)),),
+            ChangeOperation.UPDATE,
+            lambda: self._save_cover_sheet.execute(db_path, bid_uid, updates),
+            tuple(sorted(str(key) for key in updates)),
+        )
         return self._reload_after_success(db_path, success)
 
     def delete_pages(self, db_path: str, page_uids: List[str]) -> bool:
@@ -1112,17 +1708,39 @@ class ProjectWriteService(BaseWriteService):
             return False
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        success = self._delete_pages.execute(db_path, valid_page_uids)
+        resources = tuple(
+            ResourceRef("page", uid, self._active_bid_uid_for(db_path))
+            for uid in valid_page_uids
+        )
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            resources,
+            ChangeOperation.DELETE,
+            lambda: self._delete_pages.execute(db_path, valid_page_uids),
+        )
         return self._reload_after_success(db_path, success)
 
     def update_bid_job_status(
         self, db_path: str, bid_uid: str, job_status_uid: Optional[str]
     ) -> bool:
-        success = self._update_bid_job_status.execute(db_path, bid_uid, job_status_uid)
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (ResourceRef("bid", bid_uid, int(bid_uid)),),
+            ChangeOperation.UPDATE,
+            lambda: self._update_bid_job_status.execute(
+                db_path, bid_uid, job_status_uid
+            ),
+            ("job_status",),
+        )
         return self._reload_after_success(db_path, success)
 
     def save_job_statuses(self, db_path: str, changes: dict) -> bool:
-        success = self._save_job_statuses.execute(db_path, changes)
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (ResourceRef("job_statuses_collection", "database"),),
+            ChangeOperation.UPDATE,
+            lambda: self._save_job_statuses.execute(db_path, changes),
+        )
         return self._reload_after_success(db_path, success)
 
     def save_employees(self, db_path: str, changes: dict) -> bool:
@@ -1138,7 +1756,18 @@ class ProjectWriteService(BaseWriteService):
         has_changes = any(
             changes_to_write.get(key) for key in ("new", "updated", "deleted_uids")
         )
-        result = self._save_employees.execute(db_path, changes_to_write)
+        if not has_changes:
+            return WriteReloadResult({}, write_success=True, reload_success=True)
+        collection = ResourceRef("employees_collection", "database")
+
+        def save(recorder):
+            result = self._save_employees.execute(db_path, changes_to_write)
+            if result is not None and result is not False and has_changes:
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return result
+
+        mutation = self._execute_database_mutation(db_path, (collection,), save)
+        result = mutation.value if mutation.success else None
         if result is None or result is False:
             return WriteReloadResult(None, write_success=False, reload_success=False)
         reload_success = (
@@ -1153,7 +1782,12 @@ class ProjectWriteService(BaseWriteService):
         )
 
     def save_pay_classes(self, db_path: str, changes: dict) -> bool:
-        success = self._save_pay_classes.execute(db_path, changes)
+        success = self._execute_boolean_resource_mutation(
+            db_path,
+            (ResourceRef("pay_classes_collection", "database"),),
+            ChangeOperation.UPDATE,
+            lambda: self._save_pay_classes.execute(db_path, changes),
+        )
         return self._reload_after_success(db_path, success)
 
     def save_condition_types(self, db_path: str, changes: dict) -> Optional[dict]:
@@ -1206,7 +1840,18 @@ class ProjectWriteService(BaseWriteService):
                 failure_reason=validation.failure_reason,
                 blocked_uids=validation.blocked_uids,
             )
-        result = self._save_condition_types.execute(db_path, changes_to_write)
+        if not has_changes:
+            return WriteReloadResult({}, write_success=True, reload_success=True)
+        collection = ResourceRef("condition_types_collection", "database")
+
+        def save(recorder):
+            result = self._save_condition_types.execute(db_path, changes_to_write)
+            if result is not None and result is not False and has_changes:
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return result
+
+        mutation = self._execute_database_mutation(db_path, (collection,), save)
+        result = mutation.value if mutation.success else None
         if result is None or result is False:
             return WriteReloadResult(
                 None,
@@ -1257,7 +1902,35 @@ class ProjectWriteService(BaseWriteService):
     ) -> WriteReloadResult:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return WriteReloadResult(None, write_success=False, reload_success=False)
-        result = self._save_bid_areas.execute(db_path, bid_uid, changes)
+        collection = ResourceRef("areas_collection", bid_uid, int(bid_uid))
+
+        def save(recorder):
+            result = self._save_bid_areas.execute(db_path, bid_uid, changes)
+            if result is None or result is False:
+                return result
+            for area in changes.new:
+                saved_uid = result.get(area.uid)
+                if saved_uid is not None:
+                    recorder.record(
+                        ResourceRef("area", str(saved_uid), int(bid_uid)),
+                        ChangeOperation.CREATE,
+                    )
+            for area in changes.updated:
+                recorder.record(
+                    ResourceRef("area", str(area.uid), int(bid_uid)),
+                    ChangeOperation.UPDATE,
+                )
+            for area_uid in changes.deleted_uids:
+                recorder.record(
+                    ResourceRef("area", str(area_uid), int(bid_uid)),
+                    ChangeOperation.DELETE,
+                )
+            if changes.new or changes.updated or changes.deleted_uids:
+                recorder.record(collection, ChangeOperation.UPDATE)
+            return result
+
+        mutation = self._execute_database_mutation(db_path, (collection,), save)
+        result = mutation.value if mutation.success else None
         if result is None or result is False:
             return WriteReloadResult(None, write_success=False, reload_success=False)
         uid_map = result

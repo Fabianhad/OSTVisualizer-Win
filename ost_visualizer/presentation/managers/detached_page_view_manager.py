@@ -96,6 +96,7 @@ class DetachedPageViewManager(IShutdownAware):
         self._saved_window_state_provider = saved_window_state_provider
         self._ui_access_manager = None
         self._window: Optional[QtWidgets.QMainWindow] = None
+        self._window_undo_service: Optional[UndoRedoService] = None
         self._opening = False
         self._visibility_changed_callback = None
         self._refresh_signaler = _RefreshSignaler(self._refresh_window, parent_window)
@@ -122,6 +123,14 @@ class DetachedPageViewManager(IShutdownAware):
         )
         self.event_bus.subscribe(
             AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed
+        )
+        self.event_bus.subscribe(
+            AppEvents.REMOTE_BID_CONTENT_CHANGED,
+            self._on_remote_bid_content_changed,
+        )
+        self.event_bus.subscribe(
+            AppEvents.REMOTE_CONDITIONS_CHANGED,
+            self._on_remote_conditions_changed,
         )
 
     def shutdown(self) -> None:
@@ -151,6 +160,14 @@ class DetachedPageViewManager(IShutdownAware):
             self.event_bus.unsubscribe(
                 AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed
             )
+            self.event_bus.unsubscribe(
+                AppEvents.REMOTE_BID_CONTENT_CHANGED,
+                self._on_remote_bid_content_changed,
+            )
+            self.event_bus.unsubscribe(
+                AppEvents.REMOTE_CONDITIONS_CHANGED,
+                self._on_remote_conditions_changed,
+            )
         if self._refresh_signaler is not None:
             self._refresh_signaler.cleanup()
             self._refresh_signaler.deleteLater()
@@ -158,6 +175,7 @@ class DetachedPageViewManager(IShutdownAware):
         if self._window is not None:
             self._window.close()
             self._window = None
+            self._window_undo_service = None
             self._opening = False
             self._notify_visibility_changed()
         self._visibility_changed_callback = None
@@ -178,6 +196,7 @@ class DetachedPageViewManager(IShutdownAware):
 
     def _on_window_destroyed(self, _: QObject) -> None:
         self._window = None
+        self._window_undo_service = None
         self._opening = False
         self._notify_visibility_changed()
 
@@ -249,6 +268,43 @@ class DetachedPageViewManager(IShutdownAware):
         if page_uid and view.target_page_uid != page_uid:
             return
         self._refresh_signaler.request_refresh()
+
+    def _on_remote_bid_content_changed(
+        self,
+        database_id: str = "",
+        bid_uid: str = "",
+        families: Optional[List[str]] = None,
+        **_event_data,
+    ) -> None:
+        view = self.repository.get_active_view()
+        if (
+            view is None
+            or view.bid_ref is None
+            or view.bid_ref.file_path != database_id
+            or view.bid_ref.bid_uid != bid_uid
+        ):
+            return
+        if self._window_undo_service is not None and set(families or ()) & {
+            "takeoffs",
+            "annotations",
+        }:
+            self._window_undo_service.clear()
+
+    def _on_remote_conditions_changed(
+        self,
+        database_id: str = "",
+        bid_uid: str = "",
+        **_event_data,
+    ) -> None:
+        view = self.repository.get_active_view()
+        if (
+            self._window_undo_service is not None
+            and view is not None
+            and view.bid_ref is not None
+            and view.bid_ref.file_path == database_id
+            and view.bid_ref.bid_uid == bid_uid
+        ):
+            self._window_undo_service.clear()
 
     def _get_bid_for_view(self, view: AnnotationView):
         bid_ref = view.bid_ref if view else None
@@ -418,6 +474,7 @@ class DetachedPageViewManager(IShutdownAware):
         if self._window is not None:
             self._window.close()
             self._window = None
+            self._window_undo_service = None
             self._opening = False
             self._notify_visibility_changed()
         else:
@@ -540,6 +597,7 @@ class DetachedPageViewManager(IShutdownAware):
             coord_system, color_service
         )
         undo_svc = UndoRedoService()
+        self._window_undo_service = undo_svc
         if bid_ref:
             undo_svc.set_active_bid(bid_ref)
         annotation_write_coordinator = AnnotationWriteCoordinator(

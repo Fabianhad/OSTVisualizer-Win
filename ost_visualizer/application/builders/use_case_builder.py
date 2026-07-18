@@ -158,7 +158,8 @@ class UseCaseBuilder:
         load_bid = LoadBidUseCase(
             ost_model,
             ost_model.file_manager,
-            project_logger.getChild("LoadBid"),
+            self.container.get("database_concurrency_tokens"),
+            logger=project_logger.getChild("LoadBid"),
         )
         reload_database = ReloadDatabaseUseCase(
             ost_model,
@@ -467,6 +468,9 @@ class UseCaseBuilder:
                 condition_type_uids_in_use_provider=(
                     project_read_service.get_condition_type_uids_in_use
                 ),
+                mutation_executor=mdb_writer,
+                session_registry=self.container.get("database_session_registry"),
+                concurrency_tokens=self.container.get("database_concurrency_tokens"),
             ),
         )
         self.container.register_instance(
@@ -480,6 +484,10 @@ class UseCaseBuilder:
                 reload_database=reload_database_uc.execute,
                 event_bus=event_bus,
                 bid_write_guard=bid_write_guard,
+                mutation_executor=mdb_writer,
+                session_registry=self.container.get("database_session_registry"),
+                project_data_service=project_data_service,
+                concurrency_tokens=self.container.get("database_concurrency_tokens"),
             ),
         )
 
