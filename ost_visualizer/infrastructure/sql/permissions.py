@@ -8,6 +8,12 @@ from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
 )
 from .connection_manager import SqlConnectionManager
+from .client_permissions import (
+    SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+    SQL_CLIENT_DATABASE_ROLES,
+    SQL_CLIENT_PROTECTED_OSTV_TABLES,
+    SQL_CLIENT_SCHEMA_VISIBILITY,
+)
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlInfrastructureError
 from .schema_definition import LATEST_SQL_SCHEMA, schema_record_is_current
@@ -30,33 +36,19 @@ class SqlDatabasePermissionProbe:
             request = self._requests.request(database_id, read_only=True)
             with self._connections.connection(request, autocommit=True) as lease:
                 with lease.cursor() as cursor:
-                    table_names = tuple(
-                        table.name for table in LATEST_SQL_SCHEMA.core_schema.tables
-                    )
-                    placeholders = ", ".join("?" for _ in table_names)
                     cursor.execute(
-                        "SELECT COUNT_BIG(*), "
-                        "COALESCE(SUM(CASE WHEN "
-                        "COALESCE(HAS_PERMS_BY_NAME(QUOTENAME(s.[name]) + N'.' + "
-                        "QUOTENAME(t.[name]), N'OBJECT', N'SELECT'), 0)=1 AND "
-                        "COALESCE(HAS_PERMS_BY_NAME(QUOTENAME(s.[name]) + N'.' + "
-                        "QUOTENAME(t.[name]), N'OBJECT', N'INSERT'), 0)=1 AND "
-                        "COALESCE(HAS_PERMS_BY_NAME(QUOTENAME(s.[name]) + N'.' + "
-                        "QUOTENAME(t.[name]), N'OBJECT', N'UPDATE'), 0)=1 AND "
-                        "COALESCE(HAS_PERMS_BY_NAME(QUOTENAME(s.[name]) + N'.' + "
-                        "QUOTENAME(t.[name]), N'OBJECT', N'DELETE'), 0)=1 "
-                        "THEN 0 ELSE 1 END), 0) "
-                        "FROM sys.tables t JOIN sys.schemas s "
-                        "ON s.[schema_id]=t.[schema_id] "
-                        f"WHERE s.[name]=N'dbo' AND t.[name] IN ({placeholders})",
-                        *table_names,
+                        "SELECT "
+                        "COALESCE(IS_ROLEMEMBER(?, USER_NAME()), 0), "
+                        "COALESCE(IS_ROLEMEMBER(?, USER_NAME()), 0), "
+                        "COALESCE(HAS_PERMS_BY_NAME(?, N'SCHEMA', "
+                        "N'VIEW DEFINITION'), 0), "
+                        "COALESCE(HAS_PERMS_BY_NAME(?, N'SCHEMA', "
+                        "N'VIEW DEFINITION'), 0)",
+                        *SQL_CLIENT_DATABASE_ROLES,
+                        *SQL_CLIENT_SCHEMA_VISIBILITY,
                     )
-                    permission_row = cursor.fetchone()
-                    if (
-                        permission_row is None
-                        or int(permission_row[0]) != len(table_names)
-                        or int(permission_row[1]) != 0
-                    ):
+                    role_row = cursor.fetchone()
+                    if role_row is None or any(int(value) != 1 for value in role_row):
                         return False
                     cursor.execute(
                         "SELECT m.[SchemaVersion], sm.[Checksum], "
@@ -70,19 +62,18 @@ class SqlDatabasePermissionProbe:
                         "ON a.[SingletonId]=1"
                     )
                     row = cursor.fetchone()
-                    collaboration_tables = (
-                        "Sessions",
-                        "Presence",
-                        "Locks",
-                        "EntityVersions",
-                        "ChangeLog",
-                        "ChangeFeedState",
+                    writable_placeholders = ", ".join(
+                        "?" for _ in SQL_CLIENT_COLLABORATION_WRITE_TABLES
                     )
-                    collaboration_placeholders = ", ".join(
-                        "?" for _ in collaboration_tables
+                    protected_placeholders = ", ".join(
+                        "?" for _ in SQL_CLIENT_PROTECTED_OSTV_TABLES
                     )
                     cursor.execute(
-                        "SELECT COUNT_BIG(*), COALESCE(SUM(CASE WHEN "
+                        "SELECT "
+                        f"COALESCE(SUM(CASE WHEN t.[name] IN ({writable_placeholders}) "
+                        "THEN 1 ELSE 0 END), 0), "
+                        "COALESCE(SUM(CASE WHEN "
+                        f"t.[name] IN ({writable_placeholders}) AND NOT ("
                         "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
                         "N'OBJECT', N'SELECT'), 0)=1 AND "
                         "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
@@ -90,11 +81,24 @@ class SqlDatabasePermissionProbe:
                         "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
                         "N'OBJECT', N'UPDATE'), 0)=1 AND "
                         "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
-                        "N'OBJECT', N'DELETE'), 0)=1 THEN 0 ELSE 1 END), 0) "
+                        "N'OBJECT', N'DELETE'), 0)=1) THEN 1 ELSE 0 END), 0), "
+                        "COALESCE(SUM(CASE WHEN "
+                        f"t.[name] IN ({protected_placeholders}) AND ("
+                        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+                        "N'OBJECT', N'INSERT'), 0)=1 OR "
+                        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+                        "N'OBJECT', N'UPDATE'), 0)=1 OR "
+                        "COALESCE(HAS_PERMS_BY_NAME(N'ostv.' + QUOTENAME(t.[name]), "
+                        "N'OBJECT', N'DELETE'), 0)=1) THEN 1 ELSE 0 END), 0) "
                         "FROM sys.tables t JOIN sys.schemas s ON "
                         "s.[schema_id]=t.[schema_id] WHERE s.[name]=N'ostv' "
-                        f"AND t.[name] IN ({collaboration_placeholders})",
-                        *collaboration_tables,
+                        f"AND t.[name] IN ({writable_placeholders}, "
+                        f"{protected_placeholders})",
+                        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+                        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+                        *SQL_CLIENT_PROTECTED_OSTV_TABLES,
+                        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+                        *SQL_CLIENT_PROTECTED_OSTV_TABLES,
                     )
                     collaboration_row = cursor.fetchone()
         except SqlInfrastructureError:
@@ -112,6 +116,7 @@ class SqlDatabasePermissionProbe:
                 )
             )
             and collaboration_row is not None
-            and int(collaboration_row[0]) == len(collaboration_tables)
+            and int(collaboration_row[0]) == len(SQL_CLIENT_COLLABORATION_WRITE_TABLES)
             and int(collaboration_row[1]) == 0
+            and int(collaboration_row[2]) == 0
         )

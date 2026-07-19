@@ -24,6 +24,7 @@ class SqlProjectReader(MdbReader):
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self.logger = logger or logging.getLogger(__name__)
+        self._descriptor_registry = descriptor_registry
         self._sql_connections = connection_manager or SqlConnectionManager()
         self._request_factory = SqlDescriptorConnectionFactory(
             descriptor_registry, credential_store
@@ -49,4 +50,11 @@ class SqlProjectReader(MdbReader):
                     report.user_message,
                 )
             )
-        return MdbReader.parse_file(self, database_id)
+        hierarchy, cdn_types = MdbReader.parse_file(self, database_id)
+        descriptor = self._descriptor_registry.resolve(database_id)
+        if descriptor is None:
+            raise LookupError("The SQL Server database descriptor is not registered.")
+        hierarchy.file_path = descriptor.database_id
+        hierarchy.database_name = descriptor.display_name
+        hierarchy.display_name = descriptor.display_name
+        return hierarchy, cdn_types

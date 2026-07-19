@@ -62,6 +62,14 @@ DEFAULT_LAYER_ROWS: Tuple[Tuple[str, bool, bool, int], ...] = (
     ("Image", True, True, 0),
     ("Comments", True, True, 3),
 )
+# OST XML uses this spelling while the Access and SQL schemas use CopyTimeStamp.
+DATABASE_TO_OST_XML_COLUMN = {
+    "CopyTimeStamp": "CopyTimestamp",
+}
+OST_XML_TO_DATABASE_COLUMN = {
+    xml_name: database_name
+    for database_name, xml_name in DATABASE_TO_OST_XML_COLUMN.items()
+}
 
 
 def singular(table_name: str) -> str:

@@ -168,6 +168,56 @@ class DatabaseProjectWriter(SqlProjectWriter):
             operation,
         )
 
+    def _assign_next_bid_no(self, connection, remapped) -> None:
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._assign_next_bid_no(self, connection, remapped)
+        return MdbWriter._assign_next_bid_no(self, connection, remapped)
+
+    def _get_table_info(self, connection, table: str):
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._get_table_info(self, connection, table)
+        return MdbWriter._get_table_info(self, connection, table)
+
+    def _load_existing_uid_by_column(
+        self, connection, table: str, column: str
+    ) -> dict[str, str]:
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._load_existing_uid_by_column(
+                self, connection, table, column
+            )
+        return MdbWriter._load_existing_uid_by_column(self, connection, table, column)
+
+    def _load_existing_employee_uid_by_key(self, connection) -> dict[str, str]:
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._load_existing_employee_uid_by_key(self, connection)
+        return MdbWriter._load_existing_employee_uid_by_key(self, connection)
+
+    def _insert_page_area_selection(
+        self,
+        cursor,
+        schema,
+        page_uid: int,
+        area_uid: int | None,
+        selected_value: int,
+    ) -> None:
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._insert_page_area_selection(
+                self,
+                cursor,
+                schema,
+                page_uid,
+                area_uid,
+                selected_value,
+            )
+        return MdbWriter._insert_page_area_selection(
+            self,
+            cursor,
+            schema,
+            page_uid,
+            area_uid,
+            selected_value,
+        )
+
     def create_project(self, locator: str, name: str):
         with self._backend_scope(locator) as backend:
             if backend == DatabaseBackend.SQL_SERVER:

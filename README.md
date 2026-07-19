@@ -151,6 +151,45 @@ resource catalog. Direct writes by another application therefore still require a
 controlled reload or reconnect. Microsoft Access continues to use its existing
 single-client workflow and starts no SQL session or polling worker.
 
+### Local SQL development environment
+
+From an elevated PowerShell session, developers can provision the dedicated
+local `OSTVDEV` SQL Server 2022 Developer instance and its persistent
+`OSTV_CLIENT_TEST` client database:
+
+```powershell
+.\scripts\setup-sql-development.ps1
+.\scripts\run-sql-integration.ps1 -ConfirmDestructive
+```
+
+Setup installs or repairs SQL Server, SSMS, and ODBC Driver 18; configures the
+default SQL Server TCP port `1433`, trusted TLS, and a firewall rule limited to
+loopback and the development machine's own addresses; and creates separate
+guarded integration-executor and least-privilege client accounts. Local clients
+can connect using the value of `$env:COMPUTERNAME` without an instance suffix or
+explicit port. The normal client user is a member of SQL Server's built-in
+`db_datareader` and `db_datawriter` database roles, matching On-Screen Takeoff's
+connection requirements. OST Visualizer grants schema inspection explicitly and
+denies normal clients from mutating its schema, migration, and external-adapter
+ledgers.
+The client password is stored in Windows Credential Manager and in the
+ACL-restricted, ignored `.secrets\sql-development.json` file. Rerunning setup
+reuses the owned instance, database, certificates, SQL objects, and credentials.
+Rotate only the client credential explicitly:
+
+```powershell
+.\scripts\setup-sql-development.ps1 -RotateClientPassword
+```
+
+Whole-instance removal is intended only for a dedicated disposable development
+machine or VM. It validates every ownership marker and refuses unrelated
+resources before uninstalling only the `OSTVDEV` engine instance; shared SSMS,
+ODBC, SQLWriter, and unrelated SQL resources remain installed:
+
+```powershell
+.\scripts\setup-sql-development.ps1 -RemoveOwnedEnvironment -ConfirmDestructive
+```
+
 ## Local MCP Server
 
 OST Visualizer includes an optional read-only local MCP server for MCP-compatible

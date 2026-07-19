@@ -16,7 +16,7 @@ from ost_visualizer.infrastructure.sql.collaboration_store import (
 )
 from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
-from sql_integration_support import (
+from tests.sql_integration_support import (
     DisposableSqlConfiguration,
     DisposableSqlDatabase,
 )

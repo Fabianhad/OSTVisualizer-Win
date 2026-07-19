@@ -98,6 +98,11 @@ Database backends:
 - Presence is informational and separate from locks. SQL write authorization
   must be enforced at the mutation boundary; toolbar/menu state is only a
   projection of the shared capability service.
+- Normal SQL client/editor users must be explicit members of the built-in
+  `db_datareader` and `db_datawriter` database roles. Schema visibility and
+  collaboration permissions use the canonical definition in
+  `infrastructure/sql/client_permissions.py`; normal clients must not receive
+  `db_owner`, schema-ledger mutation, database creation, or server administration.
 - `SqlCollaborationCoordinator` owns SQL sessions, heartbeat, presence, lock
   renewal, polling, checkpoints, reconnect, and shutdown. It runs only for SQL
   descriptors, uses server UTC, stops and joins workers on unload/shutdown, and

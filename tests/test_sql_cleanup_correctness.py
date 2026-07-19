@@ -14,12 +14,15 @@ from ost_visualizer.domain.entities.database_descriptor import (
     SqlServerDatabaseLocation,
 )
 from ost_visualizer.domain.entities.file_state import FileEntry
+from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
+from ost_visualizer.domain.dtos.raw_bid_data_dto import RawBidData
 from ost_visualizer.infrastructure.database.connection_wrapper import ConnectionWrapper
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
 from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
 from ost_visualizer.infrastructure.database.reader_router import DatabaseProjectReader
+from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
 from ost_visualizer.infrastructure.providers import RepositoryProvider
 from ost_visualizer.infrastructure.sql.reader import SqlProjectReader
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
@@ -36,6 +39,10 @@ from ost_visualizer.infrastructure.sql.errors import (
     SqlInfrastructureError,
 )
 from ost_visualizer.infrastructure.sql.permissions import SqlDatabasePermissionProbe
+from ost_visualizer.infrastructure.sql.client_permissions import (
+    SQL_CLIENT_DATABASE_ROLES,
+    apply_sql_client_permissions,
+)
 from ost_visualizer.infrastructure.sql.schema_inspector import (
     SqlSchemaInspector,
     SqlSchemaInventory,
@@ -283,10 +290,17 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertIn("OUTPUT INSERTED.[Token]", source)
         self.assertNotIn("OUTPUT INSERTED.[Version]", source)
 
-    def test_sql_edit_probe_requires_every_core_table_and_change_log_permission(self):
+    def test_sql_edit_probe_requires_built_in_roles_and_collaboration_permissions(
+        self,
+    ):
         class _PermissionCursor:
-            def __init__(self, core_result, metadata_result, collaboration_result):
-                self._core_result = core_result
+            def __init__(
+                self,
+                role_result,
+                metadata_result,
+                collaboration_result=(6, 0, 0),
+            ):
+                self._role_result = role_result
                 self._metadata_result = metadata_result
                 self._collaboration_result = collaboration_result
                 self._last_sql = ""
@@ -296,8 +310,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 return self
 
             def fetchone(self):
-                if "s.[name]=N'dbo'" in self._last_sql:
-                    return self._core_result
+                if "IS_ROLEMEMBER" in self._last_sql:
+                    return self._role_result
                 if "s.[name]=N'ostv'" in self._last_sql:
                     return self._collaboration_result
                 return self._metadata_result
@@ -310,10 +324,13 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         class _PermissionManager:
             def __init__(
-                self, core_result, metadata_result, collaboration_result=(6, 0)
+                self,
+                role_result,
+                metadata_result,
+                collaboration_result=(6, 0, 0),
             ):
                 self._cursor = _PermissionCursor(
-                    core_result, metadata_result, collaboration_result
+                    role_result, metadata_result, collaboration_result
                 )
 
             @contextlib.contextmanager
@@ -334,40 +351,45 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             "disabled",
             None,
         )
-        table_count = len(LATEST_SQL_SCHEMA.core_schema.tables)
         complete = SqlDatabasePermissionProbe(
             registry,
             _CredentialStore(),
-            connection_manager=_PermissionManager((table_count, 0), current),
+            connection_manager=_PermissionManager((1, 1, 1, 1), current),
         )
         self.assertTrue(complete.can_edit(descriptor.database_id))
-        missing_table = SqlDatabasePermissionProbe(
-            registry,
-            _CredentialStore(),
-            connection_manager=_PermissionManager((table_count - 1, 0), current),
-        )
-        self.assertFalse(missing_table.can_edit(descriptor.database_id))
-        denied_table = SqlDatabasePermissionProbe(
-            registry,
-            _CredentialStore(),
-            connection_manager=_PermissionManager((table_count, 1), current),
-        )
-        self.assertFalse(denied_table.can_edit(descriptor.database_id))
+        for roles in ((0, 1, 1, 1), (1, 0, 1, 1)):
+            with self.subTest(roles=roles):
+                missing_role = SqlDatabasePermissionProbe(
+                    registry,
+                    _CredentialStore(),
+                    connection_manager=_PermissionManager(roles, current),
+                )
+                self.assertFalse(missing_role.can_edit(descriptor.database_id))
         denied_change_log = SqlDatabasePermissionProbe(
             registry,
             _CredentialStore(),
             connection_manager=_PermissionManager(
-                (table_count, 0),
+                (1, 1, 1, 1),
                 current,
-                (6, 1),
+                (6, 1, 0),
             ),
         )
         self.assertFalse(denied_change_log.can_edit(descriptor.database_id))
+        writable_schema_ledger = SqlDatabasePermissionProbe(
+            registry,
+            _CredentialStore(),
+            connection_manager=_PermissionManager(
+                (1, 1, 1, 1),
+                current,
+                (6, 0, 1),
+            ),
+        )
+        self.assertFalse(writable_schema_ledger.can_edit(descriptor.database_id))
         read_only_database = SqlDatabasePermissionProbe(
             registry,
             _CredentialStore(),
             connection_manager=_PermissionManager(
-                (table_count, 0),
+                (1, 1, 1, 1),
                 (
                     LATEST_SQL_SCHEMA.version,
                     LATEST_SQL_SCHEMA.checksum,
@@ -376,6 +398,29 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             ),
         )
         self.assertFalse(read_only_database.can_edit(descriptor.database_id))
+
+    def test_canonical_sql_client_permissions_use_built_in_roles_and_protect_ledgers(
+        self,
+    ):
+        cursor = _CreationCursor()
+        apply_sql_client_permissions(cursor, "OSTV_CLIENT")
+        permission_sql = " ".join(cursor.executed)
+        self.assertEqual(SQL_CLIENT_DATABASE_ROLES, ("db_datareader", "db_datawriter"))
+        self.assertIn("ALTER ROLE [db_datareader] ADD MEMBER", permission_sql)
+        self.assertIn("ALTER ROLE [db_datawriter] ADD MEMBER", permission_sql)
+        self.assertIn("GRANT VIEW DEFINITION ON SCHEMA::[dbo]", permission_sql)
+        self.assertIn("GRANT VIEW DEFINITION ON SCHEMA::[ostv]", permission_sql)
+        self.assertIn(
+            "DENY INSERT, UPDATE, DELETE ON [ostv].[DatabaseMetadata]", permission_sql
+        )
+        self.assertIn(
+            "DENY INSERT, UPDATE, DELETE ON [ostv].[SchemaMigrations]", permission_sql
+        )
+        self.assertIn(
+            "DENY INSERT, UPDATE, DELETE ON [ostv].[ExternalAdapterState]",
+            permission_sql,
+        )
+        self.assertNotIn("ostv_client_editor", permission_sql)
 
     def test_sql_edit_probe_treats_connection_failure_as_read_only(self):
         class _UnavailableManager:
@@ -424,6 +469,31 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         with writer._backend_scope("example.mdb"):
             self.assertIsInstance(writer._schema(object()), MdbSchemaInspector)
 
+    def test_access_import_lookup_never_uses_sql_table_qualification(self):
+        connection = object()
+        writer = DatabaseProjectWriter(
+            object(),
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with (
+            patch.object(
+                MdbWriter,
+                "_load_existing_uid_by_column",
+                return_value={"Concrete": "12"},
+            ) as access_lookup,
+            patch.object(
+                SqlProjectWriter,
+                "_load_existing_uid_by_column",
+                side_effect=AssertionError("Access import dispatched to SQL"),
+            ),
+            writer._backend_scope("example.mdb"),
+        ):
+            result = writer._load_existing_uid_by_column(connection, "CdnTypes", "Name")
+        self.assertEqual(result, {"Concrete": "12"})
+        access_lookup.assert_called_once_with(writer, connection, "CdnTypes", "Name")
+
     def test_writer_requires_an_explicit_backend_scope(self):
         writer = DatabaseProjectWriter(
             object(),
@@ -467,6 +537,27 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(Exception, "Schema mismatch"):
                 reader.parse_file(descriptor.database_id)
+
+    def test_sql_reader_returns_canonical_descriptor_hierarchy_identity(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            display_name="SQL Test Database",
+        )
+        registry.register(descriptor)
+        reader = SqlProjectReader(registry, _CredentialStore(), _InspectionManager())
+        reader._validator.validate = lambda _inventory: SimpleNamespace(
+            is_read_compatible=True
+        )
+        with patch.object(
+            MdbReader,
+            "parse_file",
+            return_value=(HierarchyFileEntry(file_path=""), {}),
+        ):
+            hierarchy, _cdn_types = reader.parse_file(descriptor.database_id)
+        self.assertEqual(hierarchy.file_path, descriptor.database_id)
+        self.assertEqual(hierarchy.database_name, descriptor.display_name)
+        self.assertEqual(hierarchy.display_name, descriptor.display_name)
 
     def test_sql_cursor_has_one_owner_and_is_closed_once(self):
         raw_connection = _RawConnection()
@@ -570,6 +661,187 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
 
+    def test_sql_import_failure_preserves_original_error_and_rolls_back(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+        raw_data = RawBidData(bid_row={"UID": "1", "Name": "Imported"})
+        with (
+            patch.object(writer, "_assign_next_bid_no"),
+            patch.object(
+                writer,
+                "_write_remapped_identity_graph",
+                side_effect=RuntimeError("unsupported import column"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "unsupported import column"),
+        ):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                lambda _recorder: writer.import_ost_data(
+                    descriptor.database_id,
+                    raw_data,
+                    lambda data, *_maps: data,
+                ),
+            )
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_sql_import_rebinds_bid_owned_rows_to_inserted_bid_identity(self):
+        class _Connection:
+            def cursor(self):
+                return _RawCursor()
+
+        writer = SqlProjectWriter(
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        raw_data = RawBidData(
+            bid_row={"UID": "source-bid", "Name": "Imported"},
+            bid_tables={
+                "BidLayers": [
+                    {
+                        "UID": "source-layer",
+                        "BidUID": "stale-bid",
+                        "Name": "Default",
+                    }
+                ]
+            },
+        )
+        inserted = []
+
+        def insert(_connection, table, row, _table_info):
+            inserted.append((table, row))
+            return 101 if table == "Bids" else 202
+
+        with (
+            patch.object(
+                writer,
+                "_get_table_info",
+                side_effect=lambda _connection, table: (
+                    ({"UID", "Name"}, {})
+                    if table == "Bids"
+                    else ({"UID", "BidUID", "Name"}, {})
+                ),
+            ),
+            patch.object(writer, "_insert_identity_raw", side_effect=insert),
+        ):
+            writer._write_remapped_identity_graph(_Connection(), raw_data)
+        self.assertEqual(inserted[1][0], "BidLayers")
+        self.assertEqual(inserted[1][1]["BidUID"], 101)
+
+    def test_sql_import_does_not_remap_resolved_global_identity(self):
+        class _Connection:
+            def cursor(self):
+                return _RawCursor()
+
+        writer = SqlProjectWriter(
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        raw_data = RawBidData(
+            bid_row={"UID": "5", "Name": "Imported"},
+            bid_tables={
+                "BidConditions": [
+                    {
+                        "UID": "6",
+                        "BidUID": "5",
+                        "CdnTypeUID": "5",
+                        "Name": "Concrete",
+                    }
+                ]
+            },
+        )
+        inserted = []
+
+        def insert(_connection, table, row, _table_info):
+            inserted.append((table, row))
+            return 101 if table == "Bids" else 202
+
+        with (
+            patch.object(
+                writer,
+                "_get_table_info",
+                side_effect=lambda _connection, table: (
+                    ({"UID", "Name"}, {})
+                    if table == "Bids"
+                    else ({"UID", "BidUID", "CdnTypeUID", "Name"}, {})
+                ),
+            ),
+            patch.object(writer, "_insert_identity_raw", side_effect=insert),
+        ):
+            writer._write_remapped_identity_graph(_Connection(), raw_data)
+        self.assertEqual(inserted[1][0], "BidConditions")
+        self.assertEqual(inserted[1][1]["BidUID"], 101)
+        self.assertEqual(inserted[1][1]["CdnTypeUID"], "5")
+
+    def test_sql_import_identity_map_is_scoped_to_parent_table(self):
+        class _Connection:
+            def cursor(self):
+                return _RawCursor()
+
+        writer = SqlProjectWriter(
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "Name": "Imported"},
+            bid_tables={
+                "BidNamedViews": [{"UID": "7", "BidUID": "1", "Name": "View"}],
+                "BidHotLinks": [
+                    {"UID": "7", "BidUID": "1", "BidPageViewUID": "7"},
+                    {"UID": "8", "BidUID": "1", "BidPageViewUID": "7"},
+                ],
+            },
+        )
+        inserted = []
+
+        def insert(_connection, table, row, _table_info):
+            inserted.append((table, row))
+            return len(inserted) * 100 + 1
+
+        with (
+            patch.object(
+                writer,
+                "_get_table_info",
+                side_effect=lambda _connection, table: (
+                    ({"UID", "Name"}, {})
+                    if table == "Bids"
+                    else (
+                        (
+                            {"UID", "BidUID", "Name"},
+                            {},
+                        )
+                        if table == "BidNamedViews"
+                        else ({"UID", "BidUID", "BidPageViewUID"}, {})
+                    )
+                ),
+            ),
+            patch.object(writer, "_insert_identity_raw", side_effect=insert),
+        ):
+            writer._write_remapped_identity_graph(_Connection(), raw_data)
+        self.assertEqual(inserted[1][0], "BidNamedViews")
+        self.assertEqual(inserted[2][0], "BidHotLinks")
+        self.assertEqual(inserted[3][0], "BidHotLinks")
+        self.assertEqual(inserted[2][1]["BidPageViewUID"], 201)
+        self.assertEqual(inserted[3][1]["BidPageViewUID"], 201)
+
     def test_writer_guard_rejects_stale_database_metadata(self):
         class _StaleMetadataCursor(_WriterCursor):
             def fetchone(self):
@@ -595,9 +867,14 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertTrue(all(cursor.close_count == 1 for cursor in lease.cursors))
 
     def test_sql_import_table_metadata_comes_from_canonical_schema(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
         writer = DatabaseProjectWriter(
             object(),
-            DatabaseDescriptorRegistry(),
+            registry,
             _CredentialStore(),
             DatabaseSessionRegistry(),
         )
@@ -606,7 +883,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def cursor(self):
                 raise AssertionError("writer queried a second schema inventory")
 
-        columns, types = writer._get_table_info(_NoMetadataConnection(), "Bids")
+        with writer._backend_scope(descriptor.database_id):
+            columns, types = writer._get_table_info(_NoMetadataConnection(), "Bids")
         self.assertIn("UID", columns)
         self.assertEqual(types["UID"], "int")
 
@@ -625,6 +903,30 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             )
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_blank_sql_database_creation_applies_client_roles_transactionally(self):
+        manager = _CreationManager()
+        creator = SqlDatabaseCreator(manager)
+        creator._inspector.inspect_connection = lambda _lease: SimpleNamespace(
+            database_guid="00000000-0000-0000-0000-000000000001"
+        )
+        creator._validator.validate = lambda _inventory: SqlSchemaValidationReport(
+            SqlSchemaCompatibility.CURRENT,
+            LATEST_SQL_SCHEMA.version,
+        )
+        creator.initialize_blank_database(
+            SqlServerDatabaseLocation(
+                server="localhost",
+                database="OSTV_TEST_AUDIT",
+                username="OSTV_CLIENT",
+            ),
+            application_version="test",
+        )
+        statements = " ".join(manager.lease.cursor_value.executed)
+        self.assertIn("ALTER ROLE [db_datareader] ADD MEMBER", statements)
+        self.assertIn("ALTER ROLE [db_datawriter] ADD MEMBER", statements)
+        self.assertEqual(manager.lease.commits, 1)
+        self.assertEqual(manager.lease.rollbacks, 0)
 
     def test_schema_creation_rejects_unversioned_read_only_validation(self):
         manager = _CreationManager()
@@ -690,6 +992,9 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertFalse(
             any(sql.startswith("CREATE TABLE [dbo]") for sql in statements)
         )
+        permission_sql = " ".join(statements)
+        self.assertIn("ALTER ROLE [db_datareader] ADD MEMBER", permission_sql)
+        self.assertIn("ALTER ROLE [db_datawriter] ADD MEMBER", permission_sql)
         self.assertEqual(result.schema_version, LATEST_SQL_SCHEMA.version)
         self.assertEqual(manager.lease.commits, 1)
         self.assertEqual(manager.lease.rollbacks, 0)
@@ -776,12 +1081,15 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
             credential_store=_CredentialStore(),
         )
-        with patch(
-            "ost_visualizer.presentation.handlers.file_operation_handler."
-            "OpenFilesDialog",
-            _Dialog,
-        ), patch(
-            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        with (
+            patch(
+                "ost_visualizer.presentation.handlers.file_operation_handler."
+                "OpenFilesDialog",
+                _Dialog,
+            ),
+            patch(
+                "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+            ),
         ):
             handler.open_files()
         self.assertEqual(updates[-1], [entry])

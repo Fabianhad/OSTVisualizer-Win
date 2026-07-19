@@ -14,6 +14,7 @@ from ..mdb.database_creator import (
     get_reference_seed_data,
 )
 from .connection_manager import SqlConnectionManager, SqlConnectionRequest
+from .client_permissions import apply_sql_client_permissions
 from .errors import (
     SqlErrorCode,
     SqlErrorDetails,
@@ -141,6 +142,7 @@ class SqlDatabaseCreator:
                         application_version=application_version,
                         actor=actor_name,
                     )
+                    apply_sql_client_permissions(cursor, location.username)
                 inventory = self._inspector.inspect_connection(lease)
                 report = self._validator.validate(inventory)
                 if report.compatibility != SqlSchemaCompatibility.CURRENT:
@@ -225,6 +227,8 @@ class SqlDatabaseCreator:
                                 + report.user_message,
                             )
                         )
+                with lease.cursor() as cursor:
+                    apply_sql_client_permissions(cursor, location.username)
                 lease.commit()
                 committed = True
             except pyodbc.Error as exc:

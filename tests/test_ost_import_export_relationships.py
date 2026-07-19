@@ -495,6 +495,15 @@ def _raw_data_with_row(table_name, row):
 
 
 class OstImportExportRelationshipTests(unittest.TestCase):
+    def test_ost_import_restores_database_column_name_for_copy_timestamp(self):
+        xml = '<XML_ROOT><Bid UID="1" CopyTimestamp="2026 7 19 0 39 2"/></XML_ROOT>'
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "copy_timestamp.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            raw_data = OstImporter(object())._parse_ost_xml(str(ost_path))
+        self.assertEqual(raw_data.bid_row["CopyTimeStamp"], "2026 7 19 0 39 2")
+        self.assertNotIn("CopyTimestamp", raw_data.bid_row)
+
     def test_raw_bid_integrity_map_reports_each_declared_relationship(self):
         for relationship in RAW_BID_RELATIONSHIPS:
             with self.subTest(

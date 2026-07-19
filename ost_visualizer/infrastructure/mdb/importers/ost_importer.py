@@ -17,6 +17,7 @@ from ..raw_bid_integrity import (
 from ..schema_contract import (
     BID_SECTIONS,
     BID_TAIL_SECTIONS,
+    OST_XML_TO_DATABASE_COLUMN,
     GLOBAL_SECTIONS,
     PAGE_SECTIONS,
 )
@@ -69,6 +70,13 @@ def _matches_section_child(section: str, tag: str) -> bool:
     if tag == _singular(section):
         return True
     return bool(section.endswith("s") and tag == section[:-1])
+
+
+def _database_row(attributes) -> Dict[str, str]:
+    return {
+        OST_XML_TO_DATABASE_COLUMN.get(column, column): value
+        for column, value in attributes.items()
+    }
 
 
 class OstImporter:
@@ -376,7 +384,7 @@ class OstImporter:
         bid_elem = root.find("Bid")
         if bid_elem is None:
             raise ValueError("No Bid element found in OST file")
-        bid_row = dict(bid_elem.attrib)
+        bid_row = _database_row(bid_elem.attrib)
         bid_tables: Dict[str, List] = {}
         page_tables: Dict[str, List] = {}
         global_tables: Dict[str, List] = {}
@@ -386,7 +394,7 @@ class OstImporter:
             if container is not None:
                 for child in container:
                     if _matches_section_child(section, child.tag):
-                        rows.append(dict(child.attrib))
+                        rows.append(_database_row(child.attrib))
             bid_tables[section] = rows
         pages_container = bid_elem.find("BidPages")
         bid_pages: List[Dict[str, str]] = []
@@ -394,14 +402,14 @@ class OstImporter:
             for page_elem in pages_container:
                 if page_elem.tag != "BidPage":
                     continue
-                bid_pages.append(dict(page_elem.attrib))
+                bid_pages.append(_database_row(page_elem.attrib))
                 for section in PAGE_SECTIONS:
                     container = page_elem.find(section)
                     if container is not None:
                         for child in container:
                             if _matches_section_child(section, child.tag):
                                 page_tables.setdefault(section, []).append(
-                                    dict(child.attrib)
+                                    _database_row(child.attrib)
                                 )
         bid_tables["BidPages"] = bid_pages
         for section in BID_TAIL_SECTIONS:
@@ -410,7 +418,7 @@ class OstImporter:
             if container is not None:
                 for child in container:
                     if _matches_section_child(section, child.tag):
-                        rows.append(dict(child.attrib))
+                        rows.append(_database_row(child.attrib))
             bid_tables[section] = rows
         for section in GLOBAL_SECTIONS:
             rows = []
@@ -418,7 +426,7 @@ class OstImporter:
             if container is not None:
                 for child in container:
                     if _matches_section_child(section, child.tag):
-                        rows.append(dict(child.attrib))
+                        rows.append(_database_row(child.attrib))
             global_tables[section] = rows
         return RawBidData(
             bid_row=bid_row,

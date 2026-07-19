@@ -25,6 +25,7 @@ from ..reference_validation import (
 )
 from ..schema_contract import BID_SECTIONS as _BID_SECTIONS
 from ..schema_contract import BID_TAIL_SECTIONS as _BID_TAIL_SECTIONS
+from ..schema_contract import DATABASE_TO_OST_XML_COLUMN as _COLUMN_NAME_MAP
 from ..schema_contract import GLOBAL_SECTIONS as _GLOBAL_SECTIONS
 from ..schema_contract import PAGE_SECTIONS as _PAGE_SECTIONS
 from ..schema_contract import singular as _singular
@@ -502,9 +503,6 @@ _SELF_CLOSING_PAGE_SECTIONS = frozenset(
         "BidAnnoInk",
     }
 )
-_COLUMN_NAME_MAP = {
-    "CopyTimeStamp": "CopyTimestamp",
-}
 _ATTR_ORDER_MAP: Dict[str, List[str]] = {
     "BidCondition": _BID_CONDITION_ATTR_ORDER,
     "BidPage": _BID_PAGE_ATTR_ORDER,

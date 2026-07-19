@@ -34,6 +34,7 @@ from ...application.dtos.collaboration_dtos import (
 from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
 from ...domain.dtos.raw_bid_data_dto import RawBidData
 from ..mdb.components.constants import BID_TABLES_WRITE_ORDER
+from ..mdb.raw_bid_integrity import RAW_BID_RELATIONSHIPS
 from ..mdb.schema_contract import PAGE_SECTIONS
 from ..mdb.mdb_writer import MdbWriter
 from .connection_manager import SqlConnectionLease, SqlConnectionManager
@@ -49,6 +50,12 @@ from .schema_lock import acquire_resource_transaction_lock
 from .write_schema import CurrentSqlWriteSchema
 
 T = TypeVar("T")
+_IMPORT_GRAPH_TABLES = frozenset({"Bids", *BID_TABLES_WRITE_ORDER, *PAGE_SECTIONS})
+_IMPORT_PARENT_TABLE_BY_REFERENCE = {
+    (relationship.child_table, relationship.child_column): relationship.parent_table
+    for relationship in RAW_BID_RELATIONSHIPS
+    if relationship.parent_table in _IMPORT_GRAPH_TABLES
+}
 
 
 class _DeferredIdentity(int):
@@ -726,40 +733,36 @@ class SqlProjectWriter(MdbWriter):
         transform_fn,
         target_project_uid: Optional[str] = None,
     ) -> bool:
-        try:
-            with self._connection(db_path) as connection:
-                cdn_map = self._resolve_global_by_column(
-                    connection, raw_data, "CdnTypes", "Name"
-                )
-                status_map = self._resolve_global_by_column(
-                    connection, raw_data, "JobStatuses", "Name"
-                )
-                access_map = self._resolve_global_by_column(
-                    connection, raw_data, "AccessLevels", "Description"
-                )
-                pay_class_map = self._resolve_global_by_column(
-                    connection, raw_data, "PayClasses", "Name"
-                )
-                employee_map = self._resolve_sql_employees(
-                    connection, raw_data, pay_class_map, access_map
-                )
-                remapped = transform_fn(
-                    raw_data,
-                    0,
-                    cdn_map,
-                    status_map,
-                    employee_map,
-                    pay_class_map,
-                )
-                self._assign_next_bid_no(connection, remapped)
-                remapped.bid_row["BidProjectUID"] = (
-                    target_project_uid if target_project_uid else None
-                )
-                self._write_remapped_identity_graph(connection, remapped)
-            return True
-        except (OSError, RuntimeError, TypeError, ValueError):
-            self.logger.exception("Failed to write imported OST data to %s", db_path)
-            return False
+        with self._connection(db_path) as connection:
+            cdn_map = self._resolve_global_by_column(
+                connection, raw_data, "CdnTypes", "Name"
+            )
+            status_map = self._resolve_global_by_column(
+                connection, raw_data, "JobStatuses", "Name"
+            )
+            access_map = self._resolve_global_by_column(
+                connection, raw_data, "AccessLevels", "Description"
+            )
+            pay_class_map = self._resolve_global_by_column(
+                connection, raw_data, "PayClasses", "Name"
+            )
+            employee_map = self._resolve_sql_employees(
+                connection, raw_data, pay_class_map, access_map
+            )
+            remapped = transform_fn(
+                raw_data,
+                0,
+                cdn_map,
+                status_map,
+                employee_map,
+                pay_class_map,
+            )
+            self._assign_next_bid_no(connection, remapped)
+            remapped.bid_row["BidProjectUID"] = (
+                target_project_uid if target_project_uid else None
+            )
+            self._write_remapped_identity_graph(connection, remapped)
+        return True
 
     def _resolve_global_by_column(
         self,
@@ -841,13 +844,14 @@ class SqlProjectWriter(MdbWriter):
             for row in remapped.page_tables.get(table, [])
         )
         internal_uids = {
-            str(row.get("UID"))
-            for _, row in rows_by_table
+            (table, str(row.get("UID")))
+            for table, row in rows_by_table
             if row.get("UID") not in (None, "", "0", "NULL")
         }
-        identity_map: dict[str, int] = {}
-        pending: list[tuple[str, int, str, str]] = []
+        identity_map: dict[tuple[str, str], int] = {}
+        pending: list[tuple[str, int, str, str, str]] = []
         table_info_cache = {}
+        actual_bid_uid: Optional[int] = None
         for table, row in rows_by_table:
             table_info = table_info_cache.get(table)
             if table_info is None:
@@ -855,31 +859,43 @@ class SqlProjectWriter(MdbWriter):
                 table_info_cache[table] = table_info
             source_uid = str(row.get("UID", ""))
             insert_row = dict(row)
-            unresolved_columns: list[tuple[str, str]] = []
+            unresolved_columns: list[tuple[str, str, str]] = []
             for column, value in list(insert_row.items()):
-                if column == "UID" or not column.endswith("UID"):
+                if table != "Bids" and column == "BidUID":
+                    continue
+                parent_table = _IMPORT_PARENT_TABLE_BY_REFERENCE.get((table, column))
+                if parent_table is None:
                     continue
                 raw_reference = str(value or "")
+                reference_key = (parent_table, raw_reference)
                 if raw_reference in ("", "0", "NULL"):
                     insert_row[column] = None
-                elif raw_reference in identity_map:
-                    insert_row[column] = identity_map[raw_reference]
-                elif raw_reference in internal_uids:
+                elif reference_key in identity_map:
+                    insert_row[column] = identity_map[reference_key]
+                elif reference_key in internal_uids:
                     insert_row[column] = None
-                    unresolved_columns.append((column, raw_reference))
+                    unresolved_columns.append((column, parent_table, raw_reference))
+            if table != "Bids" and "BidUID" in table_info[0]:
+                if actual_bid_uid is None:
+                    raise RuntimeError(
+                        "Imported bid identity was not allocated before child rows."
+                    )
+                insert_row["BidUID"] = actual_bid_uid
             actual_uid = self._insert_identity_raw(
                 connection, table, insert_row, table_info
             )
+            if table == "Bids":
+                actual_bid_uid = actual_uid
             if source_uid:
-                identity_map[source_uid] = actual_uid
+                identity_map[(table, source_uid)] = actual_uid
             pending.extend(
-                (table, actual_uid, column, raw_reference)
-                for column, raw_reference in unresolved_columns
+                (table, actual_uid, column, parent_table, raw_reference)
+                for column, parent_table, raw_reference in unresolved_columns
             )
         cursor = connection.cursor()
         try:
-            for table, row_uid, column, target_source_uid in pending:
-                target_uid = identity_map.get(target_source_uid)
+            for table, row_uid, column, parent_table, target_source_uid in pending:
+                target_uid = identity_map.get((parent_table, target_source_uid))
                 if target_uid is None:
                     raise RuntimeError(
                         f"Unresolved imported reference {table}.{column}"

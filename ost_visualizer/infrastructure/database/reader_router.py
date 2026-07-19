@@ -79,9 +79,6 @@ class DatabaseProjectReader(SqlProjectReader):
                 hierarchy, cdn_types = MdbReader.parse_file(self, locator)
         finally:
             self._active_backend.reset(token)
-        if backend == DatabaseBackend.SQL_SERVER:
-            hierarchy.database_name = descriptor.display_name
-            hierarchy.display_name = descriptor.display_name
         return hierarchy, cdn_types
 
     def close_connection(self, locator: Optional[str] = None) -> None:

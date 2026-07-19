@@ -1,5 +1,6 @@
 import threading
 import unittest
+from contextlib import contextmanager
 from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     COLLABORATION_RESOURCE_CATALOG,
     COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
@@ -69,6 +70,9 @@ from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
     SqlErrorDetails,
     SqlInfrastructureError,
+)
+from ost_visualizer.infrastructure.sql.remote_change_reader import (
+    SqlRemoteChangeReader,
 )
 
 
@@ -299,6 +303,73 @@ def _change(database_id, resource, sequence=1, source="other-session"):
 
 
 class SqlCollaborationPhase4Tests(unittest.TestCase):
+    def test_remote_condition_and_area_hydration_uses_current_reader_contract(self):
+        condition = object()
+        folder = object()
+        area = object()
+
+        class _Requests:
+            def request(self, database_id, *, read_only):
+                if (database_id, read_only) != ("database", True):
+                    raise AssertionError("Remote hydration must use a read request.")
+                return object()
+
+        class _Connections:
+            @contextmanager
+            def connection(self, _request, *, autocommit=False):
+                if not autocommit:
+                    raise AssertionError("Remote hydration must use autocommit reads.")
+                yield object()
+
+        class _Reader:
+            logger = None
+
+            def _parse_cdn_types(self, _connection):
+                return {"4": object()}
+
+            def _parse_bid_layers_for_bid(self, _connection, bid_uid):
+                return {"3": object()}
+
+            def _parse_bid_conditions_for_bid(
+                self, _connection, bid_uid, layers, cdn_types, schema
+            ):
+                return {"42": condition}
+
+            def _parse_bid_condition_folders_for_bid(
+                self, _connection, bid_uid, schema
+            ):
+                return {"5": folder}
+
+            def _parse_bid_areas_for_bid(self, _connection, bid_uid, schema):
+                return {"6": area}
+
+        remote_reader = SqlRemoteChangeReader.__new__(SqlRemoteChangeReader)
+        remote_reader._requests = _Requests()
+        remote_reader._connections = _Connections()
+        remote_reader._reader = _Reader()
+        batch = DatabaseChangeBatch(
+            "database",
+            "epoch",
+            1,
+            2,
+            (
+                _change(
+                    "database",
+                    ResourceRef("conditions_collection", "8", 8),
+                    1,
+                ),
+                _change(
+                    "database",
+                    ResourceRef("areas_collection", "8", 8),
+                    2,
+                ),
+            ),
+        )
+        hydrated = remote_reader.hydrate(batch)
+        self.assertEqual(hydrated.conditions_by_bid, {8: {"42": condition}})
+        self.assertEqual(hydrated.condition_folders_by_bid, {8: {"5": folder}})
+        self.assertEqual(hydrated.areas_by_bid, {8: (area,)})
+
     def test_resource_catalog_is_canonical_and_rejects_removed_aliases(self):
         self.assertEqual(len(COLLABORATION_RESOURCE_CATALOG_CHECKSUM), 64)
         self.assertNotIn("folder", COLLABORATION_RESOURCE_CATALOG)

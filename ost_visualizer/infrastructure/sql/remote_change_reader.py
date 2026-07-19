@@ -120,19 +120,32 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         if condition_bids or area_bids:
             request = self._requests.request(batch.database_id, read_only=True)
             with self._connections.connection(request, autocommit=True) as connection:
+                schema = MdbSchemaInspector(connection, self._reader.logger)
+                cdn_types = (
+                    self._reader._parse_cdn_types(connection) if condition_bids else {}
+                )
                 for bid_uid in sorted(condition_bids):
                     key = str(bid_uid)
+                    bid_layers = self._reader._parse_bid_layers_for_bid(connection, key)
                     conditions_by_bid[bid_uid] = (
-                        self._reader._parse_bid_conditions_for_bid(connection, key)
+                        self._reader._parse_bid_conditions_for_bid(
+                            connection,
+                            key,
+                            bid_layers,
+                            cdn_types,
+                            schema,
+                        )
                     )
                     folders_by_bid[bid_uid] = (
                         self._reader._parse_bid_condition_folders_for_bid(
-                            connection, key
+                            connection, key, schema
                         )
                     )
                 for bid_uid in sorted(area_bids):
                     areas_by_bid[bid_uid] = tuple(
-                        self._reader._parse_bid_areas_for_bid(connection, str(bid_uid))
+                        self._reader._parse_bid_areas_for_bid(
+                            connection, str(bid_uid), schema
+                        ).values()
                     )
         families_by_bid = {
             bid_uid: {
