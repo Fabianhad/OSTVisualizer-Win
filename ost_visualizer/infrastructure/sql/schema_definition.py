@@ -1,6 +1,6 @@
 from __future__ import annotations
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from ...application.dtos.collaboration_resource_catalog import (
     COLLABORATION_RESOURCE_CATALOG,
     CollaborationResourceType,
@@ -55,6 +55,7 @@ class SqlSchemaDefinition:
     migration_name: str
     core_schema: DatabaseSchemaModel
     tables: tuple[SqlTableDefinition, ...]
+    change_tracking_tables: tuple[tuple[str, str], ...] = ()
 
     @property
     def statements(self) -> tuple[str, ...]:
@@ -69,6 +70,10 @@ class SqlSchemaDefinition:
         for table in self.tables:
             statements.append(render_sql_table(table))
             statements.extend(render_sql_index(table, index) for index in table.indexes)
+        statements.extend(
+            f"ALTER TABLE [{schema}].[{table}] ENABLE CHANGE_TRACKING"
+            for schema, table in self.change_tracking_tables
+        )
         return tuple(statements)
 
     @property
@@ -113,7 +118,7 @@ def _foreign_key(
     )
 
 
-LATEST_SQL_SCHEMA = SqlSchemaDefinition(
+SQL_SCHEMA_V3 = SqlSchemaDefinition(
     version=3,
     migration_name="writer mode and external change adapter gate",
     core_schema=get_reference_schema_model(),
@@ -439,6 +444,76 @@ LATEST_SQL_SCHEMA = SqlSchemaDefinition(
             ),
         ),
     ),
+)
+
+
+def _version_4_tables() -> tuple[SqlTableDefinition, ...]:
+    tables = []
+    for table in SQL_SCHEMA_V3.tables:
+        if table.name == "Sessions":
+            table = replace(
+                table,
+                columns=tuple(
+                    (
+                        _column("LastAcknowledgedVersion", "bigint", default="0")
+                        if column.name == "LastAcknowledgedSequence"
+                        else column
+                    )
+                    for column in table.columns
+                ),
+            )
+        elif table.name == "ChangeFeedState":
+            table = replace(
+                table,
+                columns=tuple(
+                    column
+                    for column in table.columns
+                    if column.name not in {"OldestAvailableSequence", "LastPrunedAt"}
+                ),
+            )
+        tables.append(table)
+    tables.append(
+        SqlTableDefinition(
+            "ostv",
+            "ChangeTransactions",
+            (
+                _column("TransactionId", "uniqueidentifier"),
+                _column("SourceSessionId", "uniqueidentifier", nullable=True),
+                _column("DatabaseGuid", "uniqueidentifier"),
+                _column("CommittedAt", "datetime2(3)", default="SYSUTCDATETIME()"),
+                _column("ResourceFamilySummary", "nvarchar(1024)", nullable=True),
+            ),
+            ("TransactionId",),
+            foreign_keys=(
+                SqlForeignKeyDefinition(
+                    "FK_ostv_ChangeTransactions_DatabaseMetadata",
+                    ("DatabaseGuid",),
+                    "ostv",
+                    "DatabaseMetadata",
+                    ("DatabaseGuid",),
+                ),
+            ),
+            indexes=(
+                SqlIndexDefinition(
+                    "IX_ostv_ChangeTransactions_SourceCommitted",
+                    ("SourceSessionId", "CommittedAt"),
+                ),
+                SqlIndexDefinition(
+                    "IX_ostv_ChangeTransactions_CommittedAt",
+                    ("CommittedAt",),
+                ),
+            ),
+        )
+    )
+    return tuple(tables)
+
+
+LATEST_SQL_SCHEMA = SqlSchemaDefinition(
+    version=4,
+    migration_name="commit-ordered collaboration feed",
+    core_schema=SQL_SCHEMA_V3.core_schema,
+    tables=_version_4_tables(),
+    change_tracking_tables=(("ostv", "ChangeTransactions"),),
 )
 
 

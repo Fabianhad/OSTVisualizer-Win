@@ -162,6 +162,7 @@ _DEFINITIONS = (
         CollaborationResourceType.DEFAULT_LAYERS_COLLECTION,
         CollaborationResourceFamily.LAYERS,
         collection=True,
+        reconciliation_supported=False,
     ),
     CollaborationResourceDefinition(
         CollaborationResourceType.TAKEOFF,

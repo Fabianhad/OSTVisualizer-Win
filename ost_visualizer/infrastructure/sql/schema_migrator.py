@@ -14,6 +14,7 @@ from .errors import (
 )
 from .schema_definition import (
     LATEST_SQL_SCHEMA,
+    SQL_SCHEMA_V3,
     SqlSchemaDefinition,
     render_sql_index,
     render_sql_table,
@@ -37,7 +38,7 @@ class SqlSchemaMigration:
 
 def _version_2_schema_snapshot() -> SqlSchemaDefinition:
     tables = []
-    for table in LATEST_SQL_SCHEMA.tables:
+    for table in SQL_SCHEMA_V3.tables:
         if table.name == "ExternalAdapterState":
             continue
         if table.name == "DatabaseMetadata":
@@ -75,7 +76,7 @@ def _version_2_schema_snapshot() -> SqlSchemaDefinition:
     return SqlSchemaDefinition(
         version=2,
         migration_name="multi-user collaboration schema",
-        core_schema=LATEST_SQL_SCHEMA.core_schema,
+        core_schema=SQL_SCHEMA_V3.core_schema,
         tables=tuple(tables),
     )
 
@@ -85,9 +86,7 @@ SQL_SCHEMA_V2 = _version_2_schema_snapshot()
 
 def _version_2_to_3_statements() -> tuple[str, ...]:
     adapter_state = next(
-        table
-        for table in LATEST_SQL_SCHEMA.tables
-        if table.name == "ExternalAdapterState"
+        table for table in SQL_SCHEMA_V3.tables if table.name == "ExternalAdapterState"
     )
     return (
         "ALTER TABLE [ostv].[DatabaseMetadata] ADD [WriterMode] nvarchar(32) "
@@ -114,8 +113,60 @@ def _version_2_to_3_statements() -> tuple[str, ...]:
 
 SQL_SCHEMA_V2_TO_V3 = SqlSchemaMigration(
     source_version=SQL_SCHEMA_V2.version,
-    target_version=LATEST_SQL_SCHEMA.version,
+    target_version=SQL_SCHEMA_V3.version,
     statements=_version_2_to_3_statements(),
+)
+
+
+def _version_3_to_4_statements() -> tuple[str, ...]:
+    transaction_table = next(
+        table
+        for table in LATEST_SQL_SCHEMA.tables
+        if table.name == "ChangeTransactions"
+    )
+    return (
+        render_sql_table(transaction_table),
+        *(
+            render_sql_index(transaction_table, index)
+            for index in transaction_table.indexes
+        ),
+        "ALTER TABLE [ostv].[ChangeTransactions] ENABLE CHANGE_TRACKING",
+        "ALTER TABLE [ostv].[Sessions] ADD [LastAcknowledgedVersion] bigint "
+        "NOT NULL CONSTRAINT [DF_ostv_Sessions_LastAcknowledgedVersion] "
+        "DEFAULT (0) WITH VALUES",
+        "UPDATE [ostv].[Sessions] SET [LastAcknowledgedVersion]="
+        "CHANGE_TRACKING_CURRENT_VERSION()",
+        "DECLARE @SessionsDefault sysname=(SELECT dc.[name] FROM "
+        "sys.default_constraints dc JOIN sys.columns c ON "
+        "c.[object_id]=dc.[parent_object_id] AND "
+        "c.[column_id]=dc.[parent_column_id] WHERE "
+        "dc.[parent_object_id]=OBJECT_ID(N'ostv.Sessions') AND "
+        "c.[name]=N'LastAcknowledgedSequence'); "
+        "IF @SessionsDefault IS NOT NULL BEGIN "
+        "DECLARE @SessionsSql nvarchar(max)=N'ALTER TABLE [ostv].[Sessions] "
+        "DROP CONSTRAINT ' + QUOTENAME(@SessionsDefault); "
+        "EXEC sys.sp_executesql @SessionsSql; END; "
+        "ALTER TABLE [ostv].[Sessions] DROP COLUMN [LastAcknowledgedSequence]",
+        "DECLARE @FeedDefault sysname=(SELECT dc.[name] FROM "
+        "sys.default_constraints dc JOIN sys.columns c ON "
+        "c.[object_id]=dc.[parent_object_id] AND "
+        "c.[column_id]=dc.[parent_column_id] WHERE "
+        "dc.[parent_object_id]=OBJECT_ID(N'ostv.ChangeFeedState') AND "
+        "c.[name]=N'OldestAvailableSequence'); "
+        "IF @FeedDefault IS NOT NULL BEGIN "
+        "DECLARE @FeedSql nvarchar(max)=N'ALTER TABLE "
+        "[ostv].[ChangeFeedState] DROP CONSTRAINT ' + "
+        "QUOTENAME(@FeedDefault); EXEC sys.sp_executesql @FeedSql; END; "
+        "ALTER TABLE [ostv].[ChangeFeedState] DROP COLUMN "
+        "[OldestAvailableSequence]",
+        "ALTER TABLE [ostv].[ChangeFeedState] DROP COLUMN [LastPrunedAt]",
+    )
+
+
+SQL_SCHEMA_V3_TO_V4 = SqlSchemaMigration(
+    source_version=SQL_SCHEMA_V3.version,
+    target_version=LATEST_SQL_SCHEMA.version,
+    statements=_version_3_to_4_statements(),
 )
 
 
@@ -125,13 +176,52 @@ class SqlSchemaMigrator:
         self._inspector = SqlSchemaInspector(connection_manager)
         self._validator = SqlSchemaValidator(LATEST_SQL_SCHEMA.core_schema)
 
-    def migrate_version_2_to_latest(
+    def migrate_version_2_to_3(
         self,
         location: SqlServerDatabaseLocation,
         password: str = "",
         *,
         application_version: str,
         actor: str = "",
+    ) -> SqlDatabaseCreationResult:
+        return self._migrate(
+            location,
+            password,
+            application_version=application_version,
+            actor=actor,
+            source_schema=SQL_SCHEMA_V2,
+            target_schema=SQL_SCHEMA_V3,
+            migration=SQL_SCHEMA_V2_TO_V3,
+        )
+
+    def migrate_version_3_to_4(
+        self,
+        location: SqlServerDatabaseLocation,
+        password: str = "",
+        *,
+        application_version: str,
+        actor: str = "",
+    ) -> SqlDatabaseCreationResult:
+        return self._migrate(
+            location,
+            password,
+            application_version=application_version,
+            actor=actor,
+            source_schema=SQL_SCHEMA_V3,
+            target_schema=LATEST_SQL_SCHEMA,
+            migration=SQL_SCHEMA_V3_TO_V4,
+        )
+
+    def _migrate(
+        self,
+        location: SqlServerDatabaseLocation,
+        password: str,
+        *,
+        application_version: str,
+        actor: str,
+        source_schema: SqlSchemaDefinition,
+        target_schema: SqlSchemaDefinition,
+        migration: SqlSchemaMigration,
     ) -> SqlDatabaseCreationResult:
         if not location.database:
             raise ValueError("A target SQL Server database is required")
@@ -144,26 +234,38 @@ class SqlSchemaMigrator:
                     acquire_schema_transaction_lock(cursor)
                 before = self._inspector.inspect_connection(lease)
                 source_report = self._validator.validate_versioned_schema(
-                    before, SQL_SCHEMA_V2
+                    before, source_schema
                 )
                 if source_report.compatibility != SqlSchemaCompatibility.CURRENT:
                     raise SqlInfrastructureError(
                         SqlErrorDetails(
                             SqlErrorCode.UNSUPPORTED_SCHEMA,
-                            "Only an exact OST Visualizer schema version 2 database "
-                            "can be upgraded to the current schema.",
+                            "Only an exact OST Visualizer schema version "
+                            f"{source_schema.version} database can be upgraded by "
+                            "this migration.",
+                        )
+                    )
+                if (
+                    target_schema.change_tracking_tables
+                    and not before.change_tracking_enabled
+                ):
+                    raise SqlInfrastructureError(
+                        SqlErrorDetails(
+                            SqlErrorCode.UNSUPPORTED_SCHEMA,
+                            "Enable SQL Server Change Tracking on the database before "
+                            "running the version 3 to 4 schema migration.",
                         )
                     )
                 with lease.cursor() as cursor:
-                    for statement in SQL_SCHEMA_V2_TO_V3.statements:
+                    for statement in migration.statements:
                         cursor.execute(statement)
                     cursor.execute(
                         "INSERT INTO [ostv].[SchemaMigrations] "
                         "([Version], [Name], [Checksum], [AppliedBy], "
                         "[ApplicationVersion]) VALUES (?, ?, ?, ?, ?)",
-                        LATEST_SQL_SCHEMA.version,
-                        LATEST_SQL_SCHEMA.migration_name,
-                        LATEST_SQL_SCHEMA.checksum,
+                        target_schema.version,
+                        target_schema.migration_name,
+                        target_schema.checksum,
                         actor_name,
                         application_version,
                     )
@@ -171,9 +273,9 @@ class SqlSchemaMigrator:
                         "UPDATE [ostv].[DatabaseMetadata] SET [SchemaVersion]=?, "
                         "[LastMigratedAt]=SYSUTCDATETIME(), [LastMigratedBy]=? "
                         "WHERE [Product]=N'OST Visualizer' AND [SchemaVersion]=?",
-                        LATEST_SQL_SCHEMA.version,
+                        target_schema.version,
                         actor_name,
-                        SQL_SCHEMA_V2.version,
+                        source_schema.version,
                     )
                     if cursor.rowcount != 1:
                         raise SqlInfrastructureError(
@@ -183,7 +285,9 @@ class SqlSchemaMigrator:
                             )
                         )
                 after = self._inspector.inspect_connection(lease)
-                final_report = self._validator.validate(after)
+                final_report = self._validator.validate_versioned_schema(
+                    after, target_schema
+                )
                 if final_report.compatibility != SqlSchemaCompatibility.CURRENT:
                     raise SqlInfrastructureError(
                         SqlErrorDetails(
@@ -203,4 +307,4 @@ class SqlSchemaMigrator:
                     except pyodbc.Error:
                         pass
         final_location = replace(location, database_guid=after.database_guid)
-        return SqlDatabaseCreationResult(final_location, LATEST_SQL_SCHEMA.version)
+        return SqlDatabaseCreationResult(final_location, target_schema.version)

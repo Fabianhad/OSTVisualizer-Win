@@ -78,6 +78,11 @@ class FullReconciliationRequiredEvent:
 
 
 @dataclass
+class EditLeaseLostEvent:
+    database_id: str = ""
+
+
+@dataclass
 class TakeoffsChangedEvent:
     page_uid: str = ""
     takeoff_uids: list = field(default_factory=list)
@@ -180,6 +185,7 @@ class AppEvents:
     PRESENCE_CHANGED = PresenceChangedEvent
     SYNCHRONIZATION_CONFLICT = SynchronizationConflictEvent
     FULL_RECONCILIATION_REQUIRED = FullReconciliationRequiredEvent
+    EDIT_LEASE_LOST = EditLeaseLostEvent
     TAKEOFFS_CHANGED = TakeoffsChangedEvent
     ANNOTATIONS_CHANGED = AnnotationsChangedEvent
     FILE_UNLOADED = FileUnloadedEvent

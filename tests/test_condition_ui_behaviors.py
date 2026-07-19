@@ -1021,7 +1021,9 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             placement=SimpleNamespace(is_active=False),
             _is_takeoff_2d_view_active=lambda: True,
             flush_deferred_for_file=lambda _file_path: True,
-            begin_collaboration_edit=lambda _database_id, _resources: True,
+            request_collaboration_edit=(
+                lambda _database_id, _resources, callback: callback(True)
+            ),
             end_collaboration_edit=lambda _database_id, _resources: None,
         )
         handler = ConditionActionHandler(

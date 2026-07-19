@@ -1,13 +1,16 @@
 from ...application.dtos.collaboration_dtos import ResourceRef
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
 
+SQL_SCHEMA_LOCK_RESOURCE = "OSTVisualizer.SchemaInitialization"
+
 
 def acquire_schema_transaction_lock(cursor) -> None:
     cursor.execute(
         "DECLARE @result int; EXEC @result=sys.sp_getapplock "
-        "@Resource=N'OSTVisualizer.SchemaInitialization', "
+        "@Resource=?, "
         "@LockMode=N'Exclusive', @LockOwner=N'Transaction', "
-        "@LockTimeout=10000; SELECT @result"
+        "@LockTimeout=10000; SELECT @result",
+        SQL_SCHEMA_LOCK_RESOURCE,
     )
     row = cursor.fetchone()
     if row is None or int(row[0]) < 0:

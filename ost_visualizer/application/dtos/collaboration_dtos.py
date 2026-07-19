@@ -86,7 +86,7 @@ class ExpectedResourceVersion:
 class DatabaseSession:
     database_id: str
     session_id: str
-    last_acknowledged_sequence: int = 0
+    last_acknowledged_version: int = 0
 
 
 @dataclass(frozen=True)
@@ -108,8 +108,15 @@ class ResourceLock:
 
 
 @dataclass(frozen=True)
+class EditLeaseResult:
+    granted: bool
+    message: str = ""
+
+
+@dataclass(frozen=True)
 class DatabaseChange:
     sequence: int
+    commit_version: int
     transaction_id: str
     source_session_id: Optional[str]
     resource: ResourceRef
@@ -124,8 +131,9 @@ class DatabaseChange:
 class DatabaseChangeBatch:
     database_id: str
     feed_epoch: str
-    oldest_available_sequence: int
-    high_water_sequence: int
+    minimum_valid_version: int
+    high_water_version: int
+    delivered_through_version: int
     changes: tuple[DatabaseChange, ...] = ()
 
 
@@ -182,6 +190,19 @@ class CollaborationStatus:
     message: str = ""
     locked_resources: frozenset[ResourceRef] = frozenset()
     conflicted_resources: frozenset[ResourceRef] = frozenset()
+
+
+@dataclass(frozen=True)
+class CollaborationMetrics:
+    database_id: str
+    poll_count: int = 0
+    poll_duration_seconds: float = 0.0
+    transaction_count: int = 0
+    change_row_count: int = 0
+    reconciliation_count: int = 0
+    reconciliation_duration_seconds: float = 0.0
+    retention_gap_count: int = 0
+    reconnect_count: int = 0
 
 
 @dataclass(frozen=True)

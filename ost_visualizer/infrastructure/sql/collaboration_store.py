@@ -64,16 +64,14 @@ class SqlCollaborationStore(ICollaborationStore):
                     if guid_row is None:
                         raise _session_error("SQL collaboration metadata is missing.")
                     database_guid = str(guid_row[0])
-                    cursor.execute(
-                        "SELECT COALESCE(MAX([Sequence]), 0) " "FROM [ostv].[ChangeLog]"
-                    )
-                    initial_sequence = int(cursor.fetchone()[0])
+                    cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
+                    initial_version = int(cursor.fetchone()[0] or 0)
                     cursor.execute(
                         "INSERT INTO [ostv].[Sessions] "
                         "([SessionId], [DatabaseGuid], [ClientInstanceId], "
                         "[SqlPrincipal], [DisplayName], [MachineName], "
                         "[ApplicationVersion], [LastHeartbeatAt], "
-                        "[LastAcknowledgedSequence]) "
+                        "[LastAcknowledgedVersion]) "
                         "VALUES (?, ?, ?, CONVERT(nvarchar(256), ORIGINAL_LOGIN()), "
                         "?, ?, ?, SYSUTCDATETIME(), ?)",
                         session_id,
@@ -82,7 +80,7 @@ class SqlCollaborationStore(ICollaborationStore):
                         display_name,
                         machine_name,
                         application_version,
-                        initial_sequence,
+                        initial_version,
                     )
                 lease.commit()
                 committed = True
@@ -92,14 +90,14 @@ class SqlCollaborationStore(ICollaborationStore):
         return DatabaseSession(
             database_id=database_id,
             session_id=session_id,
-            last_acknowledged_sequence=initial_sequence,
+            last_acknowledged_version=initial_version,
         )
 
     def heartbeat(
         self,
         database_id: str,
         session_id: str,
-        acknowledged_sequence: int,
+        acknowledged_version: int,
         bid_uid: Optional[int],
         page_uid: Optional[int],
         mode: PresenceMode,
@@ -113,14 +111,14 @@ class SqlCollaborationStore(ICollaborationStore):
                     cursor.execute(
                         "UPDATE [ostv].[Sessions] SET "
                         "[LastHeartbeatAt]=SYSUTCDATETIME(), "
-                        "[LastAcknowledgedSequence]=CASE WHEN ? > "
-                        "[LastAcknowledgedSequence] THEN ? ELSE "
-                        "[LastAcknowledgedSequence] END "
-                        "OUTPUT INSERTED.[LastAcknowledgedSequence] "
+                        "[LastAcknowledgedVersion]=CASE WHEN ? > "
+                        "[LastAcknowledgedVersion] THEN ? ELSE "
+                        "[LastAcknowledgedVersion] END "
+                        "OUTPUT INSERTED.[LastAcknowledgedVersion] "
                         "WHERE [SessionId]=? AND [DisconnectedAt] IS NULL AND "
                         "[LastHeartbeatAt] >= DATEADD(second, ?, SYSUTCDATETIME())",
-                        acknowledged_sequence,
-                        acknowledged_sequence,
+                        acknowledged_version,
+                        acknowledged_version,
                         session_id,
                         -COLLABORATION_STALE_SECONDS,
                     )
@@ -162,7 +160,7 @@ class SqlCollaborationStore(ICollaborationStore):
         return DatabaseSession(
             database_id=database_id,
             session_id=session_id,
-            last_acknowledged_sequence=int(row[0]),
+            last_acknowledged_version=int(row[0]),
         )
 
     def close_session(self, database_id: str, session_id: str, reason: str) -> None:
@@ -392,61 +390,103 @@ class SqlCollaborationStore(ICollaborationStore):
         return deleted
 
     def poll_changes(
-        self, database_id: str, after_sequence: int, limit: int
+        self, database_id: str, after_version: int, limit: int
     ) -> DatabaseChangeBatch:
         batch_limit = max(1, min(int(limit), _MAX_CHANGE_BATCH))
         request = self._requests.request(database_id, read_only=True)
         with self._connections.connection(request, autocommit=True) as lease:
             with lease.cursor() as cursor:
                 cursor.execute(
-                    "SELECT CONVERT(nvarchar(36), f.[FeedEpoch]), "
-                    "f.[OldestAvailableSequence], "
-                    "COALESCE((SELECT MAX([Sequence]) FROM [ostv].[ChangeLog]), 0) "
+                    "SELECT CONVERT(nvarchar(36), f.[FeedEpoch]) "
                     "FROM [ostv].[ChangeFeedState] f WHERE f.[SingletonId]=1"
                 )
                 state = cursor.fetchone()
                 if state is None:
                     raise _session_error("SQL change-feed metadata is missing.")
                 cursor.execute(
-                    f"SELECT TOP ({batch_limit + 1}) [Sequence], "
-                    "CASE WHEN [SourceKind]=N'external' AND "
-                    "[ExternalTransactionKey] IS NOT NULL THEN "
-                    "[ExternalTransactionKey] ELSE "
-                    "CONVERT(nvarchar(36), [TransactionId]) END, "
-                    "CONVERT(nvarchar(36), [SourceSessionId]), "
-                    "[BidUID], "
-                    "[ResourceType], [ResourceId], [Operation], [ResultVersion], "
-                    "[ChangedFields], [Payload], [SourceKind] "
-                    "FROM [ostv].[ChangeLog] WHERE [Sequence] > ? "
-                    "ORDER BY [Sequence]",
-                    after_sequence,
+                    "SELECT CHANGE_TRACKING_CURRENT_VERSION(), "
+                    "CHANGE_TRACKING_MIN_VALID_VERSION("
+                    "OBJECT_ID(N'ostv.ChangeTransactions'))"
                 )
-                rows = cursor.fetchall()
-        if len(rows) > batch_limit:
-            overflow_transaction = str(rows[batch_limit][1])
-            included = rows[:batch_limit]
-            last_transaction = str(included[-1][1])
-            if overflow_transaction == last_transaction:
-                transaction_start = next(
-                    index
-                    for index, row in enumerate(included)
-                    if str(row[1]) == last_transaction
-                )
-                if transaction_start == 0:
-                    raise ValueError(
-                        "A SQL change transaction exceeds the supported batch size."
+                versions = cursor.fetchone()
+                if versions is None or versions[0] is None or versions[1] is None:
+                    raise ValueError("SQL Change Tracking metadata is unavailable.")
+                high_water_version = int(versions[0])
+                minimum_valid_version = int(versions[1])
+                if after_version and (
+                    after_version < minimum_valid_version
+                    or after_version > high_water_version
+                ):
+                    return DatabaseChangeBatch(
+                        database_id=database_id,
+                        feed_epoch=str(state[0]),
+                        minimum_valid_version=minimum_valid_version,
+                        high_water_version=high_water_version,
+                        delivered_through_version=after_version,
                     )
-                rows = included[:transaction_start]
-            else:
-                rows = included
+                cursor.execute(
+                    f"SELECT TOP ({batch_limit}) WITH TIES "
+                    "ct.[SYS_CHANGE_VERSION], "
+                    "ct.[SYS_CHANGE_OPERATION], "
+                    "CONVERT(nvarchar(36), ct.[TransactionId]) "
+                    "FROM CHANGETABLE(CHANGES [ostv].[ChangeTransactions], ?) ct "
+                    "WHERE ct.[SYS_CHANGE_VERSION] <= ? "
+                    "ORDER BY ct.[SYS_CHANGE_VERSION]",
+                    after_version,
+                    high_water_version,
+                )
+                marker_rows = cursor.fetchall()
+                if any(str(row[1]) != "I" for row in marker_rows):
+                    raise ValueError(
+                        "SQL transaction-marker history contains an invalid change."
+                    )
+                markers = tuple((str(row[2]), int(row[0])) for row in marker_rows)
+                rows = self._load_transaction_changes(cursor, markers)
+        delivered_through_version = (
+            markers[-1][1] if len(markers) >= batch_limit else high_water_version
+        )
         changes = tuple(_change_from_row(row) for row in rows)
         return DatabaseChangeBatch(
             database_id=database_id,
             feed_epoch=str(state[0]),
-            oldest_available_sequence=int(state[1]),
-            high_water_sequence=int(state[2]),
+            minimum_valid_version=minimum_valid_version,
+            high_water_version=high_water_version,
+            delivered_through_version=delivered_through_version,
             changes=changes,
         )
+
+    @staticmethod
+    def _load_transaction_changes(cursor, markers: tuple[tuple[str, int], ...]):
+        if not markers:
+            return ()
+        values_sql = ", ".join(
+            "(CONVERT(uniqueidentifier, ?), CONVERT(bigint, ?))" for _ in markers
+        )
+        parameters = tuple(value for marker in markers for value in marker)
+        cursor.execute(
+            "WITH MarkerVersions ([TransactionId], [CommitVersion]) AS ("
+            f"SELECT * FROM (VALUES {values_sql}) marker_values "
+            "([TransactionId], [CommitVersion])) "
+            "SELECT l.[Sequence], m.[CommitVersion], "
+            "CONVERT(nvarchar(36), l.[TransactionId]), "
+            "CONVERT(nvarchar(36), l.[SourceSessionId]), l.[BidUID], "
+            "l.[ResourceType], l.[ResourceId], l.[Operation], "
+            "l.[ResultVersion], l.[ChangedFields], l.[Payload], l.[SourceKind] "
+            "FROM MarkerVersions m LEFT JOIN [ostv].[ChangeLog] l ON "
+            "l.[TransactionId]=m.[TransactionId] "
+            "ORDER BY m.[CommitVersion], l.[Sequence]",
+            *parameters,
+        )
+        rows = tuple(cursor.fetchall())
+        transaction_ids = {str(row[2]) for row in rows if row[0] is not None}
+        missing = {transaction_id for transaction_id, _version in markers}.difference(
+            transaction_ids
+        )
+        if missing:
+            raise ValueError(
+                "A committed SQL transaction marker has no ChangeLog records."
+            )
+        return rows
 
     @staticmethod
     def _cleanup(cursor) -> None:
@@ -462,19 +502,6 @@ class SqlCollaborationStore(ICollaborationStore):
             "DELETE FROM [ostv].[Sessions] WHERE [DisconnectedAt] < "
             "DATEADD(day, -30, SYSUTCDATETIME());",
             -COLLABORATION_STALE_SECONDS,
-        )
-        cursor.execute(
-            "IF EXISTS (SELECT 1 FROM [ostv].[ChangeFeedState] WHERE "
-            "[SingletonId]=1 AND ([LastPrunedAt] IS NULL OR [LastPrunedAt] < "
-            "DATEADD(day, -1, SYSUTCDATETIME()))) BEGIN "
-            "DECLARE @keepFrom bigint = COALESCE((SELECT MIN([Sequence]) FROM "
-            "(SELECT TOP (100000) [Sequence] FROM [ostv].[ChangeLog] "
-            "ORDER BY [Sequence] DESC) recent), 0); "
-            "DELETE FROM [ostv].[ChangeLog] WHERE [ChangedAt] < "
-            "DATEADD(day, -30, SYSUTCDATETIME()) AND [Sequence] < @keepFrom; "
-            "UPDATE [ostv].[ChangeFeedState] SET [OldestAvailableSequence]="
-            "COALESCE((SELECT MIN([Sequence]) FROM [ostv].[ChangeLog]), 0), "
-            "[LastPrunedAt]=SYSUTCDATETIME() WHERE [SingletonId]=1; END;"
         )
 
 
@@ -494,8 +521,8 @@ def _require_active_session(cursor, session_id: str) -> None:
 
 def _change_from_row(row) -> DatabaseChange:
     changed_fields: tuple[str, ...] = ()
-    if row[8]:
-        parsed = json.loads(str(row[8]))
+    if row[9]:
+        parsed = json.loads(str(row[9]))
         if not isinstance(parsed, list) or not all(
             isinstance(value, str) for value in parsed
         ):
@@ -503,20 +530,21 @@ def _change_from_row(row) -> DatabaseChange:
         changed_fields = tuple(parsed)
     return DatabaseChange(
         sequence=int(row[0]),
-        transaction_id=str(row[1]),
-        source_session_id=str(row[2]) if row[2] else None,
+        commit_version=int(row[1]),
+        transaction_id=str(row[2]),
+        source_session_id=str(row[3]) if row[3] else None,
         resource=ResourceRef(
-            resource_type=str(row[4]),
-            resource_id=str(row[5]),
-            bid_uid=int(row[3]) if row[3] is not None else None,
+            resource_type=str(row[5]),
+            resource_id=str(row[6]),
+            bid_uid=int(row[4]) if row[4] is not None else None,
         ),
-        operation=ChangeOperation(str(row[6])),
+        operation=ChangeOperation(str(row[7])),
         resulting_version=(
-            ConcurrencyToken.from_database(row[7]) if row[7] is not None else None
+            ConcurrencyToken.from_database(row[8]) if row[8] is not None else None
         ),
         changed_fields=changed_fields,
-        payload=str(row[9] or ""),
-        source_kind=ChangeSourceKind(str(row[10])),
+        payload=str(row[10] or ""),
+        source_kind=ChangeSourceKind(str(row[11])),
     )
 
 

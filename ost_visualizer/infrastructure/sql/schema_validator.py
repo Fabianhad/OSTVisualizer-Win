@@ -72,6 +72,7 @@ class SqlSchemaValidator:
                 tuple(problems),
             )
         problems.extend(self._validate_ostv_tables(inventory, LATEST_SQL_SCHEMA))
+        problems.extend(self._validate_change_tracking(inventory, LATEST_SQL_SCHEMA))
         if inventory.schema_checksum != LATEST_SQL_SCHEMA.checksum:
             problems.append("ostv.SchemaMigrations.Checksum")
         return SqlSchemaValidationReport(
@@ -96,6 +97,7 @@ class SqlSchemaValidator:
             )
         problems = self._validate_core_tables(inventory, require_constraints=True)
         problems.extend(self._validate_ostv_tables(inventory, schema))
+        problems.extend(self._validate_change_tracking(inventory, schema))
         if inventory.schema_checksum != schema.checksum:
             problems.append("ostv.SchemaMigrations.Checksum")
         return SqlSchemaValidationReport(
@@ -107,6 +109,22 @@ class SqlSchemaValidator:
             inventory.schema_version,
             tuple(problems),
         )
+
+    @staticmethod
+    def _validate_change_tracking(
+        inventory: SqlSchemaInventory, schema: SqlSchemaDefinition
+    ) -> list[str]:
+        if not schema.change_tracking_tables:
+            return []
+        problems = []
+        if not inventory.change_tracking_enabled:
+            problems.append("database.change_tracking")
+        problems.extend(
+            f"{table_schema}.{table}.change_tracking"
+            for table_schema, table in schema.change_tracking_tables
+            if (table_schema, table) not in inventory.change_tracking_tables
+        )
+        return problems
 
     def validate_adoption_candidate(
         self, inventory: SqlSchemaInventory

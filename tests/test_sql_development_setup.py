@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import tools.manage_sql_development as sql_development
 from tools.manage_sql_development import (
     CLIENT_CREDENTIAL_TARGET,
     CLIENT_DATABASE,
@@ -27,6 +28,24 @@ class SqlDevelopmentSetupTests(unittest.TestCase):
         self.assertEqual(SERVER_HOST, socket.gethostname())
         self.assertEqual(SERVER_PORT, 1433)
         self.assertEqual(SERVER_ENDPOINT, f"tcp:{SERVER_HOST}")
+
+    def test_provisioning_refuses_a_different_instance_on_the_default_port(self):
+        class _Cursor:
+            def execute(self, _sql):
+                return None
+
+            def fetchone(self):
+                return ("UNRELATED",)
+
+            def close(self):
+                return None
+
+        class _Connection:
+            def cursor(self):
+                return _Cursor()
+
+        with self.assertRaisesRegex(RuntimeError, "OSTVDEV"):
+            sql_development.require_owned_sql_instance(_Connection())
 
     def test_generated_passwords_are_long_random_urlsafe_values(self):
         first = generate_client_password()

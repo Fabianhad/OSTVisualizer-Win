@@ -1,4 +1,9 @@
 import unittest
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    CollaborationStatus,
+    EditLeaseResult,
+    SynchronizationState,
+)
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
 from ost_visualizer.application.services.project_write_service import WriteReloadResult
 from ost_visualizer.domain.entities.annotation import ANNOTATION_TYPE_TEXT
@@ -36,6 +41,9 @@ class FakeUiState:
 class FakeSqlCollaboration:
     def update_presence(self, *_args):
         return None
+
+    def status(self, database_id):
+        return CollaborationStatus(database_id, SynchronizationState.STOPPED)
 
 
 class FakeProjectData:
@@ -535,6 +543,134 @@ class FakeRefreshNav:
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_denied_collaboration_lease_reports_the_store_message(self):
+        warnings = []
+        callbacks = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.main_window = object()
+        coordinator._sql_collaboration = type(
+            "SqlCollaboration",
+            (),
+            {
+                "request_local_edit": lambda _self, _database_id, _resources, callback, **_kwargs: callback(
+                    EditLeaseResult(False, "The resource is already being edited.")
+                )
+            },
+        )()
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        old_warning = ui_event_coordinator.show_warning
+        ui_event_coordinator.show_warning = lambda *args: warnings.append(args)
+        try:
+            coordinator.request_collaboration_edit(
+                "database",
+                (),
+                callbacks.append,
+            )
+        finally:
+            ui_event_coordinator.show_warning = old_warning
+        self.assertEqual(callbacks, [False])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("already being edited", warnings[0][2])
+
+    def test_late_collaboration_lease_grant_is_denied_during_cleanup(self):
+        callbacks = []
+        warnings = []
+        pending = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
+        coordinator.main_window = object()
+        coordinator._sql_collaboration = type(
+            "SqlCollaboration",
+            (),
+            {
+                "request_local_edit": lambda _self, _database_id, _resources, callback, **_kwargs: pending.append(
+                    callback
+                )
+            },
+        )()
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        old_warning = ui_event_coordinator.show_warning
+        ui_event_coordinator.show_warning = lambda *args: warnings.append(args)
+        try:
+            coordinator.request_collaboration_edit(
+                "database",
+                (),
+                callbacks.append,
+            )
+            coordinator._is_cleaning_up = True
+            pending[0](EditLeaseResult(True))
+        finally:
+            ui_event_coordinator.show_warning = old_warning
+        self.assertEqual(callbacks, [False])
+        self.assertEqual(warnings, [])
+
+    def test_inactive_database_reconciliation_does_not_replace_active_project_state(
+        self,
+    ):
+        reloads = []
+        cancelled = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = type(
+            "ProjectData",
+            (),
+            {"get_current_file_path": lambda _self: "active-database"},
+        )()
+        coordinator._deferred_persistence = type(
+            "Persistence",
+            (),
+            {
+                "cancel_for_file": lambda _self, database_id: cancelled.append(
+                    database_id
+                )
+            },
+        )()
+        coordinator.project_operations = type(
+            "Operations",
+            (),
+            {
+                "reload_database": lambda _self, database_id: (
+                    reloads.append(database_id) or True
+                )
+            },
+        )()
+        coordinator.event_bus = type(
+            "EventBus", (), {"publish": lambda _self, *_args, **_kwargs: None}
+        )()
+        coordinator.main_window = object()
+        coordinator._on_full_reconciliation_required("inactive-database", "gap")
+        self.assertEqual(cancelled, ["inactive-database"])
+        self.assertEqual(reloads, [])
+
+    def test_inactive_database_lease_loss_cancels_only_its_deferred_writes(self):
+        cancelled = []
+        placement_exits = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = type(
+            "UiState",
+            (),
+            {"selected_file_path": "active-database"},
+        )()
+        coordinator._deferred_persistence = type(
+            "Persistence",
+            (),
+            {
+                "cancel_for_file": lambda _self, database_id: cancelled.append(
+                    database_id
+                )
+            },
+        )()
+        coordinator._placement = type(
+            "Placement",
+            (),
+            {"force_exit": lambda _self: placement_exits.append(True)},
+        )()
+        coordinator._on_edit_lease_lost("inactive-database")
+        self.assertEqual(cancelled, ["inactive-database"])
+        self.assertEqual(placement_exits, [])
+
     def _make_page_selection_coordinator(self, *, bid_ref=None, current_state=None):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         nav = NavigationStateMachine()

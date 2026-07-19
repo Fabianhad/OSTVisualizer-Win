@@ -13,10 +13,11 @@ from .client_permissions import (
     SQL_CLIENT_DATABASE_ROLES,
     SQL_CLIENT_PROTECTED_OSTV_TABLES,
     SQL_CLIENT_SCHEMA_VISIBILITY,
+    SQL_CLIENT_TRANSACTION_MARKER_TABLE,
 )
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlInfrastructureError
-from .schema_definition import LATEST_SQL_SCHEMA, schema_record_is_current
+from .schema_definition import schema_record_is_current
 
 
 class SqlDatabasePermissionProbe:
@@ -54,7 +55,13 @@ class SqlDatabasePermissionProbe:
                         "SELECT m.[SchemaVersion], sm.[Checksum], "
                         "DATABASEPROPERTYEX(DB_NAME(), N'Updateability'), "
                         "m.[WriterMode], a.[AdapterState], "
-                        "a.[ResourceCatalogChecksum] "
+                        "a.[ResourceCatalogChecksum], "
+                        "CASE WHEN EXISTS (SELECT 1 FROM "
+                        "sys.change_tracking_databases WHERE database_id=DB_ID()) "
+                        "THEN 1 ELSE 0 END, "
+                        "CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_tables "
+                        "WHERE object_id=OBJECT_ID(N'ostv.ChangeTransactions')) "
+                        "THEN 1 ELSE 0 END "
                         "FROM [ostv].[DatabaseMetadata] m "
                         "JOIN [ostv].[SchemaMigrations] sm "
                         "ON sm.[Version]=m.[SchemaVersion] "
@@ -101,12 +108,30 @@ class SqlDatabasePermissionProbe:
                         *SQL_CLIENT_PROTECTED_OSTV_TABLES,
                     )
                     collaboration_row = cursor.fetchone()
+                    marker_name = "N'ostv.' + QUOTENAME(?)"
+                    cursor.execute(
+                        "SELECT "
+                        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', "
+                        "N'SELECT'), 0), "
+                        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', "
+                        "N'INSERT'), 0), "
+                        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', "
+                        "N'UPDATE'), 0), "
+                        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', "
+                        "N'DELETE'), 0), "
+                        f"COALESCE(HAS_PERMS_BY_NAME({marker_name}, N'OBJECT', "
+                        "N'VIEW CHANGE TRACKING'), 0)",
+                        *(SQL_CLIENT_TRANSACTION_MARKER_TABLE for _ in range(5)),
+                    )
+                    marker_row = cursor.fetchone()
         except SqlInfrastructureError:
             return False
         return bool(
             row is not None
             and schema_record_is_current(row[0], row[1])
             and str(row[2]).casefold() == "read_write"
+            and int(row[6]) == 1
+            and int(row[7]) == 1
             and (
                 str(row[3]) == "ost_visualizer_only"
                 or (
@@ -119,4 +144,6 @@ class SqlDatabasePermissionProbe:
             and int(collaboration_row[0]) == len(SQL_CLIENT_COLLABORATION_WRITE_TABLES)
             and int(collaboration_row[1]) == 0
             and int(collaboration_row[2]) == 0
+            and marker_row is not None
+            and tuple(int(value) for value in marker_row) == (1, 1, 0, 0, 1)
         )

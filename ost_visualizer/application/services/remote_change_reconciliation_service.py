@@ -54,6 +54,11 @@ class RemoteChangeReconciliationService:
                     allowed_actions=[action.value for action in plan.actions],
                 )
             return False
+        if any(
+            change.resource.resource_type not in SUPPORTED_REMOTE_RESOURCE_TYPES
+            for change in batch.changes
+        ):
+            return False
         active_ref = self._project_data.get_current_bid_ref()
         if not self._is_complete_for_active_bid(hydrated, active_ref):
             return False

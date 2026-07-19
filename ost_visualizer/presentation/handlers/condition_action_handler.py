@@ -816,13 +816,20 @@ class ConditionActionHandler:
         edit_resources = tuple(
             ResourceRef("condition", uid, bid_uid) for uid in condition_uids
         )
-        if not self._coordinator.begin_collaboration_edit(
-            bid_ref.file_path, edit_resources
-        ):
-            dialog.deleteLater()
-            return
-        try:
-            exec_with_ost_blocking(dialog, self._coordinator.event_bus)
-        finally:
-            self._coordinator.end_collaboration_edit(bid_ref.file_path, edit_resources)
-            dialog.deleteLater()
+
+        def resolved(granted: bool) -> None:
+            try:
+                if granted:
+                    exec_with_ost_blocking(dialog, self._coordinator.event_bus)
+            finally:
+                if granted:
+                    self._coordinator.end_collaboration_edit(
+                        bid_ref.file_path, edit_resources
+                    )
+                dialog.deleteLater()
+
+        self._coordinator.request_collaboration_edit(
+            bid_ref.file_path,
+            edit_resources,
+            resolved,
+        )

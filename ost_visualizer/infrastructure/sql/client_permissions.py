@@ -9,12 +9,16 @@ SQL_CLIENT_COLLABORATION_WRITE_TABLES = (
     "Locks",
     "EntityVersions",
     "ChangeLog",
-    "ChangeFeedState",
 )
+SQL_CLIENT_TRANSACTION_MARKER_TABLE = "ChangeTransactions"
 SQL_CLIENT_PROTECTED_OSTV_TABLES = tuple(
     table.name
     for table in LATEST_SQL_SCHEMA.tables
-    if table.name not in SQL_CLIENT_COLLABORATION_WRITE_TABLES
+    if table.name
+    not in {
+        *SQL_CLIENT_COLLABORATION_WRITE_TABLES,
+        SQL_CLIENT_TRANSACTION_MARKER_TABLE,
+    }
 )
 
 
@@ -37,6 +41,12 @@ def apply_sql_client_permissions(cursor, database_user: str = "") -> None:
             "EXEC sys.sp_executesql @statement;"
             for table in SQL_CLIENT_PROTECTED_OSTV_TABLES
         ),
+        "SET @statement=N'DENY UPDATE, DELETE ON "
+        f"[ostv].[{SQL_CLIENT_TRANSACTION_MARKER_TABLE}] TO ' + "
+        "QUOTENAME(@database_user); EXEC sys.sp_executesql @statement;",
+        "SET @statement=N'GRANT VIEW CHANGE TRACKING ON OBJECT::"
+        f"[ostv].[{SQL_CLIENT_TRANSACTION_MARKER_TABLE}] TO ' + "
+        "QUOTENAME(@database_user); EXEC sys.sp_executesql @statement;",
     ]
     cursor.execute(
         "DECLARE @database_user sysname=NULLIF(LTRIM(RTRIM(?)), N''); "

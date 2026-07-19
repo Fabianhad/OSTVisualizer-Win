@@ -40,6 +40,7 @@ from ost_visualizer.infrastructure.sql.errors import (
 )
 from ost_visualizer.infrastructure.sql.permissions import SqlDatabasePermissionProbe
 from ost_visualizer.infrastructure.sql.client_permissions import (
+    SQL_CLIENT_COLLABORATION_WRITE_TABLES,
     SQL_CLIENT_DATABASE_ROLES,
     apply_sql_client_permissions,
 )
@@ -48,7 +49,11 @@ from ost_visualizer.infrastructure.sql.schema_inspector import (
     SqlSchemaInventory,
 )
 from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
-from ost_visualizer.application.dtos.collaboration_dtos import DatabaseMutationRequest
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    ChangeOperation,
+    DatabaseMutationRequest,
+    ResourceRef,
+)
 from ost_visualizer.application.services.database_session_registry import (
     DatabaseSessionRegistry,
 )
@@ -164,6 +169,8 @@ class _CreationCursor:
         self.close()
 
     def fetchone(self):
+        if "IS_ROLEMEMBER" in self._last_sql:
+            return (1, 1)
         if "sp_getapplock" in self._last_sql:
             return (0,)
         if "FROM [ostv].[Sessions]" in self._last_sql:
@@ -181,6 +188,8 @@ class _CreationCursor:
                 "ost_visualizer_only",
                 "disabled",
                 None,
+                1,
+                1,
             )
         return (0,)
 
@@ -220,6 +229,8 @@ class _WriterCursor(_CreationCursor):
         self.close_count = 0
 
     def fetchone(self):
+        if "IS_ROLEMEMBER" in self._last_sql:
+            return (1, 1)
         if "SchemaMigrations" in self._last_sql:
             return (
                 LATEST_SQL_SCHEMA.version,
@@ -227,11 +238,17 @@ class _WriterCursor(_CreationCursor):
                 "ost_visualizer_only",
                 "disabled",
                 None,
+                1,
+                1,
             )
         if "sp_getapplock" in self._last_sql:
             return (0,)
         if "FROM [ostv].[Sessions]" in self._last_sql:
             return (1,)
+        if "SELECT TOP (1) [DatabaseGuid]" in self._last_sql:
+            return ("00000000-0000-0000-0000-000000000001",)
+        if "OUTPUT INSERTED.[Token]" in self._last_sql:
+            return (b"\x00\x00\x00\x00\x00\x00\x00\x01",)
         return None
 
     def close(self):
@@ -298,11 +315,17 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 self,
                 role_result,
                 metadata_result,
-                collaboration_result=(6, 0, 0),
+                collaboration_result=(
+                    len(SQL_CLIENT_COLLABORATION_WRITE_TABLES),
+                    0,
+                    0,
+                ),
+                marker_result=(1, 1, 0, 0, 1),
             ):
                 self._role_result = role_result
                 self._metadata_result = metadata_result
                 self._collaboration_result = collaboration_result
+                self._marker_result = marker_result
                 self._last_sql = ""
 
             def execute(self, sql, *_params):
@@ -314,6 +337,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                     return self._role_result
                 if "s.[name]=N'ostv'" in self._last_sql:
                     return self._collaboration_result
+                if "VIEW CHANGE TRACKING" in self._last_sql:
+                    return self._marker_result
                 return self._metadata_result
 
             def __enter__(self):
@@ -327,10 +352,18 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 self,
                 role_result,
                 metadata_result,
-                collaboration_result=(6, 0, 0),
+                collaboration_result=(
+                    len(SQL_CLIENT_COLLABORATION_WRITE_TABLES),
+                    0,
+                    0,
+                ),
+                marker_result=(1, 1, 0, 0, 1),
             ):
                 self._cursor = _PermissionCursor(
-                    role_result, metadata_result, collaboration_result
+                    role_result,
+                    metadata_result,
+                    collaboration_result,
+                    marker_result,
                 )
 
             @contextlib.contextmanager
@@ -350,6 +383,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             "ost_visualizer_only",
             "disabled",
             None,
+            1,
+            1,
         )
         complete = SqlDatabasePermissionProbe(
             registry,
@@ -371,7 +406,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             connection_manager=_PermissionManager(
                 (1, 1, 1, 1),
                 current,
-                (6, 1, 0),
+                (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 1, 0),
             ),
         )
         self.assertFalse(denied_change_log.can_edit(descriptor.database_id))
@@ -381,10 +416,29 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             connection_manager=_PermissionManager(
                 (1, 1, 1, 1),
                 current,
-                (6, 0, 1),
+                (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 1),
             ),
         )
         self.assertFalse(writable_schema_ledger.can_edit(descriptor.database_id))
+        missing_marker_permission = SqlDatabasePermissionProbe(
+            registry,
+            _CredentialStore(),
+            connection_manager=_PermissionManager(
+                (1, 1, 1, 1),
+                current,
+                marker_result=(1, 1, 0, 0, 0),
+            ),
+        )
+        self.assertFalse(missing_marker_permission.can_edit(descriptor.database_id))
+        disabled_change_tracking = SqlDatabasePermissionProbe(
+            registry,
+            _CredentialStore(),
+            connection_manager=_PermissionManager(
+                (1, 1, 1, 1),
+                current[:-2] + (0, 0),
+            ),
+        )
+        self.assertFalse(disabled_change_tracking.can_edit(descriptor.database_id))
         read_only_database = SqlDatabasePermissionProbe(
             registry,
             _CredentialStore(),
@@ -661,6 +715,51 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
 
+    def test_sql_mutation_commits_exactly_one_transaction_marker(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+
+        def mutate(recorder):
+            recorder.record(
+                ResourceRef("database", descriptor.database_id),
+                ChangeOperation.UPDATE,
+            )
+            return True
+
+        result = writer.execute(
+            DatabaseMutationRequest(
+                database_id=descriptor.database_id,
+                session_id="session-1",
+            ),
+            mutate,
+        )
+        statements = [
+            sql for cursor in manager.lease.cursors for sql in cursor.executed
+        ]
+        self.assertTrue(result.success)
+        self.assertEqual(
+            sum("INSERT INTO [ostv].[ChangeLog]" in sql for sql in statements),
+            1,
+        )
+        self.assertEqual(
+            sum("INSERT INTO [ostv].[ChangeTransactions]" in sql for sql in statements),
+            1,
+        )
+        self.assertEqual(manager.lease.commits, 1)
+        self.assertEqual(manager.lease.rollbacks, 0)
+
     def test_sql_import_failure_preserves_original_error_and_rolls_back(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -866,6 +965,46 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             SqlProjectWriter._require_current_schema(lease)
         self.assertTrue(all(cursor.close_count == 1 for cursor in lease.cursors))
 
+    def test_writer_guard_rejects_disabled_change_tracking(self):
+        class _TrackingDisabledCursor(_WriterCursor):
+            def fetchone(self):
+                if "DatabaseMetadata" in self._last_sql:
+                    return (
+                        LATEST_SQL_SCHEMA.version,
+                        LATEST_SQL_SCHEMA.checksum,
+                        "ost_visualizer_only",
+                        "disabled",
+                        None,
+                        0,
+                        0,
+                    )
+                return super().fetchone()
+
+        class _TrackingDisabledLease(_WriterLease):
+            def cursor(self):
+                cursor = _TrackingDisabledCursor()
+                self.cursors.append(cursor)
+                return cursor
+
+        with self.assertRaisesRegex(Exception, "unsupported schema version"):
+            SqlProjectWriter._require_current_schema(_TrackingDisabledLease())
+
+    def test_writer_guard_rejects_missing_builtin_client_role(self):
+        class _MissingRoleCursor(_WriterCursor):
+            def fetchone(self):
+                if "IS_ROLEMEMBER" in self._last_sql:
+                    return (1, 0)
+                return super().fetchone()
+
+        class _MissingRoleLease(_WriterLease):
+            def cursor(self):
+                cursor = _MissingRoleCursor()
+                self.cursors.append(cursor)
+                return cursor
+
+        with self.assertRaisesRegex(Exception, "required SQL database roles"):
+            SqlProjectWriter._require_current_schema(_MissingRoleLease())
+
     def test_sql_import_table_metadata_comes_from_canonical_schema(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -903,6 +1042,33 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             )
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
+        self.assertTrue(
+            any(
+                "SET CHANGE_TRACKING = OFF" in statement
+                for statement in manager.lease.cursor_value.executed
+            )
+        )
+
+    def test_failed_creator_does_not_disable_tracking_owned_by_another_creator(self):
+        manager = _CreationManager()
+        creator = SqlDatabaseCreator(manager)
+        creator._inspector.inspect_connection = (
+            lambda *_args, **_kwargs: _empty_inventory()
+        )
+        with self.assertRaisesRegex(Exception, "validation failed"):
+            creator.initialize_blank_database(
+                SqlServerDatabaseLocation(
+                    server="localhost", database="OSTV_TEST_AUDIT"
+                ),
+                application_version="test",
+            )
+        disable_statement = next(
+            statement
+            for statement in manager.lease.cursor_value.executed
+            if "SET CHANGE_TRACKING = OFF" in statement
+        )
+        self.assertIn("IF NOT EXISTS", disable_statement)
+        self.assertIn("s.[name]=N'ostv'", disable_statement)
 
     def test_blank_sql_database_creation_applies_client_roles_transactionally(self):
         manager = _CreationManager()
@@ -951,6 +1117,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         creator = SqlDatabaseCreator(manager)
         inventories = iter(
             (
+                _empty_inventory(),
                 _empty_inventory(),
                 SqlSchemaInventory(
                     database_guid="00000000-0000-0000-0000-000000000001",
@@ -1025,7 +1192,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             )
         )
         self.assertEqual(manager.lease.commits, 0)
-        self.assertEqual(manager.lease.rollbacks, 1)
+        self.assertEqual(manager.lease.rollbacks, 0)
 
     def test_failed_unload_retains_removed_checked_descriptor(self):
         descriptor = DatabaseDescriptor.for_sql_server(

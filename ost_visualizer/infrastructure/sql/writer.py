@@ -38,6 +38,7 @@ from ..mdb.raw_bid_integrity import RAW_BID_RELATIONSHIPS
 from ..mdb.schema_contract import PAGE_SECTIONS
 from ..mdb.mdb_writer import MdbWriter
 from .connection_manager import SqlConnectionLease, SqlConnectionManager
+from .client_permissions import SQL_CLIENT_DATABASE_ROLES
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import (
     SqlErrorCode,
@@ -496,7 +497,8 @@ class SqlProjectWriter(MdbWriter):
                 "SELECT TOP (1) [DatabaseGuid] " "FROM [ostv].[DatabaseMetadata]"
             )
             database_guid = cursor.fetchone()[0]
-            for record in self._coalesce_records(state.records):
+            records = self._coalesce_records(state.records)
+            for record in records:
                 cursor.execute(
                     "MERGE [ostv].[EntityVersions] WITH (HOLDLOCK) AS target "
                     "USING (SELECT ? AS [ResourceType], ? AS [ResourceId]) AS source "
@@ -541,6 +543,21 @@ class SqlProjectWriter(MdbWriter):
                     ),
                     record.payload or None,
                 )
+            resource_families = sorted(
+                {
+                    coalesced_resource_type(record.resource.resource_type)
+                    for record in records
+                }
+            )
+            cursor.execute(
+                "INSERT INTO [ostv].[ChangeTransactions] "
+                "([TransactionId], [SourceSessionId], [DatabaseGuid], "
+                "[ResourceFamilySummary]) VALUES (?, ?, ?, ?)",
+                state.transaction_id,
+                state.request.session_id,
+                database_guid,
+                json.dumps(resource_families),
+            )
         finally:
             cursor.close()
         return versions
@@ -597,8 +614,31 @@ class SqlProjectWriter(MdbWriter):
         cursor = lease.cursor()
         try:
             cursor.execute(
+                "SELECT "
+                + ", ".join(
+                    "COALESCE(IS_ROLEMEMBER(?, USER_NAME()), 0)"
+                    for _role in SQL_CLIENT_DATABASE_ROLES
+                ),
+                *SQL_CLIENT_DATABASE_ROLES,
+            )
+            role_row = cursor.fetchone()
+            if role_row is None or any(int(value) != 1 for value in role_row):
+                raise SqlInfrastructureError(
+                    SqlErrorDetails(
+                        SqlErrorCode.PERMISSION_DENIED,
+                        "SQL editing requires the configured user to belong to the "
+                        "required SQL database roles.",
+                    )
+                )
+            cursor.execute(
                 "SELECT m.[SchemaVersion], sm.[Checksum], m.[WriterMode], "
-                "a.[AdapterState], a.[ResourceCatalogChecksum] FROM "
+                "a.[AdapterState], a.[ResourceCatalogChecksum], "
+                "CASE WHEN EXISTS (SELECT 1 FROM "
+                "sys.change_tracking_databases WHERE database_id=DB_ID()) "
+                "THEN 1 ELSE 0 END, "
+                "CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_tables "
+                "WHERE object_id=OBJECT_ID(N'ostv.ChangeTransactions')) "
+                "THEN 1 ELSE 0 END FROM "
                 "[ostv].[DatabaseMetadata] m JOIN [ostv].[SchemaMigrations] sm "
                 "ON sm.[Version]=m.[SchemaVersion] "
                 "JOIN [ostv].[ExternalAdapterState] a ON a.[SingletonId]=1 "
@@ -629,6 +669,8 @@ class SqlProjectWriter(MdbWriter):
             row is None
             or not schema_record_is_current(row[0], row[1])
             or not writer_mode_valid
+            or int(row[5]) != 1
+            or int(row[6]) != 1
         ):
             raise SqlInfrastructureError(
                 SqlErrorDetails(

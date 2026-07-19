@@ -24,7 +24,7 @@ from .errors import (
 from .schema_definition import LATEST_SQL_SCHEMA
 from .schema_inspector import SqlSchemaInspector
 from .schema_validator import SqlSchemaCompatibility, SqlSchemaValidator
-from .schema_lock import acquire_schema_transaction_lock
+from .schema_lock import SQL_SCHEMA_LOCK_RESOURCE, acquire_schema_transaction_lock
 
 
 class SqlDatabaseCreator:
@@ -113,6 +113,10 @@ class SqlDatabaseCreator:
     ) -> SqlDatabaseCreationResult:
         if not location.database:
             raise ValueError("A target SQL Server database is required")
+        self._validate_blank_candidate(location, password)
+        enabled_change_tracking = self._ensure_database_change_tracking(
+            location, password
+        )
         request = SqlConnectionRequest(location=location, password=password)
         actor_name = actor.strip() or location.username.strip() or getpass.getuser()
         with self._connections.connection(request, autocommit=False) as lease:
@@ -163,6 +167,8 @@ class SqlDatabaseCreator:
                         lease.rollback()
                     except pyodbc.Error:
                         pass
+                    if enabled_change_tracking:
+                        self._disable_database_change_tracking(location, password)
         final_location = replace(location, database_guid=inventory.database_guid)
         return SqlDatabaseCreationResult(final_location, LATEST_SQL_SCHEMA.version)
 
@@ -176,6 +182,29 @@ class SqlDatabaseCreator:
     ) -> SqlDatabaseCreationResult:
         if not location.database:
             raise ValueError("A target SQL Server database is required")
+        preflight = self._inspector.inspect(location, password)
+        if preflight.schema_version:
+            if preflight.schema_version != LATEST_SQL_SCHEMA.version:
+                raise SqlInfrastructureError(
+                    SqlErrorDetails(
+                        SqlErrorCode.UNSUPPORTED_SCHEMA,
+                        "The selected SQL database uses an unsupported schema "
+                        f"version ({preflight.schema_version}).",
+                    )
+                )
+        else:
+            candidate = self._validator.validate_adoption_candidate(preflight)
+            if candidate.compatibility != SqlSchemaCompatibility.UNVERSIONED_READ_ONLY:
+                raise SqlInfrastructureError(
+                    SqlErrorDetails(
+                        SqlErrorCode.SCHEMA_MISMATCH,
+                        "The external database cannot be enabled for editing: "
+                        + candidate.user_message,
+                    )
+                )
+        enabled_change_tracking = self._ensure_database_change_tracking(
+            location, password
+        )
         request = SqlConnectionRequest(location=location, password=password)
         actor_name = actor.strip() or location.username.strip() or getpass.getuser()
         with self._connections.connection(request, autocommit=False) as lease:
@@ -239,8 +268,86 @@ class SqlDatabaseCreator:
                         lease.rollback()
                     except pyodbc.Error:
                         pass
+                    if enabled_change_tracking:
+                        self._disable_database_change_tracking(location, password)
         final_location = replace(location, database_guid=initialized.database_guid)
         return SqlDatabaseCreationResult(final_location, LATEST_SQL_SCHEMA.version)
+
+    def _ensure_database_change_tracking(
+        self, location: SqlServerDatabaseLocation, password: str
+    ) -> bool:
+        request = SqlConnectionRequest(location=location, password=password)
+        try:
+            with self._connections.connection(request, autocommit=True) as lease:
+                with lease.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT CASE WHEN EXISTS (SELECT 1 FROM "
+                        "sys.change_tracking_databases WHERE database_id=DB_ID()) "
+                        "THEN 1 ELSE 0 END"
+                    )
+                    if not bool(cursor.fetchone()[0]):
+                        cursor.execute(
+                            "ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON "
+                            "(CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON)"
+                        )
+                        return True
+        except pyodbc.Error as exc:
+            raise SqlInfrastructureError(classify_pyodbc_error(exc)) from None
+        return False
+
+    def _disable_database_change_tracking(
+        self, location: SqlServerDatabaseLocation, password: str
+    ) -> None:
+        request = SqlConnectionRequest(location=location, password=password)
+        try:
+            with self._connections.connection(request, autocommit=True) as lease:
+                with lease.cursor() as cursor:
+                    cursor.execute(
+                        "DECLARE @result int; "
+                        "EXEC @result=sys.sp_getapplock @Resource=?, "
+                        "@LockMode=N'Exclusive', @LockOwner=N'Session', "
+                        "@LockTimeout=10000; "
+                        "IF @result < 0 THROW 51000, "
+                        "'Could not verify Change Tracking ownership.', 1; "
+                        "BEGIN TRY "
+                        "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
+                        "JOIN sys.schemas s ON s.[schema_id]=t.[schema_id] "
+                        "WHERE s.[name]=N'ostv') "
+                        "ALTER DATABASE CURRENT SET CHANGE_TRACKING = OFF; "
+                        "EXEC sys.sp_releaseapplock @Resource=?, "
+                        "@LockOwner=N'Session'; "
+                        "END TRY BEGIN CATCH "
+                        "EXEC sys.sp_releaseapplock @Resource=?, "
+                        "@LockOwner=N'Session'; THROW; END CATCH",
+                        SQL_SCHEMA_LOCK_RESOURCE,
+                        SQL_SCHEMA_LOCK_RESOURCE,
+                        SQL_SCHEMA_LOCK_RESOURCE,
+                    )
+        except pyodbc.Error as exc:
+            raise SqlInfrastructureError(classify_pyodbc_error(exc)) from None
+
+    def _validate_blank_candidate(
+        self, location: SqlServerDatabaseLocation, password: str
+    ) -> None:
+        request = SqlConnectionRequest(
+            location=location,
+            password=password,
+            read_only=True,
+        )
+        with self._connections.connection(request, autocommit=True) as lease:
+            with lease.cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM sys.tables t JOIN sys.schemas s "
+                    "ON s.schema_id=t.schema_id WHERE s.name IN (N'dbo', N'ostv')"
+                )
+                if int(cursor.fetchone()[0]) != 0:
+                    raise SqlInfrastructureError(
+                        SqlErrorDetails(
+                            SqlErrorCode.SCHEMA_MISMATCH,
+                            "The selected database is not blank. Use Connect for a "
+                            "compatible database or select an empty database.",
+                        )
+                    )
 
     @staticmethod
     def _record_schema(cursor, *, application_version: str, actor: str) -> None:

@@ -47,6 +47,7 @@ class SqlInfrastructureError(DatabaseCatalogError):
             },
             read_only_required=details.code
             in {
+                SqlErrorCode.PERMISSION_DENIED,
                 SqlErrorCode.SCHEMA_MISMATCH,
                 SqlErrorCode.UNSUPPORTED_SCHEMA,
             },

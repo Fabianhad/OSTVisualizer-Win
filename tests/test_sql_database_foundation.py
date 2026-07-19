@@ -59,7 +59,10 @@ from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
     classify_pyodbc_error,
 )
-from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ost_visualizer.infrastructure.sql.schema_definition import (
+    LATEST_SQL_SCHEMA,
+    SQL_SCHEMA_V3,
+)
 from ost_visualizer.infrastructure.sql.schema_migrator import (
     SQL_SCHEMA_V2,
     SQL_SCHEMA_V2_TO_V3,
@@ -491,13 +494,18 @@ class DatabaseDescriptorTests(unittest.TestCase):
         report = SqlSchemaValidator(schema).validate_adoption_candidate(inventory)
         self.assertIn("custom.Bids.shadows_dbo", report.problems)
 
-    def test_latest_schema_is_version_3_and_version_2_is_immutable(self):
+    def test_latest_schema_is_version_4_and_prior_schemas_are_immutable(self):
         self.assertEqual(SQL_SCHEMA_V2.version, 2)
         self.assertEqual(
             SQL_SCHEMA_V2.checksum,
             "5b07b73baa89c3ed4c1dd41388e760d00cd09774007afe9062dc13987f098ce3",
         )
-        self.assertEqual(LATEST_SQL_SCHEMA.version, 3)
+        self.assertEqual(SQL_SCHEMA_V3.version, 3)
+        self.assertEqual(
+            SQL_SCHEMA_V3.checksum,
+            "dbc40a235f1d0260c041fcef6a231802fd7afd6e0cc63d14b96d07aec89207a8",
+        )
+        self.assertEqual(LATEST_SQL_SCHEMA.version, 4)
         self.assertEqual(len(LATEST_SQL_SCHEMA.checksum), 64)
         self.assertEqual(
             sum(
@@ -518,6 +526,7 @@ class DatabaseDescriptorTests(unittest.TestCase):
                 "ChangeLog",
                 "ChangeFeedState",
                 "ExternalAdapterState",
+                "ChangeTransactions",
             },
         )
         metadata = next(

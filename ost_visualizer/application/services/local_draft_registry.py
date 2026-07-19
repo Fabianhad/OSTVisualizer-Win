@@ -98,6 +98,20 @@ class LocalDraftRegistry:
                         ),
                     )
 
+    def set_base_tokens(
+        self,
+        draft_id: str,
+        base_tokens: tuple[tuple[ResourceRef, ConcurrencyToken], ...],
+    ) -> None:
+        with self._lock:
+            draft = self._drafts.get(draft_id)
+            if draft is None:
+                raise ValueError("The local draft is no longer active")
+            self._drafts[draft_id] = replace(
+                draft,
+                base_tokens=tuple(sorted(base_tokens, key=lambda item: item[0])),
+            )
+
     def conflicts_for_changes(
         self, database_id: str, changes: tuple[DatabaseChange, ...]
     ) -> tuple[LocalDraftConflict, ...]:

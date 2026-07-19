@@ -120,15 +120,22 @@ confirmation. This transaction adds only the `ostv` metadata and collaboration
 tables; it does not recreate or rewrite the external application's core tables
 or rows. Databases created or adopted by OST Visualizer carry an independent,
 checksummed schema version and collaboration-table foundation. An exact schema
-version 3 database is required by the desktop client; older versioned databases
+version 4 database is required by the desktop client; older versioned databases
 are rejected explicitly instead of being upgraded during ordinary connection.
+Databases created by unreleased development builds with a different version 4
+checksum must be recreated; the runtime does not interpret multiple version 4
+schemas or attempt a same-version migration.
 Schema initialization requires additional database permissions; ordinary readers
 and editors do not need server-administrator rights.
 
 Current-schema SQL databases use one desktop session per loaded database,
 server-timestamped heartbeats and bid presence, expiring resource edit locks,
-and optimistic row-version checks. Writes record affected resources in the SQL
-change feed in the same transaction. A background worker polls ordered deltas
+and optimistic row-version checks. Long-running condition, area, layer, and
+master-data editors acquire their SQL leases asynchronously without waiting on
+the Qt thread. Writes record affected resources and one
+transaction marker in the same SQL transaction. SQL Server Change Tracking assigns
+the marker's commit version, which is the durable feed checkpoint; identity values
+are used only to order rows within a committed transaction. A background worker polls ordered deltas
 and returns them through the Qt main thread so conditions, areas, takeoffs,
 annotations, pages, layers, and the project tree can refresh without repeatedly
 reloading the whole database. Remote changes preserve valid selection and the
@@ -139,13 +146,13 @@ state is deliberately reloaded.
 If the session or feed becomes unhealthy, SQL editing is disabled while cached
 data remains viewable.
 
-The current collaboration slice holds expiring edit locks for condition and
-area editors. Other integrated writes use transaction-scoped resource locks and
-row-version checks; richer in-place conflict choices and long-lived locks for
-additional editing gestures remain Phase 4 work.
+The current collaboration slice holds expiring edit locks for condition, area,
+master-data, and default-layer dialogs. Other integrated writes use
+transaction-scoped resource locks and row-version checks; richer in-place
+conflict choices and long-lived locks for geometry gestures remain Phase 4 work.
 
 Collaboration covers OST Visualizer clients writing through this schema. Schema
-version 3 includes an explicit writer-mode gate: mixed-application editing remains
+version 4 retains an explicit writer-mode gate: mixed-application editing remains
 disabled unless an external-write adapter has been validated against the canonical
 resource catalog. Direct writes by another application therefore still require a
 controlled reload or reconnect. Microsoft Access continues to use its existing

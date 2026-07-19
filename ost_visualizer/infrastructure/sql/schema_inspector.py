@@ -70,6 +70,8 @@ class SqlSchemaInventory:
     procedures: tuple[SqlModuleInventory, ...]
     functions: tuple[SqlModuleInventory, ...]
     check_constraints: tuple[SqlCheckConstraintInventory, ...] = ()
+    change_tracking_enabled: bool = False
+    change_tracking_tables: frozenset[tuple[str, str]] = frozenset()
 
     def dbo_columns(self) -> dict[str, dict[str, SqlColumnInventory]]:
         result: dict[str, dict[str, SqlColumnInventory]] = {}
@@ -215,6 +217,20 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
         SqlCheckConstraintInventory(*(str(value) for value in row))
         for row in cursor.fetchall()
     )
+    cursor.execute(
+        "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_databases "
+        "WHERE database_id=DB_ID()) THEN 1 ELSE 0 END"
+    )
+    tracking_row = cursor.fetchone()
+    change_tracking_enabled = bool(tracking_row and tracking_row[0])
+    cursor.execute(
+        "SELECT s.[name], t.[name] FROM sys.change_tracking_tables ct "
+        "JOIN sys.tables t ON t.[object_id]=ct.[object_id] "
+        "JOIN sys.schemas s ON s.[schema_id]=t.[schema_id]"
+    )
+    change_tracking_tables = frozenset(
+        (str(row[0]), str(row[1])) for row in cursor.fetchall()
+    )
     return SqlSchemaInventory(
         database_guid=database_guid,
         schema_version=schema_version,
@@ -228,6 +244,8 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
         procedures=procedures,
         functions=functions,
         check_constraints=check_constraints,
+        change_tracking_enabled=change_tracking_enabled,
+        change_tracking_tables=change_tracking_tables,
     )
 
 

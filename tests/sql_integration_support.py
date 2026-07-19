@@ -100,7 +100,12 @@ class DisposableSqlConfiguration:
 
 
 class DisposableSqlDatabase(AbstractContextManager):
-    def __init__(self, configuration: DisposableSqlConfiguration) -> None:
+    def __init__(
+        self,
+        configuration: DisposableSqlConfiguration,
+        *,
+        initialize_schema: bool = True,
+    ) -> None:
         self.configuration = configuration
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         self.run_marker = secrets.token_hex(16)
@@ -112,6 +117,7 @@ class DisposableSqlDatabase(AbstractContextManager):
         self.connections = SqlConnectionManager()
         self.location = configuration.location
         self._marker_verified = False
+        self._initialize_schema = initialize_schema
 
     def __enter__(self) -> "DisposableSqlDatabase":
         self._create_database()
@@ -122,15 +128,16 @@ class DisposableSqlDatabase(AbstractContextManager):
             self._verify_server_marker()
             self._verify_database_marker()
             self._marker_verified = True
-            creator = SqlDatabaseCreator(self.connections)
-            result = creator.initialize_blank_database(
-                self.location,
-                self.configuration.password,
-                application_version="integration-test",
-                actor="OST Visualizer integration test",
-            )
-            self.location = result.location
-            self._create_test_roles()
+            if self._initialize_schema:
+                creator = SqlDatabaseCreator(self.connections)
+                result = creator.initialize_blank_database(
+                    self.location,
+                    self.configuration.password,
+                    application_version="integration-test",
+                    actor="OST Visualizer integration test",
+                )
+                self.location = result.location
+                self._create_test_roles()
         except (DatabaseCatalogError, OSError, RuntimeError, ValueError, pyodbc.Error):
             if self._marker_verified:
                 self.drop()

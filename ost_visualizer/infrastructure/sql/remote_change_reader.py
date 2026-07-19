@@ -65,11 +65,13 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         batch = DatabaseChangeBatch(
             database_id=database_id,
             feed_epoch="",
-            oldest_available_sequence=checkpoint,
-            high_water_sequence=checkpoint,
+            minimum_valid_version=checkpoint,
+            high_water_version=checkpoint,
+            delivered_through_version=checkpoint,
             changes=tuple(
                 DatabaseChange(
                     sequence=checkpoint,
+                    commit_version=checkpoint,
                     transaction_id="initial-reconciliation",
                     source_session_id=None,
                     resource=resource,

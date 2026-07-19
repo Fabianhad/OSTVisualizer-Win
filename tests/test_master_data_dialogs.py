@@ -6,6 +6,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtTest import QTest
+from ost_visualizer.application.dtos.collaboration_dtos import EditLeaseResult
 from ost_visualizer.application.services.project_write_service import (
     BatchWriteResult,
     WriteReloadResult,
@@ -821,6 +822,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
                 pass
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.ui_state_manager = UiState()
         coordinator.ui_access_manager = Access()
         coordinator.project_data = ProjectData()
@@ -828,7 +830,9 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         coordinator._project_write_service = WriteService()
         coordinator._icon_provider = FakeIconProvider()
         coordinator._sql_collaboration = SimpleNamespace(
-            begin_local_edit=lambda _database_id, _resources: True,
+            request_local_edit=lambda _database_id, _resources, callback, **_kwargs: (
+                callback(EditLeaseResult(True))
+            ),
             end_local_edit=lambda _database_id, _resources: None,
         )
         coordinator.main_window = None
@@ -1334,6 +1338,7 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         main_window = MainWindow()
         access_manager = AccessManager()
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._is_cleaning_up = False
         coordinator.main_window = main_window
         coordinator.ui_access_manager = access_manager
         coordinator.project_data = project_data
@@ -1341,7 +1346,9 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
         coordinator._project_read_service = read_service
         coordinator._project_write_service = WriteService()
         coordinator._sql_collaboration = SimpleNamespace(
-            begin_local_edit=lambda _database_id, _resources: True,
+            request_local_edit=lambda _database_id, _resources, callback, **_kwargs: (
+                callback(EditLeaseResult(True))
+            ),
             end_local_edit=lambda _database_id, _resources: None,
         )
         coordinator.event_bus = object()

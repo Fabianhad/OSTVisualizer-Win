@@ -19,6 +19,7 @@ from ost_visualizer.infrastructure.sql.connection_manager import (
     SqlConnectionRequest,
 )
 from ost_visualizer.infrastructure.sql.credential_store import WindowsCredentialStore
+from tools.manage_sql_development import require_owned_sql_instance
 
 _SERVER = "tcp:localhost"
 _LOGIN = "OSTV_IT_EXECUTOR"
@@ -51,6 +52,7 @@ def main() -> int:
         timeout=10,
     )
     try:
+        require_owned_sql_instance(connection)
         marker = _server_marker(connection)
         _configure_server(
             connection,
@@ -240,6 +242,10 @@ BEGIN
     IF DB_ID(@DatabaseName) IS NOT NULL
         THROW 51002, 'Disposable test database already exists.', 1;
     DECLARE @Sql nvarchar(max) = N'CREATE DATABASE ' + QUOTENAME(@DatabaseName);
+    EXEC (@Sql);
+    SET @Sql = N'ALTER DATABASE ' + QUOTENAME(@DatabaseName)
+        + N' SET CHANGE_TRACKING = ON '
+        + N'(CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON)';
     EXEC (@Sql);
     SET @Sql = N'EXEC ' + QUOTENAME(@DatabaseName)
         + N'.sys.sp_addextendedproperty @name=N''OSTVisualizerDisposableTestRun'', '

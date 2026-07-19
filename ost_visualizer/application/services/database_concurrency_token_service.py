@@ -23,13 +23,12 @@ class DatabaseConcurrencyTokenService:
     def load_database(self, database_id: str) -> None:
         loaded = self._reader.read_database_versions(database_id)
         with self._lock:
-            stale = [
-                key
-                for key in self._tokens
-                if key[0] == database_id and key[1].bid_uid is None
-            ]
+            stale = [key for key in self._tokens if key[0] == database_id]
             for key in stale:
                 del self._tokens[key]
+            self._loaded_bids = {
+                key for key in self._loaded_bids if key[0] != database_id
+            }
             for resource, token in loaded.items():
                 self._tokens[(database_id, resource)] = token
 

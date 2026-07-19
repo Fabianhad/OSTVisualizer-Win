@@ -1,10 +1,10 @@
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QObject, Signal
 from ...application.dtos.mesh_geometry_dto import MeshGeometry
-from ...application.dtos.collaboration_dtos import ResourceRef
+from ...application.dtos.collaboration_dtos import ResourceRef, SynchronizationState
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
     CollaborationResourceType,
@@ -1156,6 +1156,7 @@ class UIEventCoordinator:
             AppEvents.SYNCHRONIZATION_CONFLICT,
             self._on_synchronization_conflict,
         )
+        self._subscribe(AppEvents.EDIT_LEASE_LOST, self._on_edit_lease_lost)
         self._subscribe(AppEvents.FILE_UNLOADED, self._on_file_unloaded)
         self._subscribe(AppEvents.FILE_SELECTED, self._on_file_selected)
         self._subscribe(AppEvents.APP_CONFIG_UPDATED, self._on_app_config_updated)
@@ -1176,10 +1177,29 @@ class UIEventCoordinator:
     def refresh_conditions_ui(self) -> None:
         self._sidebar.refresh_conditions_from_memory()
 
-    def begin_collaboration_edit(
-        self, database_id: str, resources: tuple[ResourceRef, ...]
-    ) -> bool:
-        return self._sql_collaboration.begin_local_edit(database_id, resources)
+    def request_collaboration_edit(
+        self,
+        database_id: str,
+        resources: tuple[ResourceRef, ...],
+        callback: Callable[[bool], None],
+    ) -> None:
+        def resolved(result) -> None:
+            if self._is_cleaning_up:
+                callback(False)
+                return
+            if not result.granted:
+                show_warning(
+                    self.main_window,
+                    "Editing Unavailable",
+                    result.message or "The edit lease could not be acquired.",
+                )
+            callback(result.granted)
+
+        self._sql_collaboration.request_local_edit(
+            database_id,
+            resources,
+            resolved,
+        )
 
     def end_collaboration_edit(
         self, database_id: str, resources: tuple[ResourceRef, ...]
@@ -1191,14 +1211,24 @@ class UIEventCoordinator:
         dialog: QtWidgets.QDialog,
         database_id: str,
         resources: tuple[ResourceRef, ...],
-    ) -> bool:
-        if not self.begin_collaboration_edit(database_id, resources):
-            return False
-        try:
-            exec_with_ost_blocking(dialog, self.event_bus)
-            return True
-        finally:
-            self.end_collaboration_edit(database_id, resources)
+        cleanup: Callable[[], None],
+        after_close: Optional[Callable[[bool], None]] = None,
+    ) -> None:
+        def resolved(granted: bool) -> None:
+            executed = False
+            try:
+                if granted:
+                    exec_with_ost_blocking(dialog, self.event_bus)
+                    executed = True
+            finally:
+                if granted:
+                    self.end_collaboration_edit(database_id, resources)
+                if after_close is not None:
+                    after_close(executed)
+                cleanup()
+                dialog.deleteLater()
+
+        self.request_collaboration_edit(database_id, resources, resolved)
 
     def can_renumber_conditions(self) -> bool:
         return self._condition_handler.can_renumber_conditions()
@@ -1237,26 +1267,27 @@ class UIEventCoordinator:
             bid_ref.bid_uid,
             area_bid_uid,
         )
-        if not self.begin_collaboration_edit(bid_ref.file_path, (area_resource,)):
-            dialog.cleanup()
-            dialog.deleteLater()
-            return
-        try:
-            exec_with_ost_blocking(dialog, self.event_bus)
-        finally:
-            self.end_collaboration_edit(bid_ref.file_path, (area_resource,))
-            dialog.cleanup()
-            saved_changes = dialog.has_saved_changes()
-            dialog.deleteLater()
-        if saved_changes and not self._project_write_service.reload_and_notify(
-            bid_ref.file_path
-        ):
-            show_warning(
-                self.main_window,
-                "Refresh Error",
-                "The bid area changes were saved, but the area list could not be "
-                "refreshed. Reopen the database to see the latest bid areas.",
-            )
+
+        def after_close(executed: bool) -> None:
+            if (
+                executed
+                and dialog.has_saved_changes()
+                and not self._project_write_service.reload_and_notify(bid_ref.file_path)
+            ):
+                show_warning(
+                    self.main_window,
+                    "Refresh Error",
+                    "The bid area changes were saved, but the area list could not be "
+                    "refreshed. Reopen the database to see the latest bid areas.",
+                )
+
+        self._exec_with_collaboration_lease(
+            dialog,
+            bid_ref.file_path,
+            (area_resource,),
+            dialog.cleanup,
+            after_close,
+        )
 
     def _save_bid_areas_from_dialog(self, bid_ref, changes):
         if not self.ui_access_manager.is_allowed(Feature.EDIT_PAGE_SETTINGS):
@@ -1310,11 +1341,9 @@ class UIEventCoordinator:
                 CollaborationResourceType.PAY_CLASSES_COLLECTION.value, "database"
             ),
         )
-        try:
-            self._exec_with_collaboration_lease(dialog, file_path, resources)
-        finally:
-            dialog.cleanup()
-            dialog.deleteLater()
+        self._exec_with_collaboration_lease(
+            dialog, file_path, resources, dialog.cleanup
+        )
 
     def open_job_statuses_dialog(self) -> None:
         file_path = self._editable_master_data_file_path()
@@ -1341,20 +1370,17 @@ class UIEventCoordinator:
             save_fn=lambda changes: self._save_master_job_statuses(file_path, changes),
             menu_mode=True,
         )
-        try:
-            self._exec_with_collaboration_lease(
-                dialog,
-                file_path,
-                (
-                    ResourceRef(
-                        CollaborationResourceType.JOB_STATUSES_COLLECTION.value,
-                        "database",
-                    ),
+        self._exec_with_collaboration_lease(
+            dialog,
+            file_path,
+            (
+                ResourceRef(
+                    CollaborationResourceType.JOB_STATUSES_COLLECTION.value,
+                    "database",
                 ),
-            )
-        finally:
-            dialog.cleanup()
-            dialog.deleteLater()
+            ),
+            dialog.cleanup,
+        )
 
     def open_condition_types_dialog(self) -> None:
         file_path = self._editable_master_data_file_path()
@@ -1382,20 +1408,17 @@ class UIEventCoordinator:
             has_license=True,
             menu_mode=True,
         )
-        try:
-            self._exec_with_collaboration_lease(
-                dialog,
-                file_path,
-                (
-                    ResourceRef(
-                        CollaborationResourceType.CONDITION_TYPES_COLLECTION.value,
-                        "database",
-                    ),
+        self._exec_with_collaboration_lease(
+            dialog,
+            file_path,
+            (
+                ResourceRef(
+                    CollaborationResourceType.CONDITION_TYPES_COLLECTION.value,
+                    "database",
                 ),
-            )
-        finally:
-            dialog.cleanup()
-            dialog.deleteLater()
+            ),
+            dialog.cleanup,
+        )
 
     def open_payroll_classes_dialog(self) -> None:
         file_path = self._editable_master_data_file_path()
@@ -1417,20 +1440,17 @@ class UIEventCoordinator:
             save_fn=lambda changes: self._save_master_pay_classes(file_path, changes),
             menu_mode=True,
         )
-        try:
-            self._exec_with_collaboration_lease(
-                dialog,
-                file_path,
-                (
-                    ResourceRef(
-                        CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
-                        "database",
-                    ),
+        self._exec_with_collaboration_lease(
+            dialog,
+            file_path,
+            (
+                ResourceRef(
+                    CollaborationResourceType.PAY_CLASSES_COLLECTION.value,
+                    "database",
                 ),
-            )
-        finally:
-            dialog.cleanup()
-            dialog.deleteLater()
+            ),
+            dialog.cleanup,
+        )
 
     def open_default_layers_dialog(self) -> None:
         file_path = self._editable_master_data_file_path()
@@ -1462,20 +1482,17 @@ class UIEventCoordinator:
             has_license=True,
             mode=LayersDialogMode.DEFAULT_LAYERS,
         )
-        try:
-            self._exec_with_collaboration_lease(
-                dialog,
-                file_path,
-                (
-                    ResourceRef(
-                        CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value,
-                        "database",
-                    ),
+        self._exec_with_collaboration_lease(
+            dialog,
+            file_path,
+            (
+                ResourceRef(
+                    CollaborationResourceType.DEFAULT_LAYERS_COLLECTION.value,
+                    "database",
                 ),
-            )
-        finally:
-            dialog.cleanup()
-            dialog.deleteLater()
+            ),
+            dialog.cleanup,
+        )
 
     def _save_master_employees_result(self, file_path: str, changes):
         if not self.ui_access_manager.is_allowed(Feature.EDIT_MASTER_DATA):
@@ -1927,8 +1944,15 @@ class UIEventCoordinator:
         selected = self.ui_state_manager.selected_file_path or ""
         if self._status_panel and database_id == selected:
             self._status_panel.set_collaboration_state(state, message)
-        self.ui_access_manager.refresh()
-        self._update_export_menu_state()
+
+    def _on_edit_lease_lost(
+        self,
+        database_id: str = "",
+    ) -> None:
+        self._deferred_persistence.cancel_for_file(database_id)
+        if database_id != (self.ui_state_manager.selected_file_path or ""):
+            return
+        self._placement.force_exit()
 
     def _on_presence_changed(
         self,
@@ -1945,9 +1969,8 @@ class UIEventCoordinator:
     def _on_full_reconciliation_required(
         self, database_id: str = "", reason: str = ""
     ) -> None:
+        self._deferred_persistence.cancel_for_file(database_id)
         if database_id != self.project_data.get_current_file_path():
-            return
-        if not self._flush_deferred_for_file(database_id):
             return
         if self.project_operations.reload_database(database_id):
             self.event_bus.publish(AppEvents.DATABASE_REFRESHED, file_path=database_id)
@@ -1990,6 +2013,7 @@ class UIEventCoordinator:
                     resource_id,
                     int(bid_uid) if bid_uid else None,
                 ),
+                message,
             )
         actions = tuple(
             ConflictResolutionAction(action) for action in (allowed_actions or ())
@@ -2249,12 +2273,21 @@ class UIEventCoordinator:
         self._clear_mesh_views_for_scene_update(clear_embedded=False)
         self.visualization_service.refresh_mesh_view([])
         self._update_export_menu_state()
-        if self._status_panel and file_path:
+        if file_path:
             collaboration_status = self._sql_collaboration.status(file_path)
-            self._status_panel.set_collaboration_state(
-                collaboration_status.state.value,
-                collaboration_status.message,
-            )
+            if self._status_panel:
+                self._status_panel.set_collaboration_state(
+                    collaboration_status.state.value,
+                    collaboration_status.message,
+                )
+            if (
+                collaboration_status.state
+                == SynchronizationState.RECONCILIATION_REQUIRED
+            ):
+                self._on_full_reconciliation_required(
+                    file_path,
+                    collaboration_status.message,
+                )
 
     def _on_app_config_updated(self, setting: str = "", value=None) -> None:
         _ = setting

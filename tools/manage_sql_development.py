@@ -252,6 +252,7 @@ def _provision(secrets_path: Path, rotate_requested: bool) -> dict[str, object]:
     password = ""
     previous_password = ""
     try:
+        require_owned_sql_instance(connection)
         ownership_preexisting = _registry_exists() or existing_secrets is not None
         marker = _resolve_ownership_marker(connection, existing_secrets)
         _validate_registry_ownership(marker)
@@ -330,6 +331,7 @@ def _verify_teardown(secrets_path: Path) -> dict[str, object]:
     stored = _required_owned_secrets(secrets_path)
     connection = _windows_connection()
     try:
+        require_owned_sql_instance(connection)
         _require_server_marker(connection, stored.ownership_marker)
         inventory = _collect_teardown_inventory(connection, stored.ownership_marker)
         validate_teardown_inventory(inventory)
@@ -346,6 +348,7 @@ def _prepare_teardown(secrets_path: Path) -> dict[str, object]:
     stored = _required_owned_secrets(secrets_path)
     connection = _windows_connection()
     try:
+        require_owned_sql_instance(connection)
         _require_server_marker(connection, stored.ownership_marker)
         inventory = _collect_teardown_inventory(connection, stored.ownership_marker)
         validate_teardown_inventory(inventory)
@@ -814,6 +817,19 @@ def _windows_connection_string(database: str = "master") -> str:
 
 def _windows_connection():
     return pyodbc.connect(_windows_connection_string(), autocommit=True, timeout=10)
+
+
+def require_owned_sql_instance(connection) -> None:
+    cursor = connection.cursor()
+    try:
+        cursor.execute("SELECT CONVERT(nvarchar(128), SERVERPROPERTY('InstanceName'))")
+        row = cursor.fetchone()
+    finally:
+        cursor.close()
+    if row is None or str(row[0]).casefold() != INSTANCE_NAME.casefold():
+        raise RuntimeError(
+            "The configured endpoint is not the dedicated OSTVDEV SQL instance."
+        )
 
 
 def _client_login_accepts(password: str) -> bool:
