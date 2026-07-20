@@ -201,6 +201,30 @@ class HydratedDatabaseChangeBatch:
 
 
 @dataclass(frozen=True)
+class DatabaseChangePollResult:
+    observed_batch: DatabaseChangeBatch
+    remote_batch: HydratedDatabaseChangeBatch
+
+    def __post_init__(self) -> None:
+        observed = self.observed_batch
+        remote = self.remote_batch.batch
+        if (
+            observed.database_id,
+            observed.feed_epoch,
+            observed.minimum_valid_version,
+            observed.high_water_version,
+            observed.delivered_through_version,
+        ) != (
+            remote.database_id,
+            remote.feed_epoch,
+            remote.minimum_valid_version,
+            remote.high_water_version,
+            remote.delivered_through_version,
+        ):
+            raise ValueError("Observed and hydrated SQL change batches must match.")
+
+
+@dataclass(frozen=True)
 class SynchronizationConflict:
     database_id: str
     resource: ResourceRef

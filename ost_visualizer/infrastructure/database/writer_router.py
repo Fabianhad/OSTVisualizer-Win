@@ -22,6 +22,7 @@ from ..mdb.connection_manager import MdbConnectionManager
 from ..mdb.mdb_writer import MdbWriter
 from ..sql.writer import SqlProjectWriter
 from .descriptor_registry import resolve_database_backend
+from .schema_inspector_contract import IDatabaseSchemaInspector
 
 T = TypeVar("T")
 
@@ -95,20 +96,28 @@ class DatabaseProjectWriter(SqlProjectWriter):
         request: DatabaseMutationRequest,
         operation: Callable[[IMutationRecorder], T],
     ) -> DatabaseMutationResult[T]:
-        backend = resolve_database_backend(
-            self._descriptor_registry, request.database_id
-        )
-        if backend == DatabaseBackend.SQL_SERVER:
-            return SqlProjectWriter.execute(self, request, operation)
-        value = operation(_AccessMutationRecorder())
-        return DatabaseMutationResult(success=True, value=value)
+        with self._backend_scope(request.database_id) as backend:
+            if backend == DatabaseBackend.SQL_SERVER:
+                return SqlProjectWriter.execute(self, request, operation)
+            value = operation(_AccessMutationRecorder())
+            return DatabaseMutationResult(success=True, value=value)
 
     def _next_uid(self, cursor, table: str) -> int:
         if self._current_backend() == DatabaseBackend.SQL_SERVER:
             return SqlProjectWriter._next_uid(self, cursor, table)
         return MdbWriter._next_uid(self, cursor, table)
 
-    def _schema(self, connection):
+    def _record_caught_mutation_error(self, exc: BaseException) -> bool:
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._record_caught_mutation_error(self, exc)
+        return MdbWriter._record_caught_mutation_error(exc)
+
+    def _is_access_resource_exceeded(self, exc: BaseException) -> bool:
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectWriter._is_access_resource_exceeded(exc)
+        return MdbWriter._is_access_resource_exceeded(self, exc)
+
+    def _schema(self, connection) -> IDatabaseSchemaInspector:
         if self._current_backend() == DatabaseBackend.SQL_SERVER:
             return SqlProjectWriter._schema(self, connection)
         return MdbWriter._schema(self, connection)

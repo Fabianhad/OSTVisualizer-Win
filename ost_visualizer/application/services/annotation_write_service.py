@@ -21,6 +21,7 @@ from ..use_cases.project.save_annotation_text_properties_use_case import (
 from .active_bid_write_guard import ActiveBidWriteGuard
 from .base_write_service import DatabaseMutationWriteService
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
+from .database_capability_service import DatabaseCapabilityService
 
 
 class AnnotationWriteService(DatabaseMutationWriteService):
@@ -34,6 +35,7 @@ class AnnotationWriteService(DatabaseMutationWriteService):
         mutation_executor: IDatabaseMutationExecutor,
         session_registry: IDatabaseSessionRegistry,
         concurrency_tokens: DatabaseConcurrencyTokenService,
+        database_capability_service: DatabaseCapabilityService,
         reload_database=None,
         event_bus=None,
         logger=None,
@@ -56,6 +58,7 @@ class AnnotationWriteService(DatabaseMutationWriteService):
             mutation_executor=mutation_executor,
             session_registry=session_registry,
             concurrency_tokens=concurrency_tokens,
+            database_capability_service=database_capability_service,
             logger=logger,
         )
         self._bid_write_guard = bid_write_guard

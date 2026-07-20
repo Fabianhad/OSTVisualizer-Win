@@ -67,7 +67,9 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                         int(uid),
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to bulk save annotation positions in %s", db_path
             )
@@ -146,7 +148,9 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                         *values,
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to bulk save annotation text properties in %s", db_path
             )
@@ -179,7 +183,9 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                         *values,
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to bulk save annotation styles in %s", db_path
             )
@@ -316,14 +322,18 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                             ref_remap=ref_remap,
                         )
                         new_uids.append(str(new_uid))
-                    except Exception:
+                    except Exception as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                         self.logger.exception(
                             "Failed to insert %s annotation in %s",
                             annotation_type,
                             db_path,
                         )
                         new_uids.append(None)
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to bulk insert annotations in %s", db_path)
             return []
         return [u for u in new_uids if u is not None]
@@ -573,6 +583,8 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                     for uid in uids:
                         cursor.execute(f"DELETE FROM [{table}] WHERE [UID]=?", uid)
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to bulk delete annotations in %s", db_path)
             return False

@@ -33,7 +33,9 @@ class PageOperationsMixin:
                     int(page_uid),
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save page scale for page %s in %s", page_uid, db_path
             )
@@ -76,7 +78,9 @@ class PageOperationsMixin:
                     [int(page_uid)],
                     "save_page_name",
                 )
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save page name for page %s in %s", page_uid, db_path
             )
@@ -125,7 +129,9 @@ class PageOperationsMixin:
                         serialize_position_for_table(table, scaled),
                         int(r.UID),
                     )
-            except pyodbc.Error:
+            except pyodbc.Error as exc:
+                if self._record_caught_mutation_error(exc):
+                    raise
                 self.logger.exception(
                     "Failed to rescale positions in %s for page %s", table, page_uid
                 )
@@ -159,7 +165,9 @@ class PageOperationsMixin:
                     allow_empty=True,
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save page view state for page %s in %s", page_uid, db_path
             )
@@ -177,7 +185,9 @@ class PageOperationsMixin:
                     int(page_uid),
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save page show mode for page %s in %s", page_uid, db_path
             )
@@ -215,7 +225,9 @@ class PageOperationsMixin:
                     "save_page_overlay_image",
                     allow_empty=True,
                 )
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save page overlay image for page %s in %s",
                 page_uid,
@@ -248,7 +260,9 @@ class PageOperationsMixin:
                     [int(page_uid)],
                     "save_page_overlay_rect",
                 )
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save page overlay rect for page %s in %s",
                 page_uid,
@@ -272,7 +286,9 @@ class PageOperationsMixin:
                     "save_page_invert",
                     allow_empty=True,
                 )
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save page invert state for page %s in %s",
                 page_uid,
@@ -296,7 +312,9 @@ class PageOperationsMixin:
                     "save_page_bitonal",
                     allow_empty=True,
                 )
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save page bitonal state for page %s in %s",
                 page_uid,
@@ -340,7 +358,9 @@ class PageOperationsMixin:
                         "save_page_image_adjustments",
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save page image adjustments in %s", db_path
             )
@@ -377,7 +397,9 @@ class PageOperationsMixin:
                         int(page_uid),
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save page area for page %s in %s", page_uid, db_path
             )

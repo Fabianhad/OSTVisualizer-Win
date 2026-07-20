@@ -7,7 +7,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Callable, Generator, Optional, TypeVar
+from typing import Callable, Generator, Optional, Sequence, TypeVar
 import pyodbc
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceType,
@@ -36,6 +36,7 @@ from ..mdb.components.constants import BID_TABLES_WRITE_ORDER
 from ..mdb.raw_bid_integrity import RAW_BID_RELATIONSHIPS
 from ..mdb.schema_contract import PAGE_SECTIONS
 from ..mdb.mdb_writer import MdbWriter
+from ..database.schema_inspector_contract import IDatabaseSchemaInspector
 from .connection_manager import SqlConnectionLease, SqlConnectionManager
 from .client_permissions import require_sql_client_editability
 from .descriptor_connection import SqlDescriptorConnectionFactory
@@ -113,6 +114,7 @@ class _SqlMutationState(IMutationRecorder):
     request: DatabaseMutationRequest
     transaction_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     records: list[_RecordedMutation] = field(default_factory=list)
+    operation_error: Optional[BaseException] = None
 
     def record(
         self,
@@ -159,7 +161,12 @@ class SqlProjectWriter(MdbWriter):
                 raise RuntimeError(
                     "A SQL mutation cannot switch databases inside its transaction."
                 )
-            yield active.lease
+            try:
+                yield active.lease
+            except Exception as exc:
+                if active.operation_error is None:
+                    active.operation_error = exc
+                raise
             return
         raise SqlInfrastructureError(
             SqlErrorDetails(
@@ -242,6 +249,8 @@ class SqlProjectWriter(MdbWriter):
                     value = operation(state)
                 finally:
                     self._active_mutation.reset(token)
+                if state.operation_error is not None:
+                    raise state.operation_error
                 if not state.records:
                     raise RuntimeError(
                         "The SQL mutation did not record an affected resource."
@@ -496,8 +505,12 @@ class SqlProjectWriter(MdbWriter):
                 "SELECT TOP (1) [DatabaseGuid] " "FROM [ostv].[DatabaseMetadata]"
             )
             database_guid = cursor.fetchone()[0]
-            records = self._coalesce_records(state.records)
-            for record in records:
+            entity_records = self._deduplicate_records(state.records)
+            feed_records = self._coalesce_records(entity_records)
+            version_records = self._deduplicate_records(
+                [*entity_records, *feed_records]
+            )
+            for record in version_records:
                 cursor.execute(
                     "MERGE [ostv].[EntityVersions] WITH (HOLDLOCK) AS target "
                     "USING (SELECT ? AS [ResourceType], ? AS [ResourceId]) AS source "
@@ -521,6 +534,8 @@ class SqlProjectWriter(MdbWriter):
                 )
                 version = ConcurrencyToken.from_database(cursor.fetchone()[0])
                 versions[record.resource] = version
+            for record in feed_records:
+                version = versions[record.resource]
                 cursor.execute(
                     "INSERT INTO [ostv].[ChangeLog] ([TransactionId], "
                     "[SourceSessionId], [DatabaseGuid], [BidUID], [ResourceType], "
@@ -545,7 +560,7 @@ class SqlProjectWriter(MdbWriter):
             resource_families = sorted(
                 {
                     coalesced_resource_type(record.resource.resource_type)
-                    for record in records
+                    for record in feed_records
                 }
             )
             cursor.execute(
@@ -562,11 +577,17 @@ class SqlProjectWriter(MdbWriter):
         return versions
 
     @staticmethod
-    def _coalesce_records(records: list[_RecordedMutation]):
+    def _deduplicate_records(
+        records: Sequence[_RecordedMutation],
+    ) -> tuple[_RecordedMutation, ...]:
         by_resource = {}
         for record in records:
             by_resource[record.resource] = record
-        coalesced = tuple(by_resource[key] for key in sorted(by_resource))
+        return tuple(by_resource[key] for key in sorted(by_resource))
+
+    @classmethod
+    def _coalesce_records(cls, records: Sequence[_RecordedMutation]):
+        coalesced = cls._deduplicate_records(records)
         if len(coalesced) <= 450:
             return coalesced
         families = {}
@@ -613,13 +634,6 @@ class SqlProjectWriter(MdbWriter):
         cursor = lease.cursor()
         try:
             require_sql_client_editability(cursor)
-        except pyodbc.Error:
-            raise SqlInfrastructureError(
-                SqlErrorDetails(
-                    SqlErrorCode.SCHEMA_MISMATCH,
-                    "This SQL database is not writable by this OST Visualizer version.",
-                )
-            ) from None
         finally:
             cursor.close()
 
@@ -691,26 +705,33 @@ class SqlProjectWriter(MdbWriter):
             )
         return dict(values)
 
-    def _schema(self, connection) -> CurrentSqlWriteSchema:
+    def _schema(self, connection) -> IDatabaseSchemaInspector:
         del connection
         return self._write_schema
 
+    def _record_caught_mutation_error(self, exc: BaseException) -> bool:
+        """Make a caught shared-operation error fatal to the SQL transaction."""
+        state = self._active_mutation.get()
+        if state is not None and state.operation_error is None:
+            state.operation_error = exc
+        return True
+
+    @staticmethod
+    def _is_access_resource_exceeded(_exc: BaseException) -> bool:
+        return False
+
     def create_project(self, db_path: str, name: str) -> Optional[str]:
-        try:
-            with self._connection(db_path) as conn:
-                schema = self._schema(conn)
-                self._require_write_columns(schema, "BidProjects", ("UID", "Name"))
-                with conn.cursor() as cursor:
-                    cursor.execute(
-                        "INSERT INTO [dbo].[BidProjects] ([Name]) "
-                        "OUTPUT INSERTED.[UID] VALUES (?)",
-                        name,
-                    )
-                    row = cursor.fetchone()
-                    return str(row[0]) if row is not None else None
-        except (OSError, RuntimeError, TypeError, ValueError):
-            self.logger.exception("Failed to create SQL project in %s", db_path)
-            return None
+        with self._connection(db_path) as conn:
+            schema = self._schema(conn)
+            self._require_write_columns(schema, "BidProjects", ("UID", "Name"))
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO [dbo].[BidProjects] ([Name]) "
+                    "OUTPUT INSERTED.[UID] VALUES (?)",
+                    name,
+                )
+                row = cursor.fetchone()
+                return str(row[0]) if row is not None else None
 
     def import_ost_data(
         self,

@@ -40,6 +40,10 @@ class CurrentSqlWriteSchema:
         if column_name not in self._columns[table_name]:
             self._raise_mismatch(f"dbo.{table_name}.{column_name}")
 
+    def get_columns(self, table_name: str) -> set[str]:
+        self.require_table(table_name)
+        return set(self._columns[table_name])
+
     def table_info(self, table_name: str) -> tuple[set[str], dict[str, str]]:
         self.require_table(table_name)
         return set(self._columns[table_name]), dict(self._types[table_name])
@@ -61,6 +65,17 @@ class CurrentSqlWriteSchema:
         if alias_name == column_name:
             return f"[{column_name}]"
         return f"[{column_name}] AS [{alias_name}]"
+
+    def order_by_existing(
+        self,
+        table_name: str,
+        columns: tuple[str, ...],
+        fallback: str,
+    ) -> str:
+        del fallback
+        for column in columns:
+            self.require_column(table_name, column)
+        return ", ".join(f"[{column}]" for column in columns)
 
     def log_optional_write_skip(
         self, table_name: str, column_name: str, operation: str

@@ -1947,6 +1947,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         lifecycle_orchestrator.shutdown()
         super().closeEvent(event)
+        QtCore.QCoreApplication.quit()
 
     def _begin_application_shutdown(self) -> None:
         if (

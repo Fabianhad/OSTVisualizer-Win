@@ -108,6 +108,10 @@ class _CoverSheetSettingsOps(SettingsOperationsMixin, PageOperationsMixin):
     def _next_uid(self, _cursor, _table):
         return 99
 
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return False
+
     def _execute_update_values(
         self,
         _cursor,
@@ -192,6 +196,10 @@ class _PageScaleOps(PageOperationsMixin):
     def _require_write_columns(self, *_args):
         return None
 
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return False
+
     def _rescale_page_positions(self, _cursor, _schema, page_uid, factor):
         self.rescale_calls.append((page_uid, factor))
 
@@ -267,6 +275,10 @@ class _PageOverlayOps(PageOperationsMixin):
 
     def _schema(self, _conn):
         return self.schema
+
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return False
 
     def _execute_update_values(
         self,
@@ -1081,6 +1093,9 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             ensure_resources_loaded=lambda _database_id, _resources: None,
             expected_versions=lambda _database_id, _resources: (),
             apply_result=lambda _database_id, _versions: None,
+        )
+        write_service._database_capability_service = SimpleNamespace(
+            is_editable=lambda *_args: True
         )
         handler = CoverSheetHandler(
             window=object(),

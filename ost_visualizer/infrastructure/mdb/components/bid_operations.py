@@ -56,7 +56,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
             return True
         try:
             uids = [int(u) for u in bid_uids]
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning("Invalid bid uids passed to delete_bids: %s", bid_uids)
             return False
         placeholders_sql = placeholders(uids)
@@ -202,7 +204,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     f"DELETE FROM [Bids] WHERE UID IN ({placeholders_sql})", *uids
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to delete bids %s from %s", bid_uids, db_path)
             return False
 
@@ -470,8 +474,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                                 ("BidUID", "BidLayerUID"),
                                 (new_bid_uid, old_layer_uid),
                             )
-                        except pyodbc.Error:
-                            pass
+                        except pyodbc.Error as exc:
+                            if self._record_caught_mutation_error(exc):
+                                raise
                 if not schema.optional_table_missing(
                     "Settings"
                 ) and schema.column_exists("Settings", "NextBidNo"):
@@ -479,7 +484,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         "UPDATE [Settings] SET [NextBidNo] = ?", next_bid_no + 1
                     )
                 return new_bid_uid
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to duplicate bid %s in %s", bid_uid, db_path)
             return None
 
@@ -725,7 +732,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                         "UPDATE [Settings] SET [NextBidNo] = ?", next_bid_no + 1
                     )
                 return str(new_bid_uid)
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to create bid in %s for project %s", db_path, project_uid
             )
@@ -779,8 +788,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     (uid_col,),
                     f"copy_{table}",
                 )
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
 
     def _copy_with_uid_map(
         self,
@@ -829,8 +839,9 @@ class BidOperationsMixin(AccessIdentityAllocationMixin):
                     f"copy_with_uid_map_{table}",
                 )
                 uid_map[old_row_uid] = str(new_row_uid_int)
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
         return uid_map
 
     def _update_if_columns(

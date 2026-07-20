@@ -10,6 +10,7 @@ from ..parsers.utils.parser import decode_value
 from .components.annotation_reader import AnnotationReaderMixin
 from .components.bid_data_reader import BidDataReaderMixin
 from ..database.connection_wrapper import ConnectionWrapper
+from ..database.schema_inspector_contract import IDatabaseSchemaInspector
 from .components.hierarchy_reader import HierarchyReaderMixin
 from .components.settings_reader import SettingsReaderMixin
 from .connection_manager import MdbConnectionManager
@@ -51,6 +52,16 @@ class MdbReader(
     def refresh_connection(self, db_path: str) -> None:
         self._conn_manager.close_read(db_path)
 
+    @staticmethod
+    def _record_caught_read_error(
+        _exc: BaseException, _locator: Optional[str] = None
+    ) -> bool:
+        """Keep Access's optional-table read compatibility unchanged."""
+        return False
+
+    def _schema(self, connection) -> IDatabaseSchemaInspector:
+        return MdbSchemaInspector(connection, self.logger)
+
     def parse_file(self, file_path: str) -> Tuple[ParsedHierarchy, CdnTypes]:
         with self._connection(file_path) as connection:
             hierarchy = self._parse_hierarchy(connection, file_path)
@@ -59,7 +70,7 @@ class MdbReader(
 
     def _parse_cdn_types(self, connection) -> CdnTypes:
         cdn_types: CdnTypes = {}
-        schema = MdbSchemaInspector(connection, self.logger)
+        schema = self._schema(connection)
         if schema.optional_table_missing("CdnTypes"):
             return cdn_types
         schema.require_column("CdnTypes", "UID")

@@ -96,7 +96,19 @@ class SqlDatabaseCreator:
                 application_version=application_version,
                 actor=actor,
             )
-        except (SqlInfrastructureError, OSError, ValueError):
+        except SqlInfrastructureError as exc:
+            raise SqlInfrastructureError(
+                replace(
+                    exc.details,
+                    user_message=(
+                        f"{exc.details.user_message} The database container was "
+                        "created, but initialization did not finish. No automatic "
+                        "drop was attempted; an administrator should inspect it "
+                        "before removing it."
+                    ),
+                )
+            ) from exc
+        except (OSError, ValueError) as exc:
             raise SqlInfrastructureError(
                 SqlErrorDetails(
                     SqlErrorCode.SCHEMA_MISMATCH,
@@ -104,7 +116,7 @@ class SqlDatabaseCreator:
                     "No automatic drop was attempted; an administrator should inspect "
                     f"'{database_name}' before removing it.",
                 )
-            ) from None
+            ) from exc
 
     def initialize_blank_database(
         self,
@@ -117,62 +129,89 @@ class SqlDatabaseCreator:
         if not location.database:
             raise ValueError("A target SQL Server database is required")
         self._validate_blank_candidate(location, password)
-        self._ensure_snapshot_isolation(location, password)
-        enabled_change_tracking = self._ensure_database_change_tracking(
-            location, password
-        )
-        request = SqlConnectionRequest(location=location, password=password)
-        actor_name = actor.strip() or location.username.strip() or getpass.getuser()
-        with self._connections.connection(request, autocommit=False) as lease:
-            committed = False
-            try:
-                with lease.cursor() as cursor:
-                    acquire_schema_transaction_lock(cursor)
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM sys.tables t "
-                        "JOIN sys.schemas s ON s.schema_id=t.schema_id "
-                        "WHERE s.name IN (N'dbo', N'ostv')"
-                    )
-                    if int(cursor.fetchone()[0]) != 0:
+        enabled_snapshot_isolation = self._ensure_snapshot_isolation(location, password)
+        enabled_change_tracking = False
+        initialized = False
+        initialization_error: Exception | None = None
+        try:
+            enabled_change_tracking = self._ensure_database_change_tracking(
+                location, password
+            )
+            request = SqlConnectionRequest(location=location, password=password)
+            actor_name = actor.strip() or location.username.strip() or getpass.getuser()
+            with self._connections.connection(request, autocommit=False) as lease:
+                committed = False
+                try:
+                    with lease.cursor() as cursor:
+                        acquire_schema_transaction_lock(cursor)
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM sys.tables t "
+                            "JOIN sys.schemas s ON s.schema_id=t.schema_id "
+                            "WHERE s.name IN (N'dbo', N'ostv')"
+                        )
+                        if int(cursor.fetchone()[0]) != 0:
+                            raise SqlInfrastructureError(
+                                SqlErrorDetails(
+                                    SqlErrorCode.SCHEMA_MISMATCH,
+                                    "The selected database is not blank. Select an empty "
+                                    "database or create a new one.",
+                                )
+                            )
+                        for statement in SQL_SCHEMA_V1.statements:
+                            cursor.execute(statement)
+                        self._insert_seed_data(cursor, location.database)
+                        self._initialize_collaboration_state(cursor)
+                        self._record_schema(
+                            cursor,
+                            application_version=application_version,
+                            actor=actor_name,
+                        )
+                        apply_sql_client_permissions(cursor, location.username)
+                    inventory = self._inspector.inspect_connection(lease)
+                    report = self._validator.validate(inventory)
+                    if not report.is_valid:
                         raise SqlInfrastructureError(
                             SqlErrorDetails(
                                 SqlErrorCode.SCHEMA_MISMATCH,
-                                "The selected database is not blank. Select an empty "
-                                "database or create a new one.",
+                                "SQL database initialization validation failed: "
+                                + report.user_message,
                             )
                         )
-                    for statement in SQL_SCHEMA_V1.statements:
-                        cursor.execute(statement)
-                    self._insert_seed_data(cursor, location.database)
-                    self._initialize_collaboration_state(cursor)
-                    self._record_schema(
-                        cursor,
-                        application_version=application_version,
-                        actor=actor_name,
-                    )
-                    apply_sql_client_permissions(cursor, location.username)
-                inventory = self._inspector.inspect_connection(lease)
-                report = self._validator.validate(inventory)
-                if not report.is_valid:
-                    raise SqlInfrastructureError(
-                        SqlErrorDetails(
-                            SqlErrorCode.SCHEMA_MISMATCH,
-                            "SQL database initialization validation failed: "
-                            + report.user_message,
-                        )
-                    )
-                lease.commit()
-                committed = True
-            except pyodbc.Error as exc:
-                raise SqlInfrastructureError(classify_pyodbc_error(exc)) from None
-            finally:
-                if not committed:
+                    lease.commit()
+                    committed = True
+                    initialized = True
+                except pyodbc.Error as exc:
+                    raise SqlInfrastructureError(classify_pyodbc_error(exc)) from None
+                finally:
+                    if not committed:
+                        try:
+                            lease.rollback()
+                        except pyodbc.Error:
+                            pass
+        except Exception as exc:
+            initialization_error = exc
+            raise
+        finally:
+            if not initialized:
+                cleanup_errors: list[SqlInfrastructureError] = []
+                if enabled_change_tracking:
                     try:
-                        lease.rollback()
-                    except pyodbc.Error:
-                        pass
-                    if enabled_change_tracking:
                         self._disable_database_change_tracking(location, password)
+                    except SqlInfrastructureError as cleanup_error:
+                        cleanup_errors.append(cleanup_error)
+                if enabled_snapshot_isolation:
+                    try:
+                        self._disable_snapshot_isolation(location, password)
+                    except SqlInfrastructureError as cleanup_error:
+                        cleanup_errors.append(cleanup_error)
+                if cleanup_errors:
+                    if initialization_error is None:
+                        raise cleanup_errors[0]
+                    for cleanup_error in cleanup_errors:
+                        initialization_error.add_note(
+                            "SQL database initialization cleanup also failed: "
+                            f"{cleanup_error.details.user_message}"
+                        )
         final_location = replace(location, database_guid=inventory.database_guid)
         return SqlDatabaseCreationResult(final_location, SQL_SCHEMA_V1.version)
 
@@ -215,8 +254,10 @@ class SqlDatabaseCreator:
 
     def _ensure_snapshot_isolation(
         self, location: SqlServerDatabaseLocation, password: str
-    ) -> None:
+    ) -> bool:
         request = SqlConnectionRequest(location=location, password=password)
+        enabled_by_this_call = False
+        verification_error: SqlInfrastructureError | None = None
         try:
             with self._connections.connection(request, autocommit=True) as lease:
                 with lease.cursor() as cursor:
@@ -236,18 +277,60 @@ class SqlDatabaseCreator:
                         cursor.execute(
                             "ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON"
                         )
+                        enabled_by_this_call = True
                         cursor.execute(
                             "SELECT [snapshot_isolation_state] FROM sys.databases "
                             "WHERE [database_id]=DB_ID()"
                         )
                         verified = cursor.fetchone()
                         if verified is None or int(verified[0]) != 1:
-                            raise SqlInfrastructureError(
+                            verification_error = SqlInfrastructureError(
                                 SqlErrorDetails(
                                     SqlErrorCode.SCHEMA_MISMATCH,
                                     "SQL Server snapshot isolation could not be enabled.",
                                 )
                             )
+        except pyodbc.Error as exc:
+            raise SqlInfrastructureError(classify_pyodbc_error(exc)) from None
+        if verification_error is not None:
+            try:
+                self._disable_snapshot_isolation(location, password)
+            except SqlInfrastructureError as cleanup_error:
+                verification_error.add_note(
+                    "Snapshot-isolation cleanup also failed: "
+                    f"{cleanup_error.details.user_message}"
+                )
+            raise verification_error
+        return enabled_by_this_call
+
+    def _disable_snapshot_isolation(
+        self, location: SqlServerDatabaseLocation, password: str
+    ) -> None:
+        request = SqlConnectionRequest(location=location, password=password)
+        try:
+            with self._connections.connection(request, autocommit=True) as lease:
+                with lease.cursor() as cursor:
+                    cursor.execute(
+                        "DECLARE @result int; "
+                        "EXEC @result=sys.sp_getapplock @Resource=?, "
+                        "@LockMode=N'Exclusive', @LockOwner=N'Session', "
+                        "@LockTimeout=10000; "
+                        "IF @result < 0 THROW 51000, "
+                        "'Could not verify snapshot-isolation ownership.', 1; "
+                        "BEGIN TRY "
+                        "IF NOT EXISTS (SELECT 1 FROM sys.tables t "
+                        "JOIN sys.schemas s ON s.[schema_id]=t.[schema_id] "
+                        "WHERE s.[name]=N'ostv') "
+                        "ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION OFF; "
+                        "EXEC sys.sp_releaseapplock @Resource=?, "
+                        "@LockOwner=N'Session'; "
+                        "END TRY BEGIN CATCH "
+                        "EXEC sys.sp_releaseapplock @Resource=?, "
+                        "@LockOwner=N'Session'; THROW; END CATCH",
+                        SQL_SCHEMA_LOCK_RESOURCE,
+                        SQL_SCHEMA_LOCK_RESOURCE,
+                        SQL_SCHEMA_LOCK_RESOURCE,
+                    )
         except pyodbc.Error as exc:
             raise SqlInfrastructureError(classify_pyodbc_error(exc)) from None
 
@@ -340,7 +423,7 @@ class SqlDatabaseCreator:
 
     def _insert_seed_data(self, cursor, database_name: str) -> None:
         cursor.execute(
-            "INSERT INTO [Settings] ([Name], [Created], [NextBidNo], "
+            "INSERT INTO [dbo].[Settings] ([Name], [Created], [NextBidNo], "
             "[LoginRequired], [MeasureBase], [PriceUsing], "
             "[QuantitiesInLegend], [HoursPerDay], [StartWeekOn], "
             "[GridCountMethod], [TakeoffIncrements], [ScaleStyle], "
@@ -353,10 +436,12 @@ class SqlDatabaseCreator:
             "N'Regular', N'Overtime', N'Time + 1/2', N'Double', 0, 0, 2, 2, 2)",
             database_name,
         )
-        cursor.execute("INSERT INTO [BidProjects] ([Name]) VALUES (N'Deleted Bids')")
+        cursor.execute(
+            "INSERT INTO [dbo].[BidProjects] ([Name]) VALUES (N'Deleted Bids')"
+        )
         for layer_name, show, locked, sequence in self._default_layers:
             cursor.execute(
-                "INSERT INTO [BidLayers] "
+                "INSERT INTO [dbo].[BidLayers] "
                 "([IsTemplate], [Name], [Show], [IsLocked], [Sequence]) "
                 "VALUES (1, ?, ?, ?, ?)",
                 layer_name,
@@ -366,7 +451,8 @@ class SqlDatabaseCreator:
             )
         for version in self._schema_versions:
             cursor.execute(
-                "INSERT INTO [SchemaRegistry] ([Version], [Product]) VALUES (?, 2)",
+                "INSERT INTO [dbo].[SchemaRegistry] "
+                "([Version], [Product]) VALUES (?, 2)",
                 version,
             )
 

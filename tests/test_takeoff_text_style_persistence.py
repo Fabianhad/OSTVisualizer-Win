@@ -27,6 +27,10 @@ class _TakeoffTextStyleWriter(TakeoffOperationsMixin):
     def _schema(self, _conn):
         return object()
 
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return False
+
     def _execute_update_values(
         self,
         cursor,

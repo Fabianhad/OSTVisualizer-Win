@@ -224,7 +224,9 @@ class SettingsOperationsMixin:
                             "save_cover_sheet_page",
                         )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save cover sheet for bid %s in %s", bid_uid, db_path
             )
@@ -238,7 +240,9 @@ class SettingsOperationsMixin:
                 for page_uid in page_uids:
                     self._delete_page_cascade(cursor, schema, int(page_uid))
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to delete pages in %s", db_path)
             return False
 
@@ -266,7 +270,9 @@ class SettingsOperationsMixin:
                     "update_bid_job_status",
                 )
             return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to update job status for bid %s in %s", bid_uid, db_path
             )
@@ -370,6 +376,8 @@ class SettingsOperationsMixin:
                     f"DELETE FROM [{table}] WHERE [BidPageUID] = ?", page_int
                 )
             except pyodbc.Error as exc:
+                if self._record_caught_mutation_error(exc):
+                    raise
                 self.logger.warning(
                     "Failed to delete from %s for page %s: %s", table, page_int, exc
                 )
@@ -409,6 +417,8 @@ class SettingsOperationsMixin:
                     f"DELETE FROM [{table}] WHERE [BidPageUID] = ?", page_int
                 )
             except pyodbc.Error as exc:
+                if self._record_caught_mutation_error(exc):
+                    raise
                 self.logger.warning(
                     "Failed to delete from %s for page %s: %s", table, page_int, exc
                 )
@@ -446,8 +456,9 @@ class SettingsOperationsMixin:
                         cursor.execute(
                             "DELETE FROM [JobStatuses] WHERE [UID]=?", uid_int
                         )
-                    except (pyodbc.Error, ValueError):
-                        pass
+                    except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 for s in changes.get("updated", []):
                     uid = s.get("uid")
                     if uid is None:
@@ -468,8 +479,9 @@ class SettingsOperationsMixin:
                             [int(uid)],
                             "save_job_status",
                         )
-                    except (pyodbc.Error, ValueError):
-                        pass
+                    except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 for s in changes.get("new", []):
                     try:
                         locked_val = -1 if s.get("locked") else 0
@@ -486,10 +498,13 @@ class SettingsOperationsMixin:
                             ("UID", "Name"),
                             "save_job_status_new",
                         )
-                    except pyodbc.Error:
-                        pass
+                    except pyodbc.Error as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to save job statuses in %s", db_path)
             return False
 
@@ -542,6 +557,8 @@ class SettingsOperationsMixin:
                                     uid_int,
                                 )
                         except pyodbc.Error as exc:
+                            if self._record_caught_mutation_error(exc):
+                                raise
                             self.logger.warning(
                                 "Failed to clear ConditionSets.EmployeeUID for %s: %s",
                                 uid_int,
@@ -550,6 +567,8 @@ class SettingsOperationsMixin:
                         self._require_write_columns(schema, "Employees", ("UID",))
                         cursor.execute("DELETE FROM [Employees] WHERE [UID]=?", uid_int)
                     except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                         self.logger.warning(
                             "Failed to delete employee %s: %s", uid, exc
                         )
@@ -587,8 +606,9 @@ class SettingsOperationsMixin:
                             [int(uid)],
                             "save_employee",
                         )
-                    except (pyodbc.Error, ValueError):
-                        pass
+                    except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 for e in changes.get("new", []):
                     try:
                         raw_pc_uid = e.pay_class_uid
@@ -621,10 +641,13 @@ class SettingsOperationsMixin:
                             "save_employee_new",
                         )
                         uid_map[str(e.uid)] = str(assigned_uid)
-                    except (pyodbc.Error, ValueError):
-                        pass
+                    except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 return uid_map
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to save employees in %s", db_path)
             return None
 
@@ -660,6 +683,8 @@ class SettingsOperationsMixin:
                             "DELETE FROM [PayClasses] WHERE [UID]=?", uid_int
                         )
                     except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                         self.logger.warning(
                             "Failed to delete pay class %s: %s", uid, exc
                         )
@@ -678,8 +703,9 @@ class SettingsOperationsMixin:
                             [int(uid)],
                             "save_pay_class",
                         )
-                    except (pyodbc.Error, ValueError):
-                        pass
+                    except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 for pc in changes.get("new", []):
                     try:
                         assigned_uid = self._next_uid(cursor, "PayClasses")
@@ -694,10 +720,13 @@ class SettingsOperationsMixin:
                             ("UID", "Name"),
                             "save_pay_class_new",
                         )
-                    except pyodbc.Error:
-                        pass
+                    except pyodbc.Error as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to save pay classes in %s", db_path)
             return False
 
@@ -732,6 +761,8 @@ class SettingsOperationsMixin:
                                 return None
                         cursor.execute("DELETE FROM [CdnTypes] WHERE [UID]=?", uid_int)
                     except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                         self.logger.warning(
                             "Failed to delete condition type %s: %s", uid, exc
                         )
@@ -750,8 +781,9 @@ class SettingsOperationsMixin:
                             [int(uid)],
                             "save_condition_type",
                         )
-                    except (pyodbc.Error, ValueError):
-                        pass
+                    except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 for item in changes.get("new", []):
                     temp_uid = str(item.get("uid", ""))
                     try:
@@ -768,10 +800,13 @@ class SettingsOperationsMixin:
                             "save_condition_type_new",
                         )
                         uid_map[temp_uid] = str(assigned_uid)
-                    except pyodbc.Error:
-                        pass
+                    except pyodbc.Error as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 return uid_map
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to save condition types in %s", db_path)
             return {}
 
@@ -810,8 +845,9 @@ class SettingsOperationsMixin:
                                     "DELETE FROM [BidTimeCards] WHERE [BidAreaUID]=?",
                                     uid_int,
                                 )
-                        except pyodbc.Error:
-                            pass
+                        except pyodbc.Error as exc:
+                            if self._record_caught_mutation_error(exc):
+                                raise
                         try:
                             if not schema.optional_table_missing(
                                 "BidTypAreaCounts"
@@ -822,12 +858,14 @@ class SettingsOperationsMixin:
                                     "DELETE FROM [BidTypAreaCounts] WHERE [BidAreaUID]=?",
                                     uid_int,
                                 )
-                        except pyodbc.Error:
-                            pass
+                        except pyodbc.Error as exc:
+                            if self._record_caught_mutation_error(exc):
+                                raise
                         self._require_write_columns(schema, "BidAreas", ("UID",))
                         cursor.execute("DELETE FROM [BidAreas] WHERE [UID]=?", uid_int)
-                    except (pyodbc.Error, ValueError):
-                        pass
+                    except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 for area in changes.updated:
                     try:
                         parent_val = int(area.parent_uid) if area.parent_uid else None
@@ -845,8 +883,9 @@ class SettingsOperationsMixin:
                             [int(area.uid)],
                             "save_bid_area",
                         )
-                    except (pyodbc.Error, ValueError):
-                        pass
+                    except (pyodbc.Error, ValueError) as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
                 for area in changes.new:
                     try:
                         if area.parent_uid and area.parent_uid in uid_map:
@@ -874,9 +913,12 @@ class SettingsOperationsMixin:
                             "save_bid_area_new",
                         )
                         uid_map[area.uid] = str(assigned_uid)
-                    except pyodbc.Error:
-                        pass
-        except Exception:
+                    except pyodbc.Error as exc:
+                        if self._record_caught_mutation_error(exc):
+                            raise
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save bid areas for bid %s in %s", bid_uid, db_path
             )
@@ -922,7 +964,9 @@ class SettingsOperationsMixin:
                         "save_bid_selected_page",
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to save bid selected page for bid %s in %s",
                 bid_uid,

@@ -471,6 +471,9 @@ class UseCaseBuilder:
                 mutation_executor=mdb_writer,
                 session_registry=self.container.get("database_session_registry"),
                 concurrency_tokens=self.container.get("database_concurrency_tokens"),
+                database_capability_service=self.container.get(
+                    "database_capability_service"
+                ),
             ),
         )
         self.container.register_instance(
@@ -488,6 +491,9 @@ class UseCaseBuilder:
                 session_registry=self.container.get("database_session_registry"),
                 project_data_service=project_data_service,
                 concurrency_tokens=self.container.get("database_concurrency_tokens"),
+                database_capability_service=self.container.get(
+                    "database_capability_service"
+                ),
             ),
         )
 

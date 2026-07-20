@@ -150,6 +150,8 @@ class LayerOperationsMixin:
                         layer_int,
                     )
                 except Exception as exc:
+                    if self._record_caught_mutation_error(exc):
+                        raise
                     self.logger.warning(
                         "Failed to clear BidLayerUID in %s for layer %s: %s",
                         table,

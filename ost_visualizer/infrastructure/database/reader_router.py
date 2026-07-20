@@ -12,6 +12,7 @@ from ..mdb.connection_manager import MdbConnectionManager
 from ..mdb.mdb_reader import MdbReader
 from ..sql.reader import SqlProjectReader
 from .descriptor_registry import resolve_database_backend
+from .schema_inspector_contract import IDatabaseSchemaInspector
 
 
 class DatabaseProjectReader(SqlProjectReader):
@@ -41,6 +42,32 @@ class DatabaseProjectReader(SqlProjectReader):
 
     def _is_sql(self, locator: str) -> bool:
         return self._backend(locator) == DatabaseBackend.SQL_SERVER
+
+    def _current_backend(self) -> DatabaseBackend:
+        backend = self._active_backend.get()
+        if backend is None:
+            raise RuntimeError("Database reader operation has no active backend scope.")
+        return backend
+
+    def _schema(self, connection) -> IDatabaseSchemaInspector:
+        if self._current_backend() == DatabaseBackend.SQL_SERVER:
+            return SqlProjectReader._schema(self, connection)
+        return MdbReader._schema(self, connection)
+
+    def _record_caught_read_error(
+        self, exc: BaseException, locator: Optional[str] = None
+    ) -> bool:
+        backend = self._active_backend.get()
+        if backend is None:
+            if locator is None:
+                raise RuntimeError(
+                    "Database reader error handling requires an active backend "
+                    "scope or explicit locator."
+                )
+            backend = resolve_database_backend(self._descriptor_registry, locator)
+        if backend == DatabaseBackend.SQL_SERVER:
+            return SqlProjectReader._record_caught_read_error(exc, locator)
+        return MdbReader._record_caught_read_error(exc, locator)
 
     @contextmanager
     def _connection(self, locator: str):

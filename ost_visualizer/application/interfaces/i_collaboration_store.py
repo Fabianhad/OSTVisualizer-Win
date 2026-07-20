@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional, Protocol
 from ..dtos.collaboration_dtos import (
-    DatabaseChangeBatch,
+    DatabaseChangePollResult,
     DatabaseSession,
     PresenceMode,
     PresenceSnapshot,
@@ -53,5 +53,9 @@ class ICollaborationStore(Protocol):
         self, database_id: str, session_id: str, lock_token: str
     ) -> bool: ...
     def poll_changes(
-        self, database_id: str, after_version: int, limit: int
-    ) -> DatabaseChangeBatch: ...
+        self,
+        database_id: str,
+        after_version: int,
+        limit: int,
+        excluding_session_id: str,
+    ) -> DatabaseChangePollResult: ...

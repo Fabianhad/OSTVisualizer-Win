@@ -224,6 +224,10 @@ class _RecordingTakeoffOps(AccessBulkWriteMixin, TakeoffOperationsMixin):
         for column in columns:
             schema.require_column(table, column)
 
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return False
+
 
 class InfrastructureLifecycleTests(unittest.TestCase):
     def test_license_validation_scheduler_stop_releases_thread_reference(self):
@@ -1132,6 +1136,10 @@ class InfrastructureLifecycleTests(unittest.TestCase):
 
             def _require_write_columns(self, _schema, table, columns):
                 self.required_columns.append((table, columns))
+
+            @staticmethod
+            def _record_caught_mutation_error(_exc):
+                return False
 
         writer = FakeWriter()
         self.assertTrue(

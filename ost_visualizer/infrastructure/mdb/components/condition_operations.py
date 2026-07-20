@@ -86,7 +86,9 @@ class ConditionOperationsMixin:
                     )
                     new_uids.append(str(new_uid))
             return new_uids
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to duplicate conditions in %s", db_path)
             return []
 
@@ -157,7 +159,9 @@ class ConditionOperationsMixin:
                     )
                     uid_map[old_uid] = str(new_uid)
             return uid_map
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to duplicate conditions from bid %s to bid %s in %s",
                 source_bid_uid,
@@ -237,7 +241,9 @@ class ConditionOperationsMixin:
                     "insert_condition",
                 )
                 return str(new_uid)
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to insert condition in %s", db_path)
             return None
 
@@ -249,7 +255,9 @@ class ConditionOperationsMixin:
         try:
             cond_ints = [int(u) for u in condition_uids]
             bid_int = int(bid_uid)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning(
                 "Invalid uids passed to delete_conditions: bid=%s conds=%s",
                 bid_uid,
@@ -316,6 +324,8 @@ class ConditionOperationsMixin:
                             *cond_ints,
                         )
                 except Exception as exc:
+                    if self._record_caught_mutation_error(exc):
+                        raise
                     self.logger.warning(
                         "Failed to clear ConditionSetStyles for conditions %s: %s",
                         cond_ints,
@@ -328,7 +338,9 @@ class ConditionOperationsMixin:
                     bid_int,
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to delete conditions %s in %s", condition_uids, db_path
             )
@@ -418,7 +430,9 @@ class ConditionOperationsMixin:
                     "update_condition",
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to update condition %s in %s", condition_uid, db_path
             )
@@ -432,7 +446,9 @@ class ConditionOperationsMixin:
         try:
             bid_int = int(bid_uid)
             uid_ints = [int(uid) for uid in ordered_condition_uids]
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning(
                 "Invalid uids passed to renumber_conditions: bid=%s conds=%s",
                 bid_uid,
@@ -480,7 +496,9 @@ class ConditionOperationsMixin:
                         bid_int,
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to renumber conditions for bid %s in %s", bid_uid, db_path
             )
@@ -508,7 +526,9 @@ class ConditionOperationsMixin:
                     int(exclude_uid),
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to shift ref nos from %d in %s", from_ref_no, db_path
             )

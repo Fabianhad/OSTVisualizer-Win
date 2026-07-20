@@ -74,17 +74,6 @@ class MdbSchemaInspector:
         default_sql: str,
         alias: Optional[str] = None,
     ) -> str:
-        return self.select_column_or_default(
-            table_name, column_name, default_sql, alias
-        )
-
-    def select_column_or_default(
-        self,
-        table_name: str,
-        column_name: str,
-        default_sql: str,
-        alias: Optional[str] = None,
-    ) -> str:
         alias_name = alias or column_name
         if self.column_exists(table_name, column_name):
             if alias_name == column_name:

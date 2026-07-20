@@ -8,6 +8,7 @@ from .components.bulk_write_helpers import AccessBulkWriteMixin
 from .components.condition_folder_operations import ConditionFolderOperationsMixin
 from .components.condition_operations import ConditionOperationsMixin
 from ..database.connection_wrapper import ConnectionWrapper
+from ..database.schema_inspector_contract import IDatabaseSchemaInspector
 from .components.import_operations import ImportOperationsMixin
 from .components.layer_operations import LayerOperationsMixin
 from .components.page_operations import PageOperationsMixin
@@ -52,18 +53,23 @@ class MdbWriter(
                     pass
                 raise
 
-    def _schema(self, connection) -> MdbSchemaInspector:
+    def _schema(self, connection) -> IDatabaseSchemaInspector:
         return MdbSchemaInspector(connection, self.logger)
 
+    @staticmethod
+    def _record_caught_mutation_error(_exc: BaseException) -> bool:
+        """Keep Access's established best-effort row handling unchanged."""
+        return False
+
     def _require_write_columns(
-        self, schema: MdbSchemaInspector, table: str, columns: tuple[str, ...]
+        self, schema: IDatabaseSchemaInspector, table: str, columns: tuple[str, ...]
     ) -> None:
         for column in columns:
             schema.require_column(table, column)
 
     def _filter_existing_write_values(
         self,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
         table: str,
         values: dict,
         required_columns: tuple[str, ...],
@@ -84,7 +90,7 @@ class MdbWriter(
     def _execute_insert_values(
         self,
         cursor: pyodbc.Cursor,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
         table: str,
         values: dict,
         required_columns: tuple[str, ...],
@@ -113,7 +119,7 @@ class MdbWriter(
     def _execute_update_values(
         self,
         cursor: pyodbc.Cursor,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
         table: str,
         values: dict,
         required_columns: tuple[str, ...],

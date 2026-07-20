@@ -12,6 +12,7 @@ from ..interfaces.i_database_mutation_executor import (
 )
 from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
+from .database_capability_service import DatabaseCapabilityService
 
 
 class BaseWriteService:
@@ -50,12 +51,14 @@ class DatabaseMutationWriteService(BaseWriteService):
         mutation_executor: IDatabaseMutationExecutor,
         session_registry: IDatabaseSessionRegistry,
         concurrency_tokens: DatabaseConcurrencyTokenService,
+        database_capability_service: DatabaseCapabilityService,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         super().__init__(reload_database, event_bus, logger)
         self._mutation_executor = mutation_executor
         self._session_registry = session_registry
         self._concurrency_tokens = concurrency_tokens
+        self._database_capability_service = database_capability_service
 
     def _execute_database_mutation(
         self,
@@ -66,6 +69,17 @@ class DatabaseMutationWriteService(BaseWriteService):
         block_bid_child_locks: bool = False,
         block_bid_active_editors: bool = False,
     ) -> DatabaseMutationResult:
+        if not self._database_capability_service.is_editable(database_id):
+            self.logger.warning(
+                "Database mutation rejected because editing is unavailable."
+            )
+            return DatabaseMutationResult(success=False)
+        for resource in resources:
+            if not self._database_capability_service.is_editable(database_id, resource):
+                self.logger.warning(
+                    "Database mutation rejected because its resource is unavailable."
+                )
+                return DatabaseMutationResult(success=False)
         session_id = self._session_registry.get(database_id)
         self._concurrency_tokens.ensure_resources_loaded(database_id, resources)
         expected_versions = self._concurrency_tokens.expected_versions(

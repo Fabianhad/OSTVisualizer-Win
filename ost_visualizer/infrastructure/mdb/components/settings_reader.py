@@ -9,7 +9,6 @@ from ....domain.entities.cover_sheet import (
 )
 from ....domain.entities.employee import Employee, PayClass
 from ...parsers.utils.parser import decode_value, parse_float
-from ..schema_compatibility import MdbSchemaInspector
 from .constants import LAYER_REFERENCE_TABLES
 
 
@@ -76,8 +75,9 @@ class SettingsReaderMixin:
                         val = str(row[0]).strip() if row[0] is not None else ""
                         if val and val != "NULL":
                             used_job_status_uids.add(val)
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             folders, pages_without_folder = self._query_cover_sheet_pages(
                 connection, bid_uid
             )
@@ -125,7 +125,7 @@ class SettingsReaderMixin:
         folder_parent_map: Dict[str, Optional[str]] = {}
         pages_without_folder: List[CoverSheetPage] = []
         try:
-            schema = MdbSchemaInspector(connection, self.logger)
+            schema = self._schema(connection)
             schema.require_column("BidPages", "UID")
             schema.require_column("BidPages", "BidUID")
             with connection.cursor() as cursor:
@@ -210,7 +210,9 @@ class SettingsReaderMixin:
                     else:
                         pages_without_folder.append(page)
             return root_folders, pages_without_folder
-        except pyodbc.Error:
+        except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc):
+                raise
             return {}, []
 
     def get_settings_defaults(self, file_path: str) -> Dict:
@@ -226,7 +228,7 @@ class SettingsReaderMixin:
         }
         try:
             with self._connection(file_path) as conn:
-                schema = MdbSchemaInspector(conn, self.logger)
+                schema = self._schema(conn)
                 if schema.optional_table_missing("Settings"):
                     return defaults
                 settings_select = ", ".join(
@@ -255,8 +257,9 @@ class SettingsReaderMixin:
                         defaults["next_bid_no"] = (
                             int(row.NextBidNo) if row.NextBidNo else 1
                         )
-        except (pyodbc.Error, TypeError, ValueError):
-            pass
+        except (pyodbc.Error, TypeError, ValueError) as exc:
+            if self._record_caught_read_error(exc, file_path):
+                raise
         return defaults
 
     def get_job_statuses(self, file_path: str) -> List[JobStatus]:
@@ -275,7 +278,9 @@ class SettingsReaderMixin:
                 ],
                 key=lambda s: s.sequence,
             )
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_read_error(exc, file_path):
+                raise
             self.logger.warning("Could not load job statuses from %s", file_path)
             return []
 
@@ -312,7 +317,9 @@ class SettingsReaderMixin:
                 for r in pc_rows
             ]
             return employees, pay_classes
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_read_error(exc, file_path):
+                raise
             self.logger.warning(
                 "Could not load employees/pay classes from %s", file_path
             )
@@ -321,11 +328,13 @@ class SettingsReaderMixin:
     def get_bid_areas(self, file_path: str, bid_uid: str) -> List[BidArea]:
         try:
             with self._connection(file_path) as conn:
-                schema = MdbSchemaInspector(conn, self.logger)
+                schema = self._schema(conn)
                 return list(
                     self._parse_bid_areas_for_bid(conn, bid_uid, schema).values()
                 )
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_read_error(exc, file_path):
+                raise
             self.logger.warning(
                 "Could not load bid areas for bid %s from %s", bid_uid, file_path
             )
@@ -340,13 +349,15 @@ class SettingsReaderMixin:
                     )
                     return {str(row.EstimatorUID) for row in cursor.fetchall()}
         except (pyodbc.Error, TypeError, ValueError) as e:
+            if self._record_caught_read_error(e, file_path):
+                raise
             self.logger.warning("Could not query estimator UIDs in use: %s", e)
             return set()
 
     def get_condition_type_uids_in_use(self, file_path: str) -> set:
         try:
             with self._connection(file_path) as connection:
-                schema = MdbSchemaInspector(connection, self.logger)
+                schema = self._schema(connection)
                 if schema.optional_table_missing("BidConditions"):
                     return set()
                 if not schema.column_exists("BidConditions", "CdnTypeUID"):
@@ -358,13 +369,15 @@ class SettingsReaderMixin:
                     )
                     return {str(row.CdnTypeUID) for row in cursor.fetchall()}
         except (pyodbc.Error, TypeError, ValueError) as e:
+            if self._record_caught_read_error(e, file_path):
+                raise
             self.logger.warning("Could not query condition type UIDs in use: %s", e)
             return set()
 
     def get_layer_uids_in_use(self, file_path: str, bid_uid: str) -> set:
         try:
             with self._connection(file_path) as connection:
-                schema = MdbSchemaInspector(connection, self.logger)
+                schema = self._schema(connection)
                 used_uids = set()
                 with connection.cursor() as cursor:
                     for table in LAYER_REFERENCE_TABLES:
@@ -390,5 +403,7 @@ class SettingsReaderMixin:
                         )
                 return used_uids
         except (pyodbc.Error, TypeError, ValueError) as e:
+            if self._record_caught_read_error(e, file_path):
+                raise
             self.logger.warning("Could not query layer UIDs in use: %s", e)
             return set()

@@ -35,6 +35,7 @@ from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     _MainThreadSignaler,
 )
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.managers.ui_state_manager import UIStateManager
 
 
 class FakeUiState:
@@ -571,6 +572,108 @@ class FakeRefreshNav:
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_remote_conditions_update_uses_ui_state_mutation_contract(self):
+        bid_ref = BidRef("sql-database", "bid-1")
+        ui_state = UIStateManager(
+            SimpleNamespace(
+                display_modes_synced=False,
+                display_mode_3d="condition",
+                display_mode_2d="condition",
+                grayscale_enabled=False,
+            )
+        )
+        ui_state.set_bid_selection(bid_ref)
+        ui_state.set_highlighted_conditions({"c1", "deleted"})
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = ui_state
+        coordinator.project_data = SimpleNamespace(
+            get_bid_conditions=lambda: {"c1": object()}
+        )
+        coordinator._undo_service = None
+        coordinator._sidebar = SimpleNamespace(
+            refresh_conditions_from_memory=lambda: None
+        )
+        coordinator.highlight_sidebar = lambda _uids, reveal=False: None
+        coordinator._update_plan_view_for_active = lambda **_kwargs: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._on_remote_conditions_changed(
+            database_id=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            condition_uids=["c1"],
+        )
+        self.assertEqual(ui_state.highlighted_condition_uids, {"c1"})
+
+    def test_async_restored_sql_bid_runs_canonical_selection_projection(self):
+        bid_ref = BidRef("sql-database", "bid-1")
+
+        class ProjectData:
+            def __init__(self):
+                self.current_file = None
+                self.current_bid = None
+                self.deselections = 0
+
+            def get_current_bid_ref(self):
+                return self.current_bid
+
+            def get_current_file_path(self):
+                return self.current_file
+
+            def set_current_file(self, file_path):
+                self.current_file = file_path
+
+            def get_bid(self, requested):
+                return object() if requested == bid_ref else None
+
+            def deselect_pages(self):
+                self.deselections += 1
+
+        project_data = ProjectData()
+
+        class ProjectOperations:
+            def load_bid(self, requested):
+                project_data.current_bid = requested
+                return True
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = FakeUnloadMainWindow()
+        coordinator.main_window.project_view.selected_node = {
+            "kind": "bid",
+            "file_path": bid_ref.file_path,
+            "bid_uid": bid_ref.bid_uid,
+        }
+        coordinator.project_data = project_data
+        coordinator.project_operations = ProjectOperations()
+        coordinator.ui_state_manager = UIStateManager(
+            SimpleNamespace(
+                display_modes_synced=False,
+                display_mode_3d="condition",
+                display_mode_2d="condition",
+                grayscale_enabled=False,
+            )
+        )
+        coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._placement = FakePlacement()
+        coordinator._viewer = FakeUnloadViewer()
+        coordinator.visualization_service = FakeVisualization()
+        coordinator.ui_access_manager = FakeAccess()
+        coordinator._tab_widget = FakeTabWidget(index=0)
+        coordinator._nav = FakeNav()
+        coordinator._do_file_refresh = lambda: None
+        coordinator._save_current_page_view_state = lambda: None
+        coordinator._sync_undo_bid = lambda: None
+        coordinator.ensure_select_mode = lambda: None
+        coordinator._clear_mesh_views_for_scene_update = lambda **_kwargs: None
+        coordinator._resolve_bid_lock_state = lambda _bid_ref: None
+        coordinator._reset_takeoff_workspace_state = lambda: None
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._on_remote_hierarchy_changed(bid_ref.file_path)
+        self.assertEqual(coordinator.ui_state_manager.get_selected_bid_ref(), bid_ref)
+        self.assertEqual(project_data.current_bid, bid_ref)
+        self.assertEqual(project_data.current_file, bid_ref.file_path)
+        self.assertEqual(project_data.deselections, 1)
+        self.assertEqual(coordinator._tab_widget.visibility, [(1, True), (2, True)])
+        self.assertEqual(coordinator.ui_access_manager.refreshes, 1)
+
     def test_async_sql_only_hierarchy_selects_the_database_root(self):
         database_id = "sql-database"
         project_view = FakeProjectView()
@@ -583,7 +686,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 loaded_files=[HierarchyFileEntry(file_path=database_id)]
             ),
         )
-        coordinator.ui_state_manager = SimpleNamespace(selected_file_path=None)
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path=None,
+            get_selected_bid_ref=lambda: None,
+        )
         coordinator._cache_bid_data = lambda _loaded_files: None
         coordinator._on_remote_hierarchy_changed(database_id)
         self.assertEqual(project_view.builds, 1)
@@ -593,6 +699,26 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(project_view.restored_file, database_id)
         self.assertEqual(project_view.selection_notifications, 1)
+
+    def test_delayed_sql_hierarchy_does_not_replace_active_access_bid(self):
+        access_bid = BidRef("C:/projects/active.mdb", "bid-1")
+        project_view = FakeProjectView()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = SimpleNamespace(project_view=project_view)
+        coordinator.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: access_bid,
+            get_bid=lambda _bid_ref: object(),
+        )
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path=access_bid.file_path,
+            get_selected_bid_ref=lambda: access_bid,
+        )
+        coordinator._do_file_refresh = lambda: None
+        coordinator.handle_bid_selection = lambda *_args, **_kwargs: self.fail(
+            "delayed SQL registration must not replace the active Access bid"
+        )
+        coordinator._on_remote_hierarchy_changed("sql-database")
+        self.assertIsNone(project_view.restored_bid)
 
     def test_stale_sql_failure_does_not_replace_active_access_selection(self):
         panel = _CollaborationStatusPanel()

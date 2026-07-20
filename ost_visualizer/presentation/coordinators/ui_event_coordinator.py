@@ -1947,7 +1947,7 @@ class UIEventCoordinator:
         valid_highlights = self._validate_condition_uids(
             self.ui_state_manager.highlighted_condition_uids
         )
-        self.ui_state_manager.highlighted_condition_uids = valid_highlights
+        self.ui_state_manager.set_highlighted_conditions(valid_highlights)
         self._sidebar.refresh_conditions_from_memory()
         self.highlight_sidebar(valid_highlights, reveal=False)
         if not defer_plan_projection:
@@ -2036,8 +2036,36 @@ class UIEventCoordinator:
     ) -> None:
         del defer_plan_projection
         active_bid = self.project_data.get_current_bid_ref()
+        selected_bid = self.ui_state_manager.get_selected_bid_ref()
+        selected_database_id = self.ui_state_manager.selected_file_path
         self._do_file_refresh()
         if active_bid is None:
+            if selected_database_id and normalize_path(
+                selected_database_id
+            ) != normalize_path(database_id):
+                return
+            restored_bid = selected_bid
+            selected_node = self.main_window.project_view.get_selected_node_state()
+            if (
+                restored_bid is None
+                and selected_node
+                and selected_node.get("kind") == "bid"
+                and normalize_path(selected_node.get("file_path") or "")
+                == normalize_path(database_id)
+                and selected_node.get("bid_uid")
+            ):
+                restored_bid = BidRef(
+                    database_id,
+                    str(selected_node["bid_uid"]),
+                )
+            if (
+                restored_bid is not None
+                and normalize_path(restored_bid.file_path)
+                == normalize_path(database_id)
+                and self.project_data.get_bid(restored_bid) is not None
+            ):
+                self.handle_bid_selection(restored_bid, force=True)
+                return
             if (
                 not self.ui_state_manager.selected_file_path
                 and self.project_data.get_current_file_path() == database_id

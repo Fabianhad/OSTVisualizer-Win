@@ -8,7 +8,7 @@ from ....domain.entities.hierarchy_data import (
     HierarchyProjectInfo,
 )
 from ...parsers.utils.parser import decode_value, parse_float, remove_empty_folders
-from ..schema_compatibility import MdbSchemaInspector
+from ...database.schema_inspector_contract import IDatabaseSchemaInspector
 from .serialization import decode_text_blob
 
 
@@ -17,7 +17,7 @@ class HierarchyReaderMixin:
         self, connection: "pyodbc.Connection", file_path: str
     ) -> HierarchyFileEntry:
         database_name = Path(file_path).stem
-        schema = MdbSchemaInspector(connection, self.logger)
+        schema = self._schema(connection)
         schema.require_column("BidProjects", "UID")
         schema.require_column("BidProjects", "Name")
         schema.require_column("Bids", "UID")
@@ -136,7 +136,7 @@ class HierarchyReaderMixin:
         self,
         connection: "pyodbc.Connection",
         bid_uid: str,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
     ) -> Tuple[Dict[str, HierarchyFolderInfo], List[HierarchyPageInfo]]:
         with connection.cursor() as cursor:
             pages_without_folder: List[HierarchyPageInfo] = []
@@ -180,7 +180,7 @@ class HierarchyReaderMixin:
                 elif parent_uid in all_folders:
                     all_folders[parent_uid].subfolders[folder_uid_str] = folder_data
             select_clause = ", ".join(
-                schema.select_column_or_default("BidPages", column, default)
+                schema.optional_column("BidPages", column, default)
                 for column, default in (
                     ("UID", "NULL"),
                     ("Name", "NULL"),
@@ -237,7 +237,7 @@ class HierarchyReaderMixin:
             return folders, pages_without_folder
 
     def _load_status_map(self, connection: "pyodbc.Connection") -> Dict[str, str]:
-        schema = MdbSchemaInspector(connection, self.logger)
+        schema = self._schema(connection)
         if schema.optional_table_missing("JobStatuses"):
             return {}
         schema.require_column("JobStatuses", "UID")
@@ -250,7 +250,7 @@ class HierarchyReaderMixin:
             return status_map
 
     def _load_employee_map(self, connection: "pyodbc.Connection") -> Dict[str, str]:
-        schema = MdbSchemaInspector(connection, self.logger)
+        schema = self._schema(connection)
         if schema.optional_table_missing("Employees"):
             return {}
         schema.require_column("Employees", "UID")

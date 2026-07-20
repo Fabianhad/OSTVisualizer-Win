@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Optional
+import pyodbc
 from ...application.dtos.collaboration_resource_catalog import (
     AREA_RESOURCE_TYPES,
     BID_CONTENT_RESOURCE_TYPES,
@@ -23,7 +24,6 @@ from ...application.interfaces.i_database_descriptor_registry import (
 from ...application.interfaces.i_remote_change_reader import IRemoteChangeReader
 from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.page import build_pages_from_bid_data
-from ..mdb.schema_compatibility import MdbSchemaInspector
 from .connection_manager import SqlConnectionManager
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .reader import SqlProjectReader
@@ -62,27 +62,51 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
                     CollaborationResourceType.LAYERS_COLLECTION.value,
                 )
             )
-        batch = DatabaseChangeBatch(
-            database_id=database_id,
-            feed_epoch="",
-            minimum_valid_version=checkpoint,
-            high_water_version=checkpoint,
-            delivered_through_version=checkpoint,
-            changes=tuple(
-                DatabaseChange(
-                    sequence=checkpoint,
-                    commit_version=checkpoint,
-                    transaction_id="initial-reconciliation",
-                    source_session_id=None,
-                    resource=resource,
-                    operation=ChangeOperation.BULK_REFRESH,
+        request = self._requests.request(database_id, read_only=True)
+        with self._connections.connection(request, autocommit=False) as connection:
+            transaction_finished = False
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
+                    cursor.execute("BEGIN TRANSACTION")
+                    cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
+                    version_row = cursor.fetchone()
+                    if version_row is None or version_row[0] is None:
+                        raise ValueError("SQL Change Tracking metadata is unavailable.")
+                    high_water_version = int(version_row[0])
+                    if high_water_version < checkpoint:
+                        raise ValueError(
+                            "The initial SQL checkpoint is ahead of the database."
+                        )
+                batch = DatabaseChangeBatch(
+                    database_id=database_id,
+                    feed_epoch="",
+                    minimum_valid_version=checkpoint,
+                    high_water_version=high_water_version,
+                    delivered_through_version=checkpoint,
+                    changes=tuple(
+                        DatabaseChange(
+                            sequence=high_water_version,
+                            commit_version=high_water_version,
+                            transaction_id="initial-reconciliation",
+                            source_session_id=None,
+                            resource=resource,
+                            operation=ChangeOperation.BULK_REFRESH,
+                        )
+                        for resource in resources
+                    ),
                 )
-                for resource in resources
-            ),
-        )
-        return self.hydrate(batch)
+                hydrated = self.hydrate_connection(batch, connection)
+                connection.commit()
+                transaction_finished = True
+            finally:
+                if not transaction_finished:
+                    _rollback(connection)
+        return hydrated
 
-    def hydrate(self, batch: DatabaseChangeBatch) -> HydratedDatabaseChangeBatch:
+    def hydrate_connection(
+        self, batch: DatabaseChangeBatch, connection
+    ) -> HydratedDatabaseChangeBatch:
         condition_bids = {
             change.resource.bid_uid
             for change in batch.changes
@@ -119,39 +143,35 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         hierarchy_file = None
         hierarchy_cdn_types = {}
         if needs_hierarchy:
-            hierarchy_file, hierarchy_cdn_types = self._reader.parse_file(
-                batch.database_id
+            hierarchy_file, hierarchy_cdn_types = self._reader.parse_file_connection(
+                batch.database_id, connection
             )
         if condition_bids or area_bids:
-            request = self._requests.request(batch.database_id, read_only=True)
-            with self._connections.connection(request, autocommit=True) as connection:
-                schema = MdbSchemaInspector(connection, self._reader.logger)
-                cdn_types = (
-                    self._reader._parse_cdn_types(connection) if condition_bids else {}
+            schema = self._reader._schema(connection)
+            cdn_types = (
+                self._reader._parse_cdn_types(connection) if condition_bids else {}
+            )
+            for bid_uid in sorted(condition_bids):
+                key = str(bid_uid)
+                bid_layers = self._reader._parse_bid_layers_for_bid(connection, key)
+                conditions_by_bid[bid_uid] = self._reader._parse_bid_conditions_for_bid(
+                    connection,
+                    key,
+                    bid_layers,
+                    cdn_types,
+                    schema,
                 )
-                for bid_uid in sorted(condition_bids):
-                    key = str(bid_uid)
-                    bid_layers = self._reader._parse_bid_layers_for_bid(connection, key)
-                    conditions_by_bid[bid_uid] = (
-                        self._reader._parse_bid_conditions_for_bid(
-                            connection,
-                            key,
-                            bid_layers,
-                            cdn_types,
-                            schema,
-                        )
+                folders_by_bid[bid_uid] = (
+                    self._reader._parse_bid_condition_folders_for_bid(
+                        connection, key, schema
                     )
-                    folders_by_bid[bid_uid] = (
-                        self._reader._parse_bid_condition_folders_for_bid(
-                            connection, key, schema
-                        )
-                    )
-                for bid_uid in sorted(area_bids):
-                    areas_by_bid[bid_uid] = tuple(
-                        self._reader._parse_bid_areas_for_bid(
-                            connection, str(bid_uid), schema
-                        ).values()
-                    )
+                )
+            for bid_uid in sorted(area_bids):
+                areas_by_bid[bid_uid] = tuple(
+                    self._reader._parse_bid_areas_for_bid(
+                        connection, str(bid_uid), schema
+                    ).values()
+                )
         families_by_bid = {
             bid_uid: {
                 BID_CONTENT_FAMILY_BY_RESOURCE_TYPE[change.resource.resource_type]
@@ -162,72 +182,68 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
             for bid_uid in bid_data_bids
         }
         if bid_data_bids:
-            request = self._requests.request(batch.database_id, read_only=True)
-            with self._connections.connection(request, autocommit=True) as connection:
-                schema = MdbSchemaInspector(connection, self._reader.logger)
-                for bid_uid in sorted(bid_data_bids):
-                    bid_key = str(bid_uid)
-                    families = families_by_bid[bid_uid]
-                    needs_page_graph = bool(
-                        families
-                        & {
-                            CollaborationResourceFamily.PAGES.value,
-                            CollaborationResourceFamily.TAKEOFFS.value,
-                        }
+            schema = self._reader._schema(connection)
+            for bid_uid in sorted(bid_data_bids):
+                bid_key = str(bid_uid)
+                families = families_by_bid[bid_uid]
+                needs_page_graph = bool(
+                    families
+                    & {
+                        CollaborationResourceFamily.PAGES.value,
+                        CollaborationResourceFamily.TAKEOFFS.value,
+                    }
+                )
+                raw_layers = (
+                    self._reader._parse_bid_layers_for_bid(connection, bid_key)
+                    if families
+                    & {
+                        CollaborationResourceFamily.PAGES.value,
+                        CollaborationResourceFamily.ANNOTATIONS.value,
+                    }
+                    else {}
+                )
+                takeoffs, takeoff_extras = (
+                    self._reader._parse_bid_takeoffs_for_bid(
+                        connection, bid_key, schema
                     )
-                    raw_layers = (
-                        self._reader._parse_bid_layers_for_bid(connection, bid_key)
-                        if families
-                        & {
-                            CollaborationResourceFamily.PAGES.value,
-                            CollaborationResourceFamily.ANNOTATIONS.value,
-                        }
-                        else {}
+                    if needs_page_graph
+                    else ([], {})
+                )
+                pages = (
+                    self._reader._parse_bid_pages_for_bid(
+                        connection, bid_key, raw_layers, schema
                     )
-                    takeoffs, takeoff_extras = (
-                        self._reader._parse_bid_takeoffs_for_bid(
-                            connection, bid_key, schema
-                        )
-                        if needs_page_graph
-                        else ([], {})
+                    if needs_page_graph
+                    else {}
+                )
+                annotations = (
+                    self._reader._parse_bid_annotations_for_bid(
+                        connection, bid_key, raw_layers, schema
                     )
-                    pages = (
-                        self._reader._parse_bid_pages_for_bid(
-                            connection, bid_key, raw_layers, schema
-                        )
-                        if needs_page_graph
-                        else {}
+                    if CollaborationResourceFamily.ANNOTATIONS.value in families
+                    else []
+                )
+                page_area_selections = (
+                    self._reader._parse_page_area_selections_for_bid(
+                        connection, pages, schema
                     )
-                    annotations = (
-                        self._reader._parse_bid_annotations_for_bid(
-                            connection, bid_key, raw_layers, schema
-                        )
-                        if CollaborationResourceFamily.ANNOTATIONS.value in families
-                        else []
-                    )
-                    page_area_selections = (
-                        self._reader._parse_page_area_selections_for_bid(
-                            connection, pages, schema
-                        )
-                        if CollaborationResourceFamily.PAGES.value in families
-                        else {}
-                    )
-                    layers = (
-                        self._reader.get_bid_layers_for_sidebar(
-                            batch.database_id, bid_key
-                        )
-                        if CollaborationResourceFamily.LAYERS.value in families
-                        else []
-                    )
-                    bid_data_by_bid[bid_uid] = BidLoadResult(
-                        bid_takeoffs=takeoffs,
-                        bid_pages=pages,
-                        pages=build_pages_from_bid_data(pages, takeoffs),
-                        page_area_selections=page_area_selections,
-                        bid_annotations=annotations,
-                        bid_layers=layers,
-                        takeoff_extras=takeoff_extras,
-                    )
+                    if CollaborationResourceFamily.PAGES.value in families
+                    else {}
+                )
+                layers = (
+                    self._reader._parse_bid_layers_for_sidebar(connection, bid_key)
+                    if CollaborationResourceFamily.LAYERS.value in families
+                    else []
+                )
+                bid_data_by_bid[bid_uid] = BidLoadResult(
+                    bid_takeoffs=takeoffs,
+                    bid_pages=pages,
+                    pages=build_pages_from_bid_data(pages, takeoffs),
+                    page_area_selections=page_area_selections,
+                    bid_annotations=annotations,
+                    bid_layers=layers,
+                    takeoff_extras=takeoff_extras,
+                )
         return HydratedDatabaseChangeBatch(
             batch=batch,
             conditions_by_bid=conditions_by_bid,
@@ -237,3 +253,10 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
             hierarchy_file=hierarchy_file,
             cdn_types=hierarchy_cdn_types,
         )
+
+
+def _rollback(connection) -> None:
+    try:
+        connection.rollback()
+    except pyodbc.Error:
+        pass

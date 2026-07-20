@@ -627,6 +627,31 @@ class SqlCollaborationCoordinator:
         )
 
     def _worker(self, runtime: _DatabaseRuntime) -> None:
+        try:
+            self._run_worker(runtime)
+        except Exception as exc:
+            logger.error(
+                "SQL collaboration worker stopped after an unexpected %s.",
+                type(exc).__name__,
+            )
+            try:
+                self._handle_worker_failure(
+                    runtime,
+                    "SQL collaboration stopped after an unexpected internal error.",
+                )
+            except Exception:
+                runtime.cleanup_errors.append(
+                    "The failed SQL collaboration worker could not reset its session."
+                )
+        finally:
+            try:
+                self._reset_session(runtime, close_reason=runtime.close_reason)
+            except Exception:
+                runtime.cleanup_errors.append(
+                    "The SQL collaboration worker could not complete session cleanup."
+                )
+
+    def _run_worker(self, runtime: _DatabaseRuntime) -> None:
         reconnect_attempt = 0
         next_heartbeat = 0.0
         previous_loop = time.monotonic()
@@ -787,10 +812,6 @@ class SqlCollaborationCoordinator:
                     self._on_reconciliation_required,
                     (runtime.database_id, runtime.generation, str(exc)),
                 )
-        self._reject_pending_edits(
-            runtime, "SQL collaboration stopped before the edit lease was acquired."
-        )
-        self._reset_session(runtime, close_reason=runtime.close_reason)
 
     def _process_edit_requests(self, runtime: _DatabaseRuntime) -> None:
         while not runtime.stop_event.is_set():
@@ -1152,11 +1173,13 @@ class SqlCollaborationCoordinator:
                 return
             acknowledged = runtime.acknowledged_version
             session_id = runtime.session.session_id
-        batch = self._store.poll_changes(
+        poll_result = self._store.poll_changes(
             runtime.database_id,
             acknowledged,
             self._polling_policy.maximum_batch_size,
+            session_id,
         )
+        batch = poll_result.observed_batch
         with runtime.lock:
             runtime.transaction_count += len(
                 {change.transaction_id for change in batch.changes}
@@ -1195,25 +1218,13 @@ class SqlCollaborationCoordinator:
                 ),
             )
             return
-        remote_changes = tuple(
-            change for change in batch.changes if change.source_session_id != session_id
-        )
         if not batch.changes and batch.delivered_through_version == acknowledged:
             return
-        remote_batch = type(batch)(
-            database_id=batch.database_id,
-            feed_epoch=batch.feed_epoch,
-            minimum_valid_version=batch.minimum_valid_version,
-            high_water_version=batch.high_water_version,
-            delivered_through_version=batch.delivered_through_version,
-            changes=remote_changes,
-        )
-        hydrated = self._remote_reader.hydrate(remote_batch)
         with runtime.lock:
             runtime.pending_delivery = True
         self._dispatcher.dispatch(
             self._on_remote_batch,
-            (runtime.database_id, runtime.generation, hydrated),
+            (runtime.database_id, runtime.generation, poll_result.remote_batch),
         )
 
     def _next_poll_interval(self, runtime: _DatabaseRuntime) -> float:
@@ -1311,7 +1322,7 @@ class SqlCollaborationCoordinator:
             )
             if applied and not conflicted:
                 runtime.acknowledged_version = delivered_through_version
-            runtime.pending_delivery = conflicted
+            runtime.pending_delivery = conflicted or not applied
         if conflicted:
             return
         if not applied:
@@ -1375,10 +1386,15 @@ class SqlCollaborationCoordinator:
         *,
         close_reason: str = "trust-lost",
     ) -> None:
-        self._reject_pending_edits(
-            runtime,
-            "SQL collaboration trust was lost before the edit lease was acquired.",
-        )
+        try:
+            self._reject_pending_edits(
+                runtime,
+                "SQL collaboration trust was lost before the edit lease was acquired.",
+            )
+        except Exception:
+            runtime.cleanup_errors.append(
+                "The SQL collaboration worker could not reject pending edits."
+            )
         session, locks = self._clear_runtime_edits(runtime, close_reason)
         if session is not None:
             lock_release_failed = False
@@ -1439,10 +1455,15 @@ class SqlCollaborationCoordinator:
         for draft_id in draft_ids:
             self._local_drafts.finish(draft_id)
         if losses:
-            self._dispatcher.dispatch(
-                self._publish_lease_loss,
-                losses,
-            )
+            try:
+                self._dispatcher.dispatch(
+                    self._publish_lease_loss,
+                    losses,
+                )
+            except Exception:
+                runtime.cleanup_errors.append(
+                    "The SQL collaboration worker could not publish edit-lease loss."
+                )
         for resource in resources:
             self._sessions.remove_lock(runtime.database_id, resource)
         return session, locks
@@ -1491,7 +1512,7 @@ class SqlCollaborationCoordinator:
     def _set_state(
         self, database_id: str, state: SynchronizationState, message: str = ""
     ) -> None:
-        self._capabilities.set_collaboration_state(database_id, state)
+        self._capabilities.set_collaboration_state(database_id, state, message)
         self._publish_state(database_id, state, message)
 
     def _publish_state(

@@ -2,9 +2,11 @@ import contextlib
 import logging
 import os
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+import pyodbc
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtWidgets
@@ -50,18 +52,31 @@ from ost_visualizer.infrastructure.sql.schema_inspector import (
     SqlSchemaInventory,
 )
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
+from ost_visualizer.infrastructure.sql.write_schema import CurrentSqlWriteSchema
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     DatabaseMutationRequest,
     ResourceRef,
 )
+from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
+    InsertAnnotationSpec,
+)
+from ost_visualizer.application.dtos.create_condition_spec_dto import (
+    CreateConditionSpec,
+)
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.services.database_session_registry import (
     DatabaseSessionRegistry,
 )
 from ost_visualizer.infrastructure.sql.schema_validator import (
     SqlSchemaValidationReport,
+    SqlSchemaValidator,
 )
-from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
+from ost_visualizer.infrastructure.sql.writer import (
+    SqlProjectWriter,
+    _RecordedMutation,
+    _SqlMutationState,
+)
 from ost_visualizer.presentation.dialogs.sql_connection_dialog import (
     SqlConnectionDialog,
 )
@@ -139,9 +154,17 @@ class _InspectionCursor:
 class _InspectionLease:
     def __init__(self):
         self.cursor_value = _InspectionCursor()
+        self.commits = 0
+        self.rollbacks = 0
 
     def cursor(self):
         return self.cursor_value
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
 
 
 class _InspectionManager:
@@ -192,7 +215,7 @@ class _CreationCursor:
         if "retention_period" in self._last_sql:
             return None
         if "IS_ROLEMEMBER" in self._last_sql:
-            return (1, 1, 1, 1)
+            return (1, 1, 1, 1, 1)
         if "COUNT(*) FROM sys.tables" in self._last_sql:
             return (0,)
         if "FROM sys.tables" in self._last_sql:
@@ -238,13 +261,14 @@ class _CreationManager:
 
 
 class _WriterCursor(_CreationCursor):
-    def __init__(self):
+    def __init__(self, connection):
         super().__init__()
+        self.connection = connection
         self.close_count = 0
 
     def fetchone(self):
         if "IS_ROLEMEMBER" in self._last_sql:
-            return (1, 1, 1, 1)
+            return (1, 1, 1, 1, 1)
         if "SchemaMigrations" in self._last_sql:
             return (
                 SQL_SCHEMA_V1.version,
@@ -268,6 +292,8 @@ class _WriterCursor(_CreationCursor):
             return (1,)
         if "SELECT TOP (1) [DatabaseGuid]" in self._last_sql:
             return ("00000000-0000-0000-0000-000000000001",)
+        if "SELECT MAX([RefNo])" in self._last_sql:
+            return (None,)
         if "OUTPUT INSERTED.[Token]" in self._last_sql:
             return (b"\x00\x00\x00\x00\x00\x00\x00\x01",)
         return None
@@ -283,7 +309,7 @@ class _WriterLease:
         self.rollbacks = 0
 
     def cursor(self):
-        cursor = _WriterCursor()
+        cursor = _WriterCursor(self)
         self.cursors.append(cursor)
         return cursor
 
@@ -412,10 +438,14 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         complete = SqlDatabasePermissionProbe(
             registry,
             _CredentialStore(),
-            connection_manager=_PermissionManager((1, 1, 1, 1), current),
+            connection_manager=_PermissionManager((1, 1, 1, 1, 1), current),
         )
         self.assertTrue(complete.can_edit(descriptor.database_id))
-        for roles in ((0, 1, 1, 1), (1, 0, 1, 1)):
+        for roles in (
+            (0, 1, 1, 1, 1),
+            (1, 0, 1, 1, 1),
+            (1, 1, 1, 1, 0),
+        ):
             with self.subTest(roles=roles):
                 missing_role = SqlDatabasePermissionProbe(
                     registry,
@@ -426,14 +456,14 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         malformed_role = SqlDatabasePermissionProbe(
             registry,
             _CredentialStore(),
-            connection_manager=_PermissionManager((1, 1, object(), 1), current),
+            connection_manager=_PermissionManager((1, 1, object(), 1, 1), current),
         )
         self.assertFalse(malformed_role.can_edit(descriptor.database_id))
         denied_change_log = SqlDatabasePermissionProbe(
             registry,
             _CredentialStore(),
             connection_manager=_PermissionManager(
-                (1, 1, 1, 1),
+                (1, 1, 1, 1, 1),
                 current,
                 (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 1, 0),
             ),
@@ -443,7 +473,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             registry,
             _CredentialStore(),
             connection_manager=_PermissionManager(
-                (1, 1, 1, 1),
+                (1, 1, 1, 1, 1),
                 current,
                 (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 1),
             ),
@@ -453,7 +483,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             registry,
             _CredentialStore(),
             connection_manager=_PermissionManager(
-                (1, 1, 1, 1),
+                (1, 1, 1, 1, 1),
                 current,
                 marker_result=(1, 1, 0, 0, 0),
             ),
@@ -463,7 +493,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             registry,
             _CredentialStore(),
             connection_manager=_PermissionManager(
-                (1, 1, 1, 1),
+                (1, 1, 1, 1, 1),
                 current[:6] + (0, 0, 1, 1),
             ),
         )
@@ -472,7 +502,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             registry,
             _CredentialStore(),
             connection_manager=_PermissionManager(
-                (1, 1, 1, 1),
+                (1, 1, 1, 1, 1),
                 (
                     SQL_SCHEMA_V1.version,
                     SQL_SCHEMA_V1.checksum,
@@ -489,6 +519,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         apply_sql_client_permissions(cursor, "OSTV_CLIENT")
         permission_sql = " ".join(cursor.executed)
         self.assertEqual(SQL_CLIENT_DATABASE_ROLES, ("db_datareader", "db_datawriter"))
+        self.assertIn("ALTER USER", permission_sql)
+        self.assertIn("WITH DEFAULT_SCHEMA=[dbo]", permission_sql)
         self.assertIn("ALTER ROLE [db_datareader] ADD MEMBER", permission_sql)
         self.assertIn("ALTER ROLE [db_datawriter] ADD MEMBER", permission_sql)
         self.assertIn("GRANT VIEW DEFINITION ON SCHEMA::[dbo]", permission_sql)
@@ -506,17 +538,22 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertNotIn("ostv_client_editor", permission_sql)
 
     def test_sql_edit_probe_treats_connection_failure_as_read_only(self):
-        class _UnavailableManager:
-            @contextlib.contextmanager
-            def connection(self, _request, *, autocommit=False):
-                del autocommit
+        class _UnavailableConnection:
+            def __enter__(self):
                 raise SqlInfrastructureError(
                     SqlErrorDetails(
                         SqlErrorCode.CONNECTION_FAILED,
                         "The SQL Server is unavailable.",
                     )
                 )
-                yield
+
+            def __exit__(self, _exc_type, _exc_value, _traceback):
+                return False
+
+        class _UnavailableManager:
+            def connection(self, _request, *, autocommit=False):
+                del autocommit
+                return _UnavailableConnection()
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -551,6 +588,522 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         with writer._backend_scope("example.mdb"):
             self.assertIsInstance(writer._schema(object()), MdbSchemaInspector)
+
+    def test_database_reader_router_preserves_access_schema_and_error_contract(self):
+        reader = DatabaseProjectReader(
+            object(), DatabaseDescriptorRegistry(), _CredentialStore()
+        )
+        observed = {}
+
+        def parse_access(active_reader, locator):
+            observed["locator"] = locator
+            observed["schema"] = active_reader._schema(object())
+            observed["raises_optional_read_errors"] = (
+                active_reader._record_caught_read_error(RuntimeError("optional"))
+            )
+            return HierarchyFileEntry(file_path=locator), []
+
+        with patch.object(
+            MdbReader, "parse_file", autospec=True, side_effect=parse_access
+        ):
+            reader.parse_file("example.mdb")
+        self.assertEqual(observed["locator"], "example.mdb")
+        self.assertIsInstance(observed["schema"], MdbSchemaInspector)
+        self.assertFalse(observed["raises_optional_read_errors"])
+
+    def test_database_reader_router_preserves_sql_schema_and_error_contract(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        reader = DatabaseProjectReader(object(), registry, _CredentialStore())
+        observed = {}
+
+        def parse_sql(active_reader, database_id):
+            observed["database_id"] = database_id
+            observed["schema"] = active_reader._schema(object())
+            observed["raises_read_errors"] = active_reader._record_caught_read_error(
+                RuntimeError("snapshot")
+            )
+            return HierarchyFileEntry(file_path=database_id), []
+
+        with patch.object(
+            SqlProjectReader, "parse_file", autospec=True, side_effect=parse_sql
+        ):
+            reader.parse_file(descriptor.database_id)
+        self.assertEqual(observed["database_id"], descriptor.database_id)
+        self.assertIsInstance(observed["schema"], CurrentSqlWriteSchema)
+        self.assertTrue(observed["raises_read_errors"])
+
+    def test_access_reader_router_keeps_backend_scope_for_outer_error_handler(self):
+        original = pyodbc.Error("42S02", "optional Access table is missing")
+
+        class _Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def execute(_sql, *_params):
+                raise original
+
+        class _Connection:
+            @staticmethod
+            def cursor():
+                return _Cursor()
+
+        class _AccessConnections:
+            @contextlib.contextmanager
+            def connection(self, *_args, **_kwargs):
+                yield _Connection()
+
+        reader = DatabaseProjectReader(
+            _AccessConnections(), DatabaseDescriptorRegistry(), _CredentialStore()
+        )
+        with patch.object(
+            MdbReader,
+            "_schema",
+            return_value=CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema),
+        ):
+            self.assertEqual(reader.get_pages_with_takeoffs("example.mdb", "1"), set())
+
+    def test_sql_reader_router_keeps_backend_scope_for_outer_error_handler(self):
+        original = pyodbc.Error("08S01", "snapshot read failed")
+
+        class _Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def execute(_sql, *_params):
+                raise original
+
+        class _Connection:
+            @staticmethod
+            def cursor():
+                return _Cursor()
+
+            @staticmethod
+            def rollback():
+                return None
+
+        class _SqlConnections:
+            @contextlib.contextmanager
+            def connection(self, *_args, **_kwargs):
+                yield _Connection()
+
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        reader = DatabaseProjectReader(object(), registry, _CredentialStore())
+        reader._sql_connections = _SqlConnections()
+        with self.assertRaises(pyodbc.Error) as raised:
+            reader.get_pages_with_takeoffs(descriptor.database_id, "1")
+        self.assertIs(raised.exception, original)
+
+    def test_access_writer_uses_the_common_uid_allocator_contract(self):
+        class _Cursor:
+            def execute(self, sql):
+                self.sql = sql
+
+            @staticmethod
+            def fetchone():
+                return (41,)
+
+        writer = DatabaseProjectWriter(
+            object(),
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        cursor = _Cursor()
+        with writer._backend_scope("example.mdb"):
+            uid = writer._next_uid(cursor, "BidTakeoffs")
+        self.assertEqual(uid, 42)
+        self.assertEqual(cursor.sql, "SELECT MAX([UID]) FROM [BidTakeoffs]")
+
+    def test_sql_writer_router_uses_the_common_uid_allocator_contract(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        with writer._backend_scope(descriptor.database_id):
+            uid = writer._next_uid(object(), "BidTakeoffs")
+        self.assertIsInstance(uid, int)
+        with self.assertRaisesRegex(RuntimeError, "has not been generated"):
+            str(uid)
+
+    def test_writer_router_error_policy_uses_backend_not_sql_context_presence(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        original = RuntimeError("row failure")
+        resource_error = pyodbc.Error("HY001", "System resource exceeded")
+        mutation_token = writer._active_mutation.set(
+            SimpleNamespace(operation_error=None)
+        )
+        try:
+            with writer._backend_scope("example.mdb"):
+                self.assertFalse(writer._record_caught_mutation_error(original))
+                self.assertTrue(writer._is_access_resource_exceeded(resource_error))
+            with writer._backend_scope(descriptor.database_id):
+                self.assertTrue(writer._record_caught_mutation_error(original))
+                self.assertFalse(writer._is_access_resource_exceeded(resource_error))
+        finally:
+            writer._active_mutation.reset(mutation_token)
+
+    def test_sql_write_schema_exposes_columns_to_shared_write_mixins(self):
+        schema = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema)
+        expected_columns = {
+            "Bids": {"UID", "JobName"},
+            "BidPages": {"UID", "BidUID"},
+            "BidConditions": {"UID", "BidUID", "Name", "Type"},
+            "BidTakeoffs": {"UID", "Position"},
+        }
+        for table, required in expected_columns.items():
+            with self.subTest(table=table):
+                self.assertTrue(required.issubset(schema.get_columns(table)))
+
+    def test_sql_writer_permission_guard_does_not_reclassify_transport_failure(self):
+        original = pyodbc.Error("08S01", "connection lost during permission probe")
+
+        class _Cursor:
+            closed = False
+
+            def execute(self, _sql, *_params):
+                raise original
+
+            def close(self):
+                self.closed = True
+
+        class _Lease:
+            cursor_value = _Cursor()
+
+            def cursor(self):
+                return self.cursor_value
+
+        lease = _Lease()
+        with self.assertRaises(pyodbc.Error) as captured:
+            SqlProjectWriter._require_sql_client_editability(lease)
+        self.assertIs(captured.exception, original)
+        self.assertTrue(lease.cursor_value.closed)
+
+    def test_sql_and_access_schemas_implement_every_shared_write_contract(self):
+        implementations = (
+            (
+                CurrentSqlWriteSchema.table_exists,
+                CurrentSqlWriteSchema.column_exists,
+                CurrentSqlWriteSchema.get_columns,
+                CurrentSqlWriteSchema.log_optional_write_skip,
+                CurrentSqlWriteSchema.optional_column,
+                CurrentSqlWriteSchema.optional_table_missing,
+                CurrentSqlWriteSchema.order_by_existing,
+                CurrentSqlWriteSchema.require_column,
+                CurrentSqlWriteSchema.require_table,
+            ),
+            (
+                MdbSchemaInspector.table_exists,
+                MdbSchemaInspector.column_exists,
+                MdbSchemaInspector.get_columns,
+                MdbSchemaInspector.log_optional_write_skip,
+                MdbSchemaInspector.optional_column,
+                MdbSchemaInspector.optional_table_missing,
+                MdbSchemaInspector.order_by_existing,
+                MdbSchemaInspector.require_column,
+                MdbSchemaInspector.require_table,
+            ),
+        )
+        self.assertTrue(
+            all(callable(method) for methods in implementations for method in methods)
+        )
+
+    def test_sql_schema_rejects_conflicting_core_table_outside_dbo(self):
+        inventory = replace(
+            _empty_inventory(),
+            schema_version=SQL_SCHEMA_V1.version,
+            schema_checksum=SQL_SCHEMA_V1.checksum,
+            tables=frozenset({("custom", "Bids")}),
+        )
+        report = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema).validate(inventory)
+        self.assertIn("custom.Bids.shadows_dbo", report.problems)
+
+    def test_sql_database_seed_writes_are_explicitly_qualified_to_dbo(self):
+        creator = SqlDatabaseCreator(_CreationManager())
+        cursor = _CreationCursor()
+        creator._insert_seed_data(cursor, "OSTV_TEST")
+        seed_statements = [
+            sql
+            for sql in cursor.executed
+            if sql.lstrip().upper().startswith("INSERT INTO")
+        ]
+        self.assertGreaterEqual(len(seed_statements), 4)
+        self.assertTrue(
+            all("INSERT INTO [dbo].[" in sql for sql in seed_statements),
+            seed_statements,
+        )
+
+    def test_sql_shared_annotation_reader_does_not_acknowledge_partial_data(self):
+        class _FailingCursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def execute(_sql, *_params):
+                raise pyodbc.Error("08S01", "snapshot hydration failed")
+
+        class _Connection:
+            @staticmethod
+            def cursor():
+                return _FailingCursor()
+
+        reader = SqlProjectReader.__new__(SqlProjectReader)
+        reader.logger = logging.getLogger("tests.sql_strict_shared_reader")
+        with self.assertRaisesRegex(pyodbc.Error, "snapshot hydration failed"):
+            reader._parse_bid_annotations_for_bid(
+                _Connection(),
+                "1",
+                [],
+                CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema),
+            )
+
+    def test_sql_parse_file_uses_one_snapshot_transaction(self):
+        class _Cursor:
+            def __init__(self):
+                self.executed = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, *_params):
+                self.executed.append(sql)
+                return self
+
+        class _Lease:
+            def __init__(self):
+                self.cursor_value = _Cursor()
+                self.commits = 0
+                self.rollbacks = 0
+
+            def cursor(self):
+                return self.cursor_value
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        class _Connections:
+            def __init__(self):
+                self.lease = _Lease()
+                self.autocommit = None
+
+            @contextlib.contextmanager
+            def connection(self, _request, *, autocommit=False):
+                self.autocommit = autocommit
+                yield self.lease
+
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        connections = _Connections()
+        reader = SqlProjectReader(
+            registry,
+            _CredentialStore(),
+            connection_manager=connections,
+        )
+        with patch.object(
+            reader,
+            "parse_file_connection",
+            return_value=("hierarchy", {}),
+        ) as parse:
+            result = reader.parse_file(descriptor.database_id)
+        self.assertEqual(result, ("hierarchy", {}))
+        self.assertFalse(connections.autocommit)
+        self.assertEqual(
+            connections.lease.cursor_value.executed,
+            ["SET TRANSACTION ISOLATION LEVEL SNAPSHOT", "BEGIN TRANSACTION"],
+        )
+        self.assertEqual(connections.lease.commits, 1)
+        self.assertEqual(connections.lease.rollbacks, 0)
+        parse.assert_called_once_with(descriptor.database_id, connections.lease)
+
+    def test_sql_parse_file_rolls_back_failed_snapshot(self):
+        class _Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, _sql, *_params):
+                return self
+
+        class _Lease:
+            def __init__(self):
+                self.rollbacks = 0
+
+            @staticmethod
+            def cursor():
+                return _Cursor()
+
+            @staticmethod
+            def commit():
+                raise AssertionError("failed SQL parse must not commit")
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        class _Connections:
+            def __init__(self):
+                self.lease = _Lease()
+
+            @contextlib.contextmanager
+            def connection(self, _request, *, autocommit=False):
+                self.autocommit = autocommit
+                yield self.lease
+
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        connections = _Connections()
+        reader = SqlProjectReader(
+            registry,
+            _CredentialStore(),
+            connection_manager=connections,
+        )
+        with (
+            patch.object(
+                reader,
+                "parse_file_connection",
+                side_effect=RuntimeError("hierarchy failed"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "hierarchy failed"),
+        ):
+            reader.parse_file(descriptor.database_id)
+        self.assertFalse(connections.autocommit)
+        self.assertEqual(connections.lease.rollbacks, 1)
+
+    def test_sql_shared_reader_connection_is_snapshot_scoped(self):
+        class _Cursor:
+            def __init__(self):
+                self.executed = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, *_params):
+                self.executed.append(sql)
+                return self
+
+        class _Lease:
+            def __init__(self):
+                self.cursor_value = _Cursor()
+                self.commits = 0
+                self.rollbacks = 0
+
+            def cursor(self):
+                return self.cursor_value
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        class _Connections:
+            def __init__(self):
+                self.lease = _Lease()
+                self.autocommit = None
+
+            @contextlib.contextmanager
+            def connection(self, _request, *, autocommit=False):
+                self.autocommit = autocommit
+                yield self.lease
+
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        connections = _Connections()
+        reader = SqlProjectReader(
+            registry,
+            _CredentialStore(),
+            connection_manager=connections,
+        )
+        with reader._connection(descriptor.database_id) as lease:
+            self.assertIs(lease, connections.lease)
+        self.assertFalse(connections.autocommit)
+        self.assertEqual(
+            connections.lease.cursor_value.executed,
+            ["SET TRANSACTION ISOLATION LEVEL SNAPSHOT", "BEGIN TRANSACTION"],
+        )
+        self.assertEqual(connections.lease.commits, 1)
+        self.assertEqual(connections.lease.rollbacks, 0)
+
+    def test_access_shared_annotation_reader_retains_optional_table_tolerance(self):
+        class _FailingCursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def execute(_sql, *_params):
+                raise pyodbc.Error("42S02", "optional Access table is missing")
+
+        class _Connection:
+            @staticmethod
+            def cursor():
+                return _FailingCursor()
+
+        reader = MdbReader.__new__(MdbReader)
+        reader.logger = logging.getLogger("tests.access_tolerant_shared_reader")
+        annotations = reader._parse_bid_annotations_for_bid(
+            _Connection(),
+            "1",
+            [],
+            CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema),
+        )
+        self.assertEqual(annotations, [])
 
     def test_access_import_lookup_never_uses_sql_table_qualification(self):
         connection = object()
@@ -647,10 +1200,13 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         registry.register(descriptor)
         reader = SqlProjectReader(registry, _CredentialStore(), _InspectionManager())
         reader._validator.validate = lambda _inventory: SimpleNamespace(is_valid=True)
-        with patch.object(
-            MdbReader,
-            "parse_file",
-            return_value=(HierarchyFileEntry(file_path=""), {}),
+        with (
+            patch.object(
+                reader,
+                "_parse_hierarchy",
+                return_value=HierarchyFileEntry(file_path=""),
+            ),
+            patch.object(reader, "_parse_cdn_types", return_value={}),
         ):
             hierarchy, _cdn_types = reader.parse_file(descriptor.database_id)
         self.assertEqual(hierarchy.file_path, descriptor.database_id)
@@ -759,6 +1315,474 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
 
+    def test_sql_mutation_preserves_error_swallowed_by_shared_mdb_operation(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+
+        def shared_mdb_style_operation(_recorder):
+            try:
+                with writer._connection(descriptor.database_id):
+                    raise RuntimeError("original shared-operation failure")
+            except RuntimeError:
+                return False
+
+        with self.assertRaisesRegex(RuntimeError, "original shared-operation failure"):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                shared_mdb_style_operation,
+            )
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_sql_preconnection_validation_error_is_not_replaced_by_resource_invariant(
+        self,
+    ):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+        with self.assertRaisesRegex(ValueError, "Invalid takeoff UID"):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                lambda _recorder: writer.delete_takeoffs(
+                    descriptor.database_id, ["not-a-uid"]
+                ),
+            )
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_sql_create_project_preserves_original_error_and_rolls_back(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+        with (
+            patch.object(
+                writer,
+                "_require_write_columns",
+                side_effect=RuntimeError("project schema failure"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "project schema failure"),
+        ):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                lambda _recorder: writer.create_project(
+                    descriptor.database_id,
+                    "Project",
+                ),
+            )
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_sql_create_project_rejects_direct_write_outside_mutation_executor(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=_WriterManager(),
+            session_registry=DatabaseSessionRegistry(),
+        )
+        with self.assertRaises(SqlInfrastructureError) as raised:
+            writer.create_project(descriptor.database_id, "Project")
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.SESSION_EXPIRED)
+
+    def test_inherited_sql_mutation_never_uses_access_error_fallback_directly(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=_WriterManager(),
+            session_registry=DatabaseSessionRegistry(),
+        )
+        with self.assertRaisesRegex(ValueError, "Invalid takeoff UID"):
+            writer.delete_takeoffs(descriptor.database_id, ["not-a-uid"])
+
+    def test_access_preconnection_validation_retains_established_false_result(self):
+        writer = MdbWriter()
+        self.assertFalse(writer.delete_takeoffs("example.mdb", ["not-a-uid"]))
+
+    def test_access_router_scopes_preconnection_validation_as_access(self):
+        writer = DatabaseProjectWriter(
+            object(),
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        result = writer.execute(
+            DatabaseMutationRequest(database_id="example.mdb", session_id=None),
+            lambda _recorder: writer.delete_takeoffs("example.mdb", ["not-a-uid"]),
+        )
+        self.assertTrue(result.success)
+        self.assertFalse(result.value)
+
+    def test_sql_router_scopes_preconnection_validation_as_sql(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = DatabaseProjectWriter(
+            object(),
+            registry,
+            _CredentialStore(),
+            sessions,
+        )
+        writer._sql_connections = manager
+        with self.assertRaisesRegex(ValueError, "Invalid takeoff UID"):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                lambda _recorder: writer.delete_takeoffs(
+                    descriptor.database_id, ["not-a-uid"]
+                ),
+            )
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_sql_shared_master_data_conversion_error_escapes_and_rolls_back(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = DatabaseProjectWriter(object(), registry, _CredentialStore(), sessions)
+        writer._sql_connections = manager
+        with self.assertRaisesRegex(ValueError, "invalid literal"):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                lambda _recorder: writer.update_bid_job_status(
+                    descriptor.database_id, "not-a-bid", None
+                ),
+            )
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_access_shared_master_data_conversion_retains_false_result(self):
+        writer = DatabaseProjectWriter(
+            object(),
+            DatabaseDescriptorRegistry(),
+            _CredentialStore(),
+            DatabaseSessionRegistry(),
+        )
+        result = writer.execute(
+            DatabaseMutationRequest(database_id="example.mdb", session_id=None),
+            lambda _recorder: writer.update_bid_job_status(
+                "example.mdb", "not-a-bid", None
+            ),
+        )
+        self.assertTrue(result.success)
+        self.assertFalse(result.value)
+
+    def test_sql_mutation_preserves_row_error_swallowed_inside_shared_mdb_operation(
+        self,
+    ):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+        spec = InsertAnnotationSpec(
+            page_uid="10",
+            annotation_type="rect",
+            position=[1.0, 2.0, 3.0, 4.0],
+            color="#ff0000",
+            width=1.0,
+        )
+        with (
+            patch.object(
+                writer,
+                "_execute_annotation_insert",
+                side_effect=RuntimeError("nested annotation failure"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "nested annotation failure"),
+        ):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                lambda _recorder: writer.insert_annotations(
+                    descriptor.database_id,
+                    "1",
+                    [spec],
+                ),
+            )
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_access_row_error_retains_established_best_effort_result(self):
+        writer = MdbWriter(conn_manager=_WriterManager())
+        spec = InsertAnnotationSpec(
+            page_uid="10",
+            annotation_type="rect",
+            position=[1.0, 2.0, 3.0, 4.0],
+            color="#ff0000",
+            width=1.0,
+        )
+        with (
+            patch.object(writer, "_next_uid", return_value=1),
+            patch.object(
+                writer,
+                "_execute_annotation_insert",
+                side_effect=RuntimeError("access row failure"),
+            ),
+        ):
+            result = writer.insert_annotations("example.mdb", "1", [spec])
+        self.assertEqual(result, [])
+        self.assertEqual(writer._conn_manager.lease.commits, 1)
+        self.assertEqual(writer._conn_manager.lease.rollbacks, 0)
+
+    def test_sql_takeoff_write_does_not_retry_access_driver_resource_error(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+        with (
+            patch.object(
+                writer,
+                "_run_selected_takeoffs_value_update",
+                side_effect=pyodbc.Error("HY001", "System resource exceeded"),
+            ) as update,
+            self.assertRaisesRegex(pyodbc.Error, "System resource exceeded"),
+        ):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                lambda _recorder: writer.save_takeoffs_area(
+                    descriptor.database_id,
+                    ["10"],
+                    "20",
+                ),
+            )
+        self.assertEqual(update.call_count, 1)
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_access_takeoff_write_retains_resource_limit_retry(self):
+        writer = MdbWriter()
+        with patch.object(
+            writer,
+            "_run_selected_takeoffs_value_update",
+            side_effect=[
+                pyodbc.Error("HY001", "System resource exceeded"),
+                None,
+            ],
+        ) as update:
+            result = writer.save_takeoffs_area("example.mdb", ["10"], "20")
+        self.assertTrue(result)
+        self.assertEqual(update.call_count, 2)
+
+    def test_sql_page_rescale_cleanup_error_aborts_the_whole_mutation(self):
+        class _RescaleCursor:
+            @staticmethod
+            def execute(_sql, *_params):
+                raise pyodbc.Error("42000", "page rescale failure")
+
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+
+        def mutate(recorder):
+            writer._rescale_page_positions(
+                _RescaleCursor(),
+                CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema),
+                10,
+                2.0,
+            )
+            recorder.record(
+                ResourceRef("page", "10", 1),
+                ChangeOperation.UPDATE,
+            )
+            return True
+
+        with self.assertRaisesRegex(pyodbc.Error, "page rescale failure"):
+            writer.execute(
+                DatabaseMutationRequest(
+                    database_id=descriptor.database_id,
+                    session_id="session-1",
+                ),
+                mutate,
+            )
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+
+    def test_sql_shared_mutation_families_preserve_their_original_errors(self):
+        cases = (
+            (
+                "bid",
+                "_execute_insert_values",
+                lambda writer, database_id: writer.create_bid(
+                    database_id, None, {"job_name": "Bid"}
+                ),
+            ),
+            (
+                "page",
+                "_execute_update_values",
+                lambda writer, database_id: writer.save_page_name(
+                    database_id, "10", "Page"
+                ),
+            ),
+            (
+                "condition",
+                "_execute_insert_values",
+                lambda writer, database_id: writer.insert_condition(
+                    database_id, "1", CreateConditionSpec(name="Condition")
+                ),
+            ),
+            (
+                "takeoff",
+                "_execute_insert_values",
+                lambda writer, database_id: writer.insert_takeoffs(
+                    database_id,
+                    "1",
+                    [
+                        InsertTakeoffSpec(
+                            condition_uid="2",
+                            page_uid="3",
+                            area_uid=None,
+                            position=[1.0, 2.0],
+                        )
+                    ],
+                ),
+            ),
+            (
+                "master_data",
+                "_execute_update_values",
+                lambda writer, database_id: writer.save_job_statuses(
+                    database_id,
+                    {
+                        "new": [],
+                        "updated": [{"uid": "4", "name": "Open"}],
+                        "deleted_uids": [],
+                    },
+                ),
+            ),
+        )
+        for family, helper, operation in cases:
+            with self.subTest(family=family):
+                registry = DatabaseDescriptorRegistry()
+                descriptor = DatabaseDescriptor.for_sql_server(
+                    SqlServerDatabaseLocation(
+                        server="localhost", database=f"OSTV_TEST_{family.upper()}"
+                    )
+                )
+                registry.register(descriptor)
+                manager = _WriterManager()
+                sessions = DatabaseSessionRegistry()
+                sessions.register(descriptor.database_id, "session-1")
+                writer = SqlProjectWriter(
+                    registry,
+                    _CredentialStore(),
+                    connection_manager=manager,
+                    session_registry=sessions,
+                )
+                expected = f"{family} mutation failure"
+                with (
+                    patch.object(writer, helper, side_effect=RuntimeError(expected)),
+                    self.assertRaisesRegex(RuntimeError, expected),
+                ):
+                    writer.execute(
+                        DatabaseMutationRequest(
+                            database_id=descriptor.database_id,
+                            session_id="session-1",
+                        ),
+                        lambda _recorder: operation(writer, descriptor.database_id),
+                    )
+                self.assertEqual(manager.lease.commits, 0)
+                self.assertEqual(manager.lease.rollbacks, 1)
+
     def test_sql_mutation_commits_exactly_one_transaction_marker(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -803,6 +1827,48 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         self.assertEqual(manager.lease.commits, 1)
         self.assertEqual(manager.lease.rollbacks, 0)
+
+    def test_bulk_feed_coalescing_preserves_every_entity_version(self):
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        registry.register(descriptor)
+        manager = _WriterManager()
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=DatabaseSessionRegistry(),
+        )
+        resources = tuple(ResourceRef("takeoff", str(uid), 8) for uid in range(451))
+        state = _SqlMutationState(
+            descriptor.database_id,
+            manager.lease,
+            DatabaseMutationRequest(
+                database_id=descriptor.database_id,
+                session_id="session",
+                resources=resources,
+            ),
+            records=[
+                _RecordedMutation(resource, ChangeOperation.UPDATE)
+                for resource in resources
+            ],
+        )
+        versions = writer._finish_mutation(state)
+        statements = [
+            sql for cursor in manager.lease.cursors for sql in cursor.executed
+        ]
+        version_writes = [
+            sql for sql in statements if "MERGE [ostv].[EntityVersions]" in sql
+        ]
+        change_rows = [
+            sql for sql in statements if "INSERT INTO [ostv].[ChangeLog]" in sql
+        ]
+        self.assertEqual(len(version_writes), 452)
+        self.assertTrue(all(resource in versions for resource in resources))
+        self.assertIn(ResourceRef("takeoffs_collection", "8", 8), versions)
+        self.assertEqual(len(change_rows), 1)
 
     def test_sql_import_failure_preserves_original_error_and_rolls_back(self):
         registry = DatabaseDescriptorRegistry()
@@ -1005,7 +2071,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         class _StaleMetadataLease(_WriterLease):
             def cursor(self):
-                cursor = _StaleMetadataCursor()
+                cursor = _StaleMetadataCursor(self)
                 self.cursors.append(cursor)
                 return cursor
 
@@ -1034,7 +2100,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         class _TrackingDisabledLease(_WriterLease):
             def cursor(self):
-                cursor = _TrackingDisabledCursor()
+                cursor = _TrackingDisabledCursor(self)
                 self.cursors.append(cursor)
                 return cursor
 
@@ -1050,7 +2116,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         class _MissingRoleLease(_WriterLease):
             def cursor(self):
-                cursor = _MissingRoleCursor()
+                cursor = _MissingRoleCursor(self)
                 self.cursors.append(cursor)
                 return cursor
 
@@ -1066,7 +2132,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         class _MissingMarkerPermissionLease(_WriterLease):
             def cursor(self):
-                cursor = _MissingMarkerPermissionCursor()
+                cursor = _MissingMarkerPermissionCursor(self)
                 self.cursors.append(cursor)
                 return cursor
 
@@ -1139,6 +2205,164 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         self.assertIn("IF NOT EXISTS", disable_statement)
         self.assertIn("s.[name]=N'ostv'", disable_statement)
+
+    def test_failed_creator_restores_snapshot_isolation_it_enabled(self):
+        manager = _CreationManager()
+        creator = SqlDatabaseCreator(manager)
+        location = SqlServerDatabaseLocation(
+            server="localhost", database="OSTV_TEST_AUDIT"
+        )
+        with (
+            patch.object(creator, "_validate_blank_candidate"),
+            patch.object(creator, "_ensure_snapshot_isolation", return_value=True),
+            patch.object(
+                creator, "_ensure_database_change_tracking", return_value=True
+            ),
+            patch.object(
+                creator,
+                "_insert_seed_data",
+                side_effect=RuntimeError("schema initialization failed"),
+            ),
+            patch.object(creator, "_disable_database_change_tracking") as disable_ct,
+            patch.object(
+                creator, "_disable_snapshot_isolation", create=True
+            ) as disable_snapshot,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "initialization failed"):
+                creator.initialize_blank_database(
+                    location,
+                    application_version="test",
+                )
+        self.assertEqual(manager.lease.commits, 0)
+        self.assertEqual(manager.lease.rollbacks, 1)
+        disable_ct.assert_called_once_with(location, "")
+        disable_snapshot.assert_called_once_with(location, "")
+
+    def test_failed_creator_cleanup_does_not_replace_initialization_error(self):
+        manager = _CreationManager()
+        creator = SqlDatabaseCreator(manager)
+        location = SqlServerDatabaseLocation(
+            server="localhost", database="OSTV_TEST_AUDIT"
+        )
+        original = RuntimeError("schema initialization failed")
+        with (
+            patch.object(creator, "_validate_blank_candidate"),
+            patch.object(creator, "_ensure_snapshot_isolation", return_value=True),
+            patch.object(
+                creator, "_ensure_database_change_tracking", return_value=True
+            ),
+            patch.object(creator, "_insert_seed_data", side_effect=original),
+            patch.object(
+                creator,
+                "_disable_database_change_tracking",
+                side_effect=SqlInfrastructureError(
+                    SqlErrorDetails(
+                        SqlErrorCode.CONNECTION_FAILED,
+                        "change tracking cleanup failed",
+                    )
+                ),
+            ),
+            patch.object(creator, "_disable_snapshot_isolation") as disable_snapshot,
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                creator.initialize_blank_database(
+                    location,
+                    application_version="test",
+                )
+        self.assertIs(raised.exception, original)
+        self.assertTrue(
+            any(
+                "change tracking cleanup failed" in note
+                for note in getattr(raised.exception, "__notes__", ())
+            )
+        )
+        disable_snapshot.assert_called_once_with(location, "")
+
+    def test_created_container_preserves_initialization_error_classification(self):
+        manager = _CreationManager()
+        creator = SqlDatabaseCreator(manager)
+        original = SqlInfrastructureError(
+            SqlErrorDetails(SqlErrorCode.TIMEOUT, "initialization timed out")
+        )
+        location = SqlServerDatabaseLocation(server="localhost", database="")
+        with (
+            patch.object(
+                creator,
+                "initialize_blank_database",
+                side_effect=original,
+            ),
+            self.assertRaises(SqlInfrastructureError) as raised,
+        ):
+            creator.create_database(
+                location,
+                "OSTV_TEST",
+                application_version="1.0",
+            )
+        self.assertEqual(raised.exception.details.code, SqlErrorCode.TIMEOUT)
+        self.assertIn("container was created", str(raised.exception).casefold())
+        self.assertTrue(
+            any(
+                "CREATE DATABASE [OSTV_TEST]" in sql
+                for sql in manager.lease.cursor_value.executed
+            )
+        )
+
+    def test_snapshot_enable_verification_failure_restores_owned_setting(self):
+        class _SnapshotVerificationCursor(_CreationCursor):
+            def __init__(self):
+                super().__init__()
+                self._snapshot_reads = 0
+
+            def fetchone(self):
+                if "snapshot_isolation_state" in self._last_sql:
+                    self._snapshot_reads += 1
+                    return (0,)
+                return super().fetchone()
+
+        manager = _CreationManager()
+        manager.lease.cursor_value = _SnapshotVerificationCursor()
+        creator = SqlDatabaseCreator(manager)
+        location = SqlServerDatabaseLocation(
+            server="localhost", database="OSTV_TEST_AUDIT"
+        )
+        with patch.object(creator, "_disable_snapshot_isolation") as disable_snapshot:
+            with self.assertRaisesRegex(
+                SqlInfrastructureError, "snapshot isolation could not be enabled"
+            ):
+                creator._ensure_snapshot_isolation(location, "")
+        disable_snapshot.assert_called_once_with(location, "")
+
+    def test_snapshot_cleanup_failure_preserves_verification_error(self):
+        class _SnapshotVerificationCursor(_CreationCursor):
+            def fetchone(self):
+                if "snapshot_isolation_state" in self._last_sql:
+                    return (0,)
+                return super().fetchone()
+
+        manager = _CreationManager()
+        manager.lease.cursor_value = _SnapshotVerificationCursor()
+        creator = SqlDatabaseCreator(manager)
+        location = SqlServerDatabaseLocation(
+            server="localhost", database="OSTV_TEST_AUDIT"
+        )
+        cleanup_error = SqlInfrastructureError(
+            SqlErrorDetails(
+                SqlErrorCode.CONNECTION_FAILED,
+                "snapshot cleanup failed",
+            )
+        )
+        with patch.object(
+            creator, "_disable_snapshot_isolation", side_effect=cleanup_error
+        ):
+            with self.assertRaises(SqlInfrastructureError) as raised:
+                creator._ensure_snapshot_isolation(location, "")
+        self.assertIn("could not be enabled", str(raised.exception))
+        self.assertTrue(
+            any(
+                "snapshot cleanup failed" in note
+                for note in getattr(raised.exception, "__notes__", ())
+            )
+        )
 
     def test_blank_sql_database_creation_applies_client_roles_transactionally(self):
         manager = _CreationManager()

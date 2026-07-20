@@ -56,6 +56,10 @@ class _PageOps(PageOperationsMixin):
     def __init__(self):
         self.logger = _Logger()
 
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return False
+
 
 class PageScalePositionSerializationTests(unittest.TestCase):
     def test_text_position_table_classification_includes_text_annotation_tables(self):

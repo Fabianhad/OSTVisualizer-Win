@@ -92,6 +92,7 @@ from ..use_cases.project.update_layer_show_use_case import UpdateLayerShowUseCas
 from .active_bid_write_guard import ActiveBidWriteGuard
 from .base_write_service import DatabaseMutationWriteService
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
+from .database_capability_service import DatabaseCapabilityService
 
 
 @dataclass
@@ -206,6 +207,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         mutation_executor: IDatabaseMutationExecutor,
         session_registry: IDatabaseSessionRegistry,
         concurrency_tokens: DatabaseConcurrencyTokenService,
+        database_capability_service: DatabaseCapabilityService,
         connection_manager: Optional[IMdbConnectionManager] = None,
         reload_database=None,
         event_bus=None,
@@ -230,6 +232,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
             mutation_executor=mutation_executor,
             session_registry=session_registry,
             concurrency_tokens=concurrency_tokens,
+            database_capability_service=database_capability_service,
             logger=logger,
         )
         self._bid_write_guard = bid_write_guard
@@ -336,6 +339,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
     def is_expected_deferred_write_blocked(
         self, db_path: str, bid_uid: Optional[str] = None
     ) -> bool:
+        if not self._database_capability_service.is_editable(db_path):
+            return True
         if self._is_write_blocked():
             return True
         return self._bid_write_guard.is_active_locked_bid_write_blocked(

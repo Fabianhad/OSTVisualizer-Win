@@ -652,6 +652,66 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
         self.assertEqual(hidden, [True])
         self.assertEqual(len(scheduled), 1)
 
+    def test_completed_shutdown_exits_the_qt_event_loop_after_resource_cleanup(self):
+        calls = []
+        lifecycle = SimpleNamespace(shutdown=lambda: calls.append("lifecycle"))
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = True
+        window._collaboration_shutdown_failed = False
+        window._workspace_state_coordinator = SimpleNamespace(
+            flush=lambda: calls.append("workspace_flush"),
+            cleanup=lambda: calls.append("workspace_cleanup"),
+        )
+        window.event_coordinator = SimpleNamespace(
+            cleanup=lambda: calls.append("event_cleanup")
+        )
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(cleanup=lambda: calls.append("ui_cleanup"))
+        )
+        window.license_coordinator = SimpleNamespace(
+            cleanup=lambda: calls.append("license_cleanup")
+        )
+        window.ui_access_manager = SimpleNamespace(
+            cleanup=lambda: calls.append("access_cleanup")
+        )
+        window._mcp_context_bridge = SimpleNamespace(
+            cleanup=lambda: calls.append("mcp_cleanup")
+        )
+        window.app_controller = SimpleNamespace(
+            get_service=lambda service: (
+                lifecycle
+                if service == "lifecycle_orchestrator"
+                else self.fail(f"unexpected service: {service}")
+            )
+        )
+        event = FakeCloseEvent()
+        with patch.object(
+            MainWindow.__mro__[1],
+            "closeEvent",
+            side_effect=lambda _event: calls.append("window_close"),
+        ), patch.object(
+            QtCore.QCoreApplication,
+            "quit",
+            side_effect=lambda: calls.append("qt_quit"),
+        ):
+            MainWindow.closeEvent(window, event)
+        self.assertEqual(
+            calls,
+            [
+                "workspace_flush",
+                "workspace_cleanup",
+                "event_cleanup",
+                "ui_cleanup",
+                "license_cleanup",
+                "access_cleanup",
+                "mcp_cleanup",
+                "lifecycle",
+                "window_close",
+                "qt_quit",
+            ],
+        )
+
     def test_access_only_close_flushes_page_state_before_collaboration_shutdown(self):
         requests = []
         calls = []
@@ -1716,6 +1776,9 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
 class DeferredPersistenceBoundaryTests(unittest.TestCase):
     def test_project_write_service_reports_ost_active_as_expected_deferred_block(self):
         service = ProjectWriteService.__new__(ProjectWriteService)
+        service._database_capability_service = SimpleNamespace(
+            is_editable=lambda *_args: True
+        )
         service._connection_manager = SimpleNamespace(is_write_blocked=lambda: True)
         service._bid_write_guard = SimpleNamespace(
             is_active_locked_bid_write_blocked=lambda *_args: False
@@ -1724,6 +1787,9 @@ class DeferredPersistenceBoundaryTests(unittest.TestCase):
 
     def test_project_write_service_reports_locked_bid_as_expected_deferred_block(self):
         service = ProjectWriteService.__new__(ProjectWriteService)
+        service._database_capability_service = SimpleNamespace(
+            is_editable=lambda *_args: True
+        )
         service._connection_manager = SimpleNamespace(is_write_blocked=lambda: False)
         service._bid_write_guard = SimpleNamespace(
             is_active_locked_bid_write_blocked=lambda db_path, bid_uid=None: (
@@ -1737,6 +1803,9 @@ class DeferredPersistenceBoundaryTests(unittest.TestCase):
     def test_page_area_write_can_skip_database_refresh(self):
         calls = []
         service = ProjectWriteService.__new__(ProjectWriteService)
+        service._database_capability_service = SimpleNamespace(
+            is_editable=lambda *_args: True
+        )
         service._project_data = SimpleNamespace(
             get_current_bid_ref=lambda: BidRef("a.mdb", "1")
         )

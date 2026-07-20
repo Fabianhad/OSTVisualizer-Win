@@ -4,6 +4,9 @@ from types import SimpleNamespace
 from ost_visualizer.infrastructure.mdb.components.settings_reader import (
     SettingsReaderMixin,
 )
+from ost_visualizer.infrastructure.mdb.schema_compatibility import (
+    MdbSchemaInspector,
+)
 
 
 class _FakeCursor:
@@ -18,6 +21,7 @@ class _FakeCursor:
         return False
 
     def tables(self, tableType=None):
+        del tableType
         self._rows = [
             SimpleNamespace(table_name=table_name)
             for table_name in self._connection.columns_by_table
@@ -62,6 +66,12 @@ class _LayerUsageReader(SettingsReaderMixin):
     @contextmanager
     def _connection(self, _file_path):
         yield self._connection_obj
+
+    def _schema(self, connection):
+        return MdbSchemaInspector(connection, self.logger)
+
+    def _record_caught_read_error(self, _exc):
+        return False
 
 
 class LayerUsageReaderTests(unittest.TestCase):

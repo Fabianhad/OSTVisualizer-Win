@@ -306,7 +306,7 @@ def _construct_independent_application_stack() -> None:
         ConflictResolutionService(),
     )
     remote_reader = SqlRemoteChangeReader(descriptors, credentials, connections)
-    store = SqlCollaborationStore(descriptors, credentials, connections)
+    store = SqlCollaborationStore(descriptors, credentials, remote_reader, connections)
     capabilities = DatabaseCapabilityService(
         descriptors,
         SqlDatabasePermissionProbe(descriptors, credentials, connections),

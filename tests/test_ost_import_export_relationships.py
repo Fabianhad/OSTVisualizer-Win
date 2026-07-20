@@ -199,6 +199,10 @@ class _SqliteMdbWriter(ImportOperationsMixin, PageOperationsMixin):
         row = cursor.fetchone()
         return int(row[0]) + 1 if row and row[0] is not None else 1
 
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return False
+
     def _filter_existing_write_values(
         self, schema, table, values, required_columns, operation
     ):

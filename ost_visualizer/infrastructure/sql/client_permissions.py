@@ -46,17 +46,21 @@ def require_sql_client_editability(cursor) -> None:
         "COALESCE(IS_ROLEMEMBER(?, USER_NAME()), 0), "
         "COALESCE(IS_ROLEMEMBER(?, USER_NAME()), 0), "
         "COALESCE(HAS_PERMS_BY_NAME(?, N'SCHEMA', N'VIEW DEFINITION'), 0), "
-        "COALESCE(HAS_PERMS_BY_NAME(?, N'SCHEMA', N'VIEW DEFINITION'), 0)",
+        "COALESCE(HAS_PERMS_BY_NAME(?, N'SCHEMA', N'VIEW DEFINITION'), 0), "
+        "CASE WHEN COALESCE((SELECT p.[default_schema_name] "
+        "FROM sys.database_principals p WHERE p.[name]=USER_NAME()), N'')="
+        "N'dbo' THEN 1 ELSE 0 END",
         *SQL_CLIENT_DATABASE_ROLES,
         *SQL_CLIENT_SCHEMA_VISIBILITY,
     )
     role_row = cursor.fetchone()
-    if not _sql_integer_values_match(role_row, (1, 1, 1, 1)):
+    if not _sql_integer_values_match(role_row, (1, 1, 1, 1, 1)):
         raise SqlInfrastructureError(
             SqlErrorDetails(
                 SqlErrorCode.PERMISSION_DENIED,
                 "SQL editing requires the configured user to belong to the "
-                "required SQL database roles and schema visibility grants.",
+                "required SQL database roles, use dbo as its default schema, "
+                "and have the canonical schema visibility grants.",
             )
         )
     cursor.execute(
@@ -170,6 +174,8 @@ def require_sql_client_editability(cursor) -> None:
 
 def apply_sql_client_permissions(cursor, database_user: str = "") -> None:
     permission_statements = [
+        "SET @statement=N'ALTER USER ' + QUOTENAME(@database_user) + "
+        "N' WITH DEFAULT_SCHEMA=[dbo]'; EXEC sys.sp_executesql @statement;",
         *(
             f"IF IS_ROLEMEMBER(N'{role}', @database_user) <> 1 "
             f"BEGIN SET @statement=N'ALTER ROLE [{role}] ADD MEMBER ' + "

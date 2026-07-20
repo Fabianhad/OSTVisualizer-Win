@@ -60,7 +60,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
     ) -> bool:
         try:
             area_val = None if is_unassigned_area_uid(area_uid) else int(area_uid)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning("Invalid area uid for takeoff assignment: %s", area_uid)
             return False
         return self._update_selected_takeoffs_value(
@@ -76,7 +78,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
     ) -> bool:
         try:
             condition_val = int(condition_uid)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning(
                 "Invalid condition uid for takeoff assignment: %s", condition_uid
             )
@@ -102,7 +106,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
             return False
         try:
             uid_ints = self._normalize_int_uids(takeoff_uids, "takeoff")
-        except ValueError:
+        except ValueError as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning(
                 "Invalid takeoff uids passed to %s: %s", label, takeoff_uids
             )
@@ -119,6 +125,8 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
             )
             return True
         except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             if self._is_access_resource_exceeded(exc):
                 self.logger.warning(
                     "Access resource limit while saving %s for %d takeoffs "
@@ -136,7 +144,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                         1,
                     )
                     return True
-                except Exception:
+                except Exception as retry_exc:
+                    if self._record_caught_mutation_error(retry_exc):
+                        raise
                     self.logger.exception(
                         "Failed to save %s row-by-row in %s", label, db_path
                     )
@@ -200,7 +210,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                     "set_takeoff_curve",
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to set takeoff curve in %s", db_path)
             return False
 
@@ -217,7 +229,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                         int(takeoff_uid),
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to bulk save takeoff positions in %s", db_path
             )
@@ -236,7 +250,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                         int(takeoff_uid),
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to bulk save takeoff rotations in %s", db_path
             )
@@ -268,7 +284,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                         "save_takeoff_text_properties",
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to bulk save takeoff text properties in %s", db_path
             )
@@ -277,7 +295,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
     def delete_takeoffs(self, db_path: str, takeoff_uids: List[str]) -> bool:
         try:
             uids = self._normalize_int_uids(takeoff_uids, "takeoff")
-        except ValueError:
+        except ValueError as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning(
                 "Invalid takeoff uids passed to delete_takeoffs: %s", takeoff_uids
             )
@@ -288,6 +308,8 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
             self._run_delete_takeoffs(db_path, uids, ACCESS_BULK_CHUNK_SIZE)
             return True
         except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             if self._is_access_resource_exceeded(exc):
                 self.logger.warning(
                     "Access resource limit while deleting %d takeoffs with chunk "
@@ -298,7 +320,9 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                 try:
                     self._run_delete_takeoffs(db_path, uids, 1)
                     return True
-                except Exception:
+                except Exception as retry_exc:
+                    if self._record_caught_mutation_error(retry_exc):
+                        raise
                     self.logger.exception(
                         "Failed to delete takeoffs row-by-row in %s", db_path
                     )
@@ -424,6 +448,8 @@ class TakeoffOperationsMixin(AccessIdentityAllocationMixin):
                     )
                     new_uids.append(str(new_uid))
                 return new_uids
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to bulk insert takeoffs in %s", db_path)
             return []

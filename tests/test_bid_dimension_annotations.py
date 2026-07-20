@@ -115,7 +115,8 @@ class _SelectionHarness(SelectionManagerMixin):
 
 
 class _Reader(AnnotationReaderMixin):
-    pass
+    def _record_caught_read_error(self, _exc):
+        return False
 
 
 def _annotation_reader_schema(*, named_view_has_color=True):
@@ -184,6 +185,10 @@ class _DimensionWriteOps(AnnotationOperationsMixin):
 
     def _require_write_columns(self, _schema, _table, _columns):
         pass
+
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return False
 
     def _execute_insert_values(
         self,

@@ -23,6 +23,7 @@ from ost_visualizer.infrastructure.sql.connection_manager import (
 from ost_visualizer.infrastructure.sql.credential_store import WindowsCredentialStore
 from ost_visualizer.infrastructure.sql.errors import SqlInfrastructureError
 from ost_visualizer.infrastructure.sql.permissions import SqlDatabasePermissionProbe
+from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
 from tools.manage_sql_development import (
@@ -193,10 +194,9 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
         )
         registry = DatabaseDescriptorRegistry()
         registry.register(descriptor)
-        store = SqlCollaborationStore(
-            registry,
-            _RuntimeCredentialStore(self.development.password),
-        )
+        credentials = _RuntimeCredentialStore(self.development.password)
+        remote_reader = SqlRemoteChangeReader(registry, credentials)
+        store = SqlCollaborationStore(registry, credentials, remote_reader)
         session = store.start_session(
             descriptor.database_id,
             str(uuid.uuid4()),

@@ -30,7 +30,9 @@ class ConditionFolderOperationsMixin:
                     "insert_condition_folder",
                 )
                 return str(new_uid)
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to insert condition folder in %s", db_path)
             return None
 
@@ -48,7 +50,9 @@ class ConditionFolderOperationsMixin:
                     int(folder_uid),
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to rename condition folder %s in %s", folder_uid, db_path
             )
@@ -59,7 +63,9 @@ class ConditionFolderOperationsMixin:
             return True
         try:
             uids = [int(u) for u in folder_uids]
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning(
                 "Invalid folder uids passed to delete_condition_folders: %s",
                 folder_uids,
@@ -90,7 +96,9 @@ class ConditionFolderOperationsMixin:
                     *uids,
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to delete condition folders %s in %s", folder_uids, db_path
             )

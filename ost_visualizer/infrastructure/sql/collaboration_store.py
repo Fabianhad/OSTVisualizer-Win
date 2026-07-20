@@ -11,7 +11,9 @@ from ...application.dtos.collaboration_dtos import (
     ConcurrencyToken,
     DatabaseChange,
     DatabaseChangeBatch,
+    DatabaseChangePollResult,
     DatabaseSession,
+    HydratedDatabaseChangeBatch,
     PresenceMode,
     PresenceSnapshot,
     ResourceLock,
@@ -26,6 +28,7 @@ from .connection_manager import SqlConnectionManager
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
 from .schema_lock import acquire_resource_transaction_lock
+from .remote_change_reader import SqlRemoteChangeReader
 
 _MAX_CHANGE_BATCH = 500
 
@@ -35,12 +38,14 @@ class SqlCollaborationStore(ICollaborationStore):
         self,
         descriptor_registry: IDatabaseDescriptorRegistry,
         credential_store: ICredentialStore,
+        remote_reader: SqlRemoteChangeReader,
         connection_manager: Optional[SqlConnectionManager] = None,
     ) -> None:
         self._requests = SqlDescriptorConnectionFactory(
             descriptor_registry, credential_store
         )
         self._connections = connection_manager or SqlConnectionManager()
+        self._remote_reader = remote_reader
 
     def start_session(
         self,
@@ -390,8 +395,12 @@ class SqlCollaborationStore(ICollaborationStore):
         return deleted
 
     def poll_changes(
-        self, database_id: str, after_version: int, limit: int
-    ) -> DatabaseChangeBatch:
+        self,
+        database_id: str,
+        after_version: int,
+        limit: int,
+        excluding_session_id: str,
+    ) -> DatabaseChangePollResult:
         batch_limit = max(1, min(int(limit), _MAX_CHANGE_BATCH))
         request = self._requests.request(database_id, read_only=True)
         with self._connections.connection(request, autocommit=False) as lease:
@@ -464,22 +473,41 @@ class SqlCollaborationStore(ICollaborationStore):
                             if len(markers) >= batch_limit
                             else high_water_version
                         )
+                observed_batch = DatabaseChangeBatch(
+                    database_id=database_id,
+                    feed_epoch=str(state[0]),
+                    minimum_valid_version=minimum_valid_version,
+                    high_water_version=high_water_version,
+                    delivered_through_version=delivered_through_version,
+                    changes=tuple(_change_from_row(row) for row in rows),
+                )
+                remote_batch = DatabaseChangeBatch(
+                    database_id=observed_batch.database_id,
+                    feed_epoch=observed_batch.feed_epoch,
+                    minimum_valid_version=observed_batch.minimum_valid_version,
+                    high_water_version=observed_batch.high_water_version,
+                    delivered_through_version=observed_batch.delivered_through_version,
+                    changes=tuple(
+                        change
+                        for change in observed_batch.changes
+                        if change.source_session_id != excluding_session_id
+                    ),
+                )
                 if checkpoint_invalid:
+                    hydrated = HydratedDatabaseChangeBatch(remote_batch)
                     lease.rollback()
                 else:
+                    hydrated = self._remote_reader.hydrate_connection(
+                        remote_batch, lease
+                    )
                     lease.commit()
                 transaction_finished = True
             finally:
                 if not transaction_finished:
                     _rollback(lease)
-        changes = tuple(_change_from_row(row) for row in rows)
-        return DatabaseChangeBatch(
-            database_id=database_id,
-            feed_epoch=str(state[0]),
-            minimum_valid_version=minimum_valid_version,
-            high_water_version=high_water_version,
-            delivered_through_version=delivered_through_version,
-            changes=changes,
+        return DatabaseChangePollResult(
+            observed_batch=observed_batch,
+            remote_batch=hydrated,
         )
 
     @staticmethod

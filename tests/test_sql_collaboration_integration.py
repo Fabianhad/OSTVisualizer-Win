@@ -15,6 +15,7 @@ from ost_visualizer.infrastructure.sql.collaboration_store import (
     SqlCollaborationStore,
 )
 from ost_visualizer.infrastructure.sql.connection_manager import SqlConnectionRequest
+from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
 from tests.sql_integration_support import (
@@ -60,9 +61,11 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
             for client_number in (1, 2):
                 registry = DatabaseDescriptorRegistry()
                 registry.register(descriptor)
+                credentials = _RuntimeCredentialStore(configuration.password)
                 store = SqlCollaborationStore(
                     registry,
-                    _RuntimeCredentialStore(configuration.password),
+                    credentials,
+                    SqlRemoteChangeReader(registry, credentials),
                 )
                 stores.append(store)
                 session = store.start_session(
@@ -122,9 +125,11 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
             )
             registry = DatabaseDescriptorRegistry()
             registry.register(descriptor)
+            credentials = _RuntimeCredentialStore(configuration.password)
             store = SqlCollaborationStore(
                 registry,
-                _RuntimeCredentialStore(configuration.password),
+                credentials,
+                SqlRemoteChangeReader(registry, credentials, database.connections),
                 database.connections,
             )
             sessions = tuple(
@@ -184,7 +189,9 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                                 database_guid,
                             )
                         lease_b.commit()
-                    first = store.poll_changes(descriptor.database_id, baseline, 1)
+                    first = store.poll_changes(
+                        descriptor.database_id, baseline, 1, "test-observer"
+                    ).observed_batch
                     self.assertEqual(
                         tuple(change.sequence for change in first.changes),
                         (sequence_b1, sequence_b2),
@@ -205,7 +212,8 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                     descriptor.database_id,
                     first.delivered_through_version,
                     1,
-                )
+                    "test-observer",
+                ).observed_batch
                 self.assertEqual(
                     tuple(change.sequence for change in second.changes),
                     (sequence_a,),
@@ -237,7 +245,8 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                     descriptor.database_id,
                     second.delivered_through_version,
                     10,
-                )
+                    "test-observer",
+                ).observed_batch
                 self.assertEqual(after_rollback.changes, ())
                 with database.connections.connection(
                     request, autocommit=True

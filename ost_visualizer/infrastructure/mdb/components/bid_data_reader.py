@@ -18,7 +18,7 @@ from ....domain.entities.takeoff import Takeoff
 from ...parsers.ost_serializer import serialize_row
 from ...parsers.position_parser import extract_z_value_from_name
 from ...parsers.utils.parser import decode_value, parse_float, parse_overlay_rect
-from ..schema_compatibility import MdbSchemaInspector
+from ...database.schema_inspector_contract import IDatabaseSchemaInspector
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES
 from .constants import PAGE_DELETE_CONFIRMATION_TABLES
 from .serialization import decode_text_blob, parse_position_storage
@@ -55,7 +55,7 @@ class BidDataReaderMixin:
         Dict[str, Dict[str, Any]],
     ]:
         with self._connection(file_path) as connection:
-            schema = MdbSchemaInspector(connection, self.logger)
+            schema = self._schema(connection)
             schema.require_column("BidPages", "UID")
             schema.require_column("BidPages", "BidUID")
             schema.require_column("BidTakeoffs", "UID")
@@ -103,7 +103,7 @@ class BidDataReaderMixin:
             )
 
     def _parse_bid_selected_page(self, connection, bid_uid: str) -> Optional[str]:
-        schema = MdbSchemaInspector(connection, self.logger)
+        schema = self._schema(connection)
         if schema.optional_table_missing("BidSettings"):
             return None
         schema.require_column("BidSettings", "BidUID")
@@ -119,15 +119,16 @@ class BidDataReaderMixin:
                 row = cursor.fetchone()
                 if row and row[0]:
                     return str(row[0])
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc):
+                raise
         return None
 
     def _parse_bid_areas_for_bid(
         self,
         connection: "pyodbc.Connection",
         bid_uid: str,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
     ) -> BidAreas:
         areas: BidAreas = {}
         if schema.optional_table_missing("BidAreas"):
@@ -157,13 +158,14 @@ class BidDataReaderMixin:
                         sequence=int(row[4]) if row[4] is not None else 0,
                         guid=str(row[5]) if row[5] else "",
                     )
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc):
+                raise
         return areas
 
     def get_database_statistics(self, file_path: str) -> Dict[str, int]:
         with self._connection(file_path) as connection:
-            schema = MdbSchemaInspector(connection, self.logger)
+            schema = self._schema(connection)
             with connection.cursor() as cursor:
                 project_count = self._count_table(cursor, schema, "BidProjects")
                 bid_count = self._count_table(cursor, schema, "Bids")
@@ -179,7 +181,7 @@ class BidDataReaderMixin:
                 }
 
     def _count_table(
-        self, cursor: "pyodbc.Cursor", schema: MdbSchemaInspector, table: str
+        self, cursor: "pyodbc.Cursor", schema: IDatabaseSchemaInspector, table: str
     ) -> int:
         if schema.optional_table_missing(table):
             return 0
@@ -213,7 +215,7 @@ class BidDataReaderMixin:
         key_col: str,
         key_val: str,
     ) -> Dict[str, str]:
-        schema = MdbSchemaInspector(connection, self.logger)
+        schema = self._schema(connection)
         if schema.optional_table_missing(table) or not schema.column_exists(
             table, key_col
         ):
@@ -228,8 +230,9 @@ class BidDataReaderMixin:
                 row = cursor.fetchone()
                 if row:
                     return serialize_row(row, cursor.description)
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc):
+                raise
         return {}
 
     def _select_all_filtered(
@@ -240,7 +243,7 @@ class BidDataReaderMixin:
         key_val: str,
     ) -> List[Dict[str, str]]:
         rows_out: List[Dict[str, str]] = []
-        schema = MdbSchemaInspector(connection, self.logger)
+        schema = self._schema(connection)
         if schema.optional_table_missing(table) or not schema.column_exists(
             table, key_col
         ):
@@ -255,8 +258,9 @@ class BidDataReaderMixin:
                 desc = cursor.description
                 for row in cursor.fetchall():
                     rows_out.append(serialize_row(row, desc))
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc):
+                raise
         return rows_out
 
     def _select_all_by_bid_or_page(
@@ -266,7 +270,7 @@ class BidDataReaderMixin:
         bid_uid: str,
         page_uids: List[str],
     ) -> List[Dict[str, str]]:
-        schema = MdbSchemaInspector(connection, self.logger)
+        schema = self._schema(connection)
         if schema.optional_table_missing(table):
             return []
         select_clause = self._select_all_columns(schema, table)
@@ -280,8 +284,9 @@ class BidDataReaderMixin:
                 )
                 desc = cursor.description
                 return [serialize_row(row, desc) for row in cursor.fetchall()]
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc):
+                raise
         if not page_uids:
             return []
         try:
@@ -296,15 +301,16 @@ class BidDataReaderMixin:
                 )
                 desc = cursor.description
                 return [serialize_row(row, desc) for row in cursor.fetchall()]
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc):
+                raise
         return []
 
     def _select_all_unfiltered(
         self, connection: "pyodbc.Connection", table: str
     ) -> List[Dict[str, str]]:
         rows_out: List[Dict[str, str]] = []
-        schema = MdbSchemaInspector(connection, self.logger)
+        schema = self._schema(connection)
         if schema.optional_table_missing(table):
             return rows_out
         select_clause = self._select_all_columns(schema, table)
@@ -314,11 +320,12 @@ class BidDataReaderMixin:
                 desc = cursor.description
                 for row in cursor.fetchall():
                     rows_out.append(serialize_row(row, desc))
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc):
+                raise
         return rows_out
 
-    def _select_all_columns(self, schema: MdbSchemaInspector, table: str) -> str:
+    def _select_all_columns(self, schema: IDatabaseSchemaInspector, table: str) -> str:
         columns = sorted(schema.get_columns(table))
         return ", ".join(f"[{column}]" for column in columns)
 
@@ -326,7 +333,7 @@ class BidDataReaderMixin:
         self, connection: "pyodbc.Connection", bid_uid: str
     ) -> BidLayers:
         bid_layers: BidLayers = {}
-        schema = MdbSchemaInspector(connection, self.logger)
+        schema = self._schema(connection)
         if schema.optional_table_missing("BidLayers"):
             return bid_layers
         schema.require_column("BidLayers", "UID")
@@ -356,7 +363,7 @@ class BidDataReaderMixin:
         result = set()
         try:
             with self._connection(file_path) as connection:
-                schema = MdbSchemaInspector(connection, self.logger)
+                schema = self._schema(connection)
                 if schema.optional_table_missing("BidTakeoffs"):
                     return result
                 schema.require_column("BidTakeoffs", "BidUID")
@@ -370,8 +377,9 @@ class BidDataReaderMixin:
                     for row in cursor.fetchall():
                         if row[0] is not None:
                             result.add(str(row[0]))
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc, file_path):
+                raise
         return result
 
     def get_pages_with_delete_content(self, file_path: str, bid_uid: str) -> set:
@@ -379,7 +387,7 @@ class BidDataReaderMixin:
         content_tables = PAGE_DELETE_CONFIRMATION_TABLES
         try:
             with self._connection(file_path) as connection:
-                schema = MdbSchemaInspector(connection, self.logger)
+                schema = self._schema(connection)
                 if schema.optional_table_missing("BidPages"):
                     return result
                 schema.require_column("BidPages", "UID")
@@ -406,7 +414,9 @@ class BidDataReaderMixin:
                             page_uid = str(row[0])
                             if page_uid in bid_page_uids:
                                 result.add(page_uid)
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_read_error(exc, file_path):
+                raise
             self.logger.warning(
                 "Failed to load pages with delete-sensitive content for bid %s",
                 bid_uid,
@@ -418,45 +428,45 @@ class BidDataReaderMixin:
         self, file_path: str, bid_uid: str
     ) -> List[BidLayer]:
         with self._connection(file_path) as connection:
-            schema = MdbSchemaInspector(connection, self.logger)
-            if schema.optional_table_missing("BidLayers"):
-                return []
-            schema.require_column("BidLayers", "UID")
-            schema.require_column("BidLayers", "BidUID")
-            schema.require_column("BidLayers", "Name")
-            layer_select = ", ".join(
-                [
-                    "[UID]",
-                    "[BidUID]",
-                    schema.optional_column("BidLayers", "IsTemplate", "0"),
-                    "[Name]",
-                    schema.optional_column("BidLayers", "Show", "-1"),
-                    schema.optional_column("BidLayers", "IsLocked", "0"),
-                    schema.optional_column("BidLayers", "Sequence", "0"),
-                ]
+            return self._parse_bid_layers_for_sidebar(connection, bid_uid)
+
+    def _parse_bid_layers_for_sidebar(self, connection, bid_uid: str) -> List[BidLayer]:
+        schema = self._schema(connection)
+        if schema.optional_table_missing("BidLayers"):
+            return []
+        schema.require_column("BidLayers", "UID")
+        schema.require_column("BidLayers", "BidUID")
+        schema.require_column("BidLayers", "Name")
+        layer_select = ", ".join(
+            [
+                "[UID]",
+                "[BidUID]",
+                schema.optional_column("BidLayers", "IsTemplate", "0"),
+                "[Name]",
+                schema.optional_column("BidLayers", "Show", "-1"),
+                schema.optional_column("BidLayers", "IsLocked", "0"),
+                schema.optional_column("BidLayers", "Sequence", "0"),
+            ]
+        )
+        template_filter = ""
+        if schema.column_exists("BidLayers", "IsTemplate") and schema.column_exists(
+            "BidLayers", "IsLocked"
+        ):
+            template_filter = " OR ([IsTemplate] <> 0 AND [IsLocked] <> 0)"
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT {layer_select}
+                FROM [BidLayers]
+                WHERE [BidUID] = ?{template_filter}
+                """,
+                bid_uid,
             )
-            template_filter = ""
-            if schema.column_exists("BidLayers", "IsTemplate") and schema.column_exists(
-                "BidLayers", "IsLocked"
-            ):
-                template_filter = " OR ([IsTemplate] <> 0 AND [IsLocked] <> 0)"
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    f"""
-                    SELECT {layer_select}
-                    FROM [BidLayers]
-                    WHERE [BidUID] = ?{template_filter}
-                    """,
-                    bid_uid,
-                )
-                layers: List[BidLayer] = []
-                for row in cursor.fetchall():
-                    layers.append(self._bid_layer_from_row(row))
-                return layers
+            return [self._bid_layer_from_row(row) for row in cursor.fetchall()]
 
     def get_default_layers(self, file_path: str) -> List[BidLayer]:
         with self._connection(file_path) as connection:
-            schema = MdbSchemaInspector(connection, self.logger)
+            schema = self._schema(connection)
             if schema.optional_table_missing("BidLayers"):
                 return []
             schema.require_column("BidLayers", "UID")
@@ -509,7 +519,7 @@ class BidDataReaderMixin:
         connection: "pyodbc.Connection",
         bid_uid: str,
         bid_layers: BidLayers,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
     ) -> BidPages:
         bid_pages: BidPages = {}
         image_layer_uid = get_layer_uid_by_name(bid_layers, IMAGE_LAYER_NAME)
@@ -597,7 +607,7 @@ class BidDataReaderMixin:
         self,
         connection: "pyodbc.Connection",
         page_uid: str,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
     ) -> Optional[str]:
         if schema.optional_table_missing("BidPageSettings"):
             return None
@@ -623,7 +633,7 @@ class BidDataReaderMixin:
         self,
         connection: "pyodbc.Connection",
         bid_pages: BidPages,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
     ) -> BidPageAreaSelections:
         page_area_selections: BidPageAreaSelections = {}
         for page_uid in bid_pages.keys():
@@ -639,7 +649,7 @@ class BidDataReaderMixin:
         bid_uid: str,
         bid_layers: BidLayers,
         cdn_types: CdnTypes,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
     ) -> BidConditions:
         bid_conditions: BidConditions = {}
         condition_select = ", ".join(
@@ -810,7 +820,7 @@ class BidDataReaderMixin:
         self,
         connection: "pyodbc.Connection",
         bid_uid: str,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
     ) -> BidConditionFolders:
         folders: BidConditionFolders = {}
         if schema.optional_table_missing("BidConditionFolders"):
@@ -840,8 +850,9 @@ class BidDataReaderMixin:
                         bid_uid=bid_uid,
                         parent_uid=parent_uid,
                     )
-        except pyodbc.Error:
-            pass
+        except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc):
+                raise
         return folders
 
     _TAKEOFF_TYPED_COLUMNS = frozenset(
@@ -863,7 +874,7 @@ class BidDataReaderMixin:
         self,
         connection: "pyodbc.Connection",
         bid_uid: str,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
     ) -> Tuple[BidTakeoffs, Dict[str, Dict[str, Any]]]:
         bid_takeoffs: BidTakeoffs = []
         takeoff_extras: Dict[str, Dict[str, Any]] = {}
@@ -978,6 +989,8 @@ class BidDataReaderMixin:
                     )
                     takeoff_extras[uid] = {c: row_data[c] for c in extra_cols}
         except pyodbc.Error as exc:
+            if self._record_caught_read_error(exc):
+                raise
             if "HY109" not in str(exc) and "Record is deleted" not in str(exc):
                 raise
         return bid_takeoffs, takeoff_extras

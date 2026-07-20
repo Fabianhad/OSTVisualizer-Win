@@ -58,6 +58,7 @@ from ...interfaces.i_annotation_item_renderer import IAnnotationItemRenderer
 from ...interfaces.i_takeoff_renderer import ITakeoffRenderer
 from ...managers.icon_manager import IconId, IconManager
 from ...modes.cursor import (
+    EDITING_CURSOR_MODES,
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_MOVE_OVERLAY,
     CURSOR_MODE_MOVE_OVERLAY_HANDLE,
@@ -2172,6 +2173,8 @@ class TakeoffPlanView(
     def apply_annotation_style_to_selection(
         self, *, color: Optional[str] = None, width: Optional[float] = None
     ) -> None:
+        if not self._editing_enabled:
+            return
         changes = []
         color_value = QColor(color).name() if color is not None else None
         for uid in sorted(self._selected_uids):
@@ -3211,6 +3214,11 @@ class TakeoffPlanView(
         self._editing_enabled = enabled
         if enabled:
             return
+        self._finish_active_inline_text_edit(commit=False)
+        self.cancel_overlay_move_mode(restore_preview=True)
+        self.finish_intelligent_paste_placement()
+        self.cancel_paste_backout()
+        self.cancel_place_mode()
         self._cancel_active_drag_interaction(restore_preview=True)
         if self._rotation_drag_active:
             self._rotation_drag_active = False
@@ -3313,7 +3321,11 @@ class TakeoffPlanView(
         pasted_uids: list,
         source_anchor_ost: Tuple[float, float],
     ) -> bool:
-        if not self._intelligent_paste_enabled or not pasted_uids:
+        if (
+            not self._editing_enabled
+            or not self._intelligent_paste_enabled
+            or not pasted_uids
+        ):
             return False
         self.finish_intelligent_paste_placement(clear_pending=False)
         self._intelligent_paste_pending_uids = [str(uid) for uid in pasted_uids]
@@ -3759,6 +3771,8 @@ class TakeoffPlanView(
         return width > 0.0 and height > 0.0
 
     def show_overlay_move_handle(self) -> bool:
+        if not self._editing_enabled:
+            return False
         if not self.can_move_overlay_image():
             self.cancel_overlay_move_mode(restore_preview=True)
             return False
@@ -4247,6 +4261,8 @@ class TakeoffPlanView(
         return math.hypot(vp_pos.x() - handle_vp.x(), vp_pos.y() - handle_vp.y()) <= 16
 
     def _begin_overlay_move(self, vp_pos) -> bool:
+        if not self._editing_enabled:
+            return False
         page = self._current_page
         if page is None:
             return False
@@ -4307,6 +4323,9 @@ class TakeoffPlanView(
         self._update_cursor(self.mapFromScene(scene_pos))
 
     def _commit_overlay_move(self) -> None:
+        if not self._editing_enabled:
+            self.cancel_overlay_move_mode(restore_preview=True)
+            return
         preview_rect = self._overlay_move_preview_rect
         original_rect = self._overlay_move_original_rect
         if preview_rect is None or original_rect is None:
@@ -5608,6 +5627,8 @@ class TakeoffPlanView(
         self._deferred_page_visual_result = None
 
     def set_cursor_mode(self, mode: str) -> None:
+        if mode in EDITING_CURSOR_MODES and not self._editing_enabled:
+            return
         if not self._finish_inline_text_edit_before_tool_change():
             return
         if mode not in (CURSOR_MODE_MOVE_OVERLAY, CURSOR_MODE_MOVE_OVERLAY_HANDLE):
@@ -5634,6 +5655,8 @@ class TakeoffPlanView(
     def activate_place_for_condition(
         self, condition_uid: str, all_condition_uids: list = None
     ) -> bool:
+        if not self._editing_enabled:
+            return False
         self.cancel_overlay_move_mode(restore_preview=True)
         self._remove_rotate_handle()
         self.finish_intelligent_paste_placement()
@@ -5648,6 +5671,8 @@ class TakeoffPlanView(
         return True
 
     def activate_annotation_placement(self, annotation_type: str) -> bool:
+        if not self._editing_enabled:
+            return False
         if not self._finish_inline_text_edit_before_tool_change():
             return False
         if not self._can_begin_annotation_placement():
@@ -5690,6 +5715,8 @@ class TakeoffPlanView(
         return same_type
 
     def enter_backout_mode(self, parent_uid: str) -> bool:
+        if not self._editing_enabled:
+            return False
         parent_uid = self._valid_backout_parent_uid(parent_uid)
         if not parent_uid:
             self._clear_backout_state()
@@ -5734,6 +5761,8 @@ class TakeoffPlanView(
         extras_by_uid: Dict[str, Dict],
         source_bid_uid: Optional[str],
     ) -> bool:
+        if not self._editing_enabled:
+            return False
         self.cancel_overlay_move_mode(restore_preview=True)
         self._remove_rotate_handle()
         self.finish_intelligent_paste_placement()

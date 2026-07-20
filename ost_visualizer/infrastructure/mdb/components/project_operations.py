@@ -14,7 +14,9 @@ class ProjectOperationsMixin:
             return True
         try:
             uids = [int(u) for u in bid_uids]
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning(
                 "Invalid bid uids passed to move_bids_to_project: %s", bid_uids
             )
@@ -47,7 +49,9 @@ class ProjectOperationsMixin:
                         *uids,
                     )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to move bids %s to project %s in %s",
                 bid_uids,
@@ -61,7 +65,9 @@ class ProjectOperationsMixin:
             return True
         try:
             uids = [int(u) for u in bid_uids]
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning("Invalid bid uids passed to orphan_bids: %s", bid_uids)
             return False
         placeholders_sql = placeholders(uids)
@@ -75,7 +81,9 @@ class ProjectOperationsMixin:
                     *uids,
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to orphan bids %s in %s", bid_uids, db_path)
             return False
 
@@ -92,7 +100,9 @@ class ProjectOperationsMixin:
                     name,
                 )
                 return new_uid
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception("Failed to create project in %s", db_path)
             return None
 
@@ -108,7 +118,9 @@ class ProjectOperationsMixin:
                     project_uid,
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to rename project %s in %s", project_uid, db_path
             )
@@ -119,7 +131,9 @@ class ProjectOperationsMixin:
             return True
         try:
             uids = [int(u) for u in project_uids]
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.warning(
                 "Invalid project uids passed to delete_projects: %s", project_uids
             )
@@ -143,7 +157,9 @@ class ProjectOperationsMixin:
                     *uids,
                 )
                 return True
-        except Exception:
+        except Exception as exc:
+            if self._record_caught_mutation_error(exc):
+                raise
             self.logger.exception(
                 "Failed to delete projects %s from %s", project_uids, db_path
             )

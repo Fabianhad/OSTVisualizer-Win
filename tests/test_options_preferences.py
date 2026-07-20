@@ -2649,6 +2649,7 @@ class OptionsPreferencesTests(unittest.TestCase):
 
         class FakePasteBackoutView:
             def __init__(self):
+                self._editing_enabled = True
                 self._current_conditions = {
                     "area-condition": Condition(
                         uid="area-condition",
@@ -4173,6 +4174,7 @@ class OptionsPreferencesTests(unittest.TestCase):
 
     def _make_intelligent_paste_snap_view(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
+        view._editing_enabled = True
         view._scene = QtWidgets.QGraphicsScene()
         view._scene_builder = SimpleNamespace(
             get_coordinate_system=lambda: SimpleNamespace(

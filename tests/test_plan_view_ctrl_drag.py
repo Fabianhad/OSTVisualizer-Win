@@ -1394,6 +1394,7 @@ class CtrlDragTests(unittest.TestCase):
 
     def _make_tool_change_commit_view(self):
         view = SimpleNamespace()
+        view._editing_enabled = True
         view._cursor_mode = CURSOR_MODE_ANNOTATION_PLACE
         view._editing_named_view_uid = "draft"
         view._editing_text_annotation_uid = None

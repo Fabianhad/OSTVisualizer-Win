@@ -5669,6 +5669,10 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             annotation_renderer=FakeAnnotationRenderer(),
             linear_geometry=FakeLinearGeometry(),
         )
+        # Production window composition projects access immediately after
+        # constructing the view. Tests exercising edit workflows must model
+        # that contract explicitly.
+        view.set_editing_enabled(True)
         return view
 
     def _load_completed_page_visual(self, page, return_initial_canvas=False):

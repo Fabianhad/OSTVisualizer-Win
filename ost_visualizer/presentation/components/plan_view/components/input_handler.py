@@ -41,6 +41,7 @@ from ....actions.action_ids import (
 from ....config import RIGHT_CLICK_CONTEXT_MENU_MAX_MS
 from ....managers.context_menu_manager import ContextMenuManager
 from ....modes.cursor import (
+    EDITING_CURSOR_MODES,
     CURSOR_MODE_ANNOTATION_PLACE,
     CURSOR_MODE_MOVE_OVERLAY,
     CURSOR_MODE_MOVE_OVERLAY_HANDLE,
@@ -404,6 +405,9 @@ class InputHandlerMixin:
         self.mousePressEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent):
+        if not self._editing_enabled and self._cursor_mode in EDITING_CURSOR_MODES:
+            event.accept()
+            return
         advanced_mouse_controls = self._advanced_mouse_controls_active()
         vp_pos = event.position().toPoint()
         self._last_mouse_vp_pos = vp_pos
@@ -864,6 +868,9 @@ class InputHandlerMixin:
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        if not self._editing_enabled and self._cursor_mode in EDITING_CURSOR_MODES:
+            event.accept()
+            return
         cur_vp = event.position().toPoint()
         self._last_mouse_vp_pos = cur_vp
         self._request_crosshair_repaint()
@@ -1095,6 +1102,9 @@ class InputHandlerMixin:
             self._update_cursor(cur_vp)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        if not self._editing_enabled and self._cursor_mode in EDITING_CURSOR_MODES:
+            event.accept()
+            return
         vp_pos = event.position().toPoint()
         self._last_mouse_vp_pos = vp_pos
         if event.button() == Qt.MouseButton.RightButton and self._right_pan_active:

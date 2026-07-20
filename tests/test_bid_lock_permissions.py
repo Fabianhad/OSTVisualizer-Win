@@ -492,6 +492,7 @@ def _write_service(
     project_data,
     reload_success=True,
     save_takeoffs_condition=None,
+    database_capability=None,
 ):
     logger = logging.getLogger(__name__ + ".write_service")
     logger.propagate = False
@@ -559,6 +560,7 @@ def _write_service(
         mutation_executor=_MutationExecutor(),
         session_registry=_SessionRegistry(),
         concurrency_tokens=_ConcurrencyTokens(),
+        database_capability_service=database_capability or _DatabaseCapability(),
     )
     return service, update_bid_job_status, delete_bids, duplicate_bid
 
@@ -624,6 +626,12 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(manager.is_allowed(Feature.DUPLICATE_BID))
         self.assertFalse(manager.is_allowed(Feature.DUPLICATE_CONDITION))
         self.assertFalse(manager.is_allowed(Feature.EDIT_PAGE_SETTINGS))
+
+    def test_revoked_database_capability_blocks_deferred_write_execution(self):
+        service, *_unused = _write_service(
+            _ProjectData(), database_capability=_DatabaseCapability(editable=False)
+        )
+        self.assertTrue(service.is_expected_deferred_write_blocked("sql-db"))
 
     def test_unknown_feature_and_edit_without_database_are_denied(self):
         project_data = _ProjectData()

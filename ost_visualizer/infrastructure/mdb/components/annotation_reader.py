@@ -4,7 +4,7 @@ from ....domain.entities.annotation import BidAnnotation, int_color_to_hex
 from ....domain.entities.layer import BidLayers
 from ...parsers.utils.parser import decode_value
 from ..mappers.annotation_mapper import MdbAnnotationLayerMapper
-from ..schema_compatibility import MdbSchemaInspector
+from ...database.schema_inspector_contract import IDatabaseSchemaInspector
 from .serialization import decode_annotation_text, parse_position_storage
 
 
@@ -22,7 +22,7 @@ class AnnotationReaderMixin:
         connection: "pyodbc.Connection",
         bid_uid: str,
         bid_layers: BidLayers,
-        schema: MdbSchemaInspector,
+        schema: IDatabaseSchemaInspector,
     ) -> List[BidAnnotation]:
         bid_annotations: List[BidAnnotation] = []
         layer_mapper = MdbAnnotationLayerMapper(bid_layers)
@@ -52,8 +52,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -79,8 +80,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -106,8 +108,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -133,8 +136,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -160,8 +164,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -194,8 +199,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -238,8 +244,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -272,8 +279,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -314,8 +322,9 @@ class AnnotationReaderMixin:
                             visible=visible,
                         )
                         bid_annotations.append(annotation)
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -341,8 +350,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 color_column = schema.optional_column("BidNamedViews", "Color", "NULL")
                 cursor.execute(
@@ -371,8 +381,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -405,8 +416,9 @@ class AnnotationReaderMixin:
                                 visible=visible,
                             )
                         )
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
             try:
                 cursor.execute(
                     """
@@ -447,6 +459,7 @@ class AnnotationReaderMixin:
                             visible=visible,
                         )
                         bid_annotations.append(annotation)
-            except pyodbc.Error:
-                pass
+            except pyodbc.Error as exc:
+                if self._record_caught_read_error(exc):
+                    raise
         return bid_annotations

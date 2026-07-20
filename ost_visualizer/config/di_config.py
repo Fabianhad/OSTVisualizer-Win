@@ -162,14 +162,18 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         local_drafts,
         conflict_resolution,
     )
+    remote_change_reader = SqlRemoteChangeReader(
+        descriptor_registry, credential_store, sql_connections
+    )
     collaboration = SqlCollaborationCoordinator(
         descriptor_registry=descriptor_registry,
         store=SqlCollaborationStore(
-            descriptor_registry, credential_store, sql_connections
+            descriptor_registry,
+            credential_store,
+            remote_change_reader,
+            sql_connections,
         ),
-        remote_reader=SqlRemoteChangeReader(
-            descriptor_registry, credential_store, sql_connections
-        ),
+        remote_reader=remote_change_reader,
         dispatcher=QtCallbackBridge(),
         reconciliation=reconciliation,
         capability_service=database_capability_service,
