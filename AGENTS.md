@@ -99,6 +99,13 @@ Database backends:
   collaboration permissions use the canonical definition in
   `infrastructure/sql/client_permissions.py`; normal clients must not receive
   `db_owner`, schema-ledger mutation, database creation, or server administration.
+- Schema creation, validation, adoption, repair, and client-permission setup must
+  never remove an existing login from `sysadmin` or `dbcreator`, remove its
+  `db_owner` membership, or transfer database ownership away from it. Privilege
+  demotion is a separate explicitly authorized administrative operation and is
+  permitted only while a different authenticated sysadmin connection has been
+  verified against the exact server and remains open until the reduced login
+  reconnects successfully; failure must restore the original roles and owner.
 - `SqlCollaborationCoordinator` owns SQL sessions, heartbeat, presence, lock
   renewal, polling, checkpoints, reconnect, and shutdown. It runs only for SQL
   descriptors, uses server UTC, drains workers outside the Qt thread on
