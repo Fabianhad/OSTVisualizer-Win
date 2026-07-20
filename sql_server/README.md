@@ -98,10 +98,11 @@ stopped. Leave
 random one-use bootstrap value without displaying it.
 
 Set `OSTV_SQL_PUBLIC_BIND_ADDRESS` to an IPv4 address actually assigned to the
-configured public interface. Set `OSTV_SQL_ALLOWED_SOURCE_CIDR` to exactly one
-stable global IPv4 `/32`, for example `<CLIENT_PUBLIC_IPV4>/32`. Broader
-networks, private/reserved addresses, unresolved placeholders, and automatic
-address discovery are rejected.
+configured public interface. Set `OSTV_SQL_ALLOWED_SOURCE_CIDR` to one or more
+unique stable global IPv4 `/32` values separated by commas, for example
+`<CLIENT_PUBLIC_IPV4>/32,<SECOND_CLIENT_PUBLIC_IPV4>/32`. Broader networks,
+private/reserved addresses, duplicate entries, unresolved placeholders, and
+automatic address discovery are rejected.
 
 ## New database setup
 
@@ -192,11 +193,11 @@ interface. Lost devices should also have their temporary delivery file removed.
 
 ## Source-IP allowlisted public access
 
-Docker publishes the configured SQL port on the exact public IPv4
-address. UFW allows that endpoint from only the configured `/32`, followed by a
+Docker publishes the configured SQL port on the exact public IPv4 address. UFW
+allows that endpoint from only the configured `/32` addresses, followed by a
 default-deny rule for every other source. A dedicated `OSTV-SQL` chain in
 `DOCKER-USER` independently enforces the same original destination IP, original
-destination port, public interface, and source `/32`, because Docker-published
+destination port, public interface, and source `/32` addresses, because Docker-published
 ports can bypass ordinary UFW input handling. The chain returns without acting
 on every unrelated Docker flow.
 
@@ -205,11 +206,11 @@ rebuilding its managed rules, so a partial update fails closed. Its systemd
 service and Docker drop-in reapply the policy after restarts. Never add an
 unrestricted public SQL rule, including for standard port 1433.
 
-The allowlisted address must be the client's outward-facing IPv4 address. Every
-device behind that NAT address passes the network boundary and still needs a
-valid least-privilege SQL credential. If the address changes, access correctly
-fails until an administrator explicitly updates `/home/SQLServer/.env` and
-reruns `configure_firewall.sh`.
+Each allowlisted address must be a client's outward-facing IPv4 address. Every
+device behind an allowlisted NAT address passes the network boundary and still
+needs a valid least-privilege SQL credential. If an address changes, access
+correctly fails until an administrator explicitly updates
+`/home/SQLServer/.env` and reruns `configure_firewall.sh`.
 
 ## TLS and Windows connection
 

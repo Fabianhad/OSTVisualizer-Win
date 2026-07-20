@@ -17,11 +17,11 @@ readonly managed_chain=OSTV-SQL
 public_interface="$(env_value OSTV_PUBLIC_INTERFACE)"
 public_bind_address="$(env_value OSTV_SQL_PUBLIC_BIND_ADDRESS)"
 public_port="$(env_value OSTV_SQL_PUBLIC_PORT)"
-allowed_source="$(env_value OSTV_SQL_ALLOWED_SOURCE_CIDR)"
+allowed_sources_csv="$(env_value OSTV_SQL_ALLOWED_SOURCE_CIDR)"
+IFS=',' read -r -a allowed_sources <<<"$allowed_sources_csv"
 wg_interface="$(env_value OSTV_WG_INTERFACE)"
 wg_port="$(env_value OSTV_WG_LISTEN_PORT)"
 vpn_port="$(env_value OSTV_SQL_VPN_PORT)"
-allowed_host="${allowed_source%/32}"
 
 for command in ip iptables ufw; do
     if ! command -v "$command" >/dev/null 2>&1; then
@@ -54,12 +54,11 @@ delete_rule() {
 
 verify_firewall() {
     local ufw_rules
+    local source
+    local allowed_host
+    local expected_chain_rule_count=$(( ${#allowed_sources[@]} + 2 ))
     if [[ $(iptables -S DOCKER-USER | grep -Fxc -- "-A DOCKER-USER -j $managed_chain") -ne 1 ]] \
-        || [[ $(iptables -S "$managed_chain" 2>/dev/null | grep -c '^-A ') -ne 3 ]] \
-        || ! iptables -C "$managed_chain" -i "$public_interface" -p tcp \
-            -s "$allowed_source" -m conntrack --ctorigdst "$public_bind_address" \
-            --ctorigdstport "$public_port" -m comment \
-            --comment ostv-sql-public-allow -j ACCEPT >/dev/null 2>&1 \
+        || [[ $(iptables -S "$managed_chain" 2>/dev/null | grep -c '^-A ') -ne $expected_chain_rule_count ]] \
         || ! iptables -C "$managed_chain" -i "$public_interface" -p tcp \
             -m conntrack --ctorigdst "$public_bind_address" \
             --ctorigdstport "$public_port" -m comment \
@@ -67,15 +66,30 @@ verify_firewall() {
         echo "Docker SQL allowlist rules do not match the validated private configuration." >&2
         return 1
     fi
+    for source in "${allowed_sources[@]}"; do
+        if ! iptables -C "$managed_chain" -i "$public_interface" -p tcp \
+            -s "$source" -m conntrack --ctorigdst "$public_bind_address" \
+            --ctorigdstport "$public_port" -m comment \
+            --comment ostv-sql-public-allow -j ACCEPT >/dev/null 2>&1; then
+            echo "Docker SQL allowlist rules do not match the validated private configuration." >&2
+            return 1
+        fi
+    done
     if ! ufw status | head -1 | grep -Fqx 'Status: active'; then
         echo "UFW is not active." >&2
         return 1
     fi
     ufw_rules="$(LANG=C ufw show added)"
+    for source in "${allowed_sources[@]}"; do
+        allowed_host="${source%/32}"
+        if ! grep -Fqx -- \
+            "ufw allow in on $public_interface from $allowed_host to $public_bind_address port $public_port proto tcp comment 'OSTV SQL public allowlist'" \
+            <<<"$ufw_rules"; then
+            echo "UFW SQL allowlist rules do not match the validated private configuration." >&2
+            return 1
+        fi
+    done
     if ! grep -Fqx -- \
-        "ufw allow in on $public_interface from $allowed_host to $public_bind_address port $public_port proto tcp comment 'OSTV SQL public allowlist'" \
-        <<<"$ufw_rules" \
-        || ! grep -Fqx -- \
         "ufw deny in on $public_interface to $public_bind_address port $public_port proto tcp comment 'Block non-allowlisted OSTV SQL'" \
         <<<"$ufw_rules"; then
         echo "UFW SQL allowlist rules do not match the validated private configuration." >&2
@@ -110,7 +124,7 @@ remove_managed_ufw_rules() {
 
 if [[ $mode == check ]]; then
     verify_firewall
-    echo "SQL public listener and single-source firewall policy are valid."
+    echo "SQL public listener and source-IP allowlist policy are valid."
     exit 0
 fi
 
@@ -128,9 +142,11 @@ if ! iptables -S "$managed_chain" >/dev/null 2>&1; then
     iptables -N "$managed_chain"
 fi
 iptables -F "$managed_chain"
-iptables -A "$managed_chain" -i "$public_interface" -p tcp -s "$allowed_source" \
-    -m conntrack --ctorigdst "$public_bind_address" --ctorigdstport "$public_port" \
-    -m comment --comment ostv-sql-public-allow -j ACCEPT
+for source in "${allowed_sources[@]}"; do
+    iptables -A "$managed_chain" -i "$public_interface" -p tcp -s "$source" \
+        -m conntrack --ctorigdst "$public_bind_address" --ctorigdstport "$public_port" \
+        -m comment --comment ostv-sql-public-allow -j ACCEPT
+done
 iptables -A "$managed_chain" -i "$public_interface" -p tcp \
     -m conntrack --ctorigdst "$public_bind_address" --ctorigdstport "$public_port" \
     -m comment --comment ostv-sql-public-default-deny -j DROP
@@ -144,9 +160,11 @@ delete_rule DOCKER-USER "${temporary_drop[@]}"
 remove_managed_ufw_rules
 ufw allow in on "$public_interface" proto udp to any port "$wg_port" \
     comment 'OSTV WireGuard' >/dev/null
-ufw allow in on "$public_interface" proto tcp from "$allowed_source" \
-    to "$public_bind_address" port "$public_port" \
-    comment 'OSTV SQL public allowlist' >/dev/null
+for source in "${allowed_sources[@]}"; do
+    ufw allow in on "$public_interface" proto tcp from "$source" \
+        to "$public_bind_address" port "$public_port" \
+        comment 'OSTV SQL public allowlist' >/dev/null
+done
 ufw deny in on "$public_interface" proto tcp from any \
     to "$public_bind_address" port "$public_port" \
     comment 'Block non-allowlisted OSTV SQL' >/dev/null
@@ -154,4 +172,4 @@ ufw allow in on "$wg_interface" proto tcp to any port "$vpn_port" \
     comment 'OSTV SQL over WireGuard' >/dev/null
 
 verify_firewall
-echo "SQL public access is restricted to the configured single-source IPv4 /32 and exact destination."
+echo "SQL public access is restricted to the configured IPv4 /32 allowlist and exact destination."

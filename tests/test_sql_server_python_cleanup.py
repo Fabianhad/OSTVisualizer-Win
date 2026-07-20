@@ -103,7 +103,7 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(first.container_name, "ostv-sql-test")
 
-    def test_public_sql_source_must_be_one_global_ipv4_host(self):
+    def test_public_sql_sources_must_be_unique_global_ipv4_hosts(self):
         with tempfile.TemporaryDirectory() as directory:
             state_root = Path(directory) / "state"
             state_root.mkdir(mode=0o700)
@@ -115,8 +115,20 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
             env_path.write_text(text, encoding="utf-8")
             env_path.chmod(0o600)
             with patch.object(common, "PRIVATE_STATE_ROOT", state_root):
-                with self.assertRaisesRegex(RuntimeError, "one global IPv4 /32"):
+                with self.assertRaisesRegex(RuntimeError, "one or more unique global IPv4 /32"):
                     common.load_environment()
+
+            text = _environment_text(state_root).replace(
+                "OSTV_SQL_ALLOWED_SOURCE_CIDR=9.9.9.9/32",
+                "OSTV_SQL_ALLOWED_SOURCE_CIDR=9.9.9.9/32,8.8.8.8/32",
+            )
+            env_path.write_text(text, encoding="utf-8")
+            with patch.object(common, "PRIVATE_STATE_ROOT", state_root):
+                values = common.load_environment()
+            self.assertEqual(
+                values["OSTV_SQL_ALLOWED_SOURCE_CIDR"],
+                "9.9.9.9/32,8.8.8.8/32",
+            )
 
     def test_standard_public_sql_port_is_supported(self):
         with tempfile.TemporaryDirectory() as directory:

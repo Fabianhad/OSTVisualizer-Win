@@ -398,20 +398,26 @@ def load_environment() -> dict[str, str]:
         public_bind_address = ipaddress.ip_address(
             values["OSTV_SQL_PUBLIC_BIND_ADDRESS"]
         )
-        allowed_source = ipaddress.ip_network(
-            values["OSTV_SQL_ALLOWED_SOURCE_CIDR"], strict=True
+        allowed_sources = tuple(
+            ipaddress.ip_network(source, strict=True)
+            for source in values["OSTV_SQL_ALLOWED_SOURCE_CIDR"].split(",")
         )
     except ValueError as exc:
         raise RuntimeError("The private deployment contains an invalid UUID, address, or subnet.") from exc
     if (
         public_bind_address.version != 4
         or not public_bind_address.is_global
-        or allowed_source.version != 4
-        or allowed_source.prefixlen != 32
-        or not allowed_source.is_global
+        or not allowed_sources
+        or len(set(allowed_sources)) != len(allowed_sources)
+        or any(
+            source.version != 4
+            or source.prefixlen != 32
+            or not source.is_global
+            for source in allowed_sources
+        )
     ):
         raise RuntimeError(
-            "Public SQL access requires one global IPv4 bind address and one global IPv4 /32 source."
+            "Public SQL access requires one global IPv4 bind address and one or more unique global IPv4 /32 sources."
         )
     if wireguard.version != docker_network.version:
         raise RuntimeError("The WireGuard and Docker subnets must use the same address family.")
