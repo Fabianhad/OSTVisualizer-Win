@@ -55,16 +55,7 @@ class DisposableSqlConfiguration:
         server = os.environ.get("OSTV_SQL_TEST_SERVER", "").strip()
         if not server:
             raise unittest.SkipTest("OSTV_SQL_TEST_SERVER is not configured.")
-        if server.casefold() not in {
-            "localhost",
-            "tcp:localhost",
-            "localhost,1433",
-            "tcp:localhost,1433",
-        }:
-            raise unittest.SkipTest(
-                "The local SQL integration harness accepts only localhost on "
-                "the default SQL Server port."
-            )
+        _require_local_test_server(server)
         marker = os.environ.get("OSTV_SQL_TEST_SERVER_MARKER", "").strip()
         if not marker:
             raise unittest.SkipTest("OSTV_SQL_TEST_SERVER_MARKER is not configured.")
@@ -279,3 +270,18 @@ def _integration_password() -> str:
 def _require_test_database_name(database_name: str) -> None:
     if not _SAFE_DATABASE_NAME.fullmatch(database_name) or len(database_name) > 128:
         raise RuntimeError("Refusing a database name outside the OSTV_IT_ test scope.")
+
+
+def _require_local_test_server(server: str) -> None:
+    match = re.fullmatch(
+        r"(?i)(?:tcp:)?(localhost|127\.0\.0\.1)(?:,([0-9]{1,5}))?",
+        server.strip(),
+    )
+    if match is None:
+        raise unittest.SkipTest(
+            "The local SQL integration harness accepts only an explicit localhost "
+            "TCP target."
+        )
+    port = match.group(2)
+    if port is not None and not 1 <= int(port) <= 65535:
+        raise unittest.SkipTest("OSTV_SQL_TEST_SERVER contains an invalid TCP port.")

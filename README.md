@@ -113,29 +113,26 @@ Removing a saved SQL entry removes only the local entry and its saved credential
 It never drops or deletes the SQL Server database. Unchecking an entry closes the
 runtime connection while keeping it available for reconnect.
 
-Existing unversioned SQL databases whose 64-table schema matches the Access
-model can be browsed read-only. On final connection confirmation, a structurally
-compatible external database can be enabled for editing after explicit
-confirmation. This transaction adds only the `ostv` metadata and collaboration
-tables; it does not recreate or rewrite the external application's core tables
-or rows. Databases created or adopted by OST Visualizer carry an independent,
-checksummed schema version and collaboration-table foundation. An exact schema
-version 4 database is required by the desktop client; older versioned databases
-are rejected explicitly instead of being upgraded during ordinary connection.
-Databases created by unreleased development builds with a different version 4
-checksum must be recreated; the runtime does not interpret multiple version 4
-schemas or attempt a same-version migration.
-Schema initialization requires additional database permissions; ordinary readers
-and editors do not need server-administrator rights.
+OST Visualizer uses one checksummed SQL schema, version 1. New databases are
+created directly with the complete current table, index, Change Tracking, and
+collaboration structure. There are no historical SQL schema definitions,
+migrations, upgrade routes, or external-database adoption paths. A database that
+does not validate as canonical v1 must be recreated. Schema initialization
+requires additional database permissions; ordinary readers and editors do not
+need server-administrator rights.
 
-Current-schema SQL databases use one desktop session per loaded database,
+Canonical schema-v1 SQL databases use one desktop session per loaded database,
 server-timestamped heartbeats and bid presence, expiring resource edit locks,
 and optimistic row-version checks. Long-running condition, area, layer, and
 master-data editors acquire their SQL leases asynchronously without waiting on
 the Qt thread. Writes record affected resources and one
 transaction marker in the same SQL transaction. SQL Server Change Tracking assigns
-the marker's commit version, which is the durable feed checkpoint; identity values
-are used only to order rows within a committed transaction. A background worker polls ordered deltas
+the marker's commit version, which is the only durable feed checkpoint; identity
+values are used only to order rows within a committed transaction. Snapshot
+isolation is mandatory. A poll reads its feed epoch, retention boundary, high-water
+version, markers, and complete payloads in one snapshot transaction. Logical
+transactions are never split, and the checkpoint advances only after successful
+main-thread reconciliation. A background worker polls ordered deltas
 and returns them through the Qt main thread so conditions, areas, takeoffs,
 annotations, pages, layers, and the project tree can refresh without repeatedly
 reloading the whole database. Remote changes preserve valid selection and the
@@ -145,6 +142,10 @@ baseline. Conflicting resources become read-only until their authoritative SQL
 state is deliberately reloaded.
 If the session or feed becomes unhealthy, SQL editing is disabled while cached
 data remains viewable.
+Database unload and application close invalidate callback generations immediately,
+deny new edits, cancel deferred SQL persistence, and drain collaboration workers
+outside the Qt thread. The window closes only after session and lock cleanup
+finishes; cleanup failure remains visible instead of being reported as success.
 
 The current collaboration slice holds expiring edit locks for condition, area,
 master-data, and default-layer dialogs. Other integrated writes use
@@ -152,11 +153,16 @@ transaction-scoped resource locks and row-version checks; richer in-place
 conflict choices and long-lived locks for geometry gestures remain Phase 4 work.
 
 Collaboration covers OST Visualizer clients writing through this schema. Schema
-version 4 retains an explicit writer-mode gate: mixed-application editing remains
+version 1 retains an explicit writer-mode gate: mixed-application editing remains
 disabled unless an external-write adapter has been validated against the canonical
 resource catalog. Direct writes by another application therefore still require a
 controlled reload or reconnect. Microsoft Access continues to use its existing
 single-client workflow and starts no SQL session or polling worker.
+
+Release validation for multi-user SQL requires the explicitly enabled,
+ownership-marked disposable suite and its two spawned independent client stacks.
+The normal test suite never opts into destructive SQL work. Active force-unlock is
+not supported, and mixed external-application writes remain disabled.
 
 ### Local SQL development environment
 
@@ -169,6 +175,12 @@ local `OSTVDEV` SQL Server 2022 Developer instance and its persistent
 .\scripts\run-sql-integration.ps1 -ConfirmDestructive
 ```
 
+The integration launcher requires both destructive opt-ins, an explicit local
+server, the expected disposable-server marker, an `OSTV_IT_...` database name,
+and the matching database ownership marker. A missing gate produces a precise
+skip; it never falls back to another instance. The release gate is not considered
+passed when these tests are skipped.
+
 Setup installs or repairs SQL Server, SSMS, and ODBC Driver 18; configures the
 default SQL Server TCP port `1433`, trusted TLS, and a firewall rule limited to
 loopback and the development machine's own addresses; and creates separate
@@ -177,8 +189,7 @@ can connect using the value of `$env:COMPUTERNAME` without an instance suffix or
 explicit port. The normal client user is a member of SQL Server's built-in
 `db_datareader` and `db_datawriter` database roles, matching On-Screen Takeoff's
 connection requirements. OST Visualizer grants schema inspection explicitly and
-denies normal clients from mutating its schema, migration, and external-adapter
-ledgers.
+denies normal clients from mutating its schema and external-adapter ledgers.
 The client password is stored in Windows Credential Manager and in the
 ACL-restricted, ignored `.secrets\sql-development.json` file. Rerunning setup
 reuses the owned instance, database, certificates, SQL objects, and credentials.

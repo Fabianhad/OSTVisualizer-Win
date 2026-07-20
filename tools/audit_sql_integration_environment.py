@@ -1,9 +1,7 @@
 from __future__ import annotations
-
 import json
 import os
 from pathlib import Path
-
 import pyodbc
 
 
@@ -79,7 +77,6 @@ def main() -> int:
             cursor.close()
     finally:
         connection.close()
-
     backup_root = (
         Path(os.environ.get("ProgramData", r"C:\ProgramData"))
         / "OSTVisualizer"

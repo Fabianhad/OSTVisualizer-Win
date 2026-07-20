@@ -22,7 +22,7 @@ from ..config import (
     SQL_DATABASE_PROPERTIES_DIALOG_HEIGHT,
     SQL_DATABASE_PROPERTIES_DIALOG_WIDTH,
 )
-from ..utils.messagebox import confirm, show_warning
+from ..utils.messagebox import show_warning
 from ..utils.windows import remove_minimize_maximize, set_initial_window_size
 from .sql_connection_dialog import SqlConnectionDialogResult, SqlConnectionFormMixin
 
@@ -173,41 +173,6 @@ class SqlDatabasePropertiesDialog(SqlConnectionFormMixin, QtWidgets.QDialog):
             database=selected.name,
             database_guid=selected.database_guid,
         )
-        if selected.schema_version == 0:
-            if not (
-                self._schema_change_allowed_fn and self._schema_change_allowed_fn()
-            ):
-                show_warning(
-                    self,
-                    "SQL Server",
-                    "You do not have permission to initialize this database.",
-                )
-                return None
-            if not confirm(
-                self,
-                "Enable SQL Database Editing",
-                "This compatible database was created by another application. "
-                "OST Visualizer must add its metadata and collaboration tables "
-                "before editing is enabled. Existing database tables and data "
-                "will not be rewritten. Continue?",
-            ):
-                return None
-            external_location = replace(
-                connection.location,
-                database=selected.name,
-                database_guid=selected.database_guid,
-            )
-            initialized = self._database_creator.initialize_compatible_database(
-                external_location,
-                connection.password,
-                application_version=APPLICATION_VERSION,
-                actor=connection.location.username,
-            )
-            return SqlDatabasePropertiesResult(
-                initialized.location,
-                initialized.schema_version,
-                connection.password,
-            )
         return SqlDatabasePropertiesResult(
             selected_location, selected.schema_version, connection.password
         )

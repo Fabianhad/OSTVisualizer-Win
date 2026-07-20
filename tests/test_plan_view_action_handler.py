@@ -2223,6 +2223,9 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             color_service=None,
             project_data=data,
             visualization_service=visualization,
+            callback_bridge=SimpleNamespace(
+                dispatch=lambda callback, payload: callback(payload)
+            ),
         )
         viewer.plan_view = plan_view
         viewer.opengl_viewer = OpenGLViewer()

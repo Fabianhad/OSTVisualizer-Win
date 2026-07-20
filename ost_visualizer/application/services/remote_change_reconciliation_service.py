@@ -12,6 +12,7 @@ from ..dtos.collaboration_dtos import (
     HydratedDatabaseChangeBatch,
 )
 from ..events.app_events import AppEvents
+from ..dtos.remote_projection_dtos import RemoteProjectionBarrier
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from .conflict_resolution_service import ConflictResolutionService
 from .local_draft_registry import LocalDraftRegistry
@@ -32,7 +33,11 @@ class RemoteChangeReconciliationService:
         self._drafts = drafts
         self._conflict_resolution = conflict_resolution
 
-    def apply(self, hydrated: HydratedDatabaseChangeBatch) -> bool:
+    def apply(
+        self,
+        hydrated: HydratedDatabaseChangeBatch,
+        projection_barrier: RemoteProjectionBarrier | None = None,
+    ) -> bool:
         batch = hydrated.batch
         conflicts = self._drafts.conflicts_for_changes(batch.database_id, batch.changes)
         if conflicts:
@@ -64,7 +69,10 @@ class RemoteChangeReconciliationService:
             return False
         if active_ref is None or active_ref.file_path != batch.database_id:
             if hydrated.hierarchy_file is not None:
-                self._project_data.replace_database_hierarchy(hydrated.hierarchy_file)
+                self._project_data.replace_database_hierarchy(
+                    hydrated.hierarchy_file,
+                    hydrated.cdn_types,
+                )
             self._concurrency_tokens.apply_remote_changes(
                 batch.database_id, batch.changes
             )
@@ -72,6 +80,7 @@ class RemoteChangeReconciliationService:
                 self._event_bus.publish(
                     AppEvents.REMOTE_HIERARCHY_CHANGED,
                     database_id=batch.database_id,
+                    defer_plan_projection=projection_barrier is not None,
                 )
             return True
         bid_uid = int(active_ref.bid_uid)
@@ -111,12 +120,16 @@ class RemoteChangeReconciliationService:
             ):
                 return False
         if hydrated.hierarchy_file is not None:
-            self._project_data.replace_database_hierarchy(hydrated.hierarchy_file)
+            self._project_data.replace_database_hierarchy(
+                hydrated.hierarchy_file,
+                hydrated.cdn_types,
+            )
         self._concurrency_tokens.apply_remote_changes(batch.database_id, batch.changes)
         if hydrated.hierarchy_file is not None:
             self._event_bus.publish(
                 AppEvents.REMOTE_HIERARCHY_CHANGED,
                 database_id=batch.database_id,
+                defer_plan_projection=projection_barrier is not None,
             )
         if conditions is not None and folders is not None:
             self._event_bus.publish(
@@ -124,6 +137,7 @@ class RemoteChangeReconciliationService:
                 database_id=batch.database_id,
                 bid_uid=str(bid_uid),
                 condition_uids=sorted(conditions),
+                defer_plan_projection=projection_barrier is not None,
             )
         if areas is not None:
             self._event_bus.publish(
@@ -131,6 +145,7 @@ class RemoteChangeReconciliationService:
                 database_id=batch.database_id,
                 bid_uid=str(bid_uid),
                 area_uids=sorted(str(area.uid) for area in areas),
+                defer_plan_projection=projection_barrier is not None,
             )
         if families:
             self._event_bus.publish(
@@ -153,6 +168,41 @@ class RemoteChangeReconciliationService:
                     )
                     for family in families
                 },
+                defer_plan_projection=projection_barrier is not None,
+            )
+        plan_projection_required = (
+            (conditions is not None and folders is not None)
+            or areas is not None
+            or bool(families)
+        )
+        if projection_barrier is not None and plan_projection_required:
+            projected_families = tuple(sorted(families))
+            resource_uids_by_family = {
+                family: tuple(
+                    sorted(
+                        {
+                            change.resource.resource_id
+                            for change in active_changes
+                            if BID_CONTENT_FAMILY_BY_RESOURCE_TYPE.get(
+                                change.resource.resource_type
+                            )
+                            == family
+                            and change.resource.resource_type
+                            in BID_CONTENT_ENTITY_RESOURCE_TYPES
+                        }
+                    )
+                )
+                for family in projected_families
+            }
+            self._event_bus.publish(
+                AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+                database_id=batch.database_id,
+                bid_uid=str(bid_uid),
+                runtime_generation=projection_barrier.runtime_generation,
+                families=projected_families,
+                condition_uids=tuple(sorted(conditions or ())),
+                resource_uids_by_family=resource_uids_by_family,
+                barrier=projection_barrier,
             )
         return True
 

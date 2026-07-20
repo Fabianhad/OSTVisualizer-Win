@@ -14,23 +14,27 @@ from ..dtos.collaboration_resource_catalog import resource_definition
 from ..dtos.application_info import APPLICATION_VERSION
 from ..dtos.collaboration_dtos import (
     CollaborationStatus,
+    CollaborationShutdownState,
     CollaborationMetrics,
     CollaborationPollingPolicy,
     COLLABORATION_STALE_SECONDS,
     DatabaseSession,
+    EditLeaseHandle,
+    EditLeaseLoss,
+    EditLeaseRequest,
     EditLeaseResult,
     PresenceMode,
     ResourceLock,
     ResourceRef,
     SynchronizationState,
 )
+from ..dtos.remote_projection_dtos import RemoteProjectionBarrier
 from ..events.app_events import AppEvents
 from ..interfaces.i_collaboration_store import ICollaborationStore
 from ..interfaces.i_database_catalog import DatabaseCatalogError
 from ..interfaces.i_database_descriptor_registry import IDatabaseDescriptorRegistry
 from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
 from ..interfaces.i_remote_change_reader import IRemoteChangeReader
-from ..interfaces.i_shutdown_aware import IShutdownAware
 from ..interfaces.i_thread_callback_bridge import IThreadCallbackBridge
 from .database_capability_service import DatabaseCapabilityService
 from .local_draft_registry import LocalDraftRegistry
@@ -39,17 +43,11 @@ from .remote_change_reconciliation_service import RemoteChangeReconciliationServ
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class _EditLeaseRequest:
-    database_id: str
-    resources: tuple[ResourceRef, ...]
-    operation_description: str
-
-
 @dataclass
 class _DatabaseRuntime:
     database_id: str
     generation: int
+    retry_initial_failure: bool = True
     stop_event: threading.Event = field(default_factory=threading.Event)
     ready_event: threading.Event = field(default_factory=threading.Event)
     command_event: threading.Event = field(default_factory=threading.Event)
@@ -59,6 +57,7 @@ class _DatabaseRuntime:
     observed_high_water_version: int = 0
     feed_epoch: str = ""
     healthy: bool = False
+    established: bool = False
     edit_depth: int = 0
     owned_locks: dict[ResourceRef, ResourceLock] = field(default_factory=dict)
     draft_ids: dict[frozenset[ResourceRef], str] = field(default_factory=dict)
@@ -67,6 +66,7 @@ class _DatabaseRuntime:
     pending_delivery: bool = False
     recovery_requested: bool = False
     recovery_ready: bool = False
+    recovery_attempted: bool = False
     bid_uid: Optional[int] = None
     page_uid: Optional[int] = None
     mode: PresenceMode = PresenceMode.VIEWING
@@ -80,9 +80,10 @@ class _DatabaseRuntime:
     reconciliation_duration_seconds: float = 0.0
     retention_gap_count: int = 0
     reconnect_count: int = 0
+    cleanup_errors: list[str] = field(default_factory=list)
 
 
-class SqlCollaborationCoordinator(IShutdownAware):
+class SqlCollaborationCoordinator:
     def __init__(
         self,
         descriptor_registry: IDatabaseDescriptorRegistry,
@@ -115,6 +116,13 @@ class SqlCollaborationCoordinator(IShutdownAware):
         self._lock = threading.Lock()
         self._next_generation = 0
         self._shutting_down = False
+        self._shutdown_state = CollaborationShutdownState.RUNNING
+        self._shutdown_callbacks: list[Callable[[bool, str], None]] = []
+        self._database_drains: dict[
+            tuple[str, int], list[Callable[[bool, str], None]]
+        ] = {}
+        self._database_cleanup_failures: dict[str, str] = {}
+        self._shutdown_cleanup_errors: list[str] = []
         self._event_bus.subscribe(AppEvents.FILE_OPENED, self._on_file_opened)
         self._event_bus.subscribe(AppEvents.FILE_UNLOADED, self._on_file_unloaded)
         self._event_bus.subscribe(
@@ -131,7 +139,7 @@ class SqlCollaborationCoordinator(IShutdownAware):
     def _on_file_unloaded(self, file_path: str, **_event_data) -> None:
         descriptor = self._registry.resolve(file_path)
         database_id = descriptor.database_id if descriptor is not None else file_path
-        self.stop_database(database_id)
+        self.stop_database_async(database_id)
 
     def _on_database_refreshed(self, file_path: str, **_event_data) -> None:
         runtime = self._runtime(file_path)
@@ -141,17 +149,25 @@ class SqlCollaborationCoordinator(IShutdownAware):
             self._capabilities.collaboration_status(file_path).conflicted_resources
         )
         self._capabilities.clear_collaboration_conflicts(file_path)
-        with runtime.lock:
-            if runtime.recovery_requested:
-                runtime.recovery_ready = True
-                runtime.pending_delivery = False
-                runtime.command_event.set()
-                return
+        if self.resume_controlled_recovery(file_path):
+            return
         if had_resource_conflicts:
             self._event_bus.publish(
                 AppEvents.DATABASE_CAPABILITIES_CHANGED,
                 file_path=file_path,
             )
+
+    def resume_controlled_recovery(self, database_id: str) -> bool:
+        runtime = self._runtime(database_id)
+        if runtime is None:
+            return False
+        with runtime.lock:
+            if not runtime.recovery_requested or runtime.recovery_attempted:
+                return False
+            runtime.recovery_attempted = True
+            runtime.recovery_ready = True
+            runtime.command_event.set()
+        return True
 
     def _on_database_capabilities_changed(self, file_path: str, **_event_data) -> None:
         runtime = self._runtime(file_path)
@@ -160,10 +176,20 @@ class SqlCollaborationCoordinator(IShutdownAware):
         thread = runtime.thread
         if thread is None or thread.is_alive() or thread.ident is None:
             return
-        self.stop_database(file_path, "reconfigured")
-        self.start_database(file_path)
+        self.stop_database_async(
+            file_path,
+            "reconfigured",
+            lambda success, _message: (
+                self.start_database(file_path) if success else None
+            ),
+        )
 
-    def start_database(self, database_id: str) -> bool:
+    def start_database(
+        self,
+        database_id: str,
+        *,
+        retry_initial_failure: bool = True,
+    ) -> bool:
         descriptor = self._registry.resolve(database_id)
         if (
             descriptor is None
@@ -172,10 +198,23 @@ class SqlCollaborationCoordinator(IShutdownAware):
         ):
             return False
         with self._lock:
-            if self._shutting_down or database_id in self._runtimes:
+            database_is_draining = any(
+                draining_database_id == database_id
+                for draining_database_id, _generation in self._database_drains
+            )
+            if (
+                self._shutting_down
+                or database_id in self._runtimes
+                or database_is_draining
+                or database_id in self._database_cleanup_failures
+            ):
                 return False
             self._next_generation += 1
-            runtime = _DatabaseRuntime(database_id, self._next_generation)
+            runtime = _DatabaseRuntime(
+                database_id,
+                self._next_generation,
+                retry_initial_failure=retry_initial_failure,
+            )
             runtime.thread = threading.Thread(
                 target=self._worker,
                 args=(runtime,),
@@ -187,23 +226,109 @@ class SqlCollaborationCoordinator(IShutdownAware):
         runtime.thread.start()
         return True
 
-    def stop_database(self, database_id: str, reason: str = "closed") -> None:
+    def stop_database_async(
+        self,
+        database_id: str,
+        reason: str = "closed",
+        callback: Optional[Callable[[bool, str], None]] = None,
+    ) -> None:
+        runtime = self._detach_runtime(database_id, reason)
+        if runtime is None:
+            with self._lock:
+                drain_key = next(
+                    (key for key in self._database_drains if key[0] == database_id),
+                    None,
+                )
+                if callback is not None and drain_key is not None:
+                    self._database_drains[drain_key].append(callback)
+                    return
+                cleanup_failure = self._database_cleanup_failures.get(database_id)
+            if callback is not None:
+                self._invoke_completion_callback(
+                    callback,
+                    cleanup_failure is None,
+                    cleanup_failure or "",
+                )
+            return
+        drain_key = (runtime.database_id, runtime.generation)
+        with self._lock:
+            self._database_drains[drain_key] = (
+                [callback] if callback is not None else []
+            )
+        thread = threading.Thread(
+            target=self._drain_database,
+            args=(runtime,),
+            daemon=False,
+            name=f"SqlCollaborationDrain-{database_id[:8]}",
+        )
+        thread.start()
+
+    def _detach_runtime(
+        self, database_id: str, reason: str
+    ) -> Optional[_DatabaseRuntime]:
         with self._lock:
             runtime = self._runtimes.pop(database_id, None)
         if runtime is None:
-            return
+            return None
         runtime.close_reason = reason
         runtime.stop_event.set()
         runtime.ready_event.set()
         runtime.command_event.set()
-        if runtime.thread is not None:
-            runtime.thread.join()
-        self._concurrency_tokens.clear_database(database_id)
-        self._local_drafts.clear_database(database_id)
-        self._capabilities.set_collaboration_state(
-            database_id, SynchronizationState.STOPPED
+        self._set_state(
+            database_id,
+            SynchronizationState.READ_ONLY,
+            "SQL collaboration is closing.",
         )
-        self._publish_state(database_id, SynchronizationState.STOPPED)
+        return runtime
+
+    def _drain_database(
+        self,
+        runtime: _DatabaseRuntime,
+    ) -> None:
+        try:
+            if runtime.thread is not None:
+                runtime.thread.join()
+            cleanup_errors = tuple(runtime.cleanup_errors)
+            payload = (
+                runtime.database_id,
+                runtime.generation,
+                not cleanup_errors,
+                "; ".join(cleanup_errors),
+            )
+        except RuntimeError as exc:
+            payload = (
+                runtime.database_id,
+                runtime.generation,
+                False,
+                str(exc),
+            )
+        self._dispatcher.dispatch(self._complete_database_drain, payload)
+
+    def _complete_database_drain(self, payload) -> None:
+        database_id, generation, success, message = payload
+        if not success and not message:
+            message = f"SQL collaboration cleanup failed for {database_id}."
+        with self._lock:
+            callbacks = tuple(self._database_drains.pop((database_id, generation), ()))
+            if success:
+                self._database_cleanup_failures.pop(database_id, None)
+            else:
+                self._database_cleanup_failures[database_id] = message
+            if self._shutting_down and message:
+                self._shutdown_cleanup_errors.append(message)
+        if success:
+            self._finalize_database_stop(database_id, generation)
+        self._complete_shutdown_if_drained()
+        for callback in callbacks:
+            self._invoke_completion_callback(callback, success, message)
+
+    def _finalize_database_stop(self, database_id: str, generation: int) -> None:
+        with self._lock:
+            current = self._runtimes.get(database_id)
+            if current is not None and current.generation != generation:
+                return
+        self._concurrency_tokens.clear_database(database_id)
+        self._set_state(database_id, SynchronizationState.STOPPED)
 
     def update_presence(
         self,
@@ -252,12 +377,11 @@ class SqlCollaborationCoordinator(IShutdownAware):
             runtime.recovery_requested = True
             runtime.recovery_ready = False
             runtime.command_event.set()
-        self._capabilities.set_collaboration_state(
+        self._set_state(
             database_id,
             SynchronizationState.CONFLICTED,
             message,
         )
-        self._publish_state(database_id, SynchronizationState.CONFLICTED, message)
 
     def enter_resource_conflict(
         self, database_id: str, resource: ResourceRef, message: str = ""
@@ -275,8 +399,13 @@ class SqlCollaborationCoordinator(IShutdownAware):
         database_id: str,
         resources: tuple[ResourceRef, ...],
         callback: Callable[[EditLeaseResult], None],
+        *,
+        dependency_resources: tuple[ResourceRef, ...] = (),
+        operation_id: str = "",
+        owning_surface: str = "desktop",
     ) -> None:
         normalized_resources = tuple(sorted(set(resources)))
+        normalized_dependencies = tuple(sorted(set(dependency_resources)))
         descriptor = self._registry.resolve(database_id)
         if not normalized_resources:
             self._dispatch_lease_result(
@@ -288,10 +417,20 @@ class SqlCollaborationCoordinator(IShutdownAware):
             )
             return
         if descriptor is not None and descriptor.backend == DatabaseBackend.ACCESS:
+            draft_id = str(uuid.uuid4())
             self._dispatch_lease_result(
                 callback,
                 EditLeaseResult(
                     True,
+                    handle=EditLeaseHandle(
+                        database_id=database_id,
+                        draft_id=draft_id,
+                        runtime_generation=0,
+                        operation_id=operation_id or "access-local-edit",
+                        owning_surface=owning_surface,
+                        resources=normalized_resources,
+                        dependency_resources=normalized_dependencies,
+                    ),
                 ),
             )
             return
@@ -336,11 +475,13 @@ class SqlCollaborationCoordinator(IShutdownAware):
                     and first_resource.resource_id.isdecimal()
                     else None
                 ),
-                owning_surface="desktop",
+                owning_surface=owning_surface,
                 affected_resources=normalized_resources,
+                dependency_resources=normalized_dependencies,
                 base_tokens=self._concurrency_tokens.tokens_for_resources(
                     database_id, normalized_resources
                 ),
+                operation_id=operation_id,
             )
         except ValueError as exc:
             self._dispatch_lease_result(
@@ -351,33 +492,130 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 ),
             )
             return
-        request = _EditLeaseRequest(
+        request = EditLeaseRequest(
             database_id=database_id,
+            draft_id=draft.draft_id,
+            operation_id=draft.operation_id,
+            owning_surface=owning_surface,
             resources=normalized_resources,
-            operation_description=draft.draft_type,
+            dependency_resources=normalized_dependencies,
         )
-        runtime.edit_requests.put((request, draft.draft_id, callback))
-        runtime.command_event.set()
+        with self._lock:
+            current = self._runtimes.get(database_id)
+            queued = current is runtime and not self._shutting_down
+            if queued:
+                with runtime.lock:
+                    queued = (
+                        runtime.session is not None
+                        and not runtime.recovery_requested
+                        and not runtime.stop_event.is_set()
+                    )
+            if queued:
+                runtime.edit_requests.put((request, callback))
+                runtime.command_event.set()
+        if not queued:
+            self._local_drafts.finish(draft.draft_id)
+            self._dispatch_lease_result(
+                callback,
+                EditLeaseResult(
+                    False,
+                    "SQL collaboration stopped before the edit could be queued.",
+                ),
+            )
 
-    def end_local_edit(self, database_id: str, resources: tuple) -> None:
-        runtime = self._runtime(database_id)
+    def end_edit_lease(self, handle: EditLeaseHandle) -> None:
+        runtime = self._runtime(handle.database_id, handle.runtime_generation)
         if runtime is None:
             return
-        runtime.release_requests.put(tuple(sorted(set(resources))))
+        runtime.release_requests.put(handle)
         runtime.command_event.set()
 
     def discard_local_draft(self, database_id: str, draft_id: str) -> None:
         draft = self._local_drafts.get(draft_id)
         if draft is None or draft.database_id != database_id:
             return
-        self.end_local_edit(database_id, draft.affected_resources)
+        self.end_edit_lease(
+            EditLeaseHandle(
+                database_id=draft.database_id,
+                draft_id=draft.draft_id,
+                runtime_generation=draft.runtime_generation,
+                operation_id=draft.operation_id,
+                owning_surface=draft.owning_surface,
+                resources=draft.affected_resources,
+                dependency_resources=draft.dependency_resources,
+                locks=draft.leases,
+            )
+        )
 
-    def shutdown(self) -> None:
+    @property
+    def shutdown_state(self) -> CollaborationShutdownState:
         with self._lock:
-            self._shutting_down = True
-            database_ids = tuple(self._runtimes)
+            return self._shutdown_state
+
+    def request_shutdown(
+        self, callback: Optional[Callable[[bool, str], None]] = None
+    ) -> None:
+        terminal_result: Optional[tuple[bool, str]] = None
+        with self._lock:
+            if self._shutdown_state == CollaborationShutdownState.CLOSED:
+                terminal_result = (True, "")
+            elif self._shutdown_state == CollaborationShutdownState.CLEANUP_FAILED:
+                terminal_result = (False, "; ".join(self._shutdown_cleanup_errors))
+            else:
+                if callback is not None:
+                    self._shutdown_callbacks.append(callback)
+                if self._shutdown_state != CollaborationShutdownState.RUNNING:
+                    return
+                self._shutting_down = True
+                self._shutdown_state = CollaborationShutdownState.STOP_REQUESTED
+                self._shutdown_cleanup_errors.extend(
+                    message
+                    for message in self._database_cleanup_failures.values()
+                    if message not in self._shutdown_cleanup_errors
+                )
+                database_ids = tuple(self._runtimes)
+        if terminal_result is not None:
+            if callback is not None:
+                self._invoke_completion_callback(callback, *terminal_result)
+            return
         for database_id in database_ids:
-            self.stop_database(database_id, "shutdown")
+            self.stop_database_async(database_id, "shutdown")
+        with self._lock:
+            self._shutdown_state = CollaborationShutdownState.DRAINING
+        self._complete_shutdown_if_drained()
+
+    def _complete_shutdown_if_drained(self) -> None:
+        with self._lock:
+            if (
+                self._shutdown_state != CollaborationShutdownState.DRAINING
+                or self._runtimes
+                or self._database_drains
+            ):
+                return
+            message = "; ".join(self._shutdown_cleanup_errors)
+            success = not self._shutdown_cleanup_errors
+            self._shutdown_state = (
+                CollaborationShutdownState.CLOSED
+                if success
+                else CollaborationShutdownState.CLEANUP_FAILED
+            )
+            callbacks = tuple(self._shutdown_callbacks)
+            self._shutdown_callbacks.clear()
+        if success:
+            self._unsubscribe()
+        for callback in callbacks:
+            self._invoke_completion_callback(callback, success, message)
+
+    @staticmethod
+    def _invoke_completion_callback(
+        callback: Callable[[bool, str], None], success: bool, message: str
+    ) -> None:
+        try:
+            callback(success, message)
+        except Exception:
+            logger.exception("SQL collaboration completion callback failed")
+
+    def _unsubscribe(self) -> None:
         self._event_bus.unsubscribe(AppEvents.FILE_OPENED, self._on_file_opened)
         self._event_bus.unsubscribe(AppEvents.FILE_UNLOADED, self._on_file_unloaded)
         self._event_bus.unsubscribe(
@@ -487,6 +725,9 @@ class SqlCollaborationCoordinator(IShutdownAware):
                             ),
                         )
                         break
+                    with runtime.lock:
+                        runtime.established = True
+                        runtime.recovery_attempted = False
                     self._sessions.register(
                         runtime.database_id, active_session.session_id
                     )
@@ -500,6 +741,7 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 runtime.command_event.wait(self._next_poll_interval(runtime))
                 runtime.command_event.clear()
             except DatabaseCatalogError as exc:
+                failed_before_establishment = not runtime.established
                 failure_state = (
                     SynchronizationState.CREDENTIAL_REQUIRED
                     if exc.credential_required
@@ -510,7 +752,9 @@ class SqlCollaborationCoordinator(IShutdownAware):
                     )
                 )
                 self._handle_worker_failure(runtime, str(exc), failure_state)
-                if not exc.retryable:
+                if not exc.retryable or (
+                    failed_before_establishment and not runtime.retry_initial_failure
+                ):
                     break
                 delay = self._reconnect_delay(reconnect_attempt)
                 with runtime.lock:
@@ -521,7 +765,10 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 )
                 runtime.stop_event.wait(delay)
             except OSError as exc:
+                failed_before_establishment = not runtime.established
                 self._handle_worker_failure(runtime, str(exc))
+                if failed_before_establishment and not runtime.retry_initial_failure:
+                    break
                 delay = self._reconnect_delay(reconnect_attempt)
                 with runtime.lock:
                     runtime.reconnect_count += 1
@@ -548,9 +795,10 @@ class SqlCollaborationCoordinator(IShutdownAware):
     def _process_edit_requests(self, runtime: _DatabaseRuntime) -> None:
         while not runtime.stop_event.is_set():
             try:
-                request, draft_id, callback = runtime.edit_requests.get_nowait()
+                request, callback = runtime.edit_requests.get_nowait()
             except queue.Empty:
                 return
+            draft_id = request.draft_id
             with runtime.lock:
                 session = runtime.session
                 already_owned = any(
@@ -578,7 +826,8 @@ class SqlCollaborationCoordinator(IShutdownAware):
             acquired = []
             try:
                 self._concurrency_tokens.ensure_resources_loaded(
-                    request.database_id, request.resources
+                    request.database_id,
+                    request.resources + request.dependency_resources,
                 )
                 self._local_drafts.set_base_tokens(
                     draft_id,
@@ -592,9 +841,14 @@ class SqlCollaborationCoordinator(IShutdownAware):
                             request.database_id,
                             session.session_id,
                             resource,
-                            request.operation_description,
+                            request.operation_id,
                         )
                     )
+                self._local_drafts.activate(
+                    draft_id,
+                    tuple(acquired),
+                    runtime_generation=runtime.generation,
+                )
             except DatabaseCatalogError as exc:
                 self._deny_edit_request(
                     request, draft_id, callback, session, acquired, str(exc)
@@ -617,6 +871,17 @@ class SqlCollaborationCoordinator(IShutdownAware):
                     request, draft_id, callback, session, acquired, str(exc)
                 )
                 continue
+            active_draft = self._local_drafts.get(draft_id)
+            if active_draft is None:
+                self._deny_edit_request(
+                    request,
+                    draft_id,
+                    callback,
+                    session,
+                    acquired,
+                    "The local edit was cancelled before its lease became active.",
+                )
+                continue
             with runtime.lock:
                 for lock in acquired:
                     runtime.owned_locks[lock.resource] = lock
@@ -626,8 +891,15 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 runtime.edit_depth += 1
                 runtime.mode = PresenceMode.EDITING
                 runtime.draft_ids[frozenset(request.resources)] = draft_id
-            self._local_drafts.activate(
-                draft_id, acquired[0] if len(acquired) == 1 else None
+            handle = EditLeaseHandle(
+                database_id=request.database_id,
+                draft_id=draft_id,
+                runtime_generation=runtime.generation,
+                operation_id=request.operation_id,
+                owning_surface=request.owning_surface,
+                resources=request.resources,
+                dependency_resources=request.dependency_resources,
+                locks=tuple(acquired),
             )
             self._dispatch_runtime_lease_result(
                 runtime,
@@ -635,18 +907,20 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 callback,
                 EditLeaseResult(
                     True,
+                    handle=handle,
                 ),
             )
 
     def _deny_edit_request(
         self,
-        request: _EditLeaseRequest,
+        request: EditLeaseRequest,
         draft_id: str,
         callback: Callable[[EditLeaseResult], None],
         session: DatabaseSession,
         acquired: list[ResourceLock],
         message: str,
     ) -> None:
+        cleanup_error: Optional[DatabaseCatalogError | OSError | ValueError] = None
         for lock in acquired:
             try:
                 self._store.release_lock(
@@ -654,7 +928,9 @@ class SqlCollaborationCoordinator(IShutdownAware):
                     session.session_id,
                     lock.lock_token,
                 )
-            except (DatabaseCatalogError, OSError, ValueError):
+            except (DatabaseCatalogError, OSError, ValueError) as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
                 continue
         self._local_drafts.finish(draft_id)
         self._dispatch_lease_result(
@@ -664,14 +940,16 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 message,
             ),
         )
+        if cleanup_error is not None:
+            raise cleanup_error
 
     def _reject_pending_edits(self, runtime: _DatabaseRuntime, message: str) -> None:
         while True:
             try:
-                request, draft_id, callback = runtime.edit_requests.get_nowait()
+                request, callback = runtime.edit_requests.get_nowait()
             except queue.Empty:
                 return
-            self._local_drafts.finish(draft_id)
+            self._local_drafts.finish(request.draft_id)
             self._dispatch_lease_result(
                 callback,
                 EditLeaseResult(
@@ -683,26 +961,49 @@ class SqlCollaborationCoordinator(IShutdownAware):
     def _process_release_requests(self, runtime: _DatabaseRuntime) -> None:
         while not runtime.stop_event.is_set():
             try:
-                resources = runtime.release_requests.get_nowait()
+                handle = runtime.release_requests.get_nowait()
             except queue.Empty:
                 return
+            draft = self._local_drafts.get(handle.draft_id)
+            if (
+                draft is None
+                or draft.database_id != handle.database_id
+                or draft.runtime_generation != handle.runtime_generation
+                or draft.operation_id != handle.operation_id
+                or draft.owning_surface != handle.owning_surface
+                or draft.affected_resources != handle.resources
+                or draft.dependency_resources != handle.dependency_resources
+                or draft.leases != handle.locks
+            ):
+                continue
             with runtime.lock:
-                resource_key = frozenset(resources)
-                draft_id = runtime.draft_ids.pop(resource_key, None)
-                if draft_id is None:
+                if handle.runtime_generation != runtime.generation:
                     continue
+                resource_key = frozenset(handle.resources)
+                active_draft_id = runtime.draft_ids.get(resource_key)
+                owned_tokens = {
+                    resource: runtime.owned_locks[resource].lock_token
+                    for resource in handle.resources
+                    if resource in runtime.owned_locks
+                }
+                handle_tokens = {
+                    lock.resource: lock.lock_token for lock in handle.locks
+                }
+                if active_draft_id != handle.draft_id or owned_tokens != handle_tokens:
+                    continue
+                runtime.draft_ids.pop(resource_key)
                 session = runtime.session
                 locks = tuple(
                     runtime.owned_locks.pop(resource)
-                    for resource in resources
+                    for resource in handle.resources
                     if resource in runtime.owned_locks
                 )
-                for resource in resources:
+                for resource in handle.resources:
                     self._sessions.remove_lock(runtime.database_id, resource)
                 runtime.edit_depth = max(0, runtime.edit_depth - 1)
                 if runtime.edit_depth == 0:
                     runtime.mode = PresenceMode.VIEWING
-            self._local_drafts.finish(draft_id)
+            self._local_drafts.finish(handle.draft_id)
             if session is None:
                 continue
             for lock in locks:
@@ -748,13 +1049,20 @@ class SqlCollaborationCoordinator(IShutdownAware):
         active = False
         if runtime is not None:
             with runtime.lock:
-                active = draft_id in runtime.draft_ids.values()
+                active = (
+                    not self._shutting_down and draft_id in runtime.draft_ids.values()
+                )
         if result.granted and not active:
             result = EditLeaseResult(
                 False,
                 "SQL collaboration stopped before the edit lease became active.",
             )
-        callback(result)
+        try:
+            callback(result)
+        except Exception:
+            logger.exception("SQL edit-lease completion callback failed")
+            if result.handle is not None:
+                self.end_edit_lease(result.handle)
 
     def _heartbeat(self, runtime: _DatabaseRuntime) -> None:
         with runtime.lock:
@@ -890,13 +1198,7 @@ class SqlCollaborationCoordinator(IShutdownAware):
         remote_changes = tuple(
             change for change in batch.changes if change.source_session_id != session_id
         )
-        if not batch.changes:
-            with runtime.lock:
-                runtime.acknowledged_version = batch.delivered_through_version
-            return
-        if not remote_changes:
-            with runtime.lock:
-                runtime.acknowledged_version = batch.delivered_through_version
+        if not batch.changes and batch.delivered_through_version == acknowledged:
             return
         remote_batch = type(batch)(
             database_id=batch.database_id,
@@ -947,22 +1249,20 @@ class SqlCollaborationCoordinator(IShutdownAware):
             return
         with runtime.lock:
             runtime.healthy = False
-        self._capabilities.set_collaboration_state(
+        self._set_state(
             database_id,
             SynchronizationState.CATCHING_UP,
         )
-        self._publish_state(database_id, SynchronizationState.CATCHING_UP)
         runtime.ready_event.set()
 
     def _on_connection_restored(self, payload) -> None:
         database_id, generation = payload
         if self._runtime(database_id, generation) is None:
             return
-        self._capabilities.set_collaboration_state(
+        self._set_state(
             database_id,
             SynchronizationState.HEALTHY,
         )
-        self._publish_state(database_id, SynchronizationState.HEALTHY)
 
     def _on_remote_batch(self, payload) -> None:
         database_id, generation, hydrated = payload
@@ -970,7 +1270,37 @@ class SqlCollaborationCoordinator(IShutdownAware):
         if runtime is None:
             return
         started = time.perf_counter()
-        applied = self._apply_reconciliation(hydrated)
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=generation,
+            is_runtime_current=self.is_runtime_current,
+            on_complete=lambda projection_success: self._finish_remote_batch(
+                database_id,
+                generation,
+                hydrated.batch.delivered_through_version,
+                started,
+                projection_success,
+            ),
+        )
+        applied = self._apply_reconciliation(hydrated, projection_barrier=barrier)
+        if not applied:
+            barrier.fail()
+        barrier.seal()
+
+    def is_runtime_current(self, database_id: str, generation: int) -> bool:
+        return self._runtime(database_id, generation) is not None
+
+    def _finish_remote_batch(
+        self,
+        database_id: str,
+        generation: int,
+        delivered_through_version: int,
+        started: float,
+        applied: bool,
+    ) -> None:
+        runtime = self._runtime(database_id, generation)
+        if runtime is None:
+            return
         elapsed = time.perf_counter() - started
         with runtime.lock:
             runtime.reconciliation_count += 1
@@ -980,7 +1310,7 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 == SynchronizationState.CONFLICTED
             )
             if applied and not conflicted:
-                runtime.acknowledged_version = hydrated.batch.delivered_through_version
+                runtime.acknowledged_version = delivered_through_version
             runtime.pending_delivery = conflicted
         if conflicted:
             return
@@ -993,9 +1323,13 @@ class SqlCollaborationCoordinator(IShutdownAware):
                 )
             )
 
-    def _apply_reconciliation(self, hydrated) -> bool:
+    def _apply_reconciliation(
+        self,
+        hydrated,
+        projection_barrier: RemoteProjectionBarrier | None = None,
+    ) -> bool:
         try:
-            return self._reconciliation.apply(hydrated)
+            return self._reconciliation.apply(hydrated, projection_barrier)
         except Exception:
             logger.exception("SQL main-thread reconciliation failed")
             return False
@@ -1041,8 +1375,13 @@ class SqlCollaborationCoordinator(IShutdownAware):
         *,
         close_reason: str = "trust-lost",
     ) -> None:
-        session, locks = self._clear_runtime_edits(runtime)
+        self._reject_pending_edits(
+            runtime,
+            "SQL collaboration trust was lost before the edit lease was acquired.",
+        )
+        session, locks = self._clear_runtime_edits(runtime, close_reason)
         if session is not None:
+            lock_release_failed = False
             for lock in locks:
                 try:
                     self._store.release_lock(
@@ -1051,6 +1390,7 @@ class SqlCollaborationCoordinator(IShutdownAware):
                         lock.lock_token,
                     )
                 except (DatabaseCatalogError, OSError, ValueError):
+                    lock_release_failed = True
                     continue
             self._sessions.remove(runtime.database_id, session.session_id)
             try:
@@ -1060,45 +1400,65 @@ class SqlCollaborationCoordinator(IShutdownAware):
                     close_reason,
                 )
             except (DatabaseCatalogError, OSError, ValueError):
-                pass
+                if lock_release_failed:
+                    runtime.cleanup_errors.append(
+                        "A SQL collaboration edit lock could not be released."
+                    )
+                runtime.cleanup_errors.append(
+                    "The SQL collaboration session could not be closed."
+                )
         runtime.ready_event.clear()
 
     def _clear_runtime_edits(
-        self, runtime: _DatabaseRuntime
+        self, runtime: _DatabaseRuntime, reason: str
     ) -> tuple[Optional[DatabaseSession], tuple[ResourceLock, ...]]:
         with runtime.lock:
             session = runtime.session
             locks = tuple(runtime.owned_locks.values())
             resources = tuple(runtime.owned_locks)
-            had_drafts = bool(runtime.draft_ids)
+            draft_ids = tuple(runtime.draft_ids.values())
+            losses = tuple(
+                EditLeaseLoss(
+                    database_id=runtime.database_id,
+                    draft_id=draft.draft_id,
+                    runtime_generation=runtime.generation,
+                    operation_id=draft.operation_id,
+                    owning_surface=draft.owning_surface,
+                    resources=draft.affected_resources,
+                    reason=reason,
+                )
+                for draft_id in draft_ids
+                if (draft := self._local_drafts.get(draft_id)) is not None
+            )
             runtime.session = None
             runtime.owned_locks.clear()
             runtime.draft_ids.clear()
             runtime.edit_depth = 0
             runtime.mode = PresenceMode.VIEWING
             runtime.healthy = False
-        self._local_drafts.clear_database(runtime.database_id)
-        if had_drafts:
+        for draft_id in draft_ids:
+            self._local_drafts.finish(draft_id)
+        if losses:
             self._dispatcher.dispatch(
                 self._publish_lease_loss,
-                runtime.database_id,
+                losses,
             )
         for resource in resources:
             self._sessions.remove_lock(runtime.database_id, resource)
         return session, locks
 
-    def _publish_lease_loss(self, database_id) -> None:
-        self._event_bus.publish(
-            AppEvents.EDIT_LEASE_LOST,
-            database_id=database_id,
-        )
+    def _publish_lease_loss(self, losses: tuple[EditLeaseLoss, ...]) -> None:
+        for loss in losses:
+            self._event_bus.publish(
+                AppEvents.EDIT_LEASE_LOST,
+                loss=loss,
+            )
 
     def _on_disconnected(self, payload) -> None:
         database_id, generation, state, message = payload
         if self._runtime(database_id, generation) is None:
             return
-        self._capabilities.set_collaboration_state(database_id, state)
-        self._publish_state(database_id, state, message)
+        self._set_state(database_id, state, message)
 
     def _publish_presence(self, payload) -> None:
         database_id, generation, bid_uid, users = payload

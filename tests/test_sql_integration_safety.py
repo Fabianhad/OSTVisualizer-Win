@@ -35,6 +35,31 @@ class DisposableSqlConfigurationSafetyTests(unittest.TestCase):
                 DisposableSqlConfiguration.from_environment()
         self.assertIn("local", str(skipped.exception).casefold())
 
+    def test_local_harness_accepts_an_explicit_nondefault_fixed_port(self):
+        environment = {
+            "OSTV_SQL_INTEGRATION": "1",
+            "OSTV_SQL_DESTRUCTIVE_TESTS": "1",
+            "OSTV_SQL_TEST_SERVER": "tcp:localhost,51433",
+            "OSTV_SQL_TEST_SERVER_MARKER": "test-marker",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            configuration = DisposableSqlConfiguration.from_environment()
+        self.assertEqual(configuration.location.server, "tcp:localhost,51433")
+
+    def test_local_harness_rejects_invalid_tcp_ports(self):
+        for server in ("tcp:localhost,0", "tcp:localhost,65536", "localhost,bad"):
+            environment = {
+                "OSTV_SQL_INTEGRATION": "1",
+                "OSTV_SQL_DESTRUCTIVE_TESTS": "1",
+                "OSTV_SQL_TEST_SERVER": server,
+                "OSTV_SQL_TEST_SERVER_MARKER": "test-marker",
+            }
+            with self.subTest(server=server), patch.dict(
+                os.environ, environment, clear=True
+            ):
+                with self.assertRaises(unittest.SkipTest):
+                    DisposableSqlConfiguration.from_environment()
+
     def test_database_name_guard_accepts_only_the_disposable_prefix(self):
         _require_test_database_name("OSTV_IT_20260718_abc123")
         for unsafe_name in (

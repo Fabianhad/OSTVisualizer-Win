@@ -2283,6 +2283,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             create_view=create_view,
             get_active_view=lambda: active_view,
         )
+        manager._remote_update_generation = 0
         manager._create_window = create_window
         manager._notify_visibility_changed = lambda: calls.append("notify")
         first_result = manager.open_view(BidRef("job.ost", "bid-1"), "page-1")
@@ -2303,6 +2304,22 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             ],
         )
         self.assertFalse(manager._opening)
+
+    def test_old_destroyed_signal_cannot_clear_reopened_detached_window(self):
+        calls = []
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        old_window = SimpleNamespace(close=lambda: calls.append("close"))
+        manager._window = old_window
+        manager._window_undo_service = object()
+        manager._opening = False
+        manager._remote_update_generation = 0
+        manager._notify_visibility_changed = lambda: calls.append("notify")
+        manager.close_view()
+        replacement = SimpleNamespace()
+        manager._window = replacement
+        manager._on_window_destroyed(id(old_window))
+        self.assertIs(manager._window, replacement)
+        self.assertEqual(calls, ["close", "notify"])
 
     def test_open_view_clears_opening_guard_when_window_creation_fails(self):
         manager, _calls = self._manager_for_initial_state_tests()
@@ -2615,6 +2632,59 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._on_annotations_changed(page_uid="p1")
         manager._on_annotations_changed(page_uid="p2")
         self.assertEqual(calls, ["refresh"])
+
+    def test_remote_bid_content_refreshes_matching_detached_view(self):
+        calls = []
+        view = SimpleNamespace(bid_ref=BidRef("sql-db", "bid-1"))
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._window_undo_service = SimpleNamespace(
+            clear=lambda: calls.append("undo")
+        )
+        manager._refresh_signaler = SimpleNamespace(
+            request_refresh=lambda: calls.append("refresh")
+        )
+        manager._on_remote_bid_content_changed(
+            database_id="other-db", bid_uid="bid-1", families=["takeoffs"]
+        )
+        manager._on_remote_bid_content_changed(
+            database_id="sql-db", bid_uid="bid-1", families=["takeoffs"]
+        )
+        self.assertEqual(calls, ["undo", "refresh"])
+
+    def test_remote_hierarchy_refreshes_matching_detached_database(self):
+        calls = []
+        view = SimpleNamespace(bid_ref=BidRef("sql-db", "bid-1"))
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._refresh_signaler = SimpleNamespace(
+            request_refresh=lambda: calls.append("refresh")
+        )
+        manager._on_remote_hierarchy_changed(database_id="other-db")
+        manager._on_remote_hierarchy_changed(database_id="sql-db")
+        self.assertEqual(calls, ["refresh"])
+
+    def test_remote_condition_and_area_changes_refresh_matching_detached_view(self):
+        calls = []
+        view = SimpleNamespace(bid_ref=BidRef("sql-db", "bid-1"))
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._window_undo_service = SimpleNamespace(
+            clear=lambda: calls.append("undo")
+        )
+        manager._refresh_signaler = SimpleNamespace(
+            request_refresh=lambda: calls.append("refresh")
+        )
+        manager._on_remote_conditions_changed(database_id="sql-db", bid_uid="bid-1")
+        manager._on_remote_areas_changed(database_id="sql-db", bid_uid="bid-1")
+        self.assertEqual(
+            calls,
+            ["undo", "refresh", "undo", "refresh"],
+        )
+        manager._window_undo_service = None
+        manager._on_remote_conditions_changed(database_id="sql-db", bid_uid="bid-1")
+        self.assertEqual(calls[-1], "refresh")
+        self.assertEqual(calls.count("refresh"), 3)
 
     def test_failed_detached_scale_save_refreshes_window_state(self):
         calls = []

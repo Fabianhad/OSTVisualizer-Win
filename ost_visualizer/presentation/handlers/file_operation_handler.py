@@ -30,6 +30,7 @@ class FileOperationHandler:
         unload_file_fn,
         deferred_persistence_manager,
         ui_access_manager,
+        sql_collaboration_coordinator,
         ui_state_manager=None,
         database_catalog=None,
         credential_store=None,
@@ -48,6 +49,7 @@ class FileOperationHandler:
         self.ui_state_manager = ui_state_manager
         self._deferred_persistence = deferred_persistence_manager
         self._ui_access_manager = ui_access_manager
+        self._sql_collaboration = sql_collaboration_coordinator
         self._database_catalog = database_catalog
         self._credential_store = credential_store
         self._database_descriptor_registry = database_descriptor_registry
@@ -76,9 +78,41 @@ class FileOperationHandler:
             lambda: self._ui_access_manager.is_allowed(Feature.CREATE_DATABASE),
         )
         file_entries = None
+        reconfigured_database_ids: set[str] = set()
         try:
             if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
-                file_entries = dialog.get_file_entries()
+                selected_entries = dialog.get_file_entries()
+                try:
+                    self._file_state_model.update_entries(selected_entries)
+                except OSError:
+                    show_warning(
+                        self.window,
+                        "Open Files",
+                        "The Open Files state could not be saved, so no database "
+                        "changes were applied.",
+                    )
+                else:
+                    try:
+                        reconfigured_database_ids = dialog.commit_credential_changes()
+                    except OSError:
+                        try:
+                            self._file_state_model.update_entries(original_entries)
+                        except OSError:
+                            show_warning(
+                                self.window,
+                                "Open Files",
+                                "The SQL credentials could not be finalized and the "
+                                "previous Open Files state could not be restored.",
+                            )
+                        else:
+                            show_warning(
+                                self.window,
+                                "Open Files",
+                                "The SQL credentials could not be finalized, so no "
+                                "database changes were applied.",
+                            )
+                    else:
+                        file_entries = selected_entries
         finally:
             dialog.cleanup()
             dialog.deleteLater()
@@ -89,13 +123,30 @@ class FileOperationHandler:
             }
             files_to_unload = old_checked_files.keys() - new_checked_entries.keys()
             final_entries = list(file_entries)
+            restored_entries = False
             for database_id in files_to_unload:
-                raw = old_checked_files[database_id].runtime_locator
+                original_entry = old_checked_files[database_id]
+                raw = original_entry.runtime_locator
                 if not self._deferred_persistence.flush_for_file(raw):
-                    self._restore_entry(final_entries, old_checked_files[database_id])
+                    self._restore_entry(final_entries, original_entry)
+                    restored_entries = True
+                    continue
+                if (
+                    original_entry.backend == DatabaseBackend.SQL_SERVER
+                    and any(entry.database_id == database_id for entry in final_entries)
+                    and not self._file_loading_service.is_loaded(raw)
+                ):
+                    self._deferred_persistence.cancel_for_file(raw)
+                    self._sql_collaboration.stop_database_async(
+                        database_id,
+                        "unchecked",
+                    )
+                    if self._database_capability_service is not None:
+                        self._database_capability_service.mark_disconnected(database_id)
                     continue
                 if not self._unload_file_fn(raw):
-                    self._restore_entry(final_entries, old_checked_files[database_id])
+                    self._restore_entry(final_entries, original_entry)
+                    restored_entries = True
                     show_warning(
                         self.window,
                         "Unload File",
@@ -105,49 +156,41 @@ class FileOperationHandler:
                     self._deferred_persistence.cancel_for_file(raw)
                     if self._database_capability_service is not None:
                         self._database_capability_service.mark_disconnected(database_id)
+            if restored_entries:
+                try:
+                    self._file_state_model.update_entries(final_entries)
+                except OSError:
+                    show_warning(
+                        self.window,
+                        "Open Files",
+                        "A database could not be unloaded and its checked state "
+                        "could not be restored.",
+                    )
+                    return
             database_ids_to_load = new_checked_entries.keys() - old_checked_files
             if database_ids_to_load:
                 loaded_database_ids = self._load_specific_entries(
                     [new_checked_entries[key] for key in database_ids_to_load]
                 )
-                for database_id in database_ids_to_load - loaded_database_ids:
+                failed_database_ids = database_ids_to_load - loaded_database_ids
+                for database_id in failed_database_ids:
                     for entry in final_entries:
                         if entry.database_id == database_id:
                             entry.is_checked = False
                             break
-            self._file_state_model.update_entries(final_entries)
-            if self._database_capability_service is not None:
-                for database_id in (
-                    old_checked_files.keys() & new_checked_entries.keys()
+                if failed_database_ids:
+                    self._file_state_model.update_entries(final_entries)
+            for database_id in old_checked_files.keys() & new_checked_entries.keys():
+                entry = new_checked_entries[database_id]
+                descriptor_changed = (
+                    old_checked_files[database_id].descriptor != entry.descriptor
+                )
+                if entry.backend == DatabaseBackend.SQL_SERVER and (
+                    descriptor_changed or database_id in reconfigured_database_ids
                 ):
-                    descriptor_changed = (
-                        old_checked_files[database_id].descriptor
-                        != new_checked_entries[database_id].descriptor
-                    )
-                    if descriptor_changed or (
-                        new_checked_entries[database_id].backend
-                        == DatabaseBackend.SQL_SERVER
-                    ):
-                        was_editable = self._database_capability_service.is_editable(
-                            database_id
-                        )
-                        self._database_capability_service.mark_connected(database_id)
-                        if descriptor_changed or (
-                            was_editable
-                            != self._database_capability_service.is_editable(
-                                database_id
-                            )
-                        ):
-                            self.event_bus.publish(
-                                AppEvents.DATABASE_CAPABILITIES_CHANGED,
-                                file_path=database_id,
-                            )
+                    self._restart_sql_connection(database_id)
             retained_ids = {entry.database_id for entry in final_entries}
-            if self._database_descriptor_registry is not None:
-                for entry in original_entries:
-                    if entry.database_id not in retained_ids:
-                        self._database_descriptor_registry.unregister(entry.database_id)
-            self._delete_removed_credentials(original_entries, retained_ids)
+            self._cleanup_removed_entries(original_entries, retained_ids)
 
     def create_sql_database(self) -> bool:
         if not self._ui_access_manager.is_allowed(Feature.CREATE_DATABASE):
@@ -240,12 +283,14 @@ class FileOperationHandler:
     def _load_specific_entries(self, entries) -> set:
         loaded_database_ids = set()
         for entry in entries:
+            if entry.backend == DatabaseBackend.SQL_SERVER:
+                loaded_database_ids.add(entry.database_id)
+                self._restart_sql_connection(entry.database_id)
+                continue
             locator = entry.runtime_locator
             result = self._file_loading_service.load_file(locator)
             if result.success:
                 loaded_database_ids.add(entry.database_id)
-                if self._database_capability_service is not None:
-                    self._database_capability_service.mark_connected(entry.database_id)
                 self.event_bus.publish(
                     AppEvents.FILE_OPENED,
                     file_path=result.file_path,
@@ -278,49 +323,168 @@ class FileOperationHandler:
                 return
         entries.append(original_entry.with_checked(True))
 
-    def _delete_removed_credentials(self, original_entries, retained_ids) -> None:
+    def _cleanup_removed_entries(self, original_entries, retained_ids) -> None:
+        for entry in original_entries:
+            if entry.database_id in retained_ids:
+                continue
+            if entry.backend == DatabaseBackend.ACCESS:
+                if self._database_descriptor_registry is not None:
+                    self._database_descriptor_registry.unregister(entry.database_id)
+                continue
+            self._sql_collaboration.stop_database_async(
+                entry.database_id,
+                "connection-removed",
+                lambda success, message, removed_entry=entry: self._complete_sql_connection_removal(
+                    removed_entry, success, message
+                ),
+            )
+
+    def _restart_sql_connection(self, database_id: str) -> None:
+        self._sql_collaboration.stop_database_async(
+            database_id,
+            "reconfigured",
+            lambda success, message: self._complete_sql_connection_restart(
+                database_id, success, message
+            ),
+        )
+
+    def _complete_sql_connection_restart(
+        self, database_id: str, success: bool, message: str
+    ) -> None:
+        connection_is_still_enabled = any(
+            entry.database_id == database_id
+            and entry.backend == DatabaseBackend.SQL_SERVER
+            and entry.is_checked
+            for entry in self._file_state_model.file_entries
+        )
+        if not connection_is_still_enabled:
+            return
+        if success:
+            self._sql_collaboration.start_database(database_id)
+            return
+        show_warning(
+            self.window,
+            "Reconnect SQL Server Database",
+            message
+            or "The existing SQL collaboration session could not be closed safely.",
+        )
+
+    def _complete_sql_connection_removal(
+        self, entry: FileEntry, success: bool, message: str
+    ) -> None:
+        if not success:
+            state_restore_failed = False
+            entries = list(self._file_state_model.file_entries)
+            if not any(current.database_id == entry.database_id for current in entries):
+                entries.append(entry.with_checked(False))
+                try:
+                    self._file_state_model.update_entries(entries)
+                except OSError:
+                    state_restore_failed = True
+            detail = message or (
+                "The SQL collaboration session could not be closed. The saved "
+                "connection details were retained for safe cleanup."
+            )
+            if state_restore_failed:
+                detail += (
+                    " The Open Files entry could not be restored; add the connection "
+                    "again before retrying cleanup."
+                )
+            show_warning(
+                self.window,
+                "Remove SQL Server Connection",
+                detail,
+            )
+            return
+        current_entry = next(
+            (
+                current
+                for current in self._file_state_model.file_entries
+                if current.database_id == entry.database_id
+            ),
+            None,
+        )
+        if current_entry is not None:
+            if current_entry.is_checked:
+                self._sql_collaboration.start_database(entry.database_id)
+            return
+        if self._database_descriptor_registry is not None:
+            current = self._database_descriptor_registry.resolve(entry.database_id)
+            if current is not None and current != entry.descriptor:
+                return
+            self._database_descriptor_registry.unregister(entry.database_id)
         if self._credential_store is None:
             return
-        for entry in original_entries:
-            if (
-                entry.database_id in retained_ids
-                or entry.backend != DatabaseBackend.SQL_SERVER
-            ):
-                continue
-            try:
-                self._credential_store.delete_password(
-                    credential_target_for(entry.database_id)
-                )
-            except OSError:
-                show_warning(
-                    self.window,
-                    "Remove SQL Server Connection",
-                    "The saved database entry was removed, but its Windows "
-                    "credential could not be deleted.",
-                )
+        try:
+            self._credential_store.delete_password(
+                credential_target_for(entry.database_id)
+            )
+        except OSError:
+            show_warning(
+                self.window,
+                "Remove SQL Server Connection",
+                "The saved database entry was removed, but its Windows "
+                "credential could not be deleted.",
+            )
 
     def unload_file(self) -> None:
         file_path = None
         if self.ui_state_manager and self.ui_state_manager.selected_file_path:
             file_path = self.ui_state_manager.selected_file_path
+        original_entries: list[FileEntry] = []
         if file_path:
             if not self._deferred_persistence.flush_for_file(file_path):
                 return
+            original_entries = self._file_state_model.file_entries
+            entries = [
+                (
+                    entry.with_checked(False)
+                    if entry.runtime_locator == file_path
+                    else entry
+                )
+                for entry in original_entries
+            ]
+            try:
+                self._file_state_model.update_entries(entries)
+            except OSError:
+                show_warning(
+                    self.window,
+                    "Unload File",
+                    "The Open Files state could not be saved, so the database "
+                    "was not unloaded.",
+                )
+                return
         success = self._unload_file_fn(file_path)
         if not success:
+            if file_path:
+                try:
+                    self._file_state_model.update_entries(original_entries)
+                except OSError:
+                    show_warning(
+                        self.window,
+                        "Unload File",
+                        "The database could not be unloaded and its saved Open "
+                        "Files state could not be restored.",
+                    )
+                    return
             show_warning(
                 self.window, "No File Loaded", "There is no file currently loaded."
             )
             return
         if file_path:
             self._deferred_persistence.cancel_for_file(file_path)
-            entries = self._file_state_model.file_entries
-            for entry in entries:
-                if entry.runtime_locator == file_path:
-                    entry.is_checked = False
-                    if self._database_capability_service is not None:
-                        self._database_capability_service.mark_disconnected(
-                            entry.database_id
-                        )
-                    break
-            self._file_state_model.update_entries(entries)
+            unloaded_entry = next(
+                (
+                    entry
+                    for entry in original_entries
+                    if entry.runtime_locator == file_path
+                ),
+                None,
+            )
+            if (
+                unloaded_entry is not None
+                and self._database_capability_service is not None
+            ):
+                self._database_capability_service.mark_disconnected(
+                    unloaded_entry.database_id
+                )

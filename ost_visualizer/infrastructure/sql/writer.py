@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from typing import Callable, Generator, Optional, TypeVar
 import pyodbc
 from ...application.dtos.collaboration_resource_catalog import (
-    COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
     CollaborationResourceType,
     coalesced_resource_type,
     resource_definition,
@@ -38,7 +37,7 @@ from ..mdb.raw_bid_integrity import RAW_BID_RELATIONSHIPS
 from ..mdb.schema_contract import PAGE_SECTIONS
 from ..mdb.mdb_writer import MdbWriter
 from .connection_manager import SqlConnectionLease, SqlConnectionManager
-from .client_permissions import SQL_CLIENT_DATABASE_ROLES
+from .client_permissions import require_sql_client_editability
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import (
     SqlErrorCode,
@@ -46,7 +45,7 @@ from .errors import (
     SqlInfrastructureError,
     sql_schema_mismatch,
 )
-from .schema_definition import LATEST_SQL_SCHEMA, schema_record_is_current
+from .schema_definition import SQL_SCHEMA_V1
 from .schema_lock import acquire_resource_transaction_lock
 from .write_schema import CurrentSqlWriteSchema
 
@@ -145,7 +144,7 @@ class SqlProjectWriter(MdbWriter):
         self._session_registry = session_registry
         self._identity_lock = threading.Lock()
         self._identity_placeholders = itertools.count(start=-1, step=-1)
-        self._write_schema = CurrentSqlWriteSchema(LATEST_SQL_SCHEMA.core_schema)
+        self._write_schema = CurrentSqlWriteSchema(SQL_SCHEMA_V1.core_schema)
         self._active_mutation = contextvars.ContextVar(
             "sql_database_mutation", default=None
         )
@@ -234,7 +233,7 @@ class SqlProjectWriter(MdbWriter):
         ) as lease:
             committed = False
             try:
-                self._require_current_schema(lease)
+                self._require_sql_client_editability(lease)
                 state = _SqlMutationState(request.database_id, lease, request)
                 self._set_session_context(state)
                 self._prepare_mutation(state)
@@ -610,41 +609,10 @@ class SqlProjectWriter(MdbWriter):
             ) from None
 
     @staticmethod
-    def _require_current_schema(lease) -> None:
+    def _require_sql_client_editability(lease) -> None:
         cursor = lease.cursor()
         try:
-            cursor.execute(
-                "SELECT "
-                + ", ".join(
-                    "COALESCE(IS_ROLEMEMBER(?, USER_NAME()), 0)"
-                    for _role in SQL_CLIENT_DATABASE_ROLES
-                ),
-                *SQL_CLIENT_DATABASE_ROLES,
-            )
-            role_row = cursor.fetchone()
-            if role_row is None or any(int(value) != 1 for value in role_row):
-                raise SqlInfrastructureError(
-                    SqlErrorDetails(
-                        SqlErrorCode.PERMISSION_DENIED,
-                        "SQL editing requires the configured user to belong to the "
-                        "required SQL database roles.",
-                    )
-                )
-            cursor.execute(
-                "SELECT m.[SchemaVersion], sm.[Checksum], m.[WriterMode], "
-                "a.[AdapterState], a.[ResourceCatalogChecksum], "
-                "CASE WHEN EXISTS (SELECT 1 FROM "
-                "sys.change_tracking_databases WHERE database_id=DB_ID()) "
-                "THEN 1 ELSE 0 END, "
-                "CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_tables "
-                "WHERE object_id=OBJECT_ID(N'ostv.ChangeTransactions')) "
-                "THEN 1 ELSE 0 END FROM "
-                "[ostv].[DatabaseMetadata] m JOIN [ostv].[SchemaMigrations] sm "
-                "ON sm.[Version]=m.[SchemaVersion] "
-                "JOIN [ostv].[ExternalAdapterState] a ON a.[SingletonId]=1 "
-                "WHERE m.[Product]=N'OST Visualizer'",
-            )
-            row = cursor.fetchone()
+            require_sql_client_editability(cursor)
         except pyodbc.Error:
             raise SqlInfrastructureError(
                 SqlErrorDetails(
@@ -654,30 +622,6 @@ class SqlProjectWriter(MdbWriter):
             ) from None
         finally:
             cursor.close()
-        writer_mode_valid = bool(
-            row is not None
-            and (
-                str(row[2]) == "ost_visualizer_only"
-                or (
-                    str(row[2]) == "mixed_application"
-                    and str(row[3]) == "validated"
-                    and str(row[4]) == COLLABORATION_RESOURCE_CATALOG_CHECKSUM
-                )
-            )
-        )
-        if (
-            row is None
-            or not schema_record_is_current(row[0], row[1])
-            or not writer_mode_valid
-            or int(row[5]) != 1
-            or int(row[6]) != 1
-        ):
-            raise SqlInfrastructureError(
-                SqlErrorDetails(
-                    SqlErrorCode.UNSUPPORTED_SCHEMA,
-                    "This SQL database uses an unsupported schema version.",
-                )
-            )
 
     def _next_uid(self, cursor, table: str) -> int:
         del cursor, table

@@ -132,6 +132,28 @@ class FileProjectRepository(IProjectRepository):
             merged.update(cache.cdn_types)
         return merged
 
+    def register_loaded_hierarchy(
+        self,
+        file_entry: HierarchyFileEntry,
+        cdn_types: Dict[str, CdnType],
+    ) -> HierarchyData:
+        file_path = file_entry.file_path
+        cached = self._loaded_files.get(file_path)
+        if cached is None:
+            self._loaded_files[file_path] = _LoadedFileCache(
+                file_path=file_path,
+                created_at=file_entry.created_at or time.time(),
+                parsed_hierarchy=file_entry,
+                cdn_types=dict(cdn_types),
+            )
+        else:
+            cached.parsed_hierarchy = file_entry
+            cached.cdn_types = dict(cdn_types)
+        if self._active_file_path is None:
+            self._active_file_path = file_path
+        self._rebuild_merged_hierarchy()
+        return self._current_hierarchy.data
+
     def load_file(self, file_path: str) -> FileLoadResult:
         if file_path in self._loaded_files:
             self._active_file_path = file_path

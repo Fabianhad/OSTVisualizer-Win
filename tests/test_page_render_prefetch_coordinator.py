@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from PySide6.QtGui import QImage
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.application.services.page_load_strategy_service import (
@@ -434,6 +435,7 @@ class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):
             FakeColorService(),
             FakeProjectData(),
             None,
+            SimpleNamespace(dispatch=lambda callback, payload: callback(payload)),
         )
         coordinator.plan_view = FakePlanView()
         coordinator.update_plan_view("p2")

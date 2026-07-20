@@ -3,6 +3,7 @@ import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional
+from ....domain.entities.database_descriptor import DatabaseBackend
 from ....domain.entities.file_state import normalize_path
 from ....domain.entities.project_constants import is_deleted_bids_project_uid
 from ....domain.entities.workspace_state import (
@@ -296,9 +297,11 @@ class ImportProjectFilesFromArgsUseCase:
         for entry in self._file_state_model.file_entries:
             if not entry.is_checked:
                 continue
-            file_path = str(entry.file_path)
-            if Path(file_path).is_file():
-                paths[normalize_path(file_path)] = file_path
+            locator = entry.runtime_locator
+            if entry.backend == DatabaseBackend.SQL_SERVER:
+                paths[normalize_path(locator)] = locator
+            elif Path(locator).is_file():
+                paths[normalize_path(locator)] = locator
         return paths
 
     def _target_if_enabled(

@@ -1,11 +1,9 @@
 """Print a sanitized SQL Server schema inventory as JSON.
-
 The password is accepted only through OSTV_SQL_PASSWORD. It is never included
 in the generated inventory, command-line arguments, or error text.
 """
 
 from __future__ import annotations
-
 import argparse
 import dataclasses
 import json
@@ -16,14 +14,13 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
-
 from ost_visualizer.domain.entities.database_descriptor import (
     SqlAuthenticationMode,
     SqlServerDatabaseLocation,
 )
 from ost_visualizer.infrastructure.sql.errors import SqlInfrastructureError
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
-from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_validator import SqlSchemaValidator
 
 
@@ -64,16 +61,14 @@ def main() -> int:
     )
     try:
         inventory = SqlSchemaInspector().inspect(location, password)
-        validation = SqlSchemaValidator(LATEST_SQL_SCHEMA.core_schema).validate(
-            inventory
-        )
+        validation = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema).validate(inventory)
     except SqlInfrastructureError as exc:
         print(str(exc), file=sys.stderr)
         return 1
     output = {
         "database_guid": inventory.database_guid,
         "schema_version": inventory.schema_version,
-        "compatibility": validation.compatibility.value,
+        "is_valid": validation.is_valid,
         "problems": validation.problems,
         "tables": [
             {"schema": schema, "name": name}

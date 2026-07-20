@@ -10,7 +10,7 @@ from ..mdb.mdb_reader import MdbReader
 from .connection_manager import SqlConnectionLease, SqlConnectionManager
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
-from .schema_definition import LATEST_SQL_SCHEMA
+from .schema_definition import SQL_SCHEMA_V1
 from .schema_inspector import SqlSchemaInspector
 from .schema_validator import SqlSchemaValidator
 
@@ -30,7 +30,7 @@ class SqlProjectReader(MdbReader):
             descriptor_registry, credential_store
         )
         self._inspector = SqlSchemaInspector(self._sql_connections)
-        self._validator = SqlSchemaValidator(LATEST_SQL_SCHEMA.core_schema)
+        self._validator = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema)
 
     @contextmanager
     def _connection(
@@ -43,7 +43,7 @@ class SqlProjectReader(MdbReader):
     def parse_file(self, database_id: str):
         request = self._request_factory.request(database_id, read_only=True)
         report = self._validator.validate(self._inspector.inspect_request(request))
-        if not report.is_read_compatible:
+        if not report.is_valid:
             raise SqlInfrastructureError(
                 SqlErrorDetails(
                     SqlErrorCode.SCHEMA_MISMATCH,

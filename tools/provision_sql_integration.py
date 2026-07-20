@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -7,9 +6,7 @@ import secrets
 import uuid
 import winreg
 from pathlib import Path
-
 import pyodbc
-
 from ost_visualizer.domain.entities.database_descriptor import (
     SqlAuthenticationMode,
     SqlServerDatabaseLocation,
@@ -34,7 +31,6 @@ def main() -> int:
     )
     parser.add_argument("--backup-root", required=True)
     args = parser.parse_args()
-
     backup_root = _validated_backup_root(args.backup_root)
     credential_store = WindowsCredentialStore()
     existing_password = credential_store.read_password(_CREDENTIAL_TARGET) or ""
@@ -71,7 +67,6 @@ def main() -> int:
         existing_password = ""
         password = ""
         master_key_password = ""
-
     print(
         json.dumps(
             {

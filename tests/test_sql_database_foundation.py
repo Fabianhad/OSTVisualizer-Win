@@ -59,20 +59,12 @@ from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
     classify_pyodbc_error,
 )
-from ost_visualizer.infrastructure.sql.schema_definition import (
-    LATEST_SQL_SCHEMA,
-    SQL_SCHEMA_V3,
-)
-from ost_visualizer.infrastructure.sql.schema_migrator import (
-    SQL_SCHEMA_V2,
-    SQL_SCHEMA_V2_TO_V3,
-)
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import (
     SqlColumnInventory,
     SqlSchemaInventory,
 )
 from ost_visualizer.infrastructure.sql.schema_validator import (
-    SqlSchemaCompatibility,
     SqlSchemaValidator,
     _matches_type,
     _normalize_filter,
@@ -168,9 +160,6 @@ class _SqlDatabaseCreator:
 
     def create_database(self, *_args, **_kwargs):
         raise AssertionError("creation was not requested")
-
-    def initialize_compatible_database(self, *_args, **_kwargs):
-        raise AssertionError("external database initialization was not requested")
 
 
 class _FakeApiFunction:
@@ -341,23 +330,6 @@ class DatabaseDescriptorTests(unittest.TestCase):
         store.delete_password(target)
         self.assertNotIn(target, api._records)
 
-    def test_schema_has_isolated_version_2_to_3_support_migration(self):
-        root = Path(__file__).resolve().parents[1]
-        obsolete = (
-            "ost_visualizer/infrastructure/database/__init__.py",
-            "ost_visualizer/infrastructure/sql/__init__.py",
-            "ost_visualizer/infrastructure/sql/schema/__init__.py",
-            "ost_visualizer/infrastructure/sql/schema/migrations/__init__.py",
-            "ost_visualizer/infrastructure/sql/migrator.py",
-            "ost_visualizer/infrastructure/sql/schema/migrations/"
-            "v0002_collaboration.py",
-        )
-        self.assertTrue(all(not (root / path).exists() for path in obsolete))
-        self.assertEqual(SQL_SCHEMA_V2_TO_V3.source_version, 2)
-        self.assertEqual(SQL_SCHEMA_V2_TO_V3.target_version, 3)
-        self.assertTrue(SQL_SCHEMA_V2_TO_V3.statements)
-        self.assertEqual(len(SQL_SCHEMA_V2_TO_V3.checksum), 64)
-
     def test_registry_resolves_stable_database_id(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_access(r"C:\data\one.mdb")
@@ -403,7 +375,7 @@ class DatabaseDescriptorTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "dbo.Bids.NotAColumn"):
             schema.column_exists("Bids", "NotAColumn")
 
-    def test_schema_validator_rejects_partial_and_unsupported_versions(self):
+    def test_schema_validator_accepts_only_complete_canonical_v1(self):
         def inventory(version, checksum=""):
             return SqlSchemaInventory(
                 database_guid="",
@@ -421,101 +393,35 @@ class DatabaseDescriptorTests(unittest.TestCase):
 
         validator = SqlSchemaValidator(get_reference_schema_model())
         partial = validator.validate(
-            inventory(LATEST_SQL_SCHEMA.version, LATEST_SQL_SCHEMA.checksum)
+            inventory(SQL_SCHEMA_V1.version, SQL_SCHEMA_V1.checksum)
         )
-        self.assertEqual(partial.compatibility, SqlSchemaCompatibility.INVALID)
+        self.assertFalse(partial.is_valid)
         unsupported = validator.validate(inventory(99))
+        self.assertFalse(unsupported.is_valid)
         self.assertEqual(
-            unsupported.compatibility,
-            SqlSchemaCompatibility.UNSUPPORTED_VERSION,
+            unsupported.problems,
+            ("ostv.DatabaseMetadata.SchemaVersion",),
         )
-        older = validator.validate(inventory(2, SQL_SCHEMA_V2.checksum))
-        self.assertEqual(
-            older.compatibility,
-            SqlSchemaCompatibility.UNSUPPORTED_VERSION,
-        )
-        self.assertFalse(older.is_read_compatible)
-        self.assertEqual(
-            older.user_message,
-            "Database uses an unsupported OST Visualizer schema version.",
-        )
-        unexpected = validator.validate_adoption_candidate(
-            SqlSchemaInventory(
-                database_guid="",
-                schema_version=0,
-                schema_checksum="",
-                tables=frozenset({("dbo", "UnexpectedTable")}),
-                columns=(),
-                foreign_keys=(),
-                indexes=(),
-                views=(),
-                triggers=(),
-                procedures=(),
-                functions=(),
-            )
-        )
-        self.assertEqual(unexpected.compatibility, SqlSchemaCompatibility.INVALID)
-        self.assertIn("dbo.UnexpectedTable.unexpected", unexpected.problems)
-        partial_ostv = validator.validate(
-            SqlSchemaInventory(
-                database_guid="",
-                schema_version=0,
-                schema_checksum="",
-                tables=frozenset({("ostv", "DatabaseMetadata")}),
-                columns=(),
-                foreign_keys=(),
-                indexes=(),
-                views=(),
-                triggers=(),
-                procedures=(),
-                functions=(),
-            )
-        )
-        self.assertEqual(partial_ostv.compatibility, SqlSchemaCompatibility.INVALID)
-        self.assertIn("ostv.partial_schema", partial_ostv.problems)
 
-    def test_schema_validator_rejects_core_table_name_shadowing(self):
-        schema = get_reference_schema_model()
-        inventory = SqlSchemaInventory(
-            database_guid="",
-            schema_version=0,
-            schema_checksum="",
-            tables=frozenset(
-                [("dbo", table.name) for table in schema.tables] + [("custom", "Bids")]
-            ),
-            columns=(),
-            foreign_keys=(),
-            indexes=(),
-            views=(),
-            triggers=(),
-            procedures=(),
-            functions=(),
-        )
-        report = SqlSchemaValidator(schema).validate_adoption_candidate(inventory)
-        self.assertIn("custom.Bids.shadows_dbo", report.problems)
-
-    def test_latest_schema_is_version_4_and_prior_schemas_are_immutable(self):
-        self.assertEqual(SQL_SCHEMA_V2.version, 2)
+    def test_sql_schema_v1_is_the_single_complete_schema_definition(self):
+        self.assertEqual(SQL_SCHEMA_V1.version, 1)
         self.assertEqual(
-            SQL_SCHEMA_V2.checksum,
-            "5b07b73baa89c3ed4c1dd41388e760d00cd09774007afe9062dc13987f098ce3",
+            SQL_SCHEMA_V1.checksum,
+            "7cfdad7021aff013be40f439c11ea9aa6686861d324e30359ed71c55e7f49f72",
         )
-        self.assertEqual(SQL_SCHEMA_V3.version, 3)
-        self.assertEqual(
-            SQL_SCHEMA_V3.checksum,
-            "dbc40a235f1d0260c041fcef6a231802fd7afd6e0cc63d14b96d07aec89207a8",
+        self.assertIn(
+            "ALLOW_SNAPSHOT_ISOLATION=ON",
+            SQL_SCHEMA_V1.canonical_database_requirements,
         )
-        self.assertEqual(LATEST_SQL_SCHEMA.version, 4)
-        self.assertEqual(len(LATEST_SQL_SCHEMA.checksum), 64)
         self.assertEqual(
             sum(
                 statement.startswith("CREATE TABLE [dbo]")
-                for statement in LATEST_SQL_SCHEMA.statements
+                for statement in SQL_SCHEMA_V1.statements
             ),
             64,
         )
         self.assertEqual(
-            {table.name for table in LATEST_SQL_SCHEMA.tables},
+            {table.name for table in SQL_SCHEMA_V1.tables},
             {
                 "DatabaseMetadata",
                 "SchemaMigrations",
@@ -530,17 +436,47 @@ class DatabaseDescriptorTests(unittest.TestCase):
             },
         )
         metadata = next(
-            table
-            for table in LATEST_SQL_SCHEMA.tables
-            if table.name == "DatabaseMetadata"
+            table for table in SQL_SCHEMA_V1.tables if table.name == "DatabaseMetadata"
         )
         self.assertIn("WriterMode", {column.name for column in metadata.columns})
         self.assertFalse(
-            any(
-                "\nGO\n" in statement.upper()
-                for statement in LATEST_SQL_SCHEMA.statements
-            )
+            any("\nGO\n" in statement.upper() for statement in SQL_SCHEMA_V1.statements)
         )
+
+    def test_schema_validator_rejects_noncanonical_ostv_tables_and_columns(self):
+        inventory = SqlSchemaInventory(
+            database_guid="",
+            schema_version=SQL_SCHEMA_V1.version,
+            schema_checksum=SQL_SCHEMA_V1.checksum,
+            tables=frozenset(
+                {
+                    ("ostv", "Sessions"),
+                    ("ostv", "LegacyState"),
+                }
+            ),
+            columns=(
+                SqlColumnInventory(
+                    "ostv",
+                    "Sessions",
+                    "LegacyCheckpoint",
+                    "bigint",
+                    8,
+                    0,
+                    False,
+                    False,
+                    False,
+                ),
+            ),
+            foreign_keys=(),
+            indexes=(),
+            views=(),
+            triggers=(),
+            procedures=(),
+            functions=(),
+        )
+        problems = SqlSchemaValidator._validate_ostv_tables(inventory, SQL_SCHEMA_V1)
+        self.assertIn("ostv.LegacyState.unexpected", problems)
+        self.assertIn("ostv.Sessions.LegacyCheckpoint.unexpected", problems)
 
     def test_sql_server_schema_normalization_matches_server_inventory(self):
         rowversion = SqlColumnInventory(
@@ -562,7 +498,7 @@ class DatabaseDescriptorTests(unittest.TestCase):
         )
         expected_checks = {
             name: expression
-            for table in LATEST_SQL_SCHEMA.tables
+            for table in SQL_SCHEMA_V1.tables
             for name, expression in table.check_constraints
         }
         server_checks = {
@@ -603,7 +539,7 @@ class DatabaseDescriptorTests(unittest.TestCase):
         service.mark_connected(descriptor.database_id)
         self.assertFalse(service.is_editable(descriptor.database_id))
 
-    def test_capability_service_refreshes_immediately_after_adoption_and_disconnect(
+    def test_capability_service_refreshes_immediately_after_reconnect_and_disconnect(
         self,
     ):
         class _PermissionProbe:
@@ -614,7 +550,8 @@ class DatabaseDescriptorTests(unittest.TestCase):
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="Adopted")
+            SqlServerDatabaseLocation(server="localhost", database="Canonical"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         probe = _PermissionProbe()
@@ -782,7 +719,7 @@ class SqlDialogTests(unittest.TestCase):
             database_guid="00000000-0000-0000-0000-000000000123",
             state="ONLINE",
             is_compatible=True,
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         dialog = SqlDatabasePropertiesDialog(
             self.icon_provider,
@@ -892,7 +829,7 @@ class SqlDialogTests(unittest.TestCase):
             database_guid="00000000-0000-0000-0000-000000000123",
             state="ONLINE",
             is_compatible=True,
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         catalog = _Catalog([selected])
         connection = SqlConnectionDialogResult(
@@ -938,52 +875,6 @@ class SqlDialogTests(unittest.TestCase):
         finally:
             cancelled.cleanup()
             cancelled.deleteLater()
-
-    def test_properties_open_adopts_compatible_external_database(self):
-        selected = SqlDatabaseCatalogEntry(
-            name="EXTERNAL_OST",
-            database_guid="00000000-0000-0000-0000-000000000246",
-            state="ONLINE",
-            is_compatible=True,
-            schema_version=0,
-        )
-
-        class _AdoptingCreator(_SqlDatabaseCreator):
-            def __init__(self):
-                self.calls = []
-
-            def initialize_compatible_database(self, location, password="", **_kwargs):
-                self.calls.append((location, password))
-                return SqlDatabaseCreationResult(location, LATEST_SQL_SCHEMA.version)
-
-        creator = _AdoptingCreator()
-        connection = SqlConnectionDialogResult(
-            SqlServerDatabaseLocation(server="localhost", database="")
-        )
-        dialog = SqlDatabasePropertiesDialog(
-            self.icon_provider,
-            SqlDatabasePropertiesMode.OPEN,
-            _Catalog([selected]),
-            creator,
-            connection=connection,
-            databases=[selected],
-            schema_change_allowed_fn=lambda: True,
-        )
-        try:
-            with patch(
-                "ost_visualizer.presentation.dialogs.sql_database_dialog.confirm",
-                return_value=True,
-            ):
-                dialog._accept_if_valid()
-            self.assertEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
-            self.assertEqual(
-                dialog.result_data().schema_version, LATEST_SQL_SCHEMA.version
-            )
-            self.assertEqual(len(creator.calls), 1)
-            self.assertEqual(creator.calls[0][0].database, selected.name)
-        finally:
-            dialog.cleanup()
-            dialog.deleteLater()
 
     def test_new_database_type_panels_select_expected_backend(self):
         access = NewDatabaseTypeDialog(self.icon_provider)
@@ -1376,6 +1267,93 @@ class SqlDialogTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_cancelled_open_files_dialog_removes_new_sql_credential(self):
+        password = secrets.token_urlsafe(24)
+        location = SqlServerDatabaseLocation(
+            server="localhost",
+            database="OSTV_TEST_CANCELLED",
+            authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+            username="test-user",
+            database_guid="00000000-0000-0000-0000-000000000222",
+        )
+        store = _CredentialStore()
+        dialog = OpenFilesDialog(
+            self.icon_provider,
+            None,
+            [],
+            None,
+            credential_store=store,
+        )
+        target = credential_target_for(
+            DatabaseDescriptor.for_sql_server(location).database_id
+        )
+        dialog._save_sql_result(
+            SqlDatabasePropertiesResult(location, SQL_SCHEMA_V1.version, password)
+        )
+        self.assertIn(target, store.passwords)
+        dialog.cleanup()
+        dialog.deleteLater()
+        self.assertNotIn(target, store.passwords)
+
+    def test_cancelled_reconnect_restores_previous_sql_credential(self):
+        old_password = secrets.token_urlsafe(24)
+        new_password = secrets.token_urlsafe(24)
+        location = SqlServerDatabaseLocation(
+            server="localhost",
+            database="OSTV_TEST_RECONNECT",
+            authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+            username="test-user",
+            database_guid="00000000-0000-0000-0000-000000000223",
+        )
+        descriptor = DatabaseDescriptor.for_sql_server(location)
+        target = credential_target_for(descriptor.database_id)
+        store = _CredentialStore()
+        store.write_password(target, location.username, old_password)
+        dialog = OpenFilesDialog(
+            self.icon_provider,
+            None,
+            [FileEntry.for_descriptor(descriptor)],
+            None,
+            credential_store=store,
+        )
+        with patch("ost_visualizer.presentation.dialogs.open_files_dialog.show_info"):
+            dialog._save_sql_result(
+                SqlDatabasePropertiesResult(
+                    location, SQL_SCHEMA_V1.version, new_password
+                )
+            )
+        self.assertEqual(store.passwords[target][1], new_password)
+        dialog.cleanup()
+        dialog.deleteLater()
+        self.assertEqual(store.passwords[target][1], old_password)
+
+    def test_committed_open_files_dialog_retains_new_sql_credential(self):
+        password = secrets.token_urlsafe(24)
+        location = SqlServerDatabaseLocation(
+            server="localhost",
+            database="OSTV_TEST_COMMITTED",
+            authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+            username="test-user",
+            database_guid="00000000-0000-0000-0000-000000000224",
+        )
+        descriptor = DatabaseDescriptor.for_sql_server(location)
+        target = credential_target_for(descriptor.database_id)
+        store = _CredentialStore()
+        dialog = OpenFilesDialog(
+            self.icon_provider,
+            None,
+            [],
+            None,
+            credential_store=store,
+        )
+        dialog._save_sql_result(
+            SqlDatabasePropertiesResult(location, SQL_SCHEMA_V1.version, password)
+        )
+        dialog.commit_credential_changes()
+        dialog.cleanup()
+        dialog.deleteLater()
+        self.assertEqual(store.passwords[target], (location.username, password))
+
     def test_sql_creation_persists_only_after_properties_acceptance(self):
         password = secrets.token_urlsafe(24)
         location = SqlServerDatabaseLocation(
@@ -1385,7 +1363,9 @@ class SqlDialogTests(unittest.TestCase):
             username="test-user",
             database_guid="00000000-0000-0000-0000-000000000456",
         )
-        properties_result = SqlDatabasePropertiesResult(location, 1, password)
+        properties_result = SqlDatabasePropertiesResult(
+            location, SQL_SCHEMA_V1.version, password
+        )
 
         class _State:
             def __init__(self):
@@ -1434,6 +1414,12 @@ class SqlDialogTests(unittest.TestCase):
             unload_file_fn=lambda _locator: False,
             deferred_persistence_manager=None,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(
+                stop_database_async=lambda _database_id, _reason, callback: callback(
+                    True, ""
+                ),
+                start_database=lambda _database_id: True,
+            ),
             database_catalog=_Catalog([]),
             credential_store=store,
             database_descriptor_registry=DatabaseDescriptorRegistry(),

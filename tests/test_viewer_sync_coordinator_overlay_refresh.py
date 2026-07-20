@@ -1,6 +1,7 @@
 import os
 import unittest
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -491,6 +492,9 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
             color_service=FakeColorService(),
             project_data=FakeProjectData(),
             visualization_service=visualization_service,
+            callback_bridge=SimpleNamespace(
+                dispatch=lambda callback, payload: callback(payload)
+            ),
         )
         coordinator.plan_view = plan_view
         return coordinator, visualization_service
@@ -5955,6 +5959,128 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIn("2", view._current_takeoffs)
         self.assertIn("2", view._uid_to_items)
         self.assertEqual(calls, ["sync", "scene_rect", "viewport.update"])
+
+    def test_takeoff_insert_reorders_existing_overlay_z_values(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, _calls = self._make_incremental_refresh_view(renderer)
+        existing = replace(view._current_takeoffs["1"], uid="2")
+        view._current_takeoffs = {"2": existing}
+        existing_item = QGraphicsPathItem()
+        view._scene.addItem(existing_item)
+        view._uid_to_items = {"2": [existing_item]}
+        view._takeoff_items = [existing_item]
+        inserted = replace(existing, uid="1")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[inserted, existing],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_takeoff_uids=["1"],
+        )
+        self.assertTrue(refreshed)
+        inserted_item = view._uid_to_items["1"][0]
+        self.assertGreater(existing_item.zValue(), inserted_item.zValue())
+
+    def test_takeoff_update_replaces_only_changed_primary_overlay(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        old_item = QGraphicsPathItem()
+        view._scene.addItem(old_item)
+        view._uid_to_items["1"] = [old_item]
+        view._takeoff_items = [old_item]
+        old_items = [old_item]
+        view._refresh_overlays = lambda *_args: self.fail(
+            "primary update should not rebuild every overlay"
+        )
+        updated = Takeoff(
+            uid="1",
+            condition_uid="c1",
+            page_uid=page.uid,
+            position=[9.0, 10.0],
+        )
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[updated],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_takeoff_uids=["1"],
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [["1"]])
+        self.assertEqual(view._current_takeoffs["1"], updated)
+        self.assertTrue(all(item.scene() is None for item in old_items))
+        self.assertEqual(calls, ["sync", "scene_rect", "viewport.update"])
+
+    def test_takeoff_parent_with_hole_uses_full_dependency_refresh(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        parent = replace(
+            view._current_takeoffs["1"],
+            position=[0.0, 0.0, 20.0, 0.0, 20.0, 20.0, 0.0, 20.0],
+        )
+        hole = Takeoff(
+            uid="2",
+            condition_uid="c1",
+            page_uid=page.uid,
+            parent_uid="1",
+            position=[5.0, 5.0, 10.0, 5.0, 10.0, 10.0, 5.0, 10.0],
+        )
+        view._current_takeoffs = {"1": parent, "2": hole}
+        updated_parent = replace(parent, position=[1.0, 0.0, 21.0, 0.0, 21.0, 20.0])
+        view._refresh_overlays = lambda *_args: calls.append("full")
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[updated_parent, hole],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_takeoff_uids=["1"],
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [])
+        self.assertEqual(calls, ["full", "sync", "scene_rect", "viewport.update"])
+
+    def test_takeoff_delete_removes_only_changed_primary_overlay(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        old_item = QGraphicsPathItem()
+        view._scene.addItem(old_item)
+        view._uid_to_items["1"] = [old_item]
+        view._takeoff_items = [old_item]
+        old_items = [old_item]
+        view._selected_uids = {"1"}
+        view._refresh_overlays = lambda *_args: self.fail(
+            "primary delete should not rebuild every overlay"
+        )
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=[],
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_takeoff_uids=["1"],
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [])
+        self.assertNotIn("1", view._current_takeoffs)
+        self.assertNotIn("1", view._uid_to_items)
+        self.assertEqual(view._selected_uids, set())
+        self.assertTrue(all(item.scene() is None for item in old_items))
+        self.assertEqual(calls, ["selection", "sync", "scene_rect", "viewport.update"])
 
     def test_metadata_less_same_page_unchanged_state_skips_full_overlay_refresh(self):
         renderer = RecordingPathTakeoffRenderer()

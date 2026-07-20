@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -10,9 +9,7 @@ import winreg
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
 import pyodbc
-
 from ost_visualizer.domain.entities.database_descriptor import (
     SqlAuthenticationMode,
     SqlServerDatabaseLocation,
@@ -30,12 +27,9 @@ from ost_visualizer.infrastructure.sql.client_permissions import (
 from ost_visualizer.infrastructure.sql.credential_store import WindowsCredentialStore
 from ost_visualizer.infrastructure.sql.database_creator import SqlDatabaseCreator
 from ost_visualizer.infrastructure.sql.errors import SqlInfrastructureError
-from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
-from ost_visualizer.infrastructure.sql.schema_validator import (
-    SqlSchemaCompatibility,
-    SqlSchemaValidator,
-)
+from ost_visualizer.infrastructure.sql.schema_validator import SqlSchemaValidator
 
 SERVER_HOST = socket.gethostname()
 SERVER_PORT = 1433
@@ -51,7 +45,6 @@ DATABASE_MARKER_PROPERTY = "OSTVisualizerSqlDevelopmentDatabase"
 DISPOSABLE_MARKER_PROPERTY = "OSTVisualizerDisposableTestRun"
 REGISTRY_PATH = r"SOFTWARE\OSTVisualizer\SqlDevelopment"
 SECRETS_FILE_NAME = "sql-development.json"
-
 _SECRET_KEYS = (
     "server",
     "port",
@@ -229,7 +222,6 @@ def main() -> int:
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--rotate-client-password", action="store_true")
     args = parser.parse_args()
-
     repo_root = Path(args.repo_root).resolve()
     secrets_path = _validated_secrets_path(repo_root)
     if args.provision:
@@ -267,7 +259,7 @@ def _provision(secrets_path: Path, rotate_requested: bool) -> dict[str, object]:
             )
         database_created = _ensure_database_container(connection, marker)
         location = _windows_location(CLIENT_DATABASE)
-        _ensure_current_schema(location)
+        _ensure_canonical_schema(location)
         _write_registry_ownership(marker, _installer_principal())
         previous_password = credential_password or (
             existing_secrets.password if existing_secrets is not None else ""
@@ -295,7 +287,6 @@ def _provision(secrets_path: Path, rotate_requested: bool) -> dict[str, object]:
             if login_exists and previous_password and selection.rotate_login:
                 _set_login_password(connection, previous_password)
             raise
-
         value = SqlDevelopmentSecrets(
             server=SERVER_HOST,
             port=SERVER_PORT,
@@ -316,7 +307,7 @@ def _provision(secrets_path: Path, rotate_requested: bool) -> dict[str, object]:
             "credential_rotated": selection.rotate_login,
             "schema_version": inventory.schema_version,
             "schema_checksum_valid": (
-                inventory.schema_checksum == LATEST_SQL_SCHEMA.checksum
+                inventory.schema_checksum == SQL_SCHEMA_V1.checksum
             ),
             "ownership_marker_configured": True,
         }
@@ -420,7 +411,7 @@ def _ensure_database_container(connection, marker: str) -> bool:
     return True
 
 
-def _ensure_current_schema(location: SqlServerDatabaseLocation) -> None:
+def _ensure_canonical_schema(location: SqlServerDatabaseLocation) -> None:
     inspector = SqlSchemaInspector()
     inventory = inspector.inspect(location)
     if inventory.schema_version == 0 and not any(
@@ -432,13 +423,9 @@ def _ensure_current_schema(location: SqlServerDatabaseLocation) -> None:
             actor="OST Visualizer SQL development setup",
         )
         inventory = inspector.inspect(location)
-    report = SqlSchemaValidator(LATEST_SQL_SCHEMA.core_schema).validate(inventory)
-    if (
-        report.compatibility != SqlSchemaCompatibility.CURRENT
-        or inventory.schema_version != LATEST_SQL_SCHEMA.version
-        or inventory.schema_checksum != LATEST_SQL_SCHEMA.checksum
-    ):
-        raise RuntimeError("The persistent client database schema is not current.")
+    report = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema).validate(inventory)
+    if not report.is_valid:
+        raise RuntimeError("The persistent client database is not canonical schema v1.")
 
 
 def _configure_client_login_and_permissions(
@@ -562,7 +549,6 @@ def _collect_teardown_inventory(connection, marker: str) -> TeardownInventory:
                 (owned if run_marker else unowned).append(database_name)
             else:
                 unowned.append(database_name)
-
         current_login = _current_login_name(connection)
         cursor.execute(
             "SELECT [name] FROM sys.server_principals WHERE [type] IN "

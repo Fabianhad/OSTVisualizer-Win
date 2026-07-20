@@ -17,7 +17,7 @@ class LoadFilesFromConfigUseCase:
         self.file_state_repository = file_state_repository
         self.logger = logger or logging.getLogger(__name__)
 
-    def execute(self) -> List[str]:
+    def execute(self, backends: set[DatabaseBackend]) -> List[str]:
         try:
             file_state = self.file_state_repository.load()
         except FileNotFoundError:
@@ -28,7 +28,9 @@ class LoadFilesFromConfigUseCase:
         if not file_state.file_entries:
             return []
         entries_to_load = [
-            entry for entry in file_state.file_entries if entry.is_checked
+            entry
+            for entry in file_state.file_entries
+            if entry.is_checked and entry.backend in backends
         ]
         if not entries_to_load:
             return []

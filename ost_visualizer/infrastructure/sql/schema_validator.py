@@ -1,13 +1,15 @@
 from __future__ import annotations
 import re
 from dataclasses import dataclass
-from enum import Enum
 from ..database.schema_model import (
     DatabaseSchemaModel,
     sql_server_type_for_access,
 )
 from .schema_definition import (
-    LATEST_SQL_SCHEMA,
+    SQL_SCHEMA_V1,
+    SQL_CHANGE_TRACKING_AUTO_CLEANUP_REQUIREMENT,
+    SQL_CHANGE_TRACKING_RETENTION_DAYS,
+    SQL_SNAPSHOT_ISOLATION_REQUIREMENT,
     SqlColumnDefinition,
     SqlSchemaDefinition,
     SqlTableDefinition,
@@ -15,30 +17,16 @@ from .schema_definition import (
 from .schema_inspector import SqlColumnInventory, SqlSchemaInventory
 
 
-class SqlSchemaCompatibility(str, Enum):
-    CURRENT = "current"
-    UNVERSIONED_READ_ONLY = "unversioned_read_only"
-    INVALID = "invalid"
-    UNSUPPORTED_VERSION = "unsupported_version"
-
-
 @dataclass(frozen=True)
 class SqlSchemaValidationReport:
-    compatibility: SqlSchemaCompatibility
-    schema_version: int
     problems: tuple[str, ...] = ()
 
     @property
-    def is_read_compatible(self) -> bool:
-        return self.compatibility in {
-            SqlSchemaCompatibility.CURRENT,
-            SqlSchemaCompatibility.UNVERSIONED_READ_ONLY,
-        }
+    def is_valid(self) -> bool:
+        return not self.problems
 
     @property
     def user_message(self) -> str:
-        if self.compatibility == SqlSchemaCompatibility.UNSUPPORTED_VERSION:
-            return "Database uses an unsupported OST Visualizer schema version."
         if self.problems:
             return "Schema mismatch: " + ", ".join(self.problems)
         return ""
@@ -49,66 +37,17 @@ class SqlSchemaValidator:
         self._shared_schema = shared_schema
 
     def validate(self, inventory: SqlSchemaInventory) -> SqlSchemaValidationReport:
-        if inventory.schema_version not in (0, LATEST_SQL_SCHEMA.version):
+        if inventory.schema_version != SQL_SCHEMA_V1.version:
             return SqlSchemaValidationReport(
-                SqlSchemaCompatibility.UNSUPPORTED_VERSION,
-                inventory.schema_version,
+                ("ostv.DatabaseMetadata.SchemaVersion",),
             )
-        problems = self._validate_core_tables(
-            inventory,
-            require_constraints=(inventory.schema_version == LATEST_SQL_SCHEMA.version),
-        )
-        if inventory.schema_version == 0:
-            if any(schema == "ostv" for schema, _table in inventory.tables):
-                problems.append("ostv.partial_schema")
-            compatibility = (
-                SqlSchemaCompatibility.UNVERSIONED_READ_ONLY
-                if not problems
-                else SqlSchemaCompatibility.INVALID
-            )
-            return SqlSchemaValidationReport(
-                compatibility,
-                0,
-                tuple(problems),
-            )
-        problems.extend(self._validate_ostv_tables(inventory, LATEST_SQL_SCHEMA))
-        problems.extend(self._validate_change_tracking(inventory, LATEST_SQL_SCHEMA))
-        if inventory.schema_checksum != LATEST_SQL_SCHEMA.checksum:
+        problems = self._validate_core_tables(inventory)
+        problems.extend(self._validate_ostv_tables(inventory, SQL_SCHEMA_V1))
+        problems.extend(self._validate_change_tracking(inventory, SQL_SCHEMA_V1))
+        problems.extend(self._validate_database_requirements(inventory, SQL_SCHEMA_V1))
+        if inventory.schema_checksum != SQL_SCHEMA_V1.checksum:
             problems.append("ostv.SchemaMigrations.Checksum")
-        return SqlSchemaValidationReport(
-            (
-                SqlSchemaCompatibility.CURRENT
-                if not problems
-                else SqlSchemaCompatibility.INVALID
-            ),
-            inventory.schema_version,
-            tuple(problems),
-        )
-
-    def validate_versioned_schema(
-        self,
-        inventory: SqlSchemaInventory,
-        schema: SqlSchemaDefinition,
-    ) -> SqlSchemaValidationReport:
-        if inventory.schema_version != schema.version:
-            return SqlSchemaValidationReport(
-                SqlSchemaCompatibility.UNSUPPORTED_VERSION,
-                inventory.schema_version,
-            )
-        problems = self._validate_core_tables(inventory, require_constraints=True)
-        problems.extend(self._validate_ostv_tables(inventory, schema))
-        problems.extend(self._validate_change_tracking(inventory, schema))
-        if inventory.schema_checksum != schema.checksum:
-            problems.append("ostv.SchemaMigrations.Checksum")
-        return SqlSchemaValidationReport(
-            (
-                SqlSchemaCompatibility.CURRENT
-                if not problems
-                else SqlSchemaCompatibility.INVALID
-            ),
-            inventory.schema_version,
-            tuple(problems),
-        )
+        return SqlSchemaValidationReport(tuple(problems))
 
     @staticmethod
     def _validate_change_tracking(
@@ -126,32 +65,34 @@ class SqlSchemaValidator:
         )
         return problems
 
-    def validate_adoption_candidate(
-        self, inventory: SqlSchemaInventory
-    ) -> SqlSchemaValidationReport:
-        if inventory.schema_version != 0:
-            return SqlSchemaValidationReport(
-                SqlSchemaCompatibility.UNSUPPORTED_VERSION,
-                inventory.schema_version,
-            )
-        problems = self._validate_core_tables(inventory, require_constraints=True)
-        if any(schema == "ostv" for schema, _table in inventory.tables):
-            problems.append("ostv.partial_schema")
-        return SqlSchemaValidationReport(
-            (
-                SqlSchemaCompatibility.UNVERSIONED_READ_ONLY
-                if not problems
-                else SqlSchemaCompatibility.INVALID
-            ),
-            0,
-            tuple(problems),
-        )
+    @staticmethod
+    def _validate_database_requirements(
+        inventory: SqlSchemaInventory, schema: SqlSchemaDefinition
+    ) -> list[str]:
+        requirements = set(schema.canonical_database_requirements)
+        problems: list[str] = []
+        if (
+            SQL_SNAPSHOT_ISOLATION_REQUIREMENT in requirements
+            and not inventory.snapshot_isolation_enabled
+        ):
+            problems.append("database.snapshot_isolation")
+        if (
+            f"CHANGE_TRACKING_RETENTION={SQL_CHANGE_TRACKING_RETENTION_DAYS} DAYS"
+            in requirements
+            and inventory.change_tracking_retention_days
+            != SQL_CHANGE_TRACKING_RETENTION_DAYS
+        ):
+            problems.append("database.change_tracking_retention")
+        if (
+            SQL_CHANGE_TRACKING_AUTO_CLEANUP_REQUIREMENT in requirements
+            and not inventory.change_tracking_auto_cleanup
+        ):
+            problems.append("database.change_tracking_auto_cleanup")
+        return problems
 
     def _validate_core_tables(
         self,
         inventory: SqlSchemaInventory,
-        *,
-        require_constraints: bool,
     ) -> list[str]:
         actual_tables = {name for schema, name in inventory.tables if schema == "dbo"}
         expected_tables = self._shared_schema.table_names
@@ -181,26 +122,19 @@ class SqlSchemaValidator:
                 if actual is None:
                     problems.append(label)
                     continue
-                if require_constraints:
-                    expected_type = sql_server_type_for_access(column.access_type)
-                    if not (
-                        _matches_type(actual, expected_type)
-                        or _matches_core_storage_type(actual, column.access_type)
-                    ):
-                        problems.append(label)
-                    if actual.nullable == column.required:
-                        problems.append(label + ".nullability")
-                    expected_identity = column.access_type.strip().upper() == "COUNTER"
-                    if actual.identity != expected_identity:
-                        problems.append(label + ".identity")
-                    if actual.computed:
-                        problems.append(label + ".computed")
-                    if not _matches_default(actual.default_definition, column.default):
-                        problems.append(label + ".default")
-                elif not _matches_core_storage_type(actual, column.access_type):
+                expected_type = sql_server_type_for_access(column.access_type)
+                if not _matches_type(actual, expected_type):
                     problems.append(label)
-        if require_constraints:
-            problems.extend(self._validate_core_constraints(inventory))
+                if actual.nullable == column.required:
+                    problems.append(label + ".nullability")
+                expected_identity = column.access_type.strip().upper() == "COUNTER"
+                if actual.identity != expected_identity:
+                    problems.append(label + ".identity")
+                if actual.computed:
+                    problems.append(label + ".computed")
+                if not _matches_default(actual.default_definition, column.default):
+                    problems.append(label + ".default")
+        problems.extend(self._validate_core_constraints(inventory))
         return problems
 
     def _validate_core_constraints(self, inventory: SqlSchemaInventory) -> list[str]:
@@ -284,18 +218,28 @@ class SqlSchemaValidator:
         inventory: SqlSchemaInventory, schema: SqlSchemaDefinition
     ) -> list[str]:
         actual_tables = set(inventory.tables)
+        expected_tables = {(table.schema, table.name) for table in schema.tables}
         actual_columns: dict[tuple[str, str], dict[str, SqlColumnInventory]] = {}
         for column in inventory.columns:
             actual_columns.setdefault((column.schema_name, column.table_name), {})[
                 column.column_name
             ] = column
-        problems: list[str] = []
+        problems = [
+            f"{table_schema}.{table}.unexpected"
+            for table_schema, table in sorted(actual_tables - expected_tables)
+            if table_schema == "ostv"
+        ]
         for table in schema.tables:
             table_key = (table.schema, table.name)
             if table_key not in actual_tables:
                 problems.append(f"{table.schema}.{table.name}")
                 continue
             columns = actual_columns.get(table_key, {})
+            expected_columns = {column.name for column in table.columns}
+            problems.extend(
+                f"{table.schema}.{table.name}.{column}.unexpected"
+                for column in sorted(set(columns) - expected_columns)
+            )
             for expected in table.columns:
                 actual = columns.get(expected.name)
                 label = f"{table.schema}.{table.name}.{expected.name}"
@@ -430,26 +374,3 @@ def _matches_type(actual: SqlColumnInventory, expected_type: str) -> bool:
             datetime_match.group(1)
         )
     return actual.data_type.casefold() == normalized
-
-
-def _matches_core_storage_type(
-    actual: SqlColumnInventory,
-    access_type: str,
-) -> bool:
-    normalized = access_type.strip().upper()
-    actual_type = actual.data_type.casefold()
-    if normalized in {"COUNTER", "INTEGER"}:
-        return actual_type == "int"
-    if normalized == "SMALLINT":
-        return actual_type == "smallint"
-    if normalized == "DOUBLE":
-        return actual_type == "float"
-    if normalized == "YESNO":
-        return actual_type == "bit"
-    if normalized == "IMAGE":
-        return actual_type in {"image", "varbinary"}
-    if normalized == "DATETIME":
-        return actual_type in {"datetime", "datetime2"}
-    if normalized.startswith("VARCHAR("):
-        return actual_type in {"varchar", "nvarchar"}
-    return False

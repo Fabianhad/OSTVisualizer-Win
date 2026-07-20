@@ -12,6 +12,7 @@ from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
     SqlServerDatabaseLocation,
+    credential_target_for,
 )
 from ost_visualizer.domain.entities.file_state import FileEntry
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
@@ -48,7 +49,7 @@ from ost_visualizer.infrastructure.sql.schema_inspector import (
     SqlSchemaInspector,
     SqlSchemaInventory,
 )
-from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     DatabaseMutationRequest,
@@ -58,7 +59,6 @@ from ost_visualizer.application.services.database_session_registry import (
     DatabaseSessionRegistry,
 )
 from ost_visualizer.infrastructure.sql.schema_validator import (
-    SqlSchemaCompatibility,
     SqlSchemaValidationReport,
 )
 from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
@@ -108,9 +108,11 @@ class _RawConnection:
 class _InspectionCursor:
     def __init__(self):
         self._last_sql = ""
+        self.executed = []
 
     def execute(self, sql, *_params):
         self._last_sql = sql
+        self.executed.append(sql)
         if "SELECT s.name, t.name, i.name" in sql:
             if "FROM sys.indexes i" not in sql:
                 raise AssertionError("index inventory query has no FROM sys.indexes")
@@ -146,7 +148,8 @@ class _InspectionManager:
     @contextlib.contextmanager
     def connection(self, _request, *, autocommit=False):
         self.autocommit = autocommit
-        yield _InspectionLease()
+        self.lease = _InspectionLease()
+        yield self.lease
 
 
 class _CreationCursor:
@@ -169,28 +172,39 @@ class _CreationCursor:
         self.close()
 
     def fetchone(self):
-        if "IS_ROLEMEMBER" in self._last_sql:
-            return (1, 1)
-        if "sp_getapplock" in self._last_sql:
-            return (0,)
-        if "FROM [ostv].[Sessions]" in self._last_sql:
-            return (1,)
-        if "COUNT(*) FROM sys.tables" in self._last_sql:
-            return (0,)
-        if "database_guid" in self._last_sql:
-            return ("00000000-0000-0000-0000-000000000001",)
         if (
             "[ostv].[DatabaseMetadata]" in self._last_sql
             and "[ostv].[SchemaMigrations]" in self._last_sql
         ):
             return (
                 *self.schema_record,
+                "READ_WRITE",
                 "ost_visualizer_only",
                 "disabled",
                 None,
                 1,
                 1,
+                1,
+                1,
             )
+        if "snapshot_isolation_state" in self._last_sql:
+            return (1,)
+        if "retention_period" in self._last_sql:
+            return None
+        if "IS_ROLEMEMBER" in self._last_sql:
+            return (1, 1, 1, 1)
+        if "COUNT(*) FROM sys.tables" in self._last_sql:
+            return (0,)
+        if "FROM sys.tables" in self._last_sql:
+            return (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 0)
+        if "VIEW CHANGE TRACKING" in self._last_sql:
+            return (1, 1, 0, 0, 1)
+        if "sp_getapplock" in self._last_sql:
+            return (0,)
+        if "FROM [ostv].[Sessions]" in self._last_sql:
+            return (1,)
+        if "database_guid" in self._last_sql:
+            return ("00000000-0000-0000-0000-000000000001",)
         return (0,)
 
     def close(self):
@@ -230,17 +244,24 @@ class _WriterCursor(_CreationCursor):
 
     def fetchone(self):
         if "IS_ROLEMEMBER" in self._last_sql:
-            return (1, 1)
+            return (1, 1, 1, 1)
         if "SchemaMigrations" in self._last_sql:
             return (
-                LATEST_SQL_SCHEMA.version,
-                LATEST_SQL_SCHEMA.checksum,
+                SQL_SCHEMA_V1.version,
+                SQL_SCHEMA_V1.checksum,
+                "READ_WRITE",
                 "ost_visualizer_only",
                 "disabled",
                 None,
                 1,
                 1,
+                1,
+                1,
             )
+        if "FROM sys.tables" in self._last_sql:
+            return (len(SQL_CLIENT_COLLABORATION_WRITE_TABLES), 0, 0)
+        if "VIEW CHANGE TRACKING" in self._last_sql:
+            return (1, 1, 0, 0, 1)
         if "sp_getapplock" in self._last_sql:
             return (0,)
         if "FROM [ostv].[Sessions]" in self._last_sql:
@@ -377,12 +398,14 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         registry.register(descriptor)
         current = (
-            LATEST_SQL_SCHEMA.version,
-            LATEST_SQL_SCHEMA.checksum,
+            SQL_SCHEMA_V1.version,
+            SQL_SCHEMA_V1.checksum,
             "READ_WRITE",
             "ost_visualizer_only",
             "disabled",
             None,
+            1,
+            1,
             1,
             1,
         )
@@ -400,6 +423,12 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                     connection_manager=_PermissionManager(roles, current),
                 )
                 self.assertFalse(missing_role.can_edit(descriptor.database_id))
+        malformed_role = SqlDatabasePermissionProbe(
+            registry,
+            _CredentialStore(),
+            connection_manager=_PermissionManager((1, 1, object(), 1), current),
+        )
+        self.assertFalse(malformed_role.can_edit(descriptor.database_id))
         denied_change_log = SqlDatabasePermissionProbe(
             registry,
             _CredentialStore(),
@@ -435,7 +464,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             _CredentialStore(),
             connection_manager=_PermissionManager(
                 (1, 1, 1, 1),
-                current[:-2] + (0, 0),
+                current[:6] + (0, 0, 1, 1),
             ),
         )
         self.assertFalse(disabled_change_tracking.can_edit(descriptor.database_id))
@@ -445,8 +474,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             connection_manager=_PermissionManager(
                 (1, 1, 1, 1),
                 (
-                    LATEST_SQL_SCHEMA.version,
-                    LATEST_SQL_SCHEMA.checksum,
+                    SQL_SCHEMA_V1.version,
+                    SQL_SCHEMA_V1.checksum,
                     "READ_ONLY",
                 ),
             ),
@@ -576,6 +605,23 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         self.assertEqual(inventory.indexes, ())
 
+    def test_schema_inspector_excludes_sql_server_internal_tables(self):
+        manager = _InspectionManager()
+        inspector = SqlSchemaInspector(manager)
+        inspector.inspect(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        table_inventory_queries = [
+            sql for sql in manager.lease.cursor_value.executed if "sys.tables" in sql
+        ]
+        self.assertTrue(table_inventory_queries)
+        self.assertTrue(
+            all(
+                "is_ms_shipped" in sql.replace("[", "").replace("]", "") and "=0" in sql
+                for sql in table_inventory_queries
+            )
+        )
+
     def test_sql_reader_rejects_invalid_schema_before_domain_queries(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -600,9 +646,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         registry.register(descriptor)
         reader = SqlProjectReader(registry, _CredentialStore(), _InspectionManager())
-        reader._validator.validate = lambda _inventory: SimpleNamespace(
-            is_read_compatible=True
-        )
+        reader._validator.validate = lambda _inventory: SimpleNamespace(is_valid=True)
         with patch.object(
             MdbReader,
             "parse_file",
@@ -946,11 +990,16 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def fetchone(self):
                 if "DatabaseMetadata" in self._last_sql:
                     return (
-                        1,
-                        LATEST_SQL_SCHEMA.checksum,
+                        2,
+                        SQL_SCHEMA_V1.checksum,
+                        "READ_WRITE",
                         "ost_visualizer_only",
                         "disabled",
                         None,
+                        1,
+                        1,
+                        1,
+                        1,
                     )
                 return super().fetchone()
 
@@ -961,8 +1010,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 return cursor
 
         lease = _StaleMetadataLease()
-        with self.assertRaisesRegex(Exception, "unsupported schema version"):
-            SqlProjectWriter._require_current_schema(lease)
+        with self.assertRaisesRegex(Exception, "not writable"):
+            SqlProjectWriter._require_sql_client_editability(lease)
         self.assertTrue(all(cursor.close_count == 1 for cursor in lease.cursors))
 
     def test_writer_guard_rejects_disabled_change_tracking(self):
@@ -970,13 +1019,16 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def fetchone(self):
                 if "DatabaseMetadata" in self._last_sql:
                     return (
-                        LATEST_SQL_SCHEMA.version,
-                        LATEST_SQL_SCHEMA.checksum,
+                        SQL_SCHEMA_V1.version,
+                        SQL_SCHEMA_V1.checksum,
+                        "READ_WRITE",
                         "ost_visualizer_only",
                         "disabled",
                         None,
                         0,
                         0,
+                        1,
+                        1,
                     )
                 return super().fetchone()
 
@@ -986,8 +1038,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 self.cursors.append(cursor)
                 return cursor
 
-        with self.assertRaisesRegex(Exception, "unsupported schema version"):
-            SqlProjectWriter._require_current_schema(_TrackingDisabledLease())
+        with self.assertRaisesRegex(Exception, "not writable"):
+            SqlProjectWriter._require_sql_client_editability(_TrackingDisabledLease())
 
     def test_writer_guard_rejects_missing_builtin_client_role(self):
         class _MissingRoleCursor(_WriterCursor):
@@ -1003,7 +1055,25 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 return cursor
 
         with self.assertRaisesRegex(Exception, "required SQL database roles"):
-            SqlProjectWriter._require_current_schema(_MissingRoleLease())
+            SqlProjectWriter._require_sql_client_editability(_MissingRoleLease())
+
+    def test_writer_guard_rejects_missing_collaboration_marker_permission(self):
+        class _MissingMarkerPermissionCursor(_WriterCursor):
+            def fetchone(self):
+                if "VIEW CHANGE TRACKING" in self._last_sql:
+                    return (1, 1, 0, 0, 0)
+                return super().fetchone()
+
+        class _MissingMarkerPermissionLease(_WriterLease):
+            def cursor(self):
+                cursor = _MissingMarkerPermissionCursor()
+                self.cursors.append(cursor)
+                return cursor
+
+        with self.assertRaisesRegex(Exception, "collaboration permissions"):
+            SqlProjectWriter._require_sql_client_editability(
+                _MissingMarkerPermissionLease()
+            )
 
     def test_sql_import_table_metadata_comes_from_canonical_schema(self):
         registry = DatabaseDescriptorRegistry()
@@ -1076,10 +1146,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         creator._inspector.inspect_connection = lambda _lease: SimpleNamespace(
             database_guid="00000000-0000-0000-0000-000000000001"
         )
-        creator._validator.validate = lambda _inventory: SqlSchemaValidationReport(
-            SqlSchemaCompatibility.CURRENT,
-            LATEST_SQL_SCHEMA.version,
-        )
+        creator._validator.validate = lambda _inventory: SqlSchemaValidationReport()
         creator.initialize_blank_database(
             SqlServerDatabaseLocation(
                 server="localhost",
@@ -1094,13 +1161,12 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(manager.lease.commits, 1)
         self.assertEqual(manager.lease.rollbacks, 0)
 
-    def test_schema_creation_rejects_unversioned_read_only_validation(self):
+    def test_schema_creation_rolls_back_failed_canonical_validation(self):
         manager = _CreationManager()
         creator = SqlDatabaseCreator(manager)
         creator._inspector.inspect_connection = lambda *_args: _empty_inventory()
         creator._validator.validate = lambda _inventory: SqlSchemaValidationReport(
-            SqlSchemaCompatibility.UNVERSIONED_READ_ONLY,
-            0,
+            ("ostv.SchemaMigrations.Checksum",),
         )
         with self.assertRaisesRegex(Exception, "validation failed"):
             creator.initialize_blank_database(
@@ -1111,88 +1177,6 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             )
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
-
-    def test_compatible_external_database_adoption_adds_only_ostv_schema(self):
-        manager = _CreationManager()
-        creator = SqlDatabaseCreator(manager)
-        inventories = iter(
-            (
-                _empty_inventory(),
-                _empty_inventory(),
-                SqlSchemaInventory(
-                    database_guid="00000000-0000-0000-0000-000000000001",
-                    schema_version=LATEST_SQL_SCHEMA.version,
-                    schema_checksum=LATEST_SQL_SCHEMA.checksum,
-                    tables=frozenset(),
-                    columns=(),
-                    foreign_keys=(),
-                    indexes=(),
-                    views=(),
-                    triggers=(),
-                    procedures=(),
-                    functions=(),
-                ),
-            )
-        )
-        creator._inspector.inspect_connection = lambda _lease: next(inventories)
-        creator._validator.validate_adoption_candidate = (
-            lambda _inventory: SqlSchemaValidationReport(
-                SqlSchemaCompatibility.UNVERSIONED_READ_ONLY, 0
-            )
-        )
-        creator._validator.validate = lambda inventory: SqlSchemaValidationReport(
-            (
-                SqlSchemaCompatibility.CURRENT
-                if inventory.schema_version == LATEST_SQL_SCHEMA.version
-                else SqlSchemaCompatibility.UNVERSIONED_READ_ONLY
-            ),
-            inventory.schema_version,
-        )
-        result = creator.initialize_compatible_database(
-            SqlServerDatabaseLocation(server="localhost", database="EXTERNAL_OST_TEST"),
-            application_version="test",
-        )
-        statements = manager.lease.cursor_value.executed
-        self.assertTrue(
-            any(sql.startswith("CREATE SCHEMA [ostv]") for sql in statements)
-        )
-        self.assertFalse(
-            any(sql.startswith("CREATE TABLE [dbo]") for sql in statements)
-        )
-        permission_sql = " ".join(statements)
-        self.assertIn("ALTER ROLE [db_datareader] ADD MEMBER", permission_sql)
-        self.assertIn("ALTER ROLE [db_datawriter] ADD MEMBER", permission_sql)
-        self.assertEqual(result.schema_version, LATEST_SQL_SCHEMA.version)
-        self.assertEqual(manager.lease.commits, 1)
-        self.assertEqual(manager.lease.rollbacks, 0)
-        SqlProjectWriter._require_current_schema(manager.lease)
-
-    def test_external_database_adoption_rejects_structural_mismatch(self):
-        manager = _CreationManager()
-        creator = SqlDatabaseCreator(manager)
-        creator._inspector.inspect_connection = lambda _lease: _empty_inventory()
-        creator._validator.validate_adoption_candidate = (
-            lambda _inventory: SqlSchemaValidationReport(
-                SqlSchemaCompatibility.INVALID,
-                0,
-                ("dbo.Bids.Name",),
-            )
-        )
-        with self.assertRaisesRegex(Exception, "cannot be enabled"):
-            creator.initialize_compatible_database(
-                SqlServerDatabaseLocation(
-                    server="localhost", database="EXTERNAL_OST_INVALID"
-                ),
-                application_version="test",
-            )
-        self.assertFalse(
-            any(
-                sql.startswith("CREATE SCHEMA [ostv]")
-                for sql in manager.lease.cursor_value.executed
-            )
-        )
-        self.assertEqual(manager.lease.commits, 0)
-        self.assertEqual(manager.lease.rollbacks, 0)
 
     def test_failed_unload_retains_removed_checked_descriptor(self):
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -1220,6 +1204,9 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def get_file_entries(self):
                 return []
 
+            def commit_credential_changes(self):
+                return set()
+
             def cleanup(self):
                 pass
 
@@ -1246,6 +1233,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 },
             )(),
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
             credential_store=_CredentialStore(),
         )
         with (
@@ -1261,7 +1249,196 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             handler.open_files()
         self.assertEqual(updates[-1], [entry])
 
-    def test_retained_sql_descriptor_is_reprobed_after_reconnect(self):
+    def test_removed_sql_descriptor_waits_for_collaboration_drain(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        entry = FileEntry.for_descriptor(descriptor)
+        registry = DatabaseDescriptorRegistry()
+        registry.register(descriptor)
+        credentials = _CredentialStore()
+        callbacks = []
+
+        class _State:
+            file_entries = [entry]
+
+            def reload(self):
+                pass
+
+            def update_entries(self, entries):
+                self.file_entries = list(entries)
+
+        class _Dialog:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def get_file_entries(self):
+                return []
+
+            def commit_credential_changes(self):
+                return set()
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=None,
+            file_state_model=_State(),
+            cleanup_deleted_files_use_case=SimpleNamespace(
+                execute_and_save=lambda: None
+            ),
+            file_loading_service=None,
+            working_directory_service=None,
+            unload_file_fn=lambda _locator: True,
+            deferred_persistence_manager=SimpleNamespace(
+                flush_for_file=lambda _locator: True,
+                cancel_for_file=lambda _locator: None,
+            ),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(
+                stop_database_async=lambda _database_id, _reason, callback: callbacks.append(
+                    callback
+                )
+            ),
+            credential_store=credentials,
+            database_descriptor_registry=registry,
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler."
+            "OpenFilesDialog",
+            _Dialog,
+        ):
+            handler.open_files()
+        self.assertIs(registry.resolve(descriptor.database_id), descriptor)
+        self.assertEqual(credentials.deleted, [])
+        self.assertEqual(len(callbacks), 1)
+        callbacks[0](True, "")
+        self.assertIsNone(registry.resolve(descriptor.database_id))
+        self.assertEqual(
+            credentials.deleted,
+            [credential_target_for(descriptor.database_id)],
+        )
+
+    def test_completed_old_drain_does_not_remove_readded_sql_descriptor(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        entry = FileEntry.for_descriptor(descriptor)
+        registry = DatabaseDescriptorRegistry()
+        registry.register(descriptor)
+        credentials = _CredentialStore()
+        callbacks = []
+        starts = []
+
+        class _State:
+            file_entries = [entry]
+
+            def reload(self):
+                pass
+
+            def update_entries(self, entries):
+                self.file_entries = list(entries)
+
+        class _Dialog:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def get_file_entries(self):
+                return []
+
+            def commit_credential_changes(self):
+                return set()
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        state = _State()
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=None,
+            file_state_model=state,
+            cleanup_deleted_files_use_case=SimpleNamespace(
+                execute_and_save=lambda: None
+            ),
+            file_loading_service=None,
+            working_directory_service=None,
+            unload_file_fn=lambda _locator: True,
+            deferred_persistence_manager=SimpleNamespace(
+                flush_for_file=lambda _locator: True,
+                cancel_for_file=lambda _locator: None,
+            ),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(
+                stop_database_async=lambda _database_id, _reason, callback: callbacks.append(
+                    callback
+                ),
+                start_database=lambda database_id: starts.append(database_id),
+            ),
+            credential_store=credentials,
+            database_descriptor_registry=registry,
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler."
+            "OpenFilesDialog",
+            _Dialog,
+        ):
+            handler.open_files()
+        state.file_entries = [entry]
+        registry.register(descriptor)
+        callbacks[0](True, "")
+        self.assertIs(registry.resolve(descriptor.database_id), descriptor)
+        self.assertEqual(credentials.deleted, [])
+        self.assertEqual(starts, [descriptor.database_id])
+
+    def test_failed_sql_drain_retains_descriptor_and_credential(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        )
+        entry = FileEntry.for_descriptor(descriptor)
+        registry = DatabaseDescriptorRegistry()
+        registry.register(descriptor)
+        credentials = _CredentialStore()
+
+        class _State:
+            file_entries = []
+
+            def update_entries(self, entries):
+                self.file_entries = list(entries)
+
+        state = _State()
+        handler = FileOperationHandler.__new__(FileOperationHandler)
+        handler.window = None
+        handler._file_state_model = state
+        handler._database_descriptor_registry = registry
+        handler._credential_store = credentials
+        handler._sql_collaboration = SimpleNamespace(start_database=lambda _id: None)
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        ) as warning:
+            handler._complete_sql_connection_removal(
+                entry, False, "session cleanup failed"
+            )
+        self.assertIs(registry.resolve(descriptor.database_id), descriptor)
+        self.assertEqual(credentials.deleted, [])
+        self.assertEqual(state.file_entries, [entry.with_checked(False)])
+        warning.assert_called_once()
+
+    def test_retained_sql_descriptor_reconnects_through_coordinator(self):
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
         )
@@ -1286,6 +1463,9 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def get_file_entries(self):
                 return [entry]
 
+            def commit_credential_changes(self):
+                return {entry.database_id}
+
             def cleanup(self):
                 pass
 
@@ -1294,11 +1474,11 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         connected = []
         published = []
-        capability_state = {entry.database_id: False}
+        stop_callbacks = []
+        starts = []
 
         def mark_connected(database_id):
             connected.append(database_id)
-            capability_state[database_id] = True
 
         handler = FileOperationHandler(
             window=None,
@@ -1315,8 +1495,14 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             unload_file_fn=lambda _locator: True,
             deferred_persistence_manager=SimpleNamespace(),
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(
+                stop_database_async=lambda database_id, reason, callback: stop_callbacks.append(
+                    (database_id, reason, callback)
+                ),
+                start_database=lambda database_id: starts.append(database_id),
+            ),
             database_capability_service=SimpleNamespace(
-                is_editable=lambda database_id: capability_state[database_id],
+                is_editable=lambda _database_id: False,
                 mark_connected=mark_connected,
             ),
         )
@@ -1326,17 +1512,14 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             _Dialog,
         ):
             handler.open_files()
-            handler.open_files()
-        self.assertEqual(connected, [entry.database_id, entry.database_id])
-        self.assertEqual(
-            published,
-            [
-                (
-                    AppEvents.DATABASE_CAPABILITIES_CHANGED,
-                    {"file_path": entry.database_id},
-                )
-            ],
-        )
+        self.assertEqual(connected, [])
+        self.assertEqual(published, [])
+        self.assertEqual(len(stop_callbacks), 1)
+        database_id, reason, callback = stop_callbacks[0]
+        self.assertEqual(database_id, entry.database_id)
+        self.assertEqual(reason, "reconfigured")
+        callback(True, "")
+        self.assertEqual(starts, [entry.database_id])
 
     def test_connection_dialog_cleanup_releases_result_secret(self):
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])

@@ -35,6 +35,12 @@ class FileLoadingService:
             )
         return FileLoadResultDto(success=True)
 
+    def is_loaded(self, file_path: str) -> bool:
+        return any(
+            entry.file_path == file_path
+            for entry in self.data_service.get_hierarchy().loaded_files
+        )
+
     def reload_database(self, file_path: Optional[str] = None) -> FileLoadResultDto:
         success = self.operations_service.reload_database(file_path)
         if not success:

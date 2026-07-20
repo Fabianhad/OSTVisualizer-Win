@@ -394,57 +394,84 @@ class SqlCollaborationStore(ICollaborationStore):
     ) -> DatabaseChangeBatch:
         batch_limit = max(1, min(int(limit), _MAX_CHANGE_BATCH))
         request = self._requests.request(database_id, read_only=True)
-        with self._connections.connection(request, autocommit=True) as lease:
-            with lease.cursor() as cursor:
-                cursor.execute(
-                    "SELECT CONVERT(nvarchar(36), f.[FeedEpoch]) "
-                    "FROM [ostv].[ChangeFeedState] f WHERE f.[SingletonId]=1"
-                )
-                state = cursor.fetchone()
-                if state is None:
-                    raise _session_error("SQL change-feed metadata is missing.")
-                cursor.execute(
-                    "SELECT CHANGE_TRACKING_CURRENT_VERSION(), "
-                    "CHANGE_TRACKING_MIN_VALID_VERSION("
-                    "OBJECT_ID(N'ostv.ChangeTransactions'))"
-                )
-                versions = cursor.fetchone()
-                if versions is None or versions[0] is None or versions[1] is None:
-                    raise ValueError("SQL Change Tracking metadata is unavailable.")
-                high_water_version = int(versions[0])
-                minimum_valid_version = int(versions[1])
-                if after_version and (
-                    after_version < minimum_valid_version
-                    or after_version > high_water_version
-                ):
-                    return DatabaseChangeBatch(
-                        database_id=database_id,
-                        feed_epoch=str(state[0]),
-                        minimum_valid_version=minimum_valid_version,
-                        high_water_version=high_water_version,
-                        delivered_through_version=after_version,
+        with self._connections.connection(request, autocommit=False) as lease:
+            transaction_finished = False
+            try:
+                with lease.cursor() as cursor:
+                    cursor.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
+                    cursor.execute("BEGIN TRANSACTION")
+                    cursor.execute(
+                        "SELECT CONVERT(nvarchar(36), f.[FeedEpoch]) "
+                        "FROM [ostv].[ChangeFeedState] f WHERE f.[SingletonId]=1"
                     )
-                cursor.execute(
-                    f"SELECT TOP ({batch_limit}) WITH TIES "
-                    "ct.[SYS_CHANGE_VERSION], "
-                    "ct.[SYS_CHANGE_OPERATION], "
-                    "CONVERT(nvarchar(36), ct.[TransactionId]) "
-                    "FROM CHANGETABLE(CHANGES [ostv].[ChangeTransactions], ?) ct "
-                    "WHERE ct.[SYS_CHANGE_VERSION] <= ? "
-                    "ORDER BY ct.[SYS_CHANGE_VERSION]",
-                    after_version,
-                    high_water_version,
-                )
-                marker_rows = cursor.fetchall()
-                if any(str(row[1]) != "I" for row in marker_rows):
-                    raise ValueError(
-                        "SQL transaction-marker history contains an invalid change."
+                    state = cursor.fetchone()
+                    if state is None:
+                        raise _session_error("SQL change-feed metadata is missing.")
+                    cursor.execute(
+                        "SELECT CHANGE_TRACKING_MIN_VALID_VERSION("
+                        "OBJECT_ID(N'ostv.ChangeTransactions'))"
                     )
-                markers = tuple((str(row[2]), int(row[0])) for row in marker_rows)
-                rows = self._load_transaction_changes(cursor, markers)
-        delivered_through_version = (
-            markers[-1][1] if len(markers) >= batch_limit else high_water_version
-        )
+                    minimum_row = cursor.fetchone()
+                    if minimum_row is None or minimum_row[0] is None:
+                        raise ValueError("SQL Change Tracking metadata is unavailable.")
+                    minimum_valid_version = int(minimum_row[0])
+                    cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
+                    high_water_row = cursor.fetchone()
+                    if high_water_row is None or high_water_row[0] is None:
+                        raise ValueError("SQL Change Tracking metadata is unavailable.")
+                    high_water_version = int(high_water_row[0])
+                    checkpoint_invalid = bool(
+                        after_version
+                        and (
+                            after_version < minimum_valid_version
+                            or after_version > high_water_version
+                        )
+                    )
+                    if checkpoint_invalid:
+                        markers: tuple[tuple[str, int], ...] = ()
+                        rows = ()
+                        delivered_through_version = after_version
+                    else:
+                        cursor.execute(
+                            f"SELECT TOP ({batch_limit}) WITH TIES "
+                            "ct.[SYS_CHANGE_VERSION], "
+                            "ct.[SYS_CHANGE_OPERATION], "
+                            "CONVERT(nvarchar(36), ct.[TransactionId]) "
+                            "FROM CHANGETABLE(CHANGES "
+                            "[ostv].[ChangeTransactions], ?) ct "
+                            "WHERE ct.[SYS_CHANGE_VERSION] <= ? "
+                            "ORDER BY ct.[SYS_CHANGE_VERSION]",
+                            after_version,
+                            high_water_version,
+                        )
+                        marker_rows = tuple(cursor.fetchall())
+                        if any(str(row[1]) != "I" for row in marker_rows):
+                            raise ValueError(
+                                "SQL transaction-marker history contains an "
+                                "invalid change."
+                            )
+                        markers = tuple(
+                            (str(row[2]), int(row[0])) for row in marker_rows
+                        )
+                        if len({marker[0] for marker in markers}) != len(markers):
+                            raise ValueError(
+                                "SQL transaction-marker history contains a duplicate "
+                                "transaction identity."
+                            )
+                        rows = self._load_transaction_changes(cursor, markers)
+                        delivered_through_version = (
+                            markers[-1][1]
+                            if len(markers) >= batch_limit
+                            else high_water_version
+                        )
+                if checkpoint_invalid:
+                    lease.rollback()
+                else:
+                    lease.commit()
+                transaction_finished = True
+            finally:
+                if not transaction_finished:
+                    _rollback(lease)
         changes = tuple(_change_from_row(row) for row in rows)
         return DatabaseChangeBatch(
             database_id=database_id,
@@ -485,6 +512,15 @@ class SqlCollaborationStore(ICollaborationStore):
         if missing:
             raise ValueError(
                 "A committed SQL transaction marker has no ChangeLog records."
+            )
+        payload_identities = tuple(
+            (str(row[2]), str(row[5]), str(row[6]))
+            for row in rows
+            if row[0] is not None
+        )
+        if len(set(payload_identities)) != len(payload_identities):
+            raise ValueError(
+                "A committed SQL transaction contains duplicate resource payloads."
             )
         return rows
 

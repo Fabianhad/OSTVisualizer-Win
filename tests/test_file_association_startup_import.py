@@ -16,6 +16,10 @@ from ost_visualizer.application.use_cases.project import (
     import_project_files_from_args_use_case as import_args_use_case,
 )
 from ost_visualizer.domain.entities.file_state import FileEntry
+from ost_visualizer.domain.entities.database_descriptor import (
+    DatabaseDescriptor,
+    SqlServerDatabaseLocation,
+)
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
     HierarchyData,
@@ -23,6 +27,7 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyProjectInfo,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.domain.entities.project_constants import (
     DELETED_BIDS_PROJECT_NAME,
     DELETED_BIDS_PROJECT_UID,
@@ -706,6 +711,37 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             )
             self.assertEqual(import_service.calls[0][2], str(current_db))
             self.assertEqual(import_service.calls[0][3], "current-project")
+
+    def test_import_use_case_accepts_checked_sql_database_as_current_target(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(
+                server="localhost",
+                database="OSTV_TEST",
+                database_guid="00000000-0000-0000-0000-000000000111",
+            ),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        use_case = import_args_use_case.ImportProjectFilesFromArgsUseCase(
+            import_service=FakeImportService(),
+            project_data_service=FakeProjectData(descriptor.database_id),
+            file_state_model=SimpleNamespace(
+                file_entries=[FileEntry.for_descriptor(descriptor)]
+            ),
+            workspace_state_model=SimpleNamespace(state=WorkspaceState()),
+        )
+        target = use_case.resolve_target(
+            import_args_use_case.ProjectImportCurrentTarget(
+                file_path=descriptor.database_id,
+                project_uid="sql-project",
+            )
+        )
+        self.assertEqual(
+            target,
+            import_args_use_case.ProjectImportTarget(
+                file_path=descriptor.database_id,
+                project_uid="sql-project",
+            ),
+        )
 
     def test_import_use_case_detects_single_new_project(self):
         with tempfile.TemporaryDirectory() as tmp:

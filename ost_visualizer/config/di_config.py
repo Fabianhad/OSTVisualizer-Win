@@ -27,7 +27,7 @@ from ..infrastructure.sql.credential_store import WindowsCredentialStore
 from ..infrastructure.sql.collaboration_store import SqlCollaborationStore
 from ..infrastructure.sql.connection_manager import SqlConnectionManager
 from ..infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
-from ..infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ..infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ..infrastructure.database.entity_version_reader import (
     DatabaseEntityVersionReader,
 )
@@ -177,7 +177,7 @@ def configure_application(log_dir: Optional[Path] = None) -> ServiceContainer:
         concurrency_tokens=concurrency_tokens,
         local_drafts=local_drafts,
         event_bus=event_bus,
-        supported_schema_version=LATEST_SQL_SCHEMA.version,
+        supported_schema_version=SQL_SCHEMA_V1.version,
     )
     container.register_instance("sql_collaboration_coordinator", collaboration)
     return container

@@ -22,11 +22,3 @@ class ISqlDatabaseCreator(Protocol):
         application_version: str,
         actor: str = "",
     ) -> SqlDatabaseCreationResult: ...
-    def initialize_compatible_database(
-        self,
-        location: SqlServerDatabaseLocation,
-        password: str = "",
-        *,
-        application_version: str,
-        actor: str = "",
-    ) -> SqlDatabaseCreationResult: ...

@@ -83,18 +83,14 @@ Database backends:
   semantics and explicit adapter routing live under `infrastructure/database`.
 - SQL connections and cursors are per-operation leases and must not cross
   threads or escape a transaction. Never retry an uncertain SQL write.
-- The only writable SQL schema is checksummed version 4. Fresh and externally
-  adopted compatible databases are initialized directly at version 4. Ordinary
-  open/create/adopt flows reject every older versioned schema. Because version 2
-  existed in committed builds, `schema_migrator.py` retains the exact immutable
-  version-2 and version-3 definitions plus explicit support-only transactional
-  2-to-3 and 3-to-4 migrations; they are not registered with the desktop runtime.
-  Schema initialization and isolated support migrations are serialized with
-  `sp_getapplock` and recorded under `ostv`.
+- The only SQL schema is checksummed version 1 in `SQL_SCHEMA_V1`. New databases
+  are initialized directly with that complete schema under the canonical
+  `sp_getapplock` schema lock. There are no SQL schema migrations, historical
+  schema definitions, compatibility aliases, or runtime upgrade paths. A
+  database that does not validate as canonical v1 must be recreated.
   `SchemaRegistry` remains product data and is not the SQL schema ledger.
-- External unversioned databases may be adopted only after strict core-schema
-  validation. Adoption transactionally adds the canonical `ostv` extension and
-  metadata without recreating or rewriting external `dbo` tables or rows.
+- External unversioned and older OST Visualizer SQL databases are not adopted or
+  upgraded by the desktop client.
 - Presence is informational and separate from locks. SQL write authorization
   must be enforced at the mutation boundary; toolbar/menu state is only a
   projection of the shared capability service.
@@ -105,8 +101,9 @@ Database backends:
   `db_owner`, schema-ledger mutation, database creation, or server administration.
 - `SqlCollaborationCoordinator` owns SQL sessions, heartbeat, presence, lock
   renewal, polling, checkpoints, reconnect, and shutdown. It runs only for SQL
-  descriptors, uses server UTC, stops and joins workers on unload/shutdown, and
-  crosses `QtCallbackBridge` before EventBus publication or UI changes.
+  descriptors, uses server UTC, drains workers outside the Qt thread on
+  unload/shutdown, and crosses `QtCallbackBridge` before EventBus publication or
+  UI changes. Cleanup failure is explicit and must not be reported as closed.
 - Long-lived SQL edit leases are requested and released through the coordinator's
   worker command queue; presentation code must not call the collaboration store
   or wait for SQL on the Qt thread. Access receives an immediate local grant.
@@ -116,17 +113,23 @@ Database backends:
   operation-specific `ChangeLog` records plus exactly one `ChangeTransactions`
   marker in one transaction. Change Tracking commit versions on the marker table
   are the only durable feed checkpoints; `ChangeLog.Sequence` is diagnostic row
-  order only. Access mutation execution preserves the existing MDB behavior and
-  creates no collaboration session.
+  order only. Each poll validates the feed epoch and minimum valid version,
+  captures its high-water version, enumerates markers, and hydrates their complete
+  payloads in one SQL `SNAPSHOT` transaction. Checkpoints advance only after a
+  successful main-thread reconciliation. Access mutation execution preserves the
+  existing MDB behavior and creates no collaboration session.
 - Remote application merges are targeted by entity family. Do not publish
   EventBus events from polling workers, add remote commands to local undo
   history, reset a same-bid 3D camera, or acknowledge a batch until main-thread
   reconciliation succeeds. External writers that bypass OST Visualizer are not
   represented in this change feed.
-- Version 4 retains the writer-mode gate introduced in version 3 and adds the
-  commit-ordered collaboration feed. Mixed-application editing must remain
-  disabled unless the external
-  change adapter and canonical resource-catalog checksum are validated.
+- Remote plan updates use the bounded plan-update pipeline: capture an immutable
+  page snapshot on the Qt thread, prepare color and render data on a worker, and
+  apply one generation-guarded scene projection on the Qt thread. The SQL feed
+  checkpoint remains pending until every registered plan surface completes.
+- Schema v1 includes the commit-ordered feed, writer-mode gate, and mandatory
+  snapshot isolation. Mixed-application editing must remain disabled unless the
+  external change adapter and canonical resource-catalog checksum are validated.
 
 State and identity:
 

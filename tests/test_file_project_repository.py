@@ -1,6 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from ost_visualizer.domain.entities.file_results import FileLoadResult
+from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
 from ost_visualizer.infrastructure.persistence.repositories import (
     file_project_repository,
 )
@@ -33,6 +34,42 @@ class FakeLifecycleParser:
 
 
 class MdbFileParserTests(unittest.TestCase):
+    def test_registering_late_sql_hierarchy_preserves_active_access_database(self):
+        class _Parser(FakeLifecycleParser):
+            def parse(self, file_path):
+                return FileLoadResult(
+                    success=True,
+                    parsed_hierarchy=HierarchyFileEntry(
+                        file_path=file_path,
+                        display_name="Access",
+                    ),
+                )
+
+        repository = FileProjectRepository(_Parser())
+        self.assertTrue(repository.load_file("access.mdb").success)
+        hierarchy = repository.register_loaded_hierarchy(
+            HierarchyFileEntry(file_path="sql-id", display_name="SQL"),
+            {},
+        )
+        self.assertEqual(repository.active_file_path, "access.mdb")
+        self.assertEqual(
+            [entry.file_path for entry in hierarchy.loaded_files],
+            ["access.mdb", "sql-id"],
+        )
+
+    def test_reconciling_same_sql_hierarchy_updates_one_repository_entry(self):
+        repository = FileProjectRepository(FakeLifecycleParser())
+        repository.register_loaded_hierarchy(
+            HierarchyFileEntry(file_path="sql-id", display_name="Original"),
+            {},
+        )
+        hierarchy = repository.register_loaded_hierarchy(
+            HierarchyFileEntry(file_path="sql-id", display_name="Updated"),
+            {},
+        )
+        self.assertEqual(len(hierarchy.loaded_files), 1)
+        self.assertEqual(hierarchy.loaded_files[0].display_name, "Updated")
+
     def test_bid_load_keeps_core_data_when_optional_layers_fail(self):
         parser = MdbFileParser(parser=FakeMdbReaderWithLayerFailure())
         with self.assertLogs(parser.logger, level="WARNING") as logs:

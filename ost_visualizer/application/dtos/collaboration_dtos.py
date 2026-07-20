@@ -4,6 +4,7 @@ from enum import Enum
 from typing import Generic, Optional, TypeVar
 from .collaboration_resource_catalog import resource_definition
 from ...domain.entities.area import BidArea
+from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
 from ...domain.entities.condition_folder import BidConditionFolder
 from ...domain.entities.file_results import BidLoadResult
@@ -42,6 +43,14 @@ class SynchronizationState(str, Enum):
     READ_ONLY = "read_only"
     CONFLICTED = "conflicted"
     RECONCILIATION_REQUIRED = "reconciliation_required"
+
+
+class CollaborationShutdownState(str, Enum):
+    RUNNING = "running"
+    STOP_REQUESTED = "stop_requested"
+    DRAINING = "draining"
+    CLOSED = "closed"
+    CLEANUP_FAILED = "cleanup_failed"
 
 
 @dataclass(frozen=True, order=True)
@@ -108,9 +117,50 @@ class ResourceLock:
 
 
 @dataclass(frozen=True)
+class EditLeaseRequest:
+    database_id: str
+    draft_id: str
+    operation_id: str
+    owning_surface: str
+    resources: tuple[ResourceRef, ...]
+    dependency_resources: tuple[ResourceRef, ...] = ()
+
+
+@dataclass(frozen=True)
+class EditLeaseHandle:
+    database_id: str
+    draft_id: str
+    runtime_generation: int
+    operation_id: str
+    owning_surface: str
+    resources: tuple[ResourceRef, ...]
+    dependency_resources: tuple[ResourceRef, ...] = ()
+    locks: tuple[ResourceLock, ...] = ()
+
+
+@dataclass(frozen=True)
+class EditLeaseLoss:
+    database_id: str
+    draft_id: str
+    runtime_generation: int
+    operation_id: str
+    owning_surface: str
+    resources: tuple[ResourceRef, ...]
+    reason: str
+
+
+@dataclass(frozen=True)
 class EditLeaseResult:
     granted: bool
     message: str = ""
+    handle: Optional[EditLeaseHandle] = None
+
+    def __post_init__(self) -> None:
+        if self.granted != (self.handle is not None):
+            raise ValueError(
+                "A granted edit lease requires its handle, and a denial cannot "
+                "carry a handle."
+            )
 
 
 @dataclass(frozen=True)
@@ -147,6 +197,7 @@ class HydratedDatabaseChangeBatch:
     areas_by_bid: dict[int, tuple[BidArea, ...]] = field(default_factory=dict)
     bid_data_by_bid: dict[int, BidLoadResult] = field(default_factory=dict)
     hierarchy_file: Optional[HierarchyFileEntry] = None
+    cdn_types: dict[str, CdnType] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -13,7 +13,6 @@ class SqlErrorCode(str, Enum):
     PERMISSION_DENIED = "permission_denied"
     TIMEOUT = "timeout"
     SCHEMA_MISMATCH = "schema_mismatch"
-    UNSUPPORTED_SCHEMA = "unsupported_schema"
     CREDENTIAL_MISSING = "credential_missing"
     LOCKED = "locked"
     SESSION_EXPIRED = "session_expired"
@@ -49,7 +48,6 @@ class SqlInfrastructureError(DatabaseCatalogError):
             in {
                 SqlErrorCode.PERMISSION_DENIED,
                 SqlErrorCode.SCHEMA_MISMATCH,
-                SqlErrorCode.UNSUPPORTED_SCHEMA,
             },
         )
         self.details = details

@@ -1,10 +1,20 @@
 import unittest
+from types import SimpleNamespace
 from ost_visualizer.application.dtos.collaboration_dtos import (
     CollaborationStatus,
+    EditLeaseHandle,
+    EditLeaseLoss,
     EditLeaseResult,
+    ResourceRef,
     SynchronizationState,
 )
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
+from ost_visualizer.application.dtos.remote_projection_dtos import (
+    RemoteProjectionBarrier,
+)
+from ost_visualizer.application.dtos.collaboration_resource_catalog import (
+    CollaborationResourceFamily,
+)
 from ost_visualizer.application.services.project_write_service import WriteReloadResult
 from ost_visualizer.domain.entities.annotation import ANNOTATION_TYPE_TEXT
 from ost_visualizer.domain.entities.hierarchy_data import (
@@ -99,6 +109,7 @@ class FakeViewer:
         self.changed_annotation_uids = []
         self.changed_annotation_types = []
         self.viewer_pages = []
+        self.remote_requests = []
 
     def update_plan_view(
         self,
@@ -138,6 +149,11 @@ class FakeViewer:
     def update_viewers(self, page_uids):
         self.viewer_pages.append(list(page_uids))
 
+    def request_remote_plan_update(self, **request):
+        self.remote_requests.append(request)
+        request["completion"](True)
+        return True
+
 
 class FakeMeshReceiver:
     def __init__(self, visible=True):
@@ -161,6 +177,14 @@ class FakeSignal:
 
     def connect(self, callback):
         self.callbacks.append(callback)
+
+
+class _CollaborationStatusPanel:
+    def __init__(self):
+        self.states = []
+
+    def set_collaboration_state(self, state, message=""):
+        self.states.append((state, message))
 
 
 class FakeConstructedMeshWindow:
@@ -288,6 +312,7 @@ class FakeProjectView:
         self.loaded_files = []
         self.restored_bid = None
         self.selected_node = None
+        self.selection_notifications = 0
 
     def build_complete_structure(self, loaded_files):
         self.builds += 1
@@ -309,6 +334,9 @@ class FakeProjectView:
             "file_path": bid_ref.file_path,
             "bid_uid": bid_ref.bid_uid,
         }
+
+    def notify_current_selection(self):
+        self.selection_notifications += 1
 
     def get_selected_node_state(self):
         return self.selected_node
@@ -543,6 +571,64 @@ class FakeRefreshNav:
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_async_sql_only_hierarchy_selects_the_database_root(self):
+        database_id = "sql-database"
+        project_view = FakeProjectView()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.main_window = SimpleNamespace(project_view=project_view)
+        coordinator.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: None,
+            get_current_file_path=lambda: database_id,
+            get_hierarchy=lambda: HierarchyData(
+                loaded_files=[HierarchyFileEntry(file_path=database_id)]
+            ),
+        )
+        coordinator.ui_state_manager = SimpleNamespace(selected_file_path=None)
+        coordinator._cache_bid_data = lambda _loaded_files: None
+        coordinator._on_remote_hierarchy_changed(database_id)
+        self.assertEqual(project_view.builds, 1)
+        self.assertEqual(
+            [loaded.file_path for loaded in project_view.loaded_files],
+            [database_id],
+        )
+        self.assertEqual(project_view.restored_file, database_id)
+        self.assertEqual(project_view.selection_notifications, 1)
+
+    def test_stale_sql_failure_does_not_replace_active_access_selection(self):
+        panel = _CollaborationStatusPanel()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path="C:/projects/active.mdb"
+        )
+        coordinator._status_panel = panel
+        coordinator._on_collaboration_state_changed(
+            database_id="sql-database-id",
+            state=SynchronizationState.DISCONNECTED.value,
+            message="server unavailable",
+        )
+        self.assertEqual(
+            coordinator.ui_state_manager.selected_file_path,
+            "C:/projects/active.mdb",
+        )
+        self.assertEqual(panel.states, [])
+
+    def test_selected_sql_failure_projects_disconnected_state(self):
+        panel = _CollaborationStatusPanel()
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_file_path="sql-database-id"
+        )
+        coordinator._status_panel = panel
+        coordinator._on_collaboration_state_changed(
+            database_id="sql-database-id",
+            state=SynchronizationState.DISCONNECTED.value,
+            message="server unavailable",
+        )
+        self.assertEqual(
+            panel.states,
+            [(SynchronizationState.DISCONNECTED.value, "server unavailable")],
+        )
+
     def test_denied_collaboration_lease_reports_the_store_message(self):
         warnings = []
         callbacks = []
@@ -570,7 +656,9 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             )
         finally:
             ui_event_coordinator.show_warning = old_warning
-        self.assertEqual(callbacks, [False])
+        self.assertEqual(
+            callbacks, [EditLeaseResult(False, "The resource is already being edited.")]
+        )
         self.assertEqual(len(warnings), 1)
         self.assertIn("already being edited", warnings[0][2])
 
@@ -578,6 +666,15 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         callbacks = []
         warnings = []
         pending = []
+        released = []
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="edit",
+            owning_surface="test",
+            resources=(),
+        )
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._is_cleaning_up = False
         coordinator.main_window = object()
@@ -587,7 +684,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             {
                 "request_local_edit": lambda _self, _database_id, _resources, callback, **_kwargs: pending.append(
                     callback
-                )
+                ),
+                "end_edit_lease": lambda _self, lease_handle: released.append(
+                    lease_handle
+                ),
             },
         )()
         from ost_visualizer.presentation.coordinators import ui_event_coordinator
@@ -601,10 +701,18 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
                 callbacks.append,
             )
             coordinator._is_cleaning_up = True
-            pending[0](EditLeaseResult(True))
+            pending[0](EditLeaseResult(True, handle=handle))
         finally:
             ui_event_coordinator.show_warning = old_warning
-        self.assertEqual(callbacks, [False])
+        self.assertEqual(
+            callbacks,
+            [
+                EditLeaseResult(
+                    False, "The edit was cancelled while the view was closing."
+                )
+            ],
+        )
+        self.assertEqual(released, [handle])
         self.assertEqual(warnings, [])
 
     def test_inactive_database_reconciliation_does_not_replace_active_project_state(
@@ -612,6 +720,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
     ):
         reloads = []
         cancelled = []
+        resumed = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.project_data = type(
             "ProjectData",
@@ -639,10 +748,70 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.event_bus = type(
             "EventBus", (), {"publish": lambda _self, *_args, **_kwargs: None}
         )()
+        coordinator._sql_collaboration = type(
+            "Collaboration",
+            (),
+            {
+                "resume_controlled_recovery": lambda _self, database_id: (
+                    resumed.append(database_id) or True
+                )
+            },
+        )()
         coordinator.main_window = object()
         coordinator._on_full_reconciliation_required("inactive-database", "gap")
         self.assertEqual(cancelled, ["inactive-database"])
+        self.assertEqual(resumed, ["inactive-database"])
         self.assertEqual(reloads, [])
+
+    def test_active_database_reconciliation_never_reloads_sql_on_the_qt_thread(self):
+        cancelled = []
+        resumed = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.project_data = type(
+            "ProjectData",
+            (),
+            {"get_current_file_path": lambda _self: "database"},
+        )()
+        coordinator._deferred_persistence = type(
+            "Persistence",
+            (),
+            {
+                "cancel_for_file": lambda _self, database_id: cancelled.append(
+                    database_id
+                )
+            },
+        )()
+        coordinator.project_operations = type(
+            "Operations",
+            (),
+            {
+                "reload_database": lambda _self, _database_id: self.fail(
+                    "SQL recovery must remain on the collaboration worker"
+                )
+            },
+        )()
+        coordinator._sql_collaboration = type(
+            "Collaboration",
+            (),
+            {
+                "resume_controlled_recovery": lambda _self, database_id: (
+                    resumed.append(database_id) or True
+                )
+            },
+        )()
+        coordinator.event_bus = type(
+            "EventBus",
+            (),
+            {
+                "publish": lambda _self, *_args, **_kwargs: self.fail(
+                    "Recovery must not publish the normal reload event"
+                )
+            },
+        )()
+        coordinator.main_window = object()
+        coordinator._on_full_reconciliation_required("database", "gap")
+        self.assertEqual(cancelled, ["database"])
+        self.assertEqual(resumed, ["database"])
 
     def test_inactive_database_lease_loss_cancels_only_its_deferred_writes(self):
         cancelled = []
@@ -667,7 +836,17 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             (),
             {"force_exit": lambda _self: placement_exits.append(True)},
         )()
-        coordinator._on_edit_lease_lost("inactive-database")
+        coordinator._on_edit_lease_lost(
+            EditLeaseLoss(
+                database_id="inactive-database",
+                draft_id="draft",
+                runtime_generation=1,
+                operation_id="edit-condition",
+                owning_surface="detached-view",
+                resources=(ResourceRef("condition", "42", 8),),
+                reason="trust-lost",
+            )
+        )
         self.assertEqual(cancelled, ["inactive-database"])
         self.assertEqual(placement_exits, [])
 
@@ -835,6 +1014,101 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator._sidebar.condition_summary_loads, 0)
         self.assertEqual(coordinator.main_window.menu_controller.updates, 1)
         self.assertEqual(coordinator._toolbar.refreshes, 1)
+
+    def test_remote_transaction_defers_to_one_plan_projection(self):
+        database_id = "sql-db"
+        bid_uid = "bid-1"
+
+        class SelectedUiState(FakeUiState):
+            def get_selected_bid_ref(self):
+                return BidRef(database_id, bid_uid)
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SelectedUiState()
+        coordinator.project_data = FakeProjectData()
+        coordinator.takeoff_sidebar = FakeTakeoffSidebar()
+        coordinator._page_settings_bar = FakePageSettingsBar()
+        coordinator._viewer = FakeViewer()
+        coordinator._sidebar = FakeSidebar()
+        coordinator._toolbar = FakeToolbar()
+        coordinator.main_window = FakeMainWindow()
+        coordinator.plan_view = object()
+        coordinator._is_cleaning_up = False
+        coordinator._undo_service = None
+        coordinator._pending_hotlink_page_uid = None
+        coordinator._pending_hotlink_named_view = None
+        coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
+        configure_mesh_state(coordinator)
+        completed = []
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=3,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=completed.append,
+        )
+        coordinator._on_remote_bid_content_changed(
+            database_id=database_id,
+            bid_uid=bid_uid,
+            families=[CollaborationResourceFamily.TAKEOFFS.value],
+            resource_uids_by_family={
+                CollaborationResourceFamily.TAKEOFFS.value: ["takeoff-1"]
+            },
+            defer_plan_projection=True,
+        )
+        self.assertEqual(coordinator._viewer.plan_pages, [])
+        coordinator._on_remote_plan_projection_requested(
+            database_id=database_id,
+            bid_uid=bid_uid,
+            runtime_generation=3,
+            families=(CollaborationResourceFamily.TAKEOFFS.value,),
+            condition_uids=(),
+            resource_uids_by_family={
+                CollaborationResourceFamily.TAKEOFFS.value: ("takeoff-1",)
+            },
+            barrier=barrier,
+        )
+        barrier.seal()
+        self.assertEqual(len(coordinator._viewer.remote_requests), 1)
+        self.assertEqual(completed, [True])
+
+    def test_remote_projection_request_failure_releases_registered_surface(self):
+        database_id = "sql-db"
+        bid_uid = "bid-1"
+
+        class SelectedUiState(FakeUiState):
+            def get_selected_bid_ref(self):
+                return BidRef(database_id, bid_uid)
+
+        class RaisingViewer:
+            def request_remote_plan_update(self, **_request):
+                raise RuntimeError("snapshot failed")
+
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SelectedUiState()
+        coordinator._viewer = RaisingViewer()
+        coordinator.plan_view = object()
+        coordinator._is_cleaning_up = False
+        completed = []
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=3,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=completed.append,
+        )
+        with self.assertRaisesRegex(RuntimeError, "snapshot failed"):
+            coordinator._on_remote_plan_projection_requested(
+                database_id=database_id,
+                bid_uid=bid_uid,
+                runtime_generation=3,
+                families=(CollaborationResourceFamily.TAKEOFFS.value,),
+                condition_uids=(),
+                resource_uids_by_family={
+                    CollaborationResourceFamily.TAKEOFFS.value: ("takeoff-1",)
+                },
+                barrier=barrier,
+            )
+        barrier.seal()
+        self.assertEqual(completed, [False])
 
     def test_takeoffs_changed_loads_summary_when_summary_tab_is_active(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

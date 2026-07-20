@@ -9,7 +9,7 @@ from ...application.interfaces.i_entity_version_reader import IEntityVersionRead
 from ...domain.entities.database_descriptor import DatabaseBackend
 from ..sql.connection_manager import SqlConnectionManager
 from ..sql.descriptor_connection import SqlDescriptorConnectionFactory
-from ..sql.schema_definition import LATEST_SQL_SCHEMA
+from ..sql.schema_definition import SQL_SCHEMA_V1
 
 
 class DatabaseEntityVersionReader(IEntityVersionReader):
@@ -42,7 +42,7 @@ class DatabaseEntityVersionReader(IEntityVersionReader):
         if (
             descriptor is None
             or descriptor.backend != DatabaseBackend.SQL_SERVER
-            or descriptor.schema_version != LATEST_SQL_SCHEMA.version
+            or descriptor.schema_version != SQL_SCHEMA_V1.version
         ):
             return {}
         request = self._requests.request(database_id, read_only=True)

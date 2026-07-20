@@ -140,19 +140,9 @@ class FileState:
             state.file_entries = deduplicate_entries(raw)
         return state
 
-    def get_checked_files(self) -> List[str]:
-        return [
-            entry.file_path
-            for entry in self.file_entries
-            if entry.is_checked and entry.backend == DatabaseBackend.ACCESS
-        ]
-
     def contains_path(self, file_path: str) -> bool:
         norm = normalize_path(file_path)
         return any(e.normalized_path == norm for e in self.file_entries)
-
-    def clear(self) -> None:
-        self.file_entries.clear()
 
 
 def _saved_checked(data: dict) -> bool:

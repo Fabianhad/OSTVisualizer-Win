@@ -72,6 +72,9 @@ class SqlSchemaInventory:
     check_constraints: tuple[SqlCheckConstraintInventory, ...] = ()
     change_tracking_enabled: bool = False
     change_tracking_tables: frozenset[tuple[str, str]] = frozenset()
+    snapshot_isolation_enabled: bool = False
+    change_tracking_retention_days: int = 0
+    change_tracking_auto_cleanup: bool = False
 
     def dbo_columns(self) -> dict[str, dict[str, SqlColumnInventory]]:
         result: dict[str, dict[str, SqlColumnInventory]] = {}
@@ -119,24 +122,27 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
     database_guid = str(guid_row[0]) if guid_row and guid_row[0] else ""
     cursor.execute(
         "SELECT s.name, t.name FROM sys.tables t "
-        "JOIN sys.schemas s ON s.schema_id=t.schema_id"
+        "JOIN sys.schemas s ON s.schema_id=t.schema_id "
+        "WHERE t.is_ms_shipped=0"
     )
     tables = frozenset((str(row[0]), str(row[1])) for row in cursor.fetchall())
     schema_version = 0
     schema_checksum = ""
-    if ("ostv", "DatabaseMetadata") in tables:
+    if ("ostv", "DatabaseMetadata") in tables and (
+        "ostv",
+        "SchemaMigrations",
+    ) in tables:
         cursor.execute(
-            "SELECT COALESCE(MAX([SchemaVersion]), 0) " "FROM [ostv].[DatabaseMetadata]"
+            "SELECT m.[SchemaVersion], s.[Checksum] "
+            "FROM [ostv].[DatabaseMetadata] m "
+            "JOIN [ostv].[SchemaMigrations] s "
+            "ON s.[Version]=m.[SchemaVersion] "
+            "WHERE m.[Product]=N'OST Visualizer'"
         )
-        version_row = cursor.fetchone()
-        schema_version = int(version_row[0] or 0) if version_row else 0
-        if ("ostv", "SchemaMigrations") in tables and schema_version:
-            cursor.execute(
-                "SELECT [Checksum] FROM [ostv].[SchemaMigrations] " "WHERE [Version]=?",
-                schema_version,
-            )
-            checksum_row = cursor.fetchone()
-            schema_checksum = str(checksum_row[0]) if checksum_row is not None else ""
+        schema_row = cursor.fetchone()
+        if schema_row is not None:
+            schema_version = int(schema_row[0] or 0)
+            schema_checksum = str(schema_row[1] or "")
     cursor.execute(
         "SELECT s.name, t.name, c.name, ty.name, "
         "c.max_length, c.scale, c.is_nullable, "
@@ -146,6 +152,7 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
         "JOIN sys.types ty ON ty.user_type_id=c.user_type_id "
         "LEFT JOIN sys.default_constraints dc ON dc.parent_object_id=t.object_id "
         "AND dc.parent_column_id=c.column_id "
+        "WHERE t.is_ms_shipped=0 "
         "ORDER BY s.name, t.name, c.column_id"
     )
     columns = tuple(
@@ -176,6 +183,7 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
         "JOIN sys.schemas ps ON ps.schema_id=pt.schema_id "
         "JOIN sys.columns pc ON pc.object_id=pt.object_id "
         "AND pc.column_id=fkc.referenced_column_id "
+        "WHERE ct.is_ms_shipped=0 AND pt.is_ms_shipped=0 "
         "ORDER BY fk.name, fkc.constraint_column_id"
     )
     foreign_keys = tuple(
@@ -191,7 +199,8 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
         "AND ic.index_id=i.index_id AND ic.key_ordinal > 0 "
         "JOIN sys.columns c ON c.object_id=i.object_id "
         "AND c.column_id=ic.column_id "
-        "WHERE i.name IS NOT NULL ORDER BY s.name, t.name, i.name, ic.key_ordinal"
+        "WHERE t.is_ms_shipped=0 AND i.name IS NOT NULL "
+        "ORDER BY s.name, t.name, i.name, ic.key_ordinal"
     )
     indexes = _group_indexes(cursor.fetchall())
     views = _modules(cursor, "V")
@@ -201,7 +210,8 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
         "SELECT s.name, tr.name FROM sys.triggers tr "
         "JOIN sys.objects parent ON parent.object_id=tr.parent_id "
         "JOIN sys.schemas s ON s.schema_id=parent.schema_id "
-        "WHERE tr.parent_class=1 ORDER BY s.name, tr.name"
+        "WHERE tr.parent_class=1 AND tr.is_ms_shipped=0 "
+        "AND parent.is_ms_shipped=0 ORDER BY s.name, tr.name"
     )
     triggers = tuple(
         SqlModuleInventory(str(row[0]), str(row[1])) for row in cursor.fetchall()
@@ -211,6 +221,7 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
         "FROM sys.check_constraints cc "
         "JOIN sys.tables t ON t.object_id=cc.parent_object_id "
         "JOIN sys.schemas s ON s.schema_id=t.schema_id "
+        "WHERE t.is_ms_shipped=0 "
         "ORDER BY s.name, t.name, cc.name"
     )
     check_constraints = tuple(
@@ -218,15 +229,29 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
         for row in cursor.fetchall()
     )
     cursor.execute(
-        "SELECT CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_databases "
-        "WHERE database_id=DB_ID()) THEN 1 ELSE 0 END"
+        "SELECT [snapshot_isolation_state] FROM sys.databases "
+        "WHERE [database_id]=DB_ID()"
+    )
+    snapshot_row = cursor.fetchone()
+    snapshot_isolation_enabled = bool(snapshot_row and int(snapshot_row[0]) == 1)
+    cursor.execute(
+        "SELECT [retention_period], [retention_period_units_desc], "
+        "[is_auto_cleanup_on] FROM sys.change_tracking_databases "
+        "WHERE [database_id]=DB_ID()"
     )
     tracking_row = cursor.fetchone()
-    change_tracking_enabled = bool(tracking_row and tracking_row[0])
+    change_tracking_enabled = tracking_row is not None
+    change_tracking_retention_days = 0
+    change_tracking_auto_cleanup = False
+    if tracking_row is not None:
+        units = str(tracking_row[1]).casefold()
+        change_tracking_retention_days = int(tracking_row[0]) if units == "days" else -1
+        change_tracking_auto_cleanup = bool(tracking_row[2])
     cursor.execute(
         "SELECT s.[name], t.[name] FROM sys.change_tracking_tables ct "
         "JOIN sys.tables t ON t.[object_id]=ct.[object_id] "
-        "JOIN sys.schemas s ON s.[schema_id]=t.[schema_id]"
+        "JOIN sys.schemas s ON s.[schema_id]=t.[schema_id] "
+        "WHERE t.[is_ms_shipped]=0"
     )
     change_tracking_tables = frozenset(
         (str(row[0]), str(row[1])) for row in cursor.fetchall()
@@ -246,6 +271,9 @@ def _read_inventory(cursor) -> SqlSchemaInventory:
         check_constraints=check_constraints,
         change_tracking_enabled=change_tracking_enabled,
         change_tracking_tables=change_tracking_tables,
+        snapshot_isolation_enabled=snapshot_isolation_enabled,
+        change_tracking_retention_days=change_tracking_retention_days,
+        change_tracking_auto_cleanup=change_tracking_auto_cleanup,
     )
 
 
@@ -280,7 +308,8 @@ def _modules(cursor, *module_types: str) -> tuple[SqlModuleInventory, ...]:
     cursor.execute(
         "SELECT s.name, o.name FROM sys.objects o "
         "JOIN sys.schemas s ON s.schema_id=o.schema_id "
-        f"WHERE o.type IN ({placeholders}) ORDER BY s.name, o.name",
+        f"WHERE o.is_ms_shipped=0 AND o.type IN ({placeholders}) "
+        "ORDER BY s.name, o.name",
         *module_types,
     )
     return tuple(

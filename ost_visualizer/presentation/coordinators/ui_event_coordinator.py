@@ -4,7 +4,17 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QObject, Signal
 from ...application.dtos.mesh_geometry_dto import MeshGeometry
-from ...application.dtos.collaboration_dtos import ResourceRef, SynchronizationState
+from ...application.dtos.remote_projection_dtos import (
+    RemoteProjectionBarrier,
+    RemoteProjectionToken,
+)
+from ...application.dtos.collaboration_dtos import (
+    EditLeaseHandle,
+    EditLeaseLoss,
+    EditLeaseResult,
+    ResourceRef,
+    SynchronizationState,
+)
 from ...application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
     CollaborationResourceType,
@@ -131,6 +141,7 @@ class UIEventCoordinator:
         project_read_service,
         deferred_persistence_manager,
         sql_collaboration_coordinator,
+        plan_update_callback_bridge,
     ):
         self.main_window = main_window
         self.ui_state_manager = ui_state_manager
@@ -161,6 +172,7 @@ class UIEventCoordinator:
             color_service,
             self.project_data,
             self.visualization_service,
+            plan_update_callback_bridge,
         )
         self._toolbar = ToolbarStateCoordinator(
             ui_state_manager, ui_access_manager, self.project_data
@@ -1144,6 +1156,10 @@ class UIEventCoordinator:
             self._on_remote_hierarchy_changed,
         )
         self._subscribe(
+            AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+            self._on_remote_plan_projection_requested,
+        )
+        self._subscribe(
             AppEvents.COLLABORATION_STATE_CHANGED,
             self._on_collaboration_state_changed,
         )
@@ -1181,11 +1197,22 @@ class UIEventCoordinator:
         self,
         database_id: str,
         resources: tuple[ResourceRef, ...],
-        callback: Callable[[bool], None],
+        callback: Callable[[EditLeaseResult], None],
+        *,
+        dependency_resources: tuple[ResourceRef, ...] = (),
+        operation_id: str = "",
+        owning_surface: str = "desktop",
     ) -> None:
-        def resolved(result) -> None:
+        def resolved(result: EditLeaseResult) -> None:
             if self._is_cleaning_up:
-                callback(False)
+                if result.handle is not None:
+                    self._sql_collaboration.end_edit_lease(result.handle)
+                callback(
+                    EditLeaseResult(
+                        False,
+                        "The edit was cancelled while the view was closing.",
+                    )
+                )
                 return
             if not result.granted:
                 show_warning(
@@ -1193,18 +1220,19 @@ class UIEventCoordinator:
                     "Editing Unavailable",
                     result.message or "The edit lease could not be acquired.",
                 )
-            callback(result.granted)
+            callback(result)
 
         self._sql_collaboration.request_local_edit(
             database_id,
             resources,
             resolved,
+            dependency_resources=dependency_resources,
+            operation_id=operation_id,
+            owning_surface=owning_surface,
         )
 
-    def end_collaboration_edit(
-        self, database_id: str, resources: tuple[ResourceRef, ...]
-    ) -> None:
-        self._sql_collaboration.end_local_edit(database_id, resources)
+    def end_collaboration_edit(self, handle: EditLeaseHandle) -> None:
+        self._sql_collaboration.end_edit_lease(handle)
 
     def _exec_with_collaboration_lease(
         self,
@@ -1214,21 +1242,27 @@ class UIEventCoordinator:
         cleanup: Callable[[], None],
         after_close: Optional[Callable[[bool], None]] = None,
     ) -> None:
-        def resolved(granted: bool) -> None:
+        def resolved(result: EditLeaseResult) -> None:
             executed = False
             try:
-                if granted:
+                if result.granted:
                     exec_with_ost_blocking(dialog, self.event_bus)
                     executed = True
             finally:
-                if granted:
-                    self.end_collaboration_edit(database_id, resources)
+                if result.handle is not None:
+                    self.end_collaboration_edit(result.handle)
                 if after_close is not None:
                     after_close(executed)
                 cleanup()
                 dialog.deleteLater()
 
-        self.request_collaboration_edit(database_id, resources, resolved)
+        self.request_collaboration_edit(
+            database_id,
+            resources,
+            resolved,
+            operation_id=type(dialog).__name__,
+            owning_surface="main-window-dialog",
+        )
 
     def can_renumber_conditions(self) -> bool:
         return self._condition_handler.can_renumber_conditions()
@@ -1782,17 +1816,18 @@ class UIEventCoordinator:
         takeoff_uids: list | None = None,
         condition_uids: list | None = None,
         update_shell: bool = True,
+        update_plan: bool = True,
     ) -> None:
         page_uid = page_uid or self.ui_state_manager.active_page_uid
         if page_uid:
             self._refresh_takeoff_dependent_page_controls(page_uid)
-        if page_uid:
+        if update_plan and page_uid:
             self._update_plan_view(
                 page_uid,
                 condition_uids=condition_uids,
                 takeoff_uids=takeoff_uids,
             )
-        else:
+        elif update_plan:
             self._update_plan_view_for_active(
                 condition_uids=condition_uids,
                 takeoff_uids=takeoff_uids,
@@ -1813,6 +1848,7 @@ class UIEventCoordinator:
         bid_uid: str = "",
         families: Optional[List[str]] = None,
         resource_uids_by_family: Optional[Dict[str, List[str]]] = None,
+        defer_plan_projection: bool = False,
     ) -> None:
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid):
@@ -1828,6 +1864,7 @@ class UIEventCoordinator:
                     changed_uids.get(CollaborationResourceFamily.TAKEOFFS.value) or None
                 ),
                 update_shell=False,
+                update_plan=not defer_plan_projection,
             )
         if CollaborationResourceFamily.ANNOTATIONS.value in changed_families:
             self._on_annotations_changed(
@@ -1837,6 +1874,7 @@ class UIEventCoordinator:
                     or None
                 ),
                 update_shell=False,
+                update_plan=not defer_plan_projection,
             )
         if CollaborationResourceFamily.PAGES.value in changed_families:
             valid_pages = [
@@ -1858,7 +1896,8 @@ class UIEventCoordinator:
             )
             if active_page:
                 self._update_page_settings_bar(active_page)
-                self._update_plan_view(active_page)
+                if not defer_plan_projection:
+                    self._update_plan_view(active_page)
             else:
                 self._viewer.clear_viewer()
         if (
@@ -1870,7 +1909,8 @@ class UIEventCoordinator:
                 used_uids=self.project_data.get_layer_uids_in_use(),
             )
             self._sidebar.refresh_conditions_from_memory()
-            self._update_plan_view_for_active()
+            if not defer_plan_projection:
+                self._update_plan_view_for_active()
         self._update_export_menu_state()
         self._restore_project_tree_bid_selection_if_needed()
 
@@ -1880,12 +1920,14 @@ class UIEventCoordinator:
         annotation_uids: Optional[List[str]] = None,
         annotation_types: Optional[List[str]] = None,
         update_shell: bool = True,
+        update_plan: bool = True,
     ) -> None:
-        self._update_plan_view_annotations(
-            page_uid,
-            annotation_uids=annotation_uids,
-            annotation_types=annotation_types,
-        )
+        if update_plan:
+            self._update_plan_view_annotations(
+                page_uid,
+                annotation_uids=annotation_uids,
+                annotation_types=annotation_types,
+            )
         if update_shell:
             self._update_export_menu_state()
             self._restore_project_tree_bid_selection_if_needed()
@@ -1895,6 +1937,7 @@ class UIEventCoordinator:
         database_id: str = "",
         bid_uid: str = "",
         condition_uids: Optional[List[str]] = None,
+        defer_plan_projection: bool = False,
     ) -> None:
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid):
@@ -1907,7 +1950,8 @@ class UIEventCoordinator:
         self.ui_state_manager.highlighted_condition_uids = valid_highlights
         self._sidebar.refresh_conditions_from_memory()
         self.highlight_sidebar(valid_highlights, reveal=False)
-        self._update_plan_view_for_active(condition_uids=condition_uids)
+        if not defer_plan_projection:
+            self._update_plan_view_for_active(condition_uids=condition_uids)
         self._update_export_menu_state()
 
     def _on_remote_areas_changed(
@@ -1915,8 +1959,9 @@ class UIEventCoordinator:
         database_id: str = "",
         bid_uid: str = "",
         area_uids: Optional[List[str]] = None,
+        defer_plan_projection: bool = False,
     ) -> None:
-        del area_uids
+        del area_uids, defer_plan_projection
         selected = self.ui_state_manager.get_selected_bid_ref()
         if selected != BidRef(database_id, bid_uid) or not self._page_settings_bar:
             return
@@ -1947,8 +1992,9 @@ class UIEventCoordinator:
 
     def _on_edit_lease_lost(
         self,
-        database_id: str = "",
+        loss: EditLeaseLoss,
     ) -> None:
+        database_id = loss.database_id
         self._deferred_persistence.cancel_for_file(database_id)
         if database_id != (self.ui_state_manager.selected_file_path or ""):
             return
@@ -1970,10 +2016,12 @@ class UIEventCoordinator:
         self, database_id: str = "", reason: str = ""
     ) -> None:
         self._deferred_persistence.cancel_for_file(database_id)
+        recovery_started = self._sql_collaboration.resume_controlled_recovery(
+            database_id
+        )
         if database_id != self.project_data.get_current_file_path():
             return
-        if self.project_operations.reload_database(database_id):
-            self.event_bus.publish(AppEvents.DATABASE_REFRESHED, file_path=database_id)
+        if recovery_started:
             return
         show_warning(
             self.main_window,
@@ -1981,16 +2029,85 @@ class UIEventCoordinator:
             reason or "The SQL database could not be reconciled safely.",
         )
 
-    def _on_remote_hierarchy_changed(self, database_id: str = "") -> None:
+    def _on_remote_hierarchy_changed(
+        self,
+        database_id: str = "",
+        defer_plan_projection: bool = False,
+    ) -> None:
+        del defer_plan_projection
         active_bid = self.project_data.get_current_bid_ref()
         self._do_file_refresh()
-        if active_bid is None or active_bid.file_path != database_id:
+        if active_bid is None:
+            if (
+                not self.ui_state_manager.selected_file_path
+                and self.project_data.get_current_file_path() == database_id
+            ):
+                self.main_window.project_view.restore_file_selection(database_id)
+                self.main_window.project_view.notify_current_selection()
+            return
+        if active_bid.file_path != database_id:
             return
         if self.project_data.get_bid(active_bid) is not None:
             self.main_window.project_view.restore_bid_selection(active_bid)
             return
         self._on_file_selected(database_id, is_database_root=True)
         self.main_window.project_view.restore_file_selection(database_id)
+
+    def _on_remote_plan_projection_requested(
+        self,
+        database_id: str,
+        bid_uid: str,
+        runtime_generation: int,
+        families: tuple[str, ...],
+        condition_uids: tuple[str, ...],
+        resource_uids_by_family: dict[str, tuple[str, ...]],
+        barrier: RemoteProjectionBarrier,
+    ) -> None:
+        if (
+            self._is_cleaning_up
+            or self.ui_state_manager.get_selected_bid_ref()
+            != BidRef(database_id, bid_uid)
+            or not self.ui_state_manager.active_page_uid
+            or self.plan_view is None
+        ):
+            return
+        token = barrier.register("main-plan")
+        try:
+            accepted = self._viewer.request_remote_plan_update(
+                database_id=database_id,
+                runtime_generation=runtime_generation,
+                bid_uid=bid_uid,
+                resource_uids_by_family=resource_uids_by_family,
+                barrier=barrier,
+                completion=lambda success: self._complete_remote_plan_projection(
+                    token,
+                    success,
+                    condition_uids,
+                    CollaborationResourceFamily.TAKEOFFS.value in families,
+                ),
+            )
+        except Exception:
+            token.complete(False)
+            raise
+        if not accepted:
+            token.complete(False)
+
+    def _complete_remote_plan_projection(
+        self,
+        token: RemoteProjectionToken,
+        success: bool,
+        condition_uids: tuple[str, ...],
+        takeoffs_changed: bool,
+    ) -> None:
+        if success and not self._is_cleaning_up:
+            self._apply_pending_hotlink_named_view_focus(require_stable=True)
+            if condition_uids:
+                self._sidebar.update_conditions_quantities(
+                    condition_uids=list(condition_uids)
+                )
+            elif takeoffs_changed:
+                self._sidebar.update_conditions_quantities()
+        token.complete(success)
 
     def _on_synchronization_conflict(
         self,

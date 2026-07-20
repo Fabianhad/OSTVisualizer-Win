@@ -4,6 +4,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from ...domain.aggregates.ost_aggregate import OstAggregate
 from ...domain.entities.area import BidArea, is_unassigned_area_uid, normalize_area_uid
 from ...domain.entities.bid import Bid
+from ...domain.entities.cdn_type import CdnType
 from ...domain.entities.condition import Condition
 from ...domain.entities.hierarchy_data import HierarchyData, HierarchyFileEntry
 from ...domain.entities.identity_refs import BidRef
@@ -95,18 +96,18 @@ class ProjectDataService:
     def get_hierarchy(self) -> HierarchyData:
         return self.model.get_hierarchy_data()
 
-    def replace_database_hierarchy(self, file_entry: HierarchyFileEntry) -> None:
-        current = self.model.get_hierarchy_data()
-        loaded_files = [
-            file_entry if existing.file_path == file_entry.file_path else existing
-            for existing in current.loaded_files
-        ]
-        if all(
-            existing.file_path != file_entry.file_path
-            for existing in current.loaded_files
-        ):
-            loaded_files.append(file_entry)
-        hierarchy = HierarchyData(loaded_files=loaded_files)
+    def replace_database_hierarchy(
+        self,
+        file_entry: HierarchyFileEntry,
+        cdn_types: Dict[str, CdnType],
+    ) -> None:
+        hierarchy = self.model.file_manager.register_loaded_hierarchy(
+            file_entry,
+            cdn_types,
+        )
+        self.model.cdn_types = (
+            self.model.file_manager.project_repository.get_merged_cdn_types()
+        )
         self.model.set_hierarchy(hierarchy)
         self.model.projects = build_projects(hierarchy)
 

@@ -117,8 +117,11 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         areas_by_bid = {}
         bid_data_by_bid = {}
         hierarchy_file = None
+        hierarchy_cdn_types = {}
         if needs_hierarchy:
-            hierarchy_file, _cdn_types = self._reader.parse_file(batch.database_id)
+            hierarchy_file, hierarchy_cdn_types = self._reader.parse_file(
+                batch.database_id
+            )
         if condition_bids or area_bids:
             request = self._requests.request(batch.database_id, read_only=True)
             with self._connections.connection(request, autocommit=True) as connection:
@@ -232,4 +235,5 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
             areas_by_bid=areas_by_bid,
             bid_data_by_bid=bid_data_by_bid,
             hierarchy_file=hierarchy_file,
+            cdn_types=hierarchy_cdn_types,
         )

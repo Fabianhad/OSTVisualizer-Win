@@ -2,8 +2,10 @@ import logging
 import os
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PySide6 import QtCore
 from PySide6.QtCore import QCoreApplication
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
@@ -33,6 +35,9 @@ from ost_visualizer.presentation.handlers.file_operation_handler import (
 from ost_visualizer.presentation.main_window import MainWindow
 from ost_visualizer.presentation.managers.deferred_persistence_manager import (
     DeferredPersistenceManager,
+)
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    CollaborationShutdownState,
 )
 
 
@@ -165,6 +170,37 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             self.service.calls,
             [("page_view_state", "a.mdb", "p1", 4.0, 30.0, 40.0)],
         )
+        self.assertEqual(self.manager.pending_count, 0)
+
+    def test_write_that_schedules_same_key_preserves_the_newer_item(self):
+        calls = []
+        key = ("critical_data", "a.mdb", "row-1")
+
+        def replacement_write():
+            calls.append("replacement")
+            return True
+
+        def initial_write():
+            calls.append("initial")
+            self.manager.schedule(
+                "critical_data",
+                key,
+                "replacement write",
+                replacement_write,
+            )
+            return True
+
+        self.manager.schedule(
+            "critical_data",
+            key,
+            "initial write",
+            initial_write,
+        )
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(calls, ["initial"])
+        self.assertEqual(self.manager.pending_count, 1)
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(calls, ["initial", "replacement"])
         self.assertEqual(self.manager.pending_count, 0)
 
     def test_flush_executes_all_successful_writes_and_clears_queue(self):
@@ -385,6 +421,8 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
         self.manager.schedule_layer_show("a.mdb", "l1", False)
         self.assertFalse(self.manager.cleanup())
         self.assertEqual(self.manager.pending_count, 1)
+        self.manager.schedule_page_invert("a.mdb", "p1", True)
+        self.assertEqual(self.manager.pending_count, 2)
         self.service.fail_methods.clear()
         self.assertTrue(self.manager.cleanup())
         self.assertEqual(self.manager.pending_count, 0)
@@ -393,6 +431,7 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
             [
                 ("layer_show", "a.mdb", "l1", False, False),
                 ("layer_show", "a.mdb", "l1", False, False),
+                ("page_invert", "a.mdb", "p1", True),
             ],
         )
 
@@ -520,7 +559,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             cleanup=lambda: calls.append("cleanup") or True,
         )
         self.assertTrue(MainWindow._flush_deferred_persistence_before_close(window))
-        self.assertEqual(calls, ["begin_shutdown", "flush_state", "cleanup"])
+        self.assertEqual(calls, ["flush_state", "begin_shutdown", "cleanup"])
 
     def test_app_close_does_not_cleanup_when_current_page_flush_fails(self):
         calls = []
@@ -535,14 +574,148 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             cleanup=lambda: calls.append("cleanup") or True,
         )
         self.assertFalse(MainWindow._flush_deferred_persistence_before_close(window))
-        self.assertEqual(calls, ["begin_shutdown", "flush_state"])
+        self.assertEqual(calls, ["flush_state"])
 
     def test_app_close_rejects_close_when_deferred_cleanup_fails(self):
+        scheduled = []
         window = MainWindow.__new__(MainWindow)
-        window._flush_deferred_persistence_before_close = lambda: False
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._collaboration_shutdown_failed = False
+        window.hide = lambda: None
+        window.show = lambda: None
+        window._flush_deferred_persistence_before_close = lambda **_kwargs: False
         event = FakeCloseEvent()
-        MainWindow.closeEvent(window, event)
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda _delay, callback: scheduled.append(callback),
+        ):
+            MainWindow.closeEvent(window, event)
+            scheduled.pop()()
         self.assertTrue(event.ignored)
+        self.assertFalse(window._collaboration_shutdown_pending)
+
+    def test_first_close_hides_immediately_and_defers_all_shutdown_work(self):
+        scheduled = []
+        calls = []
+        collaboration = SimpleNamespace(
+            shutdown_state=CollaborationShutdownState.RUNNING,
+            request_shutdown=lambda callback: calls.append(("shutdown", callback)),
+        )
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._collaboration_shutdown_failed = False
+        window.app_controller = SimpleNamespace(get_service=lambda _name: collaboration)
+        window.hide = lambda: calls.append("hide")
+        window.show = lambda: calls.append("show")
+        window.setEnabled = lambda _enabled: self.fail(
+            "normal shutdown must not darken the window"
+        )
+        window._flush_deferred_persistence_before_close = (
+            lambda: calls.append("flush") or True
+        )
+        event = FakeCloseEvent()
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda _delay, callback: scheduled.append(callback),
+        ):
+            MainWindow.closeEvent(window, event)
+            self.assertEqual(calls, ["hide"])
+            self.assertEqual(len(scheduled), 1)
+            scheduled.pop()()
+        self.assertTrue(event.ignored)
+        self.assertEqual(calls[:2], ["hide", "flush"])
+        self.assertEqual(calls[2][0], "shutdown")
+
+    def test_repeated_close_does_not_schedule_duplicate_shutdown(self):
+        scheduled = []
+        hidden = []
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._collaboration_shutdown_failed = False
+        window.hide = lambda: hidden.append(True)
+        first = FakeCloseEvent()
+        second = FakeCloseEvent()
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda _delay, callback: scheduled.append(callback),
+        ):
+            MainWindow.closeEvent(window, first)
+            MainWindow.closeEvent(window, second)
+        self.assertTrue(first.ignored)
+        self.assertTrue(second.ignored)
+        self.assertEqual(hidden, [True])
+        self.assertEqual(len(scheduled), 1)
+
+    def test_access_only_close_flushes_page_state_before_collaboration_shutdown(self):
+        requests = []
+        calls = []
+        scheduled = []
+        collaboration = SimpleNamespace(
+            shutdown_state=CollaborationShutdownState.RUNNING,
+            request_shutdown=lambda callback: (
+                calls.append("shutdown"),
+                requests.append(callback),
+            ),
+        )
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = False
+        window._collaboration_shutdown_failed = False
+        window.app_controller = SimpleNamespace(get_service=lambda _name: collaboration)
+        window._deferred_persistence_manager = SimpleNamespace(
+            begin_shutdown=lambda: calls.append("begin_shutdown"),
+            cancel_for_file=lambda _database_id: calls.append("cancel"),
+        )
+        window._flush_deferred_persistence_before_close = (
+            lambda: calls.append("flush") or True
+        )
+        window.hide = lambda: calls.append("hide")
+        window.show = lambda: calls.append("show")
+        event = FakeCloseEvent()
+        with patch.object(
+            QtCore.QTimer,
+            "singleShot",
+            side_effect=lambda _delay, callback: scheduled.append(callback),
+        ):
+            MainWindow.closeEvent(window, event)
+            scheduled.pop()()
+        self.assertTrue(event.ignored)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(calls, ["hide", "flush", "shutdown"])
+
+    def test_collaboration_cleanup_failure_cannot_be_bypassed_by_a_second_close(self):
+        enabled_states = []
+        close_calls = []
+        warnings = []
+        window = MainWindow.__new__(MainWindow)
+        window._collaboration_shutdown_pending = True
+        window._collaboration_shutdown_complete = False
+        window._collaboration_shutdown_failed = False
+        window.show = lambda: enabled_states.append(True)
+        window.close = lambda: close_calls.append(True)
+        from ost_visualizer.presentation import main_window
+
+        old_critical = main_window.show_critical
+        main_window.show_critical = lambda *_args: warnings.append(True)
+        try:
+            MainWindow._on_collaboration_shutdown_complete(
+                window, False, "cleanup failed"
+            )
+            event = FakeCloseEvent()
+            MainWindow.closeEvent(window, event)
+        finally:
+            main_window.show_critical = old_critical
+        self.assertTrue(window._collaboration_shutdown_failed)
+        self.assertTrue(event.ignored)
+        self.assertEqual(enabled_states, [True])
+        self.assertEqual(close_calls, [])
+        self.assertEqual(warnings, [True])
 
     def test_file_exit_uses_window_close_path(self):
         close_calls = []
@@ -570,6 +743,7 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             unload_file_fn=lambda file_path: unload_calls.append(file_path) or True,
             deferred_persistence_manager=deferred,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
             ui_state_manager=SimpleNamespace(selected_file_path="a.mdb"),
         )
         handler.unload_file()
@@ -596,11 +770,80 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             unload_file_fn=lambda file_path: unload_calls.append(file_path) or True,
             deferred_persistence_manager=deferred,
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
             ui_state_manager=SimpleNamespace(selected_file_path="a.mdb"),
         )
         handler.unload_file()
         self.assertEqual(deferred.flush_calls, ["a.mdb"])
         self.assertEqual(unload_calls, [])
+
+    def test_project_unload_stops_when_open_files_state_cannot_be_saved(self):
+        deferred = RecordingDeferredPersistence()
+        unload_calls = []
+
+        class _FailingState:
+            file_entries = [FileEntry("a.mdb", is_checked=True)]
+
+            def update_entries(self, _entries):
+                raise OSError("disk unavailable")
+
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=None,
+            file_state_model=_FailingState(),
+            cleanup_deleted_files_use_case=None,
+            file_loading_service=None,
+            working_directory_service=None,
+            unload_file_fn=lambda file_path: unload_calls.append(file_path) or True,
+            deferred_persistence_manager=deferred,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(selected_file_path="a.mdb"),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        ) as warning:
+            handler.unload_file()
+        self.assertEqual(deferred.flush_calls, ["a.mdb"])
+        self.assertEqual(deferred.cancel_calls, [])
+        self.assertEqual(unload_calls, [])
+        self.assertTrue(_FailingState.file_entries[0].is_checked)
+        warning.assert_called_once()
+
+    def test_failed_project_unload_restores_saved_open_files_state(self):
+        deferred = RecordingDeferredPersistence()
+        state = SimpleNamespace(file_entries=[FileEntry("a.mdb", is_checked=True)])
+        updates = []
+
+        def update_entries(entries):
+            state.file_entries = list(entries)
+            updates.append(list(entries))
+
+        state.update_entries = update_entries
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=None,
+            file_state_model=state,
+            cleanup_deleted_files_use_case=None,
+            file_loading_service=None,
+            working_directory_service=None,
+            unload_file_fn=lambda _file_path: False,
+            deferred_persistence_manager=deferred,
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(selected_file_path="a.mdb"),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        ):
+            handler.unload_file()
+        self.assertEqual(len(updates), 2)
+        self.assertFalse(updates[0][0].is_checked)
+        self.assertTrue(updates[1][0].is_checked)
+        self.assertTrue(state.file_entries[0].is_checked)
+        self.assertEqual(deferred.cancel_calls, [])
 
 
 class RecordingPlanView:

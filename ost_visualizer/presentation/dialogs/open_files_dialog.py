@@ -60,6 +60,11 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self._sql_database_creator = sql_database_creator
         self._schema_change_allowed_fn = schema_change_allowed_fn
         self.file_entries = [e.with_checked(e.is_checked) for e in file_entries]
+        self._initial_entries_by_id = {
+            entry.database_id: entry for entry in self.file_entries
+        }
+        self._credential_rollbacks: dict[str, tuple[str, tuple[str, str] | None]] = {}
+        self._credential_changes_committed = False
         self._setup_ui()
         self._populate_table()
         self._update_remove_button_state()
@@ -303,6 +308,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
             ),
             None,
         )
+        self._remember_credential(target, descriptor.database_id)
         if (
             result.location.authentication_mode == SqlAuthenticationMode.SQL_SERVER
             and result.password
@@ -329,6 +335,60 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self.file_entries.append(new_entry)
         self._populate_table()
 
+    def _remember_credential(self, target: str, database_id: str) -> None:
+        if target in self._credential_rollbacks:
+            return
+        previous = None
+        entry = self._initial_entries_by_id.get(database_id)
+        if (
+            entry is not None
+            and entry.backend == DatabaseBackend.SQL_SERVER
+            and entry.descriptor.sql_location.authentication_mode
+            == SqlAuthenticationMode.SQL_SERVER
+        ):
+            password = self._credential_store.read_password(target)
+            if password:
+                previous = (entry.descriptor.sql_location.username, password)
+        self._credential_rollbacks[target] = (database_id, previous)
+
+    def commit_credential_changes(self) -> set[str]:
+        changed_database_ids = {
+            database_id
+            for database_id, _previous in self._credential_rollbacks.values()
+        }
+        retained_ids = {entry.database_id for entry in self.file_entries}
+        for target, (database_id, previous) in tuple(
+            self._credential_rollbacks.items()
+        ):
+            if database_id not in retained_ids:
+                self._restore_credential(target, previous)
+        self._credential_rollbacks.clear()
+        self._credential_changes_committed = True
+        return changed_database_ids & retained_ids
+
+    def _rollback_credential_changes(self) -> None:
+        if self._credential_changes_committed:
+            return
+        for target, (_database_id, previous) in tuple(
+            self._credential_rollbacks.items()
+        ):
+            try:
+                self._restore_credential(target, previous)
+            except OSError:
+                logger.exception(
+                    "Failed to restore a SQL credential after closing Open Files"
+                )
+        self._credential_rollbacks.clear()
+
+    def _restore_credential(
+        self, target: str, previous: tuple[str, str] | None
+    ) -> None:
+        if previous is None:
+            self._credential_store.delete_password(target)
+            return
+        username, password = previous
+        self._credential_store.write_password(target, username, password)
+
     def _on_remove(self) -> None:
         current_item = self.table.currentItem()
         row = self.table.indexOfTopLevelItem(current_item)
@@ -352,6 +412,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self.accept()
 
     def cleanup(self) -> None:
+        self._rollback_credential_changes()
         try:
             self.table.itemSelectionChanged.disconnect()
         except (TypeError, RuntimeError):
@@ -379,6 +440,7 @@ class OpenFilesDialog(QtWidgets.QDialog):
         self._sql_catalog = None
         self._credential_store = None
         self._sql_database_creator = None
+        self._initial_entries_by_id = {}
         self.icon_provider = None
 
     def showEvent(self, event) -> None:

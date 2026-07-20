@@ -1,7 +1,7 @@
 from typing import Dict, Optional, Protocol
 from ..entities.cdn_type import CdnType
 from ..entities.file_results import BidLoadResult, FileLoadResult
-from ..entities.hierarchy_data import HierarchyData
+from ..entities.hierarchy_data import HierarchyData, HierarchyFileEntry
 
 
 class IProjectRepository(Protocol):
@@ -10,6 +10,11 @@ class IProjectRepository(Protocol):
     @property
     def current_hierarchy_data(self) -> HierarchyData: ...
     def load_file(self, file_path: str) -> FileLoadResult: ...
+    def register_loaded_hierarchy(
+        self,
+        file_entry: HierarchyFileEntry,
+        cdn_types: Dict[str, CdnType],
+    ) -> HierarchyData: ...
     def unload_file(self, file_path: Optional[str] = None) -> bool: ...
     def load_bid(
         self, bid_uid: str, file_path: Optional[str] = None

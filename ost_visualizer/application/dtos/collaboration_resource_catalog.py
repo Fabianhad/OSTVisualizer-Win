@@ -280,6 +280,13 @@ def coalesced_resource_type(resource_type: str) -> str:
     return (definition.coalesce_type or definition.resource_type).value
 
 
+def parse_annotation_resource_id(resource_id: str) -> tuple[str, str]:
+    annotation_type, separator, annotation_uid = str(resource_id).partition("/")
+    if not separator or not annotation_type or not annotation_uid:
+        raise ValueError("Invalid annotation collaboration resource identity")
+    return annotation_type, annotation_uid
+
+
 SUPPORTED_REMOTE_RESOURCE_TYPES = frozenset(
     name
     for name, definition in COLLABORATION_RESOURCE_CATALOG.items()

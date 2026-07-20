@@ -23,7 +23,9 @@ class LocalDraft:
     dependency_resources: tuple[ResourceRef, ...]
     base_tokens: tuple[tuple[ResourceRef, ConcurrencyToken], ...]
     state: LocalDraftState
-    lease: Optional[ResourceLock] = None
+    operation_id: str
+    runtime_generation: int
+    leases: tuple[ResourceLock, ...]
 
 
 @dataclass(frozen=True)

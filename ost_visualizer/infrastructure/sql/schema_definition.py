@@ -1,6 +1,6 @@
 from __future__ import annotations
 import hashlib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from ...application.dtos.collaboration_resource_catalog import (
     COLLABORATION_RESOURCE_CATALOG,
     CollaborationResourceType,
@@ -8,6 +8,10 @@ from ...application.dtos.collaboration_resource_catalog import (
 from ..database.schema_model import DatabaseSchemaModel, render_sql_server_schema
 from ..database.annotation_storage import ANNOTATION_TYPE_BY_TABLE
 from ..mdb.database_creator import get_reference_schema_model
+
+SQL_SNAPSHOT_ISOLATION_REQUIREMENT = "ALLOW_SNAPSHOT_ISOLATION=ON"
+SQL_CHANGE_TRACKING_RETENTION_DAYS = 7
+SQL_CHANGE_TRACKING_AUTO_CLEANUP_REQUIREMENT = "CHANGE_TRACKING_AUTO_CLEANUP=ON"
 
 
 @dataclass(frozen=True)
@@ -52,10 +56,11 @@ class SqlTableDefinition:
 @dataclass(frozen=True)
 class SqlSchemaDefinition:
     version: int
-    migration_name: str
+    name: str
     core_schema: DatabaseSchemaModel
     tables: tuple[SqlTableDefinition, ...]
     change_tracking_tables: tuple[tuple[str, str], ...] = ()
+    canonical_database_requirements: tuple[str, ...] = ()
 
     @property
     def statements(self) -> tuple[str, ...]:
@@ -78,7 +83,14 @@ class SqlSchemaDefinition:
 
     @property
     def checksum(self) -> str:
-        source = "\n-- statement --\n".join(self.statements).encode("utf-8")
+        source_text = "\n-- statement --\n".join(self.statements)
+        if self.canonical_database_requirements:
+            source_text += "\n-- database requirement --\n" + (
+                "\n-- database requirement --\n".join(
+                    self.canonical_database_requirements
+                )
+            )
+        source = source_text.encode("utf-8")
         return hashlib.sha256(source).hexdigest()
 
     @property
@@ -118,9 +130,9 @@ def _foreign_key(
     )
 
 
-SQL_SCHEMA_V3 = SqlSchemaDefinition(
-    version=3,
-    migration_name="writer mode and external change adapter gate",
+SQL_SCHEMA_V1 = SqlSchemaDefinition(
+    version=1,
+    name="canonical OST Visualizer schema",
     core_schema=get_reference_schema_model(),
     tables=(
         SqlTableDefinition(
@@ -176,7 +188,7 @@ SQL_SCHEMA_V3 = SqlSchemaDefinition(
                 _column("ConnectedAt", "datetime2(3)", default="SYSUTCDATETIME()"),
                 _column("LastHeartbeatAt", "datetime2(3)"),
                 _column("DisconnectedAt", "datetime2(3)", nullable=True),
-                _column("LastAcknowledgedSequence", "bigint", default="0"),
+                _column("LastAcknowledgedVersion", "bigint", default="0"),
                 _column("CloseReason", "nvarchar(64)", nullable=True),
                 _column("Version", "rowversion"),
             ),
@@ -405,8 +417,6 @@ SQL_SCHEMA_V3 = SqlSchemaDefinition(
             (
                 _column("SingletonId", "tinyint"),
                 _column("FeedEpoch", "uniqueidentifier", default="NEWID()"),
-                _column("OldestAvailableSequence", "bigint", default="0"),
-                _column("LastPrunedAt", "datetime2(3)", nullable=True),
             ),
             ("SingletonId",),
             check_constraints=(
@@ -443,36 +453,6 @@ SQL_SCHEMA_V3 = SqlSchemaDefinition(
                 ),
             ),
         ),
-    ),
-)
-
-
-def _version_4_tables() -> tuple[SqlTableDefinition, ...]:
-    tables = []
-    for table in SQL_SCHEMA_V3.tables:
-        if table.name == "Sessions":
-            table = replace(
-                table,
-                columns=tuple(
-                    (
-                        _column("LastAcknowledgedVersion", "bigint", default="0")
-                        if column.name == "LastAcknowledgedSequence"
-                        else column
-                    )
-                    for column in table.columns
-                ),
-            )
-        elif table.name == "ChangeFeedState":
-            table = replace(
-                table,
-                columns=tuple(
-                    column
-                    for column in table.columns
-                    if column.name not in {"OldestAvailableSequence", "LastPrunedAt"}
-                ),
-            )
-        tables.append(table)
-    tables.append(
         SqlTableDefinition(
             "ostv",
             "ChangeTransactions",
@@ -503,28 +483,25 @@ def _version_4_tables() -> tuple[SqlTableDefinition, ...]:
                     ("CommittedAt",),
                 ),
             ),
-        )
-    )
-    return tuple(tables)
-
-
-LATEST_SQL_SCHEMA = SqlSchemaDefinition(
-    version=4,
-    migration_name="commit-ordered collaboration feed",
-    core_schema=SQL_SCHEMA_V3.core_schema,
-    tables=_version_4_tables(),
+        ),
+    ),
     change_tracking_tables=(("ostv", "ChangeTransactions"),),
+    canonical_database_requirements=(
+        SQL_SNAPSHOT_ISOLATION_REQUIREMENT,
+        f"CHANGE_TRACKING_RETENTION={SQL_CHANGE_TRACKING_RETENTION_DAYS} DAYS",
+        SQL_CHANGE_TRACKING_AUTO_CLEANUP_REQUIREMENT,
+    ),
 )
 
 
-def schema_record_is_current(version: object, checksum: object) -> bool:
+def schema_record_is_canonical(version: object, checksum: object) -> bool:
     try:
         parsed_version = int(version)
     except (TypeError, ValueError):
         return False
     return (
-        parsed_version == LATEST_SQL_SCHEMA.version
-        and str(checksum) == LATEST_SQL_SCHEMA.checksum
+        parsed_version == SQL_SCHEMA_V1.version
+        and str(checksum) == SQL_SCHEMA_V1.checksum
     )
 
 

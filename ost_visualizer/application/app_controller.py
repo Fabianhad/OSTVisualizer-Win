@@ -75,9 +75,10 @@ class AppController:
             target_path and active_context_path
         ) and normalize_path(target_path) == normalize_path(active_context_path)
         try:
-            self.orchestrators.visualization.close_realtime_visualization()
             result = self._file_loading_service.unload_file(file_path)
             if result.success:
+                if active_context_removed:
+                    self.orchestrators.visualization.close_realtime_visualization()
                 self.event_bus.publish(
                     AppEvents.FILE_UNLOADED,
                     file_path=target_path or "",
@@ -97,17 +98,27 @@ class AppController:
                 self._database_descriptor_registry.register_all(
                     entry.descriptor for entry in self._file_state_model.file_entries
                 )
-            loaded = self._load_files_from_config_use_case.execute()
+            loaded = self._load_files_from_config_use_case.execute(
+                {DatabaseBackend.ACCESS}
+            )
+            loaded_locators = set(loaded)
             capability_service = self.container.get("database_capability_service")
-            loaded_set = set(loaded)
+            collaboration = self.container.get("sql_collaboration_coordinator")
             for entry in self._file_state_model.file_entries:
-                if entry.runtime_locator not in loaded_set:
-                    continue
-                capability_service.mark_connected(entry.database_id)
-                if entry.backend == DatabaseBackend.SQL_SERVER:
-                    self.container.get("sql_collaboration_coordinator").start_database(
-                        entry.database_id
-                    )
+                if (
+                    entry.backend == DatabaseBackend.ACCESS
+                    and entry.runtime_locator in loaded_locators
+                ):
+                    capability_service.mark_connected(entry.database_id)
+                if entry.is_checked and entry.backend == DatabaseBackend.SQL_SERVER:
+                    try:
+                        collaboration.start_database(
+                            entry.database_id,
+                            retry_initial_failure=False,
+                        )
+                    except Exception:
+                        capability_service.mark_disconnected(entry.database_id)
+                        self.logger.exception("Error scheduling SQL database startup")
             return loaded
         except Exception as exc:
             self.logger.exception("Error loading files from config: %s", exc)

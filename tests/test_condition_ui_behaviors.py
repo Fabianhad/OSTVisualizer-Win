@@ -11,6 +11,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
 from single_action import SingleCallRecorder
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    EditLeaseHandle,
+    EditLeaseResult,
+)
 from ost_visualizer.domain.entities import pattern as pattern_values
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.cdn_type import CdnType
@@ -1022,9 +1026,21 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             _is_takeoff_2d_view_active=lambda: True,
             flush_deferred_for_file=lambda _file_path: True,
             request_collaboration_edit=(
-                lambda _database_id, _resources, callback: callback(True)
+                lambda database_id, resources, callback, **_kwargs: callback(
+                    EditLeaseResult(
+                        True,
+                        handle=EditLeaseHandle(
+                            database_id=database_id,
+                            draft_id="test-draft",
+                            runtime_generation=0,
+                            operation_id="test-edit",
+                            owning_surface="test",
+                            resources=resources,
+                        ),
+                    )
+                )
             ),
-            end_collaboration_edit=lambda _database_id, _resources: None,
+            end_collaboration_edit=lambda _handle: None,
         )
         handler = ConditionActionHandler(
             coordinator=coordinator,

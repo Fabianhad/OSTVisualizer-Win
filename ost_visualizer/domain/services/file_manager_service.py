@@ -1,6 +1,8 @@
 import logging
-from typing import Optional
+from typing import Dict, Optional
+from ..entities.cdn_type import CdnType
 from ..entities.file_results import BidLoadResult, FileLoadResult
+from ..entities.hierarchy_data import HierarchyData, HierarchyFileEntry
 from ..repositories.i_project_repository import IProjectRepository
 
 
@@ -21,6 +23,18 @@ class FileManager:
         if result.success:
             self.current_file_path = file_path
         return result
+
+    def register_loaded_hierarchy(
+        self,
+        file_entry: HierarchyFileEntry,
+        cdn_types: Dict[str, CdnType],
+    ) -> HierarchyData:
+        hierarchy = self.project_repository.register_loaded_hierarchy(
+            file_entry, cdn_types
+        )
+        if self.current_file_path is None:
+            self.current_file_path = file_entry.file_path
+        return hierarchy
 
     def unload_file(self, file_path: Optional[str] = None) -> bool:
         target_path = file_path or self.current_file_path

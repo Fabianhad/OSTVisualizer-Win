@@ -23,7 +23,6 @@ class LoadFileUseCase:
 
     def execute(self, file_path: str) -> bool:
         self.last_error = None
-        self.data_service.reset()
         result = self.file_manager.load_file(file_path)
         if not result.success:
             self.last_error = result.error_message or "Failed to load file"
@@ -31,6 +30,7 @@ class LoadFileUseCase:
                 "Failed to load file %s: %s", file_path, result.error_message
             )
             return False
+        self.data_service.reset()
         self._apply_load_result(result)
         return True
 

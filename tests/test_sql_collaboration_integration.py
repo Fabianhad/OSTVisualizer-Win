@@ -15,12 +15,8 @@ from ost_visualizer.infrastructure.sql.collaboration_store import (
     SqlCollaborationStore,
 )
 from ost_visualizer.infrastructure.sql.connection_manager import SqlConnectionRequest
-from ost_visualizer.infrastructure.sql.schema_definition import (
-    LATEST_SQL_SCHEMA,
-    SQL_SCHEMA_V3,
-)
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
-from ost_visualizer.infrastructure.sql.schema_migrator import SqlSchemaMigrator
 from tests.sql_integration_support import (
     DisposableSqlConfiguration,
     DisposableSqlDatabase,
@@ -42,22 +38,22 @@ class _RuntimeCredentialStore:
 
 
 class SqlCollaborationIntegrationTests(unittest.TestCase):
-    def test_fresh_disposable_database_uses_latest_schema_and_is_removed(self):
+    def test_fresh_disposable_database_uses_canonical_v1_and_is_removed(self):
         configuration = DisposableSqlConfiguration.from_environment()
         with DisposableSqlDatabase(configuration) as database:
             inventory = SqlSchemaInspector(database.connections).inspect(
                 database.location,
                 configuration.password,
             )
-            self.assertEqual(inventory.schema_version, LATEST_SQL_SCHEMA.version)
-            self.assertEqual(inventory.schema_checksum, LATEST_SQL_SCHEMA.checksum)
+            self.assertEqual(inventory.schema_version, SQL_SCHEMA_V1.version)
+            self.assertEqual(inventory.schema_checksum, SQL_SCHEMA_V1.checksum)
 
     def test_two_independent_clients_own_distinct_sessions_and_locks(self):
         configuration = DisposableSqlConfiguration.from_environment()
         with DisposableSqlDatabase(configuration) as database:
             descriptor = DatabaseDescriptor.for_sql_server(
                 database.location,
-                schema_version=LATEST_SQL_SCHEMA.version,
+                schema_version=SQL_SCHEMA_V1.version,
             )
             stores = []
             sessions = []
@@ -122,7 +118,7 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
         with DisposableSqlDatabase(configuration) as database:
             descriptor = DatabaseDescriptor.for_sql_server(
                 database.location,
-                schema_version=LATEST_SQL_SCHEMA.version,
+                schema_version=SQL_SCHEMA_V1.version,
             )
             registry = DatabaseDescriptorRegistry()
             registry.register(descriptor)
@@ -262,90 +258,6 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                         session.session_id,
                         "integration-test-complete",
                     )
-
-    def test_transactional_version_3_to_4_migration(self):
-        configuration = DisposableSqlConfiguration.from_environment()
-        with DisposableSqlDatabase(
-            configuration,
-            initialize_schema=False,
-        ) as database:
-            request = SqlConnectionRequest(
-                database.location,
-                password=configuration.password,
-            )
-            with database.connections.connection(request, autocommit=True) as lease:
-                with lease.cursor() as cursor:
-                    cursor.execute(
-                        "ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON "
-                        "(CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON)"
-                    )
-            with database.connections.connection(request, autocommit=False) as lease:
-                with lease.cursor() as cursor:
-                    for statement in SQL_SCHEMA_V3.statements:
-                        cursor.execute(statement)
-                    cursor.execute(
-                        "SELECT CONVERT(uniqueidentifier, database_guid) FROM "
-                        "sys.database_recovery_status WHERE database_id=DB_ID()"
-                    )
-                    database_guid = cursor.fetchone()[0]
-                    cursor.execute(
-                        "INSERT INTO [ostv].[DatabaseMetadata] "
-                        "([DatabaseGuid], [Product], [SchemaVersion], [CreatedBy], "
-                        "[LastMigratedAt], [LastMigratedBy]) VALUES "
-                        "(?, N'OST Visualizer', 3, N'integration-test', "
-                        "SYSUTCDATETIME(), N'integration-test')",
-                        database_guid,
-                    )
-                    cursor.execute(
-                        "INSERT INTO [ostv].[SchemaMigrations] "
-                        "([Version], [Name], [Checksum], [AppliedBy], "
-                        "[ApplicationVersion]) VALUES (3, ?, ?, "
-                        "N'integration-test', N'integration-test')",
-                        SQL_SCHEMA_V3.migration_name,
-                        SQL_SCHEMA_V3.checksum,
-                    )
-                    cursor.execute(
-                        "INSERT INTO [ostv].[ChangeFeedState] ([SingletonId]) "
-                        "VALUES (1); INSERT INTO [ostv].[ExternalAdapterState] "
-                        "([SingletonId]) VALUES (1)"
-                    )
-                lease.commit()
-            with database.connections.connection(request, autocommit=True) as lease:
-                with lease.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT COALESCE(SUM(p.[rows]), 0) FROM sys.tables t "
-                        "JOIN sys.schemas s ON s.[schema_id]=t.[schema_id] "
-                        "JOIN sys.partitions p ON p.[object_id]=t.[object_id] "
-                        "AND p.[index_id] IN (0, 1) WHERE s.[name]=N'dbo'"
-                    )
-                    core_rows_before = int(cursor.fetchone()[0])
-            result = SqlSchemaMigrator(database.connections).migrate_version_3_to_4(
-                database.location,
-                configuration.password,
-                application_version="integration-test",
-                actor="integration-test",
-            )
-            self.assertEqual(result.schema_version, 4)
-            inventory = SqlSchemaInspector(database.connections).inspect(
-                database.location,
-                configuration.password,
-            )
-            self.assertEqual(inventory.schema_version, 4)
-            self.assertEqual(inventory.schema_checksum, LATEST_SQL_SCHEMA.checksum)
-            self.assertIn(("ostv", "ChangeTransactions"), inventory.tables)
-            self.assertIn(
-                ("ostv", "ChangeTransactions"),
-                inventory.change_tracking_tables,
-            )
-            with database.connections.connection(request, autocommit=True) as lease:
-                with lease.cursor() as cursor:
-                    cursor.execute(
-                        "SELECT COALESCE(SUM(p.[rows]), 0) FROM sys.tables t "
-                        "JOIN sys.schemas s ON s.[schema_id]=t.[schema_id] "
-                        "JOIN sys.partitions p ON p.[object_id]=t.[object_id] "
-                        "AND p.[index_id] IN (0, 1) WHERE s.[name]=N'dbo'"
-                    )
-                    self.assertEqual(int(cursor.fetchone()[0]), core_rows_before)
 
     @staticmethod
     def _database_guid(cursor):

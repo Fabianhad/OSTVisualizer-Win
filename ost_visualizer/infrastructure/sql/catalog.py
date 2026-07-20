@@ -7,7 +7,7 @@ from ...application.interfaces.i_database_catalog import (
 from ...domain.entities.database_descriptor import SqlServerDatabaseLocation
 from .connection_manager import SqlConnectionManager, SqlConnectionRequest
 from .schema_inspector import SqlSchemaInspector
-from .schema_definition import LATEST_SQL_SCHEMA
+from .schema_definition import SQL_SCHEMA_V1
 from .schema_validator import SqlSchemaValidator
 
 
@@ -18,7 +18,7 @@ class SqlDatabaseCatalog:
     ):
         self._connections = connection_manager or SqlConnectionManager()
         self._inspector = SqlSchemaInspector(self._connections)
-        self._validator = SqlSchemaValidator(LATEST_SQL_SCHEMA.core_schema)
+        self._validator = SqlSchemaValidator(SQL_SCHEMA_V1.core_schema)
 
     def list_databases(
         self, location: SqlServerDatabaseLocation, password: str = ""
@@ -109,9 +109,7 @@ class SqlDatabaseCatalog:
             )
         inventory = self._inspector.inspect(location, password, database_override=name)
         report = self._validator.validate(inventory)
-        if report.is_read_compatible and not self._can_read_bids(
-            location, password, name
-        ):
+        if report.is_valid and not self._can_read_bids(location, password, name):
             return SqlDatabaseCatalogEntry(
                 name=name,
                 database_guid=inventory.database_guid,
@@ -127,7 +125,7 @@ class SqlDatabaseCatalog:
             name=name,
             database_guid=inventory.database_guid,
             state=state,
-            is_compatible=report.is_read_compatible,
+            is_compatible=report.is_valid,
             compatibility_message=report.user_message,
             schema_version=inventory.schema_version,
         )

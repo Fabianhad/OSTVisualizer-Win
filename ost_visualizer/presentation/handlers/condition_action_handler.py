@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Optional
 from PySide6.QtCore import QSignalBlocker
 from ...application.dtos.create_condition_spec_dto import CreateConditionSpec
-from ...application.dtos.collaboration_dtos import ResourceRef
+from ...application.dtos.collaboration_dtos import EditLeaseResult, ResourceRef
 from ...application.dtos.update_condition_dto import (
     UpdateConditionDto,
     UpdateConditionResultDto,
@@ -817,19 +817,19 @@ class ConditionActionHandler:
             ResourceRef("condition", uid, bid_uid) for uid in condition_uids
         )
 
-        def resolved(granted: bool) -> None:
+        def resolved(result: EditLeaseResult) -> None:
             try:
-                if granted:
+                if result.granted:
                     exec_with_ost_blocking(dialog, self._coordinator.event_bus)
             finally:
-                if granted:
-                    self._coordinator.end_collaboration_edit(
-                        bid_ref.file_path, edit_resources
-                    )
+                if result.handle is not None:
+                    self._coordinator.end_collaboration_edit(result.handle)
                 dialog.deleteLater()
 
         self._coordinator.request_collaboration_edit(
             bid_ref.file_path,
             edit_resources,
             resolved,
+            operation_id="edit-condition-dialog",
+            owning_surface="condition-sidebar",
         )

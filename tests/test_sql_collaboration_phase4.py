@@ -12,14 +12,19 @@ from ost_visualizer.application.dtos.conflict_resolution_dtos import (
     ConflictResolutionAction,
 )
 from ost_visualizer.application.dtos.local_draft_dtos import LocalDraftConflict
+from ost_visualizer.application.dtos.local_draft_dtos import LocalDraftState
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
     CollaborationPollingPolicy,
+    CollaborationShutdownState,
     ConcurrencyToken,
     DatabaseChange,
     DatabaseChangeBatch,
     DatabaseMutationResult,
     DatabaseSession,
+    EditLeaseHandle,
+    EditLeaseLoss,
+    EditLeaseResult,
     HydratedDatabaseChangeBatch,
     PresenceMode,
     ResourceLock,
@@ -44,6 +49,9 @@ from ost_visualizer.application.services.local_draft_registry import LocalDraftR
 from ost_visualizer.application.services.remote_change_reconciliation_service import (
     RemoteChangeReconciliationService,
 )
+from ost_visualizer.application.dtos.remote_projection_dtos import (
+    RemoteProjectionBarrier,
+)
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
 )
@@ -52,12 +60,14 @@ from ost_visualizer.application.services.sql_collaboration_coordinator import (
     _DatabaseRuntime,
 )
 from ost_visualizer.domain.entities.area import BidArea
+from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.database_descriptor import (
     DatabaseDescriptor,
     SqlServerDatabaseLocation,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
@@ -67,7 +77,8 @@ from ost_visualizer.infrastructure.database.entity_version_reader import (
 from ost_visualizer.application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
 )
-from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
+from ost_visualizer.infrastructure.sql.schema_validator import SqlSchemaValidator
 from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter, _RecordedMutation
 from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
@@ -141,6 +152,34 @@ def _token_service(reader=None):
     return DatabaseConcurrencyTokenService(reader or _TokenReader(), drafts), drafts
 
 
+def _shutdown_coordinator(coordinator):
+    completed = threading.Event()
+    results = []
+    coordinator.request_shutdown(
+        lambda success, message: (results.append((success, message)), completed.set())
+    )
+    if not completed.wait(2):
+        raise AssertionError("SQL collaboration shutdown did not complete")
+    if results != [(True, "")]:
+        raise AssertionError(f"SQL collaboration shutdown failed: {results!r}")
+
+
+def _stop_database(coordinator, database_id):
+    completed = threading.Event()
+    results = []
+    coordinator.stop_database_async(
+        database_id,
+        callback=lambda success, message: (
+            results.append((success, message)),
+            completed.set(),
+        ),
+    )
+    if not completed.wait(2):
+        raise AssertionError("SQL collaboration database drain did not complete")
+    if results != [(True, "")]:
+        raise AssertionError(f"SQL collaboration database drain failed: {results!r}")
+
+
 class _Dispatcher:
     def dispatch(self, callback, payload=()):
         callback(payload)
@@ -167,19 +206,44 @@ class _DelayedLeaseDispatcher:
         self.pending.clear()
 
 
+class _DelayedReconciliationDispatcher:
+    def __init__(self):
+        self.pending = []
+
+    def dispatch(self, callback, payload=()):
+        if callback.__name__ == "_on_remote_batch":
+            self.pending.append((callback, payload))
+            return
+        callback(payload)
+
+    def deliver_pending(self):
+        for callback, payload in tuple(self.pending):
+            callback(payload)
+        self.pending.clear()
+
+
 class _Reconciliation:
     def __init__(self):
         self.batches = []
         self.result = True
 
-    def apply(self, batch):
+    def apply(self, batch, _projection_barrier=None):
         self.batches.append(batch)
         return self.result
 
 
 class _RaisingReconciliation:
-    def apply(self, _batch):
+    def apply(self, _batch, _projection_barrier=None):
         raise RuntimeError("reconciliation callback failed")
+
+
+class _DeferredProjectionReconciliation:
+    def __init__(self):
+        self.token = None
+
+    def apply(self, _batch, projection_barrier=None):
+        self.token = projection_barrier.register("test-plan")
+        return True
 
 
 class _RemoteReader:
@@ -306,6 +370,23 @@ class _TransientRecoveryStore(_CollaborationStore):
         return super().heartbeat(*args)
 
 
+class _AlwaysUnavailableStore(_CollaborationStore):
+    def __init__(self):
+        super().__init__()
+        self.first_failure = threading.Event()
+        self.repeated_failure = threading.Event()
+        self.start_threads = []
+
+    def start_session(self, *_args):
+        self.start_threads.append(threading.get_ident())
+        self.start_count += 1
+        if self.start_count == 1:
+            self.first_failure.set()
+        else:
+            self.repeated_failure.set()
+        raise DatabaseCatalogError("server unavailable", retryable=True)
+
+
 class _InvalidFeedStore(_CollaborationStore):
     def poll_changes(self, *_args):
         raise ValueError("invalid transaction marker")
@@ -335,6 +416,59 @@ class _LockingStore(_CollaborationStore):
         return True
 
 
+class _BlockedPollStore(_CollaborationStore):
+    def __init__(self):
+        super().__init__()
+        self.poll_entered = threading.Event()
+        self.release_poll = threading.Event()
+
+    def poll_changes(self, database_id, _after_version, _limit):
+        self.poll_entered.set()
+        if not self.release_poll.wait(2):
+            raise OSError("test poll did not receive its release signal")
+        return _batch(database_id, "epoch", 0, 0)
+
+
+class _FailedCloseStore(_CollaborationStore):
+    def close_session(self, _database_id, _session_id, _reason):
+        raise DatabaseCatalogError("test close failure")
+
+
+class _ReleaseFailsCloseSucceedsStore(_LockingStore):
+    def release_lock(self, *_args):
+        raise DatabaseCatalogError("test individual release failure")
+
+
+class _PartialAcquireCleanupFailureStore(_CollaborationStore):
+    def __init__(self):
+        super().__init__()
+        self.acquire_count = 0
+        self.release_failed = threading.Event()
+
+    def acquire_lock(self, database_id, _session_id, resource, _description):
+        self.acquire_count += 1
+        if self.acquire_count == 1:
+            return ResourceLock(database_id, resource, "first-lock")
+        raise ValueError("second lock was denied")
+
+    def release_lock(self, *_args):
+        self.release_failed.set()
+        raise OSError("partial-lock cleanup failed")
+
+
+class _BlockingDraftRegistry(LocalDraftRegistry):
+    def __init__(self):
+        super().__init__()
+        self.entered = threading.Event()
+        self.proceed = threading.Event()
+
+    def begin(self, **kwargs):
+        self.entered.set()
+        if not self.proceed.wait(2):
+            raise RuntimeError("test draft creation was not released")
+        return super().begin(**kwargs)
+
+
 class _ProjectData:
     def __init__(self, database_id):
         self.bid_ref = BidRef(database_id, "8")
@@ -356,7 +490,7 @@ class _ProjectData:
         self.areas = tuple(areas)
         return True
 
-    def replace_database_hierarchy(self, _file_entry):
+    def replace_database_hierarchy(self, _file_entry, _cdn_types):
         raise AssertionError("No hierarchy change was requested")
 
     def replace_remote_bid_families(self, *_args):
@@ -387,6 +521,57 @@ def _batch(database_id, feed_epoch, minimum_version, high_water_version, changes
 
 
 class SqlCollaborationPhase4Tests(unittest.TestCase):
+    def test_granted_lease_is_released_when_ui_callback_fails(self):
+        resource = ResourceRef("condition", "11", 7)
+        lock = ResourceLock("sql-db", resource, "lock-token")
+        handle = EditLeaseHandle(
+            database_id="sql-db",
+            draft_id="draft-1",
+            runtime_generation=3,
+            operation_id="edit-condition",
+            owning_surface="condition-sidebar",
+            resources=(resource,),
+            locks=(lock,),
+        )
+        runtime = _DatabaseRuntime("sql-db", 3)
+        runtime.draft_ids[frozenset((resource,))] = handle.draft_id
+        coordinator = SqlCollaborationCoordinator.__new__(SqlCollaborationCoordinator)
+        coordinator._shutting_down = False
+        coordinator._runtime = lambda database_id, generation=None: (
+            runtime if database_id == "sql-db" and generation in (None, 3) else None
+        )
+        released = []
+        coordinator.end_edit_lease = released.append
+
+        def broken_callback(_result):
+            raise RuntimeError("closed editor")
+
+        coordinator._complete_runtime_lease_request(
+            (
+                "sql-db",
+                3,
+                handle.draft_id,
+                broken_callback,
+                EditLeaseResult(True, handle=handle),
+            )
+        )
+        self.assertEqual(released, [handle])
+
+    def test_edit_lease_result_rejects_incomplete_ownership_state(self):
+        resource = ResourceRef("condition", "42", 8)
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="edit-condition",
+            owning_surface="test",
+            resources=(resource,),
+        )
+        with self.assertRaisesRegex(ValueError, "handle"):
+            EditLeaseResult(True)
+        with self.assertRaisesRegex(ValueError, "handle"):
+            EditLeaseResult(False, handle=handle)
+
     def test_feed_uses_commit_version_when_earlier_identity_commits_last(self):
         transaction_id = "00000000-0000-0000-0000-000000000012"
 
@@ -403,8 +588,10 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             def fetchone(self):
                 if "ChangeFeedState" in self.last_sql:
                     return ("epoch", 1)
+                if "MIN_VALID_VERSION" in self.last_sql:
+                    return (1,)
                 if "CHANGE_TRACKING_CURRENT_VERSION" in self.last_sql:
-                    return (12, 1)
+                    return (12,)
                 raise AssertionError(f"Unexpected fetchone query: {self.last_sql}")
 
             def fetchall(self):
@@ -436,12 +623,26 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         class _Connections:
             def __init__(self):
                 self.cursor = _Cursor()
+                self.commits = 0
+                self.rollbacks = 0
 
             @contextmanager
             def connection(self, _request, *, autocommit=False):
-                if not autocommit:
-                    raise AssertionError("Feed reads must use autocommit.")
-                yield type("Lease", (), {"cursor": lambda _self: self.cursor})()
+                if autocommit:
+                    raise AssertionError("Feed reads require one transaction.")
+                owner = self
+
+                class _Lease:
+                    def cursor(self):
+                        return owner.cursor
+
+                    def commit(self):
+                        owner.commits += 1
+
+                    def rollback(self):
+                        owner.rollbacks += 1
+
+                yield _Lease()
 
         store = SqlCollaborationStore.__new__(SqlCollaborationStore)
         store._requests = type(
@@ -452,6 +653,12 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         store._connections = _Connections()
         batch = store.poll_changes("database", 11, 10)
         statements = " ".join(store._connections.cursor.statements)
+        self.assertEqual(
+            store._connections.cursor.statements[:2],
+            ["SET TRANSACTION ISOLATION LEVEL SNAPSHOT", "BEGIN TRANSACTION"],
+        )
+        self.assertEqual(store._connections.commits, 1)
+        self.assertEqual(store._connections.rollbacks, 0)
         self.assertIn("CHANGETABLE", statements)
         self.assertNotIn("[Sequence] > ?", statements)
         marker_query = next(
@@ -476,6 +683,176 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         self.assertEqual(batch.changes[0].sequence, 1)
         self.assertEqual(batch.changes[0].commit_version, 12)
+
+    def test_snapshot_feed_rolls_back_the_whole_poll_when_payload_is_missing(self):
+        transaction_id = "00000000-0000-0000-0000-000000000099"
+
+        class _Cursor:
+            def __init__(self):
+                self.last_sql = ""
+
+            def execute(self, sql, *_parameters):
+                self.last_sql = sql
+                return self
+
+            def fetchone(self):
+                if "ChangeFeedState" in self.last_sql:
+                    return ("epoch",)
+                if "MIN_VALID_VERSION" in self.last_sql:
+                    return (1,)
+                if "CURRENT_VERSION" in self.last_sql:
+                    return (12,)
+                raise AssertionError(self.last_sql)
+
+            def fetchall(self):
+                if "CHANGETABLE" in self.last_sql:
+                    return [(12, "I", transaction_id)]
+                return [
+                    (
+                        None,
+                        12,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                ]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        cursor = _Cursor()
+
+        class _Lease:
+            commits = 0
+            rollbacks = 0
+
+            def cursor(self):
+                return cursor
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        lease = _Lease()
+
+        class _Connections:
+            @contextmanager
+            def connection(self, _request, *, autocommit=False):
+                self.autocommit = autocommit
+                yield lease
+
+        store = SqlCollaborationStore.__new__(SqlCollaborationStore)
+        store._requests = type(
+            "Requests",
+            (),
+            {"request": lambda _self, _database_id, *, read_only: object()},
+        )()
+        store._connections = _Connections()
+        with self.assertRaisesRegex(ValueError, "no ChangeLog records"):
+            store.poll_changes("database", 11, 10)
+        self.assertFalse(store._connections.autocommit)
+        self.assertEqual(lease.commits, 0)
+        self.assertEqual(lease.rollbacks, 1)
+
+    def test_snapshot_feed_rolls_back_a_retention_gap(self):
+        class _Cursor:
+            last_sql = ""
+
+            def execute(self, sql, *_parameters):
+                self.last_sql = sql
+                return self
+
+            def fetchone(self):
+                if "ChangeFeedState" in self.last_sql:
+                    return ("epoch",)
+                if "MIN_VALID_VERSION" in self.last_sql:
+                    return (20,)
+                if "CURRENT_VERSION" in self.last_sql:
+                    return (25,)
+                raise AssertionError(self.last_sql)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        cursor = _Cursor()
+
+        class _Lease:
+            commits = 0
+            rollbacks = 0
+
+            def cursor(self):
+                return cursor
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        lease = _Lease()
+
+        class _Connections:
+            @contextmanager
+            def connection(self, _request, *, autocommit=False):
+                self.autocommit = autocommit
+                yield lease
+
+        store = SqlCollaborationStore.__new__(SqlCollaborationStore)
+        store._requests = type(
+            "Requests",
+            (),
+            {"request": lambda _self, _database_id, *, read_only: object()},
+        )()
+        store._connections = _Connections()
+        batch = store.poll_changes("database", 10, 10)
+        self.assertEqual(batch.minimum_valid_version, 20)
+        self.assertEqual(batch.delivered_through_version, 10)
+        self.assertEqual(lease.commits, 0)
+        self.assertEqual(lease.rollbacks, 1)
+
+    def test_snapshot_feed_rejects_duplicate_resource_payloads(self):
+        transaction_id = "00000000-0000-0000-0000-000000000099"
+
+        class _Cursor:
+            def execute(self, _sql, *_parameters):
+                return self
+
+            def fetchall(self):
+                row = (
+                    1,
+                    12,
+                    transaction_id,
+                    "other-session",
+                    8,
+                    "condition",
+                    "42",
+                    "update",
+                    None,
+                    None,
+                    None,
+                    "ost_visualizer",
+                )
+                return (row, (2, *row[1:]))
+
+        with self.assertRaisesRegex(ValueError, "duplicate resource payloads"):
+            SqlCollaborationStore._load_transaction_changes(
+                _Cursor(), ((transaction_id, 12),)
+            )
 
     def test_remote_condition_and_area_hydration_uses_current_reader_contract(self):
         condition = object()
@@ -612,7 +989,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             SqlErrorDetails(SqlErrorCode.AUTHENTICATION_FAILED, "Sign in again.")
         )
         schema = SqlInfrastructureError(
-            SqlErrorDetails(SqlErrorCode.UNSUPPORTED_SCHEMA, "Upgrade required.")
+            SqlErrorDetails(SqlErrorCode.SCHEMA_MISMATCH, "Schema mismatch.")
         )
         permission = SqlInfrastructureError(
             SqlErrorDetails(SqlErrorCode.PERMISSION_DENIED, "Permission revoked.")
@@ -623,9 +1000,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertTrue(permission.read_only_required)
         self.assertFalse(schema.credential_required)
 
-    def test_latest_schema_has_canonical_collaboration_objects(self):
-        self.assertEqual(LATEST_SQL_SCHEMA.version, 4)
-        tables = {table.name: table for table in LATEST_SQL_SCHEMA.tables}
+    def test_schema_v1_has_canonical_collaboration_objects(self):
+        self.assertEqual(SQL_SCHEMA_V1.version, 1)
+        self.assertIn(
+            "ALLOW_SNAPSHOT_ISOLATION=ON",
+            SQL_SCHEMA_V1.canonical_database_requirements,
+        )
+        tables = {table.name: table for table in SQL_SCHEMA_V1.tables}
         self.assertEqual(
             set(tables),
             {
@@ -646,15 +1027,36 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         self.assertIn("BidUID", {column.name for column in tables["Locks"].columns})
         self.assertEqual(
-            LATEST_SQL_SCHEMA.change_tracking_tables,
+            SQL_SCHEMA_V1.change_tracking_tables,
             (("ostv", "ChangeTransactions"),),
         )
         feed_columns = {column.name for column in tables["ChangeFeedState"].columns}
         self.assertEqual(feed_columns, {"SingletonId", "FeedEpoch"})
-        self.assertEqual(len(LATEST_SQL_SCHEMA.checksum), 64)
+        self.assertEqual(len(SQL_SCHEMA_V1.checksum), 64)
+
+    def test_schema_v1_requires_snapshot_isolation_and_tracking_configuration(self):
+        inventory = type(
+            "Inventory",
+            (),
+            {
+                "snapshot_isolation_enabled": False,
+                "change_tracking_retention_days": 6,
+                "change_tracking_auto_cleanup": False,
+            },
+        )()
+        self.assertEqual(
+            SqlSchemaValidator._validate_database_requirements(
+                inventory, SQL_SCHEMA_V1
+            ),
+            [
+                "database.snapshot_isolation",
+                "database.change_tracking_retention",
+                "database.change_tracking_auto_cleanup",
+            ],
+        )
 
     def test_entity_seed_includes_empty_bid_collections_and_annotations(self):
-        sql = "\n".join(LATEST_SQL_SCHEMA.collaboration_initialization_statements)
+        sql = "\n".join(SQL_SCHEMA_V1.collaboration_initialization_statements)
         self.assertIn("N'annotations_collection'", sql)
         self.assertIn("FROM [dbo].[Bids]", sql)
         self.assertIn("N'projects_collection'", sql)
@@ -697,7 +1099,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         condition = ResourceRef("condition", "42", 8)
         takeoff = ResourceRef("takeoff", "395", 8)
         drafts = LocalDraftRegistry()
-        drafts.begin(
+        draft = drafts.begin(
             draft_type="takeoff-geometry",
             database_id="database",
             bid_uid=8,
@@ -716,6 +1118,31 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 affected_resources=(condition,),
             )
 
+    def test_local_draft_tracks_active_editor_and_all_leases(self):
+        first = ResourceRef("takeoff", "1", 8)
+        second = ResourceRef("takeoff", "2", 8)
+        drafts = LocalDraftRegistry()
+        draft = drafts.begin(
+            draft_type="takeoff-geometry",
+            database_id="database",
+            bid_uid=8,
+            page_uid=3,
+            owning_surface="detached-2d",
+            affected_resources=(first, second),
+            operation_id="move-takeoffs",
+        )
+        locks = (
+            ResourceLock("database", first, "first-token"),
+            ResourceLock("database", second, "second-token"),
+        )
+        drafts.activate(draft.draft_id, locks, runtime_generation=7)
+        active = drafts.get(draft.draft_id)
+        self.assertEqual(active.state, LocalDraftState.ACTIVE)
+        self.assertEqual(active.leases, locks)
+        self.assertEqual(active.runtime_generation, 7)
+        drafts.finish(draft.draft_id)
+        self.assertIsNone(drafts.get(draft.draft_id))
+
     def test_authoritative_reload_uses_current_token_after_drafts_are_cancelled(self):
         resource = ResourceRef("condition", "42", 8)
         initial = ConcurrencyToken(b"\x00" * 7 + b"\x01")
@@ -723,7 +1150,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         reader = _TokenReader({resource: initial})
         tokens, drafts = _token_service(reader)
         tokens.load_bid("database", "8")
-        drafts.begin(
+        draft = drafts.begin(
             draft_type="condition",
             database_id="database",
             bid_uid=8,
@@ -733,7 +1160,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             base_tokens=tokens.tokens_for_resources("database", (resource,)),
         )
         reader.resources[resource] = current
-        drafts.clear_database("database")
+        drafts.finish(draft.draft_id)
         tokens.load_bid("database", "8")
         self.assertEqual(
             tokens.expected_versions("database", (resource,))[0].expected,
@@ -828,7 +1255,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -849,7 +1276,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         runtime = _DatabaseRuntime(descriptor.database_id, 1)
         coordinator._runtimes[descriptor.database_id] = runtime
@@ -870,7 +1297,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 AppEvents.DATABASE_CAPABILITIES_CHANGED,
             ],
         )
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_condition_and_area_remote_batch_merges_once(self):
         database_id = "database"
@@ -914,6 +1341,183 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         names = [event for event, _payload in events.published]
         self.assertEqual(names.count(AppEvents.REMOTE_CONDITIONS_CHANGED), 1)
         self.assertEqual(names.count(AppEvents.REMOTE_AREAS_CHANGED), 1)
+
+    def test_remote_transaction_publishes_one_deferred_plan_projection(self):
+        database_id = "database"
+        events = _EventBus()
+        project_data = _ProjectData(database_id)
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, events, tokens, drafts, ConflictResolutionService()
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (
+                    _change(
+                        database_id,
+                        ResourceRef("condition", "42", 8),
+                        1,
+                    ),
+                    _change(database_id, ResourceRef("area", "6", 8), 2),
+                ),
+            ),
+            conditions_by_bid={8: {"42": Condition(uid="42", name="Remote")}},
+            condition_folders_by_bid={8: {}},
+            areas_by_bid={
+                8: (
+                    BidArea(
+                        uid="6",
+                        bid_uid="8",
+                        parent_uid="0",
+                        name="Remote Area",
+                        sequence=1,
+                    ),
+                )
+            },
+        )
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=5,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        self.assertTrue(service.apply(hydrated, barrier))
+        projected = [
+            payload
+            for event, payload in events.published
+            if event == AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED
+        ]
+        self.assertEqual(len(projected), 1)
+        self.assertEqual(projected[0]["runtime_generation"], 5)
+        granular = [
+            payload
+            for event, payload in events.published
+            if event
+            in {
+                AppEvents.REMOTE_CONDITIONS_CHANGED,
+                AppEvents.REMOTE_AREAS_CHANGED,
+            }
+        ]
+        self.assertEqual(
+            [payload["defer_plan_projection"] for payload in granular],
+            [True, True],
+        )
+
+    def test_self_only_checkpoint_does_not_schedule_plan_projection(self):
+        database_id = "database"
+        events = _EventBus()
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            _ProjectData(database_id),
+            events,
+            tokens,
+            drafts,
+            ConflictResolutionService(),
+        )
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=5,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        self.assertTrue(
+            service.apply(
+                HydratedDatabaseChangeBatch(_batch(database_id, "epoch", 1, 2, ())),
+                barrier,
+            )
+        )
+        self.assertNotIn(
+            AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+            [event for event, _payload in events.published],
+        )
+
+    def test_hierarchy_only_change_does_not_schedule_plan_projection(self):
+        database_id = "database"
+        events = _EventBus()
+        tokens, drafts = _token_service()
+
+        class _HierarchyProjectData(_ProjectData):
+            def replace_database_hierarchy(self, _file_entry, _cdn_types):
+                return None
+
+        service = RemoteChangeReconciliationService(
+            _HierarchyProjectData(database_id),
+            events,
+            tokens,
+            drafts,
+            ConflictResolutionService(),
+        )
+        barrier = RemoteProjectionBarrier(
+            database_id=database_id,
+            runtime_generation=5,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        hierarchy_file = HierarchyFileEntry(
+            file_path=database_id,
+            display_name="SQL",
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (_change(database_id, ResourceRef("database", database_id), 2),),
+            ),
+            hierarchy_file=hierarchy_file,
+        )
+        self.assertTrue(service.apply(hydrated, barrier))
+        published = [event for event, _payload in events.published]
+        self.assertIn(AppEvents.REMOTE_HIERARCHY_CHANGED, published)
+        self.assertNotIn(AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED, published)
+
+    def test_initial_sql_hierarchy_registration_includes_cdn_types(self):
+        database_id = "sql-database"
+        registered = []
+
+        class _InactiveProjectData(_ProjectData):
+            def __init__(self):
+                super().__init__("access-database")
+
+            def replace_database_hierarchy(self, file_entry, cdn_types):
+                registered.append((file_entry, cdn_types))
+
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            _InactiveProjectData(),
+            _EventBus(),
+            tokens,
+            drafts,
+            ConflictResolutionService(),
+        )
+        hierarchy_file = HierarchyFileEntry(
+            file_path=database_id,
+            display_name="SQL",
+        )
+        cdn_types = {"1": CdnType(uid="1", name="Linear")}
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                1,
+                (
+                    _change(
+                        database_id,
+                        ResourceRef("database", database_id),
+                    ),
+                ),
+            ),
+            hierarchy_file=hierarchy_file,
+            cdn_types=cdn_types,
+        )
+        self.assertTrue(service.apply(hydrated))
+        self.assertEqual(registered, [(hierarchy_file, cdn_types)])
 
     def test_remote_events_publish_only_after_all_model_merges(self):
         database_id = "database"
@@ -1111,22 +1715,22 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         descriptors = DatabaseDescriptorRegistry()
         sql_descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         access_descriptor = DatabaseDescriptor.for_access("C:/test.mdb")
         unversioned_descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="EXTERNAL")
         )
-        outdated_descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OUTDATED"),
-            schema_version=1,
+        future_descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="FUTURE"),
+            schema_version=SQL_SCHEMA_V1.version + 1,
         )
         descriptors.register_all(
             (
                 sql_descriptor,
                 access_descriptor,
                 unversioned_descriptor,
-                outdated_descriptor,
+                future_descriptor,
             )
         )
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1153,7 +1757,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
             CollaborationPollingPolicy(
                 inactive_database_seconds=0.05,
                 jitter_ratio=0.0,
@@ -1161,12 +1765,12 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         self.assertFalse(coordinator.start_database(access_descriptor.database_id))
         self.assertFalse(coordinator.start_database(unversioned_descriptor.database_id))
-        self.assertFalse(coordinator.start_database(outdated_descriptor.database_id))
+        self.assertFalse(coordinator.start_database(future_descriptor.database_id))
         self.assertTrue(coordinator.start_database(sql_descriptor.database_id))
         self.assertTrue(store.started.wait(2))
         self.assertTrue(store.polled.wait(2))
         self.assertTrue(healthy.wait(2))
-        coordinator.stop_database(sql_descriptor.database_id)
+        _stop_database(coordinator, sql_descriptor.database_id)
         self.assertTrue(store.closed.wait(2))
         self.assertEqual(sessions.get(sql_descriptor.database_id), "")
         self.assertFalse(
@@ -1175,7 +1779,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 for thread in threading.enumerate()
             )
         )
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_unversioned_sql_does_not_read_collaboration_versions(self):
         descriptors = DatabaseDescriptorRegistry()
@@ -1200,7 +1804,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1221,7 +1825,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
             CollaborationPollingPolicy(
                 inactive_database_seconds=0.05,
                 jitter_ratio=0.0,
@@ -1235,15 +1839,56 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             source=store.session_id,
         )
         self.assertTrue(store.change_seen.wait(3))
-        coordinator.stop_database(descriptor.database_id)
-        self.assertEqual(len(reconciliation.batches), 1)
-        coordinator.shutdown()
+        _stop_database(coordinator, descriptor.database_id)
+        self.assertEqual(len(reconciliation.batches), 2)
+        self.assertEqual(reconciliation.batches[-1].batch.changes, ())
+        _shutdown_coordinator(coordinator)
 
-    def test_reconciliation_checkpoint_advances_only_after_successful_reload(self):
+    def test_self_change_checkpoint_waits_for_main_thread_reconciliation_gate(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        store = _CollaborationStore()
+        store.change = _change(
+            descriptor.database_id,
+            ResourceRef("condition", "42", 8),
+            source="session",
+        )
+        dispatcher = _DelayedReconciliationDispatcher()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            dispatcher,
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.session = DatabaseSession(descriptor.database_id, "session")
+        coordinator._runtimes[descriptor.database_id] = runtime
+        coordinator._poll_once(runtime)
+        self.assertEqual(runtime.acknowledged_version, 0)
+        self.assertTrue(runtime.pending_delivery)
+        dispatcher.deliver_pending()
+        self.assertEqual(runtime.acknowledged_version, 1)
+        self.assertFalse(runtime.pending_delivery)
+        coordinator._runtimes.clear()
+        _shutdown_coordinator(coordinator)
+
+    def test_reconciliation_checkpoint_advances_only_after_worker_owned_recovery(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1269,7 +1914,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
+        )
+        events.subscribe(
+            AppEvents.FULL_RECONCILIATION_REQUIRED,
+            lambda database_id="", **_payload: (
+                coordinator.resume_controlled_recovery(database_id)
+            ),
         )
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(healthy.wait(2))
@@ -1291,16 +1942,15 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         store.initial_version = 25
         store.batch = _batch(descriptor.database_id, "epoch", 0, 25)
-        events.publish(AppEvents.DATABASE_REFRESHED, file_path=descriptor.database_id)
         self.assertTrue(store.restarted.wait(2))
         self.assertEqual(runtime.acknowledged_version, 25)
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_authoritative_recovery_can_trust_a_lower_feed_version(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1332,7 +1982,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
             CollaborationPollingPolicy(
                 inactive_database_seconds=0.05,
                 jitter_ratio=0.0,
@@ -1352,13 +2002,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertTrue(second_healthy.wait(1))
         self.assertEqual(runtime.acknowledged_version, 5)
         self.assertEqual(runtime.observed_high_water_version, 5)
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_failed_main_thread_reconciliation_does_not_acknowledge_batch(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1383,7 +2033,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
             CollaborationPollingPolicy(
                 inactive_database_seconds=0.05,
                 jitter_ratio=0.0,
@@ -1402,13 +2052,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         self.assertTrue(reconciliation_required.wait(2))
         self.assertEqual(runtime.acknowledged_version, initial_version)
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_reconciliation_exception_keeps_checkpoint_and_requests_recovery(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1425,7 +2075,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         runtime = _DatabaseRuntime(descriptor.database_id, 1)
         runtime.acknowledged_version = 7
@@ -1463,13 +2113,102 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             AppEvents.FULL_RECONCILIATION_REQUIRED,
             [event for event, _payload in events.published],
         )
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
+
+    def test_checkpoint_waits_for_successful_plan_projection(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        events = _EventBus()
+        tokens, drafts = _token_service()
+        reconciliation = _DeferredProjectionReconciliation()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            reconciliation,
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            events,
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.acknowledged_version = 7
+        runtime.pending_delivery = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(descriptor.database_id, "epoch", 1, 12)
+        )
+        coordinator._on_remote_batch(
+            (descriptor.database_id, runtime.generation, hydrated)
+        )
+        self.assertEqual(runtime.acknowledged_version, 7)
+        self.assertTrue(runtime.pending_delivery)
+        reconciliation.token.complete(True)
+        self.assertEqual(runtime.acknowledged_version, 12)
+        self.assertFalse(runtime.pending_delivery)
+        reconciliation.token.complete(True)
+        self.assertEqual(runtime.acknowledged_version, 12)
+        _shutdown_coordinator(coordinator)
+
+    def test_failed_plan_projection_does_not_acknowledge_batch(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        events = _EventBus()
+        tokens, drafts = _token_service()
+        reconciliation = _DeferredProjectionReconciliation()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            reconciliation,
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            events,
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.acknowledged_version = 7
+        runtime.pending_delivery = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        coordinator._on_remote_batch(
+            (
+                descriptor.database_id,
+                runtime.generation,
+                HydratedDatabaseChangeBatch(
+                    _batch(descriptor.database_id, "epoch", 1, 12)
+                ),
+            )
+        )
+        reconciliation.token.complete(False)
+        self.assertEqual(runtime.acknowledged_version, 7)
+        self.assertTrue(runtime.recovery_requested)
+        self.assertEqual(
+            capabilities.collaboration_status(descriptor.database_id).state,
+            SynchronizationState.RECONCILIATION_REQUIRED,
+        )
+        _shutdown_coordinator(coordinator)
 
     def test_retention_gap_enters_controlled_read_only_reconciliation(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1501,7 +2240,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
             CollaborationPollingPolicy(
                 inactive_database_seconds=0.05,
                 jitter_ratio=0.0,
@@ -1516,13 +2255,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             capabilities.collaboration_status(descriptor.database_id).state,
             SynchronizationState.RECONCILIATION_REQUIRED,
         )
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_reconciliation_releases_local_edit_locks(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1551,7 +2290,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(healthy.wait(2))
@@ -1574,13 +2313,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         self.assertEqual(sessions.lock_tokens(descriptor.database_id, (resource,)), ())
         self.assertEqual(runtime.owned_locks, {})
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_entering_conflict_releases_edit_locks_on_worker_thread(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1598,7 +2337,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             _EventBus(),
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(store.started.wait(2))
@@ -1614,7 +2353,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         coordinator.enter_conflict(descriptor.database_id, "conflict")
         self.assertTrue(store.release_event.wait(2))
         self.assertNotEqual(store.release_threads[-1], caller_thread)
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_duplicate_release_does_not_decrement_an_unrelated_edit(self):
         store = _LockingStore()
@@ -1630,36 +2369,182 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             _EventBus(),
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         first = ResourceRef("condition", "42", 8)
         second = ResourceRef("condition", "43", 8)
+        first_lock = ResourceLock("database", first, "first-lock")
+        second_lock = ResourceLock("database", second, "second-lock")
+        first_draft = drafts.begin(
+            draft_type="condition_editor",
+            database_id="database",
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="test",
+            affected_resources=(first,),
+        )
+        second_draft = drafts.begin(
+            draft_type="condition_editor",
+            database_id="database",
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="test",
+            affected_resources=(second,),
+        )
+        drafts.activate(first_draft.draft_id, (first_lock,), runtime_generation=1)
+        drafts.activate(second_draft.draft_id, (second_lock,), runtime_generation=1)
         runtime = _DatabaseRuntime("database", 1)
         runtime.session = DatabaseSession("database", "session")
         runtime.edit_depth = 2
         runtime.mode = PresenceMode.EDITING
         runtime.owned_locks = {
-            first: ResourceLock("database", first, "first-lock"),
-            second: ResourceLock("database", second, "second-lock"),
+            first: first_lock,
+            second: second_lock,
         }
         runtime.draft_ids = {
-            frozenset((first,)): "first-draft",
-            frozenset((second,)): "second-draft",
+            frozenset((first,)): first_draft.draft_id,
+            frozenset((second,)): second_draft.draft_id,
         }
-        runtime.release_requests.put((first,))
+        coordinator._runtimes["database"] = runtime
+        first_handle = EditLeaseHandle(
+            database_id="database",
+            draft_id=first_draft.draft_id,
+            runtime_generation=1,
+            operation_id=first_draft.operation_id,
+            owning_surface="test",
+            resources=(first,),
+            locks=(first_lock,),
+        )
+        coordinator.end_edit_lease(first_handle)
         coordinator._process_release_requests(runtime)
-        runtime.release_requests.put((first,))
+        coordinator.end_edit_lease(first_handle)
         coordinator._process_release_requests(runtime)
         self.assertEqual(runtime.edit_depth, 1)
         self.assertEqual(runtime.mode, PresenceMode.EDITING)
         self.assertIn(second, runtime.owned_locks)
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
+
+    def test_edit_lease_release_requires_the_exact_owned_handle(self):
+        store = _LockingStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            DatabaseDescriptorRegistry(),
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(DatabaseDescriptorRegistry(), _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        resource = ResourceRef("condition", "42", 8)
+        owned_lock = ResourceLock("database", resource, "owned-lock")
+        draft = drafts.begin(
+            draft_type="condition_editor",
+            database_id="database",
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="test",
+            affected_resources=(resource,),
+            operation_id="edit-condition",
+        )
+        drafts.activate(draft.draft_id, (owned_lock,), runtime_generation=1)
+        runtime = _DatabaseRuntime("database", 1)
+        runtime.session = DatabaseSession("database", "session")
+        runtime.edit_depth = 1
+        runtime.mode = PresenceMode.EDITING
+        runtime.owned_locks = {resource: owned_lock}
+        runtime.draft_ids = {frozenset((resource,)): draft.draft_id}
+        coordinator._runtimes["database"] = runtime
+        forged = EditLeaseHandle(
+            database_id="database",
+            draft_id=draft.draft_id,
+            runtime_generation=1,
+            operation_id="edit-condition",
+            owning_surface="test",
+            resources=(resource,),
+            locks=(ResourceLock("database", resource, "forged-lock"),),
+        )
+        coordinator.end_edit_lease(forged)
+        coordinator._process_release_requests(runtime)
+        self.assertEqual(runtime.owned_locks, {resource: owned_lock})
+        self.assertIsNotNone(drafts.get(draft.draft_id))
+        self.assertEqual(store.released, [])
+        _shutdown_coordinator(coordinator)
+
+    def test_partial_lease_cleanup_failure_resets_the_owning_session(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        store = _PartialAcquireCleanupFailureStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.started.wait(2))
+        results = []
+        first = ResourceRef("condition", "42", 8)
+        second = ResourceRef("condition", "43", 8)
+        try:
+            coordinator.request_local_edit(
+                descriptor.database_id,
+                (first, second),
+                results.append,
+            )
+            self.assertTrue(store.release_failed.wait(2))
+            self.assertTrue(store.closed.wait(2))
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0].granted)
+            replacement = drafts.begin(
+                draft_type="condition_editor",
+                database_id=descriptor.database_id,
+                bid_uid=8,
+                page_uid=None,
+                owning_surface="test",
+                affected_resources=(first, second),
+            )
+            drafts.finish(replacement.draft_id)
+        finally:
+            _shutdown_coordinator(coordinator)
+
+    def test_lease_loss_event_requires_the_typed_loss_payload(self):
+        with self.assertRaises(TypeError):
+            AppEvents.EDIT_LEASE_LOST()
+        loss = EditLeaseLoss(
+            database_id="database",
+            draft_id="draft",
+            runtime_generation=1,
+            operation_id="edit-condition",
+            owning_surface="test",
+            resources=(ResourceRef("condition", "42", 8),),
+            reason="trust-lost",
+        )
+        self.assertIs(AppEvents.EDIT_LEASE_LOST(loss).loss, loss)
 
     def test_database_stop_releases_active_lease_and_publishes_loss(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1680,7 +2565,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(store.started.wait(2))
@@ -1692,16 +2577,16 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             lambda result: acquired.set() if result.granted else None,
         )
         self.assertTrue(acquired.wait(2))
-        coordinator.stop_database(descriptor.database_id)
+        _stop_database(coordinator, descriptor.database_id)
         self.assertTrue(store.release_event.is_set())
         self.assertTrue(lease_lost.is_set())
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_stopped_database_cannot_deliver_a_stale_lease_grant(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         store = _LockingStore()
@@ -1718,7 +2603,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             _EventBus(),
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(store.started.wait(2))
@@ -1729,17 +2614,126 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             results.append,
         )
         self.assertTrue(dispatcher.lease_queued.wait(2))
-        coordinator.stop_database(descriptor.database_id)
+        _stop_database(coordinator, descriptor.database_id)
         dispatcher.deliver_pending()
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].granted)
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
+
+    def test_edit_request_cannot_queue_after_database_drain_finishes(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        drafts = _BlockingDraftRegistry()
+        tokens = DatabaseConcurrencyTokenService(_TokenReader(), drafts)
+        store = _CollaborationStore()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.started.wait(2))
+        self.assertTrue(capabilities.mark_connected(descriptor.database_id))
+        results = []
+        resource = ResourceRef("condition", "42", 8)
+        requester = threading.Thread(
+            target=coordinator.request_local_edit,
+            args=(descriptor.database_id, (resource,), results.append),
+        )
+        requester.start()
+        self.assertTrue(drafts.entered.wait(2))
+        _stop_database(coordinator, descriptor.database_id)
+        drafts.proceed.set()
+        requester.join(2)
+        try:
+            self.assertFalse(requester.is_alive())
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0].granted)
+            replacement = drafts.begin(
+                draft_type="condition_editor",
+                database_id=descriptor.database_id,
+                bid_uid=8,
+                page_uid=None,
+                owning_surface="test",
+                affected_resources=(resource,),
+            )
+            drafts.finish(replacement.draft_id)
+        finally:
+            _shutdown_coordinator(coordinator)
+
+    def test_edit_request_cannot_survive_trust_loss_during_draft_creation(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        drafts = _BlockingDraftRegistry()
+        tokens = DatabaseConcurrencyTokenService(_TokenReader(), drafts)
+        store = _CollaborationStore()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.started.wait(2))
+        self.assertTrue(capabilities.mark_connected(descriptor.database_id))
+        results = []
+        resource = ResourceRef("condition", "42", 8)
+        requester = threading.Thread(
+            target=coordinator.request_local_edit,
+            args=(descriptor.database_id, (resource,), results.append),
+        )
+        requester.start()
+        self.assertTrue(drafts.entered.wait(2))
+        coordinator.enter_conflict(descriptor.database_id, "trust lost")
+        drafts.proceed.set()
+        requester.join(2)
+        try:
+            self.assertFalse(requester.is_alive())
+            self.assertEqual(len(results), 1)
+            self.assertFalse(results[0].granted)
+            replacement = drafts.begin(
+                draft_type="condition_editor",
+                database_id=descriptor.database_id,
+                bid_uid=8,
+                page_uid=None,
+                owning_surface="test",
+                affected_resources=(resource,),
+            )
+            drafts.finish(replacement.draft_id)
+        finally:
+            _shutdown_coordinator(coordinator)
 
     def test_trust_loss_cannot_deliver_a_stale_lease_grant(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         store = _LockingStore()
@@ -1756,7 +2750,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             _EventBus(),
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(store.started.wait(2))
@@ -1772,13 +2766,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         dispatcher.deliver_pending()
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].granted)
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_sql_lease_request_denies_when_collaboration_is_not_editable(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1796,7 +2790,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             _EventBus(),
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         runtime = _DatabaseRuntime(descriptor.database_id, 1)
         runtime.session = DatabaseSession(descriptor.database_id, "session")
@@ -1811,13 +2805,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].granted)
         self.assertEqual(runtime.owned_locks, {})
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_sql_edit_lease_is_acquired_and_released_on_worker_thread(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1850,7 +2844,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             _EventBus(),
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
             CollaborationPollingPolicy(
                 inactive_database_seconds=0.05,
                 jitter_ratio=0.0,
@@ -1869,16 +2863,20 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         self.assertTrue(completed.wait(2))
         self.assertTrue(results[0].granted)
+        self.assertIsNotNone(results[0].handle)
+        self.assertEqual(results[0].handle.resources, (resource,))
+        self.assertEqual(results[0].handle.locks[0].lock_token, "lock-token")
+        self.assertGreater(results[0].handle.runtime_generation, 0)
         self.assertNotEqual(store.acquire_thread, caller_thread)
-        coordinator.end_local_edit(descriptor.database_id, (resource,))
+        coordinator.end_edit_lease(results[0].handle)
         self.assertTrue(store.release_event.wait(2))
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_capability_reprobe_restarts_stopped_credential_worker(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1897,7 +2895,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(store.failed.wait(2))
@@ -1910,13 +2908,41 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             file_path=descriptor.database_id,
         )
         self.assertTrue(store.restarted.wait(2))
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
+
+    def test_capability_reprobe_does_not_restart_after_failed_session_cleanup(self):
+        coordinator = SqlCollaborationCoordinator(
+            DatabaseDescriptorRegistry(),
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(DatabaseDescriptorRegistry(), _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            *_token_service(),
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime("database", 1)
+        runtime.thread = type(
+            "StoppedThread",
+            (),
+            {"ident": 1, "is_alive": lambda self: False},
+        )()
+        coordinator._runtimes["database"] = runtime
+        starts = []
+        coordinator.stop_database_async = (
+            lambda _database_id, _reason, callback: callback(False, "cleanup failed")
+        )
+        coordinator.start_database = lambda database_id: starts.append(database_id)
+        coordinator._on_database_capabilities_changed("database")
+        self.assertEqual(starts, [])
 
     def test_heartbeat_reprobes_permissions_for_a_healthy_session(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         store = _CollaborationStore()
@@ -1932,7 +2958,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             _EventBus(),
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         runtime = _DatabaseRuntime(descriptor.database_id, 1)
         runtime.session = DatabaseSession(descriptor.database_id, "session")
@@ -1940,13 +2966,13 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         with self.assertRaisesRegex(DatabaseCatalogError, "permissions") as failure:
             coordinator._heartbeat(runtime)
         self.assertTrue(failure.exception.read_only_required)
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
 
     def test_retryable_disconnect_creates_a_new_trusted_session(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -1964,7 +2990,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             _EventBus(),
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
             CollaborationPollingPolicy(
                 inactive_database_seconds=0.05,
                 jitter_ratio=0.0,
@@ -1975,13 +3001,56 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertTrue(store.restarted.wait(2))
         self.assertEqual(store.start_count, 2)
         self.assertEqual(coordinator.metrics(descriptor.database_id).reconnect_count, 1)
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
+
+    def test_startup_connection_failure_does_not_retry_until_user_reconnects(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        store = _AlwaysUnavailableStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+            CollaborationPollingPolicy(
+                jitter_ratio=0.0,
+                reconnect_backoff_seconds=(0.0,),
+            ),
+        )
+        caller_thread = threading.get_ident()
+        self.assertTrue(
+            coordinator.start_database(
+                descriptor.database_id,
+                retry_initial_failure=False,
+            )
+        )
+        self.assertTrue(store.first_failure.wait(2))
+        self.assertFalse(store.repeated_failure.wait(0.1))
+        self.assertEqual(store.start_count, 1)
+        self.assertNotEqual(store.start_threads, [caller_thread])
+        self.assertEqual(
+            coordinator.status(descriptor.database_id).state,
+            SynchronizationState.DISCONNECTED,
+        )
+        _shutdown_coordinator(coordinator)
 
     def test_invalid_feed_enters_controlled_reconciliation(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         descriptors.register(descriptor)
         capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
@@ -2004,7 +3073,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             tokens,
             drafts,
             events,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
         )
         self.assertTrue(coordinator.start_database(descriptor.database_id))
         self.assertTrue(reconciliation_required.wait(2))
@@ -2012,7 +3081,397 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             capabilities.collaboration_status(descriptor.database_id).state,
             SynchronizationState.RECONCILIATION_REQUIRED,
         )
-        coordinator.shutdown()
+        _shutdown_coordinator(coordinator)
+
+    def test_shutdown_drains_a_blocked_poll_without_blocking_the_caller(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        store = _BlockedPollStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.poll_entered.wait(2))
+        completed = threading.Event()
+        results = []
+        coordinator.request_shutdown(
+            lambda success, message: (
+                results.append((success, message)),
+                completed.set(),
+            )
+        )
+        self.assertEqual(
+            coordinator.shutdown_state, CollaborationShutdownState.DRAINING
+        )
+        self.assertFalse(completed.is_set())
+        store.release_poll.set()
+        self.assertTrue(completed.wait(2))
+        self.assertEqual(results, [(True, "")])
+        self.assertEqual(coordinator.shutdown_state, CollaborationShutdownState.CLOSED)
+
+    def test_shutdown_waits_for_a_database_drain_already_in_progress(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        store = _BlockedPollStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.poll_entered.wait(2))
+        coordinator.stop_database_async(descriptor.database_id)
+        completed = threading.Event()
+        coordinator.request_shutdown(lambda _success, _message: completed.set())
+        self.assertFalse(completed.is_set())
+        store.release_poll.set()
+        self.assertTrue(completed.wait(2))
+        self.assertEqual(coordinator.shutdown_state, CollaborationShutdownState.CLOSED)
+
+    def test_database_cannot_reopen_until_its_previous_session_is_drained(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        store = _BlockedPollStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.poll_entered.wait(2))
+        drained = threading.Event()
+        coordinator.stop_database_async(
+            descriptor.database_id,
+            callback=lambda _success, _message: drained.set(),
+        )
+        self.assertFalse(coordinator.start_database(descriptor.database_id))
+        store.release_poll.set()
+        self.assertTrue(drained.wait(2))
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        _shutdown_coordinator(coordinator)
+
+    def test_repeated_shutdown_requests_share_one_drain(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        store = _BlockedPollStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.poll_entered.wait(2))
+        completed = threading.Event()
+        results = []
+
+        def record(label):
+            return lambda success, _message: (
+                results.append((label, success)),
+                completed.set() if len(results) == 2 else None,
+            )
+
+        coordinator.request_shutdown(record("first"))
+        coordinator.request_shutdown(record("second"))
+        store.release_poll.set()
+        self.assertTrue(completed.wait(2))
+        self.assertCountEqual(results, [("first", True), ("second", True)])
+        self.assertEqual(store.start_count, 1)
+
+    def test_shutdown_reports_session_cleanup_failure(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        store = _FailedCloseStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.started.wait(2))
+        completed = threading.Event()
+        results = []
+        coordinator.request_shutdown(
+            lambda success, message: (
+                results.append((success, message)),
+                completed.set(),
+            )
+        )
+        self.assertTrue(completed.wait(2))
+        self.assertFalse(results[0][0])
+        self.assertIn("session could not be closed", results[0][1])
+        self.assertEqual(
+            coordinator.shutdown_state, CollaborationShutdownState.CLEANUP_FAILED
+        )
+
+    def test_successful_session_close_supersedes_individual_lock_release_failure(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        store = _ReleaseFailsCloseSucceedsStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        resource = ResourceRef("condition", "42", 8)
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.started.wait(2))
+        lease_completed = threading.Event()
+        lease_results = []
+        coordinator.request_local_edit(
+            descriptor.database_id,
+            (resource,),
+            lambda result: (lease_results.append(result), lease_completed.set()),
+        )
+        self.assertTrue(lease_completed.wait(2))
+        self.assertTrue(lease_results[0].granted)
+        shutdown_completed = threading.Event()
+        shutdown_results = []
+        coordinator.request_shutdown(
+            lambda success, message: (
+                shutdown_results.append((success, message)),
+                shutdown_completed.set(),
+            )
+        )
+        self.assertTrue(shutdown_completed.wait(2))
+        self.assertTrue(store.closed.is_set())
+        self.assertEqual(shutdown_results, [(True, "")])
+        self.assertEqual(coordinator.shutdown_state, CollaborationShutdownState.CLOSED)
+        self.assertIsNone(drafts.get(lease_results[0].handle.draft_id))
+
+    def test_failed_database_unload_remains_visible_to_shutdown(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        store = _FailedCloseStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.started.wait(2))
+        unloaded = threading.Event()
+        unload_results = []
+        coordinator.stop_database_async(
+            descriptor.database_id,
+            callback=lambda success, message: (
+                unload_results.append((success, message)),
+                unloaded.set(),
+            ),
+        )
+        self.assertTrue(unloaded.wait(2))
+        self.assertFalse(unload_results[0][0])
+        self.assertFalse(coordinator.start_database(descriptor.database_id))
+        shutdown = threading.Event()
+        shutdown_results = []
+        coordinator.request_shutdown(
+            lambda success, message: (
+                shutdown_results.append((success, message)),
+                shutdown.set(),
+            )
+        )
+        self.assertTrue(shutdown.wait(2))
+        self.assertFalse(shutdown_results[0][0])
+        self.assertIn("session could not be closed", shutdown_results[0][1])
+        self.assertEqual(
+            coordinator.shutdown_state, CollaborationShutdownState.CLEANUP_FAILED
+        )
+        repeated_results = []
+        coordinator.request_shutdown(
+            lambda success, message: repeated_results.append((success, message))
+        )
+        self.assertEqual(len(repeated_results), 1)
+        self.assertFalse(repeated_results[0][0])
+        self.assertIn("session could not be closed", repeated_results[0][1])
+
+    def test_closed_shutdown_callback_runs_outside_the_coordinator_lock(self):
+        coordinator = SqlCollaborationCoordinator(
+            DatabaseDescriptorRegistry(),
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(DatabaseDescriptorRegistry(), _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            *_token_service(),
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        _shutdown_coordinator(coordinator)
+        callback_lock_access = []
+
+        def completed(_success, _message):
+            acquired = coordinator._lock.acquire(blocking=False)
+            callback_lock_access.append(acquired)
+            if acquired:
+                coordinator._lock.release()
+
+        coordinator.request_shutdown(completed)
+        self.assertEqual(callback_lock_access, [True])
+
+    def test_stale_database_drain_cannot_clear_a_reopened_runtime(self):
+        cleared = []
+
+        class _Tokens:
+            def clear_database(self, database_id):
+                cleared.append(database_id)
+
+        descriptors = DatabaseDescriptorRegistry()
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            _Tokens(),
+            LocalDraftRegistry(),
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        coordinator._runtimes["database"] = _DatabaseRuntime("database", 2)
+        completed = []
+        coordinator._database_drains[("database", 1)] = [
+            lambda success, _message: completed.append(success)
+        ]
+        coordinator._complete_database_drain(
+            (
+                "database",
+                1,
+                True,
+                "",
+            )
+        )
+        self.assertEqual(cleared, [])
+        self.assertEqual(completed, [True])
+        self.assertEqual(coordinator._runtime("database").generation, 2)
+        _shutdown_coordinator(coordinator)
+
+    def test_database_drain_callback_failure_cannot_interrupt_shutdown_completion(self):
+        coordinator = SqlCollaborationCoordinator(
+            DatabaseDescriptorRegistry(),
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(DatabaseDescriptorRegistry(), _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            *_token_service(),
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        shutdown_results = []
+        coordinator._shutting_down = True
+        coordinator._shutdown_state = CollaborationShutdownState.DRAINING
+        coordinator._shutdown_callbacks.append(
+            lambda success, message: shutdown_results.append((success, message))
+        )
+        coordinator._database_drains[("database", 1)] = [
+            lambda _success, _message: (_ for _ in ()).throw(
+                RuntimeError("callback failed")
+            )
+        ]
+        with self.assertLogs(
+            "ost_visualizer.application.services.sql_collaboration_coordinator",
+            level="ERROR",
+        ):
+            coordinator._complete_database_drain(("database", 1, True, ""))
+        self.assertEqual(coordinator.shutdown_state, CollaborationShutdownState.CLOSED)
+        self.assertEqual(shutdown_results, [(True, "")])
 
 
 if __name__ == "__main__":

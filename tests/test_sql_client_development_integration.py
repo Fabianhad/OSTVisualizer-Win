@@ -23,7 +23,7 @@ from ost_visualizer.infrastructure.sql.connection_manager import (
 from ost_visualizer.infrastructure.sql.credential_store import WindowsCredentialStore
 from ost_visualizer.infrastructure.sql.errors import SqlInfrastructureError
 from ost_visualizer.infrastructure.sql.permissions import SqlDatabasePermissionProbe
-from ost_visualizer.infrastructure.sql.schema_definition import LATEST_SQL_SCHEMA
+from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
 from tools.manage_sql_development import (
     DATABASE_MARKER_PROPERTY,
@@ -103,8 +103,8 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
     def test_client_login_is_least_privilege_and_schema_is_current(self):
         location = self._location()
         inventory = SqlSchemaInspector().inspect(location, self.development.password)
-        self.assertEqual(inventory.schema_version, LATEST_SQL_SCHEMA.version)
-        self.assertEqual(inventory.schema_checksum, LATEST_SQL_SCHEMA.checksum)
+        self.assertEqual(inventory.schema_version, SQL_SCHEMA_V1.version)
+        self.assertEqual(inventory.schema_checksum, SQL_SCHEMA_V1.checksum)
         manager = SqlConnectionManager()
         request = SqlConnectionRequest(location, password=self.development.password)
         with manager.connection(request, autocommit=True) as lease:
@@ -147,10 +147,21 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
         )
         self.assertFalse(obsolete_role_exists)
         self.assertEqual(marker, self.development.ownership_marker)
-        with self.assertRaises(SqlInfrastructureError):
+        try:
+            with self.assertRaises(SqlInfrastructureError):
+                with manager.connection(request, autocommit=False) as lease:
+                    with lease.cursor() as cursor:
+                        cursor.execute(
+                            "CREATE TABLE [dbo].[ForbiddenClientDdl] ([Id] int)"
+                        )
+        finally:
             with manager.connection(request, autocommit=True) as lease:
                 with lease.cursor() as cursor:
-                    cursor.execute("CREATE TABLE [dbo].[ForbiddenClientDdl] ([Id] int)")
+                    cursor.execute(
+                        "SELECT CASE WHEN OBJECT_ID(N'dbo.ForbiddenClientDdl') "
+                        "IS NULL THEN 0 ELSE 1 END"
+                    )
+                    self.assertEqual(int(cursor.fetchone()[0]), 0)
 
     def test_client_catalog_recognizes_the_canonical_schema(self):
         entry = SqlDatabaseCatalog().get_database(
@@ -159,12 +170,12 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
             self.development.password,
         )
         self.assertTrue(entry.is_compatible, entry.compatibility_message)
-        self.assertEqual(entry.schema_version, LATEST_SQL_SCHEMA.version)
+        self.assertEqual(entry.schema_version, SQL_SCHEMA_V1.version)
 
     def test_client_permission_probe_accepts_the_canonical_role_model(self):
         descriptor = DatabaseDescriptor.for_sql_server(
             self._location(),
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry = DatabaseDescriptorRegistry()
         registry.register(descriptor)
@@ -178,7 +189,7 @@ class SqlClientDevelopmentIntegrationTests(unittest.TestCase):
         location = self._location()
         descriptor = DatabaseDescriptor.for_sql_server(
             location,
-            schema_version=LATEST_SQL_SCHEMA.version,
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry = DatabaseDescriptorRegistry()
         registry.register(descriptor)

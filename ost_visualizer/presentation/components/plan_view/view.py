@@ -3902,6 +3902,23 @@ class TakeoffPlanView(
             and isValid(self._overlay_move_preview_base_item)
         )
 
+    def has_active_remote_projection_blocker(self) -> bool:
+        """Return whether rebuilding overlays would destroy an active local preview."""
+        return bool(
+            self._editing_annotation_uids()
+            or self._drag_plan_item_uid
+            or self._rotation_drag_active
+            or self._overlay_move_dragging
+            or self._annotation_place_dragging
+            or self._annotation_area_rect_dragging
+            or self._place_linear_dragging
+            or self._place_area_rect_dragging
+            or self._dirty_positions
+            or self._dirty_ann_positions
+            or self._place_preview_items
+            or self._paste_backout_preview_items
+        )
+
     def _activate_overlay_move_preview_visuals(self, force: bool = False) -> None:
         if not force and not self._overlay_move_preview_base_ready():
             return
@@ -5040,7 +5057,7 @@ class TakeoffPlanView(
             self._update_scene_rect()
             self.viewport().update()
             return True
-        if not hidden_layers_changed and self._try_append_inserted_takeoff_overlays(
+        if not hidden_layers_changed and self._try_refresh_changed_takeoff_overlays(
             page=page,
             takeoffs=takeoffs,
             conditions=conditions,
@@ -5333,7 +5350,7 @@ class TakeoffPlanView(
         self._update_cursor()
         return True
 
-    def _try_append_inserted_takeoff_overlays(
+    def _try_refresh_changed_takeoff_overlays(
         self,
         page: Page,
         takeoffs: List[Takeoff],
@@ -5346,27 +5363,59 @@ class TakeoffPlanView(
     ) -> bool:
         if not changed_takeoff_uids:
             return False
-        current_uids = {str(uid) for uid in self._current_takeoffs}
+        current_by_uid = {
+            str(uid): takeoff for uid, takeoff in self._current_takeoffs.items()
+        }
+        current_uids = set(current_by_uid)
         incoming_by_uid = {str(takeoff.uid): takeoff for takeoff in takeoffs}
         incoming_uids = set(incoming_by_uid)
-        if not current_uids.issubset(incoming_uids):
-            return False
-        added_uids = incoming_uids - current_uids
         changed_uids = {str(uid) for uid in changed_takeoff_uids if uid}
-        if not added_uids or changed_uids != added_uids:
+        if not changed_uids or not changed_uids.intersection(
+            current_uids | incoming_uids
+        ):
+            return False
+        if current_uids.symmetric_difference(incoming_uids) - changed_uids:
+            return False
+        unchanged_uids = (current_uids & incoming_uids) - changed_uids
+        if any(current_by_uid[uid] != incoming_by_uid[uid] for uid in unchanged_uids):
+            return False
+        if conditions != self._current_conditions:
+            return False
+        if color_map != self._current_color_map:
+            return False
+        if page_area_selections != self._current_page_area_selections:
             return False
         annotation_dict, db_uid_map = _build_annotation_dict(
             annotations or [],
             takeoff_uids=incoming_uids,
         )
-        if set(annotation_dict) != set(self._current_annotations):
+        if (
+            annotation_dict != self._current_annotations
+            or db_uid_map != self._ann_db_uid_map
+        ):
             return False
-        if any(uid in self._current_annotations for uid in added_uids):
+        affected_current_uids = current_uids & changed_uids
+        affected_incoming_uids = incoming_uids & changed_uids
+        if any(uid in self._current_annotations for uid in changed_uids):
             return False
-        added_takeoffs = [incoming_by_uid[uid] for uid in added_uids]
-        for takeoff in added_takeoffs:
+        affected_takeoffs = [
+            incoming_by_uid[uid] for uid in sorted(affected_incoming_uids)
+        ]
+        for takeoff in affected_takeoffs:
             if takeoff.is_hole:
                 return False
+        for uid in affected_current_uids:
+            if current_by_uid[uid].is_hole:
+                return False
+        dependent_parent_uids = {
+            str(takeoff.parent_uid)
+            for takeoff in (*current_by_uid.values(), *incoming_by_uid.values())
+            if takeoff.is_hole and takeoff.parent_uid
+        }
+        if changed_uids & dependent_parent_uids:
+            return False
+        new_items: List[QGraphicsItem] = []
+        uid_to_items: Dict[str, List[QGraphicsItem]] = {}
         try:
             page_info = self._scene_builder.build_page_info(
                 page,
@@ -5375,22 +5424,27 @@ class TakeoffPlanView(
                 self._scene_scale,
                 page.rotation,
             )
-            new_items, uid_to_items = self._scene_builder.add_takeoff_overlays_subset(
-                self._scene,
-                takeoffs,
-                added_takeoffs,
-                conditions,
-                color_map,
-                page_info,
-                page_area_selections,
-            )
+            if affected_takeoffs:
+                new_items, uid_to_items = (
+                    self._scene_builder.add_takeoff_overlays_subset(
+                        self._scene,
+                        takeoffs,
+                        affected_takeoffs,
+                        conditions,
+                        color_map,
+                        page_info,
+                        page_area_selections,
+                    )
+                )
         except ValueError:
             return False
-        if set(uid_to_items) != added_uids:
+        if set(uid_to_items) != affected_incoming_uids:
             for item in new_items:
                 if item.scene() is self._scene:
                     self._scene.removeItem(item)
             return False
+        saved_selection = set(self._selected_uids)
+        self._remove_annotation_overlay_items(affected_current_uids)
         self._current_page = page
         self._current_bid_page_uid = page.uid
         self._current_bid_ref = bid_ref
@@ -5400,10 +5454,14 @@ class TakeoffPlanView(
         self._current_page_area_selections = page_area_selections
         self._current_annotations = annotation_dict
         self._ann_db_uid_map = db_uid_map
-        for uid in sorted(added_uids, key=int):
-            self._current_takeoffs[uid] = incoming_by_uid[uid]
+        self._current_takeoffs = incoming_by_uid
+        for uid in sorted(affected_incoming_uids):
             self._register_uid_items(uid, uid_to_items[uid])
         self._takeoff_items.extend(new_items)
+        self._scene_builder.update_takeoff_overlay_z_values(
+            takeoffs,
+            self._uid_to_items,
+        )
         page_transform = self._current_page_transform()
         if page_transform is not None:
             for item in new_items:
@@ -5411,6 +5469,10 @@ class TakeoffPlanView(
         if self._defer_page_visual_reveal:
             for item in new_items:
                 item.setVisible(False)
+        valid_selection = set(incoming_by_uid) | set(annotation_dict)
+        self._selected_uids = saved_selection & valid_selection
+        if self._selected_uids != saved_selection or saved_selection & changed_uids:
+            self.update_selection_visuals()
         self._invalidate_snap_index()
         self._update_cursor()
         return True

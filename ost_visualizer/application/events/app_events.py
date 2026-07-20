@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
+from ..dtos.collaboration_dtos import EditLeaseLoss
 from ..dtos.mesh_geometry_dto import MeshGeometry
+from ..dtos.remote_projection_dtos import RemoteProjectionBarrier
 
 
 @dataclass
@@ -23,6 +25,7 @@ class RemoteConditionsChangedEvent:
     database_id: str = ""
     bid_uid: str = ""
     condition_uids: list = field(default_factory=list)
+    defer_plan_projection: bool = False
 
 
 @dataclass
@@ -30,6 +33,7 @@ class RemoteAreasChangedEvent:
     database_id: str = ""
     bid_uid: str = ""
     area_uids: list = field(default_factory=list)
+    defer_plan_projection: bool = False
 
 
 @dataclass
@@ -38,11 +42,24 @@ class RemoteBidContentChangedEvent:
     bid_uid: str = ""
     families: list = field(default_factory=list)
     resource_uids_by_family: dict = field(default_factory=dict)
+    defer_plan_projection: bool = False
 
 
 @dataclass
 class RemoteHierarchyChangedEvent:
     database_id: str = ""
+    defer_plan_projection: bool = False
+
+
+@dataclass
+class RemotePlanProjectionRequestedEvent:
+    database_id: str
+    bid_uid: str
+    runtime_generation: int
+    families: tuple[str, ...]
+    condition_uids: tuple[str, ...]
+    resource_uids_by_family: dict[str, tuple[str, ...]]
+    barrier: RemoteProjectionBarrier
 
 
 @dataclass
@@ -79,7 +96,7 @@ class FullReconciliationRequiredEvent:
 
 @dataclass
 class EditLeaseLostEvent:
-    database_id: str = ""
+    loss: EditLeaseLoss
 
 
 @dataclass
@@ -181,6 +198,7 @@ class AppEvents:
     REMOTE_AREAS_CHANGED = RemoteAreasChangedEvent
     REMOTE_BID_CONTENT_CHANGED = RemoteBidContentChangedEvent
     REMOTE_HIERARCHY_CHANGED = RemoteHierarchyChangedEvent
+    REMOTE_PLAN_PROJECTION_REQUESTED = RemotePlanProjectionRequestedEvent
     COLLABORATION_STATE_CHANGED = CollaborationStateChangedEvent
     PRESENCE_CHANGED = PresenceChangedEvent
     SYNCHRONIZATION_CONFLICT = SynchronizationConflictEvent

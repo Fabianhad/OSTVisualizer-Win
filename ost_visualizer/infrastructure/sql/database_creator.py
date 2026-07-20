@@ -21,9 +21,12 @@ from .errors import (
     SqlInfrastructureError,
     classify_pyodbc_error,
 )
-from .schema_definition import LATEST_SQL_SCHEMA
+from .schema_definition import (
+    SQL_SCHEMA_V1,
+    SQL_CHANGE_TRACKING_RETENTION_DAYS,
+)
 from .schema_inspector import SqlSchemaInspector
-from .schema_validator import SqlSchemaCompatibility, SqlSchemaValidator
+from .schema_validator import SqlSchemaValidator
 from .schema_lock import SQL_SCHEMA_LOCK_RESOURCE, acquire_schema_transaction_lock
 
 
@@ -32,7 +35,7 @@ class SqlDatabaseCreator:
         self,
         connection_manager: Optional[SqlConnectionManager] = None,
     ) -> None:
-        self._schema_model = LATEST_SQL_SCHEMA.core_schema
+        self._schema_model = SQL_SCHEMA_V1.core_schema
         self._schema_versions, self._default_layers = get_reference_seed_data()
         self._connections = connection_manager or SqlConnectionManager()
         self._inspector = SqlSchemaInspector(self._connections)
@@ -114,6 +117,7 @@ class SqlDatabaseCreator:
         if not location.database:
             raise ValueError("A target SQL Server database is required")
         self._validate_blank_candidate(location, password)
+        self._ensure_snapshot_isolation(location, password)
         enabled_change_tracking = self._ensure_database_change_tracking(
             location, password
         )
@@ -133,11 +137,11 @@ class SqlDatabaseCreator:
                         raise SqlInfrastructureError(
                             SqlErrorDetails(
                                 SqlErrorCode.SCHEMA_MISMATCH,
-                                "The selected database is not blank. Use Connect for a "
-                                "compatible database or select an empty database.",
+                                "The selected database is not blank. Select an empty "
+                                "database or create a new one.",
                             )
                         )
-                    for statement in LATEST_SQL_SCHEMA.statements:
+                    for statement in SQL_SCHEMA_V1.statements:
                         cursor.execute(statement)
                     self._insert_seed_data(cursor, location.database)
                     self._initialize_collaboration_state(cursor)
@@ -149,7 +153,7 @@ class SqlDatabaseCreator:
                     apply_sql_client_permissions(cursor, location.username)
                 inventory = self._inspector.inspect_connection(lease)
                 report = self._validator.validate(inventory)
-                if report.compatibility != SqlSchemaCompatibility.CURRENT:
+                if not report.is_valid:
                     raise SqlInfrastructureError(
                         SqlErrorDetails(
                             SqlErrorCode.SCHEMA_MISMATCH,
@@ -170,108 +174,7 @@ class SqlDatabaseCreator:
                     if enabled_change_tracking:
                         self._disable_database_change_tracking(location, password)
         final_location = replace(location, database_guid=inventory.database_guid)
-        return SqlDatabaseCreationResult(final_location, LATEST_SQL_SCHEMA.version)
-
-    def initialize_compatible_database(
-        self,
-        location: SqlServerDatabaseLocation,
-        password: str = "",
-        *,
-        application_version: str,
-        actor: str = "",
-    ) -> SqlDatabaseCreationResult:
-        if not location.database:
-            raise ValueError("A target SQL Server database is required")
-        preflight = self._inspector.inspect(location, password)
-        if preflight.schema_version:
-            if preflight.schema_version != LATEST_SQL_SCHEMA.version:
-                raise SqlInfrastructureError(
-                    SqlErrorDetails(
-                        SqlErrorCode.UNSUPPORTED_SCHEMA,
-                        "The selected SQL database uses an unsupported schema "
-                        f"version ({preflight.schema_version}).",
-                    )
-                )
-        else:
-            candidate = self._validator.validate_adoption_candidate(preflight)
-            if candidate.compatibility != SqlSchemaCompatibility.UNVERSIONED_READ_ONLY:
-                raise SqlInfrastructureError(
-                    SqlErrorDetails(
-                        SqlErrorCode.SCHEMA_MISMATCH,
-                        "The external database cannot be enabled for editing: "
-                        + candidate.user_message,
-                    )
-                )
-        enabled_change_tracking = self._ensure_database_change_tracking(
-            location, password
-        )
-        request = SqlConnectionRequest(location=location, password=password)
-        actor_name = actor.strip() or location.username.strip() or getpass.getuser()
-        with self._connections.connection(request, autocommit=False) as lease:
-            committed = False
-            try:
-                with lease.cursor() as cursor:
-                    acquire_schema_transaction_lock(cursor)
-                inventory = self._inspector.inspect_connection(lease)
-                if inventory.schema_version == LATEST_SQL_SCHEMA.version:
-                    report = self._validator.validate(inventory)
-                    if report.compatibility != SqlSchemaCompatibility.CURRENT:
-                        raise SqlInfrastructureError(
-                            SqlErrorDetails(
-                                SqlErrorCode.SCHEMA_MISMATCH,
-                                "The external database cannot be enabled for editing: "
-                                + report.user_message,
-                            )
-                        )
-                    initialized = inventory
-                else:
-                    candidate = self._validator.validate_adoption_candidate(inventory)
-                    if (
-                        candidate.compatibility
-                        != SqlSchemaCompatibility.UNVERSIONED_READ_ONLY
-                    ):
-                        raise SqlInfrastructureError(
-                            SqlErrorDetails(
-                                SqlErrorCode.SCHEMA_MISMATCH,
-                                "The external database cannot be enabled for editing: "
-                                + candidate.user_message,
-                            )
-                        )
-                    with lease.cursor() as cursor:
-                        for statement in LATEST_SQL_SCHEMA.extension_statements:
-                            cursor.execute(statement)
-                        self._initialize_collaboration_state(cursor)
-                        self._record_schema(
-                            cursor,
-                            application_version=application_version,
-                            actor=actor_name,
-                        )
-                    initialized = self._inspector.inspect_connection(lease)
-                    report = self._validator.validate(initialized)
-                    if report.compatibility != SqlSchemaCompatibility.CURRENT:
-                        raise SqlInfrastructureError(
-                            SqlErrorDetails(
-                                SqlErrorCode.SCHEMA_MISMATCH,
-                                "External database initialization validation failed: "
-                                + report.user_message,
-                            )
-                        )
-                with lease.cursor() as cursor:
-                    apply_sql_client_permissions(cursor, location.username)
-                lease.commit()
-                committed = True
-            except pyodbc.Error as exc:
-                raise SqlInfrastructureError(classify_pyodbc_error(exc)) from None
-            finally:
-                if not committed:
-                    try:
-                        lease.rollback()
-                    except pyodbc.Error:
-                        pass
-                    if enabled_change_tracking:
-                        self._disable_database_change_tracking(location, password)
-        final_location = replace(location, database_guid=initialized.database_guid)
-        return SqlDatabaseCreationResult(final_location, LATEST_SQL_SCHEMA.version)
+        return SqlDatabaseCreationResult(final_location, SQL_SCHEMA_V1.version)
 
     def _ensure_database_change_tracking(
         self, location: SqlServerDatabaseLocation, password: str
@@ -281,19 +184,72 @@ class SqlDatabaseCreator:
             with self._connections.connection(request, autocommit=True) as lease:
                 with lease.cursor() as cursor:
                     cursor.execute(
-                        "SELECT CASE WHEN EXISTS (SELECT 1 FROM "
-                        "sys.change_tracking_databases WHERE database_id=DB_ID()) "
-                        "THEN 1 ELSE 0 END"
+                        "SELECT [retention_period], [retention_period_units_desc], "
+                        "[is_auto_cleanup_on] FROM sys.change_tracking_databases "
+                        "WHERE [database_id]=DB_ID()"
                     )
-                    if not bool(cursor.fetchone()[0]):
+                    row = cursor.fetchone()
+                    if row is None:
                         cursor.execute(
                             "ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON "
-                            "(CHANGE_RETENTION = 7 DAYS, AUTO_CLEANUP = ON)"
+                            "(CHANGE_RETENTION = "
+                            f"{SQL_CHANGE_TRACKING_RETENTION_DAYS} DAYS, "
+                            "AUTO_CLEANUP = ON)"
                         )
                         return True
+                    if (
+                        int(row[0]) != SQL_CHANGE_TRACKING_RETENTION_DAYS
+                        or str(row[1]).casefold() != "days"
+                        or not bool(row[2])
+                    ):
+                        raise SqlInfrastructureError(
+                            SqlErrorDetails(
+                                SqlErrorCode.SCHEMA_MISMATCH,
+                                "SQL Server Change Tracking must use seven-day "
+                                "retention with automatic cleanup enabled.",
+                            )
+                        )
         except pyodbc.Error as exc:
             raise SqlInfrastructureError(classify_pyodbc_error(exc)) from None
         return False
+
+    def _ensure_snapshot_isolation(
+        self, location: SqlServerDatabaseLocation, password: str
+    ) -> None:
+        request = SqlConnectionRequest(location=location, password=password)
+        try:
+            with self._connections.connection(request, autocommit=True) as lease:
+                with lease.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT [snapshot_isolation_state] FROM sys.databases "
+                        "WHERE [database_id]=DB_ID()"
+                    )
+                    row = cursor.fetchone()
+                    if row is None:
+                        raise SqlInfrastructureError(
+                            SqlErrorDetails(
+                                SqlErrorCode.CONNECTION_FAILED,
+                                "The exact SQL database target could not be resolved.",
+                            )
+                        )
+                    if int(row[0]) != 1:
+                        cursor.execute(
+                            "ALTER DATABASE CURRENT SET ALLOW_SNAPSHOT_ISOLATION ON"
+                        )
+                        cursor.execute(
+                            "SELECT [snapshot_isolation_state] FROM sys.databases "
+                            "WHERE [database_id]=DB_ID()"
+                        )
+                        verified = cursor.fetchone()
+                        if verified is None or int(verified[0]) != 1:
+                            raise SqlInfrastructureError(
+                                SqlErrorDetails(
+                                    SqlErrorCode.SCHEMA_MISMATCH,
+                                    "SQL Server snapshot isolation could not be enabled.",
+                                )
+                            )
+        except pyodbc.Error as exc:
+            raise SqlInfrastructureError(classify_pyodbc_error(exc)) from None
 
     def _disable_database_change_tracking(
         self, location: SqlServerDatabaseLocation, password: str
@@ -344,8 +300,8 @@ class SqlDatabaseCreator:
                     raise SqlInfrastructureError(
                         SqlErrorDetails(
                             SqlErrorCode.SCHEMA_MISMATCH,
-                            "The selected database is not blank. Use Connect for a "
-                            "compatible database or select an empty database.",
+                            "The selected database is not blank. Select an empty "
+                            "database or create a new one.",
                         )
                     )
 
@@ -362,7 +318,7 @@ class SqlDatabaseCreator:
             "[LastMigratedAt], [LastMigratedBy]) "
             "VALUES (?, N'OST Visualizer', ?, ?, SYSUTCDATETIME(), ?)",
             database_guid,
-            LATEST_SQL_SCHEMA.version,
+            SQL_SCHEMA_V1.version,
             actor,
             actor,
         )
@@ -370,16 +326,16 @@ class SqlDatabaseCreator:
             "INSERT INTO [ostv].[SchemaMigrations] "
             "([Version], [Name], [Checksum], [AppliedBy], [ApplicationVersion]) "
             "VALUES (?, ?, ?, ?, ?)",
-            LATEST_SQL_SCHEMA.version,
-            LATEST_SQL_SCHEMA.migration_name,
-            LATEST_SQL_SCHEMA.checksum,
+            SQL_SCHEMA_V1.version,
+            SQL_SCHEMA_V1.name,
+            SQL_SCHEMA_V1.checksum,
             actor,
             application_version,
         )
 
     @staticmethod
     def _initialize_collaboration_state(cursor) -> None:
-        for statement in LATEST_SQL_SCHEMA.collaboration_initialization_statements:
+        for statement in SQL_SCHEMA_V1.collaboration_initialization_statements:
             cursor.execute(statement)
 
     def _insert_seed_data(self, cursor, database_name: str) -> None:

@@ -28,6 +28,7 @@ class LocalDraftRegistry:
         affected_resources: tuple[ResourceRef, ...],
         dependency_resources: tuple[ResourceRef, ...] = (),
         base_tokens: tuple[tuple[ResourceRef, ConcurrencyToken], ...] = (),
+        operation_id: str = "",
     ) -> LocalDraft:
         if not affected_resources:
             raise ValueError("A local draft must affect at least one resource")
@@ -42,6 +43,9 @@ class LocalDraftRegistry:
             dependency_resources=tuple(sorted(set(dependency_resources))),
             base_tokens=tuple(base_tokens),
             state=LocalDraftState.PENDING,
+            operation_id=operation_id or draft_type,
+            runtime_generation=0,
+            leases=(),
         )
         with self._lock:
             overlapping = self._overlapping_draft_locked(
@@ -55,8 +59,19 @@ class LocalDraftRegistry:
             self._drafts[draft.draft_id] = draft
         return draft
 
-    def activate(self, draft_id: str, lease: Optional[ResourceLock] = None) -> None:
-        self._set_state(draft_id, LocalDraftState.ACTIVE, lease)
+    def activate(
+        self,
+        draft_id: str,
+        leases: tuple[ResourceLock, ...],
+        *,
+        runtime_generation: int,
+    ) -> None:
+        self._set_state(
+            draft_id,
+            LocalDraftState.ACTIVE,
+            leases,
+            runtime_generation=runtime_generation,
+        )
 
     def finish(self, draft_id: str) -> None:
         with self._lock:
@@ -141,28 +156,23 @@ class LocalDraftRegistry:
                     )
         return tuple(conflicts)
 
-    def clear_database(self, database_id: str) -> None:
-        with self._lock:
-            draft_ids = tuple(
-                draft_id
-                for draft_id, draft in self._drafts.items()
-                if draft.database_id == database_id
-            )
-            for draft_id in draft_ids:
-                self._drafts.pop(draft_id, None)
-
     def _set_state(
         self,
         draft_id: str,
         state: LocalDraftState,
-        lease: Optional[ResourceLock] = None,
+        leases: tuple[ResourceLock, ...],
+        *,
+        runtime_generation: int,
     ) -> None:
         with self._lock:
             draft = self._drafts.get(draft_id)
             if draft is None:
                 raise ValueError("The local draft is no longer active")
             self._drafts[draft_id] = replace(
-                draft, state=state, lease=lease if lease is not None else draft.lease
+                draft,
+                state=state,
+                leases=leases,
+                runtime_generation=runtime_generation,
             )
 
     def _overlapping_draft_locked(

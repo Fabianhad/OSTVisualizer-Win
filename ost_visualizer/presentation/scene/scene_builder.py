@@ -165,6 +165,20 @@ class SceneBuilder:
             uid_to_items[uid_key] = items_to_add
         return takeoff_items, uid_to_items
 
+    def update_takeoff_overlay_z_values(
+        self,
+        takeoffs: List[Takeoff],
+        uid_to_items: Dict[str, List[Any]],
+    ) -> None:
+        for draw_index, takeoff in enumerate(_takeoffs_in_draw_order(takeoffs)):
+            for item in uid_to_items.get(str(takeoff.uid), []):
+                base_z = (
+                    _TAKEOFF_LABEL_Z
+                    if item.data(2) == "condition_label"
+                    else _TAKEOFF_BODY_Z
+                )
+                item.setZValue(_takeoff_z_value(base_z, draw_index))
+
     def add_annotation_overlays(
         self,
         scene: QGraphicsScene,

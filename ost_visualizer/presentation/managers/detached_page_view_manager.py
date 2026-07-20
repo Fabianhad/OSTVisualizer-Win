@@ -1,9 +1,15 @@
 import logging
+from copy import deepcopy
+from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 from PySide6 import QtWidgets
 from PySide6.QtCore import QByteArray, QObject, Qt, Signal
 from ...application.dtos.page_view_dto import PageViewDto
 from ...application.dtos.snap_preferences_dto import SnapPreferencesDto
+from ...application.dtos.remote_projection_dtos import (
+    RemoteProjectionBarrier,
+    RemoteProjectionToken,
+)
 from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_color_service import IColorService
 from ...application.interfaces.i_coordinate_transformer_factory import (
@@ -23,6 +29,7 @@ from ...domain.repositories.i_annotation_view_repository import (
 from ...domain.services.project_data_service import ProjectDataService
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.undo_redo_service import UndoRedoService
+from ..coordinators.remote_plan_update_pipeline import RemotePlanUpdatePipeline
 from .ui_access_manager import Feature
 
 
@@ -40,6 +47,34 @@ def _collect_pages_from_folder(folder, result: List[Tuple[str, str]]) -> None:
         _collect_pages_from_folder(subfolder, result)
     for page in folder.pages:
         result.append((page.uid, page.name))
+
+
+@dataclass(frozen=True)
+class _DetachedPlanIdentity:
+    database_id: str
+    bid_uid: str
+    page_uid: str
+    view_uid: str
+    surface_id: str
+    update_generation: int
+    barrier: RemoteProjectionBarrier
+
+
+@dataclass(frozen=True)
+class _DetachedPlanSnapshot:
+    page: object
+    takeoffs: tuple
+    conditions: tuple
+    annotations: tuple
+    bid_ref: object
+    ordered_pages: tuple
+    target_named_view_uid: Optional[str]
+    page_area_selections: tuple
+    hidden_layer_uids: frozenset[str]
+    annotation_layer_uid: Optional[str]
+    display_mode: str
+    grayscale_enabled: bool
+    identity: Optional[_DetachedPlanIdentity] = None
 
 
 class _RefreshSignaler(QObject):
@@ -100,6 +135,15 @@ class DetachedPageViewManager(IShutdownAware):
         self._opening = False
         self._visibility_changed_callback = None
         self._refresh_signaler = _RefreshSignaler(self._refresh_window, parent_window)
+        self._remote_update_generation = 0
+        self._remote_surface_id = f"detached-plan:{id(self)}"
+        self._remote_plan_pipeline = RemotePlanUpdatePipeline(
+            callback_bridge=infrastructure_provider.get_thread_callback_bridge(),
+            prepare=self._prepare_page_data,
+            apply=self._apply_remote_page_data,
+            is_current=self._is_remote_page_data_current,
+            coalesce=lambda _previous, current: current,
+        )
         self.event_bus.subscribe(
             AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
         )
@@ -135,6 +179,14 @@ class DetachedPageViewManager(IShutdownAware):
         self.event_bus.subscribe(
             AppEvents.REMOTE_AREAS_CHANGED,
             self._on_remote_areas_changed,
+        )
+        self.event_bus.subscribe(
+            AppEvents.REMOTE_HIERARCHY_CHANGED,
+            self._on_remote_hierarchy_changed,
+        )
+        self.event_bus.subscribe(
+            AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+            self._on_remote_plan_projection_requested,
         )
 
     def shutdown(self) -> None:
@@ -176,16 +228,30 @@ class DetachedPageViewManager(IShutdownAware):
                 AppEvents.REMOTE_AREAS_CHANGED,
                 self._on_remote_areas_changed,
             )
+            self.event_bus.unsubscribe(
+                AppEvents.REMOTE_HIERARCHY_CHANGED,
+                self._on_remote_hierarchy_changed,
+            )
+            self.event_bus.unsubscribe(
+                AppEvents.REMOTE_PLAN_PROJECTION_REQUESTED,
+                self._on_remote_plan_projection_requested,
+            )
+        self._remote_update_generation += 1
+        if self._remote_plan_pipeline is not None:
+            self._remote_plan_pipeline.cleanup()
+            self._remote_plan_pipeline = None
         if self._refresh_signaler is not None:
             self._refresh_signaler.cleanup()
             self._refresh_signaler.deleteLater()
             self._refresh_signaler = None
         if self._window is not None:
-            self._window.close()
-            self._window = None
-            self._window_undo_service = None
-            self._opening = False
-            self._notify_visibility_changed()
+            window = self._window
+            window.close()
+            if self._window is window:
+                self._window = None
+                self._window_undo_service = None
+                self._opening = False
+                self._notify_visibility_changed()
         self._visibility_changed_callback = None
         self._ui_access_manager = None
         self.event_bus = None
@@ -202,7 +268,9 @@ class DetachedPageViewManager(IShutdownAware):
         self._annotation_write_service = None
         self._saved_window_state_provider = None
 
-    def _on_window_destroyed(self, _: QObject) -> None:
+    def _on_window_destroyed(self, window_identity: int) -> None:
+        if self._window is None or id(self._window) != window_identity:
+            return
         self._window = None
         self._window_undo_service = None
         self._opening = False
@@ -282,6 +350,7 @@ class DetachedPageViewManager(IShutdownAware):
         database_id: str = "",
         bid_uid: str = "",
         families: Optional[List[str]] = None,
+        defer_plan_projection: bool = False,
         **_event_data,
     ) -> None:
         view = self.repository.get_active_view()
@@ -294,30 +363,103 @@ class DetachedPageViewManager(IShutdownAware):
             return
         if self._window_undo_service is not None and families:
             self._window_undo_service.clear()
+        if not defer_plan_projection:
+            self._refresh_signaler.request_refresh()
 
     def _on_remote_conditions_changed(
         self,
         database_id: str = "",
         bid_uid: str = "",
+        defer_plan_projection: bool = False,
         **_event_data,
     ) -> None:
         view = self.repository.get_active_view()
         if (
-            self._window_undo_service is not None
-            and view is not None
-            and view.bid_ref is not None
-            and view.bid_ref.file_path == database_id
-            and view.bid_ref.bid_uid == bid_uid
+            view is None
+            or view.bid_ref is None
+            or view.bid_ref.file_path != database_id
+            or view.bid_ref.bid_uid != bid_uid
         ):
+            return
+        if self._window_undo_service is not None:
             self._window_undo_service.clear()
+        if not defer_plan_projection:
+            self._refresh_signaler.request_refresh()
 
     def _on_remote_areas_changed(
         self,
         database_id: str = "",
         bid_uid: str = "",
+        defer_plan_projection: bool = False,
         **_event_data,
     ) -> None:
-        self._on_remote_conditions_changed(database_id, bid_uid)
+        self._on_remote_conditions_changed(
+            database_id, bid_uid, defer_plan_projection=defer_plan_projection
+        )
+
+    def _on_remote_hierarchy_changed(
+        self,
+        database_id: str = "",
+        defer_plan_projection: bool = False,
+        **_event_data,
+    ) -> None:
+        view = self.repository.get_active_view()
+        if (
+            view is None
+            or view.bid_ref is None
+            or view.bid_ref.file_path != database_id
+        ):
+            return
+        if not defer_plan_projection:
+            self._refresh_signaler.request_refresh()
+
+    def _on_remote_plan_projection_requested(
+        self,
+        database_id: str,
+        bid_uid: str,
+        runtime_generation: int,
+        families: tuple[str, ...],
+        condition_uids: tuple[str, ...],
+        resource_uids_by_family: dict[str, tuple[str, ...]],
+        barrier: RemoteProjectionBarrier,
+    ) -> None:
+        del families, condition_uids, resource_uids_by_family
+        if not self.is_view_open():
+            return
+        view = self.repository.get_active_view()
+        if (
+            view is None
+            or view.bid_ref is None
+            or view.bid_ref.file_path != database_id
+            or view.bid_ref.bid_uid != bid_uid
+            or not view.target_page_uid
+            or barrier.runtime_generation != runtime_generation
+        ):
+            return
+        self._remote_update_generation += 1
+        identity = _DetachedPlanIdentity(
+            database_id=database_id,
+            bid_uid=bid_uid,
+            page_uid=view.target_page_uid,
+            view_uid=view.uid,
+            surface_id=self._remote_surface_id,
+            update_generation=self._remote_update_generation,
+            barrier=barrier,
+        )
+        snapshot = self._capture_page_data(view, identity)
+        if snapshot is None:
+            return
+        token = barrier.register(self._remote_surface_id)
+        self._remote_plan_pipeline.submit(
+            snapshot,
+            lambda success: self._complete_remote_projection(token, success),
+        )
+
+    @staticmethod
+    def _complete_remote_projection(
+        token: RemoteProjectionToken, success: bool
+    ) -> None:
+        token.complete(success)
 
     def _get_bid_for_view(self, view: AnnotationView):
         bid_ref = view.bid_ref if view else None
@@ -484,12 +626,15 @@ class DetachedPageViewManager(IShutdownAware):
         return QByteArray.fromBase64(value.encode("ascii"))
 
     def close_view(self) -> None:
+        self._remote_update_generation += 1
         if self._window is not None:
-            self._window.close()
-            self._window = None
-            self._window_undo_service = None
-            self._opening = False
-            self._notify_visibility_changed()
+            window = self._window
+            window.close()
+            if self._window is window:
+                self._window = None
+                self._window_undo_service = None
+                self._opening = False
+                self._notify_visibility_changed()
         else:
             self._opening = False
 
@@ -672,43 +817,114 @@ class DetachedPageViewManager(IShutdownAware):
             parent=self.parent_window,
         )
         self._window.set_read_only(self._is_read_only())
-        self._window.destroyed.connect(self._on_window_destroyed)
+        window_identity = id(self._window)
+        self._window.destroyed.connect(
+            lambda _object: self._on_window_destroyed(window_identity)
+        )
         self._window.show_when_page_ready()
 
     def _get_page_data(self, view: AnnotationView) -> PageViewDto:
+        self._remote_update_generation += 1
+        snapshot = self._capture_page_data(view)
+        if snapshot is None:
+            return PageViewDto(page=None, bid_ref=view.bid_ref)
+        return self._prepare_page_data(snapshot)
+
+    def _capture_page_data(
+        self,
+        view: AnnotationView,
+        identity: Optional[_DetachedPlanIdentity] = None,
+    ) -> Optional[_DetachedPlanSnapshot]:
         page_uid = view.target_page_uid
         bid_ref = view.bid_ref
         current_bid_ref = self.project_data.get_current_bid_ref()
         if bid_ref and current_bid_ref != bid_ref:
-            return PageViewDto(page=None, bid_ref=bid_ref)
+            return None
         page = self.project_data.get_page(page_uid)
         if not page:
-            return PageViewDto(page=None, bid_ref=bid_ref)
+            return None
         page_takeoffs = self.project_data.get_page_takeoffs(page_uid)
         page_annotations = self.project_data.get_page_annotations(page_uid)
+        conditions = self.project_data.get_bid_conditions()
+        ordered_pages = self.project_data.get_all_pages()
+        page_area_selections = self.project_data.get_page_area_selections()
+        if identity is not None:
+            page = deepcopy(page)
+            page_takeoffs = deepcopy(page_takeoffs)
+            page_annotations = deepcopy(page_annotations)
+            conditions = deepcopy(conditions)
+            ordered_pages = deepcopy(ordered_pages)
+            page_area_selections = deepcopy(page_area_selections)
+        return _DetachedPlanSnapshot(
+            page=page,
+            takeoffs=tuple(page_takeoffs),
+            conditions=tuple(conditions.items()),
+            annotations=tuple(page_annotations),
+            bid_ref=bid_ref,
+            ordered_pages=tuple(ordered_pages),
+            target_named_view_uid=view.target_named_view_uid,
+            page_area_selections=tuple(page_area_selections.items()),
+            hidden_layer_uids=frozenset(self.project_data.get_hidden_layer_uids()),
+            annotation_layer_uid=self.project_data.get_annotation_layer_uid(),
+            display_mode=self.config_model.display_mode_2d,
+            grayscale_enabled=self.config_model.grayscale_enabled,
+            identity=identity,
+        )
+
+    def _prepare_page_data(self, snapshot: _DetachedPlanSnapshot) -> PageViewDto:
         named_view = None
-        if view.target_named_view_uid:
-            for ann in page_annotations:
+        if snapshot.target_named_view_uid:
+            for ann in snapshot.annotations:
                 nv = build_named_view_from_annotation(ann)
-                if nv and nv.uid == view.target_named_view_uid:
+                if nv and nv.uid == snapshot.target_named_view_uid:
                     named_view = nv
                     break
-        conditions = self.project_data.get_bid_conditions()
-        display_mode = self.config_model.display_mode_2d
-        grayscale_enabled = self.config_model.grayscale_enabled
+        conditions = dict(snapshot.conditions)
         _, color_map = self._color_service.get_color_mapping(
-            conditions, page_takeoffs, display_mode, grayscale_enabled
+            conditions,
+            snapshot.takeoffs,
+            snapshot.display_mode,
+            snapshot.grayscale_enabled,
         )
         return PageViewDto(
-            page=page,
-            takeoffs=page_takeoffs,
+            page=snapshot.page,
+            takeoffs=list(snapshot.takeoffs),
             conditions=conditions,
             color_map=color_map,
-            bid_ref=bid_ref,
-            annotations=page_annotations,
-            ordered_pages=self.project_data.get_all_pages(),
+            bid_ref=snapshot.bid_ref,
+            annotations=list(snapshot.annotations),
+            ordered_pages=list(snapshot.ordered_pages),
             named_view=named_view,
-            page_area_selections=self.project_data.get_page_area_selections(),
-            hidden_layer_uids=self.project_data.get_hidden_layer_uids(),
-            annotation_layer_uid=self.project_data.get_annotation_layer_uid(),
+            page_area_selections=dict(snapshot.page_area_selections),
+            hidden_layer_uids=set(snapshot.hidden_layer_uids),
+            annotation_layer_uid=snapshot.annotation_layer_uid,
         )
+
+    def _is_remote_page_data_current(self, snapshot: _DetachedPlanSnapshot) -> bool:
+        identity = snapshot.identity
+        if identity is None or self._window is None:
+            return False
+        view = self.repository.get_active_view()
+        return (
+            identity.update_generation == self._remote_update_generation
+            and identity.surface_id == self._remote_surface_id
+            and identity.barrier.is_current()
+            and view is not None
+            and view.uid == identity.view_uid
+            and view.bid_ref is not None
+            and view.bid_ref.file_path == identity.database_id
+            and view.bid_ref.bid_uid == identity.bid_uid
+            and view.target_page_uid == identity.page_uid
+            and not self._window.plan_view.has_active_remote_projection_blocker()
+        )
+
+    def _apply_remote_page_data(self, page_data: PageViewDto) -> bool:
+        if self._window is None:
+            return False
+        view = self.repository.get_active_view()
+        if view is None:
+            return False
+        self._update_window_navigation(view)
+        self._window.set_read_only(self._is_read_only())
+        self._window.update_page(page_data)
+        return True

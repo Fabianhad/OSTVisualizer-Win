@@ -3,6 +3,7 @@ import threading
 from types import SimpleNamespace
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
+from ..application.dtos.collaboration_dtos import CollaborationShutdownState
 from ..application.dtos.condition_summary_dtos import ConditionSummaryGrouping
 from ..application.dtos.file_import_args import ProjectFileArgs
 from ..application.events.app_events import AppEvents
@@ -117,6 +118,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._project_file_import_scheduled = False
         self._project_file_import_running = False
         self._pending_project_file_args = []
+        self._collaboration_shutdown_pending = False
+        self._collaboration_shutdown_complete = False
+        self._collaboration_shutdown_failed = False
         self.splash_screen = splash_screen
         self.app_controller = app_controller
         app_controller.container.register_instance("main_window", self)
@@ -564,6 +568,9 @@ class MainWindow(QtWidgets.QMainWindow):
             ui_state_manager=self.ui_state_manager,
             deferred_persistence_manager=self._deferred_persistence_manager,
             ui_access_manager=self.ui_access_manager,
+            sql_collaboration_coordinator=self.app_controller.get_service(
+                "sql_collaboration_coordinator"
+            ),
             database_catalog=self._infrastructure_provider.get_database_catalog(),
             credential_store=self._infrastructure_provider.get_credential_store(),
             database_descriptor_registry=(
@@ -631,6 +638,9 @@ class MainWindow(QtWidgets.QMainWindow):
             deferred_persistence_manager=self._deferred_persistence_manager,
             sql_collaboration_coordinator=self.app_controller.get_service(
                 "sql_collaboration_coordinator"
+            ),
+            plan_update_callback_bridge=(
+                self._infrastructure_provider.get_thread_callback_bridge()
             ),
         )
         return handlers
@@ -1916,8 +1926,14 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        if not self._flush_deferred_persistence_before_close():
+        if self._collaboration_shutdown_pending or self._collaboration_shutdown_failed:
             event.ignore()
+            return
+        if not self._collaboration_shutdown_complete:
+            self._collaboration_shutdown_pending = True
+            self.hide()
+            event.ignore()
+            QtCore.QTimer.singleShot(0, self._begin_application_shutdown)
             return
         self._workspace_state_coordinator.flush()
         self._workspace_state_coordinator.cleanup()
@@ -1932,8 +1948,39 @@ class MainWindow(QtWidgets.QMainWindow):
         lifecycle_orchestrator.shutdown()
         super().closeEvent(event)
 
+    def _begin_application_shutdown(self) -> None:
+        if (
+            not self._collaboration_shutdown_pending
+            or self._collaboration_shutdown_complete
+            or self._collaboration_shutdown_failed
+        ):
+            return
+        if not self._flush_deferred_persistence_before_close():
+            self._collaboration_shutdown_pending = False
+            self.show()
+            return
+        collaboration = self.app_controller.get_service("sql_collaboration_coordinator")
+        if collaboration.shutdown_state == CollaborationShutdownState.CLOSED:
+            self._on_collaboration_shutdown_complete(True, "")
+            return
+        collaboration.request_shutdown(self._on_collaboration_shutdown_complete)
+
+    def _on_collaboration_shutdown_complete(self, success: bool, message: str) -> None:
+        self._collaboration_shutdown_pending = False
+        if not success:
+            self._collaboration_shutdown_failed = True
+            self.show()
+            show_critical(
+                self,
+                "Shutdown Incomplete",
+                message or "SQL collaboration resources could not be closed safely.",
+            )
+            return
+        self._collaboration_shutdown_complete = True
+        QtCore.QTimer.singleShot(0, self.close)
+
     def _flush_deferred_persistence_before_close(self) -> bool:
-        self._deferred_persistence_manager.begin_shutdown()
         if not self.handlers.ui_event.flush_current_page_state():
             return False
+        self._deferred_persistence_manager.begin_shutdown()
         return bool(self._deferred_persistence_manager.cleanup())

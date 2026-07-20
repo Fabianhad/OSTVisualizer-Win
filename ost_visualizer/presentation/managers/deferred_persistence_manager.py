@@ -50,7 +50,7 @@ class DeferredPersistenceManager(QtCore.QObject):
         write_fn: Callable[[], bool],
         skippable_when_blocked: bool = False,
     ) -> None:
-        if self._cleaned_up:
+        if self._cleaned_up or self._shutdown_started:
             return
         self._pending[key] = DeferredPersistenceItem(
             kind,
@@ -252,7 +252,8 @@ class DeferredPersistenceManager(QtCore.QObject):
             if item is None:
                 continue
             if self._execute_item(item):
-                self._pending.pop(key, None)
+                if self._pending.get(key) is item:
+                    self._pending.pop(key, None)
             else:
                 failed[key] = item
         return failed
@@ -311,6 +312,9 @@ class DeferredPersistenceManager(QtCore.QObject):
         if not self._shutdown_started:
             self.begin_shutdown()
         if not self.flush():
+            self._shutdown_started = False
+            if self._pending:
+                self._timer.start()
             return False
         self._timer.stop()
         self._write_service = None
