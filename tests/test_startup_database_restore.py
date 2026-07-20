@@ -284,6 +284,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         original = FileEntry.for_descriptor(sql_descriptor, is_checked=True)
         unchecked = original.with_checked(False)
         stopped = []
+        cancelled = []
 
         class _State:
             file_entries = [original]
@@ -329,8 +330,10 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
                 "An unavailable SQL database must not be unloaded from the repository"
             ),
             deferred_persistence_manager=SimpleNamespace(
-                flush_for_file=lambda _locator: True,
-                cancel_for_file=lambda _locator: None,
+                flush_for_file=lambda _locator: self.fail(
+                    "Offline SQL uncheck must abandon deferred writes without flushing"
+                ),
+                cancel_for_file=cancelled.append,
             ),
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
             sql_collaboration_coordinator=SimpleNamespace(
@@ -349,6 +352,152 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
             handler.open_files()
         self.assertEqual(state.file_entries, [unchecked])
         self.assertEqual(stopped, [(sql_descriptor.database_id, "unchecked")])
+        self.assertEqual(cancelled, [sql_descriptor.database_id])
+
+    def test_explicit_unload_of_offline_sql_detaches_local_state(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OFFLINE_SQL"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        original = FileEntry.for_descriptor(descriptor, is_checked=True)
+
+        class _State:
+            file_entries = [original]
+
+            def update_entries(self, entries):
+                self.file_entries = list(entries)
+
+        state = _State()
+        cancelled = []
+        stopped = []
+        disconnected = []
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+            file_state_model=state,
+            cleanup_deleted_files_use_case=SimpleNamespace(),
+            file_loading_service=SimpleNamespace(is_loaded=lambda _locator: False),
+            working_directory_service=None,
+            unload_file_fn=lambda _locator: self.fail(
+                "Offline SQL detach must not call repository unload"
+            ),
+            deferred_persistence_manager=SimpleNamespace(
+                flush_for_file=lambda _locator: self.fail(
+                    "Offline SQL detach must not flush deferred writes"
+                ),
+                cancel_for_file=cancelled.append,
+            ),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(
+                stop_database_async=lambda database_id, reason: stopped.append(
+                    (database_id, reason)
+                )
+            ),
+            ui_state_manager=SimpleNamespace(selected_file_path=descriptor.database_id),
+            database_capability_service=SimpleNamespace(
+                mark_disconnected=disconnected.append
+            ),
+        )
+        handler.unload_file()
+        self.assertEqual(state.file_entries, [original.with_checked(False)])
+        self.assertEqual(cancelled, [descriptor.database_id])
+        self.assertEqual(stopped, [(descriptor.database_id, "unchecked")])
+        self.assertEqual(disconnected, [descriptor.database_id])
+
+    def test_sql_unload_state_save_failure_preserves_writes_and_runtime(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="SQL_STATE_FAIL"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        original = FileEntry.for_descriptor(descriptor, is_checked=True)
+        cancelled = []
+        stopped = []
+        unloaded = []
+
+        class _State:
+            file_entries = [original]
+
+            def update_entries(self, _entries):
+                raise OSError("disk unavailable")
+
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+            file_state_model=_State(),
+            cleanup_deleted_files_use_case=SimpleNamespace(),
+            file_loading_service=SimpleNamespace(
+                is_loaded=lambda _locator: self.fail(
+                    "Runtime inspection must follow persisted state"
+                )
+            ),
+            working_directory_service=None,
+            unload_file_fn=lambda locator: unloaded.append(locator) or True,
+            deferred_persistence_manager=SimpleNamespace(
+                flush_for_file=lambda _locator: self.fail(
+                    "SQL unload must not flush deferred writes"
+                ),
+                cancel_for_file=cancelled.append,
+            ),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(
+                stop_database_async=lambda database_id, reason: stopped.append(
+                    (database_id, reason)
+                )
+            ),
+            ui_state_manager=SimpleNamespace(selected_file_path=descriptor.database_id),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        ) as warning:
+            handler.unload_file()
+        self.assertEqual(cancelled, [])
+        self.assertEqual(stopped, [])
+        self.assertEqual(unloaded, [])
+        self.assertTrue(_State.file_entries[0].is_checked)
+        warning.assert_called_once()
+
+    def test_loaded_sql_unload_failure_preserves_deferred_writes(self):
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="SQL_LOCAL_FAIL"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        original = FileEntry.for_descriptor(descriptor, is_checked=True)
+        cancelled = []
+
+        class _State:
+            file_entries = [original]
+
+            def update_entries(self, entries):
+                self.file_entries = list(entries)
+
+        state = _State()
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+            file_state_model=state,
+            cleanup_deleted_files_use_case=SimpleNamespace(),
+            file_loading_service=SimpleNamespace(is_loaded=lambda _locator: True),
+            working_directory_service=None,
+            unload_file_fn=lambda _locator: False,
+            deferred_persistence_manager=SimpleNamespace(
+                flush_for_file=lambda _locator: self.fail(
+                    "SQL unload must not flush deferred writes"
+                ),
+                cancel_for_file=cancelled.append,
+            ),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
+            ui_state_manager=SimpleNamespace(selected_file_path=descriptor.database_id),
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
+        ):
+            handler.unload_file()
+        self.assertEqual(state.file_entries, [original])
+        self.assertEqual(cancelled, [])
 
     def test_open_files_save_failure_does_not_unload_the_active_database(self):
         original = FileEntry("C:/projects/active.mdb", is_checked=True)
@@ -654,6 +803,7 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         handler._sql_collaboration = SimpleNamespace(start_database=starts.append)
         handler._database_descriptor_registry = None
         handler._credential_store = None
+        handler._database_capability_service = None
         handler._complete_sql_connection_removal(entry, True, "")
         self.assertEqual(starts, [])
 

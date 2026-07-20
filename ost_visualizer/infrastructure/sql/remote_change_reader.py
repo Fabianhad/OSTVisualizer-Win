@@ -24,7 +24,7 @@ from ...application.interfaces.i_database_descriptor_registry import (
 from ...application.interfaces.i_remote_change_reader import IRemoteChangeReader
 from ...domain.entities.file_results import BidLoadResult
 from ...domain.entities.page import build_pages_from_bid_data
-from .connection_manager import SqlConnectionManager
+from .connection_manager import SqlConnectionManager, begin_snapshot_transaction
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .reader import SqlProjectReader
 
@@ -66,10 +66,8 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
         with self._connections.connection(request, autocommit=False) as connection:
             transaction_finished = False
             try:
+                begin_snapshot_transaction(connection)
                 with connection.cursor() as cursor:
-                    cursor.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
-                    connection.commit()
-                    cursor.execute("BEGIN TRANSACTION")
                     cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
                     version_row = cursor.fetchone()
                     if version_row is None or version_row[0] is None:

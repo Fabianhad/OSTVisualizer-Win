@@ -127,20 +127,18 @@ class FileOperationHandler:
             for database_id in files_to_unload:
                 original_entry = old_checked_files[database_id]
                 raw = original_entry.runtime_locator
-                if not self._deferred_persistence.flush_for_file(raw):
+                is_sql = original_entry.backend == DatabaseBackend.SQL_SERVER
+                if not is_sql and not self._deferred_persistence.flush_for_file(raw):
                     self._restore_entry(final_entries, original_entry)
                     restored_entries = True
                     continue
-                if (
-                    original_entry.backend == DatabaseBackend.SQL_SERVER
-                    and any(entry.database_id == database_id for entry in final_entries)
-                    and not self._file_loading_service.is_loaded(raw)
-                ):
+                if is_sql and not self._file_loading_service.is_loaded(raw):
                     self._deferred_persistence.cancel_for_file(raw)
-                    self._sql_collaboration.stop_database_async(
-                        database_id,
-                        "unchecked",
-                    )
+                    if any(entry.database_id == database_id for entry in final_entries):
+                        self._sql_collaboration.stop_database_async(
+                            database_id,
+                            "unchecked",
+                        )
                     if self._database_capability_service is not None:
                         self._database_capability_service.mark_disconnected(database_id)
                     continue
@@ -370,32 +368,8 @@ class FileOperationHandler:
         )
 
     def _complete_sql_connection_removal(
-        self, entry: FileEntry, success: bool, message: str
+        self, entry: FileEntry, _success: bool, _message: str
     ) -> None:
-        if not success:
-            state_restore_failed = False
-            entries = list(self._file_state_model.file_entries)
-            if not any(current.database_id == entry.database_id for current in entries):
-                entries.append(entry.with_checked(False))
-                try:
-                    self._file_state_model.update_entries(entries)
-                except OSError:
-                    state_restore_failed = True
-            detail = message or (
-                "The SQL collaboration session could not be closed. The saved "
-                "connection details were retained for safe cleanup."
-            )
-            if state_restore_failed:
-                detail += (
-                    " The Open Files entry could not be restored; add the connection "
-                    "again before retrying cleanup."
-                )
-            show_warning(
-                self.window,
-                "Remove SQL Server Connection",
-                detail,
-            )
-            return
         current_entry = next(
             (
                 current
@@ -408,6 +382,8 @@ class FileOperationHandler:
             if current_entry.is_checked:
                 self._sql_collaboration.start_database(entry.database_id)
             return
+        if self._database_capability_service is not None:
+            self._database_capability_service.mark_disconnected(entry.database_id)
         if self._database_descriptor_registry is not None:
             current = self._database_descriptor_registry.resolve(entry.database_id)
             if current is not None and current != entry.descriptor:
@@ -429,13 +405,26 @@ class FileOperationHandler:
 
     def unload_file(self) -> None:
         file_path = None
+        selected_entry = None
         if self.ui_state_manager and self.ui_state_manager.selected_file_path:
             file_path = self.ui_state_manager.selected_file_path
         original_entries: list[FileEntry] = []
         if file_path:
-            if not self._deferred_persistence.flush_for_file(file_path):
-                return
             original_entries = self._file_state_model.file_entries
+            selected_entry = next(
+                (
+                    entry
+                    for entry in original_entries
+                    if entry.runtime_locator == file_path
+                ),
+                None,
+            )
+            is_sql = (
+                selected_entry is not None
+                and selected_entry.backend == DatabaseBackend.SQL_SERVER
+            )
+            if not is_sql and not self._deferred_persistence.flush_for_file(file_path):
+                return
             entries = [
                 (
                     entry.with_checked(False)
@@ -454,6 +443,18 @@ class FileOperationHandler:
                     "was not unloaded.",
                 )
                 return
+            if is_sql:
+                if not self._file_loading_service.is_loaded(file_path):
+                    self._deferred_persistence.cancel_for_file(file_path)
+                    self._sql_collaboration.stop_database_async(
+                        selected_entry.database_id,
+                        "unchecked",
+                    )
+                    if self._database_capability_service is not None:
+                        self._database_capability_service.mark_disconnected(
+                            selected_entry.database_id
+                        )
+                    return
         success = self._unload_file_fn(file_path)
         if not success:
             if file_path:
@@ -473,18 +474,10 @@ class FileOperationHandler:
             return
         if file_path:
             self._deferred_persistence.cancel_for_file(file_path)
-            unloaded_entry = next(
-                (
-                    entry
-                    for entry in original_entries
-                    if entry.runtime_locator == file_path
-                ),
-                None,
-            )
             if (
-                unloaded_entry is not None
+                selected_entry is not None
                 and self._database_capability_service is not None
             ):
                 self._database_capability_service.mark_disconnected(
-                    unloaded_entry.database_id
+                    selected_entry.database_id
                 )

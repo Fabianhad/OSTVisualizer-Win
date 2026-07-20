@@ -954,39 +954,39 @@ class BidDataReaderMixin:
                         else None
                     )
                     position = parse_position_storage(position_raw)
-                    bid_takeoffs.append(
-                        Takeoff(
-                            uid=uid,
-                            condition_uid=condition_uid,
-                            page_uid=bid_page_uid,
-                            area_uid=bid_area_uid,
-                            position=position,
-                            rotation=rotation,
-                            curve=curve,
-                            parent_uid=parent_uid,
-                            is_negative=is_negative_quantity,
-                            dimension_font_name=dimension_font_name,
-                            dimension_font_color=dimension_font_color,
-                            dimension_font_size=dimension_font_size,
-                            dimension_font_bold=bool(row_data.get("FontBold", False)),
-                            dimension_font_italic=bool(
-                                row_data.get("FontItalic", False)
-                            ),
-                            dimension_font_underline=bool(
-                                row_data.get("FontUnderline", False)
-                            ),
-                            name_font_name=name_font_name,
-                            name_font_color=name_font_color,
-                            name_font_size=name_font_size,
-                            name_font_bold=bool(row_data.get("NameFontBold", False)),
-                            name_font_italic=bool(
-                                row_data.get("NameFontItalic", False)
-                            ),
-                            name_font_underline=bool(
-                                row_data.get("NameFontUnderline", False)
-                            ),
-                        )
+                    takeoff = Takeoff(
+                        uid=uid,
+                        condition_uid=condition_uid,
+                        page_uid=bid_page_uid,
+                        area_uid=bid_area_uid,
+                        position=position,
+                        rotation=rotation,
+                        curve=curve,
+                        parent_uid=parent_uid,
+                        is_negative=is_negative_quantity,
+                        dimension_font_name=dimension_font_name,
+                        dimension_font_color=dimension_font_color,
+                        dimension_font_size=dimension_font_size,
+                        dimension_font_bold=bool(row_data.get("FontBold", False)),
+                        dimension_font_italic=bool(row_data.get("FontItalic", False)),
+                        dimension_font_underline=bool(
+                            row_data.get("FontUnderline", False)
+                        ),
+                        name_font_name=name_font_name,
+                        name_font_color=name_font_color,
+                        name_font_size=name_font_size,
+                        name_font_bold=bool(row_data.get("NameFontBold", False)),
+                        name_font_italic=bool(row_data.get("NameFontItalic", False)),
+                        name_font_underline=bool(
+                            row_data.get("NameFontUnderline", False)
+                        ),
                     )
+                    if not takeoff.has_valid_contract():
+                        raise ValueError(
+                            f"BidTakeoffs.UID={uid or '<missing>'} does not satisfy "
+                            "the Takeoff domain contract"
+                        )
+                    bid_takeoffs.append(takeoff)
                     takeoff_extras[uid] = {c: row_data[c] for c in extra_cols}
         except pyodbc.Error as exc:
             if self._record_caught_read_error(exc):

@@ -63,6 +63,9 @@ Threading and events:
 - Worker threads must marshal back through existing Qt bridges before UI updates or EventBus publication.
 - Do not publish EventBus events from worker threads.
 - Subscribe in constructors/init paths and unsubscribe in `cleanup()`.
+- Native 3D rendering uses physical pixels for viewports, framebuffers, and
+  picking. Qt layouts and input remain in logical coordinates and cross the
+  device-pixel-ratio boundary exactly once in `RenderSurfaceMetrics`.
 
 Persistence:
 
@@ -130,6 +133,13 @@ Database backends:
   history, reset a same-bid 3D camera, or acknowledge a batch until main-thread
   reconciliation succeeds. External writers that bypass OST Visualizer are not
   represented in this change feed.
+- Takeoffs inherit bid-layer membership through their condition; `Takeoff` does
+  not own a layer UID. SQL and Access share the canonical takeoff hydrator, and
+  remote takeoff graphs must be validated before main-thread projection.
+- Unchecking or removing a SQL descriptor always detaches local state even when
+  the server is unavailable. Remote session and lock cleanup is best effort for
+  this path; connection-owned leases are allowed to expire after local runtime
+  generations, drafts, deferred writes, tokens, and capabilities are invalidated.
 - Remote plan updates use the bounded plan-update pipeline: capture an immutable
   page snapshot on the Qt thread, prepare color and render data on a worker, and
   apply one generation-guarded scene projection on the Qt thread. The SQL feed

@@ -24,6 +24,7 @@ from ..dtos.collaboration_dtos import (
     EditLeaseRequest,
     EditLeaseResult,
     PresenceMode,
+    ReconciliationFailureKind,
     ResourceLock,
     ResourceRef,
     SynchronizationState,
@@ -41,6 +42,8 @@ from .local_draft_registry import LocalDraftRegistry
 from .remote_change_reconciliation_service import RemoteChangeReconciliationService
 
 logger = logging.getLogger(__name__)
+_LOCAL_DETACH_REASONS = frozenset({"closed", "unchecked", "connection-removed"})
+_DATABASE_DRAIN_GRACE_SECONDS = 5.0
 
 
 @dataclass
@@ -121,6 +124,7 @@ class SqlCollaborationCoordinator:
         self._database_drains: dict[
             tuple[str, int], list[Callable[[bool, str], None]]
         ] = {}
+        self._local_detach_drains: set[tuple[str, int]] = set()
         self._database_cleanup_failures: dict[str, str] = {}
         self._shutdown_cleanup_errors: list[str] = []
         self._event_bus.subscribe(AppEvents.FILE_OPENED, self._on_file_opened)
@@ -234,15 +238,25 @@ class SqlCollaborationCoordinator:
     ) -> None:
         runtime = self._detach_runtime(database_id, reason)
         if runtime is None:
+            finalize_local_detach = False
             with self._lock:
                 drain_key = next(
                     (key for key in self._database_drains if key[0] == database_id),
                     None,
                 )
-                if callback is not None and drain_key is not None:
-                    self._database_drains[drain_key].append(callback)
+                if drain_key is not None:
+                    if reason in _LOCAL_DETACH_REASONS:
+                        self._local_detach_drains.add(drain_key)
+                    if callback is not None:
+                        self._database_drains[drain_key].append(callback)
                     return
                 cleanup_failure = self._database_cleanup_failures.get(database_id)
+                if reason in _LOCAL_DETACH_REASONS:
+                    self._database_cleanup_failures.pop(database_id, None)
+                    cleanup_failure = None
+                    finalize_local_detach = True
+            if finalize_local_detach:
+                self._finalize_database_stop(database_id, -1)
             if callback is not None:
                 self._invoke_completion_callback(
                     callback,
@@ -255,6 +269,8 @@ class SqlCollaborationCoordinator:
             self._database_drains[drain_key] = (
                 [callback] if callback is not None else []
             )
+            if reason in _LOCAL_DETACH_REASONS:
+                self._local_detach_drains.add(drain_key)
         thread = threading.Thread(
             target=self._drain_database,
             args=(runtime,),
@@ -287,7 +303,12 @@ class SqlCollaborationCoordinator:
     ) -> None:
         try:
             if runtime.thread is not None:
-                runtime.thread.join()
+                runtime.thread.join(self._database_drain_timeout(runtime.database_id))
+                if runtime.thread.is_alive():
+                    raise RuntimeError(
+                        "The SQL collaboration worker did not stop before the "
+                        "configured database-operation timeout."
+                    )
             cleanup_errors = tuple(runtime.cleanup_errors)
             payload = (
                 runtime.database_id,
@@ -304,12 +325,29 @@ class SqlCollaborationCoordinator:
             )
         self._dispatcher.dispatch(self._complete_database_drain, payload)
 
+    def _database_drain_timeout(self, database_id: str) -> float:
+        descriptor = self._registry.resolve(database_id)
+        if descriptor is None or descriptor.backend != DatabaseBackend.SQL_SERVER:
+            return _DATABASE_DRAIN_GRACE_SECONDS
+        location = descriptor.location
+        return float(
+            location.connection_timeout_seconds
+            + location.command_timeout_seconds
+            + _DATABASE_DRAIN_GRACE_SECONDS
+        )
+
     def _complete_database_drain(self, payload) -> None:
         database_id, generation, success, message = payload
-        if not success and not message:
-            message = f"SQL collaboration cleanup failed for {database_id}."
         with self._lock:
-            callbacks = tuple(self._database_drains.pop((database_id, generation), ()))
+            drain_key = (database_id, generation)
+            callbacks = tuple(self._database_drains.pop(drain_key, ()))
+            local_detach = drain_key in self._local_detach_drains
+            self._local_detach_drains.discard(drain_key)
+            if local_detach:
+                success = True
+                message = ""
+            elif not success and not message:
+                message = f"SQL collaboration cleanup failed for {database_id}."
             if success:
                 self._database_cleanup_failures.pop(database_id, None)
             else:
@@ -1253,7 +1291,12 @@ class SqlCollaborationCoordinator:
                 (
                     database_id,
                     generation,
-                    "The SQL database could not be reconciled at session start.",
+                    (
+                        "The SQL session-start reconciliation payload was malformed."
+                        if self._reconciliation.last_failure_kind
+                        == ReconciliationFailureKind.MALFORMED_PAYLOAD
+                        else "The SQL database could not be reconciled at session start."
+                    ),
                 )
             )
             runtime.ready_event.set()
@@ -1330,7 +1373,14 @@ class SqlCollaborationCoordinator:
                 (
                     database_id,
                     generation,
-                    "A remote SQL change requires a controlled database refresh.",
+                    (
+                        "A malformed SQL reconciliation payload requires a "
+                        "controlled database refresh."
+                        if self._reconciliation.last_failure_kind
+                        == ReconciliationFailureKind.MALFORMED_PAYLOAD
+                        else "A remote SQL catch-up change requires a controlled "
+                        "database refresh."
+                    ),
                 )
             )
 

@@ -1,11 +1,17 @@
 import logging
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from PySide6 import QtWidgets
 from ost_visualizer.application.dtos.update_condition_dto import UpdateConditionDto
-from ost_visualizer.application.dtos.collaboration_dtos import DatabaseMutationResult
+from ost_visualizer.application.dtos.collaboration_dtos import (
+    DatabaseMutationResult,
+    ResourceRef,
+    SynchronizationConflict,
+    SynchronizationConflictKind,
+)
 from ost_visualizer.application.services.active_bid_write_guard import (
     ActiveBidWriteGuard,
 )
@@ -105,6 +111,9 @@ class _SessionRegistry:
 
 
 class _ConcurrencyTokens:
+    def mutation_scope(self, _database_id):
+        return nullcontext()
+
     def ensure_resources_loaded(self, _database_id, _resources):
         pass
 
@@ -1265,6 +1274,30 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         self.assertFalse(result.success)
         self.assertEqual("The active bid is locked", result.error)
+
+    def test_condition_update_preserves_typed_session_conflict_reason(self):
+        project_data = _ProjectData()
+        service, _, _, _ = _write_service(project_data)
+        resource = ResourceRef("condition", "12", int(project_data.bid_ref.bid_uid))
+        service._mutation_executor = SimpleNamespace(
+            execute=lambda _request, _operation: DatabaseMutationResult(
+                success=False,
+                conflict=SynchronizationConflict(
+                    database_id=project_data.bid_ref.file_path,
+                    resource=resource,
+                    reason="The SQL collaboration session expired.",
+                    kind=SynchronizationConflictKind.SESSION,
+                ),
+            )
+        )
+        result = service.update_condition(
+            project_data.bid_ref.file_path,
+            project_data.bid_ref.bid_uid,
+            "12",
+            UpdateConditionDto(),
+        )
+        self.assertFalse(result.success)
+        self.assertEqual("The SQL collaboration session expired.", result.error)
 
     def test_locked_bid_expected_block_does_not_warn(self):
         project_data = _ProjectData()

@@ -1,6 +1,5 @@
 from __future__ import annotations
 import json
-import uuid
 from typing import Optional
 import pyodbc
 from ...application.dtos.collaboration_dtos import (
@@ -18,13 +17,14 @@ from ...application.dtos.collaboration_dtos import (
     PresenceSnapshot,
     ResourceLock,
     ResourceRef,
+    session_identities_equal,
 )
 from ...application.interfaces.i_collaboration_store import ICollaborationStore
 from ...application.interfaces.i_credential_store import ICredentialStore
 from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
 )
-from .connection_manager import SqlConnectionManager
+from .connection_manager import SqlConnectionManager, begin_snapshot_transaction
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
 from .schema_lock import acquire_resource_transaction_lock
@@ -406,10 +406,8 @@ class SqlCollaborationStore(ICollaborationStore):
         with self._connections.connection(request, autocommit=False) as lease:
             transaction_finished = False
             try:
+                begin_snapshot_transaction(lease)
                 with lease.cursor() as cursor:
-                    cursor.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
-                    lease.commit()
-                    cursor.execute("BEGIN TRANSACTION")
                     cursor.execute(
                         "SELECT CONVERT(nvarchar(36), f.[FeedEpoch]) "
                         "FROM [ostv].[ChangeFeedState] f WHERE f.[SingletonId]=1"
@@ -491,7 +489,9 @@ class SqlCollaborationStore(ICollaborationStore):
                     changes=tuple(
                         change
                         for change in observed_batch.changes
-                        if change.source_session_id != excluding_session_id
+                        if not session_identities_equal(
+                            change.source_session_id, excluding_session_id
+                        )
                     ),
                 )
                 if checkpoint_invalid:

@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import io
 import os
 import sys
@@ -9,11 +8,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SQL_SERVER_ROOT = REPOSITORY_ROOT / "sql_server"
 sys.path.insert(0, str(SQL_SERVER_ROOT / "python"))
-
 from ostv_sql_admin import admin, common, host_state  # noqa: E402
 
 
@@ -21,8 +18,7 @@ def _environment_text(state_root: Path) -> str:
     values = {
         "OSTV_STATE_ROOT": str(state_root),
         "OSTV_SQL_IMAGE": (
-            "mcr.microsoft.com/mssql/server:2025-CU7-ubuntu-24.04@sha256:"
-            + "a" * 64
+            "mcr.microsoft.com/mssql/server:2025-CU7-ubuntu-24.04@sha256:" + "a" * 64
         ),
         "OSTV_CONTAINER_NAME": "ostv-sql-test",
         "OSTV_DEPLOYMENT_ID": "00000000-0000-4000-8000-000000000001",
@@ -79,7 +75,9 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "missing-state"
             with patch.object(common, "PRIVATE_STATE_ROOT", missing):
-                with self.assertRaisesRegex(RuntimeError, "private state root is missing"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "private state root is missing"
+                ):
                     common.load_config()
 
     def test_ownership_mismatch_fails_closed(self):
@@ -124,12 +122,16 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state_root = Path(directory) / "state"
             state_root.mkdir(mode=0o700)
-            text = _environment_text(state_root).replace(
-                "OSTV_SQL_HOST_PORT=11433",
-                "OSTV_SQL_HOST_PORT=1433",
-            ).replace(
-                "OSTV_SQL_PUBLIC_PORT=11433",
-                "OSTV_SQL_PUBLIC_PORT=1433",
+            text = (
+                _environment_text(state_root)
+                .replace(
+                    "OSTV_SQL_HOST_PORT=11433",
+                    "OSTV_SQL_HOST_PORT=1433",
+                )
+                .replace(
+                    "OSTV_SQL_PUBLIC_PORT=11433",
+                    "OSTV_SQL_PUBLIC_PORT=1433",
+                )
             )
             env_path = state_root / ".env"
             env_path.write_text(text, encoding="utf-8")
@@ -149,13 +151,18 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
         self.assertIn("--ctorigdst", firewall)
         self.assertIn("--ctorigdstport", firewall)
         self.assertIn("OSTV_SQL_ALLOWED_SOURCE_CIDR", firewall)
-        self.assertIn('readonly managed_chain=OSTV-SQL', firewall)
-        self.assertIn("${OSTV_SQL_PUBLIC_BIND_ADDRESS}:${OSTV_SQL_PUBLIC_PORT}:1433", compose)
-        self.assertNotIn("ufw deny in on \"$public_interface\" proto tcp to any port 1433", firewall)
+        self.assertIn("readonly managed_chain=OSTV-SQL", firewall)
+        self.assertIn(
+            "${OSTV_SQL_PUBLIC_BIND_ADDRESS}:${OSTV_SQL_PUBLIC_PORT}:1433", compose
+        )
+        self.assertNotIn(
+            'ufw deny in on "$public_interface" proto tcp to any port 1433', firewall
+        )
 
     def test_public_dns_must_resolve_only_to_the_configured_bind_address(self):
         values = dict(
-            line.split("=", 1) for line in _environment_text(Path("/state")).splitlines()
+            line.split("=", 1)
+            for line in _environment_text(Path("/state")).splitlines()
         )
         with (
             patch.object(host_state, "load_environment", return_value=values),
@@ -207,9 +214,9 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
             }
             values = dict(
                 line.split("=", 1)
-                for line in _environment_text(state_root).replace(
-                    "OSTV_SQL_HOST_PORT=11433", "OSTV_SQL_HOST_PORT=1433"
-                ).splitlines()
+                for line in _environment_text(state_root)
+                .replace("OSTV_SQL_HOST_PORT=11433", "OSTV_SQL_HOST_PORT=1433")
+                .splitlines()
             )
             with (
                 patch.object(common, "PRIVATE_STATE_ROOT", state_root),
@@ -230,7 +237,9 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
                     patch.object(host_state, "load_environment", return_value=values),
                     patch.object(host_state, "write_secret", side_effect=fail_second),
                 ):
-                    with self.assertRaisesRegex(OSError, "second endpoint write failed"):
+                    with self.assertRaisesRegex(
+                        OSError, "second endpoint write failed"
+                    ):
                         host_state.sync_credential_endpoint()
                 for role, secret in original.items():
                     self.assertEqual(
@@ -248,9 +257,9 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
 
     def test_tls_deployment_uses_certbot_and_has_a_scoped_renewal_hook(self):
         deployment = (SQL_SERVER_ROOT / "deploy_tls.sh").read_text(encoding="utf-8")
-        hook = (
-            SQL_SERVER_ROOT / "templates/certbot-deploy-hook.sh"
-        ).read_text(encoding="utf-8")
+        hook = (SQL_SERVER_ROOT / "templates/certbot-deploy-hook.sh").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("/etc/letsencrypt/live/$certificate_name", deployment)
         self.assertIn("openssl verify", deployment)
         self.assertIn("require_container_identity", deployment)
@@ -264,9 +273,11 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
         ]
         combined = "\n".join(path.read_text(encoding="utf-8") for path in shell_files)
         self.assertNotIn("config/container.env", combined)
-        self.assertNotIn("sed -n \"s/^${key}=", combined)
+        self.assertNotIn('sed -n "s/^${key}=', combined)
         self.assertIn("ostv_sql_admin.common get", combined)
-        self.assertFalse(any("<<'PY'" in path.read_text(encoding="utf-8") for path in shell_files))
+        self.assertFalse(
+            any("<<'PY'" in path.read_text(encoding="utf-8") for path in shell_files)
+        )
 
     def test_atomic_private_write_removes_temporary_after_success_and_failure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -276,7 +287,9 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
             with patch.object(common, "PRIVATE_STATE_ROOT", state_root):
                 common.atomic_write_private(target, "{}\n")
                 self.assertEqual(target.read_text(encoding="utf-8"), "{}\n")
-                with patch.object(common.os, "replace", side_effect=OSError("replace failed")):
+                with patch.object(
+                    common.os, "replace", side_effect=OSError("replace failed")
+                ):
                     with self.assertRaisesRegex(OSError, "replace failed"):
                         common.atomic_write_private(state_root / "failure.json", "{}\n")
             self.assertEqual(list(state_root.glob(".*.tmp")), [])
@@ -341,14 +354,18 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
                 patch.object(common, "PRIVATE_STATE_ROOT", state_root),
                 patch.object(host_state, "PRIVATE_STATE_ROOT", state_root),
                 patch.object(host_state, "load_environment", return_value=values),
-                patch.object(host_state, "atomic_write_private", side_effect=fail_second),
+                patch.object(
+                    host_state, "atomic_write_private", side_effect=fail_second
+                ),
             ):
                 with self.assertRaisesRegex(OSError, "second write failed"):
                     host_state.create_wireguard_peer(
                         "client-one", "10.250.240.2", private_key, public_key
                     )
             self.assertFalse((state_root / "wireguard/peers/client-one.json").exists())
-            self.assertFalse((state_root / "temporary/wireguard-client-one.conf").exists())
+            self.assertFalse(
+                (state_root / "temporary/wireguard-client-one.conf").exists()
+            )
 
     def test_sa_reset_does_not_print_or_put_password_in_arguments(self):
         password = "unique-bootstrap-secret"
@@ -408,11 +425,19 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
             SQL_SERVER_ROOT / "lib/common.sh"
         ]
         combined = "\n".join(path.read_text(encoding="utf-8") for path in shell_files)
-        for forbidden in ("docker system prune", "docker container prune", "docker rm", "docker network rm"):
+        for forbidden in (
+            "docker system prune",
+            "docker container prune",
+            "docker rm",
+            "docker network rm",
+        ):
             self.assertNotIn(forbidden, combined)
         self.assertNotIn("backups -delete", combined)
         uninstall = (SQL_SERVER_ROOT / "uninstall.sh").read_text(encoding="utf-8")
-        self.assertLess(uninstall.index("require_container_identity"), uninstall.index("compose down"))
+        self.assertLess(
+            uninstall.index("require_container_identity"),
+            uninstall.index("compose down"),
+        )
 
 
 if __name__ == "__main__":

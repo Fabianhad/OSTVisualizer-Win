@@ -120,12 +120,13 @@ namespace ost_renderer
         Renderer(const Renderer &) = delete;
         Renderer &operator=(const Renderer &) = delete;
         void render();
-        void resize(int width, int height);
+        // Native viewport, render-target, and pick coordinates are physical pixels.
+        void resize(int width_px, int height_px);
         void shutdown();
         void suspend();
         void resume();
         void clear_frame();
-        int pick(int screen_x, int screen_y);
+        int pick(int screen_x_px, int screen_y_px);
         void set_background_color(float r, float g, float b, float a);
         void set_plan_texture(
             const std::string &pixels_rgba,

@@ -164,6 +164,13 @@ class SqlConnectionManager:
         return ";".join(parts) + ";"
 
 
+def begin_snapshot_transaction(lease: SqlConnectionLease) -> None:
+    with lease.cursor() as cursor:
+        cursor.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
+        lease.commit()
+        cursor.execute("BEGIN TRANSACTION")
+
+
 def _brace(value: str) -> str:
     if "\x00" in value:
         raise ValueError("SQL connection value contains a null character")

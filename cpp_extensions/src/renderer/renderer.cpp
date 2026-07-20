@@ -1522,8 +1522,8 @@ void main() {
     }
     void Renderer::Impl::resize(int w, int h)
     {
-        if (h <= 0)
-            h = 1;
+        if (w <= 0 || h <= 0)
+            return;
         width = w;
         height = h;
         camera->aspect_ratio = static_cast<float>(w) / static_cast<float>(h);
@@ -1537,14 +1537,14 @@ void main() {
             clear_frame();
     }
     void Renderer::render() { pImpl->render(); }
-    void Renderer::resize(int width, int height) { pImpl->resize(width, height); }
+    void Renderer::resize(int width_px, int height_px) { pImpl->resize(width_px, height_px); }
     void Renderer::shutdown() { pImpl->shutdown(); }
     void Renderer::suspend() { pImpl->suspend(); }
     void Renderer::resume() { pImpl->resume(); }
     void Renderer::clear_frame() { pImpl->clear_frame(); }
-    int Renderer::pick(int screen_x, int screen_y)
+    int Renderer::pick(int screen_x_px, int screen_y_px)
     {
-        return pImpl->pick_at(screen_x, screen_y);
+        return pImpl->pick_at(screen_x_px, screen_y_px);
     }
     void Renderer::set_background_color(float r, float g, float b, float a)
     {

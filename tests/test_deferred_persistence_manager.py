@@ -1,6 +1,7 @@
 import logging
 import os
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -1832,6 +1833,7 @@ class DeferredPersistenceBoundaryTests(unittest.TestCase):
             lock_tokens=lambda _database_id, _resources: (),
         )
         service._concurrency_tokens = SimpleNamespace(
+            mutation_scope=lambda _database_id: nullcontext(),
             ensure_resources_loaded=lambda _database_id, _resources: None,
             expected_versions=lambda _database_id, _resources: (),
             apply_result=lambda _database_id, _versions: None,

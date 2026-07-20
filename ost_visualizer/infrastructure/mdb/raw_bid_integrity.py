@@ -1,6 +1,8 @@
+from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Sequence, Set, Tuple
 from ...domain.dtos.raw_bid_data_dto import RawBidData, RawTable
+from ...domain.entities.takeoff import find_takeoff_parent_cycle_uids
 from .reference_validation import is_present_uid
 from .schema_contract import (
     BID_SECTIONS,
@@ -16,6 +18,7 @@ class RawBidRelationship:
     child_column: str
     parent_table: str
     parent_column: str = "UID"
+    required: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,53 @@ class RawBidIntegrityIssue:
             f"{self.table}.UID={row_uid} {self.column}={self.missing_uid} "
             f"missing {self.parent_table}.UID"
         )
+
+
+@dataclass(frozen=True)
+class RawBidDuplicateUid:
+    table: str
+    uid: str
+    count: int
+
+    def format(self) -> str:
+        return f"{self.table}.UID={self.uid} occurs {self.count} times"
+
+
+@dataclass(frozen=True)
+class RawBidMalformedUid:
+    table: str
+    row_uid: str
+    column: str
+    value: str
+
+    def format(self) -> str:
+        row_uid = self.row_uid or "<no UID>"
+        value = self.value or "<missing>"
+        return f"{self.table}.UID={row_uid} has malformed {self.column}={value}"
+
+
+@dataclass(frozen=True)
+class RawBidParentCycle:
+    table: str
+    uid: str
+
+    def format(self) -> str:
+        return f"{self.table}.UID={self.uid} participates in a ParentUID cycle"
+
+
+RawBidGraphIssue = RawBidDuplicateUid | RawBidMalformedUid | RawBidParentCycle
+RawBidFormattedIssue = RawBidIntegrityIssue | RawBidGraphIssue
+
+
+@dataclass(frozen=True)
+class TakeoffGraphResolution:
+    fatal_issues: Tuple[RawBidGraphIssue, ...] = ()
+    missing_parent_roots: Tuple[RawBidIntegrityIssue, ...] = ()
+    dependent_descendants: Tuple[RawBidIntegrityIssue, ...] = ()
+
+    @property
+    def skipped_count(self) -> int:
+        return len(self.missing_parent_roots) + len(self.dependent_descendants)
 
 
 RAW_BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = (
@@ -65,12 +115,13 @@ RAW_BID_RELATIONSHIPS: Tuple[RawBidRelationship, ...] = (
     RawBidRelationship("BidPages", "BidPageFolderUID", "BidPageFolders"),
     RawBidRelationship("BidPages", "MasterPageUID", "BidPages"),
     RawBidRelationship("BidTakeoffs", "BidUID", "Bids"),
-    RawBidRelationship("BidTakeoffs", "BidPageUID", "BidPages"),
-    RawBidRelationship("BidTakeoffs", "BidConditionUID", "BidConditions"),
+    RawBidRelationship("BidTakeoffs", "BidPageUID", "BidPages", required=True),
+    RawBidRelationship(
+        "BidTakeoffs", "BidConditionUID", "BidConditions", required=True
+    ),
     RawBidRelationship("BidTakeoffs", "BidZoneUID", "BidZones"),
     RawBidRelationship("BidTakeoffs", "BidAreaUID", "BidAreas"),
     RawBidRelationship("BidTakeoffs", "BidTypAreaUID", "BidTypAreas"),
-    RawBidRelationship("BidTakeoffs", "ParentUID", "BidTakeoffs"),
     RawBidRelationship("BidTakeoffs", "TypGroupTakeoffUID", "BidTakeoffs"),
     RawBidRelationship("BidTakeoffs", "TypPageTakeoffUID", "BidTakeoffs"),
     RawBidRelationship("BidTakeoffs", "TypGroupMarkerUID", "BidTakeoffs"),
@@ -207,9 +258,31 @@ def validate_raw_bid_integrity(
         valid_parent_uids = parent_uid_cache[key]
         for row in child_rows:
             if relationship.child_column not in row:
+                if relationship.required:
+                    issues.append(
+                        RawBidIntegrityIssue(
+                            table=relationship.child_table,
+                            row_uid=str(row.get("UID", "")),
+                            column=relationship.child_column,
+                            missing_uid="<missing>",
+                            parent_table=relationship.parent_table,
+                        )
+                    )
                 continue
             value = str(row.get(relationship.child_column, ""))
-            if not is_present_uid(value) or value in valid_parent_uids:
+            if not is_present_uid(value):
+                if relationship.required:
+                    issues.append(
+                        RawBidIntegrityIssue(
+                            table=relationship.child_table,
+                            row_uid=str(row.get("UID", "")),
+                            column=relationship.child_column,
+                            missing_uid="<missing>",
+                            parent_table=relationship.parent_table,
+                        )
+                    )
+                continue
+            if value in valid_parent_uids:
                 continue
             issues.append(
                 RawBidIntegrityIssue(
@@ -224,7 +297,7 @@ def validate_raw_bid_integrity(
 
 
 def format_integrity_issues(
-    issues: Sequence[RawBidIntegrityIssue],
+    issues: Sequence[RawBidFormattedIssue],
     *,
     limit: int = 10,
 ) -> str:
@@ -234,34 +307,92 @@ def format_integrity_issues(
     return preview
 
 
-def prune_orphaned_takeoffs(raw_data: RawBidData) -> List[RawBidIntegrityIssue]:
+def resolve_takeoff_graph(raw_data: RawBidData) -> TakeoffGraphResolution:
     rows = raw_data.page_tables.get("BidTakeoffs", [])
-    removed: List[RawBidIntegrityIssue] = []
-    while rows:
-        takeoff_uids = _present_uids(rows, "UID")
-        kept: RawTable = []
-        removed_this_pass = False
-        for row in rows:
-            parent_uid = str(row.get("ParentUID", ""))
-            if not is_present_uid(parent_uid) or parent_uid in takeoff_uids:
-                kept.append(row)
+    if not rows:
+        return TakeoffGraphResolution()
+    malformed: List[RawBidMalformedUid] = []
+    rows_by_uid: Dict[str, Mapping[str, str]] = {}
+    duplicate_counts: Dict[str, int] = {}
+    for row in rows:
+        uid = str(row.get("UID", ""))
+        if not _is_valid_takeoff_uid(uid):
+            malformed.append(RawBidMalformedUid("BidTakeoffs", uid, "UID", uid))
+            continue
+        if uid in rows_by_uid:
+            duplicate_counts[uid] = duplicate_counts.get(uid, 1) + 1
+        else:
+            rows_by_uid[uid] = row
+    duplicates = [
+        RawBidDuplicateUid("BidTakeoffs", uid, count)
+        for uid, count in sorted(duplicate_counts.items())
+    ]
+    if malformed or duplicates:
+        return TakeoffGraphResolution(fatal_issues=tuple(malformed + duplicates))
+    parent_by_uid: Dict[str, str] = {}
+    children_by_parent_uid: Dict[str, List[str]] = {}
+    for uid, row in rows_by_uid.items():
+        parent_uid = str(row.get("ParentUID", ""))
+        if not is_present_uid(parent_uid):
+            continue
+        if not _is_valid_takeoff_uid(parent_uid):
+            malformed.append(
+                RawBidMalformedUid("BidTakeoffs", uid, "ParentUID", parent_uid)
+            )
+            continue
+        parent_by_uid[uid] = parent_uid
+        children_by_parent_uid.setdefault(parent_uid, []).append(uid)
+    if malformed:
+        return TakeoffGraphResolution(fatal_issues=tuple(malformed))
+    cycle_uids = sorted(find_takeoff_parent_cycle_uids(parent_by_uid))
+    if cycle_uids:
+        return TakeoffGraphResolution(
+            fatal_issues=tuple(
+                RawBidParentCycle("BidTakeoffs", uid) for uid in cycle_uids
+            )
+        )
+    missing_parent_roots = tuple(
+        RawBidIntegrityIssue(
+            table="BidTakeoffs",
+            row_uid=uid,
+            column="ParentUID",
+            missing_uid=parent_uid,
+            parent_table="BidTakeoffs",
+        )
+        for uid, parent_uid in parent_by_uid.items()
+        if parent_uid not in rows_by_uid
+    )
+    invalid_uids = {issue.row_uid for issue in missing_parent_roots}
+    pending = deque(issue.row_uid for issue in missing_parent_roots)
+    dependent_descendants: List[RawBidIntegrityIssue] = []
+    while pending:
+        invalid_parent_uid = pending.popleft()
+        for child_uid in children_by_parent_uid.get(invalid_parent_uid, []):
+            if child_uid in invalid_uids:
                 continue
-            removed.append(
+            invalid_uids.add(child_uid)
+            pending.append(child_uid)
+            dependent_descendants.append(
                 RawBidIntegrityIssue(
                     table="BidTakeoffs",
-                    row_uid=str(row.get("UID", "")),
+                    row_uid=child_uid,
                     column="ParentUID",
-                    missing_uid=parent_uid,
+                    missing_uid=invalid_parent_uid,
                     parent_table="BidTakeoffs",
                 )
             )
-            removed_this_pass = True
-        rows = kept
-        if not removed_this_pass:
-            break
-    if removed:
-        raw_data.page_tables["BidTakeoffs"] = rows
-    return removed
+    if invalid_uids:
+        raw_data.page_tables["BidTakeoffs"] = [
+            row for row in rows if str(row["UID"]) not in invalid_uids
+        ]
+    return TakeoffGraphResolution(
+        missing_parent_roots=missing_parent_roots,
+        dependent_descendants=tuple(dependent_descendants),
+    )
+
+
+def _is_valid_takeoff_uid(value: str) -> bool:
+    return value.isascii() and value.isdecimal() and int(value) > 0
 
 
 def clear_missing_selected_page_references(
@@ -321,6 +452,14 @@ def clear_missing_annotation_takeoff_references(
 def prepare_raw_bid_data_for_export(raw_data: RawBidData) -> RawBidData:
     prepared = clone_raw_bid_data(raw_data)
     _clear_missing_export_references(prepared)
+    while _prune_export_orphans(prepared):
+        _clear_missing_export_references(prepared)
+    resolution = resolve_takeoff_graph(prepared)
+    if resolution.fatal_issues:
+        raise ValueError(
+            "Cannot export invalid takeoff graph: "
+            f"{format_integrity_issues(resolution.fatal_issues)}"
+        )
     while _prune_export_orphans(prepared):
         _clear_missing_export_references(prepared)
     return prepared

@@ -32,6 +32,7 @@ from ost_visualizer.infrastructure.mdb.schema_contract import (
     PAGE_SECTIONS,
 )
 from ost_visualizer.infrastructure.parsers.ost_serializer import serialize_value
+from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
 from ost_visualizer.presentation.visualization.exporters.osp_exporter import OspExporter
 
 _ACCESS_DRIVER = "Microsoft Access Driver (*.mdb, *.accdb)"
@@ -213,6 +214,24 @@ class _SqliteMdbWriter(ImportOperationsMixin, PageOperationsMixin):
             for key, value in values.items()
             if schema.column_exists(table, key)
         }
+
+
+class _CapturingImportWriter:
+    def __init__(self):
+        self.takeoffs = ()
+
+    def import_ost_data(
+        self,
+        _target_db_path,
+        raw_data,
+        _transform,
+        _target_project_uid,
+    ):
+        self.takeoffs = tuple(
+            (row["UID"], row.get("ParentUID", "0"), row.get("Name", ""))
+            for row in raw_data.page_tables.get("BidTakeoffs", [])
+        )
+        return True
 
 
 def _create_import_schema(connection, *, unique_page_selected=False):
@@ -566,6 +585,9 @@ class OstImportExportRelationshipTests(unittest.TestCase):
                   <BidTakeoff UID="33" BidUID="1" BidPageUID="20"
                               BidConditionUID="10" ParentUID="32"
                               Name="Cascading Orphan"/>
+                  <BidTakeoff UID="34" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" ParentUID="33"
+                              Name="Nested Cascading Orphan"/>
                 </BidTakeoffs>
               </BidPage>
             </BidPages>
@@ -602,8 +624,315 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         parent_uids = {row[2]: row[1] for row in takeoffs}
         self.assertIsNone(parent_uids["Primary"])
         self.assertEqual(parent_uids["Valid Child"], takeoff_uids["Primary"])
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("missing-parent roots", logs.output[0])
         self.assertIn("BidTakeoffs.UID=32 ParentUID=999", logs.output[0])
+        self.assertIn("skipped dependent descendants", logs.output[0])
         self.assertIn("BidTakeoffs.UID=33 ParentUID=32", logs.output[0])
+        self.assertIn("BidTakeoffs.UID=34 ParentUID=33", logs.output[0])
+
+    def test_ost_import_resolves_child_before_parent_after_full_parse(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidConditions><BidCondition UID="10" BidUID="1"/></BidConditions>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet">
+                <BidTakeoffs>
+                  <BidTakeoff UID="31" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" ParentUID="30" Name="Child"/>
+                  <BidTakeoff UID="30" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" Name="Parent"/>
+                </BidTakeoffs>
+              </BidPage>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        connection.execute(
+            "CREATE TABLE BidConditions (UID INTEGER PRIMARY KEY, BidUID INTEGER)"
+        )
+        connection.execute(
+            "CREATE TABLE BidTakeoffs (UID INTEGER PRIMARY KEY, BidUID INTEGER, "
+            "BidPageUID INTEGER, BidConditionUID INTEGER, ParentUID INTEGER, Name TEXT)"
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "child_first.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            self.assertTrue(
+                OstImporter(_SqliteMdbWriter(connection)).import_ost(
+                    str(ost_path), "target.mdb"
+                )
+            )
+        rows = connection.execute(
+            "SELECT UID, ParentUID, Name FROM BidTakeoffs ORDER BY Name"
+        ).fetchall()
+        by_name = {name: (uid, parent_uid) for uid, parent_uid, name in rows}
+        self.assertEqual(by_name["Child"][1], by_name["Parent"][0])
+
+    def test_ost_import_rejects_duplicate_takeoff_uid_before_remapping(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidConditions><BidCondition UID="10" BidUID="1"/></BidConditions>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet">
+                <BidTakeoffs>
+                  <BidTakeoff UID="30" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" Name="First"/>
+                  <BidTakeoff UID="30" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" Name="Duplicate"/>
+                </BidTakeoffs>
+              </BidPage>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "duplicate_takeoff.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ) as logs:
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        self.assertIn("BidTakeoffs.UID=30 occurs 2 times", logs.output[0])
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
+        )
+
+    def test_ost_import_rejects_malformed_takeoff_uid_before_remapping(self):
+        cases = (
+            (
+                'UID="not-a-uid"',
+                "BidTakeoffs.UID=not-a-uid has malformed UID=not-a-uid",
+            ),
+            (
+                'UID="30" ParentUID="not-a-uid"',
+                "BidTakeoffs.UID=30 has malformed ParentUID=not-a-uid",
+            ),
+        )
+        for takeoff_identity, expected_diagnostic in cases:
+            with self.subTest(takeoff_identity=takeoff_identity):
+                xml = f"""
+                <XML_ROOT>
+                  <Bid UID="1" JobName="Imported">
+                    <BidConditions>
+                      <BidCondition UID="10" BidUID="1"/>
+                    </BidConditions>
+                    <BidPages>
+                      <BidPage UID="20" BidUID="1" Name="Sheet">
+                        <BidTakeoffs>
+                          <BidTakeoff {takeoff_identity} BidUID="1"
+                                      BidPageUID="20" BidConditionUID="10"/>
+                        </BidTakeoffs>
+                      </BidPage>
+                    </BidPages>
+                  </Bid>
+                </XML_ROOT>
+                """
+                writer = _CapturingImportWriter()
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    ost_path = Path(temp_dir) / "malformed_takeoff_uid.ost"
+                    ost_path.write_text(xml, encoding="utf-8")
+                    with self.assertLogs(
+                        "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                        level="ERROR",
+                    ) as logs:
+                        self.assertFalse(
+                            OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                        )
+                self.assertIn(expected_diagnostic, logs.output[0])
+                self.assertEqual(writer.takeoffs, ())
+
+    def test_ost_import_rejects_takeoff_parent_cycle(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidConditions><BidCondition UID="10" BidUID="1"/></BidConditions>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet">
+                <BidTakeoffs>
+                  <BidTakeoff UID="30" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" ParentUID="31"/>
+                  <BidTakeoff UID="31" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" ParentUID="30"/>
+                </BidTakeoffs>
+              </BidPage>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "takeoff_cycle.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ) as logs:
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        self.assertIn("participates in a ParentUID cycle", logs.output[0])
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
+        )
+
+    def test_access_and_sql_writers_receive_same_pruned_takeoff_graph(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidConditions><BidCondition UID="10" BidUID="1"/></BidConditions>
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet">
+                <BidTakeoffs>
+                  <BidTakeoff UID="31" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" ParentUID="30" Name="Child"/>
+                  <BidTakeoff UID="30" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" Name="Parent"/>
+                  <BidTakeoff UID="32" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" ParentUID="999" Name="Orphan"/>
+                  <BidTakeoff UID="33" BidUID="1" BidPageUID="20"
+                              BidConditionUID="10" ParentUID="32" Name="Descendant"/>
+                </BidTakeoffs>
+              </BidPage>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        captured_graphs = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "backend_neutral_graph.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            for writer_type in (MdbWriter, SqlProjectWriter):
+                with self.subTest(writer_type=writer_type.__name__), self.assertLogs(
+                    "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                    level="WARNING",
+                ):
+                    writer = writer_type.__new__(writer_type)
+                    captured = _CapturingImportWriter()
+                    writer.import_ost_data = captured.import_ost_data
+                    self.assertTrue(
+                        OstImporter(writer).import_ost(
+                            str(ost_path), f"{writer_type.__name__}-target"
+                        )
+                    )
+                    captured_graphs.append(captured.takeoffs)
+        self.assertEqual(captured_graphs[0], captured_graphs[1])
+        self.assertEqual(
+            captured_graphs[0],
+            (("31", "30", "Child"), ("30", "0", "Parent")),
+        )
+
+    def test_export_prunes_orphan_takeoff_graph_and_keeps_valid_graph(self):
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Exported"},
+            bid_tables={
+                "BidConditions": [{"UID": "10", "BidUID": "1"}],
+                "BidPages": [{"UID": "20", "BidUID": "1"}],
+            },
+            page_tables={
+                "BidTakeoffs": [
+                    {
+                        "UID": "30",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "BidConditionUID": "10",
+                        "Name": "Parent",
+                    },
+                    {
+                        "UID": "31",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "BidConditionUID": "10",
+                        "ParentUID": "30",
+                        "Name": "Child",
+                    },
+                    {
+                        "UID": "32",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "BidConditionUID": "10",
+                        "ParentUID": "999",
+                        "Name": "Orphan",
+                    },
+                    {
+                        "UID": "33",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "BidConditionUID": "10",
+                        "ParentUID": "32",
+                        "Name": "Descendant",
+                    },
+                ]
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "takeoff_graph.ost"
+            result = OstExporter(
+                SimpleNamespace(
+                    calculate_condition_quantities=lambda **_kwargs: (0.0, 0.0, 0.0)
+                )
+            ).export(raw_data, str(output_path))
+            self.assertTrue(result.success, result.error_message)
+            takeoffs = (
+                ET.parse(output_path)
+                .getroot()
+                .findall("./Bid/BidPages/BidPage/BidTakeoffs/BidTakeoff")
+            )
+        self.assertEqual(
+            {takeoff.get("Name") for takeoff in takeoffs}, {"Parent", "Child"}
+        )
+        by_name = {takeoff.get("Name"): takeoff for takeoff in takeoffs}
+        self.assertEqual(
+            by_name["Child"].get("ParentUID"), by_name["Parent"].get("UID")
+        )
+        self.assertEqual(
+            [row["Name"] for row in raw_data.page_tables["BidTakeoffs"]],
+            ["Parent", "Child", "Orphan", "Descendant"],
+        )
+
+    def test_ost_import_rejects_takeoff_missing_required_condition(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="Sheet">
+                <BidTakeoffs>
+                  <BidTakeoff UID="30" BidUID="1" BidPageUID="20"/>
+                </BidTakeoffs>
+              </BidPage>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        connection = sqlite3.connect(":memory:")
+        _create_import_schema(connection)
+        writer = _SqliteMdbWriter(connection)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "missing_condition.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ) as logs:
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        self.assertIn("BidConditionUID=<missing>", logs.output[0])
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
+        )
 
     def test_ost_import_clears_missing_annotation_takeoff_attachments(self):
         xml = """

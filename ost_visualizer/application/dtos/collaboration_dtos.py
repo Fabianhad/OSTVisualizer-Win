@@ -1,4 +1,5 @@
 from __future__ import annotations
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Generic, Optional, TypeVar
@@ -43,6 +44,25 @@ class SynchronizationState(str, Enum):
     READ_ONLY = "read_only"
     CONFLICTED = "conflicted"
     RECONCILIATION_REQUIRED = "reconciliation_required"
+
+
+class ReconciliationFailureKind(str, Enum):
+    MALFORMED_PAYLOAD = "malformed_payload"
+
+
+class SynchronizationConflictKind(str, Enum):
+    OPTIMISTIC_CONCURRENCY = "optimistic_concurrency"
+    LEASE = "lease"
+    SESSION = "session"
+
+
+def session_identities_equal(left: Optional[str], right: Optional[str]) -> bool:
+    if not left or not right:
+        return False
+    try:
+        return uuid.UUID(str(left)) == uuid.UUID(str(right))
+    except ValueError:
+        return False
 
 
 class CollaborationShutdownState(str, Enum):
@@ -232,6 +252,9 @@ class SynchronizationConflict:
     expected: Optional[ConcurrencyToken] = None
     actual: Optional[ConcurrencyToken] = None
     lock_owner: str = ""
+    kind: SynchronizationConflictKind = (
+        SynchronizationConflictKind.OPTIMISTIC_CONCURRENCY
+    )
 
 
 @dataclass(frozen=True)

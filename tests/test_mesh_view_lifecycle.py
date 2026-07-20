@@ -1,9 +1,11 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 from PySide6 import QtCore
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
 from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
+from ost_visualizer.presentation.modes.cursor import CURSOR_MODE_DEFAULT
 from ost_visualizer.presentation.visualization.native_page_plane import (
     NativePageImagePlaneData,
 )
@@ -67,6 +69,8 @@ class FakeMeshCamera:
         self.position = SimpleNamespace(x=10.0, y=20.0, z=30.0)
         self.target = SimpleNamespace(x=1.0, y=2.0, z=3.0)
         self.fov = 37.0
+        self.rotate_calls = []
+        self.pan_calls = []
 
     def reset(self):
         self.reset_calls += 1
@@ -77,6 +81,12 @@ class FakeMeshCamera:
         self.target = SimpleNamespace(x=0.0, y=0.0, z=0.0)
         self.fov = 45.0
 
+    def rotate(self, delta_x, delta_y):
+        self.rotate_calls.append((delta_x, delta_y))
+
+    def pan(self, delta_x, delta_y):
+        self.pan_calls.append((delta_x, delta_y))
+
 
 class FakeMeshRenderer:
     def __init__(self, scene):
@@ -86,12 +96,21 @@ class FakeMeshRenderer:
         self.plan_texture_calls = []
         self.plan_texture_visibility_calls = []
         self.clear_plan_texture_calls = 0
+        self.resize_calls = []
+        self.clear_frame_calls = 0
 
     def suspend(self):
         self.suspend_calls += 1
 
     def resume(self):
         pass
+
+    def resize(self, width_px, height_px):
+        self.resize_calls.append((width_px, height_px))
+        self.camera.aspect_ratio = width_px / height_px
+
+    def clear_frame(self):
+        self.clear_frame_calls += 1
 
     def clear_plan_texture(self):
         self.clear_plan_texture_calls += 1
@@ -107,9 +126,19 @@ class FakePickingMeshRenderer(FakeMeshRenderer):
     def __init__(self, scene, pick_index):
         super().__init__(scene)
         self.pick_index = pick_index
+        self.pick_calls = []
 
-    def pick(self, _px, _py):
+    def pick(self, px, py):
+        self.pick_calls.append((px, py))
         return self.pick_index
+
+
+class FailingInitializationRenderer:
+    def __init__(self, _window_handle):
+        self.shutdown_calls = 0
+
+    def shutdown(self):
+        self.shutdown_calls += 1
 
 
 class FakeSourceMesh:
@@ -220,6 +249,9 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._zoom_cursor = retained
         viewer._animation_timer = None
         viewer._renderer = None
+        viewer._surface_window = None
+        viewer._surface_screen = None
+        viewer._render_surface_size = None
         OpenGLViewer.cleanup(viewer)
         self.assertIsNone(viewer._pending_data)
         self.assertIsNone(viewer._current_bid_ref)
@@ -230,6 +262,36 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertFalse(viewer._negative_check_fn(["uid"]))
         self.assertEqual((False, False), viewer._curved_check_fn(["uid"]))
         self.assertEqual({}, viewer._context_menu_conditions_fn())
+
+    def test_failed_renderer_initialization_releases_partial_renderer(self):
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        viewer._renderer = None
+        viewer._render_surface_size = None
+        viewer._surface_window = None
+        viewer._surface_screen = None
+        viewer._pending_camera_reset = False
+        viewer.winId = lambda: 123
+        viewer._connect_surface_notifications = lambda: (_ for _ in ()).throw(
+            RuntimeError("surface setup failed")
+        )
+        viewer._disconnect_surface_notifications = lambda: None
+        created = []
+
+        def create_renderer(window_handle):
+            renderer = FailingInitializationRenderer(window_handle)
+            created.append(renderer)
+            return renderer
+
+        with patch(
+            "ost_visualizer.presentation.components.mesh_view.ost_renderer.Renderer",
+            create_renderer,
+        ), self.assertLogs(
+            "ost_visualizer.presentation.components.mesh_view", level="ERROR"
+        ):
+            self.assertFalse(OpenGLViewer._ensure_renderer(viewer))
+        self.assertIsNone(viewer._renderer)
+        self.assertIsNone(viewer._render_surface_size)
+        self.assertEqual(created[0].shutdown_calls, 1)
 
     def test_scene_rebuild_drops_missing_selected_takeoffs_without_broadcasting(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
@@ -342,12 +404,46 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._pick_enabled = True
         viewer._selected_takeoff_uids = []
         viewer.mesh_clicked = FakeMeshSignal()
+        viewer.width = lambda: 100
+        viewer.height = lambda: 100
         viewer.devicePixelRatioF = lambda: 1.0
         viewer.update = lambda: None
         OpenGLViewer._handle_pick(viewer, QtCore.QPoint(10, 20), ctrl=False)
         self.assertEqual(viewer.get_selected_takeoff_uids(), ["selected"])
         self.assertEqual(scene.selected, {0})
         self.assertEqual(viewer.mesh_clicked.emitted, [["selected"]])
+
+    def test_user_mesh_pick_uses_current_fractional_device_pixel_ratio(self):
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        renderer = FakePickingMeshRenderer(FakeMeshScene(["selected"]), 0)
+        viewer._renderer = renderer
+        viewer._pick_enabled = True
+        viewer._selected_takeoff_uids = []
+        viewer.mesh_clicked = FakeMeshSignal()
+        viewer.width = lambda: 801
+        viewer.height = lambda: 603
+        viewer.devicePixelRatioF = lambda: 1.25
+        viewer.update = lambda: None
+        OpenGLViewer._handle_pick(viewer, QtCore.QPoint(13, 17), ctrl=False)
+        self.assertEqual(renderer.pick_calls, [(16, 21)])
+
+    def test_orbit_keeps_fractional_qt_delta_in_logical_coordinates(self):
+        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        renderer = FakeMeshRenderer(FakeMeshScene([]))
+        viewer._renderer = renderer
+        viewer._cursor_mode = CURSOR_MODE_DEFAULT
+        viewer._last_mouse_pos = QtCore.QPointF(10.25, 20.25)
+        viewer._click_pos = None
+        viewer.update = lambda: None
+        event = SimpleNamespace(
+            position=lambda: QtCore.QPointF(10.75, 20.5),
+            buttons=lambda: QtCore.Qt.MouseButton.LeftButton,
+            accept=lambda: None,
+            ignore=lambda: None,
+        )
+        OpenGLViewer.mouseMoveEvent(viewer, event)
+        self.assertEqual(renderer.camera.rotate_calls, [(0.5, 0.25)])
+        self.assertEqual(renderer.camera.pan_calls, [])
 
     def test_mesh_window_cleanup_clears_external_callback_references(self):
         window = MeshViewWindow.__new__(MeshViewWindow)

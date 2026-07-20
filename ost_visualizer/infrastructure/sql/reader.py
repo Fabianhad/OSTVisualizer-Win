@@ -8,7 +8,11 @@ from ...application.interfaces.i_database_descriptor_registry import (
     IDatabaseDescriptorRegistry,
 )
 from ..mdb.mdb_reader import MdbReader
-from .connection_manager import SqlConnectionLease, SqlConnectionManager
+from .connection_manager import (
+    SqlConnectionLease,
+    SqlConnectionManager,
+    begin_snapshot_transaction,
+)
 from .descriptor_connection import SqlDescriptorConnectionFactory
 from .errors import SqlErrorCode, SqlErrorDetails, SqlInfrastructureError
 from .schema_definition import SQL_SCHEMA_V1
@@ -44,10 +48,7 @@ class SqlProjectReader(MdbReader):
         with self._sql_connections.connection(request, autocommit=False) as lease:
             completed = False
             try:
-                with lease.cursor() as cursor:
-                    cursor.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
-                    lease.commit()
-                    cursor.execute("BEGIN TRANSACTION")
+                begin_snapshot_transaction(lease)
                 yield lease
                 lease.commit()
                 completed = True
@@ -87,7 +88,6 @@ class SqlProjectReader(MdbReader):
     def _record_caught_read_error(
         _exc: BaseException, _locator: Optional[str] = None
     ) -> bool:
-        """Prevent partial shared-reader results from escaping SQL snapshots."""
         return True
 
     def _schema(self, connection) -> IDatabaseSchemaInspector:

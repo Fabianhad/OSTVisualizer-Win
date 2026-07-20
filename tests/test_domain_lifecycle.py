@@ -74,10 +74,10 @@ class DomainLifecycleTests(unittest.TestCase):
             TakeoffWorkspaceState.VALID_ACTIVE_VIEWS, WORKSPACE_VALID_ACTIVE_VIEWS
         )
 
-    def test_takeoff_none_parent_sentinel_is_primary(self):
-        self.assertFalse(
-            Takeoff(uid="1", condition_uid="c1", parent_uid="None").is_hole
-        )
+    def test_takeoff_root_parent_sentinels_are_canonical(self):
+        self.assertFalse(Takeoff(uid="1", condition_uid="c1", parent_uid="0").is_hole)
+        self.assertFalse(Takeoff(uid="1", condition_uid="c1", parent_uid="").is_hole)
+        self.assertTrue(Takeoff(uid="1", condition_uid="c1", parent_uid="None").is_hole)
         self.assertTrue(Takeoff(uid="2", condition_uid="c1", parent_uid="1").is_hole)
 
     def test_workspace_annotation_styles_round_trip_and_clamp_values(self):

@@ -860,8 +860,14 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         mutation = self._execute_database_mutation(db_path, (resource,), update)
         if not mutation.success or mutation.value is None:
+            error = (
+                mutation.conflict.reason
+                if mutation.conflict is not None
+                else "The condition update could not be completed"
+            )
             return UpdateConditionResultDto(
-                success=False, error="The SQL condition changed in another session"
+                success=False,
+                error=error,
             )
         result = mutation.value
         if (

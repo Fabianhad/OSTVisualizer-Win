@@ -972,15 +972,15 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         class _Lease:
             def __init__(self):
+                self.commits = 0
                 self.rollbacks = 0
 
             @staticmethod
             def cursor():
                 return _Cursor()
 
-            @staticmethod
-            def commit():
-                raise AssertionError("failed SQL parse must not commit")
+            def commit(self):
+                self.commits += 1
 
             def rollback(self):
                 self.rollbacks += 1
@@ -1015,6 +1015,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         ):
             reader.parse_file(descriptor.database_id)
         self.assertFalse(connections.autocommit)
+        self.assertEqual(connections.lease.commits, 1)
         self.assertEqual(connections.lease.rollbacks, 1)
 
     def test_sql_shared_reader_connection_is_snapshot_scoped(self):
@@ -2402,7 +2403,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
 
-    def test_failed_unload_retains_removed_checked_descriptor(self):
+    def test_offline_removed_sql_does_not_require_repository_unload(self):
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
         )
@@ -2437,6 +2438,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             def deleteLater(self):
                 pass
 
+        stops = []
         handler = FileOperationHandler(
             window=None,
             icon_provider=None,
@@ -2445,7 +2447,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             cleanup_deleted_files_use_case=type(
                 "Cleanup", (), {"execute_and_save": lambda self: 0}
             )(),
-            file_loading_service=None,
+            file_loading_service=SimpleNamespace(is_loaded=lambda _locator: False),
             working_directory_service=None,
             unload_file_fn=lambda _locator: False,
             deferred_persistence_manager=type(
@@ -2457,7 +2459,11 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 },
             )(),
             ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
-            sql_collaboration_coordinator=SimpleNamespace(),
+            sql_collaboration_coordinator=SimpleNamespace(
+                stop_database_async=lambda database_id, reason, callback=None: stops.append(
+                    (database_id, reason, callback)
+                )
+            ),
             credential_store=_CredentialStore(),
         )
         with (
@@ -2471,7 +2477,11 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             ),
         ):
             handler.open_files()
-        self.assertEqual(updates[-1], [entry])
+        self.assertEqual(updates[-1], [])
+        self.assertEqual(
+            [(database_id, reason) for database_id, reason, _callback in stops],
+            [(descriptor.database_id, "connection-removed")],
+        )
 
     def test_removed_sql_descriptor_waits_for_collaboration_drain(self):
         descriptor = DatabaseDescriptor.for_sql_server(
@@ -2519,7 +2529,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             cleanup_deleted_files_use_case=SimpleNamespace(
                 execute_and_save=lambda: None
             ),
-            file_loading_service=None,
+            file_loading_service=SimpleNamespace(is_loaded=lambda _locator: True),
             working_directory_service=None,
             unload_file_fn=lambda _locator: True,
             deferred_persistence_manager=SimpleNamespace(
@@ -2599,7 +2609,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             cleanup_deleted_files_use_case=SimpleNamespace(
                 execute_and_save=lambda: None
             ),
-            file_loading_service=None,
+            file_loading_service=SimpleNamespace(is_loaded=lambda _locator: True),
             working_directory_service=None,
             unload_file_fn=lambda _locator: True,
             deferred_persistence_manager=SimpleNamespace(
@@ -2629,7 +2639,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(credentials.deleted, [])
         self.assertEqual(starts, [descriptor.database_id])
 
-    def test_failed_sql_drain_retains_descriptor_and_credential(self):
+    def test_offline_sql_drain_still_removes_descriptor_and_credential(self):
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
         )
@@ -2651,16 +2661,23 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         handler._database_descriptor_registry = registry
         handler._credential_store = credentials
         handler._sql_collaboration = SimpleNamespace(start_database=lambda _id: None)
+        disconnected = []
+        handler._database_capability_service = SimpleNamespace(
+            mark_disconnected=disconnected.append
+        )
         with patch(
             "ost_visualizer.presentation.handlers.file_operation_handler.show_warning"
         ) as warning:
             handler._complete_sql_connection_removal(
                 entry, False, "session cleanup failed"
             )
-        self.assertIs(registry.resolve(descriptor.database_id), descriptor)
-        self.assertEqual(credentials.deleted, [])
-        self.assertEqual(state.file_entries, [entry.with_checked(False)])
-        warning.assert_called_once()
+        self.assertIsNone(registry.resolve(descriptor.database_id))
+        self.assertEqual(
+            credentials.deleted, [credential_target_for(descriptor.database_id)]
+        )
+        self.assertEqual(state.file_entries, [])
+        self.assertEqual(disconnected, [descriptor.database_id])
+        warning.assert_not_called()
 
     def test_retained_sql_descriptor_reconnects_through_coordinator(self):
         descriptor = DatabaseDescriptor.for_sql_server(

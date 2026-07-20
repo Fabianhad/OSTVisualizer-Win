@@ -21,6 +21,7 @@ from ...application.dtos.collaboration_resource_catalog import (
 )
 from ...application.dtos.conflict_resolution_dtos import ConflictResolutionAction
 from ...application.events.app_events import AppEvents
+from ...application.interfaces.i_database_catalog import DatabaseCatalogError
 from ...domain.entities.bid import Bid
 from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
@@ -2544,7 +2545,13 @@ class UIEventCoordinator:
             return
         prev_current_file_path = self.project_data.get_current_file_path()
         self.project_data.set_current_file(bid_ref.file_path)
-        load_success = self.project_operations.load_bid(bid_ref)
+        load_error = ""
+        try:
+            load_success = self.project_operations.load_bid(bid_ref)
+        except DatabaseCatalogError as exc:
+            logger.warning("Failed to load selected SQL bid", exc_info=True)
+            load_success = False
+            load_error = str(exc)
         if not load_success:
             if prev_current_file_path:
                 self.project_data.set_current_file(prev_current_file_path)
@@ -2553,6 +2560,8 @@ class UIEventCoordinator:
             self.ui_access_manager.refresh()
             self._update_export_menu_state()
             self._restore_project_tree_bid_selection_if_needed()
+            if load_error:
+                show_warning(self.main_window, "Open SQL Bid", load_error)
             return
         self._placement.force_exit()
         self.ensure_select_mode()

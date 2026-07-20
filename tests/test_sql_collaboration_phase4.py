@@ -22,6 +22,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseChange,
     DatabaseChangeBatch,
     DatabaseChangePollResult,
+    DatabaseMutationRequest,
     DatabaseMutationResult,
     DatabaseSession,
     EditLeaseHandle,
@@ -29,10 +30,13 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     EditLeaseResult,
     HydratedDatabaseChangeBatch,
     PresenceMode,
+    ReconciliationFailureKind,
     ResourceLock,
     ResourceRef,
     SynchronizationConflict,
+    SynchronizationConflictKind,
     SynchronizationState,
+    session_identities_equal,
 )
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.database_capability_service import (
@@ -69,7 +73,10 @@ from ost_visualizer.domain.entities.database_descriptor import (
     SqlServerDatabaseLocation,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.file_results import BidLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
+from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
@@ -236,6 +243,7 @@ class _Reconciliation:
     def __init__(self):
         self.batches = []
         self.result = True
+        self.last_failure_kind = None
 
     def apply(self, batch, _projection_barrier=None):
         self.batches.append(batch)
@@ -243,6 +251,8 @@ class _Reconciliation:
 
 
 class _RaisingReconciliation:
+    last_failure_kind = None
+
     def apply(self, _batch, _projection_barrier=None):
         raise RuntimeError("reconciliation callback failed")
 
@@ -250,6 +260,7 @@ class _RaisingReconciliation:
 class _DeferredProjectionReconciliation:
     def __init__(self):
         self.token = None
+        self.last_failure_kind = None
 
     def apply(self, _batch, projection_barrier=None):
         self.token = projection_barrier.register("test-plan")
@@ -353,7 +364,9 @@ class _CollaborationStore:
             tuple(
                 change
                 for change in changes
-                if change.source_session_id != excluding_session_id
+                if not session_identities_equal(
+                    change.source_session_id, excluding_session_id
+                )
             ),
             delivered_through=observed.delivered_through_version,
         )
@@ -528,6 +541,9 @@ class _ProjectData:
 
     def get_current_bid_ref(self):
         return self.bid_ref
+
+    def get_bid_conditions(self):
+        return self.conditions
 
     def replace_condition_family(self, bid_ref, conditions, _folders):
         if bid_ref != self.bid_ref:
@@ -1746,6 +1762,110 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             initial,
         )
 
+    def test_malformed_remote_takeoff_graph_is_rejected_before_projection(self):
+        database_id = "database"
+        events = _EventBus()
+        project_data = _ProjectData(database_id)
+        project_data.conditions = {"10": Condition(uid="10")}
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, events, tokens, drafts, ConflictResolutionService()
+        )
+        change = _change(database_id, ResourceRef("takeoffs_collection", "8", 8), 2)
+        orphan = Takeoff(
+            uid="4485",
+            condition_uid="10",
+            page_uid="20",
+            parent_uid="4393",
+        )
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(database_id, "epoch", 1, 2, (change,)),
+            bid_data_by_bid={
+                8: BidLoadResult(
+                    bid_takeoffs=[orphan],
+                    pages={"20": Page(uid="20", name="Sheet", takeoffs=[orphan])},
+                )
+            },
+        )
+        self.assertFalse(service.apply(hydrated))
+        self.assertEqual(
+            service.last_failure_kind, ReconciliationFailureKind.MALFORMED_PAYLOAD
+        )
+        self.assertEqual(events.published, [])
+
+    def test_remote_takeoff_cycle_is_rejected_before_projection(self):
+        database_id = "database"
+        project_data = _ProjectData(database_id)
+        project_data.conditions = {"10": Condition(uid="10")}
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, _EventBus(), tokens, drafts, ConflictResolutionService()
+        )
+        first = Takeoff(uid="30", condition_uid="10", page_uid="20", parent_uid="31")
+        second = Takeoff(uid="31", condition_uid="10", page_uid="20", parent_uid="30")
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (
+                    _change(
+                        database_id,
+                        ResourceRef("takeoffs_collection", "8", 8),
+                        2,
+                    ),
+                ),
+            ),
+            bid_data_by_bid={
+                8: BidLoadResult(
+                    bid_takeoffs=[first, second],
+                    pages={
+                        "20": Page(uid="20", name="Sheet", takeoffs=[first, second])
+                    },
+                )
+            },
+        )
+        self.assertFalse(service.apply(hydrated))
+        self.assertEqual(
+            service.last_failure_kind, ReconciliationFailureKind.MALFORMED_PAYLOAD
+        )
+
+    def test_remote_takeoff_with_missing_condition_is_rejected(self):
+        database_id = "database"
+        project_data = _ProjectData(database_id)
+        project_data.conditions = {"10": Condition(uid="10")}
+        tokens, drafts = _token_service()
+        service = RemoteChangeReconciliationService(
+            project_data, _EventBus(), tokens, drafts, ConflictResolutionService()
+        )
+        takeoff = Takeoff(uid="30", condition_uid="999", page_uid="20")
+        hydrated = HydratedDatabaseChangeBatch(
+            _batch(
+                database_id,
+                "epoch",
+                1,
+                2,
+                (
+                    _change(
+                        database_id,
+                        ResourceRef("takeoffs_collection", "8", 8),
+                        2,
+                    ),
+                ),
+            ),
+            bid_data_by_bid={
+                8: BidLoadResult(
+                    bid_takeoffs=[takeoff],
+                    pages={"20": Page(uid="20", name="Sheet", takeoffs=[takeoff])},
+                )
+            },
+        )
+        self.assertFalse(service.apply(hydrated))
+        self.assertEqual(
+            service.last_failure_kind, ReconciliationFailureKind.MALFORMED_PAYLOAD
+        )
+
     def test_remote_bid_change_is_acknowledged_when_no_bid_is_active(self):
         database_id = "database"
         events = _EventBus()
@@ -1869,6 +1989,338 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         event, payload = events.published[-1]
         self.assertIs(event, AppEvents.SYNCHRONIZATION_CONFLICT)
         self.assertEqual(payload["resource_id"], "42")
+        self.assertFalse(payload["blocks_database"])
+
+    def test_project_write_session_conflict_blocks_the_database(self):
+        database_id = "database"
+        resource = ResourceRef("database", database_id)
+        events = _EventBus()
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service._database_capability_service = SimpleNamespace(
+            is_editable=lambda *_args: True
+        )
+        service._event_bus = events
+        service._mutation_executor = _ConflictingMutationExecutor(
+            SynchronizationConflict(
+                database_id,
+                resource,
+                "session expired",
+                kind=SynchronizationConflictKind.SESSION,
+            )
+        )
+        service._session_registry = DatabaseSessionRegistry()
+        service._concurrency_tokens, _drafts = _token_service()
+        result = service._execute_database_mutation(
+            database_id, (resource,), lambda _recorder: True
+        )
+        self.assertFalse(result.success)
+        _event, payload = events.published[-1]
+        self.assertTrue(payload["blocks_database"])
+
+    def test_many_rapid_local_mutations_advance_expected_token_each_commit(self):
+        database_id = "database"
+        resource = ResourceRef("takeoffs_collection", "8", 8)
+        initial = ConcurrencyToken((1).to_bytes(8, "big"))
+        tokens, _drafts = _token_service(_TokenReader({resource: initial}))
+        tokens.load_bid(database_id, "8")
+
+        class _AdvancingExecutor:
+            def __init__(self):
+                self.current = initial
+                self.expected = []
+
+            def execute(self, request, _operation):
+                presented = request.expected_versions[0].expected
+                self.expected.append(presented)
+                if presented != self.current:
+                    return DatabaseMutationResult(
+                        success=False,
+                        conflict=SynchronizationConflict(
+                            database_id,
+                            resource,
+                            "stale takeoff collection",
+                            expected=presented,
+                            actual=self.current,
+                            kind=SynchronizationConflictKind.OPTIMISTIC_CONCURRENCY,
+                        ),
+                    )
+                self.current = ConcurrencyToken(
+                    (int.from_bytes(self.current.value, "big") + 1).to_bytes(8, "big")
+                )
+                return DatabaseMutationResult(
+                    success=True,
+                    value=True,
+                    resulting_versions={resource: self.current},
+                )
+
+        executor = _AdvancingExecutor()
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service._database_capability_service = SimpleNamespace(
+            is_editable=lambda *_args: True
+        )
+        service._event_bus = _EventBus()
+        service._mutation_executor = executor
+        service._session_registry = DatabaseSessionRegistry()
+        service._session_registry.register(database_id, "session")
+        service._concurrency_tokens = tokens
+        for _index in range(100):
+            result = service._execute_database_mutation(
+                database_id, (resource,), lambda _recorder: True
+            )
+            self.assertTrue(result.success)
+        self.assertEqual(executor.expected[0], initial)
+        self.assertEqual(
+            executor.expected[-1], ConcurrencyToken((100).to_bytes(8, "big"))
+        )
+
+    def test_write_services_share_one_database_token_mutation_scope(self):
+        database_id = "database"
+        resource = ResourceRef("takeoffs_collection", "8", 8)
+        initial = ConcurrencyToken((1).to_bytes(8, "big"))
+        tokens, _drafts = _token_service(_TokenReader({resource: initial}))
+        tokens.load_bid(database_id, "8")
+
+        class _OverlapDetectingExecutor:
+            def __init__(self):
+                self.current = initial
+                self.active = False
+                self.overlap = False
+                self.first_entered = threading.Event()
+                self.release_first = threading.Event()
+                self.lock = threading.Lock()
+
+            def execute(self, request, _operation):
+                with self.lock:
+                    if self.active:
+                        self.overlap = True
+                        self.release_first.set()
+                    self.active = True
+                    first = not self.first_entered.is_set()
+                    self.first_entered.set()
+                if first:
+                    self.release_first.wait(0.2)
+                presented = request.expected_versions[0].expected
+                success = presented == self.current
+                if success:
+                    self.current = ConcurrencyToken(
+                        (int.from_bytes(self.current.value, "big") + 1).to_bytes(
+                            8, "big"
+                        )
+                    )
+                with self.lock:
+                    self.active = False
+                return DatabaseMutationResult(
+                    success=success,
+                    value=success,
+                    resulting_versions={resource: self.current} if success else {},
+                )
+
+        executor = _OverlapDetectingExecutor()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(database_id, "session")
+
+        def service():
+            instance = ProjectWriteService.__new__(ProjectWriteService)
+            instance._database_capability_service = SimpleNamespace(
+                is_editable=lambda *_args: True
+            )
+            instance._event_bus = _EventBus()
+            instance._mutation_executor = executor
+            instance._session_registry = sessions
+            instance._concurrency_tokens = tokens
+            return instance
+
+        services = (service(), service())
+        start = threading.Barrier(3)
+        results = []
+
+        def mutate(instance):
+            start.wait()
+            results.append(
+                instance._execute_database_mutation(
+                    database_id, (resource,), lambda _recorder: True
+                )
+            )
+
+        workers = [
+            threading.Thread(target=mutate, args=(instance,)) for instance in services
+        ]
+        for worker in workers:
+            worker.start()
+        start.wait()
+        for worker in workers:
+            worker.join(2)
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertFalse(executor.overlap)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result.success for result in results))
+        self.assertEqual(
+            tokens.expected_versions(database_id, (resource,))[0].expected,
+            ConcurrencyToken((3).to_bytes(8, "big")),
+        )
+
+    def test_database_token_clear_waits_for_inflight_mutation(self):
+        database_id = "database"
+        resource = ResourceRef("takeoffs_collection", "8", 8)
+        initial = ConcurrencyToken((1).to_bytes(8, "big"))
+        tokens, _drafts = _token_service(_TokenReader({resource: initial}))
+        tokens.load_bid(database_id, "8")
+        entered = threading.Event()
+        release = threading.Event()
+
+        class _BlockingExecutor:
+            def execute(self, _request, _operation):
+                entered.set()
+                if not release.wait(2):
+                    raise AssertionError("blocked mutation was not released")
+                return DatabaseMutationResult(
+                    success=True,
+                    value=True,
+                    resulting_versions={
+                        resource: ConcurrencyToken((2).to_bytes(8, "big"))
+                    },
+                )
+
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service._database_capability_service = SimpleNamespace(
+            is_editable=lambda *_args: True
+        )
+        service._event_bus = _EventBus()
+        service._mutation_executor = _BlockingExecutor()
+        service._session_registry = DatabaseSessionRegistry()
+        service._session_registry.register(database_id, "session")
+        service._concurrency_tokens = tokens
+        mutation = threading.Thread(
+            target=lambda: service._execute_database_mutation(
+                database_id, (resource,), lambda _recorder: True
+            )
+        )
+        cleared = threading.Event()
+        mutation.start()
+        self.assertTrue(entered.wait(1))
+        clearing = threading.Thread(
+            target=lambda: (tokens.clear_database(database_id), cleared.set())
+        )
+        clearing.start()
+        self.assertFalse(cleared.wait(0.05))
+        release.set()
+        mutation.join(2)
+        clearing.join(2)
+        self.assertTrue(cleared.is_set())
+        self.assertEqual(tokens.tokens_for_resources(database_id, (resource,)), ())
+
+    def test_authoritative_token_reload_waits_for_inflight_mutation(self):
+        database_id = "database"
+        resource = ResourceRef("takeoffs_collection", "8", 8)
+        initial = ConcurrencyToken((1).to_bytes(8, "big"))
+        committed = ConcurrencyToken((2).to_bytes(8, "big"))
+
+        class _ObservedReader(_TokenReader):
+            def __init__(self):
+                super().__init__({resource: initial})
+                self.entered = threading.Event()
+
+            def read_bid_versions(self, database_id, bid_uid):
+                self.entered.set()
+                return super().read_bid_versions(database_id, bid_uid)
+
+        reader = _ObservedReader()
+        tokens, _drafts = _token_service(reader)
+        tokens.load_bid(database_id, "8")
+        reader.entered.clear()
+        mutation_entered = threading.Event()
+        release_mutation = threading.Event()
+
+        class _BlockingExecutor:
+            def execute(self, _request, _operation):
+                mutation_entered.set()
+                if not release_mutation.wait(2):
+                    raise AssertionError("blocked mutation was not released")
+                reader.resources[resource] = committed
+                return DatabaseMutationResult(
+                    success=True,
+                    value=True,
+                    resulting_versions={resource: committed},
+                )
+
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service._database_capability_service = SimpleNamespace(
+            is_editable=lambda *_args: True
+        )
+        service._event_bus = _EventBus()
+        service._mutation_executor = _BlockingExecutor()
+        service._session_registry = DatabaseSessionRegistry()
+        service._session_registry.register(database_id, "session")
+        service._concurrency_tokens = tokens
+        mutation = threading.Thread(
+            target=lambda: service._execute_database_mutation(
+                database_id, (resource,), lambda _recorder: True
+            )
+        )
+        reload_complete = threading.Event()
+        mutation.start()
+        self.assertTrue(mutation_entered.wait(1))
+        reload = threading.Thread(
+            target=lambda: (
+                tokens.load_bid(database_id, "8"),
+                reload_complete.set(),
+            )
+        )
+        reload.start()
+        self.assertFalse(reader.entered.wait(0.05))
+        self.assertFalse(reload_complete.is_set())
+        release_mutation.set()
+        mutation.join(2)
+        reload.join(2)
+        self.assertTrue(reload_complete.is_set())
+        self.assertEqual(
+            tokens.expected_versions(database_id, (resource,))[0].expected,
+            committed,
+        )
+
+    def test_sql_writer_classifies_session_and_lease_conflicts(self):
+        sessions = DatabaseSessionRegistry()
+        sessions.register("database", "current-session")
+        writer = SqlProjectWriter(
+            DatabaseDescriptorRegistry(),
+            SimpleNamespace(),
+            session_registry=sessions,
+        )
+        session_result = writer.execute(
+            DatabaseMutationRequest(
+                database_id="database",
+                session_id="stale-session",
+            ),
+            lambda _recorder: True,
+        )
+        self.assertEqual(
+            session_result.conflict.kind, SynchronizationConflictKind.SESSION
+        )
+        for error_code, expected_kind in (
+            (SqlErrorCode.LOCKED, SynchronizationConflictKind.LEASE),
+            (SqlErrorCode.SESSION_EXPIRED, SynchronizationConflictKind.SESSION),
+        ):
+            classified_writer = SqlProjectWriter.__new__(SqlProjectWriter)
+
+            def fail(_request, _operation, code=error_code):
+                raise SqlInfrastructureError(SqlErrorDetails(code, code.value))
+
+            classified_writer._execute_mutation_transaction = fail
+            result = classified_writer.execute(
+                DatabaseMutationRequest(database_id="database", session_id=None),
+                lambda _recorder: True,
+            )
+            self.assertEqual(result.conflict.kind, expected_kind)
+
+    def test_session_identity_comparison_normalizes_uuid_text(self):
+        self.assertTrue(
+            session_identities_equal(
+                "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+                "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            )
+        )
+        self.assertFalse(session_identities_equal("session-a", "session-b"))
+        self.assertFalse(session_identities_equal("session-a", "SESSION-A"))
 
     def test_coordinator_starts_only_for_sql_and_closes_session(self):
         descriptors = DatabaseDescriptorRegistry()
@@ -1995,7 +2447,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         store.change = _change(
             descriptor.database_id,
             ResourceRef("condition", "42", 8),
-            source=store.session_id,
+            source=store.session_id.upper(),
         )
         self.assertTrue(store.change_seen.wait(3))
         _stop_database(coordinator, descriptor.database_id)
@@ -2211,6 +2663,56 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         self.assertTrue(reconciliation_required.wait(2))
         self.assertEqual(runtime.acknowledged_version, initial_version)
+        failure_payload = next(
+            payload
+            for event, payload in reversed(events.published)
+            if event is AppEvents.FULL_RECONCILIATION_REQUIRED
+        )
+        self.assertNotIn("session start", failure_payload["reason"].lower())
+        _shutdown_coordinator(coordinator)
+
+    def test_malformed_session_start_has_distinct_failure_classification(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        reconciliation = _Reconciliation()
+        reconciliation.result = False
+        reconciliation.last_failure_kind = ReconciliationFailureKind.MALFORMED_PAYLOAD
+        events = _EventBus()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            reconciliation,
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            events,
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        coordinator._runtimes[descriptor.database_id] = runtime
+        coordinator._on_session_started(
+            (
+                descriptor.database_id,
+                runtime.generation,
+                HydratedDatabaseChangeBatch(
+                    _batch(descriptor.database_id, "epoch", 0, 0)
+                ),
+            )
+        )
+        failure_payload = next(
+            payload
+            for event, payload in events.published
+            if event is AppEvents.FULL_RECONCILIATION_REQUIRED
+        )
+        self.assertIn("session-start", failure_payload["reason"])
         _shutdown_coordinator(coordinator)
 
     def test_reconciliation_exception_keeps_checkpoint_and_requests_recovery(self):
@@ -3630,7 +4132,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(coordinator.shutdown_state, CollaborationShutdownState.CLOSED)
         self.assertIsNone(drafts.get(lease_results[0].handle.draft_id))
 
-    def test_failed_database_unload_remains_visible_to_shutdown(self):
+    def test_offline_database_unload_abandons_expiring_remote_cleanup(self):
         descriptors = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="TEST"),
@@ -3664,8 +4166,8 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             ),
         )
         self.assertTrue(unloaded.wait(2))
-        self.assertFalse(unload_results[0][0])
-        self.assertFalse(coordinator.start_database(descriptor.database_id))
+        self.assertEqual(unload_results, [(True, "")])
+        self.assertEqual(coordinator._database_cleanup_failures, {})
         shutdown = threading.Event()
         shutdown_results = []
         coordinator.request_shutdown(
@@ -3675,18 +4177,61 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             )
         )
         self.assertTrue(shutdown.wait(2))
-        self.assertFalse(shutdown_results[0][0])
-        self.assertIn("session could not be closed", shutdown_results[0][1])
-        self.assertEqual(
-            coordinator.shutdown_state, CollaborationShutdownState.CLEANUP_FAILED
-        )
+        self.assertEqual(shutdown_results, [(True, "")])
+        self.assertEqual(coordinator.shutdown_state, CollaborationShutdownState.CLOSED)
         repeated_results = []
         coordinator.request_shutdown(
             lambda success, message: repeated_results.append((success, message))
         )
         self.assertEqual(len(repeated_results), 1)
-        self.assertFalse(repeated_results[0][0])
-        self.assertIn("session could not be closed", repeated_results[0][1])
+        self.assertEqual(repeated_results, [(True, "")])
+
+    def test_database_drain_reports_a_worker_that_exceeds_sql_timeouts(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(
+                server="localhost",
+                database="TEST",
+                connection_timeout_seconds=2,
+                command_timeout_seconds=3,
+            ),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            *_token_service(),
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+
+        class _StuckThread:
+            def __init__(self):
+                self.join_timeout = None
+
+            def join(self, timeout):
+                self.join_timeout = timeout
+
+            @staticmethod
+            def is_alive():
+                return True
+
+        payloads = []
+        coordinator._dispatcher = SimpleNamespace(
+            dispatch=lambda _callback, payload: payloads.append(payload)
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.thread = _StuckThread()
+        coordinator._drain_database(runtime)
+        self.assertEqual(runtime.thread.join_timeout, 10.0)
+        self.assertEqual(payloads[0][:3], (descriptor.database_id, 1, False))
+        self.assertIn("did not stop", payloads[0][3])
 
     def test_closed_shutdown_callback_runs_outside_the_coordinator_lock(self):
         coordinator = SqlCollaborationCoordinator(

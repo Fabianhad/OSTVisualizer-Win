@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 from ost_visualizer.application.dtos.collaboration_dtos import (
     CollaborationStatus,
     EditLeaseHandle,
@@ -16,6 +17,9 @@ from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
 )
 from ost_visualizer.application.services.project_write_service import WriteReloadResult
+from ost_visualizer.application.interfaces.i_database_catalog import (
+    DatabaseCatalogError,
+)
 from ost_visualizer.domain.entities.annotation import ANNOTATION_TYPE_TEXT
 from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyBidInfo,
@@ -24,7 +28,11 @@ from ost_visualizer.domain.entities.hierarchy_data import (
     HierarchyProjectInfo,
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
+from ost_visualizer.domain.entities.condition import Condition
+from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.page import Page
+from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.coordinators.navigation_state_machine import (
     NavigationStateMachine,
@@ -1197,6 +1205,59 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(len(coordinator._viewer.remote_requests), 1)
         self.assertEqual(completed, [True])
 
+    def test_remote_layer_reconciliation_derives_takeoff_layer_from_condition(self):
+        database_id = "sql-db"
+        bid_uid = "bid-1"
+
+        class SelectedUiState(FakeUiState):
+            def get_selected_bid_ref(self):
+                return BidRef(database_id, bid_uid)
+
+        loaded = []
+        layer_sidebar = SimpleNamespace(
+            load_layers=lambda layers, used_uids: loaded.append(
+                (list(layers), set(used_uids))
+            )
+        )
+        sidebar = SimpleNamespace(
+            bid_layers_sidebar=layer_sidebar,
+            refresh_conditions_from_memory=lambda: None,
+        )
+        takeoff = Takeoff(uid="4485", condition_uid="10", page_uid="20")
+        model = SimpleNamespace(
+            bid_layers=[
+                BidLayer(
+                    uid="25",
+                    bid_uid=bid_uid,
+                    name="Takeoff layer",
+                    show=True,
+                    sequence=0,
+                )
+            ],
+            bid_layer_visibility={"25": True},
+            bid_layer_names_by_uid={"25": "Takeoff layer"},
+            current_bid_ref=BidRef(database_id, bid_uid),
+            bid_conditions={"10": Condition(uid="10", layer_uid="25")},
+            get_all_takeoffs=lambda: [takeoff],
+            get_all_annotations=lambda: [],
+        )
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SelectedUiState()
+        coordinator.project_data = ProjectDataService(model)
+        coordinator._undo_service = None
+        coordinator._sidebar = sidebar
+        coordinator._update_export_menu_state = lambda: None
+        coordinator._restore_project_tree_bid_selection_if_needed = lambda: None
+        coordinator._on_remote_bid_content_changed(
+            database_id=database_id,
+            bid_uid=bid_uid,
+            families=[CollaborationResourceFamily.LAYERS.value],
+            defer_plan_projection=True,
+        )
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual([layer.uid for layer in loaded[0][0]], ["25"])
+        self.assertEqual(loaded[0][1], {"25"})
+
     def test_remote_projection_request_failure_releases_registered_surface(self):
         database_id = "sql-db"
         bid_uid = "bid-1"
@@ -1895,6 +1956,31 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator._viewer.clears, 0)
         self.assertEqual(coordinator._undo_service.active, [])
         self.assertIs(coordinator.main_window.project_view.restored_bid, old_ref)
+
+        class FailingSqlProjectOperations:
+            @staticmethod
+            def load_bid(_bid_ref):
+                raise DatabaseCatalogError("SQL bid read failed")
+
+        coordinator.project_operations = FailingSqlProjectOperations()
+
+        def assert_restored_before_warning(*_args):
+            self.assertIs(coordinator.ui_state_manager.get_selected_bid_ref(), old_ref)
+            self.assertEqual(coordinator.project_data.current_file, "old.mdb")
+
+        with patch(
+            "ost_visualizer.presentation.coordinators.ui_event_coordinator.show_warning",
+            side_effect=assert_restored_before_warning,
+        ) as warning:
+            coordinator.handle_bid_selection(new_ref)
+        warning.assert_called_once_with(
+            coordinator.main_window,
+            "Open SQL Bid",
+            "SQL bid read failed",
+        )
+        self.assertIs(coordinator.ui_state_manager.get_selected_bid_ref(), old_ref)
+        self.assertEqual(coordinator.project_data.current_file, "old.mdb")
+        self.assertEqual(coordinator._viewer.clears, 0)
 
     def test_clearing_bid_selection_clears_undo_owner(self):
         old_ref = BidRef("old.mdb", "old-bid")

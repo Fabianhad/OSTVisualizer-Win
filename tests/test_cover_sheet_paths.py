@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from copy import deepcopy
 from pathlib import Path
@@ -1090,6 +1091,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             lock_tokens=lambda _database_id, _resources: (),
         )
         write_service._concurrency_tokens = SimpleNamespace(
+            mutation_scope=lambda _database_id: nullcontext(),
             ensure_resources_loaded=lambda _database_id, _resources: None,
             expected_versions=lambda _database_id, _resources: (),
             apply_result=lambda _database_id, _versions: None,

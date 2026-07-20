@@ -29,6 +29,7 @@ from ...application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
     ResourceRef,
     SynchronizationConflict,
+    SynchronizationConflictKind,
 )
 from ...application.interfaces.i_database_mutation_executor import IMutationRecorder
 from ...domain.dtos.raw_bid_data_dto import RawBidData
@@ -194,7 +195,7 @@ class SqlProjectWriter(MdbWriter):
                 if isinstance(exc, _OptimisticConflict)
                 else (
                     request.resources[0]
-                    if request.resources
+                    if request.resources and exc.details.code == SqlErrorCode.LOCKED
                     else ResourceRef(
                         CollaborationResourceType.DATABASE.value,
                         request.database_id,
@@ -213,6 +214,15 @@ class SqlProjectWriter(MdbWriter):
                     actual=(
                         exc.actual if isinstance(exc, _OptimisticConflict) else None
                     ),
+                    kind=(
+                        SynchronizationConflictKind.OPTIMISTIC_CONCURRENCY
+                        if isinstance(exc, _OptimisticConflict)
+                        else (
+                            SynchronizationConflictKind.LEASE
+                            if exc.details.code == SqlErrorCode.LOCKED
+                            else SynchronizationConflictKind.SESSION
+                        )
+                    ),
                 ),
             )
 
@@ -223,15 +233,12 @@ class SqlProjectWriter(MdbWriter):
     ) -> DatabaseMutationResult[T]:
         registered_session = self._require_active_session(request.database_id)
         if request.session_id != registered_session:
-            conflict = SynchronizationConflict(
-                database_id=request.database_id,
-                resource=ResourceRef(
-                    CollaborationResourceType.DATABASE.value,
-                    request.database_id,
-                ),
-                reason="The SQL collaboration session changed before the write.",
+            raise SqlInfrastructureError(
+                SqlErrorDetails(
+                    SqlErrorCode.SESSION_EXPIRED,
+                    "The SQL collaboration session changed before the write.",
+                )
             )
-            return DatabaseMutationResult(success=False, conflict=conflict)
         connection_request = self._requests.request(
             request.database_id, read_only=False
         )
@@ -710,7 +717,6 @@ class SqlProjectWriter(MdbWriter):
         return self._write_schema
 
     def _record_caught_mutation_error(self, exc: BaseException) -> bool:
-        """Make a caught shared-operation error fatal to the SQL transaction."""
         state = self._active_mutation.get()
         if state is not None and state.operation_error is None:
             state.operation_error = exc

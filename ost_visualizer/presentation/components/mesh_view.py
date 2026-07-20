@@ -24,6 +24,7 @@ from ..utils.view_context_menu import (
     add_reassign_condition_submenu,
 )
 from ..visualization.native_page_plane import NativePageImagePlaneData
+from ..visualization.render_surface_metrics import RenderSurfaceMetrics
 from . import ost_renderer
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ class OpenGLViewer(QtWidgets.QWidget):
         super().__init__(parent)
         self._destroyed = False
         self._renderer: ost_renderer.Renderer | None = None
+        self._render_surface_size: tuple[int, int] | None = None
+        self._surface_window: QtGui.QWindow | None = None
+        self._surface_screen: QtGui.QScreen | None = None
         self._pending_data: Optional[dict] = None
         self._current_bid_ref: Optional[BidRef] = None
         self._pending_camera_reset = False
@@ -55,7 +59,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WA_NativeWindow)
         self.setAttribute(QtCore.Qt.WA_NoSystemBackground)
         self._set_palette_background()
-        self._last_mouse_pos: Optional[QtCore.QPoint] = None
+        self._last_mouse_pos: Optional[QtCore.QPointF] = None
         self._zoom_reference_distance: float = 0.0
         self._cursor_mode: str = CURSOR_MODE_DEFAULT
         self._zoom_cursor: Optional[QtGui.QCursor] = None
@@ -63,10 +67,10 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._animation_timer.timeout.connect(self._on_animation_frame)
         self._animation_timer.setInterval(0)
         self._camera_moving = False
-        self._click_pos: Optional[QtCore.QPoint] = None
+        self._click_pos: Optional[QtCore.QPointF] = None
         self._click_threshold = _CLICK_DRAG_THRESHOLD_PX
         self._dragged = False
-        self._right_button_press_pos: Optional[QtCore.QPoint] = None
+        self._right_button_press_pos: Optional[QtCore.QPointF] = None
         self._right_button_press_timer = QtCore.QElapsedTimer()
         self._right_button_dragged = False
         self._suppress_next_context_menu = False
@@ -90,13 +94,13 @@ class OpenGLViewer(QtWidgets.QWidget):
     def paintEngine(self) -> None:
         return None
 
-    def _start_right_context_tracking(self, pos: QtCore.QPoint) -> None:
+    def _start_right_context_tracking(self, pos: QtCore.QPointF) -> None:
         self._suppress_next_context_menu = False
         self._right_button_press_pos = pos
         self._right_button_press_timer.restart()
         self._right_button_dragged = False
 
-    def _update_right_context_drag(self, pos: QtCore.QPoint) -> None:
+    def _update_right_context_drag(self, pos: QtCore.QPointF) -> None:
         total = pos - self._right_button_press_pos
         if total.manhattanLength() >= QtWidgets.QApplication.startDragDistance():
             self._right_button_dragged = True
@@ -129,7 +133,8 @@ class OpenGLViewer(QtWidgets.QWidget):
             return False
         try:
             self._renderer = ost_renderer.Renderer(int(self.winId()))
-            self._renderer.resize(self.width(), self.height())
+            self._connect_surface_notifications()
+            self._resize_render_surface()
             self._set_palette_background()
             self._renderer.suspend()
             if self._pending_camera_reset:
@@ -137,6 +142,15 @@ class OpenGLViewer(QtWidgets.QWidget):
                 self._pending_camera_reset = False
             return True
         except Exception:
+            renderer = self._renderer
+            self._renderer = None
+            self._render_surface_size = None
+            self._disconnect_surface_notifications()
+            if renderer is not None:
+                try:
+                    renderer.shutdown()
+                except Exception:
+                    logger.exception("Failed to release an incomplete ost_renderer")
             logger.exception("Failed to initialize ost_renderer")
             return False
 
@@ -146,26 +160,101 @@ class OpenGLViewer(QtWidgets.QWidget):
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
-        if self._renderer:
-            self._renderer.resize(self.width(), self.height())
+        self._resize_render_surface()
 
     def refresh_viewport(self) -> None:
-        if self._renderer:
-            self._renderer.resize(self.width(), self.height())
+        if self._resize_render_surface():
             if self._render_suspended:
                 self._renderer.clear_frame()
         self.update()
+
+    def _current_render_surface_metrics(self) -> RenderSurfaceMetrics:
+        return RenderSurfaceMetrics.from_logical_size(
+            self.width(), self.height(), self.devicePixelRatioF()
+        )
+
+    def _resize_render_surface(self) -> bool:
+        if self._renderer is None or not self.isVisible():
+            return False
+        metrics = self._current_render_surface_metrics()
+        if not metrics.has_render_target:
+            return False
+        if metrics.physical_size != self._render_surface_size:
+            self._renderer.resize(*metrics.physical_size)
+            self._render_surface_size = metrics.physical_size
+        return True
+
+    def _connect_surface_notifications(self) -> None:
+        surface_window = self.windowHandle()
+        if surface_window is not self._surface_window:
+            if self._surface_window is not None:
+                try:
+                    self._surface_window.screenChanged.disconnect(
+                        self._on_surface_screen_changed
+                    )
+                except (RuntimeError, TypeError):
+                    pass
+            self._surface_window = surface_window
+            if surface_window is not None:
+                surface_window.screenChanged.connect(self._on_surface_screen_changed)
+        screen = surface_window.screen() if surface_window is not None else None
+        self._connect_surface_screen(screen)
+
+    def _connect_surface_screen(self, screen: QtGui.QScreen | None) -> None:
+        if screen is self._surface_screen:
+            return
+        if self._surface_screen is not None:
+            try:
+                self._surface_screen.logicalDotsPerInchChanged.disconnect(
+                    self._on_surface_dpi_changed
+                )
+            except (RuntimeError, TypeError):
+                pass
+        self._surface_screen = screen
+        if screen is not None:
+            screen.logicalDotsPerInchChanged.connect(self._on_surface_dpi_changed)
+
+    @QtCore.Slot(QtGui.QScreen)
+    def _on_surface_screen_changed(self, screen: QtGui.QScreen | None) -> None:
+        self._connect_surface_screen(screen)
+        self._queue_surface_metrics_refresh()
+
+    @QtCore.Slot(float)
+    def _on_surface_dpi_changed(self, _dpi: float = 0.0) -> None:
+        self._queue_surface_metrics_refresh()
+
+    def _queue_surface_metrics_refresh(self) -> None:
+        QtCore.QTimer.singleShot(0, self._refresh_surface_metrics)
+
+    @QtCore.Slot()
+    def _refresh_surface_metrics(self) -> None:
+        if self._destroyed:
+            return
+        self._connect_surface_notifications()
+        self._resize_render_surface()
+        self.update()
+
+    def event(self, event: QtCore.QEvent) -> bool:
+        handled = super().event(event)
+        if event.type() in (
+            QtCore.QEvent.Type.DevicePixelRatioChange,
+            QtCore.QEvent.Type.ScreenChangeInternal,
+            QtCore.QEvent.Type.WinIdChange,
+        ):
+            self._queue_surface_metrics_refresh()
+        return handled
 
     def set_zoom_cursor(self, cursor: QtGui.QCursor) -> None:
         self._zoom_cursor = cursor
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+        position = event.position()
         if self._cursor_mode == CURSOR_MODE_ZOOM and self._renderer:
             if event.button() == QtCore.Qt.MouseButton.RightButton:
-                self._start_right_context_tracking(event.pos())
+                self._start_right_context_tracking(position)
             if event.button() == QtCore.Qt.MouseButton.MiddleButton:
-                self._last_mouse_pos = event.pos()
+                self._last_mouse_pos = position
                 self._camera_moving = True
                 self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
                 if not self._animation_timer.isActive():
@@ -183,11 +272,11 @@ class OpenGLViewer(QtWidgets.QWidget):
                 self.update()
             event.accept()
             return
-        self._last_mouse_pos = event.pos()
-        self._click_pos = event.pos()
+        self._last_mouse_pos = position
+        self._click_pos = position
         self._dragged = False
         if event.button() == QtCore.Qt.MouseButton.RightButton:
-            self._start_right_context_tracking(event.pos())
+            self._start_right_context_tracking(position)
         self._camera_moving = True
         if self._cursor_mode == CURSOR_MODE_PAN:
             self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
@@ -213,7 +302,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             and event.button() == QtCore.Qt.MouseButton.LeftButton
         ):
             ctrl = bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier)
-            self._handle_pick(event.pos(), ctrl)
+            self._handle_pick(event.position(), ctrl)
         self._click_pos = None
         self._last_mouse_pos = None
         if event.button() == QtCore.Qt.MouseButton.RightButton:
@@ -224,17 +313,18 @@ class OpenGLViewer(QtWidgets.QWidget):
         event.accept()
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        position = event.position()
         if self._cursor_mode == CURSOR_MODE_ZOOM:
             if event.buttons() & QtCore.Qt.RightButton:
-                self._update_right_context_drag(event.pos())
+                self._update_right_context_drag(position)
             if (
                 self._last_mouse_pos is not None
                 and self._renderer
                 and event.buttons() & QtCore.Qt.MiddleButton
             ):
-                delta = event.pos() - self._last_mouse_pos
+                delta = position - self._last_mouse_pos
                 self._renderer.camera.pan(delta.x(), delta.y())
-                self._last_mouse_pos = event.pos()
+                self._last_mouse_pos = position
                 self.update()
             event.accept()
             return
@@ -242,15 +332,15 @@ class OpenGLViewer(QtWidgets.QWidget):
             event.ignore()
             return
         if self._click_pos is not None and not self._dragged:
-            total = event.pos() - self._click_pos
+            total = position - self._click_pos
             if (
                 abs(total.x()) > self._click_threshold
                 or abs(total.y()) > self._click_threshold
             ):
                 self._dragged = True
         if event.buttons() & QtCore.Qt.RightButton:
-            self._update_right_context_drag(event.pos())
-        delta = event.pos() - self._last_mouse_pos
+            self._update_right_context_drag(position)
+        delta = position - self._last_mouse_pos
         if self._cursor_mode == CURSOR_MODE_PAN:
             if event.buttons() & QtCore.Qt.LeftButton:
                 self._renderer.camera.pan(delta.x(), delta.y())
@@ -261,7 +351,7 @@ class OpenGLViewer(QtWidgets.QWidget):
                 self._renderer.camera.rotate(delta.x(), delta.y())
             elif event.buttons() & QtCore.Qt.RightButton:
                 self._renderer.camera.pan(delta.x(), delta.y())
-        self._last_mouse_pos = event.pos()
+        self._last_mouse_pos = position
         self.update()
         event.accept()
 
@@ -271,11 +361,12 @@ class OpenGLViewer(QtWidgets.QWidget):
     def set_editing_enabled(self, enabled: bool) -> None:
         self._editing_enabled = bool(enabled)
 
-    def _handle_pick(self, pos: QtCore.QPoint, ctrl: bool) -> None:
+    def _handle_pick(self, pos: QtCore.QPointF | QtCore.QPoint, ctrl: bool) -> None:
         if not self._renderer or not self._pick_enabled:
             return
-        dpr = self.devicePixelRatioF()
-        px, py = int(pos.x() * dpr), int(pos.y() * dpr)
+        px, py = self._current_render_surface_metrics().to_physical_point(
+            pos.x(), pos.y()
+        )
         mesh_idx = self._renderer.pick(px, py)
         scene = self._renderer.scene
         if mesh_idx < 0 or mesh_idx >= scene.mesh_count():
@@ -967,6 +1058,8 @@ class OpenGLViewer(QtWidgets.QWidget):
         super().showEvent(event)
         if not self._ensure_renderer():
             return
+        self._connect_surface_notifications()
+        self._resize_render_surface()
         if not self._has_renderable_content():
             self._render_suspended = True
             self._renderer.suspend()
@@ -998,6 +1091,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._context_menu_action_state = None
         self._context_menu_conditions_fn = lambda: {}
         self._zoom_cursor = None
+        self._disconnect_surface_notifications()
         if self._animation_timer:
             self._animation_timer.stop()
             self._animation_timer.timeout.disconnect(self._on_animation_frame)
@@ -1006,6 +1100,25 @@ class OpenGLViewer(QtWidgets.QWidget):
         if self._renderer is not None:
             self._renderer.shutdown()
             self._renderer = None
+        self._render_surface_size = None
+
+    def _disconnect_surface_notifications(self) -> None:
+        if self._surface_window is not None:
+            try:
+                self._surface_window.screenChanged.disconnect(
+                    self._on_surface_screen_changed
+                )
+            except (RuntimeError, TypeError):
+                pass
+        if self._surface_screen is not None:
+            try:
+                self._surface_screen.logicalDotsPerInchChanged.disconnect(
+                    self._on_surface_dpi_changed
+                )
+            except (RuntimeError, TypeError):
+                pass
+        self._surface_window = None
+        self._surface_screen = None
 
     def closeEvent(self, event: QtCore.QEvent) -> None:
         self.cleanup()

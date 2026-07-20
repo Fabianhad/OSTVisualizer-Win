@@ -11,7 +11,7 @@ from ..raw_bid_integrity import (
     clear_missing_annotation_takeoff_references,
     clear_missing_selected_page_references,
     format_integrity_issues,
-    prune_orphaned_takeoffs,
+    resolve_takeoff_graph,
     validate_raw_bid_integrity,
 )
 from ..schema_contract import (
@@ -95,12 +95,26 @@ class OstImporter:
     ) -> bool:
         try:
             raw_data = self._parse_ost_xml(ost_file_path)
-            removed_takeoffs = prune_orphaned_takeoffs(raw_data)
-            if removed_takeoffs:
+            takeoff_graph = resolve_takeoff_graph(raw_data)
+            if takeoff_graph.fatal_issues:
+                logger.error(
+                    "Rejecting OST import because the takeoff graph is invalid: %s",
+                    format_integrity_issues(takeoff_graph.fatal_issues),
+                )
+                return False
+            if takeoff_graph.skipped_count:
+                descendant_diagnostic = (
+                    "; skipped dependent descendants: "
+                    + format_integrity_issues(takeoff_graph.dependent_descendants)
+                    if takeoff_graph.dependent_descendants
+                    else ""
+                )
                 logger.warning(
-                    "Skipping %d orphaned takeoff(s) during OST import: %s",
-                    len(removed_takeoffs),
-                    format_integrity_issues(removed_takeoffs),
+                    "Skipping %d invalid takeoff(s) during OST import; "
+                    "missing-parent roots: %s%s",
+                    takeoff_graph.skipped_count,
+                    format_integrity_issues(takeoff_graph.missing_parent_roots),
+                    descendant_diagnostic,
                 )
             cleared_selected_pages = clear_missing_selected_page_references(raw_data)
             if cleared_selected_pages:

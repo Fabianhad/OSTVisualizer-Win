@@ -1,4 +1,5 @@
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from ost_visualizer.application.dtos.collaboration_dtos import (
     DatabaseMutationResult,
@@ -53,6 +54,9 @@ class _ConcurrencyTokens:
 
     def ensure_resources_loaded(self, _database_id, _resources):
         self.load_calls += 1
+
+    def mutation_scope(self, _database_id):
+        return nullcontext()
 
     def expected_versions(self, _database_id, _resources):
         return ()

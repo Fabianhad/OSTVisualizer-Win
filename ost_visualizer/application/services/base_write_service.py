@@ -4,6 +4,7 @@ from ..dtos.collaboration_dtos import (
     DatabaseMutationRequest,
     DatabaseMutationResult,
     ResourceRef,
+    SynchronizationConflictKind,
 )
 from ..events.app_events import AppEvents
 from ..interfaces.i_database_mutation_executor import (
@@ -69,40 +70,43 @@ class DatabaseMutationWriteService(BaseWriteService):
         block_bid_child_locks: bool = False,
         block_bid_active_editors: bool = False,
     ) -> DatabaseMutationResult:
-        if not self._database_capability_service.is_editable(database_id):
-            self.logger.warning(
-                "Database mutation rejected because editing is unavailable."
-            )
-            return DatabaseMutationResult(success=False)
-        for resource in resources:
-            if not self._database_capability_service.is_editable(database_id, resource):
+        with self._concurrency_tokens.mutation_scope(database_id):
+            if not self._database_capability_service.is_editable(database_id):
                 self.logger.warning(
-                    "Database mutation rejected because its resource is unavailable."
+                    "Database mutation rejected because editing is unavailable."
                 )
                 return DatabaseMutationResult(success=False)
-        session_id = self._session_registry.get(database_id)
-        self._concurrency_tokens.ensure_resources_loaded(database_id, resources)
-        expected_versions = self._concurrency_tokens.expected_versions(
-            database_id, resources
-        )
-        result = self._mutation_executor.execute(
-            DatabaseMutationRequest(
-                database_id=database_id,
-                session_id=session_id,
-                resources=resources,
-                expected_versions=expected_versions,
-                required_lock_tokens=self._session_registry.lock_tokens(
-                    database_id, resources
-                ),
-                block_bid_child_locks=block_bid_child_locks,
-                block_bid_active_editors=block_bid_active_editors,
-            ),
-            operation,
-        )
-        if result.success:
-            self._concurrency_tokens.apply_result(
-                database_id, result.resulting_versions
+            for resource in resources:
+                if not self._database_capability_service.is_editable(
+                    database_id, resource
+                ):
+                    self.logger.warning(
+                        "Database mutation rejected because its resource is unavailable."
+                    )
+                    return DatabaseMutationResult(success=False)
+            session_id = self._session_registry.get(database_id)
+            self._concurrency_tokens.ensure_resources_loaded(database_id, resources)
+            expected_versions = self._concurrency_tokens.expected_versions(
+                database_id, resources
             )
+            result = self._mutation_executor.execute(
+                DatabaseMutationRequest(
+                    database_id=database_id,
+                    session_id=session_id,
+                    resources=resources,
+                    expected_versions=expected_versions,
+                    required_lock_tokens=self._session_registry.lock_tokens(
+                        database_id, resources
+                    ),
+                    block_bid_child_locks=block_bid_child_locks,
+                    block_bid_active_editors=block_bid_active_editors,
+                ),
+                operation,
+            )
+            if result.success:
+                self._concurrency_tokens.apply_result(
+                    database_id, result.resulting_versions
+                )
         if result.conflict is not None:
             self._event_bus.publish(
                 AppEvents.SYNCHRONIZATION_CONFLICT,
@@ -111,6 +115,8 @@ class DatabaseMutationWriteService(BaseWriteService):
                 resource_id=result.conflict.resource.resource_id,
                 bid_uid=str(result.conflict.resource.bid_uid or ""),
                 message=result.conflict.reason,
-                blocks_database=False,
+                blocks_database=(
+                    result.conflict.kind == SynchronizationConflictKind.SESSION
+                ),
             )
         return result
