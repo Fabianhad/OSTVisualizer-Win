@@ -47,7 +47,7 @@ class SqlServerDatabaseLocation:
     username: str = ""
     database_guid: str = ""
     encrypt: bool = True
-    trust_server_certificate: bool = True
+    trust_server_certificate: bool = False
     connection_timeout_seconds: int = 10
     command_timeout_seconds: int = 30
 

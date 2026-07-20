@@ -65,7 +65,7 @@ def require_sql_client_editability(cursor) -> None:
         )
     cursor.execute(
         "SELECT m.[SchemaVersion], sm.[Checksum], "
-        "DATABASEPROPERTYEX(DB_NAME(), N'Updateability'), "
+        "CONVERT(nvarchar(128), DATABASEPROPERTYEX(DB_NAME(), N'Updateability')), "
         "m.[WriterMode], a.[AdapterState], a.[ResourceCatalogChecksum], "
         "CASE WHEN EXISTS (SELECT 1 FROM sys.change_tracking_databases "
         "WHERE database_id=DB_ID()) THEN 1 ELSE 0 END, "

@@ -1,0 +1,45 @@
+services:
+  sqlserver:
+    image: ${OSTV_SQL_IMAGE}
+    container_name: ${OSTV_CONTAINER_NAME}
+    hostname: ${OSTV_CONTAINER_NAME}
+    restart: unless-stopped
+    stop_grace_period: 90s
+    shm_size: 1gb
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: ${OSTV_SQL_EDITION}
+      MSSQL_SA_PASSWORD: ${OSTV_SA_PASSWORD}
+      SSL_CERT_DIR: /var/opt/mssql/tls/ca-path:/etc/ssl/certs
+    ports:
+      - "127.0.0.1:${OSTV_SQL_HOST_PORT}:1433"
+      - "${OSTV_WG_SERVER_ADDRESS}:${OSTV_SQL_VPN_PORT}:1433"
+      - "${OSTV_SQL_PUBLIC_BIND_ADDRESS}:${OSTV_SQL_PUBLIC_PORT}:1433"
+    volumes:
+      - ${OSTV_STATE_ROOT}/data:/var/opt/mssql/data
+      - ${OSTV_STATE_ROOT}/logs/sqlserver:/var/opt/mssql/log
+      - ${OSTV_STATE_ROOT}/tls/server:/var/opt/mssql/tls:ro
+      - ${OSTV_STATE_ROOT}/tls/server/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+      - ${OSTV_STATE_ROOT}/backups:/var/opt/mssql/backup
+      - ${OSTV_STATE_ROOT}/config/mssql.conf:/var/opt/mssql/mssql.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/1433'"]
+      interval: 10s
+      timeout: 3s
+      retries: 18
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      ostv_sql_private:
+        ipv4_address: ${OSTV_SQL_CONTAINER_ADDRESS}
+    labels:
+      com.ostvisualizer.component: sqlserver
+      com.ostvisualizer.deployment-id: ${OSTV_DEPLOYMENT_ID}
+
+networks:
+  ostv_sql_private:
+    name: ${OSTV_DOCKER_NETWORK}
+    ipam:
+      config:
+        - subnet: ${OSTV_DOCKER_SUBNET}

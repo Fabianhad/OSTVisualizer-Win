@@ -678,7 +678,7 @@ class SqlDialogTests(unittest.TestCase):
             dialog.username_input.setText("test-user")
             dialog.password_input.setText("temporary-secret")
             dialog._accept_if_valid()
-            self.assertTrue(dialog.result_data().location.trust_server_certificate)
+            self.assertFalse(dialog.result_data().location.trust_server_certificate)
         finally:
             dialog.cleanup()
             dialog.deleteLater()

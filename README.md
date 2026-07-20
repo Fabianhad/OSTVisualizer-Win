@@ -100,9 +100,10 @@ never written to `config.json` or `file_state.json`. After the server connection
 is authenticated, **Database Properties (SQL Server)** lists the accessible
 databases; the descriptor and credential are saved only after its final **OK**.
 
-Microsoft ODBC Driver 18 for SQL Server is required. Connections use encryption
-and trust the certificate presented by the configured SQL Server by default.
-Only configure SQL Server connections to servers you control or otherwise trust.
+Microsoft ODBC Driver 18 for SQL Server is required. New connections use
+encryption and validate the SQL Server certificate and hostname by default.
+The server certificate must chain to a CA trusted by Windows and its DNS name
+must match the SQL Server name entered in OST Visualizer.
 
 **New Database** first offers Microsoft Access and Microsoft SQL Server. The
 Access option keeps the existing local database-name workflow. The SQL Server

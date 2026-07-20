@@ -46,6 +46,7 @@ class SqlProjectReader(MdbReader):
             try:
                 with lease.cursor() as cursor:
                     cursor.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
+                    lease.commit()
                     cursor.execute("BEGIN TRANSACTION")
                 yield lease
                 lease.commit()

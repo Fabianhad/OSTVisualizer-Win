@@ -955,7 +955,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             connections.lease.cursor_value.executed,
             ["SET TRANSACTION ISOLATION LEVEL SNAPSHOT", "BEGIN TRANSACTION"],
         )
-        self.assertEqual(connections.lease.commits, 1)
+        self.assertEqual(connections.lease.commits, 2)
         self.assertEqual(connections.lease.rollbacks, 0)
         parse.assert_called_once_with(descriptor.database_id, connections.lease)
 
@@ -1075,7 +1075,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
             connections.lease.cursor_value.executed,
             ["SET TRANSACTION ISOLATION LEVEL SNAPSHOT", "BEGIN TRANSACTION"],
         )
-        self.assertEqual(connections.lease.commits, 1)
+        self.assertEqual(connections.lease.commits, 2)
         self.assertEqual(connections.lease.rollbacks, 0)
 
     def test_access_shared_annotation_reader_retains_optional_table_tolerance(self):

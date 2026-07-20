@@ -68,6 +68,7 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
             try:
                 with connection.cursor() as cursor:
                     cursor.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
+                    connection.commit()
                     cursor.execute("BEGIN TRANSACTION")
                     cursor.execute("SELECT CHANGE_TRACKING_CURRENT_VERSION()")
                     version_row = cursor.fetchone()

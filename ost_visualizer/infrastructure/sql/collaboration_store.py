@@ -408,6 +408,7 @@ class SqlCollaborationStore(ICollaborationStore):
             try:
                 with lease.cursor() as cursor:
                     cursor.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
+                    lease.commit()
                     cursor.execute("BEGIN TRANSACTION")
                     cursor.execute(
                         "SELECT CONVERT(nvarchar(36), f.[FeedEpoch]) "

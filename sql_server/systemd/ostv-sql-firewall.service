@@ -1,0 +1,12 @@
+[Unit]
+Description=OST Visualizer SQL source-IP and Docker firewall containment
+After=docker.service network-online.target wg-quick@@@WG_INTERFACE@@.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=@@SQLSERVER_ROOT@@/configure_firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

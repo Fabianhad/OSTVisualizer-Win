@@ -1,0 +1,9 @@
+[Interface]
+Address = <WIREGUARD_SERVER_ADDRESS>/<PREFIX_LENGTH>
+ListenPort = <WIREGUARD_UDP_PORT>
+PrivateKey = <SERVER_PRIVATE_KEY_FROM_PRIVATE_STATE>
+
+# One block per authorized client. Never put a client private key here.
+[Peer]
+PublicKey = <CLIENT_PUBLIC_KEY>
+AllowedIPs = <CLIENT_WIREGUARD_ADDRESS>/32

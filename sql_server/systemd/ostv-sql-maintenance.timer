@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily OST Visualizer SQL Server validation
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target

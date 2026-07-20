@@ -636,7 +636,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
 
         def hydrate(batch, connection):
             hydration_connections.append(connection)
-            self.assertEqual(connections.lease.commits, 0)
+            self.assertEqual(connections.lease.commits, 1)
             return HydratedDatabaseChangeBatch(batch)
 
         remote_reader.hydrate_connection = hydrate
@@ -649,7 +649,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(hydrated.batch.high_water_version, 19)
         self.assertEqual(hydrated.batch.delivered_through_version, 11)
         self.assertEqual(hydration_connections, [connections.lease])
-        self.assertEqual(connections.lease.commits, 1)
+        self.assertEqual(connections.lease.commits, 2)
         self.assertEqual(connections.lease.rollbacks, 0)
 
     def test_granted_lease_is_released_when_ui_callback_fails(self):
@@ -784,7 +784,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             def hydrate_connection(self, batch, connection):
                 self_batch = batch
                 hydration_connections.append(connection)
-                test_case.assertEqual(store._connections.commits, 0)
+                test_case.assertEqual(store._connections.commits, 1)
                 return HydratedDatabaseChangeBatch(self_batch)
 
         test_case = self
@@ -797,7 +797,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             store._connections.cursor.statements[:2],
             ["SET TRANSACTION ISOLATION LEVEL SNAPSHOT", "BEGIN TRANSACTION"],
         )
-        self.assertEqual(store._connections.commits, 1)
+        self.assertEqual(store._connections.commits, 2)
         self.assertEqual(store._connections.rollbacks, 0)
         self.assertIn("CHANGETABLE", statements)
         self.assertNotIn("[Sequence] > ?", statements)
@@ -901,7 +901,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no ChangeLog records"):
             store.poll_changes("database", 11, 10, "local-session")
         self.assertFalse(store._connections.autocommit)
-        self.assertEqual(lease.commits, 0)
+        self.assertEqual(lease.commits, 1)
         self.assertEqual(lease.rollbacks, 1)
 
     def test_snapshot_feed_rolls_back_a_retention_gap(self):
@@ -956,7 +956,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         batch = store.poll_changes("database", 10, 10, "local-session").observed_batch
         self.assertEqual(batch.minimum_valid_version, 20)
         self.assertEqual(batch.delivered_through_version, 10)
-        self.assertEqual(lease.commits, 0)
+        self.assertEqual(lease.commits, 1)
         self.assertEqual(lease.rollbacks, 1)
 
     def test_snapshot_feed_rejects_duplicate_resource_payloads(self):
