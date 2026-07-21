@@ -6,7 +6,7 @@ from ..dtos.collaboration_dtos import ResourceRef
 class DatabaseSessionRegistry:
     def __init__(self) -> None:
         self._sessions: dict[str, str] = {}
-        self._lock_tokens: dict[tuple[str, ResourceRef], str] = {}
+        self._lock_tokens: dict[tuple[str, tuple[str, str]], str] = {}
         self._lock = threading.Lock()
 
     def register(self, database_id: str, session_id: str) -> None:
@@ -40,18 +40,18 @@ class DatabaseSessionRegistry:
         self, database_id: str, resource: ResourceRef, lock_token: str
     ) -> None:
         with self._lock:
-            self._lock_tokens[(database_id, resource)] = lock_token
+            self._lock_tokens[(database_id, resource.lease_identity)] = lock_token
 
     def remove_lock(self, database_id: str, resource: ResourceRef) -> None:
         with self._lock:
-            self._lock_tokens.pop((database_id, resource), None)
+            self._lock_tokens.pop((database_id, resource.lease_identity), None)
 
     def lock_tokens(
         self, database_id: str, resources: tuple[ResourceRef, ...]
     ) -> tuple[str, ...]:
         with self._lock:
-            return tuple(
-                self._lock_tokens[(database_id, resource)]
+            tokens = (
+                self._lock_tokens.get((database_id, resource.lease_identity))
                 for resource in resources
-                if (database_id, resource) in self._lock_tokens
             )
+            return tuple(dict.fromkeys(token for token in tokens if token is not None))

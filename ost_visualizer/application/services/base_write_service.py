@@ -4,7 +4,6 @@ from ..dtos.collaboration_dtos import (
     DatabaseMutationRequest,
     DatabaseMutationResult,
     ResourceRef,
-    SynchronizationConflictKind,
 )
 from ..events.app_events import AppEvents
 from ..interfaces.i_database_mutation_executor import (
@@ -14,6 +13,7 @@ from ..interfaces.i_database_mutation_executor import (
 from ..interfaces.i_database_session_registry import IDatabaseSessionRegistry
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from .database_capability_service import DatabaseCapabilityService
+from .synchronization_conflict_publisher import publish_synchronization_conflict
 
 
 class BaseWriteService:
@@ -69,6 +69,7 @@ class DatabaseMutationWriteService(BaseWriteService):
         *,
         block_bid_child_locks: bool = False,
         block_bid_active_editors: bool = False,
+        publish_conflict_event: bool = True,
     ) -> DatabaseMutationResult:
         with self._concurrency_tokens.mutation_scope(database_id):
             if not self._database_capability_service.is_editable(database_id):
@@ -107,16 +108,6 @@ class DatabaseMutationWriteService(BaseWriteService):
                 self._concurrency_tokens.apply_result(
                     database_id, result.resulting_versions
                 )
-        if result.conflict is not None:
-            self._event_bus.publish(
-                AppEvents.SYNCHRONIZATION_CONFLICT,
-                database_id=database_id,
-                resource_type=result.conflict.resource.resource_type,
-                resource_id=result.conflict.resource.resource_id,
-                bid_uid=str(result.conflict.resource.bid_uid or ""),
-                message=result.conflict.reason,
-                blocks_database=(
-                    result.conflict.kind == SynchronizationConflictKind.SESSION
-                ),
-            )
+        if result.conflict is not None and publish_conflict_event:
+            publish_synchronization_conflict(self._event_bus, result.conflict)
         return result

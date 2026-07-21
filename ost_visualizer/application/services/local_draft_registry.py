@@ -88,7 +88,14 @@ class LocalDraftRegistry:
             draft = self._overlapping_draft_locked(database_id, (resource,))
             if draft is None:
                 return None
-            return dict(draft.base_tokens).get(resource)
+            return next(
+                (
+                    token
+                    for stored_resource, token in draft.base_tokens
+                    if stored_resource.lease_identity == resource.lease_identity
+                ),
+                None,
+            )
 
     def apply_local_versions(
         self,
@@ -102,8 +109,16 @@ class LocalDraftRegistry:
                 base_tokens = dict(draft.base_tokens)
                 changed = False
                 for resource, token in versions.items():
-                    if resource in draft.affected_resources:
-                        base_tokens[resource] = token
+                    matching_resource = next(
+                        (
+                            affected
+                            for affected in draft.affected_resources
+                            if affected.lease_identity == resource.lease_identity
+                        ),
+                        None,
+                    )
+                    if matching_resource is not None:
+                        base_tokens[matching_resource] = token
                         changed = True
                 if changed:
                     self._drafts[draft_id] = replace(
@@ -137,10 +152,16 @@ class LocalDraftRegistry:
                 for draft_id, draft in self._drafts.items():
                     if draft.database_id != database_id:
                         continue
-                    resources = frozenset(
-                        draft.affected_resources + draft.dependency_resources
+                    resource_identities = frozenset(
+                        resource.lease_identity
+                        for resource in (
+                            draft.affected_resources + draft.dependency_resources
+                        )
                     )
-                    if change.resource not in resources or draft_id in seen:
+                    if (
+                        change.resource.lease_identity not in resource_identities
+                        or draft_id in seen
+                    ):
                         continue
                     seen.add(draft_id)
                     self._drafts[draft_id] = replace(
@@ -178,14 +199,17 @@ class LocalDraftRegistry:
     def _overlapping_draft_locked(
         self, database_id: str, resources: tuple[ResourceRef, ...]
     ) -> Optional[LocalDraft]:
-        requested = frozenset(resources)
+        requested = frozenset(resource.lease_identity for resource in resources)
         return next(
             (
                 draft
                 for draft in self._drafts.values()
                 if draft.database_id == database_id
                 and requested.intersection(
-                    draft.affected_resources + draft.dependency_resources
+                    resource.lease_identity
+                    for resource in (
+                        draft.affected_resources + draft.dependency_resources
+                    )
                 )
             ),
             None,

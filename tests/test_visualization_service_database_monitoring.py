@@ -1,6 +1,5 @@
 import unittest
 from types import SimpleNamespace
-
 from ost_visualizer.application.services.visualization_service import (
     VisualizationService,
 )
@@ -118,10 +117,8 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         service, monitor, _data, operations, notifier = _service(
             locator, DatabaseBackend.ACCESS
         )
-
         service.start_database_monitoring()
         self.assertEqual(monitor.start_calls, 1)
-
         monitor.callback()
         self.assertEqual(operations.reloads, [])
         service._callback_bridge.run_pending()
@@ -133,9 +130,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         service, monitor, _data, operations, notifier = _service(
             locator, DatabaseBackend.SQL_SERVER
         )
-
         service.start_database_monitoring()
-
         self.assertEqual(monitor.start_calls, 0)
         self.assertEqual(operations.reloads, [])
         self.assertEqual(notifier.refreshes, [])
@@ -154,11 +149,9 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         )
         service.start_database_monitoring()
         callback = monitor.callback
-
         callback()
         project_data.locator = sql_locator
         service._callback_bridge.run_pending()
-
         self.assertEqual(operations.reloads, [])
         self.assertEqual(notifier.refreshes, [])
 
@@ -176,11 +169,9 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         )
         service.start_database_monitoring()
         monitor.callback()
-
         project_data.locator = second_locator
         service.start_database_monitoring()
         service._callback_bridge.run_pending()
-
         self.assertEqual(operations.reloads, [])
         self.assertEqual(notifier.refreshes, [])
         self.assertEqual(monitor.start_calls, 2)
@@ -191,9 +182,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         service, monitor, _data, _operations, _notifier = _service(
             locator, DatabaseBackend.SQL_SERVER, monitoring=True
         )
-
         service.start_database_monitoring()
-
         self.assertEqual(monitor.stop_calls, 1)
         self.assertFalse(monitor.monitoring)
 
@@ -203,9 +192,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         monitor._pending_callback = True
         monitor._last_signal_time = 123.0
         monitor._callback = lambda: None
-
         monitor.stop_monitoring()
-
         self.assertFalse(monitor._pending_callback)
         self.assertEqual(monitor._last_signal_time, 0.0)
         self.assertIsNone(monitor._callback)
@@ -215,9 +202,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         monitor._pending_callback = True
         monitor._last_signal_time = 123.0
         monitor._callback = lambda: None
-
         monitor.stop_monitoring()
-
         self.assertFalse(monitor._pending_callback)
         self.assertEqual(monitor._last_signal_time, 0.0)
         self.assertIsNone(monitor._callback)
@@ -227,9 +212,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         monitor._is_monitoring = True
         monitor._state = MonitorState.CONNECTED
         monitor._status_online = True
-
         monitor.stop_monitoring()
-
         self.assertEqual(monitor._state, MonitorState.INITIAL)
         self.assertFalse(monitor._status_online)
 
@@ -249,9 +232,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         monitor._monitor_thread = thread
         monitor._is_monitoring = True
         monitor._callback = lambda: None
-
         monitor.stop_monitoring()
-
         self.assertIs(monitor._monitor_thread, thread)
         self.assertTrue(monitor._is_monitoring)
         self.assertIsNone(monitor._callback)

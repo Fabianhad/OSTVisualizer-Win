@@ -115,9 +115,10 @@ class SqlServerPythonCleanupTests(unittest.TestCase):
             env_path.write_text(text, encoding="utf-8")
             env_path.chmod(0o600)
             with patch.object(common, "PRIVATE_STATE_ROOT", state_root):
-                with self.assertRaisesRegex(RuntimeError, "one or more unique global IPv4 /32"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "one or more unique global IPv4 /32"
+                ):
                     common.load_environment()
-
             text = _environment_text(state_root).replace(
                 "OSTV_SQL_ALLOWED_SOURCE_CIDR=9.9.9.9/32",
                 "OSTV_SQL_ALLOWED_SOURCE_CIDR=9.9.9.9/32,8.8.8.8/32",

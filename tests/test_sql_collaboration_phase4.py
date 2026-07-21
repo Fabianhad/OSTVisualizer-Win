@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -31,6 +32,7 @@ from ost_visualizer.application.dtos.collaboration_dtos import (
     HydratedDatabaseChangeBatch,
     PresenceMode,
     QueuedMutationResult,
+    QueuedMutationWorkResult,
     ReconciliationFailureKind,
     ReconciliationResult,
     ResourceLock,
@@ -780,9 +782,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 ),
             ),
         )
-
         hydrated = reader.hydrate_connection(batch, object())
-
         self.assertEqual(set(hydrated.conditions_by_bid[8]), {"10"})
         self.assertEqual(calls, [("condition-layers", "8")])
 
@@ -870,7 +870,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             locks=(lock,),
         )
         runtime = _DatabaseRuntime("sql-db", 3)
-        runtime.draft_ids[frozenset((resource,))] = handle.draft_id
+        runtime.draft_ids[frozenset((resource.lease_identity,))] = handle.draft_id
         coordinator = SqlCollaborationCoordinator.__new__(SqlCollaborationCoordinator)
         coordinator._shutting_down = False
         coordinator._runtime = lambda database_id, generation=None: (
@@ -1500,6 +1500,19 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         registry.remove("database", "session")
         self.assertEqual(registry.lock_tokens("database", (resource,)), ())
 
+    def test_session_registry_uses_sql_lock_identity_without_bid_context(self):
+        registry = DatabaseSessionRegistry()
+        registered = ResourceRef("condition", "42")
+        requested = ResourceRef("condition", "42", 8)
+        registry.register("database", "session")
+        registry.register_lock("database", registered, "lock-token")
+        self.assertEqual(
+            registry.lock_tokens("database", (requested,)),
+            ("lock-token",),
+        )
+        registry.remove_lock("database", requested)
+        self.assertEqual(registry.lock_tokens("database", (registered,)), ())
+
     def test_remote_change_during_local_edit_returns_conflict(self):
         resource = ResourceRef("condition", "42", 8)
         initial = ConcurrencyToken(b"\x00" * 7 + b"\x01")
@@ -1545,6 +1558,67 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 owning_surface="condition-dialog",
                 affected_resources=(condition,),
             )
+
+    def test_local_draft_overlap_ignores_optional_bid_context(self):
+        drafts = LocalDraftRegistry()
+        stored = ResourceRef("takeoff", "41")
+        requested = ResourceRef("takeoff", "41", 7)
+        drafts.begin(
+            draft_type="takeoff-mutation",
+            database_id="database",
+            bid_uid=None,
+            page_uid=None,
+            owning_surface="plan-view",
+            affected_resources=(stored,),
+        )
+        with self.assertRaisesRegex(ValueError, "already owns"):
+            drafts.begin(
+                draft_type="takeoff-mutation",
+                database_id="database",
+                bid_uid=7,
+                page_uid=None,
+                owning_surface="detached-plan",
+                affected_resources=(requested,),
+            )
+
+    def test_local_draft_remote_conflict_ignores_optional_bid_context(self):
+        drafts = LocalDraftRegistry()
+        stored = ResourceRef("takeoff", "41")
+        changed = ResourceRef("takeoff", "41", 7)
+        draft = drafts.begin(
+            draft_type="takeoff-mutation",
+            database_id="database",
+            bid_uid=None,
+            page_uid=None,
+            owning_surface="plan-view",
+            affected_resources=(stored,),
+        )
+        conflicts = drafts.conflicts_for_changes(
+            "database", (_change("database", changed, 2),)
+        )
+        self.assertEqual(
+            tuple(conflict.draft_id for conflict in conflicts), (draft.draft_id,)
+        )
+
+    def test_local_draft_version_state_ignores_optional_bid_context(self):
+        drafts = LocalDraftRegistry()
+        stored = ResourceRef("takeoff", "41")
+        contextual = ResourceRef("takeoff", "41", 7)
+        original = ConcurrencyToken(b"\x00" * 7 + b"\x01")
+        updated = ConcurrencyToken(b"\x00" * 7 + b"\x02")
+        draft = drafts.begin(
+            draft_type="takeoff-mutation",
+            database_id="database",
+            bid_uid=None,
+            page_uid=None,
+            owning_surface="plan-view",
+            affected_resources=(stored,),
+            base_tokens=((stored, original),),
+        )
+        self.assertEqual(drafts.base_token("database", contextual), original)
+        drafts.apply_local_versions("database", {contextual: updated})
+        self.assertEqual(drafts.base_token("database", contextual), updated)
+        self.assertEqual(drafts.get(draft.draft_id).base_tokens, ((stored, updated),))
 
     def test_local_draft_tracks_active_editor_and_all_leases(self):
         first = ResourceRef("takeoff", "1", 8)
@@ -1874,9 +1948,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             is_runtime_current=lambda _database_id, _generation: True,
             on_complete=lambda _success: None,
         )
-
         self.assertTrue(service.apply(hydrated, barrier).applied)
-
         content_events = [
             payload
             for event, payload in events.published
@@ -2126,9 +2198,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 (_change(database_id, ResourceRef("condition", "42", 8), 2),),
             )
         )
-
         result = service.apply(malformed)
-
         self.assertFalse(result.applied)
         self.assertEqual(
             result.failure_kind,
@@ -2335,6 +2405,150 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertIs(event, AppEvents.SYNCHRONIZATION_CONFLICT)
         self.assertEqual(payload["resource_id"], "42")
         self.assertFalse(payload["blocks_database"])
+
+    def test_queued_mutation_conflict_is_published_only_after_qt_dispatch(self):
+        database_id = "database"
+        resource = ResourceRef("takeoffs_collection", "8", 8)
+        conflict = SynchronizationConflict(
+            database_id,
+            resource,
+            "stale takeoff collection",
+        )
+        events = _EventBus()
+        service = ProjectWriteService.__new__(ProjectWriteService)
+        service._database_capability_service = SimpleNamespace(
+            is_editable=lambda *_args: True
+        )
+        service._event_bus = events
+        service._mutation_executor = _ConflictingMutationExecutor(conflict)
+        service._session_registry = DatabaseSessionRegistry()
+        service._concurrency_tokens, _drafts = _token_service()
+        mutation = service._execute_database_mutation(
+            database_id,
+            (resource,),
+            lambda _recorder: True,
+            publish_conflict_event=False,
+        )
+        self.assertFalse(mutation.success)
+        self.assertEqual(events.published, [])
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        dispatcher = _DelayedMutationDispatcher()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            dispatcher,
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            service._concurrency_tokens,
+            _drafts,
+            events,
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.healthy = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        callback_results = []
+        callback_threads = []
+        event_threads = []
+        delivery_order = []
+        events.subscribe(
+            AppEvents.SYNCHRONIZATION_CONFLICT,
+            lambda **_payload: (
+                event_threads.append(threading.get_ident()),
+                delivery_order.append("conflict"),
+            ),
+        )
+        coordinator._dispatch_mutation_result(
+            lambda result: (
+                callback_results.append(result),
+                callback_threads.append(threading.get_ident()),
+                delivery_order.append("completion"),
+            ),
+            QueuedMutationResult(
+                database_id=descriptor.database_id,
+                runtime_generation=runtime.generation,
+                operation_id="takeoff-placement:test",
+                success=False,
+                message=conflict.reason,
+                conflict=conflict,
+            ),
+        )
+        self.assertEqual(events.published, [])
+        dispatch_thread = threading.get_ident()
+        dispatcher.deliver_pending()
+        self.assertEqual(callback_threads, [dispatch_thread])
+        self.assertEqual(event_threads, [dispatch_thread])
+        self.assertEqual(delivery_order, ["completion", "conflict"])
+        self.assertEqual(callback_results[0].conflict, conflict)
+        _shutdown_coordinator(coordinator)
+
+    def test_stale_queued_mutation_conflict_cannot_open_dialog_for_new_runtime(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        dispatcher = _DelayedMutationDispatcher()
+        events = _EventBus()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            dispatcher,
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            events,
+            SQL_SCHEMA_V1.version,
+        )
+        old_runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        old_runtime.healthy = True
+        coordinator._runtimes[descriptor.database_id] = old_runtime
+        conflict = SynchronizationConflict(
+            descriptor.database_id,
+            ResourceRef("takeoffs_collection", "8", 8),
+            "stale takeoff collection",
+        )
+        callbacks = []
+        coordinator._dispatch_mutation_result(
+            callbacks.append,
+            QueuedMutationResult(
+                database_id=descriptor.database_id,
+                runtime_generation=old_runtime.generation,
+                operation_id="takeoff-placement:test",
+                success=False,
+                message=conflict.reason,
+                conflict=conflict,
+            ),
+        )
+        new_runtime = _DatabaseRuntime(descriptor.database_id, 2)
+        new_runtime.healthy = True
+        coordinator._runtimes[descriptor.database_id] = new_runtime
+        dispatcher.deliver_pending()
+        self.assertEqual(len(callbacks), 1)
+        self.assertEqual(events.published, [])
+        _shutdown_coordinator(coordinator)
 
     def test_project_write_session_conflict_blocks_the_database(self):
         database_id = "database"
@@ -3176,7 +3390,10 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 descriptor.database_id,
                 {resource: ConcurrencyToken((index + 1).to_bytes(8, "big"))},
             )
-            return (f"created-{index}",)
+            return QueuedMutationWorkResult(
+                success=True,
+                created_resource_ids=(f"created-{index}",),
+            )
 
         def complete(result):
             results.append(result)
@@ -3215,6 +3432,266 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         _stop_database(coordinator, descriptor.database_id)
         _shutdown_coordinator(coordinator)
 
+    def test_rapid_queued_mutations_wait_for_inflight_reconciliation(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        store = _LockingStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.session = DatabaseSession(
+            database_id=descriptor.database_id,
+            session_id="session-1",
+            last_acknowledged_version=7,
+        )
+        runtime.established = True
+        runtime.healthy = False
+        runtime.pending_delivery = True
+        runtime.acknowledged_version = 7
+        runtime.observed_high_water_version = 8
+        coordinator._runtimes[descriptor.database_id] = runtime
+        calls = []
+        results = []
+        for index in range(3):
+            coordinator.queue_mutation(
+                descriptor.database_id,
+                (ResourceRef("takeoffs_collection", "8", 8),),
+                lambda index=index: (
+                    calls.append(index)
+                    or QueuedMutationWorkResult(
+                        success=True,
+                        created_resource_ids=(str(501 + index),),
+                    )
+                ),
+                results.append,
+                expected_created_count=1,
+                operation_id=f"placement-{index}",
+                owning_surface="main-plan",
+            )
+        self.assertEqual(calls, [])
+        self.assertEqual(results, [])
+        self.assertEqual(runtime.mutation_requests.qsize(), 3)
+        coordinator._finish_remote_batch(
+            descriptor.database_id,
+            runtime.generation,
+            8,
+            time.perf_counter(),
+            None,
+            True,
+        )
+        for _index in range(3):
+            coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, [0, 1, 2])
+        self.assertEqual(len(results), 3)
+        self.assertTrue(all(result.success for result in results))
+        self.assertEqual(
+            [result.created_resource_ids for result in results],
+            [("501",), ("502",), ("503",)],
+        )
+        self.assertEqual(runtime.mutation_requests.qsize(), 0)
+        self.assertEqual(drafts._drafts, {})
+        _shutdown_coordinator(coordinator)
+
+    def test_caught_up_empty_runtime_does_not_wake_worker_again(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _LockingStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(descriptors, _PermissionProbe()),
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.pending_delivery = True
+        runtime.acknowledged_version = 7
+        runtime.observed_high_water_version = 8
+        coordinator._runtimes[descriptor.database_id] = runtime
+        coordinator._finish_remote_batch(
+            descriptor.database_id,
+            runtime.generation,
+            8,
+            time.perf_counter(),
+            None,
+            True,
+        )
+        self.assertTrue(runtime.healthy)
+        self.assertFalse(runtime.command_event.is_set())
+        _shutdown_coordinator(coordinator)
+
+    def test_queued_mutation_capacity_rejects_only_the_sixty_fifth_request(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _LockingStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.session = DatabaseSession(
+            database_id=descriptor.database_id,
+            session_id="session-1",
+            last_acknowledged_version=7,
+        )
+        runtime.established = True
+        runtime.healthy = False
+        runtime.pending_delivery = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        results = []
+        for index in range(65):
+            coordinator.queue_mutation(
+                descriptor.database_id,
+                (ResourceRef("takeoffs_collection", "8", 8),),
+                lambda index=index: QueuedMutationWorkResult(
+                    success=True,
+                    created_resource_ids=(str(501 + index),),
+                ),
+                results.append,
+                expected_created_count=1,
+                operation_id=f"placement-{index}",
+                owning_surface="main-plan",
+            )
+        self.assertEqual(runtime.mutation_requests.qsize(), 64)
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].success)
+        self.assertEqual(results[0].operation_id, "placement-64")
+        self.assertIn("queue is full", results[0].message.lower())
+        self.assertNotIn("stopped", results[0].message.lower())
+        _shutdown_coordinator(coordinator)
+
+    def test_queued_mutation_presents_lock_when_store_omits_bid_context(self):
+        class _CanonicalLockStore(_LockingStore):
+            def acquire_lock(self, database_id, _session_id, resource, _description):
+                return ResourceLock(
+                    database_id,
+                    ResourceRef(resource.resource_type, resource.resource_id),
+                    "lock-token",
+                )
+
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        sessions = DatabaseSessionRegistry()
+        tokens, drafts = _token_service()
+        store = _CanonicalLockStore()
+        events = _EventBus()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            sessions,
+            tokens,
+            drafts,
+            events,
+            SQL_SCHEMA_V1.version,
+            CollaborationPollingPolicy(
+                inactive_database_seconds=0.05,
+                jitter_ratio=0.0,
+            ),
+        )
+        self.assertTrue(coordinator.start_database(descriptor.database_id))
+        self.assertTrue(store.polled.wait(2))
+        requested = ResourceRef("takeoffs_collection", "8", 8)
+        results = []
+        completed = threading.Event()
+
+        def operation():
+            self.assertEqual(
+                sessions.lock_tokens(descriptor.database_id, (requested,)),
+                ("lock-token",),
+            )
+            return QueuedMutationWorkResult(
+                success=True,
+                created_resource_ids=("501",),
+            )
+
+        coordinator.queue_mutation(
+            descriptor.database_id,
+            (requested,),
+            operation,
+            lambda result: (results.append(result), completed.set()),
+            expected_created_count=1,
+            operation_id="takeoff-placement",
+            owning_surface="main-plan",
+        )
+        self.assertTrue(completed.wait(2))
+        self.assertTrue(results[0].success)
+        self.assertEqual(
+            sessions.lock_tokens(descriptor.database_id, (requested,)),
+            (),
+        )
+        self.assertTrue(sessions.get(descriptor.database_id))
+        self.assertFalse(
+            any(
+                event
+                in (
+                    AppEvents.SYNCHRONIZATION_CONFLICT,
+                    AppEvents.FULL_RECONCILIATION_REQUIRED,
+                )
+                for event, _payload in events.published
+            )
+        )
+        _stop_database(coordinator, descriptor.database_id)
+        _shutdown_coordinator(coordinator)
+
     def test_queued_mutation_result_requires_current_keyword_shape(self):
         with self.assertRaises(TypeError):
             QueuedMutationResult("database", 1, "operation", True)
@@ -3232,15 +3709,15 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         service = ProjectWriteService.__new__(ProjectWriteService)
         service._sql_collaboration_provider = lambda: _MutationQueue()
         insert_calls = []
-        service.insert_takeoffs = lambda *_args, **kwargs: (
-            insert_calls.append(kwargs) or ["501"]
+        service._insert_takeoffs_mutation = lambda *_args, **kwargs: (
+            insert_calls.append(kwargs)
+            or DatabaseMutationResult(success=True, value=["501"])
         )
         callback = lambda _result: None
         specs = [
             SimpleNamespace(page_uid="20", condition_uid="10"),
             SimpleNamespace(page_uid="20", condition_uid="11"),
         ]
-
         generation = service.queue_takeoff_insert(
             "database",
             "8",
@@ -3248,11 +3725,12 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             "placement-1",
             callback,
         )
-
         args, kwargs = queued[0]
         self.assertEqual(args[0], "database")
         self.assertEqual(args[1], (ResourceRef("takeoffs_collection", "8", 8),))
-        self.assertEqual(args[2](), ("501",))
+        work_result = args[2]()
+        self.assertTrue(work_result.success)
+        self.assertEqual(work_result.created_resource_ids, ("501",))
         self.assertIs(args[3], callback)
         self.assertEqual(
             kwargs["dependency_resources"],
@@ -3268,6 +3746,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             insert_calls[0]["consistency_resources"],
             kwargs["dependency_resources"],
         )
+        self.assertFalse(insert_calls[0]["publish_conflict_event"])
 
     def test_database_stop_rejects_queued_mutations_without_retrying_inflight_write(
         self,
@@ -3312,11 +3791,17 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             entered.set()
             if not release.wait(2):
                 raise AssertionError("in-flight test mutation was not released")
-            return ("created-1",)
+            return QueuedMutationWorkResult(
+                success=True,
+                created_resource_ids=("created-1",),
+            )
 
         def second_operation():
             calls.append("second")
-            return ("created-2",)
+            return QueuedMutationWorkResult(
+                success=True,
+                created_resource_ids=("created-2",),
+            )
 
         def complete(result):
             results.append(result)
@@ -3357,6 +3842,151 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertEqual(calls, ["first"])
         self.assertFalse(results[0].success)
         self.assertFalse(results[1].success)
+        self.assertEqual(drafts._drafts, {})
+        _shutdown_coordinator(coordinator)
+
+    def test_stop_race_after_dequeue_cannot_execute_queued_mutation(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _LockingStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.session = DatabaseSession(
+            descriptor.database_id,
+            "session-1",
+        )
+        runtime.established = True
+        runtime.healthy = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        calls = []
+        results = []
+        coordinator.queue_mutation(
+            descriptor.database_id,
+            (ResourceRef("takeoffs_collection", "8", 8),),
+            lambda: (
+                calls.append(True)
+                or QueuedMutationWorkResult(
+                    success=True,
+                    created_resource_ids=("501",),
+                )
+            ),
+            results.append,
+            expected_created_count=1,
+            operation_id="placement",
+            owning_surface="main-plan",
+        )
+        queued_requests = runtime.mutation_requests
+
+        class _StopOnGetQueue:
+            def get_nowait(self):
+                request = queued_requests.get_nowait()
+                runtime.stop_event.set()
+                return request
+
+            def empty(self):
+                return queued_requests.empty()
+
+        runtime.mutation_requests = _StopOnGetQueue()
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, [])
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0].success)
+        self.assertEqual(drafts._drafts, {})
+        _shutdown_coordinator(coordinator)
+
+    def test_failed_queued_mutation_does_not_corrupt_the_next_request(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        store = _LockingStore()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.session = DatabaseSession(descriptor.database_id, "session-1")
+        runtime.established = True
+        runtime.healthy = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        calls = []
+        results = []
+        resource = ResourceRef("takeoffs_collection", "8", 8)
+        coordinator.queue_mutation(
+            descriptor.database_id,
+            (resource,),
+            lambda: (
+                calls.append("failed")
+                or QueuedMutationWorkResult(
+                    success=False,
+                    message="conflict",
+                )
+            ),
+            results.append,
+            expected_created_count=1,
+            operation_id="failed",
+            owning_surface="main-plan",
+        )
+        coordinator.queue_mutation(
+            descriptor.database_id,
+            (resource,),
+            lambda: (
+                calls.append("succeeded")
+                or QueuedMutationWorkResult(
+                    success=True,
+                    created_resource_ids=("501",),
+                )
+            ),
+            results.append,
+            expected_created_count=1,
+            operation_id="succeeded",
+            owning_surface="main-plan",
+        )
+        coordinator._process_mutation_requests(runtime)
+        coordinator._process_mutation_requests(runtime)
+        self.assertEqual(calls, ["failed", "succeeded"])
+        self.assertEqual([result.success for result in results], [False, True])
+        self.assertEqual(results[1].created_resource_ids, ("501",))
+        self.assertEqual(runtime.mutation_requests.qsize(), 0)
+        self.assertEqual(len(store.released), 2)
         self.assertEqual(drafts._drafts, {})
         _shutdown_coordinator(coordinator)
 
@@ -3410,20 +4040,75 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             sessions.register_lock(
                 descriptor.database_id, lock.resource, lock.lock_token
             )
-
         failure = coordinator._release_queued_mutation_resources(
             _DatabaseRuntime(descriptor.database_id, 1),
             session,
             draft.draft_id,
             locks,
         )
-
         self.assertIsInstance(failure, ValueError)
         self.assertEqual([entry[2] for entry in store.released], ["first", "second"])
         self.assertEqual(drafts._drafts, {})
         self.assertEqual(
             sessions.lock_tokens(descriptor.database_id, (resource_a, resource_b)), ()
         )
+        _shutdown_coordinator(coordinator)
+
+    def test_queued_mutation_cleanup_failure_preserves_original_result(self):
+        class _FailedReleaseStore(_LockingStore):
+            def release_lock(self, database_id, session_id, lock_token):
+                super().release_lock(database_id, session_id, lock_token)
+                raise ValueError("lock cleanup failed")
+
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _FailedReleaseStore(),
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.session = DatabaseSession(descriptor.database_id, "session-1")
+        runtime.established = True
+        runtime.healthy = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        results = []
+        resource = ResourceRef("takeoffs_collection", "8", 8)
+        coordinator.queue_mutation(
+            descriptor.database_id,
+            (resource,),
+            lambda: QueuedMutationWorkResult(
+                success=False,
+                message="the authoritative mutation conflict",
+            ),
+            results.append,
+            expected_created_count=1,
+            operation_id="placement",
+            owning_surface="main-plan",
+        )
+        with self.assertRaisesRegex(ValueError, "lock cleanup failed"):
+            coordinator._process_mutation_requests(runtime)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].message, "the authoritative mutation conflict")
+        self.assertEqual(drafts._drafts, {})
         _shutdown_coordinator(coordinator)
 
     def test_stale_runtime_cannot_deliver_successful_queued_mutation_result(self):
@@ -3464,9 +4149,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         coordinator._runtimes[descriptor.database_id] = _DatabaseRuntime(
             descriptor.database_id, 2
         )
-
         dispatcher.deliver_pending()
-
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].success)
         self.assertEqual(results[0].created_resource_ids, ())
@@ -3511,12 +4194,61 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         with runtime.lock:
             runtime.healthy = False
             runtime.recovery_requested = True
-
         dispatcher.deliver_pending()
-
         self.assertEqual(len(results), 1)
         self.assertFalse(results[0].success)
         self.assertEqual(results[0].created_resource_ids, ())
+        _shutdown_coordinator(coordinator)
+
+    def test_transient_self_feed_does_not_reject_committed_projection(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        dispatcher = _DelayedMutationDispatcher()
+        capabilities = DatabaseCapabilityService(descriptors, _PermissionProbe())
+        capabilities.mark_connected(descriptor.database_id)
+        capabilities.set_collaboration_state(
+            descriptor.database_id, SynchronizationState.HEALTHY
+        )
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            descriptors,
+            _CollaborationStore(),
+            _RemoteReader(),
+            dispatcher,
+            _Reconciliation(),
+            capabilities,
+            DatabaseSessionRegistry(),
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        runtime = _DatabaseRuntime(descriptor.database_id, 1)
+        runtime.established = True
+        runtime.healthy = True
+        coordinator._runtimes[descriptor.database_id] = runtime
+        results = []
+        coordinator._dispatch_mutation_result(
+            results.append,
+            QueuedMutationResult(
+                database_id=descriptor.database_id,
+                runtime_generation=runtime.generation,
+                operation_id="placement",
+                success=True,
+                created_resource_ids=("501",),
+            ),
+        )
+        with runtime.lock:
+            runtime.healthy = False
+            runtime.pending_delivery = True
+        dispatcher.deliver_pending()
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].success)
+        self.assertEqual(results[0].created_resource_ids, ("501",))
         _shutdown_coordinator(coordinator)
 
     def test_worker_services_heartbeat_between_queued_mutations(self):
@@ -3570,11 +4302,17 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             first_entered.set()
             if not release_first.wait(2):
                 raise AssertionError("first mutation was not released")
-            return ("501",)
+            return QueuedMutationWorkResult(
+                success=True,
+                created_resource_ids=("501",),
+            )
 
         def second_operation():
             store.order.append("second")
-            return ("502",)
+            return QueuedMutationWorkResult(
+                success=True,
+                created_resource_ids=("502",),
+            )
 
         def complete(_result):
             nonlocal result_count
@@ -3604,7 +4342,6 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         release_first.set()
         self.assertTrue(completed.wait(2))
-
         first_index = store.order.index("first")
         second_index = store.order.index("second")
         self.assertIn("heartbeat", store.order[first_index + 1 : second_index])
@@ -3648,13 +4385,14 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         coordinator.queue_mutation(
             descriptor.database_id,
             (ResourceRef("takeoffs_collection", "8", 8),),
-            lambda: operation_calls.append(True) or (),
+            lambda: (
+                operation_calls.append(True) or QueuedMutationWorkResult(success=True)
+            ),
             lambda result: (results.append(result), completed.set()),
             expected_created_count=1,
             operation_id="placement",
             owning_surface="main-plan",
         )
-
         self.assertTrue(completed.wait(2))
         self.assertEqual(operation_calls, [True])
         self.assertEqual(len(results), 1)
@@ -3711,11 +4449,9 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
                 ),
             )
         )
-
         coordinator._on_remote_batch(
             (descriptor.database_id, runtime.generation, hydrated)
         )
-
         failure_payload = next(
             payload
             for event, payload in events.published
@@ -4053,12 +4789,12 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         runtime.edit_depth = 2
         runtime.mode = PresenceMode.EDITING
         runtime.owned_locks = {
-            first: first_lock,
-            second: second_lock,
+            first.lease_identity: first_lock,
+            second.lease_identity: second_lock,
         }
         runtime.draft_ids = {
-            frozenset((first,)): first_draft.draft_id,
-            frozenset((second,)): second_draft.draft_id,
+            frozenset((first.lease_identity,)): first_draft.draft_id,
+            frozenset((second.lease_identity,)): second_draft.draft_id,
         }
         coordinator._runtimes["database"] = runtime
         first_handle = EditLeaseHandle(
@@ -4076,7 +4812,7 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         coordinator._process_release_requests(runtime)
         self.assertEqual(runtime.edit_depth, 1)
         self.assertEqual(runtime.mode, PresenceMode.EDITING)
-        self.assertIn(second, runtime.owned_locks)
+        self.assertIn(second.lease_identity, runtime.owned_locks)
         _shutdown_coordinator(coordinator)
 
     def test_edit_lease_release_requires_the_exact_owned_handle(self):
@@ -4111,8 +4847,8 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         runtime.session = DatabaseSession("database", "session")
         runtime.edit_depth = 1
         runtime.mode = PresenceMode.EDITING
-        runtime.owned_locks = {resource: owned_lock}
-        runtime.draft_ids = {frozenset((resource,)): draft.draft_id}
+        runtime.owned_locks = {resource.lease_identity: owned_lock}
+        runtime.draft_ids = {frozenset((resource.lease_identity,)): draft.draft_id}
         coordinator._runtimes["database"] = runtime
         forged = EditLeaseHandle(
             database_id="database",
@@ -4125,9 +4861,67 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         )
         coordinator.end_edit_lease(forged)
         coordinator._process_release_requests(runtime)
-        self.assertEqual(runtime.owned_locks, {resource: owned_lock})
+        self.assertEqual(runtime.owned_locks, {resource.lease_identity: owned_lock})
         self.assertIsNotNone(drafts.get(draft.draft_id))
         self.assertEqual(store.released, [])
+        _shutdown_coordinator(coordinator)
+
+    def test_edit_lease_release_ignores_optional_bid_context_in_lock_identity(self):
+        store = _LockingStore()
+        sessions = DatabaseSessionRegistry()
+        tokens, drafts = _token_service()
+        coordinator = SqlCollaborationCoordinator(
+            DatabaseDescriptorRegistry(),
+            store,
+            _RemoteReader(),
+            _Dispatcher(),
+            _Reconciliation(),
+            DatabaseCapabilityService(DatabaseDescriptorRegistry(), _PermissionProbe()),
+            sessions,
+            tokens,
+            drafts,
+            _EventBus(),
+            SQL_SCHEMA_V1.version,
+        )
+        requested = ResourceRef("condition", "42", 8)
+        stored = ResourceRef("condition", "42")
+        owned_lock = ResourceLock("database", stored, "owned-lock")
+        draft = drafts.begin(
+            draft_type="condition_editor",
+            database_id="database",
+            bid_uid=8,
+            page_uid=None,
+            owning_surface="test",
+            affected_resources=(requested,),
+            operation_id="edit-condition",
+        )
+        drafts.activate(draft.draft_id, (owned_lock,), runtime_generation=1)
+        runtime = _DatabaseRuntime("database", 1)
+        runtime.session = DatabaseSession("database", "session")
+        runtime.edit_depth = 1
+        runtime.mode = PresenceMode.EDITING
+        runtime.owned_locks = {stored.lease_identity: owned_lock}
+        runtime.draft_ids = {frozenset((requested.lease_identity,)): draft.draft_id}
+        coordinator._runtimes["database"] = runtime
+        sessions.register("database", "session")
+        sessions.register_lock("database", stored, owned_lock.lock_token)
+        handle = EditLeaseHandle(
+            database_id="database",
+            draft_id=draft.draft_id,
+            runtime_generation=1,
+            operation_id="edit-condition",
+            owning_surface="test",
+            resources=(requested,),
+            locks=(owned_lock,),
+        )
+        coordinator.end_edit_lease(handle)
+        coordinator._process_release_requests(runtime)
+        self.assertEqual(len(store.released), 1)
+        self.assertEqual(runtime.owned_locks, {})
+        self.assertEqual(runtime.draft_ids, {})
+        self.assertEqual(runtime.edit_depth, 0)
+        self.assertIsNone(drafts.get(draft.draft_id))
+        self.assertEqual(sessions.lock_tokens("database", (requested,)), ())
         _shutdown_coordinator(coordinator)
 
     def test_partial_lease_cleanup_failure_resets_the_owning_session(self):
@@ -4849,8 +5643,8 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         runtime.session = DatabaseSession("database", "session")
         resource = ResourceRef("takeoff", "10", bid_uid=1)
         lock = ResourceLock("database", resource, "lock-token")
-        runtime.owned_locks[resource] = lock
-        runtime.draft_ids[resource] = "draft"
+        runtime.owned_locks[resource.lease_identity] = lock
+        runtime.draft_ids[frozenset((resource.lease_identity,))] = "draft"
         draft = SimpleNamespace(
             draft_id="draft",
             operation_id="move",

@@ -1,23 +1,41 @@
+import secrets
 import unittest
 import uuid
+from dataclasses import replace
 from ost_visualizer.application.dtos.collaboration_dtos import (
+    ChangeOperation,
+    DatabaseMutationRequest,
     PresenceMode,
     ResourceRef,
 )
+from ost_visualizer.application.services.database_session_registry import (
+    DatabaseSessionRegistry,
+)
+from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ost_visualizer.application.interfaces.i_database_catalog import (
     DatabaseCatalogError,
 )
-from ost_visualizer.domain.entities.database_descriptor import DatabaseDescriptor
+from ost_visualizer.domain.entities.database_descriptor import (
+    DatabaseDescriptor,
+    SqlAuthenticationMode,
+)
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
 from ost_visualizer.infrastructure.sql.collaboration_store import (
     SqlCollaborationStore,
 )
-from ost_visualizer.infrastructure.sql.connection_manager import SqlConnectionRequest
+from ost_visualizer.infrastructure.sql.client_permissions import (
+    apply_sql_client_permissions,
+)
+from ost_visualizer.infrastructure.sql.connection_manager import (
+    SqlConnectionManager,
+    SqlConnectionRequest,
+)
 from ost_visualizer.infrastructure.sql.remote_change_reader import SqlRemoteChangeReader
 from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
 from ost_visualizer.infrastructure.sql.schema_inspector import SqlSchemaInspector
+from ost_visualizer.infrastructure.sql.writer import SqlProjectWriter
 from tests.sql_integration_support import (
     DisposableSqlConfiguration,
     DisposableSqlDatabase,
@@ -115,6 +133,191 @@ class SqlCollaborationIntegrationTests(unittest.TestCase):
                         session.session_id,
                         "integration-test-complete",
                     )
+
+    def test_mutation_presents_owned_lock_across_bid_context_variants(self):
+        configuration = DisposableSqlConfiguration.from_environment()
+        login = f"OSTV_IT_TMP_MUTATION_{secrets.token_hex(6).upper()}"
+        password = secrets.token_urlsafe(32)
+        admin = SqlConnectionManager()
+        windows_master = replace(
+            configuration.location,
+            authentication_mode=SqlAuthenticationMode.WINDOWS,
+            username="",
+            database="master",
+        )
+        with admin.connection(
+            SqlConnectionRequest(windows_master, database_override="master"),
+            autocommit=True,
+        ) as lease:
+            with lease.cursor() as cursor:
+                cursor.execute(
+                    "DECLARE @secret nvarchar(128)=?; "
+                    "DECLARE @statement nvarchar(max)=N'CREATE LOGIN "
+                    f"[{login}] WITH PASSWORD=' + QUOTENAME(@secret, NCHAR(39)) + "
+                    "N', CHECK_POLICY=ON, CHECK_EXPIRATION=OFF'; "
+                    "EXEC sys.sp_executesql @statement",
+                    password,
+                )
+        try:
+            with DisposableSqlDatabase(configuration) as database:
+                windows_database = replace(
+                    database.location,
+                    authentication_mode=SqlAuthenticationMode.WINDOWS,
+                    username="",
+                )
+                setup_stage = "opening the disposable database"
+                try:
+                    with database.connections.connection(
+                        SqlConnectionRequest(windows_database),
+                        autocommit=True,
+                    ) as lease:
+                        with lease.cursor() as cursor:
+                            setup_stage = "seeding the bid"
+                            cursor.execute(
+                                "INSERT INTO [dbo].[Bids] OUTPUT INSERTED.[UID] "
+                                "DEFAULT VALUES"
+                            )
+                            bid_uid = int(cursor.fetchone()[0])
+                            setup_stage = "seeding the condition"
+                            cursor.execute(
+                                "INSERT INTO [dbo].[BidConditions] "
+                                "([BidUID]) OUTPUT INSERTED.[UID] VALUES (?)",
+                                bid_uid,
+                            )
+                            condition_uid = int(cursor.fetchone()[0])
+                            setup_stage = "seeding the page"
+                            cursor.execute(
+                                "INSERT INTO [dbo].[BidPages] "
+                                "([BidUID]) OUTPUT INSERTED.[UID] VALUES (?)",
+                                bid_uid,
+                            )
+                            page_uid = int(cursor.fetchone()[0])
+                            setup_stage = "creating the client user"
+                            cursor.execute(f"CREATE USER [{login}] FOR LOGIN [{login}]")
+                            setup_stage = "applying client permissions"
+                            apply_sql_client_permissions(cursor, login)
+                except DatabaseCatalogError:
+                    self.fail(f"Disposable SQL setup failed while {setup_stage}.")
+                client_location = replace(
+                    database.location,
+                    authentication_mode=SqlAuthenticationMode.SQL_SERVER,
+                    username=login,
+                )
+                descriptor = DatabaseDescriptor.for_sql_server(
+                    client_location,
+                    schema_version=SQL_SCHEMA_V1.version,
+                )
+                registry = DatabaseDescriptorRegistry()
+                registry.register(descriptor)
+                credentials = _RuntimeCredentialStore(password)
+                sessions = DatabaseSessionRegistry()
+                store = SqlCollaborationStore(
+                    registry,
+                    credentials,
+                    SqlRemoteChangeReader(
+                        registry,
+                        credentials,
+                        database.connections,
+                    ),
+                    database.connections,
+                )
+                session = store.start_session(
+                    descriptor.database_id,
+                    str(uuid.uuid4()),
+                    str(uuid.uuid4()),
+                    "lock-identity-client",
+                    "test-machine",
+                    "integration-test",
+                )
+                sessions.register(descriptor.database_id, session.session_id)
+                bid_key = str(bid_uid)
+                condition_key = str(condition_uid)
+                page_key = str(page_uid)
+                stored_resource = ResourceRef("takeoffs_collection", bid_key)
+                requested_resource = ResourceRef(
+                    "takeoffs_collection",
+                    bid_key,
+                    bid_uid,
+                )
+                dependencies = (
+                    ResourceRef("condition", condition_key, bid_uid),
+                    ResourceRef("page", page_key, bid_uid),
+                )
+                lock = store.acquire_lock(
+                    descriptor.database_id,
+                    session.session_id,
+                    stored_resource,
+                    "takeoff placement integration test",
+                )
+                sessions.register_lock(
+                    descriptor.database_id,
+                    lock.resource,
+                    lock.lock_token,
+                )
+                writer = SqlProjectWriter(
+                    registry,
+                    credentials,
+                    sessions,
+                    database.connections,
+                )
+
+                def record_mutation(recorder):
+                    new_uids = writer.insert_takeoffs(
+                        descriptor.database_id,
+                        bid_key,
+                        [
+                            InsertTakeoffSpec(
+                                condition_uid=condition_key,
+                                page_uid=page_key,
+                                area_uid="0",
+                                position=[10.0, 20.0],
+                            )
+                        ],
+                    )
+                    for new_uid in new_uids:
+                        recorder.record(
+                            ResourceRef("takeoff", new_uid, bid_uid),
+                            ChangeOperation.CREATE,
+                        )
+                    recorder.record(requested_resource, ChangeOperation.UPDATE)
+                    return new_uids
+
+                result = writer.execute(
+                    DatabaseMutationRequest(
+                        database_id=descriptor.database_id,
+                        session_id=session.session_id,
+                        resources=(requested_resource, *dependencies),
+                        required_lock_tokens=sessions.lock_tokens(
+                            descriptor.database_id,
+                            (requested_resource, *dependencies),
+                        ),
+                    ),
+                    record_mutation,
+                )
+                self.assertTrue(
+                    result.success,
+                    result.conflict.reason if result.conflict is not None else "",
+                )
+                self.assertEqual(len(result.value or ()), 1)
+                self.assertIn(requested_resource, result.resulting_versions)
+                sessions.remove_lock(descriptor.database_id, requested_resource)
+                store.release_lock(
+                    descriptor.database_id,
+                    session.session_id,
+                    lock.lock_token,
+                )
+                store.close_session(
+                    descriptor.database_id,
+                    session.session_id,
+                    "integration-test-complete",
+                )
+        finally:
+            with admin.connection(
+                SqlConnectionRequest(windows_master, database_override="master"),
+                autocommit=True,
+            ) as lease:
+                with lease.cursor() as cursor:
+                    cursor.execute(f"DROP LOGIN [{login}]")
 
     def test_inverse_identity_commit_order_is_delivered_without_splitting(self):
         configuration = DisposableSqlConfiguration.from_environment()

@@ -1335,6 +1335,59 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
 
+    def test_sql_owned_lock_token_comparison_accepts_uuid_casing(self):
+        lock_token = "abcdef01-2345-6789-abcd-ef0123456789"
+        resource = ResourceRef("takeoffs_collection", "8", 8)
+
+        class _LockCursor(_WriterCursor):
+            def fetchone(self):
+                if "SELECT [ResourceType], [ResourceId]" in self._last_sql:
+                    return (resource.resource_type, resource.resource_id)
+                if "SELECT CONVERT(nvarchar(36), [LockToken])" in self._last_sql:
+                    return (lock_token.upper(),)
+                return super().fetchone()
+
+        class _LockLease(_WriterLease):
+            def cursor(self):
+                cursor = _LockCursor(self)
+                self.cursors.append(cursor)
+                return cursor
+
+        class _LockManager(_WriterManager):
+            def __init__(self):
+                self.lease = _LockLease()
+
+        registry = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        registry.register(descriptor)
+        manager = _LockManager()
+        sessions = DatabaseSessionRegistry()
+        sessions.register(descriptor.database_id, "session-1")
+        writer = SqlProjectWriter(
+            registry,
+            _CredentialStore(),
+            connection_manager=manager,
+            session_registry=sessions,
+        )
+        result = writer.execute(
+            DatabaseMutationRequest(
+                database_id=descriptor.database_id,
+                session_id="session-1",
+                resources=(resource,),
+                required_lock_tokens=(lock_token,),
+            ),
+            lambda recorder: (
+                recorder.record(resource, ChangeOperation.UPDATE),
+                True,
+            )[1],
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(manager.lease.commits, 1)
+        self.assertEqual(manager.lease.rollbacks, 0)
+
     def test_sql_mutation_preserves_error_swallowed_by_shared_mdb_operation(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(

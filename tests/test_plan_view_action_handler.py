@@ -2130,7 +2130,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             )
         )
         self.assertEqual(data.takeoffs, {})
-
         handler.on_takeoff_created("42", [3.0, 4.0], "9")
         operation_id, callback = write.queued_takeoff_callbacks[1]
         callback(
@@ -2163,7 +2162,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_takeoff_created("42", [1.0, 2.0], "9")
         operation_id, callback = write.queued_takeoff_callbacks[0]
         pending_uid = next(iter(data.takeoffs))
-
         callback(
             QueuedMutationResult(
                 database_id="bid.mdb",
@@ -2173,7 +2171,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 created_resource_ids=("501",),
             )
         )
-
         self.assertNotIn(pending_uid, data.takeoffs)
         self.assertNotIn("501", data.takeoffs)
 
@@ -2196,7 +2193,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         handler.on_takeoff_created("42", [1.0, 2.0], "9")
         operation_id, callback = write.queued_takeoff_callbacks[0]
         pending_uid = next(iter(data.takeoffs))
-
         callback(
             QueuedMutationResult(
                 database_id="another-database",
@@ -2206,7 +2202,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 created_resource_ids=("501",),
             )
         )
-
         self.assertNotIn(pending_uid, data.takeoffs)
         self.assertNotIn("501", data.takeoffs)
 
@@ -2228,9 +2223,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_takeoff_created("42", [1.0, 2.0], "9")
-
         handler.invalidate_pending_takeoff_placements()
-
         invalidation = events.events[-1]
         self.assertEqual(invalidation[0], AppEvents.TAKEOFFS_CHANGED)
         self.assertEqual(invalidation[1]["condition_uids"], ["42"])
@@ -2252,9 +2245,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         )
         handler.on_takeoff_created("42", [1.0, 2.0], "9")
         handler_reference = weakref.ref(handler)
-
         del handler
-
         self.assertIsNone(handler_reference())
 
     def test_new_area_takeoff_keeps_curve_disabled_for_polygon_position(self):

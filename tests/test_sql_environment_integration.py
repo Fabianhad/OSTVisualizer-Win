@@ -93,31 +93,18 @@ class SqlDevelopmentEnvironmentIntegrationTests(unittest.TestCase):
                 database.location,
                 password=configuration.password,
             )
-            windows_master = replace(
-                configuration.location,
-                authentication_mode=SqlAuthenticationMode.WINDOWS,
-                username="",
-            )
-            admin_request = SqlConnectionRequest(
-                windows_master,
-                database_override="master",
-            )
-            _execute_batch(
-                database.connections,
-                admin_request,
-                f"ALTER DATABASE [{database.database_name}] "
-                "SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
-                "BEGIN TRY "
-                f"ALTER DATABASE [{database.database_name}] SET "
-                "CHANGE_TRACKING = ON (CHANGE_RETENTION = 2 DAYS, "
-                "AUTO_CLEANUP = ON); "
-                f"ALTER DATABASE [{database.database_name}] SET MULTI_USER; "
-                "END TRY BEGIN CATCH "
-                f"ALTER DATABASE [{database.database_name}] SET MULTI_USER; "
-                "THROW; END CATCH",
-            )
             with database.connections.connection(request, autocommit=True) as lease:
                 with lease.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT [is_auto_cleanup_on], [retention_period], "
+                        "[retention_period_units_desc] FROM "
+                        "sys.change_tracking_databases WHERE [database_id]=DB_ID()"
+                    )
+                    tracking = cursor.fetchone()
+                    self.assertIsNotNone(tracking)
+                    self.assertEqual(int(tracking[0]), 1)
+                    self.assertGreaterEqual(int(tracking[1]), 2)
+                    self.assertEqual(str(tracking[2]), "DAYS")
                     cursor.execute(
                         "CREATE TABLE [ostv_it].[ChangeTrackingProbe] "
                         "([Id] int NOT NULL PRIMARY KEY, [Value] nvarchar(64) "

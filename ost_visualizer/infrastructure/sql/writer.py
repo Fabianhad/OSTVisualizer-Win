@@ -443,7 +443,10 @@ class SqlProjectWriter(MdbWriter):
             requested_keys = {
                 (resource.resource_type, resource.resource_id) for resource in resources
             }
-            required_tokens = set(state.request.required_lock_tokens)
+            required_tokens = {
+                lock_token.casefold()
+                for lock_token in state.request.required_lock_tokens
+            }
             for lock_token in required_tokens:
                 cursor.execute(
                     "SELECT [ResourceType], [ResourceId] FROM [ostv].[Locks] "
@@ -477,7 +480,10 @@ class SqlProjectWriter(MdbWriter):
                     state.request.session_id,
                 )
                 owned_lock = cursor.fetchone()
-                if owned_lock is not None and str(owned_lock[0]) not in required_tokens:
+                if (
+                    owned_lock is not None
+                    and str(owned_lock[0]).casefold() not in required_tokens
+                ):
                     raise SqlInfrastructureError(
                         SqlErrorDetails(
                             SqlErrorCode.LOCKED,

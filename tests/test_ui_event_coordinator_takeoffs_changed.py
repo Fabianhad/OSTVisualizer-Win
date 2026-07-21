@@ -584,9 +584,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._bid_data_cache = {}
         coordinator.visualization_service = FakeVisualization()
-
         coordinator._sync_monitoring_state()
-
         self.assertEqual(coordinator.visualization_service.monitoring_started, 1)
         self.assertEqual(coordinator.visualization_service.monitoring_stopped, 0)
 

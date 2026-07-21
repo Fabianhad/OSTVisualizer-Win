@@ -7,7 +7,9 @@ from ...domain.services.takeoff_domain_service import (
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
 from ..dtos.collaboration_dtos import (
     ChangeOperation,
+    DatabaseMutationResult,
     QueuedMutationResult,
+    QueuedMutationWorkResult,
     ResourceRef,
 )
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
@@ -1146,8 +1148,32 @@ class ProjectWriteService(DatabaseMutationWriteService):
         *,
         consistency_resources: tuple[ResourceRef, ...] = (),
     ) -> List[str]:
-        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
+        mutation = self._insert_takeoffs_mutation(
+            db_path,
+            bid_uid,
+            takeoff_specs,
+            consistency_resources=consistency_resources,
+        )
+        new_uids = mutation.value if mutation.success else []
+        if (
+            new_uids
+            and publish_database_refreshed_after_write
+            and not self.reload_and_notify(db_path)
+        ):
             return []
+        return new_uids
+
+    def _insert_takeoffs_mutation(
+        self,
+        db_path: str,
+        bid_uid: str,
+        takeoff_specs: List[InsertTakeoffSpec],
+        *,
+        consistency_resources: tuple[ResourceRef, ...] = (),
+        publish_conflict_event: bool = True,
+    ) -> DatabaseMutationResult[List[str]]:
+        if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
+            return DatabaseMutationResult(success=False)
         collection = ResourceRef("takeoffs_collection", bid_uid, int(bid_uid))
 
         def insert(recorder):
@@ -1162,15 +1188,12 @@ class ProjectWriteService(DatabaseMutationWriteService):
             return new_uids
 
         mutation_resources = tuple(sorted({collection, *consistency_resources}))
-        mutation = self._execute_database_mutation(db_path, mutation_resources, insert)
-        new_uids = mutation.value if mutation.success else []
-        if (
-            new_uids
-            and publish_database_refreshed_after_write
-            and not self.reload_and_notify(db_path)
-        ):
-            return []
-        return new_uids
+        return self._execute_database_mutation(
+            db_path,
+            mutation_resources,
+            insert,
+            publish_conflict_event=publish_conflict_event,
+        )
 
     def uses_queued_takeoff_mutations(self, database_id: str) -> bool:
         return self._sql_collaboration_provider().uses_sql_collaboration(database_id)
@@ -1198,18 +1221,35 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 )
             )
         )
+
+        def execute() -> QueuedMutationWorkResult:
+            mutation = self._insert_takeoffs_mutation(
+                database_id,
+                bid_uid,
+                takeoff_specs,
+                consistency_resources=dependencies,
+                publish_conflict_event=False,
+            )
+            created_resource_ids = tuple(mutation.value or ())
+            return QueuedMutationWorkResult(
+                success=mutation.success,
+                created_resource_ids=created_resource_ids,
+                message=(
+                    mutation.conflict.reason
+                    if mutation.conflict is not None
+                    else (
+                        ""
+                        if mutation.success
+                        else "The database rejected the placement."
+                    )
+                ),
+                conflict=mutation.conflict,
+            )
+
         return self._sql_collaboration_provider().queue_mutation(
             database_id,
             (collection,),
-            lambda: tuple(
-                self.insert_takeoffs(
-                    database_id,
-                    bid_uid,
-                    takeoff_specs,
-                    publish_database_refreshed_after_write=False,
-                    consistency_resources=dependencies,
-                )
-            ),
+            execute,
             callback,
             dependency_resources=dependencies,
             expected_created_count=len(takeoff_specs),

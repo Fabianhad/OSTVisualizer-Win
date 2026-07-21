@@ -25,6 +25,7 @@ from ..dtos.collaboration_dtos import (
     EditLeaseResult,
     PresenceMode,
     QueuedMutationResult,
+    QueuedMutationWorkResult,
     ReconciliationFailureKind,
     ReconciliationResult,
     ResourceLock,
@@ -42,6 +43,7 @@ from ..interfaces.i_thread_callback_bridge import IThreadCallbackBridge
 from .database_capability_service import DatabaseCapabilityService
 from .local_draft_registry import LocalDraftRegistry
 from .remote_change_reconciliation_service import RemoteChangeReconciliationService
+from .synchronization_conflict_publisher import publish_synchronization_conflict
 
 logger = logging.getLogger(__name__)
 _LOCAL_DETACH_REASONS = frozenset({"closed", "unchecked", "connection-removed"})
@@ -65,8 +67,8 @@ class _DatabaseRuntime:
     healthy: bool = False
     established: bool = False
     edit_depth: int = 0
-    owned_locks: dict[ResourceRef, ResourceLock] = field(default_factory=dict)
-    draft_ids: dict[frozenset[ResourceRef], str] = field(default_factory=dict)
+    owned_locks: dict[tuple[str, str], ResourceLock] = field(default_factory=dict)
+    draft_ids: dict[frozenset[tuple[str, str]], str] = field(default_factory=dict)
     edit_requests: queue.Queue = field(default_factory=queue.Queue)
     release_requests: queue.Queue = field(default_factory=queue.Queue)
     mutation_requests: queue.Queue = field(
@@ -101,7 +103,7 @@ class _QueuedMutation:
     resources: tuple[ResourceRef, ...]
     dependency_resources: tuple[ResourceRef, ...]
     expected_created_count: int
-    operation: Callable[[], tuple[str, ...]]
+    operation: Callable[[], QueuedMutationWorkResult]
     callback: Callable[[QueuedMutationResult], None]
 
 
@@ -461,7 +463,7 @@ class SqlCollaborationCoordinator:
         self,
         database_id: str,
         resources: tuple[ResourceRef, ...],
-        operation: Callable[[], tuple[str, ...]],
+        operation: Callable[[], QueuedMutationWorkResult],
         callback: Callable[[QueuedMutationResult], None],
         *,
         dependency_resources: tuple[ResourceRef, ...] = (),
@@ -525,6 +527,7 @@ class SqlCollaborationCoordinator:
             operation=operation,
             callback=callback,
         )
+        rejection_message = "SQL collaboration stopped before the mutation was queued."
         with self._lock:
             current = self._runtimes.get(database_id)
             queued = current is runtime and not self._shutting_down
@@ -532,8 +535,7 @@ class SqlCollaborationCoordinator:
                 with runtime.lock:
                     queued = (
                         runtime.session is not None
-                        and runtime.healthy
-                        and not runtime.pending_delivery
+                        and runtime.established
                         and not runtime.recovery_requested
                         and not runtime.stop_event.is_set()
                     )
@@ -542,6 +544,10 @@ class SqlCollaborationCoordinator:
                     runtime.mutation_requests.put_nowait(request)
                 except queue.Full:
                     queued = False
+                    rejection_message = (
+                        "The SQL mutation queue is full; wait for pending edits "
+                        "to finish."
+                    )
                 else:
                     runtime.command_event.set()
         if queued:
@@ -553,7 +559,7 @@ class SqlCollaborationCoordinator:
                 runtime_generation=runtime.generation,
                 operation_id=operation_id,
                 success=False,
-                message="SQL collaboration stopped before the mutation was queued.",
+                message=rejection_message,
             ),
         )
         return runtime.generation
@@ -981,6 +987,13 @@ class SqlCollaborationCoordinator:
     def _process_mutation_requests(self, runtime: _DatabaseRuntime) -> None:
         if runtime.stop_event.is_set():
             return
+        with runtime.lock:
+            if (
+                not runtime.healthy
+                or runtime.pending_delivery
+                or runtime.recovery_requested
+            ):
+                return
         try:
             request = runtime.mutation_requests.get_nowait()
         except queue.Empty:
@@ -993,6 +1006,8 @@ class SqlCollaborationCoordinator:
                 or request.runtime_generation != runtime.generation
                 or not runtime.healthy
                 or runtime.pending_delivery
+                or runtime.recovery_requested
+                or runtime.stop_event.is_set()
                 or not self._capabilities.is_editable(request.database_id)
             ):
                 self._dispatch_mutation_result(
@@ -1077,8 +1092,18 @@ class SqlCollaborationCoordinator:
                     self._sessions.register_lock(
                         request.database_id, lock.resource, lock.lock_token
                     )
-                created_resource_ids = tuple(request.operation())
-                if len(created_resource_ids) != request.expected_created_count:
+                work_result = request.operation()
+                created_resource_ids = work_result.created_resource_ids
+                if not work_result.success:
+                    result = QueuedMutationResult(
+                        database_id=request.database_id,
+                        runtime_generation=request.runtime_generation,
+                        operation_id=request.operation_id,
+                        success=False,
+                        message=work_result.message,
+                        conflict=work_result.conflict,
+                    )
+                elif len(created_resource_ids) != request.expected_created_count:
                     failure = DatabaseCatalogError(
                         "The SQL mutation returned an incomplete authoritative "
                         "identity set.",
@@ -1122,14 +1147,6 @@ class SqlCollaborationCoordinator:
                 )
                 if cleanup_failure is not None:
                     failure = cleanup_failure
-                    if not result.success:
-                        result = QueuedMutationResult(
-                            database_id=request.database_id,
-                            runtime_generation=request.runtime_generation,
-                            operation_id=request.operation_id,
-                            success=False,
-                            message=str(cleanup_failure),
-                        )
                 self._dispatch_mutation_result(request.callback, result)
             if failure is not None:
                 raise failure
@@ -1190,10 +1207,7 @@ class SqlCollaborationCoordinator:
         if runtime is not None:
             with runtime.lock:
                 trusted = (
-                    runtime.healthy
-                    and not runtime.pending_delivery
-                    and not runtime.recovery_requested
-                    and not runtime.stop_event.is_set()
+                    not runtime.recovery_requested and not runtime.stop_event.is_set()
                 )
             trusted = trusted and self._capabilities.is_editable(result.database_id)
         if result.success and not trusted:
@@ -1208,6 +1222,8 @@ class SqlCollaborationCoordinator:
             callback(result)
         except Exception:
             logger.exception("SQL queued-mutation completion callback failed")
+        if result.conflict is not None and trusted:
+            publish_synchronization_conflict(self._event_bus, result.conflict)
 
     def _process_edit_requests(self, runtime: _DatabaseRuntime) -> None:
         while not runtime.stop_event.is_set():
@@ -1219,7 +1235,8 @@ class SqlCollaborationCoordinator:
             with runtime.lock:
                 session = runtime.session
                 already_owned = any(
-                    resource in runtime.owned_locks for resource in request.resources
+                    resource.lease_identity in runtime.owned_locks
+                    for resource in request.resources
                 )
             editable = self._capabilities.is_editable(request.database_id)
             if session is None or already_owned or not editable:
@@ -1301,13 +1318,15 @@ class SqlCollaborationCoordinator:
                 continue
             with runtime.lock:
                 for lock in acquired:
-                    runtime.owned_locks[lock.resource] = lock
+                    runtime.owned_locks[lock.resource.lease_identity] = lock
                     self._sessions.register_lock(
                         request.database_id, lock.resource, lock.lock_token
                     )
                 runtime.edit_depth += 1
                 runtime.mode = PresenceMode.EDITING
-                runtime.draft_ids[frozenset(request.resources)] = draft_id
+                runtime.draft_ids[
+                    frozenset(resource.lease_identity for resource in request.resources)
+                ] = draft_id
             handle = EditLeaseHandle(
                 database_id=request.database_id,
                 draft_id=draft_id,
@@ -1396,24 +1415,29 @@ class SqlCollaborationCoordinator:
             with runtime.lock:
                 if handle.runtime_generation != runtime.generation:
                     continue
-                resource_key = frozenset(handle.resources)
+                resource_key = frozenset(
+                    resource.lease_identity for resource in handle.resources
+                )
                 active_draft_id = runtime.draft_ids.get(resource_key)
                 owned_tokens = {
-                    resource: runtime.owned_locks[resource].lock_token
+                    resource.lease_identity: runtime.owned_locks[
+                        resource.lease_identity
+                    ].lock_token
                     for resource in handle.resources
-                    if resource in runtime.owned_locks
+                    if resource.lease_identity in runtime.owned_locks
                 }
                 handle_tokens = {
-                    lock.resource: lock.lock_token for lock in handle.locks
+                    lock.resource.lease_identity: lock.lock_token
+                    for lock in handle.locks
                 }
                 if active_draft_id != handle.draft_id or owned_tokens != handle_tokens:
                     continue
                 runtime.draft_ids.pop(resource_key)
                 session = runtime.session
                 locks = tuple(
-                    runtime.owned_locks.pop(resource)
+                    runtime.owned_locks.pop(resource.lease_identity)
                     for resource in handle.resources
-                    if resource in runtime.owned_locks
+                    if resource.lease_identity in runtime.owned_locks
                 )
                 for resource in handle.resources:
                     self._sessions.remove_lock(runtime.database_id, resource)
@@ -1519,7 +1543,7 @@ class SqlCollaborationCoordinator:
         if renewed_locks:
             with runtime.lock:
                 for renewed in renewed_locks:
-                    runtime.owned_locks[renewed.resource] = renewed
+                    runtime.owned_locks[renewed.resource.lease_identity] = renewed
                     self._sessions.register_lock(
                         runtime.database_id,
                         renewed.resource,
@@ -1724,9 +1748,19 @@ class SqlCollaborationCoordinator:
                 self._capabilities.collaboration_status(database_id).state
                 == SynchronizationState.CONFLICTED
             )
-            if applied and not conflicted:
+            trusted = applied and not conflicted and not runtime.recovery_requested
+            if trusted:
                 runtime.acknowledged_version = delivered_through_version
-            runtime.pending_delivery = conflicted or not applied
+            runtime.pending_delivery = not trusted
+            runtime.healthy = (
+                trusted
+                and runtime.acknowledged_version >= runtime.observed_high_water_version
+            )
+            resume_worker = trusted and (
+                not runtime.healthy or not runtime.mutation_requests.empty()
+            )
+        if resume_worker:
+            runtime.command_event.set()
         if conflicted:
             return
         if not applied:
@@ -1850,7 +1884,7 @@ class SqlCollaborationCoordinator:
         with runtime.lock:
             session = runtime.session
             locks = tuple(runtime.owned_locks.values())
-            resources = tuple(runtime.owned_locks)
+            resources = tuple(lock.resource for lock in locks)
             draft_ids = tuple(runtime.draft_ids.values())
             losses = tuple(
                 EditLeaseLoss(

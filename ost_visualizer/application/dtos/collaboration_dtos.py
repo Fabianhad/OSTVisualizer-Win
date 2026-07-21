@@ -96,6 +96,10 @@ class ResourceRef:
             raise ValueError("Resource ID must contain 1 to 128 characters")
         resource_definition(self.resource_type)
 
+    @property
+    def lease_identity(self) -> tuple[str, str]:
+        return self.resource_type, self.resource_id
+
 
 @dataclass(frozen=True)
 class ConcurrencyToken:
@@ -194,6 +198,18 @@ class EditLeaseResult:
 
 
 @dataclass(frozen=True, kw_only=True)
+class QueuedMutationWorkResult:
+    success: bool
+    created_resource_ids: tuple[str, ...] = ()
+    message: str = ""
+    conflict: Optional[SynchronizationConflict] = None
+
+    def __post_init__(self) -> None:
+        if self.success and self.conflict is not None:
+            raise ValueError("A successful queued mutation cannot carry a conflict.")
+
+
+@dataclass(frozen=True, kw_only=True)
 class QueuedMutationResult:
     database_id: str
     runtime_generation: int
@@ -201,6 +217,11 @@ class QueuedMutationResult:
     success: bool
     created_resource_ids: tuple[str, ...] = ()
     message: str = ""
+    conflict: Optional[SynchronizationConflict] = None
+
+    def __post_init__(self) -> None:
+        if self.success and self.conflict is not None:
+            raise ValueError("A successful queued mutation cannot carry a conflict.")
 
 
 _QUEUED_TAKEOFF_PREVIEW_UID_PREFIX = "pending:takeoff-placement:"
