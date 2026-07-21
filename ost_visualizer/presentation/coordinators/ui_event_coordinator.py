@@ -2553,7 +2553,8 @@ class UIEventCoordinator:
         if self.ui_access_manager.is_allowed(Feature.VIEW_2D):
             self._update_plan_view_for_active()
 
-    def _on_license_status_changed(self, _has_license: bool) -> None:
+    def _on_license_status_changed(self, has_license: bool) -> None:
+        del has_license
         self._viewer.update_license_plan_state()
         if self.ui_access_manager.is_allowed(Feature.VIEW_3D):
             self._request_or_defer_mesh_refresh(

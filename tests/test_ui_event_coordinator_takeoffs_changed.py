@@ -16,6 +16,7 @@ from ost_visualizer.application.dtos.mesh_geometry_dto import (
 from ost_visualizer.application.dtos.remote_projection_dtos import (
     RemoteProjectionBarrier,
 )
+from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     CollaborationResourceFamily,
 )
@@ -36,6 +37,7 @@ from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
+from ost_visualizer.infrastructure.events.event_bus import EventBus
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.coordinators.navigation_state_machine import (
     NavigationStateMachine,
@@ -625,6 +627,28 @@ class FakeRefreshNav:
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_license_event_keyword_contract_updates_ui(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._viewer = SimpleNamespace(
+            update_license_plan_state=lambda: calls.append("plan")
+        )
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda _feature: False
+        )
+        coordinator._clear_mesh_views_for_scene_update = lambda: calls.append("clear")
+        coordinator._toolbar = SimpleNamespace(refresh=lambda: calls.append("toolbar"))
+        coordinator.ensure_select_mode = lambda: calls.append("select")
+        event_bus = EventBus()
+        event_bus.subscribe(
+            AppEvents.LICENSE_STATUS_CHANGED,
+            coordinator._on_license_status_changed,
+        )
+
+        event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
+
+        self.assertEqual(calls, ["plan", "clear", "toolbar", "select"])
+
     def test_empty_access_hierarchy_still_delegates_monitoring_to_database_owner(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator._bid_data_cache = {}
