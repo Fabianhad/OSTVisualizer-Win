@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 from ..dtos.collaboration_dtos import EditLeaseLoss
-from ..dtos.mesh_geometry_dto import MeshGeometry
+from ..dtos.mesh_geometry_dto import MeshGeometry, MeshSceneIdentity
 from ..dtos.remote_projection_dtos import RemoteProjectionBarrier
 
 
@@ -102,6 +102,7 @@ class EditLeaseLostEvent:
 @dataclass
 class TakeoffsChangedEvent:
     page_uid: str = ""
+    page_uids: list = field(default_factory=list)
     takeoff_uids: list = field(default_factory=list)
     condition_uids: list = field(default_factory=list)
 
@@ -109,6 +110,7 @@ class TakeoffsChangedEvent:
 @dataclass
 class AnnotationsChangedEvent:
     page_uid: str = ""
+    page_uids: list = field(default_factory=list)
     annotation_uids: list = field(default_factory=list)
     annotation_types: list = field(default_factory=list)
 
@@ -135,9 +137,7 @@ class AppConfigUpdatedEvent:
 @dataclass
 class NativeSceneUpdatedEvent:
     geometries: List[MeshGeometry]
-    database_id: str
-    bid_uid: str
-    generation: int
+    scene_identity: MeshSceneIdentity
     bounds: Optional[tuple] = None
 
 
@@ -171,24 +171,6 @@ class HotlinkClickedEvent:
 
 
 @dataclass
-class NamedViewRenamedEvent:
-    named_view_uid: str
-    name: str
-
-
-@dataclass
-class NamedViewCreatedEvent:
-    named_view_uid: str
-    page_uid: str
-    name: str
-
-
-@dataclass
-class NamedViewDeletedEvent:
-    named_view_uids: list = field(default_factory=list)
-
-
-@dataclass
 class OstStatusChangedEvent:
     active: bool = False
 
@@ -217,7 +199,4 @@ class AppEvents:
     LICENSE_STATUS_CHANGED = LicenseStatusChangedEvent
     LICENSE_EXPIRED = LicenseExpiredEvent
     HOTLINK_CLICKED = HotlinkClickedEvent
-    NAMED_VIEW_RENAMED = NamedViewRenamedEvent
-    NAMED_VIEW_CREATED = NamedViewCreatedEvent
-    NAMED_VIEW_DELETED = NamedViewDeletedEvent
     OST_STATUS_CHANGED = OstStatusChangedEvent

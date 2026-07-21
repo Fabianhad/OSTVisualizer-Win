@@ -13,6 +13,30 @@ class OstSignaler(QObject):
         self.ost_changed.emit(active)
 
 
+class QtVoidCallback(QObject):
+    callback_requested = Signal()
+
+    def __init__(self, callback=None, parent=None):
+        super().__init__(parent)
+        self._callback = callback
+        self.callback_requested.connect(self._invoke)
+
+    def set_callback(self, callback) -> None:
+        self._callback = callback
+
+    def request(self) -> None:
+        self.callback_requested.emit()
+
+    @Slot()
+    def _invoke(self) -> None:
+        if self._callback is not None:
+            self._callback()
+
+    def cleanup(self) -> None:
+        self.callback_requested.disconnect(self._invoke)
+        self._callback = None
+
+
 class QtCallbackBridge(QObject):
     callback_ready = Signal(int, bool, str)
     dispatch_ready = Signal(object, object)

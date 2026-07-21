@@ -203,6 +203,28 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         self.assertEqual(rendering.calls, scheduled_after_switch)
         self.assertCountEqual(rendering.cancelled, old_ids)
 
+    def test_synchronous_prefetch_completion_does_not_leave_orphaned_request(self):
+        class SynchronousRenderingService(FakeRenderingService):
+            def render_page_async(self, **render_options):
+                self._counter += 1
+                request_id = f"page-{self._counter}"
+                render_options["callback"](
+                    RenderResult(request_id, True, object(), None)
+                )
+                return request_id
+
+        rendering = SynchronousRenderingService()
+        coordinator = self._coordinator(rendering)
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page("p2", image_path="p2.pdf"),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        self.assertEqual(coordinator._active_request_ids, set())
+        self.assertEqual(coordinator._completed_request_ids, set())
+        coordinator.cancel_pending()
+        self.assertEqual(rendering.cancelled, [])
+
     def test_cache_pressure_skips_prefetch(self):
         rendering = FakeRenderingService()
         cache = FakeCache(can_accept=False)
@@ -434,7 +456,6 @@ class ViewerSyncPrefetchIntegrationTests(unittest.TestCase):
             None,
             FakeColorService(),
             FakeProjectData(),
-            None,
             SimpleNamespace(dispatch=lambda callback, payload: callback(payload)),
         )
         coordinator.plan_view = FakePlanView()

@@ -398,7 +398,6 @@ class ViewerRemotePlanUpdateTests(unittest.TestCase):
             ui_access_manager=None,
             color_service=ColorService(),
             project_data=_ViewerProjectData(),
-            visualization_service=None,
             callback_bridge=bridge,
             plan_update_thread_pool=pool,
         )

@@ -4372,6 +4372,31 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertEqual(combo._page_items["p1"].text(), "A101")
         combo.close()
 
+    def test_page_combo_emits_every_uncheck_switch_and_recheck_state(self):
+        combo = PageComboBox()
+        combo.load_bid(
+            Bid(
+                uid="bid-1",
+                name="Bid",
+                pages_without_folder=[
+                    Page(uid="page-a", name="A101"),
+                    Page(uid="page-b", name="A102"),
+                ],
+            )
+        )
+        emitted = []
+        combo.page_selection_changed.connect(lambda pages: emitted.append(list(pages)))
+        combo._page_items["page-a"].setCheckState(QtCore.Qt.CheckState.Checked)
+        combo._page_items["page-a"].setCheckState(QtCore.Qt.CheckState.Unchecked)
+        combo._page_items["page-b"].setCheckState(QtCore.Qt.CheckState.Checked)
+        combo._page_items["page-b"].setCheckState(QtCore.Qt.CheckState.Unchecked)
+        combo._page_items["page-a"].setCheckState(QtCore.Qt.CheckState.Checked)
+        self.assertEqual(
+            emitted,
+            [["page-a"], [], ["page-b"], [], ["page-a"]],
+        )
+        combo.close()
+
     def test_page_label_index_uses_sequence_not_pdf_page_index(self):
         combo = PageComboBox()
         bid = Bid(
@@ -4689,6 +4714,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         coordinator.ui_state_manager = SimpleNamespace(
             sync_from_config=lambda: calls.append("sync"),
             highlighted_condition_uids=["cond-1"],
+            get_selected_bid_ref=lambda: object(),
         )
         coordinator._app_config_presentation = FakeAppConfigPresentation()
         coordinator._sidebar = SimpleNamespace(
@@ -4731,6 +4757,28 @@ class OptionsPreferencesTests(unittest.TestCase):
                 "plan_view",
             ],
         )
+
+    def test_condition_display_refresh_does_not_request_unlicensed_3d_scene(self):
+        calls = []
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = SimpleNamespace(highlighted_condition_uids=[])
+        coordinator._sidebar = SimpleNamespace(
+            load_conditions_sidebar=lambda: calls.append("conditions")
+        )
+        coordinator._load_condition_summary = lambda: calls.append("summary")
+        coordinator.conditions_sidebar = None
+        coordinator.ui_access_manager = SimpleNamespace(
+            is_allowed=lambda feature: feature == Feature.VIEW_2D
+        )
+        coordinator.project_data = SimpleNamespace(
+            get_selected_page_uids=lambda: ["page-1"]
+        )
+        coordinator._request_or_defer_mesh_refresh = lambda _pages: self.fail(
+            "unlicensed 3D refresh must not be requested"
+        )
+        coordinator._update_plan_view_for_active = lambda: calls.append("plan")
+        coordinator._refresh_condition_display_after_app_config_change()
+        self.assertEqual(calls, ["conditions", "summary", "plan"])
 
 
 if __name__ == "__main__":

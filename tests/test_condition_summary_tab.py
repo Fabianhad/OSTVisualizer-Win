@@ -1080,8 +1080,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._mesh_scene_dirty = False
         coordinator._dirty_mesh_page_uids = set()
         coordinator._pending_dirty_mesh_refresh = False
-        coordinator._last_mesh_args = None
-        coordinator._last_mesh_options = None
+        coordinator._last_mesh_scene = None
         coordinator.visualization_service = SimpleNamespace(
             cancel_mesh_view_refresh=lambda: None, refresh_mesh_view=lambda *_args: None
         )
@@ -1184,7 +1183,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator.condition_summary_tab = tab
         coordinator.ensure_select_mode = lambda: None
         coordinator._menu_state_signaler = type(
-            "FakeSignaler", (), {"request_update": lambda self: None}
+            "FakeSignaler", (), {"request": lambda self: None}
         )()
         UIEventCoordinator._on_ost_status_changed(coordinator, active=True)
         _app().processEvents()
@@ -1233,7 +1232,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator.condition_summary_tab = tab
         coordinator.ensure_select_mode = lambda: None
         coordinator._menu_state_signaler = type(
-            "FakeSignaler", (), {"request_update": lambda self: None}
+            "FakeSignaler", (), {"request": lambda self: None}
         )()
         UIEventCoordinator._on_ost_status_changed(coordinator, active=True)
         coordinator._deferred_persistence = SimpleNamespace(
@@ -1242,7 +1241,12 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._nav = SimpleNamespace(
             start_refresh=lambda *_args, **_call_options: True
         )
-        coordinator.ui_state_manager = SimpleNamespace(selected_area_uid="")
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_area_uid="",
+            selected_page_uids=[],
+            get_selected_bid_ref=lambda: None,
+        )
+        coordinator._mesh_scene_dirty = False
         coordinator._placement = SimpleNamespace()
         coordinator._do_file_refresh = lambda: None
         coordinator._finish_refresh = lambda: None

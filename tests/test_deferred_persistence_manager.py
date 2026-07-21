@@ -953,6 +953,10 @@ class RecordingNativeMeshView:
     def __init__(self):
         self.plan_texture_visibility_calls = []
         self.plan_texture_update_calls = 0
+        self.scene_refresh_calls = []
+
+    def prepare_scene_refresh(self, bid_ref, page_uids):
+        self.scene_refresh_calls.append((bid_ref, tuple(page_uids)))
 
     def set_plan_texture_visibility(self, visible):
         self.plan_texture_visibility_calls.append(bool(visible))
@@ -1617,7 +1621,12 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator._nav = SimpleNamespace(
             start_refresh=lambda *_args, **_call_options: calls.append("start") or True
         )
-        coordinator.ui_state_manager = SimpleNamespace(selected_area_uid="")
+        coordinator.ui_state_manager = SimpleNamespace(
+            selected_area_uid="",
+            selected_page_uids=[],
+            get_selected_bid_ref=lambda: None,
+        )
+        coordinator._mesh_scene_dirty = False
         coordinator._placement = SimpleNamespace()
         coordinator._do_file_refresh = lambda: calls.append("refresh")
         coordinator._finish_refresh = lambda: calls.append("finish")
@@ -1708,7 +1717,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             get_page_area_selections=lambda: area_selections,
             get_selected_page_uids=selected_page_uids,
         )
-        coordinator.ui_state_manager = SimpleNamespace(active_page_uid="p1")
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="p1",
+            get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
+        )
         coordinator._deferred_persistence = RecordingDeferredPersistence()
         coordinator._project_write_service = SimpleNamespace(
             save_page_area=lambda *_args, **_call_options: direct_writes.append(_args)
@@ -1751,7 +1763,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             get_page_area_selections=lambda: area_selections,
             get_selected_page_uids=lambda: ["p1"],
         )
-        coordinator.ui_state_manager = SimpleNamespace(active_page_uid="p1")
+        coordinator.ui_state_manager = SimpleNamespace(
+            active_page_uid="p1",
+            get_selected_bid_ref=lambda: BidRef("a.mdb", "bid-1"),
+        )
         coordinator._deferred_persistence = RecordingDeferredPersistence()
         self._install_hidden_2d_mesh_state(coordinator)
         coordinator._viewer = SimpleNamespace(

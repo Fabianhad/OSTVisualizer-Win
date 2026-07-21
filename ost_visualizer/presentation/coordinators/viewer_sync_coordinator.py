@@ -55,7 +55,6 @@ class ViewerSyncCoordinator:
         ui_access_manager,
         color_service,
         project_data,
-        visualization_service,
         callback_bridge,
         plan_update_thread_pool=None,
     ):
@@ -63,7 +62,6 @@ class ViewerSyncCoordinator:
         self._access = ui_access_manager
         self._color_service = color_service
         self._project_data = project_data
-        self._visualization_service = visualization_service
         self._remote_update_generation = 0
         self._remote_pipeline = RemotePlanUpdatePipeline(
             callback_bridge=callback_bridge,
@@ -74,12 +72,8 @@ class ViewerSyncCoordinator:
             thread_pool=plan_update_thread_pool,
         )
         self.plan_view = None
-        self.opengl_viewer = None
 
     def clear_plan_view(self) -> None:
-        self._clear_plan_view()
-
-    def _clear_plan_view(self) -> None:
         self._remote_update_generation += 1
         if self.plan_view:
             self.plan_view.clear()
@@ -105,7 +99,7 @@ class ViewerSyncCoordinator:
                 changed_annotation_types=changed_annotation_types,
             )
         else:
-            self._clear_plan_view()
+            self.clear_plan_view()
 
     def update_plan_view(
         self,
@@ -114,7 +108,6 @@ class ViewerSyncCoordinator:
         changed_annotation_uids: Optional[List[str]] = None,
         changed_annotation_types: Optional[List[str]] = None,
     ) -> None:
-        self._remote_update_generation += 1
         snapshot = self._capture_plan_update(
             page_uid,
             changed_takeoff_uids=changed_takeoff_uids,
@@ -122,8 +115,9 @@ class ViewerSyncCoordinator:
             changed_annotation_types=changed_annotation_types,
         )
         if snapshot is None:
-            self._clear_plan_view()
+            self.clear_plan_view()
             return
+        self._remote_update_generation += 1
         self._apply_plan_update(self._prepare_plan_update(snapshot))
 
     def request_remote_plan_update(
@@ -361,23 +355,18 @@ class ViewerSyncCoordinator:
             ),
         )
 
-    def update_license_visualization_state(self) -> None:
-        if self._access.is_allowed(Feature.VIEW_3D):
-            selected_pages = self._project_data.get_selected_page_uids()
-            self._visualization_service.refresh_mesh_view(selected_pages)
+    def update_license_plan_state(self) -> None:
         if self._access.is_allowed(Feature.VIEW_2D):
             self.update_plan_view_for_active()
         else:
-            self._clear_plan_view()
+            self.clear_plan_view()
 
     def cleanup(self) -> None:
         self._remote_update_generation += 1
         self._remote_pipeline.cleanup()
         self._remote_pipeline = None
         self.plan_view = None
-        self.opengl_viewer = None
         self._ui_state = None
         self._access = None
         self._color_service = None
         self._project_data = None
-        self._visualization_service = None

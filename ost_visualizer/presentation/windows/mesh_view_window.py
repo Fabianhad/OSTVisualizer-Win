@@ -1,5 +1,6 @@
 from typing import Optional, Sequence, cast
 from PySide6 import QtCore, QtGui, QtWidgets
+from ...application.dtos.mesh_geometry_dto import MeshSceneIdentity
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.identity_refs import BidRef
 from ..actions.action_ids import ACTION_REDO, ACTION_UNDO
@@ -301,8 +302,7 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         indices_list: Sequence[Sequence[int]],
         colors: Sequence[object],
         *,
-        bid_ref: BidRef,
-        scene_generation: int,
+        scene_identity: MeshSceneIdentity,
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
         scene_bounds: Optional[Sequence[float]] = None,
@@ -314,17 +314,34 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             normals_list,
             indices_list,
             colors,
-            bid_ref=bid_ref,
+            scene_identity=scene_identity,
             condition_uids=condition_uids,
             takeoff_uids=takeoff_uids,
             scene_bounds=scene_bounds,
-            scene_generation=scene_generation,
         )
 
     def begin_scene_load(self, bid_ref: BidRef) -> None:
         if self._is_closing:
             return
         cast(OpenGLViewer, self.viewer).begin_scene_load(bid_ref)
+
+    def prepare_scene_refresh(self, bid_ref: BidRef, page_uids: Sequence[str]) -> None:
+        if self._is_closing:
+            return
+        cast(OpenGLViewer, self.viewer).prepare_scene_refresh(bid_ref, page_uids)
+
+    def discard_saved_camera_states(
+        self,
+        *,
+        bid_ref: Optional[BidRef] = None,
+        file_path: Optional[str] = None,
+    ) -> None:
+        if self._is_closing:
+            return
+        cast(OpenGLViewer, self.viewer).discard_saved_camera_states(
+            bid_ref=bid_ref,
+            file_path=file_path,
+        )
 
     def set_plan_texture_provider(self, provider) -> None:
         if self.viewer:

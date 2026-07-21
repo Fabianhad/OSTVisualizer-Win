@@ -5860,12 +5860,9 @@ class TakeoffPlanView(
     def cleanup(self):
         self._zoom_debouncer.cancel()
         self._finish_active_inline_text_edit(commit=True)
-        self._reset_render_loading()
-        if self._prefetch_coordinator is not None:
-            self._prefetch_coordinator.cancel_pending()
         self._cancel_pending_renders()
-        self._rendering_service.shutdown()
         self.clear()
+        self._rendering_service.shutdown()
         self._scene.focusItemChanged.disconnect(self._on_scene_focus_item_changed)
         self._condition_text_toolbar.deleteLater()
         self._condition_text_toolbar = None

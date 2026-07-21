@@ -244,17 +244,17 @@ class PlanViewActionHandler:
             affected_condition_uids = self._data_svc.get_condition_uids_for_takeoffs(
                 takeoff_uids
             )
-        seen = set()
-        for page_uid in page_uids:
-            if not page_uid or page_uid in seen:
-                continue
-            seen.add(page_uid)
-            self._event_bus.publish(
-                AppEvents.TAKEOFFS_CHANGED,
-                page_uid=page_uid,
-                takeoff_uids=takeoff_uids,
-                condition_uids=list(affected_condition_uids),
-            )
+        affected_page_uids = list(dict.fromkeys(str(uid) for uid in page_uids if uid))
+        if not affected_page_uids:
+            return
+        payload = {
+            "page_uid": affected_page_uids[0] if len(affected_page_uids) == 1 else "",
+            "takeoff_uids": takeoff_uids,
+            "condition_uids": list(affected_condition_uids),
+        }
+        if len(affected_page_uids) > 1:
+            payload["page_uids"] = affected_page_uids
+        self._event_bus.publish(AppEvents.TAKEOFFS_CHANGED, **payload)
 
     def _save_takeoff_positions_fast(
         self, db_path: str, positions: List[tuple]
@@ -799,7 +799,6 @@ class PlanViewActionHandler:
         if not success:
             self._plan_view.restore_annotation_text_properties(changes)
             return
-        self._publish_named_view_renames(new_updates)
         old_updates = [
             (uid, ann_type, dict(old_props))
             for uid, ann_type, old_props, _new_props in changes
@@ -809,12 +808,10 @@ class PlanViewActionHandler:
             return
 
         def _undo_text_properties():
-            if self._save_annotation_text_properties_fast(db_path, old_updates):
-                self._publish_named_view_renames(old_updates)
+            self._save_annotation_text_properties_fast(db_path, old_updates)
 
         def _redo_text_properties():
-            if self._save_annotation_text_properties_fast(db_path, new_updates):
-                self._publish_named_view_renames(new_updates)
+            self._save_annotation_text_properties_fast(db_path, new_updates)
 
         self._undo_svc.push(_undo_text_properties, _redo_text_properties)
 
@@ -847,9 +844,6 @@ class PlanViewActionHandler:
             self._save_annotation_styles_fast(db_path, new_updates)
 
         self._undo_svc.push(_undo_styles, _redo_styles)
-
-    def _publish_named_view_renames(self, updates: list) -> None:
-        self._annotation_writes.publish_named_view_renames(updates)
 
     def on_annotation_text_and_positions_flushed(
         self, text_changes: list, ann_position_changes: list
@@ -1298,12 +1292,6 @@ class PlanViewActionHandler:
             spec.color = color
         new_uids = self._insert_annotations_with_undo(bid_ref, [spec])
         if new_uids:
-            self._event_bus.publish(
-                AppEvents.NAMED_VIEW_CREATED,
-                named_view_uid=new_uids[0],
-                page_uid=page_uid,
-                name=name,
-            )
             self._plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
 
     def on_hotlink_placement_requested(self, position: list, page_uid: str) -> None:

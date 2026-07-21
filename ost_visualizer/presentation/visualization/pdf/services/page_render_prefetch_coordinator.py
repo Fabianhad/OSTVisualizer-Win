@@ -24,6 +24,7 @@ class PageRenderPrefetchCoordinator:
         self._lock = threading.Lock()
         self._generation = 0
         self._active_request_ids: set[str] = set()
+        self._completed_request_ids: set[str] = set()
 
     def prefetch_nearby_pages(
         self,
@@ -47,6 +48,7 @@ class PageRenderPrefetchCoordinator:
         with self._lock:
             request_ids = list(self._active_request_ids)
             self._active_request_ids.clear()
+            self._completed_request_ids.clear()
             self._generation += 1
         for request_id in request_ids:
             self._rendering_service.cancel_request(request_id)
@@ -138,6 +140,9 @@ class PageRenderPrefetchCoordinator:
         with self._lock:
             if generation != self._generation:
                 cancel_now = True
+            elif request_id in self._completed_request_ids:
+                self._completed_request_ids.remove(request_id)
+                cancel_now = False
             else:
                 self._active_request_ids.add(request_id)
                 cancel_now = False
@@ -147,9 +152,13 @@ class PageRenderPrefetchCoordinator:
     def _on_prefetch_complete(self, result: RenderResult, generation: int) -> None:
         with self._lock:
             stale = generation != self._generation
-            self._active_request_ids.discard(result.request_id)
             if stale:
+                self._active_request_ids.discard(result.request_id)
                 return
+            if result.request_id in self._active_request_ids:
+                self._active_request_ids.remove(result.request_id)
+            else:
+                self._completed_request_ids.add(result.request_id)
 
     def _cacheable_prefetch_scale(
         self,

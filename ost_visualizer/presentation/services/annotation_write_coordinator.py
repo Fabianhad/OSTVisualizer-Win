@@ -37,6 +37,7 @@ class AnnotationWriteCoordinator:
         ):
             return False
         page_uids = self._data_svc.update_annotation_text_properties(updates)
+        self._update_named_view_names(updates)
         self.publish_annotations_changed_for_pages(
             page_uids,
             self._annotation_uids_from_changes(updates),
@@ -71,6 +72,7 @@ class AnnotationWriteCoordinator:
         page_uids = []
         if updates:
             page_uids.extend(self._data_svc.update_annotation_text_properties(updates))
+            self._update_named_view_names(updates)
         if positions:
             page_uids.extend(self._data_svc.update_annotation_positions(positions))
         annotation_uids = self._annotation_uids_from_changes(updates)
@@ -145,7 +147,6 @@ class AnnotationWriteCoordinator:
         self.publish_annotations_changed_for_pages(
             page_uids, annotation_uids, annotation_types
         )
-        self.publish_named_view_deletes(saved_annotations)
         return True
 
     def insert_saved_annotations(
@@ -184,7 +185,7 @@ class AnnotationWriteCoordinator:
             if (annotation.uid, annotation.annotation_type) in restored_by_key
         ]
 
-    def publish_named_view_renames(self, updates: list) -> None:
+    def _update_named_view_names(self, updates: list) -> None:
         renames = [
             (str(uid), str(properties["Text"] or ""))
             for uid, ann_type, properties in updates
@@ -193,22 +194,6 @@ class AnnotationWriteCoordinator:
         if not renames:
             return
         self._data_svc.update_named_view_names(renames)
-        for uid, name in renames:
-            self._event_bus.publish(
-                AppEvents.NAMED_VIEW_RENAMED,
-                named_view_uid=uid,
-                name=name,
-            )
-
-    def publish_named_view_deletes(self, annotations: List[BidAnnotation]) -> None:
-        named_view_uids = [
-            str(annotation.uid) for annotation in annotations if annotation.is_namedview
-        ]
-        if named_view_uids:
-            self._event_bus.publish(
-                AppEvents.NAMED_VIEW_DELETED,
-                named_view_uids=named_view_uids,
-            )
 
     def apply_default_annotation_layer(self, specs: List[InsertAnnotationSpec]) -> None:
         factory = AnnotationCreationFactory(self._data_svc.get_annotation_layer_uid())
@@ -309,14 +294,14 @@ class AnnotationWriteCoordinator:
         annotation_types: List[str],
     ) -> None:
         event_types = [str(annotation_type) for annotation_type in annotation_types]
-        seen = set()
-        for page_uid in page_uids:
-            if not page_uid or page_uid in seen:
-                continue
-            seen.add(page_uid)
-            self._event_bus.publish(
-                AppEvents.ANNOTATIONS_CHANGED,
-                page_uid=page_uid,
-                annotation_uids=list(annotation_uids),
-                annotation_types=list(event_types),
-            )
+        affected_page_uids = self._unique_ordered(page_uids)
+        if not affected_page_uids:
+            return
+        payload = {
+            "page_uid": affected_page_uids[0] if len(affected_page_uids) == 1 else "",
+            "annotation_uids": list(annotation_uids),
+            "annotation_types": list(event_types),
+        }
+        if len(affected_page_uids) > 1:
+            payload["page_uids"] = affected_page_uids
+        self._event_bus.publish(AppEvents.ANNOTATIONS_CHANGED, **payload)

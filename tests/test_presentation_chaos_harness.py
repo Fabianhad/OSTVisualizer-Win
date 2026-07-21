@@ -69,6 +69,7 @@ from test_viewer_sync_coordinator_overlay_refresh import (
     FakeRenderingService,
     RecordingPathTakeoffRenderer,
 )
+from ost_visualizer.application.dtos.mesh_geometry_dto import MeshSceneIdentity
 from ost_visualizer.application.dtos.page_view_dto import PageViewDto
 from ost_visualizer.application.dtos.render_result_dto import RenderResult
 from ost_visualizer.domain.entities.annotation import (
@@ -1243,8 +1244,7 @@ class UIEventCoordinatorChaosHarness:
         self.coordinator.plan_view = CoordinatorChaosPlanView()
         self.coordinator._pending_hotlink_page_uid = None
         self.coordinator._pending_hotlink_named_view = None
-        self.coordinator._last_mesh_args = None
-        self.coordinator._last_mesh_options = None
+        self.coordinator._last_mesh_scene = None
         self.coordinator._update_page_info_status = self._record_page_info_update
         self.page_info_updates = 0
         configure_mesh_state(
@@ -1350,9 +1350,11 @@ class UIEventCoordinatorChaosHarness:
         ):
             self.coordinator._on_native_scene_updated(
                 geometries=[],
-                database_id=self.active_bid_ref.file_path,
-                bid_uid=self.active_bid_ref.bid_uid,
-                generation=1,
+                scene_identity=MeshSceneIdentity(
+                    self.active_bid_ref,
+                    tuple(self.coordinator.project_data.get_selected_page_uids()),
+                    1,
+                ),
             )
         return ChaosActionResult("native_scene_updated")
 
@@ -1448,7 +1450,7 @@ class UIEventCoordinatorChaosTests(unittest.TestCase):
         self.assertFalse(harness.coordinator._pending_dirty_mesh_refresh)
         self.assertEqual(harness.coordinator._dirty_mesh_page_uids, set())
 
-    def test_known_sequence_no_selected_pages_clears_mesh_refresh(self):
+    def test_known_sequence_no_selected_pages_publishes_empty_mesh_scene(self):
         harness = UIEventCoordinatorChaosHarness(9652, self)
         harness.run_sequence(
             [
@@ -1457,8 +1459,8 @@ class UIEventCoordinatorChaosTests(unittest.TestCase):
             ]
         )
         visualization = harness.coordinator.visualization_service
-        self.assertEqual(visualization.mesh_pages, [])
-        self.assertGreater(visualization.cancelled_mesh_refreshes, 0)
+        self.assertEqual(visualization.mesh_pages, [[]])
+        self.assertEqual(visualization.cancelled_mesh_refreshes, 0)
 
 
 class DeferredChaosWriteService:
@@ -1689,7 +1691,6 @@ class DetachedChaosWindow:
     def __init__(self):
         self.page_updates: list[str | None] = []
         self.read_only_updates: list[bool] = []
-        self.named_view_updates: list[tuple[str, str]] = []
         self.navigation_updates = 0
 
     def set_read_only(self, read_only):
@@ -1697,9 +1698,6 @@ class DetachedChaosWindow:
 
     def update_page(self, page_data):
         self.page_updates.append(page_data.page.uid if page_data.page else None)
-
-    def update_named_view_name(self, uid, name):
-        self.named_view_updates.append((uid, name))
 
 
 class DetachedChaosProjectData:
@@ -1729,7 +1727,7 @@ class DetachedChaosRefreshSignaler:
         self.manager = manager
         self.requests = 0
 
-    def request_refresh(self):
+    def request(self):
         self.requests += 1
         self.manager._refresh_window()
 
@@ -1786,8 +1784,6 @@ class DetachedWindowChaosHarness:
             self.action_annotations_changed_other_page,
             self.action_delete_active_page,
             self.action_refresh_window,
-            self.action_named_view_renamed,
-            self.action_named_view_deleted,
             self.action_close_window,
             self.action_reopen_window,
         ]
@@ -1878,14 +1874,6 @@ class DetachedWindowChaosHarness:
     def action_refresh_window(self):
         self.manager._refresh_window()
         return ChaosActionResult("refresh_window")
-
-    def action_named_view_renamed(self):
-        self.manager._on_named_view_renamed("named-1", "Updated")
-        return ChaosActionResult("named_view_renamed")
-
-    def action_named_view_deleted(self):
-        self.manager._on_named_view_deleted(["named-1"])
-        return ChaosActionResult("named_view_deleted")
 
     def action_close_window(self):
         self.manager._window = None

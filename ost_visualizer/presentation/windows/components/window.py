@@ -690,30 +690,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._update_combo_to_page(page_uid)
         self._page_combo.set_pages_with_takeoffs(self._pages_with_takeoffs)
 
-    def update_named_view_name(self, named_view_uid: str, name: str) -> None:
-        if self._is_closing:
-            return
-        uid = str(named_view_uid)
-        text = str(name)
-        changed = False
-        updated: List[NamedViewEntry] = []
-        for nv_uid, page_uid, page_name, view_name in self._named_views:
-            if nv_uid == uid:
-                updated.append((nv_uid, page_uid, page_name, text))
-                changed = changed or view_name != text
-            else:
-                updated.append((nv_uid, page_uid, page_name, view_name))
-        if not changed:
-            return
-        self._named_views = updated
-        if self.page_data is not None:
-            for annotation in self.page_data.annotations:
-                if annotation.uid == uid and annotation.is_namedview:
-                    annotation.properties["Text"] = text
-        if self.plan_view is not None:
-            self.plan_view.update_named_view_label_text(uid, text)
-        self._populate_named_view_combo()
-
     def _on_named_view_combo_changed(self, index: int) -> None:
         if self._is_closing or not self._on_named_view_selected or index < 0:
             return
@@ -1218,7 +1194,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if not success:
             self.plan_view.restore_annotation_text_properties(changes)
             return
-        self._publish_named_view_renames(new_updates)
         if self._undo_svc is None:
             return
         old_updates = [
@@ -1230,12 +1205,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             return
 
         def _undo_text_properties():
-            if self._save_annotation_text_properties(db_path, old_updates):
-                self._publish_named_view_renames(old_updates)
+            self._save_annotation_text_properties(db_path, old_updates)
 
         def _redo_text_properties():
-            if self._save_annotation_text_properties(db_path, new_updates):
-                self._publish_named_view_renames(new_updates)
+            self._save_annotation_text_properties(db_path, new_updates)
 
         self._undo_svc.push(_undo_text_properties, _redo_text_properties)
 
@@ -1272,20 +1245,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             self._save_annotation_styles(db_path, new_updates)
 
         self._undo_svc.push(_undo_styles, _redo_styles)
-
-    def _publish_named_view_renames(self, updates: list) -> None:
-        if self._annotation_write_coordinator is not None:
-            self._annotation_write_coordinator.publish_named_view_renames(updates)
-            return
-        for uid, ann_type, properties in updates:
-            if ann_type != ANNOTATION_TYPE_NAMED_VIEW or "Text" not in properties:
-                continue
-            name = str(properties["Text"] or "")
-            self.event_bus.publish(
-                AppEvents.NAMED_VIEW_RENAMED,
-                named_view_uid=str(uid),
-                name=name,
-            )
 
     def _apply_default_annotation_layer(self, spec) -> None:
         if self.page_data is None:
@@ -1665,12 +1624,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         keys = self.plan_view.find_annotation_keys_by_uid_type(uid_type_set)
         if keys:
             self.plan_view.set_selected_uids(keys)
-        self.event_bus.publish(
-            AppEvents.NAMED_VIEW_CREATED,
-            named_view_uid=new_uids[0],
-            page_uid=page_uid,
-            name=name,
-        )
         self.plan_view.activate_annotation_placement(ANNOTATION_TYPE_NAMED_VIEW)
         if self._undo_svc is None:
             return

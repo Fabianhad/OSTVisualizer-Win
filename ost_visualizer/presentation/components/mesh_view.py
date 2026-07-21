@@ -4,6 +4,11 @@ import math
 from typing import Callable, Optional, Sequence, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QTimer, Signal
+from ...application.dtos.mesh_geometry_dto import (
+    MeshSceneIdentity,
+    normalize_scene_page_uids,
+)
+from ...domain.entities.file_state import normalize_path
 from ...domain.entities.identity_refs import BidRef
 from ..actions.action_ids import (
     ACTION_DELETE,
@@ -53,9 +58,10 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._surface_screen: QtGui.QScreen | None = None
         self._current_bid_ref: Optional[BidRef] = None
         self._loading_bid_ref: Optional[BidRef] = None
+        self._accepted_scene_bid_ref: Optional[BidRef] = None
+        self._requested_scene_page_uids: Optional[tuple[str, ...]] = None
         self._latest_scene_generation = 0
-        self._accept_scene_results = True
-        self._scene_load_pending = False
+        self._scene_refresh_pending = False
         self._camera_initialized_for_scene = False
         self._saved_camera_states: dict[BidRef, _CameraState] = {}
         self._pending_camera_reset = False
@@ -786,7 +792,11 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._update_after_plan_texture_change()
 
     def update_plan_texture(self) -> None:
-        if not self._renderer or self._scene_load_pending:
+        if (
+            not self._renderer
+            or self._scene_refresh_pending
+            or not self._requested_scene_page_uids
+        ):
             return
         scene_bounds = None
         if not self._renderer.scene.empty():
@@ -809,8 +819,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         indices_list: Sequence[Sequence[int]],
         colors: Sequence[object],
         *,
-        bid_ref: BidRef,
-        scene_generation: int,
+        scene_identity: MeshSceneIdentity,
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
         scene_bounds: Optional[Sequence[float]] = None,
@@ -832,11 +841,10 @@ class OpenGLViewer(QtWidgets.QWidget):
                     "normals": normals_list,
                     "indices": indices_list,
                     "colors": colors,
-                    "bid_ref": bid_ref,
+                    "scene_identity": scene_identity,
                     "condition_uids": condition_uids,
                     "takeoff_uids": takeoff_uids,
                     "scene_bounds": scene_bounds,
-                    "scene_generation": scene_generation,
                 }
             )
             return
@@ -845,22 +853,27 @@ class OpenGLViewer(QtWidgets.QWidget):
             normals_list,
             indices_list,
             colors,
-            bid_ref,
-            scene_generation,
+            scene_identity,
             condition_uids,
             takeoff_uids,
             scene_bounds,
         )
 
-    def _claim_scene_result(self, bid_ref: BidRef, scene_generation: int) -> bool:
-        if not self._accept_scene_results:
+    def _claim_scene_result(self, scene_identity: MeshSceneIdentity) -> bool:
+        if not self._scene_result_matches_request(scene_identity):
             return False
-        expected_bid_ref = self._loading_bid_ref or self._current_bid_ref
-        if expected_bid_ref is not None and bid_ref != expected_bid_ref:
+        self._latest_scene_generation = scene_identity.generation
+        return True
+
+    def _scene_result_matches_request(self, scene_identity: MeshSceneIdentity) -> bool:
+        if self._accepted_scene_bid_ref is None:
             return False
-        if scene_generation <= self._latest_scene_generation:
+        if scene_identity.bid_ref != self._accepted_scene_bid_ref:
             return False
-        self._latest_scene_generation = scene_generation
+        if scene_identity.page_uids != self._requested_scene_page_uids:
+            return False
+        if scene_identity.generation <= self._latest_scene_generation:
+            return False
         return True
 
     @staticmethod
@@ -901,8 +914,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             data["normals"],
             data["indices"],
             data["colors"],
-            data["bid_ref"],
-            data["scene_generation"],
+            data["scene_identity"],
             data["condition_uids"],
             data["takeoff_uids"],
             data["scene_bounds"],
@@ -914,8 +926,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         normals_list: Sequence[Sequence[float]],
         indices_list: Sequence[Sequence[int]],
         colors: Sequence[object],
-        bid_ref: BidRef,
-        scene_generation: int,
+        scene_identity: MeshSceneIdentity,
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
         scene_bounds: Optional[Sequence[float]] = None,
@@ -928,21 +939,10 @@ class OpenGLViewer(QtWidgets.QWidget):
             condition_uids,
             takeoff_uids,
         )
+        if not self._scene_result_matches_request(scene_identity):
+            return
         if not self._ensure_renderer():
             return
-        if not self._claim_scene_result(bid_ref, scene_generation):
-            return
-        was_loading = bid_ref == self._loading_bid_ref
-        is_same_bid = bid_ref == self._current_bid_ref
-        is_new_bid = bid_ref != self._current_bid_ref
-        if not is_same_bid:
-            self.suspend_rendering()
-        self._current_bid_ref = bid_ref
-        self._loading_bid_ref = None
-        self._scene_load_pending = False
-        if is_new_bid:
-            self._selected_takeoff_uids.clear()
-            self._camera_initialized_for_scene = False
         meshes = []
         for i, (verts, norms, idxs, color) in enumerate(
             zip(vertices_list, normals_list, indices_list, colors)
@@ -960,17 +960,35 @@ class OpenGLViewer(QtWidgets.QWidget):
             if takeoff_uids and i < len(takeoff_uids):
                 mesh.takeoff_uid = takeoff_uids[i]
             meshes.append(mesh)
+        if not self._claim_scene_result(scene_identity):
+            return
+        bid_ref = scene_identity.bid_ref
+        was_loading = bid_ref == self._loading_bid_ref
+        is_same_bid = bid_ref == self._current_bid_ref
+        is_new_bid = bid_ref != self._current_bid_ref
+        if not is_same_bid:
+            self.suspend_rendering()
+        self._current_bid_ref = bid_ref
+        self._loading_bid_ref = None
+        self._scene_refresh_pending = False
+        if is_new_bid:
+            self._selected_takeoff_uids.clear()
+            self._camera_initialized_for_scene = False
         self._renderer.scene.clear()
         for mesh in meshes:
             self._renderer.scene.add_mesh(mesh)
-        self._replace_plan_texture(scene_bounds)
+        if scene_identity.page_uids:
+            self._replace_plan_texture(scene_bounds)
+        else:
+            self._current_plan_texture = None
+            self._has_visible_plan_texture = False
+            self._renderer.clear_plan_texture()
         self._reconcile_selected_takeoffs_with_scene()
         if not self._has_renderable_content():
-            self._camera_initialized_for_scene = False
             if not is_same_bid or was_loading:
+                self._camera_initialized_for_scene = False
                 self._renderer.camera.reset()
-            self._renderer.suspend()
-            self._render_suspended = True
+            self.suspend_rendering()
             self.update()
             return
         if is_same_bid and self._camera_initialized_for_scene:
@@ -983,20 +1001,31 @@ class OpenGLViewer(QtWidgets.QWidget):
         self.resume_rendering()
 
     def begin_scene_load(self, bid_ref: BidRef) -> None:
+        if self._destroyed:
+            return
         self._save_current_camera()
         self._loading_bid_ref = bid_ref
-        self._accept_scene_results = True
-        self._scene_load_pending = True
+        self._set_scene_request(bid_ref, ())
         self._camera_initialized_for_scene = False
         if self._renderer:
             self._renderer.scene.clear()
             self._renderer.clear_plan_texture()
-            self._renderer.suspend()
+        self.suspend_rendering()
+        if self._renderer:
             self._renderer.clear_frame()
         self._current_plan_texture = None
         self._has_visible_plan_texture = False
-        self._render_suspended = True
         self.update()
+
+    def prepare_scene_refresh(self, bid_ref: BidRef, page_uids: Sequence[str]) -> None:
+        if self._destroyed:
+            return
+        self._set_scene_request(bid_ref, page_uids)
+
+    def _set_scene_request(self, bid_ref: BidRef, page_uids: Sequence[str]) -> None:
+        self._accepted_scene_bid_ref = bid_ref
+        self._requested_scene_page_uids = normalize_scene_page_uids(page_uids)
+        self._scene_refresh_pending = True
 
     def _save_current_camera(self) -> None:
         bid_ref = self._current_bid_ref
@@ -1019,6 +1048,26 @@ class OpenGLViewer(QtWidgets.QWidget):
         )
         if self._valid_camera_state(state):
             self._saved_camera_states[bid_ref] = state
+
+    def discard_saved_camera_states(
+        self,
+        *,
+        bid_ref: Optional[BidRef] = None,
+        file_path: Optional[str] = None,
+    ) -> None:
+        if bid_ref is not None and file_path is not None:
+            raise ValueError("Specify either bid_ref or file_path, not both")
+        if bid_ref is not None:
+            self._saved_camera_states.pop(bid_ref, None)
+            return
+        if not file_path:
+            return
+        target_path = normalize_path(file_path)
+        self._saved_camera_states = {
+            cached_bid_ref: state
+            for cached_bid_ref, state in self._saved_camera_states.items()
+            if normalize_path(cached_bid_ref.file_path) != target_path
+        }
 
     @staticmethod
     def _valid_camera_state(state: _CameraState) -> bool:
@@ -1089,8 +1138,7 @@ class OpenGLViewer(QtWidgets.QWidget):
 
     def _update_after_plan_texture_change(self) -> None:
         if not self._has_renderable_content():
-            self._renderer.suspend()
-            self._render_suspended = True
+            self.suspend_rendering()
             self.update()
             return
         self._initialize_camera_for_current_scene()
@@ -1150,19 +1198,19 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._selected_takeoff_uids = []
         self._current_bid_ref = None
         self._loading_bid_ref = None
-        self._accept_scene_results = False
-        self._scene_load_pending = False
+        self._accepted_scene_bid_ref = None
+        self._requested_scene_page_uids = None
+        self._scene_refresh_pending = False
         self._camera_initialized_for_scene = False
         if self._renderer:
             self._renderer.scene.clear()
             self._renderer.clear_plan_texture()
             self._renderer.camera.reset()
-            self._renderer.suspend()
         else:
             self._pending_camera_reset = True
         self._current_plan_texture = None
         self._has_visible_plan_texture = False
-        self._render_suspended = True
+        self.suspend_rendering()
         self.update()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
@@ -1171,7 +1219,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             return
         self._connect_surface_notifications()
         self._resize_render_surface()
-        if not self._has_renderable_content():
+        if self._scene_refresh_pending or not self._has_renderable_content():
             self._render_suspended = True
             self._renderer.suspend()
             return
@@ -1190,8 +1238,9 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._destroyed = True
         self._current_bid_ref = None
         self._loading_bid_ref = None
-        self._accept_scene_results = False
-        self._scene_load_pending = False
+        self._accepted_scene_bid_ref = None
+        self._requested_scene_page_uids = None
+        self._scene_refresh_pending = False
         self._camera_initialized_for_scene = False
         self._saved_camera_states = {}
         self._pending_camera_reset = False

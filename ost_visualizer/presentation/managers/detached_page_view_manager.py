@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
 from PySide6 import QtWidgets
-from PySide6.QtCore import QByteArray, QObject, Qt, Signal
+from PySide6.QtCore import QByteArray, Qt
 from ...application.dtos.page_view_dto import PageViewDto
 from ...application.dtos.snap_preferences_dto import SnapPreferencesDto
 from ...application.dtos.remote_projection_dtos import (
@@ -29,6 +29,7 @@ from ...domain.repositories.i_annotation_view_repository import (
 from ...domain.services.project_data_service import ProjectDataService
 from ..services.annotation_write_coordinator import AnnotationWriteCoordinator
 from ..services.undo_redo_service import UndoRedoService
+from ..utils.qt_callback_bridge import QtVoidCallback
 from ..coordinators.remote_plan_update_pipeline import RemotePlanUpdatePipeline
 from .ui_access_manager import Feature
 
@@ -77,26 +78,6 @@ class _DetachedPlanSnapshot:
     identity: Optional[_DetachedPlanIdentity] = None
 
 
-class _RefreshSignaler(QObject):
-    refresh_requested = Signal()
-
-    def __init__(self, callback, parent=None):
-        super().__init__(parent)
-        self._callback = callback
-        self.refresh_requested.connect(self._on_refresh_requested)
-
-    def request_refresh(self):
-        self.refresh_requested.emit()
-
-    def _on_refresh_requested(self):
-        if self._callback is not None:
-            self._callback()
-
-    def cleanup(self) -> None:
-        self.refresh_requested.disconnect(self._on_refresh_requested)
-        self._callback = None
-
-
 class DetachedPageViewManager(IShutdownAware):
     def __init__(
         self,
@@ -134,7 +115,7 @@ class DetachedPageViewManager(IShutdownAware):
         self._window_undo_service: Optional[UndoRedoService] = None
         self._opening = False
         self._visibility_changed_callback = None
-        self._refresh_signaler = _RefreshSignaler(self._refresh_window, parent_window)
+        self._refresh_signaler = QtVoidCallback(self._refresh_window, parent_window)
         self._remote_update_generation = 0
         self._remote_surface_id = f"detached-plan:{id(self)}"
         self._remote_plan_pipeline = RemotePlanUpdatePipeline(
@@ -148,22 +129,12 @@ class DetachedPageViewManager(IShutdownAware):
             AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
         )
         self.event_bus.subscribe(
-            AppEvents.DATABASE_CAPABILITIES_CHANGED, self._on_database_refreshed
+            AppEvents.DATABASE_CAPABILITIES_CHANGED,
+            self._on_database_capabilities_changed,
         )
-        self.event_bus.subscribe(
-            AppEvents.NATIVE_SCENE_UPDATED, self._on_native_scene_updated
-        )
+        self.event_bus.subscribe(AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed)
         self.event_bus.subscribe(
             AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed
-        )
-        self.event_bus.subscribe(
-            AppEvents.NAMED_VIEW_RENAMED, self._on_named_view_renamed
-        )
-        self.event_bus.subscribe(
-            AppEvents.NAMED_VIEW_CREATED, self._on_named_view_created
-        )
-        self.event_bus.subscribe(
-            AppEvents.NAMED_VIEW_DELETED, self._on_named_view_deleted
         )
         self.event_bus.subscribe(
             AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed
@@ -196,22 +167,13 @@ class DetachedPageViewManager(IShutdownAware):
             )
             self.event_bus.unsubscribe(
                 AppEvents.DATABASE_CAPABILITIES_CHANGED,
-                self._on_database_refreshed,
+                self._on_database_capabilities_changed,
             )
             self.event_bus.unsubscribe(
-                AppEvents.NATIVE_SCENE_UPDATED, self._on_native_scene_updated
+                AppEvents.TAKEOFFS_CHANGED, self._on_takeoffs_changed
             )
             self.event_bus.unsubscribe(
                 AppEvents.LAYER_VISIBILITY_CHANGED, self._on_layer_visibility_changed
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.NAMED_VIEW_RENAMED, self._on_named_view_renamed
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.NAMED_VIEW_CREATED, self._on_named_view_created
-            )
-            self.event_bus.unsubscribe(
-                AppEvents.NAMED_VIEW_DELETED, self._on_named_view_deleted
             )
             self.event_bus.unsubscribe(
                 AppEvents.ANNOTATIONS_CHANGED, self._on_annotations_changed
@@ -276,28 +238,27 @@ class DetachedPageViewManager(IShutdownAware):
         self._opening = False
         self._notify_visibility_changed()
 
-    def _on_native_scene_updated(
+    def _on_takeoffs_changed(
         self,
-        geometries: list,
-        database_id: str,
-        bid_uid: str,
-        generation: int,
-        bounds: tuple | None = None,
+        page_uid: str = "",
+        page_uids: Optional[list] = None,
+        takeoff_uids: Optional[list] = None,
+        condition_uids: Optional[list] = None,
     ) -> None:
+        del takeoff_uids, condition_uids
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()
         if (
             view is None
             or view.bid_ref is None
-            or not database_id
-            or not bid_uid
-            or generation <= 0
-            or view.bid_ref.file_path != database_id
-            or view.bid_ref.bid_uid != bid_uid
+            or view.bid_ref != self.project_data.get_current_bid_ref()
         ):
             return
-        self._refresh_signaler.request_refresh()
+        affected_page_uids = set(page_uids or ([page_uid] if page_uid else []))
+        if affected_page_uids and view.target_page_uid not in affected_page_uids:
+            return
+        self._refresh_signaler.request()
 
     def _on_database_refreshed(self, file_path: str = "") -> None:
         if not self.is_view_open():
@@ -308,7 +269,17 @@ class DetachedPageViewManager(IShutdownAware):
         bid_ref = view.bid_ref
         if bid_ref and file_path and bid_ref.file_path != file_path:
             return
-        self._refresh_signaler.request_refresh()
+        self._refresh_signaler.request()
+
+    def _on_database_capabilities_changed(self, file_path: str = "") -> None:
+        if not self.is_view_open():
+            return
+        view = self.repository.get_active_view()
+        if view is None or view.bid_ref is None:
+            return
+        if file_path and view.bid_ref.file_path != file_path:
+            return
+        self._window.set_read_only(self._is_read_only())
 
     def _on_layer_visibility_changed(
         self,
@@ -327,28 +298,12 @@ class DetachedPageViewManager(IShutdownAware):
         bid_ref = view.bid_ref
         if bid_ref and (bid_ref.file_path != file_path or bid_ref.bid_uid != bid_uid):
             return
-        self._refresh_signaler.request_refresh()
-
-    def _on_named_view_renamed(self, named_view_uid: str, name: str) -> None:
-        self.project_data.update_named_view_names([(named_view_uid, name)])
-        if self._window is not None:
-            self._window.update_named_view_name(named_view_uid, name)
-
-    def _on_named_view_created(
-        self, named_view_uid: str, page_uid: str, name: str
-    ) -> None:
-        view = self.repository.get_active_view()
-        if view:
-            self._update_window_navigation(view)
-
-    def _on_named_view_deleted(self, named_view_uids: list | None = None) -> None:
-        view = self.repository.get_active_view()
-        if view:
-            self._update_window_navigation(view)
+        self._refresh_signaler.request()
 
     def _on_annotations_changed(
         self,
         page_uid: str = "",
+        page_uids: Optional[list] = None,
         annotation_uids: list | None = None,
         annotation_types: list | None = None,
     ) -> None:
@@ -357,9 +312,10 @@ class DetachedPageViewManager(IShutdownAware):
         view = self.repository.get_active_view()
         if not view:
             return
-        if page_uid and view.target_page_uid != page_uid:
+        affected_page_uids = set(page_uids or ([page_uid] if page_uid else []))
+        if affected_page_uids and view.target_page_uid not in affected_page_uids:
             return
-        self._refresh_signaler.request_refresh()
+        self._refresh_signaler.request()
 
     def _on_remote_bid_content_changed(
         self,
@@ -380,7 +336,7 @@ class DetachedPageViewManager(IShutdownAware):
         if self._window_undo_service is not None and families:
             self._window_undo_service.clear()
         if not defer_plan_projection:
-            self._refresh_signaler.request_refresh()
+            self._refresh_signaler.request()
 
     def _on_remote_conditions_changed(
         self,
@@ -400,7 +356,7 @@ class DetachedPageViewManager(IShutdownAware):
         if self._window_undo_service is not None:
             self._window_undo_service.clear()
         if not defer_plan_projection:
-            self._refresh_signaler.request_refresh()
+            self._refresh_signaler.request()
 
     def _on_remote_areas_changed(
         self,
@@ -427,7 +383,7 @@ class DetachedPageViewManager(IShutdownAware):
         ):
             return
         if not defer_plan_projection:
-            self._refresh_signaler.request_refresh()
+            self._refresh_signaler.request()
 
     def _on_remote_plan_projection_requested(
         self,

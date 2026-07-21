@@ -755,6 +755,50 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                 text_align=0,
             )
 
+    def test_multi_page_changes_publish_one_event_per_transaction(self):
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=FakeAnnotationWriteService(),
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler._publish_takeoffs_changed_for_pages(
+            ["p1", "p2", "p1"], ["t1", "t2"], ["c1"]
+        )
+        handler._annotation_writes.publish_annotations_changed_for_pages(
+            ["p1", "p2", "p1"], ["a1", "a2"], ["rect", "text"]
+        )
+        self.assertEqual(
+            event_bus.events,
+            [
+                (
+                    AppEvents.TAKEOFFS_CHANGED,
+                    {
+                        "page_uid": "",
+                        "page_uids": ["p1", "p2"],
+                        "takeoff_uids": ["t1", "t2"],
+                        "condition_uids": ["c1"],
+                    },
+                ),
+                (
+                    AppEvents.ANNOTATIONS_CHANGED,
+                    {
+                        "page_uid": "",
+                        "page_uids": ["p1", "p2"],
+                        "annotation_uids": ["a1", "a2"],
+                        "annotation_types": ["rect", "text"],
+                    },
+                ),
+            ],
+        )
+
     def test_markup_annotation_default_line_width_is_four_pixels(self):
         for annotation_type in (
             "arrow",
@@ -1460,14 +1504,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                         "page_uid": "p1",
                         "annotation_uids": ["ann-1"],
                         "annotation_types": ["namedview"],
-                    },
-                ),
-                (
-                    AppEvents.NAMED_VIEW_CREATED,
-                    {
-                        "named_view_uid": "ann-1",
-                        "page_uid": "p1",
-                        "name": "Lobby View",
                     },
                 ),
             ],
@@ -2463,7 +2499,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ui_access_manager=None,
             color_service=None,
             project_data=data,
-            visualization_service=visualization,
             callback_bridge=SimpleNamespace(
                 dispatch=lambda callback, payload: callback(payload)
             ),
@@ -3240,10 +3275,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                         "annotation_uids": ["nv1"],
                         "annotation_types": ["namedview"],
                     },
-                ),
-                (
-                    AppEvents.NAMED_VIEW_RENAMED,
-                    {"named_view_uid": "nv1", "name": "New"},
                 ),
             ],
         )
@@ -4047,7 +4078,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(data.annotations, [])
         self.assertEqual(
             [event for event, _event_payload in event_bus.events],
-            [AppEvents.ANNOTATIONS_CHANGED, AppEvents.NAMED_VIEW_DELETED],
+            [AppEvents.ANNOTATIONS_CHANGED],
         )
         self.assertEqual(undo.count, 1)
 
@@ -4106,7 +4137,7 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(undo.count, 1)
         self.assertEqual(
             [event for event, _event_payload in event_bus.events],
-            [AppEvents.ANNOTATIONS_CHANGED, AppEvents.NAMED_VIEW_DELETED],
+            [AppEvents.ANNOTATIONS_CHANGED],
         )
 
     def test_bulk_named_view_delete_all_skipped_does_not_write_or_refresh(self):

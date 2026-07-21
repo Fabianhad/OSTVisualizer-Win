@@ -287,7 +287,7 @@ class ApplicationLifecycleTests(unittest.TestCase):
         service._mesh_worker = SimpleNamespace(join=join_mesh_worker)
         service._mesh_generation_lock = threading.Lock()
         service._mesh_generation_id = 4
-        service._mesh_generation_bid_ref = object()
+        service._mesh_generation_identity = object()
         service._mesh_generation_delivered = False
         service.close_realtime_visualization = lambda: None
         service._transaction_monitor = monitor
@@ -311,7 +311,7 @@ class ApplicationLifecycleTests(unittest.TestCase):
         self.assertIsNone(service._monitored_access_locator)
         self.assertIsNone(service._scene_notifier)
         self.assertIsNone(service._mesh_pending_task)
-        self.assertIsNone(service._mesh_generation_bid_ref)
+        self.assertIsNone(service._mesh_generation_identity)
         self.assertIsNone(service.config_model)
         self.assertIsNone(service._mesh_generator)
         self.assertIsNone(service._visualization_provider)

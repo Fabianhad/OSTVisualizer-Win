@@ -95,10 +95,10 @@ class NativePageImagePlaneProvider:
         )
 
     def _active_page_uid(self) -> str:
-        active_uid = self._ui_state.active_page_uid
-        if active_uid:
-            return str(active_uid)
         selected = self._project_data.get_selected_page_uids()
+        active_uid = self._ui_state.active_page_uid
+        if active_uid and active_uid in selected:
+            return str(active_uid)
         return str(selected[0]) if selected else ""
 
 

@@ -485,23 +485,21 @@ class FakePlanView:
 
 class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
     def _make_coordinator(self, plan_view):
-        visualization_service = FakeVisualizationService()
         coordinator = ViewerSyncCoordinator(
             ui_state_manager=FakeUiState(),
             ui_access_manager=None,
             color_service=FakeColorService(),
             project_data=FakeProjectData(),
-            visualization_service=visualization_service,
             callback_bridge=SimpleNamespace(
                 dispatch=lambda callback, payload: callback(payload)
             ),
         )
         coordinator.plan_view = plan_view
-        return coordinator, visualization_service
+        return coordinator
 
     def test_same_loaded_page_uses_overlay_refresh_without_load_page(self):
         plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
-        coordinator, _visualization_service = self._make_coordinator(plan_view)
+        coordinator = self._make_coordinator(plan_view)
         coordinator.update_plan_view("page-1")
         self.assertEqual(plan_view.overlay_calls, 1)
         self.assertEqual(plan_view.load_calls, 0)
@@ -513,7 +511,7 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
 
     def test_same_loaded_page_passes_annotation_change_metadata(self):
         plan_view = FakePlanView(current_page_uid="page-1", overlay_result=True)
-        coordinator, _visualization_service = self._make_coordinator(plan_view)
+        coordinator = self._make_coordinator(plan_view)
         coordinator.update_plan_view(
             "page-1",
             changed_annotation_uids=["ann-1"],
@@ -531,7 +529,7 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
 
     def test_different_current_page_uses_full_load_page(self):
         plan_view = FakePlanView(current_page_uid="page-2", overlay_result=True)
-        coordinator, _visualization_service = self._make_coordinator(plan_view)
+        coordinator = self._make_coordinator(plan_view)
         coordinator.update_plan_view("page-1")
         self.assertEqual(plan_view.overlay_calls, 0)
         self.assertEqual(plan_view.load_calls, 1)
@@ -543,7 +541,7 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
 
     def test_annotation_change_on_different_current_page_uses_full_load_page(self):
         plan_view = FakePlanView(current_page_uid="page-2", overlay_result=True)
-        coordinator, _visualization_service = self._make_coordinator(plan_view)
+        coordinator = self._make_coordinator(plan_view)
         coordinator.update_plan_view(
             "page-1",
             changed_annotation_uids=["ann-1"],
@@ -554,7 +552,7 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
 
     def test_same_page_render_identity_mismatch_falls_back_to_load_page(self):
         plan_view = FakePlanView(current_page_uid="page-1", overlay_result=False)
-        coordinator, _visualization_service = self._make_coordinator(plan_view)
+        coordinator = self._make_coordinator(plan_view)
         coordinator.update_plan_view("page-1")
         self.assertEqual(plan_view.overlay_calls, 1)
         self.assertEqual(plan_view.load_calls, 1)
@@ -565,6 +563,17 @@ class ViewerSyncCoordinatorOverlayRefreshTests(unittest.TestCase):
         )
         self.assertEqual(
             plan_view.load_options[0]["hidden_layer_uids"], {"annotation-layer"}
+        )
+
+    def test_missing_page_uses_one_canonical_clear_transition(self):
+        plan_view = FakePlanView(current_page_uid="page-1")
+        coordinator = self._make_coordinator(plan_view)
+        initial_generation = coordinator._remote_update_generation
+        coordinator.update_plan_view("missing-page")
+        self.assertEqual(plan_view.clear_calls, 1)
+        self.assertEqual(
+            coordinator._remote_update_generation,
+            initial_generation + 1,
         )
 
 
@@ -1057,12 +1066,13 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         class RecordingPrefetchCoordinator:
             def __init__(self):
                 self.calls = []
+                self.cancel_count = 0
 
             def prefetch_nearby_pages(self, current_page, ordered_pages, bid_ref):
                 self.calls.append((current_page, ordered_pages, bid_ref))
 
             def cancel_pending(self):
-                pass
+                self.cancel_count += 1
 
         coordinator = RecordingPrefetchCoordinator()
         view = self._make_plan_view()
@@ -1074,6 +1084,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertFalse(view._render_loading_bar.is_loading)
         self.assertTrue(view._render_loading_bar.isHidden())
         view.cleanup()
+        self.assertEqual(coordinator.cancel_count, 1)
 
     def test_zoom_visible_frame_render_starts_and_completes_loading_bar(self):
         view = self._make_plan_view()

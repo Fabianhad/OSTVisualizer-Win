@@ -230,7 +230,6 @@ class ComponentBuilder:
             on_bid_activated=lambda _bid_ref: tab_widget.setCurrentIndex(
                 TAB_INDEX_TAKEOFF
             ),
-            on_page_selection=ui_event_handler.handle_page_selection,
         )
         bids_layout.addWidget(project_view)
         tab_widget.addTab(projects_tab, "Projects")
@@ -291,7 +290,6 @@ class ComponentBuilder:
             renderers.page_cache,
             page_visualization_metadata_service,
         )
-        canvas.set_plan_texture_provider(page_plane_provider.build_for_bounds)
         ui_event_handler.set_plan_texture_provider(page_plane_provider.build_for_bounds)
         plan_view = TakeoffPlanView(
             color_service,

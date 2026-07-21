@@ -48,6 +48,15 @@ class FakePageCache:
 
 
 class NativePageImagePlaneTests(unittest.TestCase):
+    def test_unchecked_active_page_falls_back_to_first_checked_page(self):
+        provider = NativePageImagePlaneProvider(
+            SimpleNamespace(get_selected_page_uids=lambda: ["page-b"]),
+            SimpleNamespace(active_page_uid="page-a"),
+            None,
+            None,
+        )
+        self.assertEqual(provider._active_page_uid(), "page-b")
+
     def test_native_and_threejs_plane_transforms_share_floor_offset(self):
         native = native_page_plane_transform(20.0, 10.0, (-5, 5, -2, 2, 3, 8))
         threejs = threejs_page_plane_transform(

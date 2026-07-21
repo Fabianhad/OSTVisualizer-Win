@@ -251,14 +251,12 @@ class ProjectView(QtWidgets.QWidget):
         event_bus,
         on_bid_selection: Optional[Callable[[Optional[BidRef]], None]] = None,
         on_bid_activated: Optional[Callable[[BidRef], None]] = None,
-        on_page_selection: Optional[Callable[[List[str]], None]] = None,
         on_multi_selection: Optional[Callable[[List[BidRef], List[str]], None]] = None,
     ):
         super().__init__(parent)
         self.event_bus = event_bus
         self.on_bid_selection = on_bid_selection
         self.on_bid_activated = on_bid_activated
-        self.on_page_selection = on_page_selection
         self.on_multi_selection = on_multi_selection
         self.on_restore_bid: Optional[Callable[[List[BidRef]], None]] = None
         self.on_copy_bids: Optional[Callable[[List[BidRef]], None]] = None
@@ -899,8 +897,6 @@ class ProjectView(QtWidgets.QWidget):
             self._selected_node_state = None
             if self.on_bid_selection:
                 self.on_bid_selection(None)
-            if self.on_page_selection:
-                self.on_page_selection([])
             if self.on_multi_selection:
                 self.on_multi_selection(bid_refs, project_uids)
             return
@@ -1620,7 +1616,6 @@ class ProjectView(QtWidgets.QWidget):
         self._clear_tree_items()
         self.on_bid_selection = None
         self.on_bid_activated = None
-        self.on_page_selection = None
         self.on_multi_selection = None
         self.on_restore_bid = None
         self.on_copy_bids = None
