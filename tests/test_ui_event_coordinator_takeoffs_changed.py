@@ -580,6 +580,16 @@ class FakeRefreshNav:
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_empty_access_hierarchy_still_delegates_monitoring_to_database_owner(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._bid_data_cache = {}
+        coordinator.visualization_service = FakeVisualization()
+
+        coordinator._sync_monitoring_state()
+
+        self.assertEqual(coordinator.visualization_service.monitoring_started, 1)
+        self.assertEqual(coordinator.visualization_service.monitoring_stopped, 0)
+
     def test_remote_conditions_update_uses_ui_state_mutation_contract(self):
         bid_ref = BidRef("sql-database", "bid-1")
         ui_state = UIStateManager(
@@ -660,6 +670,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             )
         )
         coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._plan_view_handler = None
         coordinator._placement = FakePlacement()
         coordinator._viewer = FakeUnloadViewer()
         coordinator.visualization_service = FakeVisualization()
@@ -735,6 +746,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             selected_file_path="C:/projects/active.mdb"
         )
         coordinator._status_panel = panel
+        coordinator._plan_view_handler = None
         coordinator._on_collaboration_state_changed(
             database_id="sql-database-id",
             state=SynchronizationState.DISCONNECTED.value,
@@ -753,6 +765,10 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             selected_file_path="sql-database-id"
         )
         coordinator._status_panel = panel
+        invalidations = []
+        coordinator._plan_view_handler = SimpleNamespace(
+            invalidate_pending_takeoff_placements=lambda: invalidations.append(True)
+        )
         coordinator._on_collaboration_state_changed(
             database_id="sql-database-id",
             state=SynchronizationState.DISCONNECTED.value,
@@ -762,6 +778,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             panel.states,
             [(SynchronizationState.DISCONNECTED.value, "server unavailable")],
         )
+        self.assertEqual(invalidations, [True])
 
     def test_denied_collaboration_lease_reports_the_store_message(self):
         warnings = []
@@ -1930,6 +1947,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._plan_view_handler = None
         coordinator._status_panel = None
         coordinator.main_window.project_view.selected_node = {
             "kind": "bid",
@@ -2004,6 +2022,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeMainWindow()
         coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._plan_view_handler = None
         coordinator._status_panel = None
         coordinator.ui_state_manager = UiState()
         clear_bid_calls = []
@@ -2056,6 +2075,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         coordinator.main_window = FakeMainWindow()
         coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._plan_view_handler = None
         coordinator._status_panel = None
         coordinator.ui_state_manager = UiState()
         clear_bid_calls = []
@@ -2390,6 +2410,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.ui_state_manager = UiState()
         coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._plan_view_handler = None
         coordinator._status_panel = None
         coordinator.project_data = ProjectData()
         coordinator.ui_access_manager = FakeAccess()
@@ -2557,6 +2578,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.main_window = FakeUnloadMainWindow()
         coordinator.ui_state_manager = UiState()
         coordinator._sql_collaboration = FakeSqlCollaboration()
+        coordinator._plan_view_handler = None
         coordinator._status_panel = None
         coordinator.project_data = ProjectData()
         coordinator.project_operations = ProjectOperations(coordinator.project_data)

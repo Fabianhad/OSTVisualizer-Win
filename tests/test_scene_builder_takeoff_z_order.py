@@ -154,6 +154,24 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
         self.assertLess(uid_to_items["1"][0].zValue(), uid_to_items["2"][0].zValue())
         self.assertLess(uid_to_items["2"][0].zValue(), uid_to_items["10"][0].zValue())
 
+    def test_pending_takeoff_preview_draws_after_committed_takeoffs(self):
+        pending_uid = "pending:takeoff-placement:operation-1:0"
+        _scene, renderer, uid_to_items = self._build_scene(
+            [
+                Takeoff(uid=pending_uid, condition_uid="c1"),
+                Takeoff(uid="10", condition_uid="c1"),
+                Takeoff(uid="2", condition_uid="c1"),
+            ]
+        )
+        self.assertEqual(renderer.rendered_uid_order, ["2", "10", pending_uid])
+        self.assertGreater(
+            uid_to_items[pending_uid][0].zValue(), uid_to_items["10"][0].zValue()
+        )
+
+    def test_unrecognized_non_numeric_takeoff_uid_remains_invalid(self):
+        with self.assertRaisesRegex(ValueError, "must be numeric"):
+            self._build_scene([Takeoff(uid="invalid", condition_uid="c1")])
+
     def test_condition_labels_follow_same_takeoff_draw_order_in_label_band(self):
         _scene, _renderer, uid_to_items = self._build_scene(
             [

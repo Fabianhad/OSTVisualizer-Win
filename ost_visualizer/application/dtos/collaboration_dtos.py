@@ -50,6 +50,16 @@ class ReconciliationFailureKind(str, Enum):
     MALFORMED_PAYLOAD = "malformed_payload"
 
 
+@dataclass(frozen=True, kw_only=True)
+class ReconciliationResult:
+    applied: bool
+    failure_kind: Optional[ReconciliationFailureKind] = None
+
+    def __post_init__(self) -> None:
+        if self.applied and self.failure_kind is not None:
+            raise ValueError("A successful reconciliation cannot carry a failure kind")
+
+
 class SynchronizationConflictKind(str, Enum):
     OPTIMISTIC_CONCURRENCY = "optimistic_concurrency"
     LEASE = "lease"
@@ -181,6 +191,27 @@ class EditLeaseResult:
                 "A granted edit lease requires its handle, and a denial cannot "
                 "carry a handle."
             )
+
+
+@dataclass(frozen=True, kw_only=True)
+class QueuedMutationResult:
+    database_id: str
+    runtime_generation: int
+    operation_id: str
+    success: bool
+    created_resource_ids: tuple[str, ...] = ()
+    message: str = ""
+
+
+_QUEUED_TAKEOFF_PREVIEW_UID_PREFIX = "pending:takeoff-placement:"
+
+
+def queued_takeoff_preview_uid(operation_id: str, index: int) -> str:
+    return f"pending:{operation_id}:{index}"
+
+
+def is_queued_takeoff_preview_uid(uid: str) -> bool:
+    return uid.startswith(_QUEUED_TAKEOFF_PREVIEW_UID_PREFIX)
 
 
 @dataclass(frozen=True)

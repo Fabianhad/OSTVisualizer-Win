@@ -173,7 +173,7 @@ class DatabaseDescriptor:
         *,
         display_name: Optional[str] = None,
         database_id: Optional[str] = None,
-        schema_version: int = 0,
+        schema_version: int,
     ) -> "DatabaseDescriptor":
         identity = location.database_guid.strip().lower()
         if not identity:

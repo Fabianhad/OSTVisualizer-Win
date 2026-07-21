@@ -286,6 +286,9 @@ class ApplicationLifecycleTests(unittest.TestCase):
         service._mesh_worker = SimpleNamespace(join=join_mesh_worker)
         service.close_realtime_visualization = lambda: None
         service._transaction_monitor = monitor
+        service._database_descriptor_registry = object()
+        service._callback_bridge = object()
+        service._monitored_access_locator = "C:/projects/local.mdb"
         service._scene_notifier = notifier
         service._mesh_pending_task = ("large", "task")
         service.config_model = object()
@@ -298,6 +301,9 @@ class ApplicationLifecycleTests(unittest.TestCase):
         self.assertEqual(monitor.cleanup_calls, 1)
         self.assertEqual(notifier.cleanup_calls, 1)
         self.assertIsNone(service._transaction_monitor)
+        self.assertIsNone(service._database_descriptor_registry)
+        self.assertIsNone(service._callback_bridge)
+        self.assertIsNone(service._monitored_access_locator)
         self.assertIsNone(service._scene_notifier)
         self.assertIsNone(service._mesh_pending_task)
         self.assertIsNone(service.config_model)

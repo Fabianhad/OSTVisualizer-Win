@@ -116,6 +116,8 @@ class ServiceBuilder:
                 project_operations_service,
                 event_bus,
                 transaction_monitor,
+                self.infrastructure_provider.get_database_descriptor_registry(),
+                self.infrastructure_provider.get_thread_callback_bridge(),
                 visualization_provider,
                 self.scene_notifier,
             ),

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 from ...domain.entities.file_state import normalize_path
 from ...domain.services.takeoff_domain_service import (
     takeoffs_can_reassign_to_condition,
@@ -7,6 +7,7 @@ from ...domain.services.takeoff_domain_service import (
 from ..dtos.create_condition_spec_dto import CreateConditionSpec
 from ..dtos.collaboration_dtos import (
     ChangeOperation,
+    QueuedMutationResult,
     ResourceRef,
 )
 from ..dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
@@ -93,6 +94,9 @@ from .active_bid_write_guard import ActiveBidWriteGuard
 from .base_write_service import DatabaseMutationWriteService
 from .database_concurrency_token_service import DatabaseConcurrencyTokenService
 from .database_capability_service import DatabaseCapabilityService
+
+if TYPE_CHECKING:
+    from .sql_collaboration_coordinator import SqlCollaborationCoordinator
 
 
 @dataclass
@@ -208,6 +212,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         session_registry: IDatabaseSessionRegistry,
         concurrency_tokens: DatabaseConcurrencyTokenService,
         database_capability_service: DatabaseCapabilityService,
+        sql_collaboration_provider: Callable[[], "SqlCollaborationCoordinator"],
         connection_manager: Optional[IMdbConnectionManager] = None,
         reload_database=None,
         event_bus=None,
@@ -226,6 +231,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
             raise ValueError("ProjectWriteService requires session_registry")
         if concurrency_tokens is None:
             raise ValueError("ProjectWriteService requires concurrency_tokens")
+        if sql_collaboration_provider is None:
+            raise ValueError("ProjectWriteService requires sql_collaboration_provider")
         super().__init__(
             reload_database=reload_database,
             event_bus=event_bus,
@@ -239,6 +246,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         self._connection_manager = connection_manager
         self._project_data = project_data_service
         self._condition_type_uids_in_use_provider = condition_type_uids_in_use_provider
+        self._sql_collaboration_provider = sql_collaboration_provider
         self._delete_bids = delete_bids
         self._delete_projects = delete_projects
         self._create_project = create_project
@@ -1135,6 +1143,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
         bid_uid: str,
         takeoff_specs: List[InsertTakeoffSpec],
         publish_database_refreshed_after_write: bool = True,
+        *,
+        consistency_resources: tuple[ResourceRef, ...] = (),
     ) -> List[str]:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
             return []
@@ -1151,7 +1161,8 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 recorder.record(collection, ChangeOperation.UPDATE)
             return new_uids
 
-        mutation = self._execute_database_mutation(db_path, (collection,), insert)
+        mutation_resources = tuple(sorted({collection, *consistency_resources}))
+        mutation = self._execute_database_mutation(db_path, mutation_resources, insert)
         new_uids = mutation.value if mutation.success else []
         if (
             new_uids
@@ -1160,6 +1171,51 @@ class ProjectWriteService(DatabaseMutationWriteService):
         ):
             return []
         return new_uids
+
+    def uses_queued_takeoff_mutations(self, database_id: str) -> bool:
+        return self._sql_collaboration_provider().uses_sql_collaboration(database_id)
+
+    def queue_takeoff_insert(
+        self,
+        database_id: str,
+        bid_uid: str,
+        takeoff_specs: List[InsertTakeoffSpec],
+        operation_id: str,
+        callback: Callable[[QueuedMutationResult], None],
+    ) -> int:
+        bid_value = int(bid_uid)
+        collection = ResourceRef("takeoffs_collection", bid_uid, bid_value)
+        dependencies = tuple(
+            sorted(
+                {
+                    ResourceRef("page", str(spec.page_uid), bid_value)
+                    for spec in takeoff_specs
+                }.union(
+                    {
+                        ResourceRef("condition", str(spec.condition_uid), bid_value)
+                        for spec in takeoff_specs
+                    }
+                )
+            )
+        )
+        return self._sql_collaboration_provider().queue_mutation(
+            database_id,
+            (collection,),
+            lambda: tuple(
+                self.insert_takeoffs(
+                    database_id,
+                    bid_uid,
+                    takeoff_specs,
+                    publish_database_refreshed_after_write=False,
+                    consistency_resources=dependencies,
+                )
+            ),
+            callback,
+            dependency_resources=dependencies,
+            expected_created_count=len(takeoff_specs),
+            operation_id=operation_id,
+            owning_surface="main-plan",
+        )
 
     def delete_takeoffs(
         self,

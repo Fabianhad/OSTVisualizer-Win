@@ -59,7 +59,10 @@ from ost_visualizer.infrastructure.sql.errors import (
     SqlErrorCode,
     classify_pyodbc_error,
 )
-from ost_visualizer.infrastructure.sql.schema_definition import SQL_SCHEMA_V1
+from ost_visualizer.infrastructure.sql.schema_definition import (
+    SQL_SCHEMA_V1,
+    schema_record_is_canonical,
+)
 from ost_visualizer.infrastructure.sql.schema_inspector import (
     SqlColumnInventory,
     SqlSchemaInventory,
@@ -239,7 +242,8 @@ class DatabaseDescriptorTests(unittest.TestCase):
                 SqlServerDatabaseLocation(
                     server="server\\instance",
                     database="OSTV",
-                )
+                ),
+                schema_version=SQL_SCHEMA_V1.version,
             )
         )
         missing_access = FileEntry(file_path="missing-database.mdb")
@@ -273,16 +277,24 @@ class DatabaseDescriptorTests(unittest.TestCase):
             username="test-user",
             database_guid="00000000-0000-0000-0000-000000000123",
         )
-        descriptor = DatabaseDescriptor.for_sql_server(location)
+        descriptor = DatabaseDescriptor.for_sql_server(
+            location, schema_version=SQL_SCHEMA_V1.version
+        )
         payload = json.dumps(FileEntry.for_descriptor(descriptor).to_dict())
         self.assertNotIn(password, payload)
         self.assertNotIn("password", payload.casefold())
         self.assertNotIn(password, repr(descriptor))
         self.assertEqual(DatabaseDescriptor.from_dict(descriptor.to_dict()), descriptor)
 
+    def test_sql_descriptor_requires_an_explicit_schema_version(self):
+        location = SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+        with self.assertRaises(TypeError):
+            DatabaseDescriptor.for_sql_server(location)
+
     def test_temporary_sql_descriptor_fields_are_rejected(self):
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         payload = descriptor.to_dict()
         payload["location"]["credential_target"] = "obsolete"
@@ -291,7 +303,8 @@ class DatabaseDescriptorTests(unittest.TestCase):
 
     def test_saved_descriptors_reject_noncanonical_scalar_types(self):
         sql_payload = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         ).to_dict()
         sql_payload["location"]["server"] = None
         with self.assertRaisesRegex(ValueError, "server"):
@@ -301,7 +314,8 @@ class DatabaseDescriptorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "file_path"):
             DatabaseDescriptor.from_dict(access_payload)
         timeout_payload = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         ).to_dict()
         timeout_payload["location"]["connection_timeout_seconds"] = True
         with self.assertRaisesRegex(ValueError, "connection_timeout_seconds"):
@@ -443,6 +457,13 @@ class DatabaseDescriptorTests(unittest.TestCase):
             any("\nGO\n" in statement.upper() for statement in SQL_SCHEMA_V1.statements)
         )
 
+    def test_canonical_schema_record_rejects_legacy_coercible_values(self):
+        self.assertTrue(
+            schema_record_is_canonical(SQL_SCHEMA_V1.version, SQL_SCHEMA_V1.checksum)
+        )
+        self.assertFalse(schema_record_is_canonical("1", SQL_SCHEMA_V1.checksum))
+        self.assertFalse(schema_record_is_canonical(1.0, SQL_SCHEMA_V1.checksum))
+
     def test_schema_validator_rejects_noncanonical_ostv_tables_and_columns(self):
         inventory = SqlSchemaInventory(
             database_guid="",
@@ -532,7 +553,8 @@ class DatabaseDescriptorTests(unittest.TestCase):
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="Unversioned")
+            SqlServerDatabaseLocation(server="localhost", database="Unversioned"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         service = DatabaseCapabilityService(registry, _ReadOnlyPermissionProbe())
@@ -584,7 +606,8 @@ class DatabaseDescriptorTests(unittest.TestCase):
     def test_writer_uses_one_inherited_operation_surface(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         writer = DatabaseProjectWriter(
@@ -1237,7 +1260,9 @@ class SqlDialogTests(unittest.TestCase):
             None,
             [
                 FileEntry.for_descriptor(
-                    DatabaseDescriptor.for_sql_server(existing_location),
+                    DatabaseDescriptor.for_sql_server(
+                        existing_location, schema_version=SQL_SCHEMA_V1.version
+                    ),
                     is_checked=False,
                 )
             ],
@@ -1285,7 +1310,9 @@ class SqlDialogTests(unittest.TestCase):
             credential_store=store,
         )
         target = credential_target_for(
-            DatabaseDescriptor.for_sql_server(location).database_id
+            DatabaseDescriptor.for_sql_server(
+                location, schema_version=SQL_SCHEMA_V1.version
+            ).database_id
         )
         dialog._save_sql_result(
             SqlDatabasePropertiesResult(location, SQL_SCHEMA_V1.version, password)
@@ -1305,7 +1332,9 @@ class SqlDialogTests(unittest.TestCase):
             username="test-user",
             database_guid="00000000-0000-0000-0000-000000000223",
         )
-        descriptor = DatabaseDescriptor.for_sql_server(location)
+        descriptor = DatabaseDescriptor.for_sql_server(
+            location, schema_version=SQL_SCHEMA_V1.version
+        )
         target = credential_target_for(descriptor.database_id)
         store = _CredentialStore()
         store.write_password(target, location.username, old_password)
@@ -1336,7 +1365,9 @@ class SqlDialogTests(unittest.TestCase):
             username="test-user",
             database_guid="00000000-0000-0000-0000-000000000224",
         )
-        descriptor = DatabaseDescriptor.for_sql_server(location)
+        descriptor = DatabaseDescriptor.for_sql_server(
+            location, schema_version=SQL_SCHEMA_V1.version
+        )
         target = credential_target_for(descriptor.database_id)
         store = _CredentialStore()
         dialog = OpenFilesDialog(

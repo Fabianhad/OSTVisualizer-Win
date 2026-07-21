@@ -5964,6 +5964,36 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIn("2", view._uid_to_items)
         self.assertEqual(calls, ["sync", "scene_rect", "viewport.update"])
 
+    def test_pending_takeoff_insert_refreshes_the_active_plan(self):
+        renderer = RecordingPathTakeoffRenderer()
+        view, page, bid_ref, calls = self._make_incremental_refresh_view(renderer)
+        pending_uid = "pending:takeoff-placement:operation-1:0"
+        incoming = [
+            view._current_takeoffs["1"],
+            Takeoff(
+                uid=pending_uid,
+                condition_uid="c1",
+                page_uid=page.uid,
+                position=[3.0, 4.0],
+            ),
+        ]
+        refreshed = view.refresh_current_page_overlays(
+            page=page,
+            takeoffs=incoming,
+            conditions=view._current_conditions,
+            color_map=view._current_color_map,
+            bid_ref=bid_ref,
+            annotations=[],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+            changed_takeoff_uids=[pending_uid],
+        )
+        self.assertTrue(refreshed)
+        self.assertEqual(renderer.calls, [[pending_uid]])
+        self.assertIn(pending_uid, view._current_takeoffs)
+        self.assertIn(pending_uid, view._uid_to_items)
+        self.assertEqual(calls, ["sync", "scene_rect", "viewport.update"])
+
     def test_takeoff_insert_reorders_existing_overlay_z_values(self):
         renderer = RecordingPathTakeoffRenderer()
         view, page, bid_ref, _calls = self._make_incremental_refresh_view(renderer)

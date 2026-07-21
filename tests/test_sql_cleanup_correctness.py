@@ -45,6 +45,7 @@ from ost_visualizer.infrastructure.sql.permissions import SqlDatabasePermissionP
 from ost_visualizer.infrastructure.sql.client_permissions import (
     SQL_CLIENT_COLLABORATION_WRITE_TABLES,
     SQL_CLIENT_DATABASE_ROLES,
+    _sql_integer_values_match,
     apply_sql_client_permissions,
 )
 from ost_visualizer.infrastructure.sql.schema_inspector import (
@@ -420,7 +421,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         current = (
@@ -537,6 +539,11 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         )
         self.assertNotIn("ostv_client_editor", permission_sql)
 
+    def test_permission_contract_rejects_legacy_coercible_values(self):
+        self.assertTrue(_sql_integer_values_match((1, 1), (1, 1)))
+        self.assertFalse(_sql_integer_values_match(("1", 1), (1, 1)))
+        self.assertFalse(_sql_integer_values_match((True, 1), (1, 1)))
+
     def test_sql_edit_probe_treats_connection_failure_as_read_only(self):
         class _UnavailableConnection:
             def __enter__(self):
@@ -557,7 +564,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         probe = SqlDatabasePermissionProbe(
@@ -614,7 +622,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_database_reader_router_preserves_sql_schema_and_error_contract(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         reader = DatabaseProjectReader(object(), registry, _CredentialStore())
@@ -700,7 +709,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         reader = DatabaseProjectReader(object(), registry, _CredentialStore())
@@ -733,7 +743,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_writer_router_uses_the_common_uid_allocator_contract(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         writer = DatabaseProjectWriter(
@@ -751,7 +762,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_writer_router_error_policy_uses_backend_not_sql_context_presence(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         writer = DatabaseProjectWriter(
@@ -934,7 +946,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         connections = _Connections()
@@ -996,7 +1009,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         connections = _Connections()
@@ -1060,7 +1074,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         connections = _Connections()
@@ -1179,7 +1194,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_reader_rejects_invalid_schema_before_domain_queries(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         reader = SqlProjectReader(registry, _CredentialStore(), _InspectionManager())
@@ -1197,6 +1213,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
             display_name="SQL Test Database",
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         reader = SqlProjectReader(registry, _CredentialStore(), _InspectionManager())
@@ -1260,7 +1277,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_write_failure_rolls_back_and_closes_all_cursors(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1293,7 +1311,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_write_without_record_fails_and_rolls_back(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1319,7 +1338,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_mutation_preserves_error_swallowed_by_shared_mdb_operation(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1355,7 +1375,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     ):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1383,7 +1404,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_create_project_preserves_original_error_and_rolls_back(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1419,7 +1441,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_create_project_rejects_direct_write_outside_mutation_executor(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         writer = SqlProjectWriter(
@@ -1435,7 +1458,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_inherited_sql_mutation_never_uses_access_error_fallback_directly(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         writer = SqlProjectWriter(
@@ -1468,7 +1492,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_router_scopes_preconnection_validation_as_sql(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1497,7 +1522,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_shared_master_data_conversion_error_escapes_and_rolls_back(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1539,7 +1565,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     ):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1605,7 +1632,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_takeoff_write_does_not_retry_access_driver_resource_error(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1662,7 +1690,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1757,7 +1786,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
                 descriptor = DatabaseDescriptor.for_sql_server(
                     SqlServerDatabaseLocation(
                         server="localhost", database=f"OSTV_TEST_{family.upper()}"
-                    )
+                    ),
+                    schema_version=SQL_SCHEMA_V1.version,
                 )
                 registry.register(descriptor)
                 manager = _WriterManager()
@@ -1787,7 +1817,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_mutation_commits_exactly_one_transaction_marker(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1832,7 +1863,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_bulk_feed_coalescing_preserves_every_entity_version(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -1874,7 +1906,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_import_failure_preserves_original_error_and_rolls_back(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         manager = _WriterManager()
@@ -2145,7 +2178,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
     def test_sql_import_table_metadata_comes_from_canonical_schema(self):
         registry = DatabaseDescriptorRegistry()
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         registry.register(descriptor)
         writer = DatabaseProjectWriter(
@@ -2405,7 +2439,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
     def test_offline_removed_sql_does_not_require_repository_unload(self):
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         entry = FileEntry.for_descriptor(descriptor)
         updates = []
@@ -2485,7 +2520,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
     def test_removed_sql_descriptor_waits_for_collaboration_drain(self):
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         entry = FileEntry.for_descriptor(descriptor)
         registry = DatabaseDescriptorRegistry()
@@ -2563,7 +2599,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
     def test_completed_old_drain_does_not_remove_readded_sql_descriptor(self):
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         entry = FileEntry.for_descriptor(descriptor)
         registry = DatabaseDescriptorRegistry()
@@ -2641,7 +2678,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
     def test_offline_sql_drain_still_removes_descriptor_and_credential(self):
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         entry = FileEntry.for_descriptor(descriptor)
         registry = DatabaseDescriptorRegistry()
@@ -2681,7 +2719,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
 
     def test_retained_sql_descriptor_reconnects_through_coordinator(self):
         descriptor = DatabaseDescriptor.for_sql_server(
-            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST")
+            SqlServerDatabaseLocation(server="localhost", database="OSTV_TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
         )
         entry = FileEntry.for_descriptor(descriptor)
 

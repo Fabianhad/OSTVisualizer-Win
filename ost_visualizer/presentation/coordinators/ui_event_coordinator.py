@@ -1692,6 +1692,8 @@ class UIEventCoordinator:
 
     def cleanup(self) -> None:
         self._is_cleaning_up = True
+        if self._plan_view_handler is not None:
+            self._plan_view_handler.invalidate_pending_takeoff_placements()
         if self._view_stack:
             try:
                 self._view_stack.currentChanged.disconnect(self._on_view_stack_changed)
@@ -1988,6 +1990,16 @@ class UIEventCoordinator:
         message: str = "",
     ) -> None:
         selected = self.ui_state_manager.selected_file_path or ""
+        if (
+            database_id == selected
+            and state
+            not in {
+                SynchronizationState.HEALTHY.value,
+                SynchronizationState.CATCHING_UP.value,
+            }
+            and self._plan_view_handler is not None
+        ):
+            self._plan_view_handler.invalidate_pending_takeoff_placements()
         if self._status_panel and database_id == selected:
             self._status_panel.set_collaboration_state(state, message)
 
@@ -2526,6 +2538,8 @@ class UIEventCoordinator:
         ):
             self._sql_collaboration.update_presence(prev_bid_ref.file_path, None, None)
         if not bid_ref:
+            if self._plan_view_handler is not None:
+                self._plan_view_handler.invalidate_pending_takeoff_placements()
             self._placement.force_exit()
             self.ui_state_manager.set_bid_selection(None)
             self.ui_state_manager.set_database_selected(False)
@@ -2563,6 +2577,8 @@ class UIEventCoordinator:
             if load_error:
                 show_warning(self.main_window, "Open SQL Bid", load_error)
             return
+        if self._plan_view_handler is not None:
+            self._plan_view_handler.invalidate_pending_takeoff_placements()
         self._placement.force_exit()
         self.ensure_select_mode()
         self.ui_state_manager.set_bid_selection(bid_ref)
@@ -2730,10 +2746,7 @@ class UIEventCoordinator:
         self._undo_service.set_active_bid(bid_ref)
 
     def _sync_monitoring_state(self) -> None:
-        if self._bid_data_cache:
-            self.visualization_service.start_database_monitoring()
-        else:
-            self.visualization_service.stop_database_monitoring()
+        self.visualization_service.start_database_monitoring()
 
     def _save_current_page_view_state(
         self, selected_page_override: Optional[str] = None

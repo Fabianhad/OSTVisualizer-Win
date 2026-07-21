@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import uuid
 from typing import Optional
 import pyodbc
 from ...application.dtos.collaboration_dtos import (

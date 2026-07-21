@@ -261,7 +261,6 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             window.handlers = SimpleNamespace(
                 ui_event=SimpleNamespace(sync_after_startup_load=lambda: None)
             )
-            window._sync_database_monitoring = lambda: None
             window._workspace_state_coordinator = SimpleNamespace(
                 restore_deferred_state=lambda: None
             )

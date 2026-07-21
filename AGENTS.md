@@ -126,8 +126,11 @@ Database backends:
   order only. Each poll validates the feed epoch and minimum valid version,
   captures its high-water version, enumerates markers, and hydrates their complete
   payloads in one SQL `SNAPSHOT` transaction. Checkpoints advance only after a
-  successful main-thread reconciliation. Access mutation execution preserves the
-  existing MDB behavior and creates no collaboration session.
+  successful main-thread reconciliation. Latency-sensitive SQL takeoff placement
+  uses the coordinator's bounded mutation queue; only provisional presentation
+  state exists before the worker commits and returns authoritative identities
+  through the Qt callback bridge. Access mutation execution preserves the existing
+  MDB behavior and creates no collaboration session.
 - Remote application merges are targeted by entity family. Do not publish
   EventBus events from polling workers, add remote commands to local undo
   history, reset a same-bid 3D camera, or acknowledge a batch until main-thread

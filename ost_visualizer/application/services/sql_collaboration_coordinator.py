@@ -24,7 +24,9 @@ from ..dtos.collaboration_dtos import (
     EditLeaseRequest,
     EditLeaseResult,
     PresenceMode,
+    QueuedMutationResult,
     ReconciliationFailureKind,
+    ReconciliationResult,
     ResourceLock,
     ResourceRef,
     SynchronizationState,
@@ -44,6 +46,7 @@ from .remote_change_reconciliation_service import RemoteChangeReconciliationServ
 logger = logging.getLogger(__name__)
 _LOCAL_DETACH_REASONS = frozenset({"closed", "unchecked", "connection-removed"})
 _DATABASE_DRAIN_GRACE_SECONDS = 5.0
+_MAX_QUEUED_MUTATIONS = 64
 
 
 @dataclass
@@ -66,6 +69,9 @@ class _DatabaseRuntime:
     draft_ids: dict[frozenset[ResourceRef], str] = field(default_factory=dict)
     edit_requests: queue.Queue = field(default_factory=queue.Queue)
     release_requests: queue.Queue = field(default_factory=queue.Queue)
+    mutation_requests: queue.Queue = field(
+        default_factory=lambda: queue.Queue(maxsize=_MAX_QUEUED_MUTATIONS)
+    )
     pending_delivery: bool = False
     recovery_requested: bool = False
     recovery_ready: bool = False
@@ -84,6 +90,19 @@ class _DatabaseRuntime:
     retention_gap_count: int = 0
     reconnect_count: int = 0
     cleanup_errors: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _QueuedMutation:
+    database_id: str
+    runtime_generation: int
+    operation_id: str
+    owning_surface: str
+    resources: tuple[ResourceRef, ...]
+    dependency_resources: tuple[ResourceRef, ...]
+    expected_created_count: int
+    operation: Callable[[], tuple[str, ...]]
+    callback: Callable[[QueuedMutationResult], None]
 
 
 class SqlCollaborationCoordinator:
@@ -432,6 +451,113 @@ class SqlCollaborationCoordinator:
             message or "A pending remote transaction overlaps an active local draft.",
         )
 
+    def uses_sql_collaboration(self, database_id: str) -> bool:
+        descriptor = self._registry.resolve(database_id)
+        return (
+            descriptor is not None and descriptor.backend == DatabaseBackend.SQL_SERVER
+        )
+
+    def queue_mutation(
+        self,
+        database_id: str,
+        resources: tuple[ResourceRef, ...],
+        operation: Callable[[], tuple[str, ...]],
+        callback: Callable[[QueuedMutationResult], None],
+        *,
+        dependency_resources: tuple[ResourceRef, ...] = (),
+        expected_created_count: int,
+        operation_id: str,
+        owning_surface: str,
+    ) -> int:
+        normalized_resources = tuple(sorted(set(resources)))
+        normalized_dependencies = tuple(sorted(set(dependency_resources)))
+        runtime = self._runtime(database_id)
+        if not normalized_resources:
+            self._dispatch_mutation_result(
+                callback,
+                QueuedMutationResult(
+                    database_id=database_id,
+                    runtime_generation=(
+                        runtime.generation if runtime is not None else 0
+                    ),
+                    operation_id=operation_id,
+                    success=False,
+                    message="A queued mutation requires at least one resource.",
+                ),
+            )
+            return runtime.generation if runtime is not None else 0
+        if expected_created_count <= 0:
+            self._dispatch_mutation_result(
+                callback,
+                QueuedMutationResult(
+                    database_id=database_id,
+                    runtime_generation=(
+                        runtime.generation if runtime is not None else 0
+                    ),
+                    operation_id=operation_id,
+                    success=False,
+                    message="A queued insert requires an expected result count.",
+                ),
+            )
+            return runtime.generation if runtime is not None else 0
+        if runtime is None or not self._capabilities.is_editable(database_id):
+            self._dispatch_mutation_result(
+                callback,
+                QueuedMutationResult(
+                    database_id=database_id,
+                    runtime_generation=(
+                        runtime.generation if runtime is not None else 0
+                    ),
+                    operation_id=operation_id,
+                    success=False,
+                    message="SQL collaboration is not ready for editing.",
+                ),
+            )
+            return runtime.generation if runtime is not None else 0
+        request = _QueuedMutation(
+            database_id=database_id,
+            runtime_generation=runtime.generation,
+            operation_id=operation_id,
+            owning_surface=owning_surface,
+            resources=normalized_resources,
+            dependency_resources=normalized_dependencies,
+            expected_created_count=expected_created_count,
+            operation=operation,
+            callback=callback,
+        )
+        with self._lock:
+            current = self._runtimes.get(database_id)
+            queued = current is runtime and not self._shutting_down
+            if queued:
+                with runtime.lock:
+                    queued = (
+                        runtime.session is not None
+                        and runtime.healthy
+                        and not runtime.pending_delivery
+                        and not runtime.recovery_requested
+                        and not runtime.stop_event.is_set()
+                    )
+            if queued:
+                try:
+                    runtime.mutation_requests.put_nowait(request)
+                except queue.Full:
+                    queued = False
+                else:
+                    runtime.command_event.set()
+        if queued:
+            return runtime.generation
+        self._dispatch_mutation_result(
+            callback,
+            QueuedMutationResult(
+                database_id=database_id,
+                runtime_generation=runtime.generation,
+                operation_id=operation_id,
+                success=False,
+                message="SQL collaboration stopped before the mutation was queued.",
+            ),
+        )
+        return runtime.generation
+
     def request_local_edit(
         self,
         database_id: str,
@@ -668,7 +794,7 @@ class SqlCollaborationCoordinator:
         try:
             self._run_worker(runtime)
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "SQL collaboration worker stopped after an unexpected %s.",
                 type(exc).__name__,
             )
@@ -757,6 +883,7 @@ class SqlCollaborationCoordinator:
                         break
                     next_heartbeat = time.monotonic()
                     reconnect_attempt = 0
+                self._process_mutation_requests(runtime)
                 self._process_edit_requests(runtime)
                 self._process_release_requests(runtime)
                 now = time.monotonic()
@@ -850,6 +977,237 @@ class SqlCollaborationCoordinator:
                     self._on_reconciliation_required,
                     (runtime.database_id, runtime.generation, str(exc)),
                 )
+
+    def _process_mutation_requests(self, runtime: _DatabaseRuntime) -> None:
+        if runtime.stop_event.is_set():
+            return
+        try:
+            request = runtime.mutation_requests.get_nowait()
+        except queue.Empty:
+            return
+        try:
+            with runtime.lock:
+                session = runtime.session
+            if (
+                session is None
+                or request.runtime_generation != runtime.generation
+                or not runtime.healthy
+                or runtime.pending_delivery
+                or not self._capabilities.is_editable(request.database_id)
+            ):
+                self._dispatch_mutation_result(
+                    request.callback,
+                    QueuedMutationResult(
+                        database_id=request.database_id,
+                        runtime_generation=request.runtime_generation,
+                        operation_id=request.operation_id,
+                        success=False,
+                        message="SQL collaboration is not ready for editing.",
+                    ),
+                )
+                return
+            first_resource = request.resources[0]
+            try:
+                draft = self._local_drafts.begin(
+                    draft_type=(
+                        resource_definition(first_resource.resource_type).family.value
+                        + "_mutation"
+                    ),
+                    database_id=request.database_id,
+                    bid_uid=next(
+                        (
+                            resource.bid_uid
+                            for resource in request.resources
+                            if resource.bid_uid is not None
+                        ),
+                        None,
+                    ),
+                    page_uid=None,
+                    owning_surface=request.owning_surface,
+                    affected_resources=request.resources,
+                    dependency_resources=request.dependency_resources,
+                    operation_id=request.operation_id,
+                )
+            except ValueError as exc:
+                self._dispatch_mutation_result(
+                    request.callback,
+                    QueuedMutationResult(
+                        database_id=request.database_id,
+                        runtime_generation=request.runtime_generation,
+                        operation_id=request.operation_id,
+                        success=False,
+                        message=str(exc),
+                    ),
+                )
+                return
+            acquired: list[ResourceLock] = []
+            result = QueuedMutationResult(
+                database_id=request.database_id,
+                runtime_generation=request.runtime_generation,
+                operation_id=request.operation_id,
+                success=False,
+            )
+            failure: DatabaseCatalogError | OSError | None = None
+            try:
+                all_resources = request.resources + request.dependency_resources
+                self._concurrency_tokens.ensure_resources_loaded(
+                    request.database_id, all_resources
+                )
+                self._local_drafts.set_base_tokens(
+                    draft.draft_id,
+                    self._concurrency_tokens.tokens_for_resources(
+                        request.database_id, all_resources
+                    ),
+                )
+                for resource in request.resources:
+                    acquired.append(
+                        self._store.acquire_lock(
+                            request.database_id,
+                            session.session_id,
+                            resource,
+                            request.operation_id,
+                        )
+                    )
+                self._local_drafts.activate(
+                    draft.draft_id,
+                    tuple(acquired),
+                    runtime_generation=runtime.generation,
+                )
+                for lock in acquired:
+                    self._sessions.register_lock(
+                        request.database_id, lock.resource, lock.lock_token
+                    )
+                created_resource_ids = tuple(request.operation())
+                if len(created_resource_ids) != request.expected_created_count:
+                    failure = DatabaseCatalogError(
+                        "The SQL mutation returned an incomplete authoritative "
+                        "identity set.",
+                        read_only_required=True,
+                    )
+                    result = QueuedMutationResult(
+                        database_id=request.database_id,
+                        runtime_generation=request.runtime_generation,
+                        operation_id=request.operation_id,
+                        success=False,
+                        message=str(failure),
+                    )
+                else:
+                    result = QueuedMutationResult(
+                        database_id=request.database_id,
+                        runtime_generation=request.runtime_generation,
+                        operation_id=request.operation_id,
+                        success=True,
+                        created_resource_ids=created_resource_ids,
+                    )
+            except (DatabaseCatalogError, OSError) as exc:
+                failure = exc
+                result = QueuedMutationResult(
+                    database_id=request.database_id,
+                    runtime_generation=request.runtime_generation,
+                    operation_id=request.operation_id,
+                    success=False,
+                    message=str(exc),
+                )
+            except (RuntimeError, ValueError) as exc:
+                result = QueuedMutationResult(
+                    database_id=request.database_id,
+                    runtime_generation=request.runtime_generation,
+                    operation_id=request.operation_id,
+                    success=False,
+                    message=str(exc),
+                )
+            finally:
+                cleanup_failure = self._release_queued_mutation_resources(
+                    runtime, session, draft.draft_id, tuple(acquired)
+                )
+                if cleanup_failure is not None:
+                    failure = cleanup_failure
+                    if not result.success:
+                        result = QueuedMutationResult(
+                            database_id=request.database_id,
+                            runtime_generation=request.runtime_generation,
+                            operation_id=request.operation_id,
+                            success=False,
+                            message=str(cleanup_failure),
+                        )
+                self._dispatch_mutation_result(request.callback, result)
+            if failure is not None:
+                raise failure
+        finally:
+            if not runtime.mutation_requests.empty():
+                runtime.command_event.set()
+
+    def _release_queued_mutation_resources(
+        self,
+        runtime: _DatabaseRuntime,
+        session: DatabaseSession,
+        draft_id: str,
+        locks: tuple[ResourceLock, ...],
+    ) -> DatabaseCatalogError | OSError | ValueError | None:
+        cleanup_failure: DatabaseCatalogError | OSError | ValueError | None = None
+        for lock in locks:
+            self._sessions.remove_lock(runtime.database_id, lock.resource)
+            try:
+                self._store.release_lock(
+                    runtime.database_id, session.session_id, lock.lock_token
+                )
+            except (DatabaseCatalogError, OSError, ValueError) as exc:
+                if cleanup_failure is None:
+                    cleanup_failure = exc
+        self._local_drafts.finish(draft_id)
+        return cleanup_failure
+
+    def _reject_pending_mutations(
+        self, runtime: _DatabaseRuntime, message: str
+    ) -> None:
+        while True:
+            try:
+                request = runtime.mutation_requests.get_nowait()
+            except queue.Empty:
+                return
+            self._dispatch_mutation_result(
+                request.callback,
+                QueuedMutationResult(
+                    database_id=request.database_id,
+                    runtime_generation=request.runtime_generation,
+                    operation_id=request.operation_id,
+                    success=False,
+                    message=message,
+                ),
+            )
+
+    def _dispatch_mutation_result(
+        self,
+        callback: Callable[[QueuedMutationResult], None],
+        result: QueuedMutationResult,
+    ) -> None:
+        self._dispatcher.dispatch(self._complete_mutation_request, (callback, result))
+
+    def _complete_mutation_request(self, payload) -> None:
+        callback, result = payload
+        runtime = self._runtime(result.database_id, result.runtime_generation)
+        trusted = False
+        if runtime is not None:
+            with runtime.lock:
+                trusted = (
+                    runtime.healthy
+                    and not runtime.pending_delivery
+                    and not runtime.recovery_requested
+                    and not runtime.stop_event.is_set()
+                )
+            trusted = trusted and self._capabilities.is_editable(result.database_id)
+        if result.success and not trusted:
+            result = QueuedMutationResult(
+                database_id=result.database_id,
+                runtime_generation=result.runtime_generation,
+                operation_id=result.operation_id,
+                success=False,
+                message="The SQL runtime changed before the mutation completed.",
+            )
+        try:
+            callback(result)
+        except Exception:
+            logger.exception("SQL queued-mutation completion callback failed")
 
     def _process_edit_requests(self, runtime: _DatabaseRuntime) -> None:
         while not runtime.stop_event.is_set():
@@ -1286,14 +1644,15 @@ class SqlCollaborationCoordinator:
         runtime = self._runtime(database_id, generation)
         if runtime is None:
             return
-        if not self._apply_reconciliation(hydrated):
+        attempt = self._apply_reconciliation(hydrated)
+        if not attempt.applied:
             self._on_reconciliation_required(
                 (
                     database_id,
                     generation,
                     (
                         "The SQL session-start reconciliation payload was malformed."
-                        if self._reconciliation.last_failure_kind
+                        if attempt.failure_kind
                         == ReconciliationFailureKind.MALFORMED_PAYLOAD
                         else "The SQL database could not be reconciled at session start."
                     ),
@@ -1333,11 +1692,12 @@ class SqlCollaborationCoordinator:
                 generation,
                 hydrated.batch.delivered_through_version,
                 started,
+                attempt.failure_kind,
                 projection_success,
             ),
         )
-        applied = self._apply_reconciliation(hydrated, projection_barrier=barrier)
-        if not applied:
+        attempt = self._apply_reconciliation(hydrated, projection_barrier=barrier)
+        if not attempt.applied:
             barrier.fail()
         barrier.seal()
 
@@ -1350,6 +1710,7 @@ class SqlCollaborationCoordinator:
         generation: int,
         delivered_through_version: int,
         started: float,
+        failure_kind: ReconciliationFailureKind | None,
         applied: bool,
     ) -> None:
         runtime = self._runtime(database_id, generation)
@@ -1376,8 +1737,7 @@ class SqlCollaborationCoordinator:
                     (
                         "A malformed SQL reconciliation payload requires a "
                         "controlled database refresh."
-                        if self._reconciliation.last_failure_kind
-                        == ReconciliationFailureKind.MALFORMED_PAYLOAD
+                        if failure_kind == ReconciliationFailureKind.MALFORMED_PAYLOAD
                         else "A remote SQL catch-up change requires a controlled "
                         "database refresh."
                     ),
@@ -1388,12 +1748,12 @@ class SqlCollaborationCoordinator:
         self,
         hydrated,
         projection_barrier: RemoteProjectionBarrier | None = None,
-    ) -> bool:
+    ) -> ReconciliationResult:
         try:
             return self._reconciliation.apply(hydrated, projection_barrier)
         except Exception:
             logger.exception("SQL main-thread reconciliation failed")
-            return False
+            return ReconciliationResult(applied=False)
 
     def _on_reconciliation_required(self, payload) -> None:
         database_id, generation, reason = payload
@@ -1436,6 +1796,15 @@ class SqlCollaborationCoordinator:
         *,
         close_reason: str = "trust-lost",
     ) -> None:
+        try:
+            self._reject_pending_mutations(
+                runtime,
+                "SQL collaboration stopped before the queued mutation was executed.",
+            )
+        except Exception:
+            runtime.cleanup_errors.append(
+                "The SQL collaboration worker could not reject queued mutations."
+            )
         try:
             self._reject_pending_edits(
                 runtime,

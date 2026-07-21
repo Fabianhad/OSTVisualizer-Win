@@ -1,9 +1,16 @@
 import logging
+import uuid
+import weakref
 from dataclasses import dataclass, replace
 from typing import Dict, List, Optional
 from PySide6 import QtWidgets
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+from ...application.dtos.collaboration_dtos import (
+    QueuedMutationResult,
+    is_queued_takeoff_preview_uid,
+    queued_takeoff_preview_uid,
+)
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
 from ...application.events.app_events import AppEvents
 from ...domain.entities.annotation import (
@@ -90,6 +97,15 @@ class _DeferredWriteResult:
     refresh_failed: bool = False
 
 
+@dataclass(frozen=True)
+class _PendingTakeoffPlacement:
+    database_id: str
+    bid_uid: str
+    pending_uids: tuple[str, ...]
+    specs: tuple[InsertTakeoffSpec, ...]
+    runtime_generation: Optional[int]
+
+
 class PlanViewActionHandler:
     def __init__(
         self,
@@ -118,6 +134,7 @@ class PlanViewActionHandler:
         self._annotation_writes = AnnotationWriteCoordinator(
             annotation_write_svc, project_data_svc, event_bus
         )
+        self._pending_takeoff_placements: dict[str, _PendingTakeoffPlacement] = {}
 
     def _is_allowed(self, feature: Feature) -> bool:
         return self._ui_access_manager.is_allowed(feature)
@@ -211,6 +228,8 @@ class PlanViewActionHandler:
         return self._plan_view.get_takeoff(uid) if self._plan_view else None
 
     def _command_takeoff(self, uid: str):
+        if is_queued_takeoff_preview_uid(str(uid)):
+            return None
         takeoff = self._current_plan_takeoff(uid)
         return takeoff or self._data_svc.get_takeoff(uid)
 
@@ -714,6 +733,12 @@ class PlanViewActionHandler:
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path or (not takeoff_changes and not ann_changes):
             return
+        if any(
+            is_queued_takeoff_preview_uid(str(uid))
+            for uid, _old, _new in takeoff_changes
+        ):
+            self._plan_view.restore_flushed_positions(takeoff_changes, ann_changes)
+            return
         t_old = [(uid, list(old)) for uid, old, _ in takeoff_changes if old]
         t_new = [(uid, list(new)) for uid, _, new in takeoff_changes]
         a_old = [(uid, t, list(old)) for uid, t, old, _ in ann_changes if old]
@@ -892,6 +917,12 @@ class PlanViewActionHandler:
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path or not rotation_changes:
             return
+        if any(
+            is_queued_takeoff_preview_uid(str(uid))
+            for uid, _old, _new in rotation_changes
+        ):
+            self._plan_view.restore_flushed_rotations(rotation_changes)
+            return
         new_rotations = [(uid, new_rot) for uid, _old, new_rot in rotation_changes]
         if not self._save_takeoff_rotations_fast(db_path, new_rotations):
             self._plan_view.restore_flushed_rotations(rotation_changes)
@@ -918,6 +949,16 @@ class PlanViewActionHandler:
             return
         db_path = self._data_svc.get_current_bid_file_path()
         if not db_path:
+            return
+        if any(
+            is_queued_takeoff_preview_uid(str(uid))
+            for uid, _old, _new in takeoff_changes
+        ) or any(
+            is_queued_takeoff_preview_uid(str(uid))
+            for uid, _old, _new in rotation_changes
+        ):
+            self._plan_view.restore_flushed_positions(takeoff_changes, ann_changes)
+            self._plan_view.restore_flushed_rotations(rotation_changes)
             return
         t_new = [(uid, list(new)) for uid, _, new in takeoff_changes]
         r_new = [(uid, new) for uid, _, new in rotation_changes]
@@ -1061,7 +1102,145 @@ class PlanViewActionHandler:
                     curve=curve,
                 )
             ]
+        if self._write_svc.uses_queued_takeoff_mutations(bid_ref.file_path) is True:
+            self._queue_takeoff_placement(bid_ref, specs)
+            return
         self._insert_takeoffs_with_undo(bid_ref, specs, fast_refresh=True)
+
+    def _queue_takeoff_placement(self, bid_ref, specs: List[InsertTakeoffSpec]) -> None:
+        operation_id = f"takeoff-placement:{uuid.uuid4()}"
+        pending_uids = tuple(
+            queued_takeoff_preview_uid(operation_id, index)
+            for index in range(len(specs))
+        )
+        pending = _PendingTakeoffPlacement(
+            database_id=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            pending_uids=pending_uids,
+            specs=tuple(specs),
+            runtime_generation=None,
+        )
+        self._pending_takeoff_placements[operation_id] = pending
+        self._add_inserted_takeoffs_to_model(list(pending_uids), specs)
+        handler_reference = weakref.ref(self)
+
+        def complete(result: QueuedMutationResult) -> None:
+            handler = handler_reference()
+            if handler is not None:
+                handler._complete_queued_takeoff_placement(result)
+
+        try:
+            self._publish_takeoffs_changed_for_pages(
+                self._takeoff_spec_page_uids(specs),
+                list(pending_uids),
+                [str(spec.condition_uid) for spec in specs],
+            )
+            runtime_generation = self._write_svc.queue_takeoff_insert(
+                bid_ref.file_path,
+                bid_ref.bid_uid,
+                specs,
+                operation_id,
+                complete,
+            )
+        except Exception:
+            self._pending_takeoff_placements.pop(operation_id, None)
+            self._data_svc.remove_takeoffs(pending_uids)
+            raise
+        if operation_id in self._pending_takeoff_placements:
+            self._pending_takeoff_placements[operation_id] = _PendingTakeoffPlacement(
+                database_id=pending.database_id,
+                bid_uid=pending.bid_uid,
+                pending_uids=pending.pending_uids,
+                specs=pending.specs,
+                runtime_generation=runtime_generation,
+            )
+
+    def _complete_queued_takeoff_placement(self, result: QueuedMutationResult) -> None:
+        pending = self._pending_takeoff_placements.pop(result.operation_id, None)
+        if pending is None:
+            return
+        self._data_svc.remove_takeoffs(pending.pending_uids)
+        bid_ref = self._ui_state.get_selected_bid_ref()
+        if (
+            bid_ref is None
+            or bid_ref.file_path != pending.database_id
+            or bid_ref.bid_uid != pending.bid_uid
+        ):
+            return
+        page_uids = self._takeoff_spec_page_uids(list(pending.specs))
+        condition_uids = [str(spec.condition_uid) for spec in pending.specs]
+        completion_matches = (
+            result.database_id == pending.database_id
+            and result.runtime_generation == pending.runtime_generation
+        )
+        if not result.success or not completion_matches:
+            self._publish_takeoffs_changed_for_pages(
+                page_uids,
+                list(pending.pending_uids),
+                condition_uids,
+            )
+            logger.warning(
+                "SQL takeoff placement failed: %s",
+                result.message or "The database rejected the placement.",
+            )
+            return
+        new_uids = list(result.created_resource_ids)
+        if len(new_uids) != len(pending.specs):
+            self._publish_takeoffs_changed_for_pages(
+                page_uids,
+                list(pending.pending_uids),
+                condition_uids,
+            )
+            logger.error(
+                "SQL takeoff placement returned %d identities for %d takeoffs.",
+                len(new_uids),
+                len(pending.specs),
+            )
+            return
+        specs = list(pending.specs)
+        self._add_inserted_takeoffs_to_model(new_uids, specs)
+        self._publish_takeoffs_changed_for_pages(
+            page_uids,
+            new_uids,
+            condition_uids,
+        )
+        self._plan_view.set_selected_uids(set(new_uids))
+
+    def invalidate_pending_takeoff_placements(self) -> None:
+        current_bid = self._ui_state.get_selected_bid_ref()
+        pending = tuple(self._pending_takeoff_placements.values())
+        self._pending_takeoff_placements.clear()
+        if current_bid is None:
+            return
+        current_pending = tuple(
+            placement
+            for placement in pending
+            if placement.database_id == current_bid.file_path
+            and placement.bid_uid == current_bid.bid_uid
+        )
+        removed_uids = [
+            uid for placement in current_pending for uid in placement.pending_uids
+        ]
+        if not removed_uids:
+            return
+        self._data_svc.remove_takeoffs(removed_uids)
+        page_uids = self._takeoff_spec_page_uids(
+            [spec for placement in current_pending for spec in placement.specs]
+        )
+        condition_uids = list(
+            dict.fromkeys(
+                str(spec.condition_uid)
+                for placement in current_pending
+                for spec in placement.specs
+            )
+        )
+        self._publish_takeoffs_changed_for_pages(
+            page_uids, removed_uids, condition_uids
+        )
+
+    @staticmethod
+    def _takeoff_spec_page_uids(specs: List[InsertTakeoffSpec]) -> List[str]:
+        return list(dict.fromkeys(str(spec.page_uid) for spec in specs))
 
     def on_annotation_created(
         self, annotation_type: str, position: list, page_uid: str
@@ -1331,33 +1510,12 @@ class PlanViewActionHandler:
             return False
         if use_fast_refresh:
             self._add_inserted_takeoffs_to_model(new_uids, specs)
-            page_uids = []
-            for spec in specs:
-                if spec.page_uid not in page_uids:
-                    page_uids.append(spec.page_uid)
-            self._publish_takeoffs_changed_for_pages(page_uids, new_uids)
+            self._publish_takeoffs_changed_for_pages(
+                self._takeoff_spec_page_uids(specs), new_uids
+            )
         self._plan_view.set_selected_uids(set(new_uids))
         if use_fast_refresh:
-            current_uids = list(new_uids)
-            current_specs = specs[: len(new_uids)]
-            current_specs_scales = self._capture_takeoff_spec_scales(current_specs)
-
-            def _undo_insert():
-                if self._delete_takeoffs_fast(bid_ref.file_path, list(current_uids)):
-                    self._plan_view.clear_selection()
-
-            def _redo_insert():
-                redone_specs = self._takeoff_specs_for_current_scales(
-                    current_specs, current_specs_scales
-                )
-                redone_uids = self._insert_takeoffs_fast(bid_ref, redone_specs)
-                for i, uid in enumerate(redone_uids):
-                    if i < len(current_uids):
-                        current_uids[i] = uid
-                if redone_uids:
-                    self._plan_view.set_selected_uids(set(redone_uids))
-
-            self._undo_svc.push(_undo_insert, _redo_insert)
+            self._push_fast_takeoff_insert_undo(bid_ref, new_uids, specs)
             return True
         specs_scales = self._capture_takeoff_spec_scales(specs)
         cmd = InsertTakeoffsCommand(
@@ -1375,6 +1533,30 @@ class PlanViewActionHandler:
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
         return True
+
+    def _push_fast_takeoff_insert_undo(
+        self, bid_ref, new_uids: List[str], specs: List[InsertTakeoffSpec]
+    ) -> None:
+        current_uids = list(new_uids)
+        current_specs = specs[: len(new_uids)]
+        current_specs_scales = self._capture_takeoff_spec_scales(current_specs)
+
+        def _undo_insert():
+            if self._delete_takeoffs_fast(bid_ref.file_path, list(current_uids)):
+                self._plan_view.clear_selection()
+
+        def _redo_insert():
+            redone_specs = self._takeoff_specs_for_current_scales(
+                current_specs, current_specs_scales
+            )
+            redone_uids = self._insert_takeoffs_fast(bid_ref, redone_specs)
+            for index, uid in enumerate(redone_uids):
+                if index < len(current_uids):
+                    current_uids[index] = uid
+            if redone_uids:
+                self._plan_view.set_selected_uids(set(redone_uids))
+
+        self._undo_svc.push(_undo_insert, _redo_insert)
 
     def _add_inserted_takeoffs_to_model(
         self, new_uids: List[str], specs: List[InsertTakeoffSpec]

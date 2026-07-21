@@ -495,14 +495,9 @@ SQL_SCHEMA_V1 = SqlSchemaDefinition(
 
 
 def schema_record_is_canonical(version: object, checksum: object) -> bool:
-    try:
-        parsed_version = int(version)
-    except (TypeError, ValueError):
+    if type(version) is not int or not isinstance(checksum, str):
         return False
-    return (
-        parsed_version == SQL_SCHEMA_V1.version
-        and str(checksum) == SQL_SCHEMA_V1.checksum
-    )
+    return version == SQL_SCHEMA_V1.version and checksum == SQL_SCHEMA_V1.checksum
 
 
 def _entity_version_seed_statements() -> tuple[str, ...]:

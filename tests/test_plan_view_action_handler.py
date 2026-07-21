@@ -1,10 +1,12 @@
 import unittest
+import weakref
 from types import SimpleNamespace
 from unittest.mock import patch
 from ost_visualizer.application.dtos.insert_annotation_spec_dto import (
     InsertAnnotationSpec,
 )
 from ost_visualizer.application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
+from ost_visualizer.application.dtos.collaboration_dtos import QueuedMutationResult
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.domain.entities.annotation import (
     ANNOTATION_TYPE_RECT,
@@ -439,6 +441,24 @@ class FakeWriteService:
         self.next_uids = ["100"]
         self.uid_batches = []
         self._next_uid_index = 0
+        self.queued_takeoff_mutations = False
+        self.queued_takeoff_callbacks = []
+        self.queued_runtime_generation = 3
+
+    def uses_queued_takeoff_mutations(self, _database_id):
+        return self.queued_takeoff_mutations
+
+    def queue_takeoff_insert(
+        self,
+        database_id,
+        bid_uid,
+        specs,
+        operation_id,
+        callback,
+    ):
+        self.calls.append((database_id, bid_uid, specs, "queued"))
+        self.queued_takeoff_callbacks.append((operation_id, callback))
+        return self.queued_runtime_generation
 
     def insert_takeoffs(
         self, db_path, bid_uid, specs, publish_database_refreshed_after_write=True
@@ -2006,6 +2026,236 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(event_bus.events[0][0], AppEvents.TAKEOFFS_CHANGED)
         self.assertEqual(event_bus.events[0][1]["takeoff_uids"], ["100"])
         self.assertEqual(plan_view.cancel_place_mode_calls, 0)
+
+    def test_sql_takeoff_placement_projects_pending_then_committed_identity(self):
+        plan_view = FakePlanView()
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.queued_takeoff_mutations = True
+        undo = FakeUndoService()
+        events = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=events,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        self.assertEqual(len(write.queued_takeoff_callbacks), 1)
+        operation_id, callback = write.queued_takeoff_callbacks[0]
+        pending_uids = tuple(data.takeoffs)
+        self.assertEqual(len(pending_uids), 1)
+        self.assertTrue(pending_uids[0].startswith("pending:takeoff-placement:"))
+        self.assertEqual(undo.count, 0)
+        self.assertEqual(plan_view.selected, set())
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                success=True,
+                created_resource_ids=("501",),
+            )
+        )
+        self.assertNotIn(pending_uids[0], data.takeoffs)
+        self.assertIn("501", data.takeoffs)
+        self.assertEqual(plan_view.selected, {"501"})
+        self.assertEqual(undo.count, 0)
+        self.assertEqual(
+            [event[1]["takeoff_uids"] for event in events.events],
+            [[pending_uids[0]], ["501"]],
+        )
+
+    def test_failed_pending_projection_removes_preview_before_queueing_sql(self):
+        class FailingEventBus:
+            def publish(self, _event_name, **_event_payload):
+                raise RuntimeError("plan projection failed")
+
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.queued_takeoff_mutations = True
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FailingEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        with self.assertRaisesRegex(RuntimeError, "plan projection failed"):
+            handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        self.assertEqual(data.takeoffs, {})
+        self.assertEqual(write.queued_takeoff_callbacks, [])
+        self.assertEqual(handler._pending_takeoff_placements, {})
+
+    def test_failed_or_invalidated_sql_placement_never_projects_authoritative_item(
+        self,
+    ):
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.queued_takeoff_mutations = True
+        events = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=events,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        operation_id, callback = write.queued_takeoff_callbacks[0]
+        handler.invalidate_pending_takeoff_placements()
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                success=True,
+                created_resource_ids=("501",),
+            )
+        )
+        self.assertEqual(data.takeoffs, {})
+
+        handler.on_takeoff_created("42", [3.0, 4.0], "9")
+        operation_id, callback = write.queued_takeoff_callbacks[1]
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=3,
+                operation_id=operation_id,
+                success=False,
+                message="conflict",
+            )
+        )
+        self.assertEqual(data.takeoffs, {})
+
+    def test_stale_runtime_completion_removes_preview_without_projecting_commit(self):
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.queued_takeoff_mutations = True
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        operation_id, callback = write.queued_takeoff_callbacks[0]
+        pending_uid = next(iter(data.takeoffs))
+
+        callback(
+            QueuedMutationResult(
+                database_id="bid.mdb",
+                runtime_generation=write.queued_runtime_generation + 1,
+                operation_id=operation_id,
+                success=True,
+                created_resource_ids=("501",),
+            )
+        )
+
+        self.assertNotIn(pending_uid, data.takeoffs)
+        self.assertNotIn("501", data.takeoffs)
+
+    def test_mismatched_database_completion_cannot_orphan_pending_preview(self):
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.queued_takeoff_mutations = True
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        operation_id, callback = write.queued_takeoff_callbacks[0]
+        pending_uid = next(iter(data.takeoffs))
+
+        callback(
+            QueuedMutationResult(
+                database_id="another-database",
+                runtime_generation=write.queued_runtime_generation,
+                operation_id=operation_id,
+                success=True,
+                created_resource_ids=("501",),
+            )
+        )
+
+        self.assertNotIn(pending_uid, data.takeoffs)
+        self.assertNotIn("501", data.takeoffs)
+
+    def test_pending_invalidation_preserves_condition_summary_dependencies(self):
+        data = FakeProjectData()
+        write = FakeWriteService()
+        write.queued_takeoff_mutations = True
+        events = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=events,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+
+        handler.invalidate_pending_takeoff_placements()
+
+        invalidation = events.events[-1]
+        self.assertEqual(invalidation[0], AppEvents.TAKEOFFS_CHANGED)
+        self.assertEqual(invalidation[1]["condition_uids"], ["42"])
+
+    def test_pending_queue_callback_does_not_retain_closed_plan_handler(self):
+        write = FakeWriteService()
+        write.queued_takeoff_mutations = True
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=FakeProjectData(),
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_takeoff_created("42", [1.0, 2.0], "9")
+        handler_reference = weakref.ref(handler)
+
+        del handler
+
+        self.assertIsNone(handler_reference())
 
     def test_new_area_takeoff_keeps_curve_disabled_for_polygon_position(self):
         plan_view = FakePlanView()

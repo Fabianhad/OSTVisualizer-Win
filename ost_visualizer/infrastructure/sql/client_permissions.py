@@ -33,9 +33,8 @@ SQL_CLIENT_PROTECTED_OSTV_TABLES = tuple(
 def _sql_integer_values_match(row, expected: tuple[int, ...]) -> bool:
     if row is None:
         return False
-    try:
-        values = tuple(int(value) for value in row)
-    except (TypeError, ValueError):
+    values = tuple(row)
+    if any(type(value) is not int for value in values):
         return False
     return values == expected
 

@@ -474,6 +474,11 @@ class UseCaseBuilder:
                 database_capability_service=self.container.get(
                     "database_capability_service"
                 ),
+                sql_collaboration_provider=(
+                    lambda container=self.container: container.get(
+                        "sql_collaboration_coordinator"
+                    )
+                ),
             ),
         )
         self.container.register_instance(

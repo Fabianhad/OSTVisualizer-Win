@@ -570,6 +570,10 @@ def _write_service(
         session_registry=_SessionRegistry(),
         concurrency_tokens=_ConcurrencyTokens(),
         database_capability_service=database_capability or _DatabaseCapability(),
+        sql_collaboration_provider=lambda: SimpleNamespace(
+            uses_sql_collaboration=lambda _database_id: False,
+            queue_mutation=lambda *_args, **_kwargs: 0,
+        ),
     )
     return service, update_bid_job_status, delete_bids, duplicate_bid
 

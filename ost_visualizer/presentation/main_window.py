@@ -649,7 +649,6 @@ class MainWindow(QtWidgets.QMainWindow):
         loaded_files = self.app_controller.load_files_from_config()
         if loaded_files:
             self.handlers.ui_event.sync_after_startup_load()
-            self._sync_database_monitoring()
         elif not self.app_controller.has_any_databases():
             self._needs_create_database_prompt = True
         QtCore.QTimer.singleShot(
@@ -923,12 +922,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 exc_info=True,
             )
         return None
-
-    def _sync_database_monitoring(self) -> None:
-        if self._project_data_service.has_loaded_files():
-            self._visualization_service.start_database_monitoring()
-        else:
-            self._visualization_service.stop_database_monitoring()
 
     def _resolve_update_service(self):
         try:

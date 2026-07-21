@@ -106,12 +106,19 @@ class SqlRemoteChangeReader(IRemoteChangeReader):
     def hydrate_connection(
         self, batch: DatabaseChangeBatch, connection
     ) -> HydratedDatabaseChangeBatch:
+        takeoff_bids = {
+            change.resource.bid_uid
+            for change in batch.changes
+            if change.resource.bid_uid is not None
+            and BID_CONTENT_FAMILY_BY_RESOURCE_TYPE.get(change.resource.resource_type)
+            == CollaborationResourceFamily.TAKEOFFS.value
+        }
         condition_bids = {
             change.resource.bid_uid
             for change in batch.changes
             if change.resource.bid_uid is not None
             and change.resource.resource_type in CONDITION_RESOURCE_TYPES
-        }
+        }.union(takeoff_bids)
         area_bids = {
             change.resource.bid_uid
             for change in batch.changes

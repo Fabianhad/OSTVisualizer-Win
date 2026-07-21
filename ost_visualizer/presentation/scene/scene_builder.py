@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsScene,
 )
+from ...application.dtos.collaboration_dtos import is_queued_takeoff_preview_uid
 from ...application.dtos.hotlink_dto import HotlinkDto
 from ...application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ...domain.entities.annotation import BidAnnotation
@@ -32,9 +33,12 @@ def _numeric_takeoff_uid(uid: str) -> int:
 def _takeoffs_in_draw_order(takeoffs: List[Takeoff]) -> List[Takeoff]:
     indexed_takeoffs = list(enumerate(takeoffs))
 
-    def sort_key(indexed_takeoff: tuple[int, Takeoff]) -> tuple[int, int]:
+    def sort_key(indexed_takeoff: tuple[int, Takeoff]) -> tuple[int, int, int]:
         index, takeoff = indexed_takeoff
-        return (_numeric_takeoff_uid(takeoff.uid), index)
+        uid = str(takeoff.uid)
+        if is_queued_takeoff_preview_uid(uid):
+            return (1, 0, index)
+        return (0, _numeric_takeoff_uid(uid), index)
 
     return [takeoff for _index, takeoff in sorted(indexed_takeoffs, key=sort_key)]
 

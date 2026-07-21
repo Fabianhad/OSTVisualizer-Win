@@ -12,6 +12,7 @@ from ..dtos.collaboration_resource_catalog import (
 from ..dtos.collaboration_dtos import (
     HydratedDatabaseChangeBatch,
     ReconciliationFailureKind,
+    ReconciliationResult,
 )
 from ..events.app_events import AppEvents
 from ..dtos.remote_projection_dtos import RemoteProjectionBarrier
@@ -34,18 +35,12 @@ class RemoteChangeReconciliationService:
         self._concurrency_tokens = concurrency_tokens
         self._drafts = drafts
         self._conflict_resolution = conflict_resolution
-        self._last_failure_kind: ReconciliationFailureKind | None = None
-
-    @property
-    def last_failure_kind(self) -> ReconciliationFailureKind | None:
-        return self._last_failure_kind
 
     def apply(
         self,
         hydrated: HydratedDatabaseChangeBatch,
         projection_barrier: RemoteProjectionBarrier | None = None,
-    ) -> bool:
-        self._last_failure_kind = None
+    ) -> ReconciliationResult:
         batch = hydrated.batch
         conflicts = self._drafts.conflicts_for_changes(batch.database_id, batch.changes)
         if conflicts:
@@ -66,17 +61,21 @@ class RemoteChangeReconciliationService:
                     draft_id=plan.draft_id,
                     allowed_actions=[action.value for action in plan.actions],
                 )
-            return False
+            return ReconciliationResult(applied=False)
         if any(
             change.resource.resource_type not in SUPPORTED_REMOTE_RESOURCE_TYPES
             for change in batch.changes
         ):
-            self._last_failure_kind = ReconciliationFailureKind.MALFORMED_PAYLOAD
-            return False
+            return ReconciliationResult(
+                applied=False,
+                failure_kind=ReconciliationFailureKind.MALFORMED_PAYLOAD,
+            )
         active_ref = self._project_data.get_current_bid_ref()
         if not self._is_complete_for_active_bid(hydrated, active_ref):
-            self._last_failure_kind = ReconciliationFailureKind.MALFORMED_PAYLOAD
-            return False
+            return ReconciliationResult(
+                applied=False,
+                failure_kind=ReconciliationFailureKind.MALFORMED_PAYLOAD,
+            )
         if active_ref is None or active_ref.file_path != batch.database_id:
             if hydrated.hierarchy_file is not None:
                 self._project_data.replace_database_hierarchy(
@@ -92,7 +91,7 @@ class RemoteChangeReconciliationService:
                     database_id=batch.database_id,
                     defer_plan_projection=projection_barrier is not None,
                 )
-            return True
+            return ReconciliationResult(applied=True)
         bid_uid = int(active_ref.bid_uid)
         active_changes = tuple(
             change
@@ -105,13 +104,13 @@ class RemoteChangeReconciliationService:
             if not self._project_data.replace_condition_family(
                 BidRef(batch.database_id, str(bid_uid)), conditions, folders
             ):
-                return False
+                return ReconciliationResult(applied=False)
         areas = hydrated.areas_by_bid.get(bid_uid)
         if areas is not None:
             if not self._project_data.replace_bid_areas(
                 BidRef(batch.database_id, str(bid_uid)), areas
             ):
-                return False
+                return ReconciliationResult(applied=False)
         bid_data = hydrated.bid_data_by_bid.get(bid_uid)
         families = set()
         if bid_data is not None:
@@ -123,7 +122,7 @@ class RemoteChangeReconciliationService:
             if families and not self._project_data.replace_remote_bid_families(
                 BidRef(batch.database_id, str(bid_uid)), bid_data, families
             ):
-                return False
+                return ReconciliationResult(applied=False)
         if hydrated.hierarchy_file is not None:
             self._project_data.replace_database_hierarchy(
                 hydrated.hierarchy_file,
@@ -209,7 +208,7 @@ class RemoteChangeReconciliationService:
                 resource_uids_by_family=resource_uids_by_family,
                 barrier=projection_barrier,
             )
-        return True
+        return ReconciliationResult(applied=True)
 
     def _is_complete_for_active_bid(self, hydrated, active_ref) -> bool:
         if active_ref is None or active_ref.file_path != hydrated.batch.database_id:

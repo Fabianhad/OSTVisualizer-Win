@@ -1,9 +1,12 @@
 import logging
 import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
+from ...domain.entities.database_descriptor import DatabaseBackend
 from ...domain.services.project_data_service import ProjectDataService
 from ..dtos.mesh_geometry_dto import MeshGeometry
 from ..events.app_events import AppEvents
+from ..interfaces.i_database_descriptor_registry import IDatabaseDescriptorRegistry
+from ..interfaces.i_thread_callback_bridge import IThreadCallbackBridge
 from ..interfaces.i_thread_scene_notifier import IThreadSceneNotifier
 from ..interfaces.i_transaction_monitor import ITransactionMonitor
 from ..interfaces.i_visualization_provider import IVisualizationProvider
@@ -20,6 +23,8 @@ class VisualizationService:
         project_operations_service: ProjectOperationsService,
         event_bus,
         transaction_monitor: ITransactionMonitor,
+        database_descriptor_registry: IDatabaseDescriptorRegistry,
+        callback_bridge: IThreadCallbackBridge,
         visualization_provider: IVisualizationProvider,
         scene_notifier: IThreadSceneNotifier,
     ):
@@ -28,14 +33,17 @@ class VisualizationService:
         self.project_operations = project_operations_service
         self.event_bus = event_bus
         self._transaction_monitor = transaction_monitor
+        self._database_descriptor_registry = database_descriptor_registry
+        self._callback_bridge = callback_bridge
         self._visualization_provider = visualization_provider
         self._mesh_generator = visualization_provider.get_mesh_generator()
-        self._refresh_lock = threading.Lock()
         self._scene_notifier = scene_notifier
         self._scene_notifier.set_handlers(
             on_scene_ready=self._on_scene_ready,
             on_full_refresh=self._on_full_refresh_ready,
         )
+        self._database_monitor_generation = 0
+        self._monitored_access_locator: Optional[str] = None
         self._mesh_generation_id = 0
         self._mesh_generation_lock = threading.Lock()
         self._mesh_pending_task: Optional[Tuple] = None
@@ -144,7 +152,7 @@ class VisualizationService:
         )
 
     def close_realtime_visualization(self) -> None:
-        self._stop_file_monitoring()
+        self.stop_database_monitoring()
 
     def cleanup(self) -> None:
         self._mesh_shutdown.set()
@@ -153,6 +161,9 @@ class VisualizationService:
         self.close_realtime_visualization()
         self._transaction_monitor.cleanup()
         self._transaction_monitor = None
+        self._database_descriptor_registry = None
+        self._callback_bridge = None
+        self._monitored_access_locator = None
         if self._scene_notifier is not None:
             self._scene_notifier.cleanup()
         self._scene_notifier = None
@@ -165,10 +176,28 @@ class VisualizationService:
         self.event_bus = None
 
     def start_database_monitoring(self) -> None:
-        self._start_file_monitoring()
+        if not self.project_data.has_loaded_files():
+            self.stop_database_monitoring()
+            return
+        file_path = self.project_data.get_current_file_path()
+        if not file_path or not self._is_access_database(file_path):
+            self.stop_database_monitoring()
+            return
+        if self._transaction_monitor.is_monitoring():
+            if self._monitored_access_locator == file_path:
+                return
+            self.stop_database_monitoring()
+        self._database_monitor_generation += 1
+        generation = self._database_monitor_generation
+        self._monitored_access_locator = file_path
+        self._transaction_monitor.start_monitoring(
+            lambda: self._on_monitored_file_changed(file_path, generation)
+        )
 
     def stop_database_monitoring(self) -> None:
-        self._stop_file_monitoring()
+        self._database_monitor_generation += 1
+        self._monitored_access_locator = None
+        self._transaction_monitor.stop_monitoring()
 
     def set_update_dialog_active(self, active: bool) -> None:
         self._transaction_monitor.set_update_dialog_active(active)
@@ -176,34 +205,28 @@ class VisualizationService:
     def set_message_parent(self, parent) -> None:
         self._transaction_monitor.set_message_parent(parent)
 
-    def _start_file_monitoring(self) -> None:
+    def _on_monitored_file_changed(self, locator: str, generation: int) -> None:
+        self._callback_bridge.dispatch(
+            self._reload_monitored_access_database,
+            (locator, generation),
+        )
+
+    def _reload_monitored_access_database(self, payload: tuple[str, int]) -> None:
+        locator, generation = payload
         if (
-            self._transaction_monitor.is_monitoring()
-            or not self.project_data.has_loaded_files()
+            generation != self._database_monitor_generation
+            or locator != self._monitored_access_locator
+            or self.project_data.get_current_file_path() != locator
+            or not self._is_access_database(locator)
         ):
             return
-        file_path = self.project_data.get_current_file_path()
-        if not file_path:
-            return
-        if self._transaction_monitor.is_available():
-            self._transaction_monitor.start_monitoring(self._on_monitored_file_changed)
+        success = self.project_operations.reload_database(locator)
+        if success:
+            self._scene_notifier.notify_full_refresh(locator)
 
-    def _stop_file_monitoring(self) -> None:
-        self._transaction_monitor.stop_monitoring()
-
-    def _on_monitored_file_changed(self) -> None:
-        acquired = self._refresh_lock.acquire(blocking=False)
-        if not acquired:
-            return
-        try:
-            file_path = self.project_data.get_current_file_path()
-            if not file_path:
-                return
-            success = self.project_operations.reload_database(file_path)
-            if success:
-                self._scene_notifier.notify_full_refresh(file_path)
-        finally:
-            self._refresh_lock.release()
+    def _is_access_database(self, locator: str) -> bool:
+        descriptor = self._database_descriptor_registry.resolve(locator)
+        return descriptor is not None and descriptor.backend == DatabaseBackend.ACCESS
 
     def _on_full_refresh_ready(self, file_path: str) -> None:
         self.event_bus.publish(

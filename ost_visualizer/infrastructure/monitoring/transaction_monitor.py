@@ -124,9 +124,6 @@ class TransactionMonitor:
             "info",
         )
 
-    def is_available(self) -> bool:
-        return True
-
     def is_monitoring(self) -> bool:
         return self._is_monitoring
 
@@ -139,6 +136,9 @@ class TransactionMonitor:
     def start_monitoring(self, callback: Callable[[], None]) -> bool:
         if self._is_monitoring:
             return False
+        with self._debounce_lock:
+            self._pending_callback = False
+            self._last_signal_time = 0.0
         self._callback = callback
         self._stop_flag.clear()
         self._is_monitoring = True
@@ -197,21 +197,30 @@ class TransactionMonitor:
         self._is_monitoring = False
 
     def stop_monitoring(self) -> None:
-        if not self._is_monitoring:
-            return
         self._stop_flag.set()
-        if self._monitor_thread and self._monitor_thread.is_alive():
-            self._monitor_thread.join(timeout=1.5)
+        self._callback = None
+        worker = self._monitor_thread
+        if worker and worker.is_alive():
+            worker.join(timeout=1.5)
+            if worker.is_alive():
+                logger.error(
+                    "The transaction-monitor worker did not stop within 1.5 seconds."
+                )
+                with self._debounce_lock:
+                    self._pending_callback = False
+                    self._last_signal_time = 0.0
+                return
         self._reset_events()
         self._monitor_thread = None
-        self._callback = None
         self._is_monitoring = False
+        self._status_online = False
+        self._state = MonitorState.INITIAL
+        with self._debounce_lock:
+            self._pending_callback = False
+            self._last_signal_time = 0.0
 
     def cleanup(self) -> None:
         self.stop_monitoring()
-        self._reset_events()
-        self._status_online = False
-        self._state = MonitorState.INITIAL
         self._ost_status_callback = None
         if self._notifier is not None:
             self._notifier.cleanup()
