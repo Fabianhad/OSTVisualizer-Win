@@ -1,7 +1,8 @@
 import logging
 import threading
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple
 from ...domain.entities.database_descriptor import DatabaseBackend
+from ...domain.entities.identity_refs import BidRef
 from ...domain.services.project_data_service import ProjectDataService
 from ..dtos.mesh_geometry_dto import MeshGeometry
 from ..events.app_events import AppEvents
@@ -45,6 +46,8 @@ class VisualizationService:
         self._database_monitor_generation = 0
         self._monitored_access_locator: Optional[str] = None
         self._mesh_generation_id = 0
+        self._mesh_generation_bid_ref: Optional[BidRef] = None
+        self._mesh_generation_delivered = True
         self._mesh_generation_lock = threading.Lock()
         self._mesh_pending_task: Optional[Tuple] = None
         self._mesh_task_event = threading.Event()
@@ -54,28 +57,49 @@ class VisualizationService:
         )
         self._mesh_worker.start()
 
-    def _publish_native_scene(
-        self, meshes: List, mesh_colors: Dict[str, Union[str, Dict[str, object]]]
-    ) -> None:
-        geometries, bounds = self._visualization_provider.convert_meshes_to_geometries(
-            meshes, mesh_colors
-        )
-        self.event_bus.publish(
-            AppEvents.NATIVE_SCENE_UPDATED,
-            geometries=geometries,
-            bounds=bounds,
-        )
+    def cancel_mesh_view_refresh(self) -> None:
+        with self._mesh_generation_lock:
+            self._mesh_generation_id += 1
+            self._mesh_pending_task = None
+            self._mesh_generation_bid_ref = None
+            self._mesh_generation_delivered = True
+
+    def _is_current_mesh_generation(self, generation: int) -> bool:
+        with self._mesh_generation_lock:
+            return (
+                not self._mesh_shutdown.is_set()
+                and generation == self._mesh_generation_id
+            )
+
+    def _claim_mesh_result(self, generation: int) -> Optional[BidRef]:
+        with self._mesh_generation_lock:
+            if (
+                self._mesh_shutdown.is_set()
+                or generation != self._mesh_generation_id
+                or self._mesh_generation_delivered
+            ):
+                return None
+            self._mesh_generation_delivered = True
+            return self._mesh_generation_bid_ref
 
     def refresh_mesh_view(self, page_uids: List[str]) -> None:
-        takeoffs: List[Any] = []
-        if page_uids:
-            result = self.project_data.collect_takeoffs_for_pages(page_uids)
-            takeoffs = result.takeoffs
+        bid_ref = self.project_data.get_current_bid_ref()
+        if bid_ref is None or not page_uids:
+            self.cancel_mesh_view_refresh()
+            return
+        result = self.project_data.collect_takeoffs_for_pages(page_uids)
+        takeoffs = result.takeoffs
         if not takeoffs:
             with self._mesh_generation_lock:
                 self._mesh_generation_id += 1
+                generation = self._mesh_generation_id
                 self._mesh_pending_task = None
-            self._publish_native_scene([], {})
+                self._mesh_generation_bid_ref = bid_ref
+                self._mesh_generation_delivered = False
+            geometries, bounds = (
+                self._visualization_provider.convert_meshes_to_geometries([], {})
+            )
+            self._on_scene_ready(geometries, bounds, generation)
             return
         conditions = self.project_data.get_bid_conditions()
         page_area_selections = self.project_data.get_page_area_selections()
@@ -84,6 +108,8 @@ class VisualizationService:
         with self._mesh_generation_lock:
             self._mesh_generation_id += 1
             gen_id = self._mesh_generation_id
+            self._mesh_generation_bid_ref = bid_ref
+            self._mesh_generation_delivered = False
             self._mesh_pending_task = (
                 takeoffs,
                 conditions,
@@ -114,9 +140,8 @@ class VisualizationService:
                 gen_id,
             ) = task
             try:
-                with self._mesh_generation_lock:
-                    if gen_id != self._mesh_generation_id:
-                        continue
+                if not self._is_current_mesh_generation(gen_id):
+                    continue
                 meshes, mesh_colors, _ = self._mesh_generator.generate_meshes(
                     conditions,
                     takeoffs,
@@ -124,17 +149,15 @@ class VisualizationService:
                     display_mode=display_mode,
                     grayscale_enabled=grayscale_enabled,
                 )
-                with self._mesh_generation_lock:
-                    if gen_id != self._mesh_generation_id:
-                        continue
+                if not self._is_current_mesh_generation(gen_id):
+                    continue
                 geometries, bounds = (
                     self._visualization_provider.convert_meshes_to_geometries(
                         meshes, mesh_colors
                     )
                 )
-                with self._mesh_generation_lock:
-                    if gen_id != self._mesh_generation_id:
-                        continue
+                if not self._is_current_mesh_generation(gen_id):
+                    continue
                 self._scene_notifier.notify_scene_ready(geometries, bounds, gen_id)
             except Exception as exc:
                 logger.exception("Mesh generation error: %s", exc)
@@ -142,19 +165,23 @@ class VisualizationService:
     def _on_scene_ready(
         self, geometries: List[MeshGeometry], bounds: Any, gen_id: int
     ) -> None:
-        with self._mesh_generation_lock:
-            if gen_id != self._mesh_generation_id:
-                return
+        bid_ref = self._claim_mesh_result(gen_id)
+        if bid_ref is None:
+            return
         self.event_bus.publish(
             AppEvents.NATIVE_SCENE_UPDATED,
             geometries=geometries,
             bounds=bounds,
+            database_id=bid_ref.file_path,
+            bid_uid=bid_ref.bid_uid,
+            generation=gen_id,
         )
 
     def close_realtime_visualization(self) -> None:
         self.stop_database_monitoring()
 
     def cleanup(self) -> None:
+        self.cancel_mesh_view_refresh()
         self._mesh_shutdown.set()
         self._mesh_task_event.set()
         self._mesh_worker.join(timeout=3.0)
@@ -164,10 +191,10 @@ class VisualizationService:
         self._database_descriptor_registry = None
         self._callback_bridge = None
         self._monitored_access_locator = None
-        if self._scene_notifier is not None:
-            self._scene_notifier.cleanup()
+        self._scene_notifier.cleanup()
         self._scene_notifier = None
         self._mesh_pending_task = None
+        self._mesh_generation_bid_ref = None
         self.config_model = None
         self._mesh_generator = None
         self._visualization_provider = None

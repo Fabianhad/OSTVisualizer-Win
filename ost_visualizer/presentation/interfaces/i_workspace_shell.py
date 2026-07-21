@@ -1,7 +1,15 @@
+from dataclasses import dataclass
 from typing import Any, Optional, Protocol
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.dtos.condition_summary_dtos import ConditionSummaryGrouping
 from ...domain.entities.annotation_style import AnnotationStyle
+
+
+@dataclass(frozen=True)
+class CurrentAreaSelectionContext:
+    parent: QtWidgets.QWidget
+    plan_view: Optional[QtWidgets.QWidget] = None
+    area_uid: Optional[str] = None
 
 
 class IWorkspaceShell(Protocol):
@@ -61,6 +69,9 @@ class IWorkspaceShell(Protocol):
     def is_takeoff_tab_active(self) -> bool: ...
     def get_takeoff_plan_view(self) -> QtWidgets.QWidget: ...
     def get_page_settings_bar(self) -> QtWidgets.QWidget: ...
+    def resolve_current_area_selection_context(
+        self,
+    ) -> CurrentAreaSelectionContext: ...
     def get_takeoff_dropdown_popup_sizes(self) -> dict[str, list[int]]: ...
     def set_takeoff_dropdown_popup_sizes(self, sizes: dict[str, list[int]]) -> None: ...
     def save_project_header_state(self) -> QtCore.QByteArray: ...

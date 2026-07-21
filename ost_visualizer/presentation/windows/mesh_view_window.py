@@ -1,4 +1,4 @@
-from typing import Optional, Sequence
+from typing import Optional, Sequence, cast
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.identity_refs import BidRef
@@ -300,14 +300,16 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         normals_list: Sequence[Sequence[float]],
         indices_list: Sequence[Sequence[int]],
         colors: Sequence[object],
-        bid_ref: Optional[BidRef] = None,
+        *,
+        bid_ref: BidRef,
+        scene_generation: int,
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
         scene_bounds: Optional[Sequence[float]] = None,
     ) -> None:
-        if self._is_closing or not self.viewer:
+        if self._is_closing:
             return
-        self.viewer.apply_mesh_data(
+        cast(OpenGLViewer, self.viewer).apply_mesh_data(
             vertices_list,
             normals_list,
             indices_list,
@@ -316,7 +318,13 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             condition_uids=condition_uids,
             takeoff_uids=takeoff_uids,
             scene_bounds=scene_bounds,
+            scene_generation=scene_generation,
         )
+
+    def begin_scene_load(self, bid_ref: BidRef) -> None:
+        if self._is_closing:
+            return
+        cast(OpenGLViewer, self.viewer).begin_scene_load(bid_ref)
 
     def set_plan_texture_provider(self, provider) -> None:
         if self.viewer:
@@ -373,23 +381,22 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             self._resize_timer.start()
 
     def _on_resize_settled(self) -> None:
-        if self._is_closing or not self.viewer:
+        if self._is_closing:
             return
-        self.viewer.refresh_viewport()
+        cast(OpenGLViewer, self.viewer).refresh_viewport()
 
     def cleanup(self) -> None:
         if self._is_closing:
             return
         self._is_closing = True
-        if self._resize_timer is not None:
-            self._resize_timer.stop()
-            self._resize_timer.timeout.disconnect(self._on_resize_settled)
-            self._resize_timer.deleteLater()
-            self._resize_timer = None
-        if self.viewer is not None:
-            self.viewer.blockSignals(True)
-            self.viewer.cleanup()
-            self.viewer = None
+        self._resize_timer.stop()
+        self._resize_timer.timeout.disconnect(self._on_resize_settled)
+        self._resize_timer.deleteLater()
+        self._resize_timer = None
+        viewer = cast(OpenGLViewer, self.viewer)
+        viewer.blockSignals(True)
+        viewer.cleanup()
+        self.viewer = None
         self._zoom_combo = None
         self._context_menu_command_trigger = None
         self._context_menu_action_state = None

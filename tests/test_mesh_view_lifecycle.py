@@ -1,10 +1,10 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from PySide6 import QtCore
+from PySide6 import QtCore, QtWidgets
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshGeometry
-from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
+from ost_visualizer.presentation.components.mesh_view import OpenGLViewer, ost_renderer
 from ost_visualizer.presentation.modes.cursor import CURSOR_MODE_DEFAULT
 from ost_visualizer.presentation.visualization.native_page_plane import (
     NativePageImagePlaneData,
@@ -71,6 +71,7 @@ class FakeMeshCamera:
         self.fov = 37.0
         self.rotate_calls = []
         self.pan_calls = []
+        self.restore_state_calls = []
 
     def reset(self):
         self.reset_calls += 1
@@ -80,6 +81,12 @@ class FakeMeshCamera:
         self.position = SimpleNamespace(x=100.0, y=200.0, z=300.0)
         self.target = SimpleNamespace(x=0.0, y=0.0, z=0.0)
         self.fov = 45.0
+
+    def restore_state(self, position, target, fov, bounds):
+        self.restore_state_calls.append((position, target, fov, bounds))
+        self.position = SimpleNamespace(x=position.x, y=position.y, z=position.z)
+        self.target = SimpleNamespace(x=target.x, y=target.y, z=target.z)
+        self.fov = fov
 
     def rotate(self, delta_x, delta_y):
         self.rotate_calls.append((delta_x, delta_y))
@@ -93,6 +100,7 @@ class FakeMeshRenderer:
         self.scene = scene
         self.camera = FakeMeshCamera()
         self.suspend_calls = 0
+        self.resume_calls = 0
         self.plan_texture_calls = []
         self.plan_texture_visibility_calls = []
         self.clear_plan_texture_calls = 0
@@ -103,7 +111,7 @@ class FakeMeshRenderer:
         self.suspend_calls += 1
 
     def resume(self):
-        pass
+        self.resume_calls += 1
 
     def resize(self, width_px, height_px):
         self.resize_calls.append((width_px, height_px))
@@ -148,6 +156,10 @@ class FakeSourceMesh:
 
 class TestMeshViewLifecycle(unittest.TestCase):
     @staticmethod
+    def _app():
+        return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    @staticmethod
     def _page_texture(page_uid="p1", visible=True):
         return NativePageImagePlaneData(
             page_uid=page_uid,
@@ -171,6 +183,12 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._renderer = renderer
         viewer._ensure_renderer = lambda: True
         viewer._current_bid_ref = BidRef("a.mdb", "bid-1")
+        viewer._loading_bid_ref = None
+        viewer._latest_scene_generation = 0
+        viewer._accept_scene_results = True
+        viewer._scene_load_pending = False
+        viewer._camera_initialized_for_scene = True
+        viewer._saved_camera_states = {}
         viewer._selected_takeoff_uids = []
         viewer._current_plan_texture = self._page_texture("existing")
         viewer._has_visible_plan_texture = True
@@ -221,6 +239,30 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual("takeoff-1", geometry.takeoff_uid)
         self.assertEqual([0, 1, 2], geometry.indices)
 
+    def test_native_camera_restore_clears_motion_and_sets_saved_pose_atomically(self):
+        camera = ost_renderer.Camera()
+        camera.rotate(100.0, -50.0)
+        self.assertTrue(camera.has_velocity())
+        bounds = ost_renderer.Box3()
+        bounds.min = ost_renderer.Vec3(-10.0, -20.0, -1.0)
+        bounds.max = ost_renderer.Vec3(10.0, 20.0, 5.0)
+        camera.restore_state(
+            ost_renderer.Vec3(4.0, 5.0, 6.0),
+            ost_renderer.Vec3(1.0, 2.0, 3.0),
+            38.0,
+            bounds,
+        )
+        self.assertFalse(camera.has_velocity())
+        self.assertEqual(
+            (camera.position.x, camera.position.y, camera.position.z),
+            (4.0, 5.0, 6.0),
+        )
+        self.assertEqual(
+            (camera.target.x, camera.target.y, camera.target.z),
+            (1.0, 2.0, 3.0),
+        )
+        self.assertEqual(camera.fov, 38.0)
+
     def test_mesh_buffer_length_mismatch_raises_clear_error(self):
         with self.assertRaisesRegex(ValueError, "matching lengths"):
             OpenGLViewer._validate_mesh_buffer_lengths(
@@ -233,10 +275,9 @@ class TestMeshViewLifecycle(unittest.TestCase):
             )
 
     def test_cleanup_clears_external_callback_references(self):
-        viewer = OpenGLViewer.__new__(OpenGLViewer)
+        self._app()
+        viewer = OpenGLViewer(None, SimpleNamespace())
         retained = object()
-        viewer._destroyed = False
-        viewer._pending_data = retained
         viewer._current_bid_ref = retained
         viewer._pending_camera_reset = True
         viewer._render_suspended = False
@@ -247,18 +288,13 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._context_menu_action_state = lambda: retained
         viewer._context_menu_conditions_fn = lambda: {"condition": retained}
         viewer._zoom_cursor = retained
-        viewer._animation_timer = None
-        viewer._renderer = None
-        viewer._surface_window = None
-        viewer._surface_screen = None
-        viewer._render_surface_size = None
-        OpenGLViewer.cleanup(viewer)
-        self.assertIsNone(viewer._pending_data)
+        viewer.cleanup()
         self.assertIsNone(viewer._current_bid_ref)
         self.assertIsNone(viewer._selected_context_state_fn)
         self.assertIsNone(viewer._context_menu_command_trigger)
         self.assertIsNone(viewer._context_menu_action_state)
         self.assertIsNone(viewer._zoom_cursor)
+        self.assertIsNone(viewer._surface_metrics_timer)
         self.assertFalse(viewer._negative_check_fn(["uid"]))
         self.assertEqual((False, False), viewer._curved_check_fn(["uid"]))
         self.assertEqual({}, viewer._context_menu_conditions_fn())
@@ -321,8 +357,11 @@ class TestMeshViewLifecycle(unittest.TestCase):
         renderer = FakeMeshRenderer(scene)
         viewer._renderer = renderer
         viewer._selected_takeoff_uids = ["selected"]
-        viewer._pending_data = object()
         viewer._current_bid_ref = object()
+        viewer._loading_bid_ref = None
+        viewer._scene_load_pending = False
+        viewer._camera_initialized_for_scene = True
+        viewer._saved_camera_states = {}
         viewer._pending_camera_reset = False
         viewer._render_suspended = False
         viewer._zoom_reference_distance = 3.0
@@ -345,7 +384,7 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer, renderer = self._make_page_plane_viewer([self._page_texture("p2")])
         before = self._camera_state(viewer, renderer)
         OpenGLViewer._do_apply_mesh_data(
-            viewer, [], [], [], [], BidRef("a.mdb", "bid-1")
+            viewer, [], [], [], [], BidRef("a.mdb", "bid-1"), scene_generation=1
         )
         self.assertEqual(self._camera_state(viewer, renderer), before)
         self.assertEqual(renderer.camera.show_object_calls, [])
@@ -385,10 +424,210 @@ class TestMeshViewLifecycle(unittest.TestCase):
         viewer._current_plan_texture = None
         viewer._has_visible_plan_texture = False
         OpenGLViewer._do_apply_mesh_data(
-            viewer, [], [], [], [], BidRef("a.mdb", "bid-1")
+            viewer, [], [], [], [], BidRef("a.mdb", "bid-1"), scene_generation=2
         )
         self.assertEqual(len(renderer.camera.show_object_calls), 1)
         self.assertEqual(renderer.camera.reset_calls, 0)
+
+    def test_bid_load_hides_scene_and_defers_plan_until_authoritative_bounds(self):
+        old_ref = BidRef("a.mdb", "bid-old")
+        new_ref = BidRef("a.mdb", "bid-new")
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._current_bid_ref = old_ref
+        requested_bounds = []
+
+        def build_texture(bounds):
+            requested_bounds.append(bounds)
+            return self._page_texture("p-new")
+
+        viewer._plan_texture_provider = build_texture
+        OpenGLViewer.begin_scene_load(viewer, new_ref)
+        OpenGLViewer.update_plan_texture(viewer)
+        self.assertEqual(requested_bounds, [])
+        self.assertTrue(viewer._scene_load_pending)
+        self.assertTrue(viewer._render_suspended)
+        self.assertEqual(renderer.clear_frame_calls, 1)
+        self.assertEqual(renderer.resume_calls, 0)
+        final_bounds = (-50.0, 50.0, -25.0, 25.0, 10.0, 30.0)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer,
+            [],
+            [],
+            [],
+            [],
+            new_ref,
+            scene_bounds=final_bounds,
+            scene_generation=7,
+        )
+        self.assertEqual(requested_bounds, [final_bounds])
+        self.assertFalse(viewer._scene_load_pending)
+        self.assertEqual(len(renderer.camera.show_object_calls), 1)
+        self.assertEqual(renderer.resume_calls, 1)
+
+    def test_stale_bid_mesh_result_cannot_reveal_or_move_loading_scene(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        stale_ref = BidRef("a.mdb", "bid-stale")
+        active_ref = BidRef("a.mdb", "bid-active")
+        OpenGLViewer.begin_scene_load(viewer, active_ref)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], stale_ref, scene_generation=4
+        )
+        self.assertEqual(viewer._loading_bid_ref, active_ref)
+        self.assertTrue(viewer._scene_load_pending)
+        self.assertEqual(renderer.camera.show_object_calls, [])
+        self.assertEqual(renderer.resume_calls, 0)
+
+    def test_switching_bids_during_mesh_load_accepts_only_latest_bid(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._plan_texture_provider = lambda _bounds: self._page_texture("p-new")
+        first_ref = BidRef("a.mdb", "bid-first")
+        second_ref = BidRef("a.mdb", "bid-second")
+        OpenGLViewer.begin_scene_load(viewer, first_ref)
+        OpenGLViewer.begin_scene_load(viewer, second_ref)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], first_ref, scene_generation=8
+        )
+        self.assertEqual(renderer.camera.show_object_calls, [])
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], second_ref, scene_generation=9
+        )
+        self.assertEqual(viewer._current_bid_ref, second_ref)
+        self.assertEqual(len(renderer.camera.show_object_calls), 1)
+
+    def test_saved_bid_camera_is_restored_while_new_bid_is_initially_framed(self):
+        first_ref = BidRef("a.mdb", "bid-first")
+        second_ref = BidRef("a.mdb", "bid-second")
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._plan_texture_provider = lambda _bounds: self._page_texture("p-current")
+        viewer._current_bid_ref = first_ref
+        saved_state = self._camera_state(viewer, renderer)[:7]
+        OpenGLViewer.begin_scene_load(viewer, second_ref)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], second_ref, scene_generation=10
+        )
+        self.assertEqual(len(renderer.camera.show_object_calls), 1)
+        OpenGLViewer.begin_scene_load(viewer, first_ref)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], first_ref, scene_generation=11
+        )
+        self.assertEqual(len(renderer.camera.show_object_calls), 1)
+        self.assertEqual(self._camera_state(viewer, renderer)[:7], saved_state)
+        self.assertEqual(len(renderer.camera.restore_state_calls), 1)
+
+    def test_empty_mesh_bid_frames_its_final_page_plane_once(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._plan_texture_provider = lambda _bounds: self._page_texture("p-empty")
+        new_ref = BidRef("a.mdb", "empty-bid")
+        OpenGLViewer.begin_scene_load(viewer, new_ref)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], new_ref, scene_generation=12
+        )
+        self.assertEqual(len(renderer.camera.show_object_calls), 1)
+        self.assertEqual(renderer.camera.reset_calls, 0)
+
+    def test_bid_with_no_mesh_or_plan_remains_suspended_without_camera_fit(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._plan_texture_provider = lambda _bounds: None
+        new_ref = BidRef("a.mdb", "contentless-bid")
+        OpenGLViewer.begin_scene_load(viewer, new_ref)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], new_ref, scene_generation=13
+        )
+        self.assertEqual(renderer.camera.show_object_calls, [])
+        self.assertEqual(renderer.resume_calls, 0)
+        self.assertTrue(viewer._render_suspended)
+
+    def test_duplicate_scene_generation_is_not_published_to_renderer_twice(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._plan_texture_provider = lambda _bounds: self._page_texture("p-final")
+        bid_ref = BidRef("a.mdb", "bid-1")
+        OpenGLViewer.begin_scene_load(viewer, bid_ref)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], bid_ref, scene_generation=20
+        )
+        first_counts = (
+            len(renderer.plan_texture_calls),
+            len(renderer.camera.show_object_calls),
+            renderer.resume_calls,
+        )
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], bid_ref, scene_generation=20
+        )
+        self.assertEqual(
+            (
+                len(renderer.plan_texture_calls),
+                len(renderer.camera.show_object_calls),
+                renderer.resume_calls,
+            ),
+            first_counts,
+        )
+
+    def test_late_other_bid_result_after_final_scene_cannot_move_camera(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        viewer._plan_texture_provider = lambda _bounds: self._page_texture("p-final")
+        active_ref = BidRef("a.mdb", "active")
+        stale_ref = BidRef("a.mdb", "stale")
+        OpenGLViewer.begin_scene_load(viewer, active_ref)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], active_ref, scene_generation=30
+        )
+        camera_state = self._camera_state(viewer, renderer)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer, [], [], [], [], stale_ref, scene_generation=31
+        )
+        self.assertEqual(viewer._current_bid_ref, active_ref)
+        self.assertEqual(self._camera_state(viewer, renderer), camera_state)
+        self.assertEqual(len(renderer.camera.show_object_calls), 1)
+
+    def test_terminal_clear_rejects_a_previously_unseen_queued_scene(self):
+        viewer, renderer = self._make_page_plane_viewer([])
+        bid_ref = BidRef("a.mdb", "bid-1")
+        OpenGLViewer.begin_scene_load(viewer, bid_ref)
+        OpenGLViewer._do_clear(viewer)
+        OpenGLViewer._do_apply_mesh_data(
+            viewer,
+            [[0.0, 0.0, 0.0]],
+            [[0.0, 0.0, 1.0]],
+            [[0]],
+            ["#ffffff"],
+            bid_ref,
+            scene_generation=99,
+        )
+        self.assertTrue(renderer.scene.empty())
+        self.assertIsNone(viewer._current_bid_ref)
+        self.assertFalse(viewer._camera_initialized_for_scene)
+
+    def test_two_3d_surfaces_keep_independent_saved_cameras(self):
+        bid_ref = BidRef("a.mdb", "bid-1")
+        other_ref = BidRef("a.mdb", "bid-2")
+        main_viewer, main_renderer = self._make_page_plane_viewer([])
+        detached_viewer, detached_renderer = self._make_page_plane_viewer([])
+        main_viewer._plan_texture_provider = lambda _bounds: self._page_texture(
+            "p-main"
+        )
+        detached_viewer._plan_texture_provider = lambda _bounds: self._page_texture(
+            "p-detached"
+        )
+        main_renderer.camera.position.x = 101.0
+        detached_renderer.camera.position.x = 202.0
+        OpenGLViewer.begin_scene_load(main_viewer, other_ref)
+        OpenGLViewer.begin_scene_load(detached_viewer, other_ref)
+        OpenGLViewer._do_apply_mesh_data(
+            main_viewer, [], [], [], [], other_ref, scene_generation=13
+        )
+        OpenGLViewer._do_apply_mesh_data(
+            detached_viewer, [], [], [], [], other_ref, scene_generation=13
+        )
+        OpenGLViewer.begin_scene_load(main_viewer, bid_ref)
+        OpenGLViewer.begin_scene_load(detached_viewer, bid_ref)
+        OpenGLViewer._do_apply_mesh_data(
+            main_viewer, [], [], [], [], bid_ref, scene_generation=14
+        )
+        OpenGLViewer._do_apply_mesh_data(
+            detached_viewer, [], [], [], [], bid_ref, scene_generation=14
+        )
+        self.assertEqual(main_renderer.camera.position.x, 101.0)
+        self.assertEqual(detached_renderer.camera.position.x, 202.0)
 
     def test_explicit_reset_view_still_fits_current_content(self):
         viewer, renderer = self._make_page_plane_viewer([])
@@ -448,9 +687,17 @@ class TestMeshViewLifecycle(unittest.TestCase):
     def test_mesh_window_cleanup_clears_external_callback_references(self):
         window = MeshViewWindow.__new__(MeshViewWindow)
         retained = object()
+        cleanup_calls = []
         window._is_closing = False
-        window._resize_timer = None
-        window.viewer = None
+        window._resize_timer = SimpleNamespace(
+            stop=lambda: cleanup_calls.append("timer-stop"),
+            timeout=SimpleNamespace(disconnect=lambda _callback: None),
+            deleteLater=lambda: cleanup_calls.append("timer-delete"),
+        )
+        window.viewer = SimpleNamespace(
+            blockSignals=lambda _blocked: cleanup_calls.append("viewer-block"),
+            cleanup=lambda: cleanup_calls.append("viewer-cleanup"),
+        )
         window._zoom_combo = retained
         window._context_menu_command_trigger = lambda _key: retained
         window._context_menu_action_state = lambda: retained
@@ -462,6 +709,10 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertIsNone(window._context_menu_action_state)
         self.assertIsNone(window.icon_provider)
         self.assertIsNone(window._color_service)
+        self.assertEqual(
+            cleanup_calls,
+            ["timer-stop", "timer-delete", "viewer-block", "viewer-cleanup"],
+        )
 
 
 if __name__ == "__main__":

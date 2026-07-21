@@ -1,9 +1,12 @@
 import unittest
+import threading
 from types import SimpleNamespace
+from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.visualization_service import (
     VisualizationService,
 )
 from ost_visualizer.domain.entities.database_descriptor import DatabaseBackend
+from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.infrastructure.monitoring.transaction_monitor import (
     MonitorState,
     TransactionMonitor,
@@ -112,6 +115,64 @@ def _service(
 
 
 class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
+    def test_no_pages_cancel_without_scene_but_selected_page_without_mesh_publishes(
+        self,
+    ):
+        published = []
+        bid_ref = BidRef("db.mdb", "bid-empty")
+        service = VisualizationService.__new__(VisualizationService)
+        service.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: bid_ref,
+            collect_takeoffs_for_pages=lambda _pages: SimpleNamespace(takeoffs=[]),
+        )
+        service._visualization_provider = SimpleNamespace(
+            convert_meshes_to_geometries=lambda _meshes, _colors: (
+                [],
+                (0, 0, 0, 0, 0, 0),
+            )
+        )
+        service.event_bus = SimpleNamespace(
+            publish=lambda event, **payload: published.append((event, payload))
+        )
+        service._mesh_generation_lock = threading.Lock()
+        service._mesh_generation_id = 0
+        service._mesh_generation_bid_ref = None
+        service._mesh_generation_delivered = True
+        service._mesh_pending_task = None
+        service._mesh_shutdown = threading.Event()
+        service.refresh_mesh_view([])
+        self.assertEqual(published, [])
+        service.refresh_mesh_view(["page-1"])
+        self.assertEqual(len(published), 1)
+        event, payload = published[0]
+        self.assertIs(event, AppEvents.NATIVE_SCENE_UPDATED)
+        self.assertEqual(payload["database_id"], bid_ref.file_path)
+        self.assertEqual(payload["bid_uid"], bid_ref.bid_uid)
+        self.assertEqual(payload["generation"], 2)
+
+    def test_scene_ready_publishes_only_current_generation_with_bid_identity(self):
+        published = []
+        service = VisualizationService.__new__(VisualizationService)
+        service._mesh_generation_lock = threading.Lock()
+        service._mesh_generation_id = 42
+        service._mesh_generation_bid_ref = BidRef("db.mdb", "bid-42")
+        service._mesh_generation_delivered = False
+        service._mesh_shutdown = threading.Event()
+        service.event_bus = SimpleNamespace(
+            publish=lambda event, **payload: published.append((event, payload))
+        )
+        service._on_scene_ready([], (0, 1, 0, 1, 0, 1), 41)
+        self.assertEqual(published, [])
+        service._on_scene_ready([], (0, 1, 0, 1, 0, 1), 42)
+        self.assertEqual(len(published), 1)
+        event, payload = published[0]
+        self.assertIs(event, AppEvents.NATIVE_SCENE_UPDATED)
+        self.assertEqual(payload["database_id"], "db.mdb")
+        self.assertEqual(payload["bid_uid"], "bid-42")
+        self.assertEqual(payload["generation"], 42)
+        service._on_scene_ready([], (0, 1, 0, 1, 0, 1), 42)
+        self.assertEqual(len(published), 1)
+
     def test_access_database_starts_and_processes_companion_commit_monitor(self):
         locator = "C:/projects/local.mdb"
         service, monitor, _data, operations, notifier = _service(

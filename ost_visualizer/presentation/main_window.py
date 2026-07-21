@@ -3,6 +3,7 @@ import threading
 from types import SimpleNamespace
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Signal
+from shiboken6 import isValid
 from ..application.dtos.collaboration_dtos import CollaborationShutdownState
 from ..application.dtos.condition_summary_dtos import ConditionSummaryGrouping
 from ..application.dtos.file_import_args import ProjectFileArgs
@@ -73,6 +74,7 @@ from .managers.deferred_persistence_manager import DeferredPersistenceManager
 from .managers.shortcut_manager import ShortcutManager
 from .managers.ui_access_manager import Feature, UIAccessManager
 from .managers.ui_state_manager import UIStateManager
+from .interfaces.i_workspace_shell import CurrentAreaSelectionContext
 from .services.bid_clipboard_service import BidClipboardService
 from .services.mcp_context_bridge import McpContextBridge
 from .utils.annotation_defaults import (
@@ -1380,6 +1382,70 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def get_page_settings_bar(self):
         return self._page_settings_bar
+
+    @staticmethod
+    def _widget_top_level(
+        widget: QtWidgets.QWidget | None,
+    ) -> QtWidgets.QWidget | None:
+        if widget is None or not isValid(widget):
+            return None
+        try:
+            top_level = widget.window()
+        except RuntimeError:
+            return None
+        return top_level if top_level is not None and isValid(top_level) else None
+
+    def _detached_plan_windows(self) -> tuple[QtWidgets.QWidget, ...]:
+        windows = []
+        for manager in (self._annotation_view_manager, self._view_window_manager):
+            window = manager.get_window()
+            if window is not None and isValid(window):
+                windows.append(window)
+        return tuple(windows)
+
+    def resolve_current_area_selection_context(self) -> CurrentAreaSelectionContext:
+        focus_widget = QtWidgets.QApplication.focusWidget()
+        focus_top_level = self._widget_top_level(focus_widget)
+        active_window = QtWidgets.QApplication.activeWindow()
+        detached_windows = self._detached_plan_windows()
+        if isinstance(focus_top_level, QtWidgets.QMenu):
+            menu_parent = focus_top_level.parentWidget()
+            while isinstance(menu_parent, QtWidgets.QMenu):
+                menu_parent = menu_parent.parentWidget()
+            owner = self._widget_top_level(menu_parent)
+            if owner is None or isinstance(owner, QtWidgets.QMenu):
+                owner = active_window
+        else:
+            owner = focus_top_level or active_window
+        if any(owner is window for window in detached_windows):
+            target = owner.current_area_selection_target()
+            if target is None:
+                return CurrentAreaSelectionContext(parent=self)
+            plan_view, area_uid = target
+            return CurrentAreaSelectionContext(
+                parent=owner,
+                plan_view=plan_view,
+                area_uid=area_uid,
+            )
+        if owner is not self:
+            return CurrentAreaSelectionContext(parent=self)
+        if not self.is_takeoff_tab_active():
+            return CurrentAreaSelectionContext(parent=self)
+        plan_view = self.get_takeoff_plan_view()
+        page_settings_bar = self.get_page_settings_bar()
+        if (
+            plan_view is None
+            or page_settings_bar is None
+            or not isValid(plan_view)
+            or not isValid(page_settings_bar)
+            or not plan_view.current_page_uid
+        ):
+            return CurrentAreaSelectionContext(parent=self)
+        return CurrentAreaSelectionContext(
+            parent=self,
+            plan_view=plan_view,
+            area_uid=page_settings_bar.get_selected_area_uid() or None,
+        )
 
     def get_active_takeoff_view(self) -> str:
         return "2d" if self._view_stack.currentIndex() == 1 else "3d"

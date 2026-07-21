@@ -1619,9 +1619,16 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
         retained = object()
         plan_view = CleanupPlanView()
+        timer_calls = []
         window._is_closing = False
-        window._show_timer = None
-        window._named_view_resize_focus_timer = None
+        window._show_timer = SimpleNamespace(
+            stop=lambda: timer_calls.append("show-stop"),
+            deleteLater=lambda: timer_calls.append("show-delete"),
+        )
+        window._named_view_resize_focus_timer = SimpleNamespace(
+            stop=lambda: timer_calls.append("focus-stop"),
+            deleteLater=lambda: timer_calls.append("focus-delete"),
+        )
         window._pending_named_view_resize_focus = False
         window._reveal_named_view_blank_canvas = lambda: None
         window._hotlink_adapter = None
@@ -1659,6 +1666,10 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertIsNone(window._named_view_combo)
         self.assertIsNone(window._scale_combo)
         self.assertIsNone(window._btn_select)
+        self.assertEqual(
+            timer_calls,
+            ["show-stop", "show-delete", "focus-stop", "focus-delete"],
+        )
 
 
 def FakeDetachedPageData(*, annotation_layer_hidden: bool = False):
@@ -2492,6 +2503,34 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         manager._on_database_refreshed(file_path="other.mdb")
         manager._on_database_refreshed(file_path="file.mdb")
+        self.assertEqual(calls, ["refresh"])
+
+    def test_native_scene_refresh_isolated_to_matching_detached_bid(self):
+        calls = []
+        view = AnnotationView(
+            uid="view-1",
+            bid_uid="bid-1",
+            file_path="file.mdb",
+            target_page_uid="p1",
+        )
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager._window = object()
+        manager.repository = SimpleNamespace(get_active_view=lambda: view)
+        manager._refresh_signaler = SimpleNamespace(
+            request_refresh=lambda: calls.append("refresh")
+        )
+        manager._on_native_scene_updated(
+            geometries=[],
+            database_id="file.mdb",
+            bid_uid="other-bid",
+            generation=1,
+        )
+        manager._on_native_scene_updated(
+            geometries=[],
+            database_id="file.mdb",
+            bid_uid="bid-1",
+            generation=2,
+        )
         self.assertEqual(calls, ["refresh"])
 
     def test_refresh_window_retargets_deleted_active_page(self):

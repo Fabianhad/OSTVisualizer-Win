@@ -57,8 +57,6 @@ class _PreparationRunnable(QtCore.QRunnable, Generic[RequestT, PreparedT]):
 
 
 class RemotePlanUpdatePipeline(Generic[RequestT, PreparedT]):
-    """Runs bounded plan preparation off-thread and serializes Qt projections."""
-
     def __init__(
         self,
         *,

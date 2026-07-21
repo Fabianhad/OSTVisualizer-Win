@@ -1,4 +1,5 @@
 import logging
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -284,6 +285,10 @@ class ApplicationLifecycleTests(unittest.TestCase):
         service._mesh_shutdown = SimpleNamespace(set=lambda: None)
         service._mesh_task_event = SimpleNamespace(set=lambda: None)
         service._mesh_worker = SimpleNamespace(join=join_mesh_worker)
+        service._mesh_generation_lock = threading.Lock()
+        service._mesh_generation_id = 4
+        service._mesh_generation_bid_ref = object()
+        service._mesh_generation_delivered = False
         service.close_realtime_visualization = lambda: None
         service._transaction_monitor = monitor
         service._database_descriptor_registry = object()
@@ -306,6 +311,7 @@ class ApplicationLifecycleTests(unittest.TestCase):
         self.assertIsNone(service._monitored_access_locator)
         self.assertIsNone(service._scene_notifier)
         self.assertIsNone(service._mesh_pending_task)
+        self.assertIsNone(service._mesh_generation_bid_ref)
         self.assertIsNone(service.config_model)
         self.assertIsNone(service._mesh_generator)
         self.assertIsNone(service._visualization_provider)

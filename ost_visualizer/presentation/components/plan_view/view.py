@@ -3917,7 +3917,6 @@ class TakeoffPlanView(
         )
 
     def has_active_remote_projection_blocker(self) -> bool:
-        """Return whether rebuilding overlays would destroy an active local preview."""
         return bool(
             self._editing_annotation_uids()
             or self._drag_plan_item_uid

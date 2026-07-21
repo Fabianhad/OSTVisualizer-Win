@@ -67,9 +67,16 @@ namespace ost_renderer
         void interpolate(float alpha);
         bool has_velocity() const;
         void show_object(const Box3 &bounds);
+        void restore_state(const Vec3 &saved_position,
+                           const Vec3 &saved_target,
+                           float saved_fov,
+                           const Box3 &bounds);
         void reset();
         void get_view_matrix(float *out_matrix) const;
         void get_projection_matrix(float *out_matrix) const;
+
+    private:
+        float configure_clip_planes(const Box3 &bounds);
     };
     class Scene
     {

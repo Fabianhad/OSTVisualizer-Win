@@ -3,6 +3,9 @@ from types import SimpleNamespace
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
+from ost_visualizer.presentation.interfaces.i_workspace_shell import (
+    CurrentAreaSelectionContext,
+)
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
 
 
@@ -173,6 +176,11 @@ class ExportMenuStateTests(unittest.TestCase):
             get_takeoff_plan_view=lambda: plan_view,
             get_page_settings_bar=lambda: SimpleNamespace(
                 get_selected_area_uid=lambda: "area-1"
+            ),
+            resolve_current_area_selection_context=lambda: CurrentAreaSelectionContext(
+                parent=plan_view,
+                plan_view=plan_view,
+                area_uid="area-1",
             ),
         )
         controller.handlers = SimpleNamespace(

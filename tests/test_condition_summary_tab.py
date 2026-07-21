@@ -1083,7 +1083,7 @@ class SummaryTabCoordinatorTests(unittest.TestCase):
         coordinator._last_mesh_args = None
         coordinator._last_mesh_options = None
         coordinator.visualization_service = SimpleNamespace(
-            refresh_mesh_view=lambda *_args: None
+            cancel_mesh_view_refresh=lambda: None, refresh_mesh_view=lambda *_args: None
         )
         coordinator._toolbar = SimpleNamespace(refresh=lambda: None)
         coordinator._suspend_active_layer_tool = lambda *_args: None

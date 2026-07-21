@@ -76,9 +76,7 @@ class ViewerSyncCoordinator:
         self.plan_view = None
         self.opengl_viewer = None
 
-    def clear_viewer(self) -> None:
-        if self.opengl_viewer:
-            self.opengl_viewer.clear_scene()
+    def clear_plan_view(self) -> None:
         self._clear_plan_view()
 
     def _clear_plan_view(self) -> None:
@@ -364,10 +362,7 @@ class ViewerSyncCoordinator:
         )
 
     def update_license_visualization_state(self) -> None:
-        if not self._access.is_allowed(Feature.VIEW_3D):
-            if self.opengl_viewer:
-                self.opengl_viewer.clear_scene()
-        else:
+        if self._access.is_allowed(Feature.VIEW_3D):
             selected_pages = self._project_data.get_selected_page_uids()
             self._visualization_service.refresh_mesh_view(selected_pages)
         if self._access.is_allowed(Feature.VIEW_2D):

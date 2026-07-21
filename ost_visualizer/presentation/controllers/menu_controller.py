@@ -46,6 +46,7 @@ from ..dialogs.cover_sheet.dialog import CoverSheetDialog
 from ..dialogs.new_database_type_dialog import NewDatabaseTypeDialog
 from ..dialogs.options.dialog import OptionsDialog
 from ..managers.ui_access_manager import Feature
+from ..interfaces.i_workspace_shell import CurrentAreaSelectionContext
 from ..utils.image_show_mode import mode_to_flags
 from ..utils.messagebox import DB_LOCKED_HINT, show_critical, show_warning
 from ..utils.ost_blocking import exec_with_ost_blocking
@@ -424,13 +425,14 @@ class MenuController:
             rotate_flip_menu.setEnabled(can_transform_takeoffs or page_image_enabled)
         select_current_area_action = self._actions.get("select_objects_in_current_area")
         if select_current_area_action:
+            area_context = self._current_area_selection_context()
+            area_plan_view = area_context.plan_view
             select_current_area_action.setEnabled(
-                takeoff_active
-                and self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS)
+                self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS)
                 and bool(
-                    plan_view
-                    and plan_view.current_page_uid
-                    and plan_view.has_takeoff_objects
+                    area_plan_view
+                    and area_plan_view.current_page_uid
+                    and area_plan_view.has_takeoff_objects
                 )
             )
         set_scale_action = self._actions.get("set_scale")
@@ -723,18 +725,22 @@ class MenuController:
         return self.window.is_summary_tab_active()
 
     def _select_objects_in_current_area(self) -> None:
-        if (
-            not self.window.is_takeoff_tab_active()
-            or not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS)
-        ):
+        if not self.ui_access_manager.is_allowed(Feature.SELECT_PLAN_ITEMS):
             return
-        plan_view = self.window.get_takeoff_plan_view()
-        page_settings_bar = self.window.get_page_settings_bar()
-        if not plan_view or not page_settings_bar:
+        context = self._current_area_selection_context()
+        if context.plan_view is None:
+            show_warning(
+                context.parent,
+                "Select Objects in Current Area",
+                "The active plan view is no longer available. Activate an open plan "
+                "view and try again.",
+            )
             return
-        area_uid = page_settings_bar.get_selected_area_uid() or None
-        plan_view.select_takeoffs_in_area(area_uid)
+        context.plan_view.select_takeoffs_in_area(context.area_uid)
         self.handlers.ui_event.refresh_toolbar()
+
+    def _current_area_selection_context(self) -> CurrentAreaSelectionContext:
+        return self.window.resolve_current_area_selection_context()
 
     def _show_cover_sheet(self) -> None:
         if not self.ui_access_manager.is_allowed(Feature.COVER_SHEET):

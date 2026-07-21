@@ -169,12 +169,16 @@ class FakeMeshReceiver:
         self.mesh_calls = []
         self.clear_calls = 0
         self.visible = visible
+        self.scene_loads = []
 
     def apply_mesh_data(self, *args, **mesh_options):
         self.mesh_calls.append((args, mesh_options))
 
     def clear_scene(self):
         self.clear_calls += 1
+
+    def begin_scene_load(self, bid_ref):
+        self.scene_loads.append(bid_ref)
 
     def isVisible(self):
         return self.visible
@@ -469,7 +473,7 @@ class FakeUnloadViewer:
     def __init__(self):
         self.clears = 0
 
-    def clear_viewer(self):
+    def clear_plan_view(self):
         self.clears += 1
 
 
@@ -478,9 +482,13 @@ class FakeVisualization:
         self.mesh_pages = []
         self.monitoring_stopped = 0
         self.monitoring_started = 0
+        self.cancelled_mesh_refreshes = 0
 
     def refresh_mesh_view(self, page_uids):
         self.mesh_pages.append(list(page_uids))
+
+    def cancel_mesh_view_refresh(self):
+        self.cancelled_mesh_refreshes += 1
 
     def stop_database_monitoring(self):
         self.monitoring_stopped += 1
@@ -507,6 +515,7 @@ def configure_mesh_state(
     coordinator._mesh_scene_dirty = False
     coordinator._dirty_mesh_page_uids = set()
     coordinator._pending_dirty_mesh_refresh = False
+    coordinator._is_cleaning_up = False
 
 
 class FakeUndo:
@@ -675,6 +684,13 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.ui_access_manager = FakeAccess()
         coordinator._tab_widget = FakeTabWidget(index=0)
         coordinator._nav = FakeNav()
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
+        coordinator._last_mesh_args = None
+        coordinator._last_mesh_options = None
+        coordinator._mesh_scene_dirty = False
+        coordinator._dirty_mesh_page_uids = set()
+        coordinator._pending_dirty_mesh_refresh = False
         coordinator._do_file_refresh = lambda: None
         coordinator._save_current_page_view_state = lambda: None
         coordinator._sync_undo_bid = lambda: None
@@ -1371,7 +1387,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._pending_hotlink_named_view = None
         coordinator._on_takeoffs_changed(page_uid="page-1", takeoff_uids=["t-1"])
         self.assertEqual(coordinator._viewer.plan_pages, ["page-1"])
-        self.assertEqual(coordinator.visualization_service.mesh_pages, [[]])
+        self.assertEqual(coordinator.visualization_service.mesh_pages, [])
+        self.assertEqual(coordinator.visualization_service.cancelled_mesh_refreshes, 1)
         self.assertFalse(coordinator._mesh_scene_dirty)
 
     def test_takeoffs_changed_refreshes_mesh_live_when_embedded_3d_active(self):
@@ -1436,7 +1453,14 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._on_view_stack_changed(0)
         self.assertEqual(coordinator.visualization_service.mesh_pages, [["page-1"]])
         self.assertTrue(coordinator._pending_dirty_mesh_refresh)
-        coordinator._on_native_scene_updated(geometries=[])
+        active_ref = BidRef("test.mdb", "bid-1")
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
+        coordinator._on_native_scene_updated(
+            geometries=[],
+            database_id=active_ref.file_path,
+            bid_uid=active_ref.bid_uid,
+            generation=1,
+        )
         self.assertFalse(coordinator._mesh_scene_dirty)
         self.assertFalse(coordinator._pending_dirty_mesh_refresh)
 
@@ -1509,6 +1533,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         coordinator._last_mesh_args = None
         coordinator._last_mesh_options = None
+        active_ref = BidRef("test.mdb", "bid-1")
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
         geometry = MeshGeometry(
             vertices=[0.0, 0.0, 0.0],
             normals=[0.0, 1.0, 0.0],
@@ -1519,7 +1545,11 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             takeoff_uid="takeoff-1",
         )
         coordinator._on_native_scene_updated(
-            geometries=[geometry], bounds=(-1, 1, -2, 2, -3, 3)
+            geometries=[geometry],
+            bounds=(-1, 1, -2, 2, -3, 3),
+            database_id=active_ref.file_path,
+            bid_uid=active_ref.bid_uid,
+            generation=7,
         )
         self.assertEqual(1, len(coordinator.opengl_viewer.mesh_calls))
         args, mesh_options = coordinator.opengl_viewer.mesh_calls[0]
@@ -1531,6 +1561,91 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator._last_mesh_args, args)
         self.assertEqual(coordinator._last_mesh_options, mesh_options)
         self.assertEqual(1, coordinator._plan_view_signaler.requests)
+
+    def test_native_scene_update_rejects_stale_bid_before_touching_views(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator._nav = FakeNav()
+        coordinator.ui_access_manager = FakeMeshAccess()
+        coordinator.ui_state_manager = FakeUiState()
+        active_ref = BidRef("active.mdb", "active-bid")
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
+        coordinator.project_data = FakeProjectData()
+        opengl_viewer = FakeMeshReceiver()
+        mesh_window = FakeMeshReceiver()
+        coordinator._plan_view_signaler = FakeMeshPlanSignaler()
+        configure_mesh_state(
+            coordinator,
+            view_index=0,
+            opengl_viewer=opengl_viewer,
+            mesh_window=mesh_window,
+        )
+        coordinator._last_mesh_args = None
+        coordinator._last_mesh_options = None
+        coordinator._on_native_scene_updated(
+            geometries=[],
+            database_id="stale.mdb",
+            bid_uid="stale-bid",
+            generation=21,
+        )
+        self.assertEqual(opengl_viewer.mesh_calls, [])
+        self.assertEqual(mesh_window.mesh_calls, [])
+        self.assertIsNone(coordinator._last_mesh_args)
+
+    def test_bid_load_suspends_each_3d_surface_and_cancels_without_empty_publish(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        embedded = FakeMeshReceiver()
+        detached = FakeMeshReceiver()
+        visualization = FakeVisualization()
+        configure_mesh_state(
+            coordinator,
+            opengl_viewer=embedded,
+            mesh_window=detached,
+            visualization=visualization,
+        )
+        coordinator._last_mesh_args = ("old",)
+        coordinator._last_mesh_options = {"bid_ref": BidRef("a.mdb", "old")}
+        target = BidRef("a.mdb", "new")
+        coordinator._begin_mesh_views_for_bid_load(target)
+        self.assertEqual(embedded.scene_loads, [target])
+        self.assertEqual(detached.scene_loads, [target])
+        self.assertEqual(visualization.cancelled_mesh_refreshes, 1)
+        self.assertEqual(visualization.mesh_pages, [])
+        self.assertIsNone(coordinator._last_mesh_args)
+
+    def test_detached_mesh_close_during_load_skips_callback_and_reopen_replays_final(
+        self,
+    ):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        active_ref = BidRef("a.mdb", "bid-1")
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
+        coordinator.project_data = FakeProjectData()
+        coordinator._nav = FakeNav()
+        coordinator.ui_access_manager = FakeMeshAccess()
+        coordinator._plan_view_signaler = FakeMeshPlanSignaler()
+        embedded = FakeMeshReceiver(visible=True)
+        closing_detached = FakeMeshReceiver(visible=True)
+        configure_mesh_state(
+            coordinator,
+            view_index=0,
+            opengl_viewer=embedded,
+            mesh_window=closing_detached,
+        )
+        coordinator._last_mesh_args = None
+        coordinator._last_mesh_options = None
+        coordinator._begin_mesh_views_for_bid_load(active_ref)
+        closing_detached.visible = False
+        coordinator._on_native_scene_updated(
+            geometries=[],
+            database_id=active_ref.file_path,
+            bid_uid=active_ref.bid_uid,
+            generation=40,
+        )
+        self.assertEqual(len(embedded.mesh_calls), 1)
+        self.assertEqual(closing_detached.mesh_calls, [])
+        reopened = FakeMeshReceiver(visible=True)
+        coordinator._replay_mesh_if_current(reopened)
+        self.assertEqual(len(reopened.mesh_calls), 1)
 
     def test_condition_selection_in_3d_does_not_enter_place_mode(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -2587,6 +2702,13 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._viewer = FakeUnloadViewer()
         coordinator.visualization_service = FakeVisualization()
         coordinator._nav = FakeRefreshNav(FakeRefreshSnapshot(bid_ref=replacement_ref))
+        coordinator.opengl_viewer = None
+        coordinator._mesh_window = None
+        coordinator._last_mesh_args = None
+        coordinator._last_mesh_options = None
+        coordinator._mesh_scene_dirty = False
+        coordinator._dirty_mesh_page_uids = set()
+        coordinator._pending_dirty_mesh_refresh = False
         coordinator._save_current_page_view_state = lambda: None
         coordinator._sync_undo_bid = lambda: None
         coordinator.ensure_select_mode = lambda: None

@@ -39,6 +39,8 @@ NB_MODULE(ost_renderer, m)
         .def("pan", &Camera::pan, "delta_x", "delta_y")
         .def("zoom", &Camera::zoom, "delta")
         .def("show_object", &Camera::show_object, "bounds")
+        .def("restore_state", &Camera::restore_state,
+             "position", "target", "fov", "bounds")
         .def("reset", &Camera::reset)
         .def("has_velocity", &Camera::has_velocity)
         .def_rw("fov", &Camera::fov)

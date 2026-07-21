@@ -577,13 +577,19 @@ class UIEventCoordinator:
         self._last_mesh_args = None
         self._last_mesh_options = None
 
-    def _clear_mesh_views_for_scene_update(self, clear_embedded: bool = True) -> None:
+    def _clear_mesh_views_for_scene_update(self) -> None:
+        self.visualization_service.cancel_mesh_view_refresh()
         self._clear_mesh_replay_buffer()
         self._clear_mesh_dirty_state()
-        if clear_embedded and self.opengl_viewer:
-            self.opengl_viewer.clear_scene()
-        if self._mesh_window:
-            self._mesh_window.clear_scene()
+        for view in self._native_3d_views():
+            view.clear_scene()
+
+    def _begin_mesh_views_for_bid_load(self, bid_ref: BidRef) -> None:
+        self.visualization_service.cancel_mesh_view_refresh()
+        self._clear_mesh_replay_buffer()
+        self._clear_mesh_dirty_state()
+        for view in self._native_3d_views():
+            view.begin_scene_load(bid_ref)
 
     def _is_embedded_3d_active(self) -> bool:
         return bool(
@@ -620,7 +626,6 @@ class UIEventCoordinator:
         pages = [str(uid) for uid in page_uids if uid]
         if not pages:
             self._clear_mesh_views_for_scene_update()
-            self.visualization_service.refresh_mesh_view([])
             return
         if self._needs_live_3d_mesh_refresh():
             self._pending_dirty_mesh_refresh = self._mesh_scene_dirty
@@ -636,7 +641,6 @@ class UIEventCoordinator:
         selected_pages = self.project_data.get_selected_page_uids()
         if not selected_pages:
             self._clear_mesh_views_for_scene_update()
-            self.visualization_service.refresh_mesh_view([])
             return
         self._pending_dirty_mesh_refresh = True
         self.visualization_service.refresh_mesh_view(selected_pages)
@@ -1692,6 +1696,8 @@ class UIEventCoordinator:
 
     def cleanup(self) -> None:
         self._is_cleaning_up = True
+        self.visualization_service.cancel_mesh_view_refresh()
+        self._clear_mesh_replay_buffer()
         if self._plan_view_handler is not None:
             self._plan_view_handler.invalidate_pending_takeoff_placements()
         if self._view_stack:
@@ -1777,7 +1783,8 @@ class UIEventCoordinator:
         self.main_window.project_view.set_selected_node_state(None)
         self._nav.transition_to(NavState.FILE_LOADED_NO_BID)
         self.ui_access_manager.refresh()
-        self._viewer.clear_viewer()
+        self._viewer.clear_plan_view()
+        self._clear_mesh_views_for_scene_update()
         self._set_takeoff_tab_visible(False)
         self._rebuild_ui_after_file_load()
         self._update_export_menu_state()
@@ -1902,7 +1909,8 @@ class UIEventCoordinator:
                 if not defer_plan_projection:
                     self._update_plan_view(active_page)
             else:
-                self._viewer.clear_viewer()
+                self._viewer.clear_plan_view()
+                self._clear_mesh_views_for_scene_update()
         if (
             CollaborationResourceFamily.LAYERS.value in changed_families
             and self._sidebar.bid_layers_sidebar
@@ -2385,9 +2393,8 @@ class UIEventCoordinator:
         self.ui_access_manager.refresh()
         self.project_data.clear_page_selection()
         self._reset_takeoff_workspace_state()
-        self._viewer.clear_viewer()
-        self._clear_mesh_views_for_scene_update(clear_embedded=False)
-        self.visualization_service.refresh_mesh_view([])
+        self._viewer.clear_plan_view()
+        self._clear_mesh_views_for_scene_update()
         self._set_takeoff_tab_visible(False)
         self._refresh_project_tree_after_file_unload()
         self._update_export_menu_state()
@@ -2427,9 +2434,8 @@ class UIEventCoordinator:
         self.project_data.deselect_pages()
         self._reset_takeoff_workspace_state()
         self._set_takeoff_tab_visible(False)
-        self._viewer.clear_viewer()
-        self._clear_mesh_views_for_scene_update(clear_embedded=False)
-        self.visualization_service.refresh_mesh_view([])
+        self._viewer.clear_plan_view()
+        self._clear_mesh_views_for_scene_update()
         self._update_export_menu_state()
         if file_path:
             collaboration_status = self._sql_collaboration.status(file_path)
@@ -2475,27 +2481,35 @@ class UIEventCoordinator:
     def _on_license_status_changed(self, has_license: bool) -> None:
         self._viewer.update_license_visualization_state()
         if not self.ui_access_manager.is_allowed(Feature.VIEW_3D):
-            self._clear_mesh_replay_buffer()
-            if self._mesh_window:
-                self._mesh_window.clear_scene()
+            self._clear_mesh_views_for_scene_update()
         self._toolbar.refresh()
         self.ensure_select_mode()
 
     def _on_native_scene_updated(
-        self, geometries: List[MeshGeometry], bounds: tuple | None = None
+        self,
+        geometries: List[MeshGeometry],
+        database_id: str,
+        bid_uid: str,
+        generation: int,
+        bounds: tuple | None = None,
     ) -> None:
-        if self._nav.is_refreshing:
+        if self._is_cleaning_up or self._nav.is_refreshing:
             return
         if not self.ui_access_manager.is_allowed(Feature.VIEW_3D):
-            self._last_mesh_args = None
-            self._last_mesh_options = None
-            self._clear_mesh_dirty_state()
-            if self.opengl_viewer:
-                self.opengl_viewer.clear_scene()
-            if self._mesh_window:
-                self._mesh_window.clear_scene()
+            self._clear_mesh_views_for_scene_update()
+            return
+        if not database_id or not bid_uid or generation <= 0:
+            logger.warning("Discarding native scene without a complete identity")
             return
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        result_bid_ref = BidRef(database_id, bid_uid)
+        if result_bid_ref != bid_ref:
+            logger.info(
+                "Discarding stale native scene for %s; active bid is %s",
+                result_bid_ref,
+                bid_ref,
+            )
+            return
         (
             vertices,
             normals,
@@ -2509,6 +2523,7 @@ class UIEventCoordinator:
             "bid_ref": bid_ref,
             "condition_uids": condition_uids,
             "takeoff_uids": takeoff_uids,
+            "scene_generation": generation,
         }
         if bounds is not None:
             mesh_options["scene_bounds"] = bounds
@@ -2550,9 +2565,8 @@ class UIEventCoordinator:
             self.ui_access_manager.refresh()
             self.project_data.deselect_pages()
             self._reset_takeoff_workspace_state()
-            self._viewer.clear_viewer()
-            self._clear_mesh_views_for_scene_update(clear_embedded=False)
-            self.visualization_service.refresh_mesh_view([])
+            self._viewer.clear_plan_view()
+            self._clear_mesh_views_for_scene_update()
             self._set_takeoff_tab_visible(False)
             self._update_export_menu_state()
             self.main_window.refresh_window_title()
@@ -2588,9 +2602,8 @@ class UIEventCoordinator:
         self._sync_undo_bid()
         self.project_data.deselect_pages()
         self.ui_state_manager.set_page_selection([])
-        self._viewer.clear_viewer()
-        self._clear_mesh_views_for_scene_update(clear_embedded=False)
-        self.visualization_service.refresh_mesh_view([])
+        self._viewer.clear_plan_view()
+        self._begin_mesh_views_for_bid_load(bid_ref)
         self._resolve_bid_lock_state(bid_ref)
         self._reset_takeoff_workspace_state()
         self._nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)

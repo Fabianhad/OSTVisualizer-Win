@@ -277,9 +277,25 @@ class DetachedPageViewManager(IShutdownAware):
         self._notify_visibility_changed()
 
     def _on_native_scene_updated(
-        self, geometries: list, bounds: tuple | None = None
+        self,
+        geometries: list,
+        database_id: str,
+        bid_uid: str,
+        generation: int,
+        bounds: tuple | None = None,
     ) -> None:
         if not self.is_view_open():
+            return
+        view = self.repository.get_active_view()
+        if (
+            view is None
+            or view.bid_ref is None
+            or not database_id
+            or not bid_uid
+            or generation <= 0
+            or view.bid_ref.file_path != database_id
+            or view.bid_ref.bid_uid != bid_uid
+        ):
             return
         self._refresh_signaler.request_refresh()
 

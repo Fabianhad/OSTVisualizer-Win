@@ -44,6 +44,19 @@ class _Window:
         return self._screen
 
 
+class _Timer:
+    def __init__(self):
+        self.active = False
+        self.starts = 0
+
+    def isActive(self):
+        return self.active
+
+    def start(self, _interval):
+        self.active = True
+        self.starts += 1
+
+
 class RenderSurfaceSizingTests(unittest.TestCase):
     def test_logical_dimensions_convert_to_physical_pixels_once(self):
         expected = {
@@ -152,9 +165,18 @@ class RenderSurfaceSizingTests(unittest.TestCase):
         viewer, _renderer, _state = self._viewer()
         screen = _Screen()
         window = _Window(screen)
+        top_level = type(
+            "TopLevel",
+            (),
+            {
+                "isWindow": lambda _self: True,
+                "isVisible": lambda _self: True,
+                "windowHandle": lambda _self: window,
+            },
+        )()
         viewer._surface_window = None
         viewer._surface_screen = None
-        viewer.windowHandle = lambda: window
+        viewer.window = lambda: top_level
         OpenGLViewer._connect_surface_notifications(viewer)
         OpenGLViewer._connect_surface_notifications(viewer)
         self.assertEqual(len(window.screenChanged.callbacks), 1)
@@ -164,6 +186,37 @@ class RenderSurfaceSizingTests(unittest.TestCase):
         self.assertEqual(screen.logicalDotsPerInchChanged.callbacks, [])
         self.assertIsNone(viewer._surface_window)
         self.assertIsNone(viewer._surface_screen)
+
+    def test_invisible_top_level_does_not_request_native_window_handle(self):
+        viewer, _renderer, _state = self._viewer()
+        top_level = type(
+            "HiddenTopLevel",
+            (),
+            {
+                "isWindow": lambda _self: True,
+                "isVisible": lambda _self: False,
+                "windowHandle": lambda _self: (_ for _ in ()).throw(
+                    AssertionError("native handle requested before show")
+                ),
+            },
+        )()
+        viewer._surface_window = None
+        viewer._surface_screen = None
+        viewer.window = lambda: top_level
+        OpenGLViewer._connect_surface_notifications(viewer)
+        self.assertIsNone(viewer._surface_window)
+
+    def test_surface_metric_refresh_requests_are_coalesced_and_stop_after_cleanup(self):
+        viewer, _renderer, _state = self._viewer()
+        viewer._destroyed = False
+        viewer._surface_metrics_timer = _Timer()
+        OpenGLViewer._queue_surface_metrics_refresh(viewer)
+        OpenGLViewer._queue_surface_metrics_refresh(viewer)
+        self.assertEqual(viewer._surface_metrics_timer.starts, 1)
+        viewer._destroyed = True
+        viewer._surface_metrics_timer.active = False
+        OpenGLViewer._queue_surface_metrics_refresh(viewer)
+        self.assertEqual(viewer._surface_metrics_timer.starts, 1)
 
 
 if __name__ == "__main__":

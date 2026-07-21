@@ -1,7 +1,8 @@
 import logging
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple, cast
 from PySide6 import QtCore, QtGui, QtWidgets
+from shiboken6 import isValid
 from ....application.dtos.annotation_creation_factory import AnnotationCreationFactory
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.page_view_dto import PageViewDto
@@ -804,6 +805,23 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         else:
             self._reveal_named_view_blank_canvas()
         self._load_page_content()
+
+    def current_area_selection_target(
+        self,
+    ) -> Optional[tuple[QtWidgets.QWidget, Optional[str]]]:
+        plan_view = cast(TakeoffPlanView, self.plan_view)
+        if (
+            self._is_closing
+            or not isValid(plan_view)
+            or self.page_data is None
+            or self.page_data.page is None
+        ):
+            return None
+        page_uid = plan_view.current_page_uid
+        if not page_uid or page_uid != self.page_data.page.uid:
+            return None
+        area_uid = self.page_data.page_area_selections.get(page_uid) or None
+        return plan_view, area_uid
 
     def _update_scale_combo(self, sf1: float, sf2: float) -> None:
         if self._scale_combo is None:
@@ -1866,57 +1884,53 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         if self._is_closing:
             return
         self._is_closing = True
-        if self._show_timer is not None:
-            self._show_timer.stop()
-            self._show_timer.deleteLater()
-            self._show_timer = None
-        if self._named_view_resize_focus_timer is not None:
-            self._named_view_resize_focus_timer.stop()
-            self._named_view_resize_focus_timer.deleteLater()
-            self._named_view_resize_focus_timer = None
+        show_timer = cast(QtCore.QTimer, self._show_timer)
+        show_timer.stop()
+        show_timer.deleteLater()
+        self._show_timer = None
+        resize_focus_timer = cast(QtCore.QTimer, self._named_view_resize_focus_timer)
+        resize_focus_timer.stop()
+        resize_focus_timer.deleteLater()
+        self._named_view_resize_focus_timer = None
         self._pending_named_view_resize_focus = False
         self._reveal_named_view_blank_canvas()
         if self._hotlink_adapter is not None:
             self._hotlink_adapter.shutdown()
             self._hotlink_adapter = None
-        if self.plan_view is not None:
-            self.plan_view.page_geometry_ready.disconnect(self._on_page_geometry_ready)
-            self.plan_view.page_fully_loaded.disconnect(self._on_page_loaded)
-            self.plan_view.page_view_state_changed.disconnect(
-                self._on_page_view_state_changed
-            )
-            self.plan_view.positions_flushed.disconnect(self._on_positions_flushed)
-            self.plan_view.annotation_text_properties_flushed.disconnect(
-                self._on_annotation_text_properties_flushed
-            )
-            self.plan_view.annotation_text_and_positions_flushed.disconnect(
-                self._on_annotation_text_and_positions_flushed
-            )
-            self.plan_view.annotation_styles_flushed.disconnect(
-                self._on_annotation_styles_flushed
-            )
-            self.plan_view.elements_deleted.disconnect(self._on_elements_deleted)
-            self.plan_view.annotation_created.disconnect(self._on_annotation_created)
-            self.plan_view.text_annotation_created.disconnect(
-                self._on_text_annotation_created
-            )
-            self.plan_view.named_view_created.disconnect(self._on_named_view_created)
-            self.plan_view.hotlink_placement_requested.disconnect(
-                self._on_hotlink_placement_requested
-            )
-            if self._annotation_clipboard_svc is not None:
-                self.plan_view.copy_requested.disconnect(self._on_copy_requested)
-                self.plan_view.paste_requested.disconnect(self._on_paste_requested)
-                self.plan_view.set_context_menu_command_handlers(None, None)
-            self.plan_view.cursor_mode_change_requested.disconnect(
-                self._on_cursor_mode_change_requested
-            )
-            if self._undo_svc is not None:
-                self.plan_view.undo_requested.disconnect(self._undo_svc.undo)
-                self.plan_view.redo_requested.disconnect(self._undo_svc.redo)
-            self.plan_view.blockSignals(True)
-            self.plan_view.cleanup()
-            self.plan_view = None
+        plan_view = cast(TakeoffPlanView, self.plan_view)
+        plan_view.page_geometry_ready.disconnect(self._on_page_geometry_ready)
+        plan_view.page_fully_loaded.disconnect(self._on_page_loaded)
+        plan_view.page_view_state_changed.disconnect(self._on_page_view_state_changed)
+        plan_view.positions_flushed.disconnect(self._on_positions_flushed)
+        plan_view.annotation_text_properties_flushed.disconnect(
+            self._on_annotation_text_properties_flushed
+        )
+        plan_view.annotation_text_and_positions_flushed.disconnect(
+            self._on_annotation_text_and_positions_flushed
+        )
+        plan_view.annotation_styles_flushed.disconnect(
+            self._on_annotation_styles_flushed
+        )
+        plan_view.elements_deleted.disconnect(self._on_elements_deleted)
+        plan_view.annotation_created.disconnect(self._on_annotation_created)
+        plan_view.text_annotation_created.disconnect(self._on_text_annotation_created)
+        plan_view.named_view_created.disconnect(self._on_named_view_created)
+        plan_view.hotlink_placement_requested.disconnect(
+            self._on_hotlink_placement_requested
+        )
+        if self._annotation_clipboard_svc is not None:
+            plan_view.copy_requested.disconnect(self._on_copy_requested)
+            plan_view.paste_requested.disconnect(self._on_paste_requested)
+            plan_view.set_context_menu_command_handlers(None, None)
+        plan_view.cursor_mode_change_requested.disconnect(
+            self._on_cursor_mode_change_requested
+        )
+        if self._undo_svc is not None:
+            plan_view.undo_requested.disconnect(self._undo_svc.undo)
+            plan_view.redo_requested.disconnect(self._undo_svc.redo)
+        plan_view.blockSignals(True)
+        plan_view.cleanup()
+        self.plan_view = None
         if self._undo_svc is not None:
             self._undo_svc.clear()
         self._undo_svc = None

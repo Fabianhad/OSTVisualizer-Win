@@ -1227,6 +1227,7 @@ class UIEventCoordinatorChaosHarness:
         self.history: list[ChaosActionResult] = []
         self.coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
         self.coordinator.ui_state_manager = CoordinatorFakeUiState()
+        self.active_bid_ref = BidRef("chaos.mdb", "bid-1")
         self.coordinator.project_data = CoordinatorFakeProjectData()
         self.coordinator.takeoff_sidebar = CoordinatorFakeTakeoffSidebar()
         self.coordinator._page_settings_bar = CoordinatorFakePageSettingsBar()
@@ -1342,7 +1343,17 @@ class UIEventCoordinatorChaosHarness:
         return ChaosActionResult("switch_to_2d_view")
 
     def action_native_scene_updated(self) -> ChaosActionResult:
-        self.coordinator._on_native_scene_updated(geometries=[])
+        with unittest.mock.patch.object(
+            self.coordinator.ui_state_manager,
+            "get_selected_bid_ref",
+            return_value=self.active_bid_ref,
+        ):
+            self.coordinator._on_native_scene_updated(
+                geometries=[],
+                database_id=self.active_bid_ref.file_path,
+                bid_uid=self.active_bid_ref.bid_uid,
+                generation=1,
+            )
         return ChaosActionResult("native_scene_updated")
 
     def action_toggle_detached_mesh(self) -> ChaosActionResult:
@@ -1445,7 +1456,9 @@ class UIEventCoordinatorChaosTests(unittest.TestCase):
                 "takeoffs_changed_active_page",
             ]
         )
-        self.assertIn([], harness.coordinator.visualization_service.mesh_pages)
+        visualization = harness.coordinator.visualization_service
+        self.assertEqual(visualization.mesh_pages, [])
+        self.assertGreater(visualization.cancelled_mesh_refreshes, 0)
 
 
 class DeferredChaosWriteService:

@@ -191,17 +191,10 @@ namespace ost_renderer
         position = Vec3::from_glm(target.to_glm() - direction * new_distance);
         prev_position = position;
     }
-    void Camera::show_object(const Box3 &bounds)
+    float Camera::configure_clip_planes(const Box3 &bounds)
     {
         if (bounds.is_empty())
-        {
-            reset();
-            return;
-        }
-        Vec3 center(
-            (bounds.min.x + bounds.max.x) * 0.5f,
-            (bounds.min.y + bounds.max.y) * 0.5f,
-            (bounds.min.z + bounds.max.z) * 0.5f);
+            return 0.0f;
         float size = std::max({bounds.max.x - bounds.min.x,
                                bounds.max.y - bounds.min.y,
                                bounds.max.z - bounds.min.z});
@@ -209,12 +202,41 @@ namespace ost_renderer
             size = 100.0f;
         near_plane = std::max(0.1f, size * 0.001f);
         far_plane = std::max(10000.0f, size * 20.0f);
+        return size;
+    }
+    void Camera::show_object(const Box3 &bounds)
+    {
+        if (bounds.is_empty())
+        {
+            reset();
+            return;
+        }
+        float size = configure_clip_planes(bounds);
+        Vec3 center(
+            (bounds.min.x + bounds.max.x) * 0.5f,
+            (bounds.min.y + bounds.max.y) * 0.5f,
+            (bounds.min.z + bounds.max.z) * 0.5f);
         target = center;
         position.x = center.x;
         position.y = center.y - size * 1.5f;
         position.z = center.z + size * 0.5f;
         prev_position = position;
         prev_target = target;
+    }
+    void Camera::restore_state(const Vec3 &saved_position,
+                               const Vec3 &saved_target,
+                               float saved_fov,
+                               const Box3 &bounds)
+    {
+        configure_clip_planes(bounds);
+        position = saved_position;
+        target = saved_target;
+        prev_position = position;
+        prev_target = target;
+        fov = saved_fov;
+        rotational_velocity = glm::vec2(0.0f);
+        pan_velocity = glm::vec3(0.0f);
+        interpolation_alpha = 0.0f;
     }
     void Camera::reset()
     {

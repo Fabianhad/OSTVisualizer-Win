@@ -135,6 +135,9 @@ class AppConfigUpdatedEvent:
 @dataclass
 class NativeSceneUpdatedEvent:
     geometries: List[MeshGeometry]
+    database_id: str
+    bid_uid: str
+    generation: int
     bounds: Optional[tuple] = None
 
 
