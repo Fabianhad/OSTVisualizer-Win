@@ -756,6 +756,37 @@ class HandlerChaosUiState(FakeUiState):
         self.active_page_uid = "p1"
 
 
+class HandlerChaosAnnotationWriteService(FakeAnnotationWriteService):
+    def __init__(self):
+        super().__init__()
+        self._next_uid_index = 0
+
+    def insert_annotations(
+        self,
+        db_path,
+        bid_uid,
+        specs,
+        ref_remap=None,
+        publish_database_refreshed_after_write=True,
+    ):
+        self.insert_calls.append(
+            (
+                db_path,
+                bid_uid,
+                specs,
+                ref_remap,
+                publish_database_refreshed_after_write,
+            )
+        )
+        count = len(specs)
+        start = self._next_uid_index
+        result = list(self.next_uids[start : start + count])
+        while len(result) < count:
+            result.append(f"ann-chaos-{start + len(result)}")
+        self._next_uid_index += count
+        return result
+
+
 class PlanViewActionHandlerChaosHarness:
     def __init__(self, seed: int, test_case: unittest.TestCase):
         self.seed = seed
@@ -767,7 +798,7 @@ class PlanViewActionHandlerChaosHarness:
         self.plan_view = HandlerChaosPlanView(self.data)
         self.write = FakeWriteService()
         self.write.next_uids = [str(uid) for uid in range(1000, 1100)]
-        self.ann_write = FakeAnnotationWriteService()
+        self.ann_write = HandlerChaosAnnotationWriteService()
         self.ann_write.next_uids = [f"ann-{uid}" for uid in range(1000, 1100)]
         self.undo = FakeUndoService()
         self.event_bus = FakeEventBus()
@@ -1211,6 +1242,54 @@ class PlanViewActionHandlerChaosTests(unittest.TestCase):
         self.assertNotIn(("p1-named", ANNOTATION_TYPE_NAMED_VIEW), remaining)
         self.assertNotIn(("p1-hotlink", ANNOTATION_TYPE_HOTLINK), remaining)
 
+    def test_paste_retains_hotlink_to_existing_named_view(self):
+        harness = PlanViewActionHandlerChaosHarness(9604, self)
+        harness.plan_view.set_selected_uids({"p1-hotlink"})
+        harness.action_copy_selection()
+        harness.action_switch_page()
+        harness.action_paste_clipboard()
+        harness._assert_invariants()
+        copied_hotlinks = [
+            annotation
+            for annotation in harness.data.annotations
+            if annotation.page_uid == "p2"
+            and annotation.uid != "p2-hotlink"
+            and annotation.is_hotlink
+        ]
+        self.assertEqual(len(copied_hotlinks), 1)
+        self.assertEqual(copied_hotlinks[0].properties["BidPageViewUID"], "p1-named")
+
+    def test_paste_skips_stale_hotlink_but_keeps_other_clipboard_annotations(self):
+        harness = PlanViewActionHandlerChaosHarness(9605, self)
+        harness.action_switch_page()
+        harness.plan_view.set_selected_uids({"p2-hotlink", "p2-text"})
+        harness.action_copy_selection()
+        with unittest.mock.patch.object(
+            action_handler_module, "confirm", return_value=True
+        ):
+            harness.handler.on_elements_deleted(["p2-named"])
+        harness.plan_view.clear_selection()
+        before_text_uids = {
+            annotation.uid
+            for annotation in harness.data.annotations
+            if annotation.annotation_type == ANNOTATION_TYPE_TEXT
+        }
+        harness.action_paste_clipboard()
+        harness._assert_invariants()
+        self.assertFalse(
+            any(
+                annotation.is_hotlink
+                and annotation.properties.get("BidPageViewUID") == "p2-named"
+                for annotation in harness.data.annotations
+            )
+        )
+        after_text_uids = {
+            annotation.uid
+            for annotation in harness.data.annotations
+            if annotation.annotation_type == ANNOTATION_TYPE_TEXT
+        }
+        self.assertGreater(len(after_text_uids), len(before_text_uids))
+
 
 class CoordinatorChaosPlanView:
     def __init__(self):
@@ -1355,6 +1434,8 @@ class UIEventCoordinatorChaosHarness:
                     tuple(self.coordinator.project_data.get_selected_page_uids()),
                     1,
                 ),
+                bounds=None,
+                scene_failed=False,
             )
         return ChaosActionResult("native_scene_updated")
 

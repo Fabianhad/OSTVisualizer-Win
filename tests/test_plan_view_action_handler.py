@@ -3721,7 +3721,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(len(write.delete_calls), 1)
         self.assertEqual(write.delete_calls[0][0], "bid.mdb")
         self.assertEqual(set(write.delete_calls[0][1]), {"parent", "hole"})
-        self.assertTrue(write.delete_calls[0][2])
+        self.assertFalse(write.delete_calls[0][2])
+        self.assertEqual(write.reloads, ["bid.mdb"])
         self.assertEqual(event_bus.events, [])
 
     def test_takeoff_delete_with_unknown_extras_keeps_full_reload(self):
@@ -3745,7 +3746,8 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ui_access_manager=FakeAccess(set(Feature)),
         )
         handler.on_elements_deleted(["t1"])
-        self.assertEqual(write.delete_calls, [("bid.mdb", ["t1"], True)])
+        self.assertEqual(write.delete_calls, [("bid.mdb", ["t1"], False)])
+        self.assertEqual(write.reloads, ["bid.mdb"])
         self.assertIn("t1", data.takeoffs)
         self.assertEqual(event_bus.events, [])
 
@@ -3881,6 +3883,64 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(
             ann_write.insert_calls[0][2][0].position,
             [0.0, 0.0, 64.0, 64.0],
+        )
+
+    def test_mixed_delete_undo_uses_canonical_annotation_projection(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+        )
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type=ANNOTATION_TYPE_RECT,
+            page_uid="p1",
+            position=[1.0, 2.0, 3.0, 4.0],
+        )
+        data.annotations = [annotation]
+        plan_view = FakePlanView(data)
+        plan_view.annotations["rect-item"] = annotation
+        plan_view.annotation_key_map[("ann-2", ANNOTATION_TYPE_RECT)] = "rect-item"
+        write = FakeWriteService()
+        write.next_uids = ["t2"]
+        annotation_write = FakeAnnotationWriteService()
+        annotation_write.next_uids = ["ann-2"]
+        undo = FakeUndoService()
+        event_bus = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=event_bus,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_elements_deleted(["t1", "rect-item"])
+        self.assertEqual(write.delete_calls, [("bid.mdb", ["t1"], False)])
+        self.assertEqual(annotation_write.delete_calls[0][2], False)
+        self.assertEqual(write.reloads, ["bid.mdb"])
+        data.annotations = []
+        undo.undo()
+        self.assertEqual(
+            [(item.uid, item.annotation_type) for item in data.annotations],
+            [("ann-2", ANNOTATION_TYPE_RECT)],
+        )
+        self.assertEqual(plan_view.selected, {"rect-item"})
+        undo.redo()
+        self.assertEqual(data.annotations, [])
+        self.assertEqual(
+            [event for event, _payload in event_bus.events],
+            [AppEvents.ANNOTATIONS_CHANGED, AppEvents.ANNOTATIONS_CHANGED],
+        )
+        self.assertEqual(
+            [call[2] for call in annotation_write.delete_calls],
+            [False, False],
         )
 
     def test_named_view_delete_with_linked_hotlink_no_or_close_cancels_delete(self):
@@ -4081,6 +4141,59 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [AppEvents.ANNOTATIONS_CHANGED],
         )
         self.assertEqual(undo.count, 1)
+
+    def test_named_view_delete_undo_remaps_hotlink_in_memory_on_every_restore(self):
+        data = FakeProjectData()
+        named_view = _named_view_annotation("nv1", "Lobby")
+        hotlink = _hotlink_annotation("hl1", "nv1")
+        data.annotations = [named_view, hotlink]
+        plan_view = FakePlanView(data)
+        plan_view.annotations = {"nv1": named_view}
+        ann_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=FakeWriteService(),
+            annotation_write_svc=ann_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess({Feature.EDIT_PLAN_ITEMS}),
+        )
+        with patch.object(handler_module, "confirm", return_value=True):
+            handler.on_elements_deleted(["nv1"])
+        with patch.object(
+            ann_write,
+            "insert_annotations",
+            side_effect=[["nv-restored-1"], ["hl-restored-1"]],
+        ):
+            undo.undo()
+        restored = {
+            annotation.annotation_type: annotation for annotation in data.annotations
+        }
+        self.assertEqual(restored["namedview"].uid, "nv-restored-1")
+        self.assertEqual(restored["hotlink"].uid, "hl-restored-1")
+        self.assertEqual(
+            restored["hotlink"].properties["BidPageViewUID"], "nv-restored-1"
+        )
+        undo.redo()
+        with patch.object(
+            ann_write,
+            "insert_annotations",
+            side_effect=[["nv-restored-2"], ["hl-restored-2"]],
+        ):
+            undo.undo()
+        restored = {
+            annotation.annotation_type: annotation for annotation in data.annotations
+        }
+        self.assertEqual(restored["namedview"].uid, "nv-restored-2")
+        self.assertEqual(restored["hotlink"].uid, "hl-restored-2")
+        self.assertEqual(
+            restored["hotlink"].properties["BidPageViewUID"], "nv-restored-2"
+        )
 
     def test_bulk_named_view_delete_decline_skips_only_that_view(self):
         data = FakeProjectData()

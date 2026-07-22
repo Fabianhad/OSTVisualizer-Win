@@ -57,6 +57,23 @@ class NativePageImagePlaneTests(unittest.TestCase):
         )
         self.assertEqual(provider._active_page_uid(), "page-b")
 
+    def test_fallback_page_is_stable_for_equivalent_checked_page_orderings(self):
+        ui_state = SimpleNamespace(active_page_uid="unchecked-page")
+        first = NativePageImagePlaneProvider(
+            SimpleNamespace(get_selected_page_uids=lambda: ["page-b", "page-a"]),
+            ui_state,
+            None,
+            None,
+        )
+        second = NativePageImagePlaneProvider(
+            SimpleNamespace(get_selected_page_uids=lambda: ["page-a", "page-b"]),
+            ui_state,
+            None,
+            None,
+        )
+        self.assertEqual(first._active_page_uid(), "page-a")
+        self.assertEqual(second._active_page_uid(), "page-a")
+
     def test_native_and_threejs_plane_transforms_share_floor_offset(self):
         native = native_page_plane_transform(20.0, 10.0, (-5, 5, -2, 2, 3, 8))
         threejs = threejs_page_plane_transform(

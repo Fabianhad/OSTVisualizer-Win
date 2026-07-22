@@ -117,17 +117,14 @@ class NavigationStateMachine:
         self,
         has_file: bool,
         bid_ref: Optional[BidRef],
-        page_uids: list,
-        placement_active: bool,
+        active_page_uid: Optional[str],
     ) -> NavState:
         if not has_file:
             return NavState.NO_FILE
         if not bid_ref:
             return NavState.FILE_LOADED_NO_BID
-        if not page_uids:
+        if not active_page_uid:
             return NavState.BID_ACTIVE_NO_PAGES
-        if placement_active:
-            return NavState.PLACE_MODE
         return NavState.BID_ACTIVE_PAGES_SELECTED
 
     def start_refresh(self, ui_state, placement, selected_area_uid: str = "") -> bool:

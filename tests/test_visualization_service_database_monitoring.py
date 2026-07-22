@@ -156,6 +156,42 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         self.assertEqual(payload["scene_identity"].page_uids, ("page-1",))
         self.assertEqual(payload["scene_identity"].generation, 2)
 
+    def test_meshless_conversion_failure_is_identified_and_retryable(self):
+        published = []
+        bid_ref = BidRef("db.mdb", "bid-empty")
+        conversion_attempts = [RuntimeError("conversion failed"), ([], None)]
+        service = VisualizationService.__new__(VisualizationService)
+        service.project_data = SimpleNamespace(
+            get_current_bid_ref=lambda: bid_ref,
+            collect_takeoffs_for_pages=lambda _pages: SimpleNamespace(takeoffs=[]),
+        )
+
+        def convert(_meshes, _colors):
+            outcome = conversion_attempts.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        service._visualization_provider = SimpleNamespace(
+            convert_meshes_to_geometries=convert
+        )
+        service.event_bus = SimpleNamespace(
+            publish=lambda event, **payload: published.append((event, payload))
+        )
+        service._mesh_generation_lock = threading.Lock()
+        service._mesh_generation_id = 0
+        service._mesh_generation_identity = None
+        service._mesh_generation_delivered = True
+        service._mesh_pending_task = None
+        service._mesh_shutdown = threading.Event()
+        service.refresh_mesh_view(["page-1"])
+        service.refresh_mesh_view(["page-1"])
+        self.assertEqual(len(published), 2)
+        self.assertTrue(published[0][1]["scene_failed"])
+        self.assertEqual(published[0][1]["scene_identity"].generation, 1)
+        self.assertFalse(published[1][1]["scene_failed"])
+        self.assertEqual(published[1][1]["scene_identity"].generation, 2)
+
     def test_scene_ready_publishes_only_current_generation_with_bid_identity(self):
         published = []
         service = VisualizationService.__new__(VisualizationService)
@@ -169,9 +205,9 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         service.event_bus = SimpleNamespace(
             publish=lambda event, **payload: published.append((event, payload))
         )
-        service._on_scene_ready([], (0, 1, 0, 1, 0, 1), 41)
+        service._on_scene_ready([], (0, 1, 0, 1, 0, 1), 41, False)
         self.assertEqual(published, [])
-        service._on_scene_ready([], (0, 1, 0, 1, 0, 1), 42)
+        service._on_scene_ready([], (0, 1, 0, 1, 0, 1), 42, False)
         self.assertEqual(len(published), 1)
         event, payload = published[0]
         self.assertIs(event, AppEvents.NATIVE_SCENE_UPDATED)
@@ -179,7 +215,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         self.assertEqual(payload["scene_identity"].bid_ref.bid_uid, "bid-42")
         self.assertEqual(payload["scene_identity"].page_uids, ("page-42",))
         self.assertEqual(payload["scene_identity"].generation, 42)
-        service._on_scene_ready([], (0, 1, 0, 1, 0, 1), 42)
+        service._on_scene_ready([], (0, 1, 0, 1, 0, 1), 42, False)
         self.assertEqual(len(published), 1)
 
     def test_rapid_page_and_bid_switches_reject_obsolete_mesh_results(self):
@@ -211,16 +247,16 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         page_a_generation = service._mesh_generation_id
         service.refresh_mesh_view(["page-b"])
         page_b_generation = service._mesh_generation_id
-        service._on_scene_ready([], None, page_a_generation)
+        service._on_scene_ready([], None, page_a_generation, False)
         self.assertEqual(published, [])
-        service._on_scene_ready([], None, page_b_generation)
+        service._on_scene_ready([], None, page_b_generation, False)
         self.assertEqual(published[0][1]["scene_identity"].page_uids, ("page-b",))
         current_bid[0] = BidRef("db.mdb", "bid-2")
         service.refresh_mesh_view(["page-b"])
         bid_two_generation = service._mesh_generation_id
-        service._on_scene_ready([], None, page_b_generation)
+        service._on_scene_ready([], None, page_b_generation, False)
         self.assertEqual(len(published), 1)
-        service._on_scene_ready([], None, bid_two_generation)
+        service._on_scene_ready([], None, bid_two_generation, False)
         self.assertEqual(published[1][1]["scene_identity"].bid_ref, current_bid[0])
 
     def test_failed_generation_can_be_retried_for_the_same_page_selection(self):
@@ -252,13 +288,13 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         failed_generation = service._mesh_generation_id
         service.refresh_mesh_view(["page-a"])
         retry_generation = service._mesh_generation_id
-        service._on_scene_ready([], None, failed_generation)
+        service._on_scene_ready([], None, failed_generation, False)
         self.assertEqual(published, [])
-        service._on_scene_ready([], None, retry_generation)
+        service._on_scene_ready([], None, retry_generation, False)
         self.assertEqual(len(published), 1)
         self.assertEqual(published[0][1]["scene_identity"].page_uids, ("page-a",))
 
-    def test_worker_failure_publishes_current_empty_scene_and_retry_succeeds(self):
+    def test_worker_failure_publishes_terminal_failure_and_retry_succeeds(self):
         bid_ref = BidRef("db.mdb", "bid-1")
         published = []
         scene_ready = threading.Event()
@@ -303,8 +339,13 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
         service._mesh_shutdown = threading.Event()
         service._mesh_task_event = threading.Event()
         service._scene_notifier = SimpleNamespace(
-            notify_scene_ready=lambda geometries, bounds, generation: (
-                service._on_scene_ready(geometries, bounds, generation)
+            notify_scene_ready=lambda geometries, bounds, generation, failed: (
+                service._on_scene_ready(
+                    geometries,
+                    bounds,
+                    generation,
+                    failed,
+                )
             )
         )
         worker = threading.Thread(target=service._mesh_worker_loop, daemon=True)
@@ -316,12 +357,14 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
             first_identity = published[0][1]["scene_identity"]
             self.assertEqual(first_identity.page_uids, ("page-a",))
             self.assertEqual(published[0][1]["geometries"], [])
+            self.assertTrue(published[0][1]["scene_failed"])
             scene_ready.clear()
             service.refresh_mesh_view(["page-a"])
             self.assertTrue(scene_ready.wait(2.0))
             self.assertEqual(len(published), 2)
             second_identity = published[1][1]["scene_identity"]
             self.assertGreater(second_identity.generation, first_identity.generation)
+            self.assertFalse(published[1][1]["scene_failed"])
         finally:
             service._mesh_shutdown.set()
             service._mesh_task_event.set()
@@ -384,7 +427,7 @@ class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
                         and generation == service._mesh_generation_id
                         and not service._mesh_generation_delivered
                     )
-                    service._on_scene_ready([], None, generation)
+                    service._on_scene_ready([], None, generation, False)
                     self.assertEqual(len(published) - before, int(should_publish))
                     if should_publish:
                         self.assertEqual(

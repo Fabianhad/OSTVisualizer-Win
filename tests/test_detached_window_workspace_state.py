@@ -510,6 +510,9 @@ class FakeAnnotationProjectData:
     def get_annotation_layer_uid(self):
         return "detached-annotation-layer"
 
+    def get_all_annotations(self):
+        return list(self.annotations)
+
     def add_annotations(self, annotations):
         self.annotations.extend(annotations)
 
@@ -1636,6 +1639,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         window._undo_svc = None
         window._annotation_clipboard_svc = None
         window._ann_write_svc = retained
+        window._annotation_write_coordinator = retained
         window._file_path = "file.mdb"
         window._renderers = retained
         window._color_service = retained
@@ -1657,6 +1661,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         DetachedPageViewWindow.cleanup(window)
         self.assertTrue(plan_view.cleaned)
         self.assertIsNone(window.plan_view)
+        self.assertIsNone(window._annotation_write_coordinator)
         self.assertIsNone(window._renderers)
         self.assertIsNone(window._color_service)
         self.assertIsNone(window._config)
@@ -1802,7 +1807,10 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         cls.app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
         cls.app.processEvents()
 
-    def _make_toolbar_window(self, window_cls):
+    def _make_toolbar_window(self, window_cls, *, include_write_coordinator=True):
+        window_options = {}
+        if include_write_coordinator:
+            window_options["annotation_write_coordinator"] = SimpleNamespace()
         with patch(
             "ost_visualizer.presentation.windows.components.window.TakeoffPlanView",
             FakeToolbarPlanView,
@@ -1822,6 +1830,17 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 SimpleNamespace(),
                 SimpleNamespace(),
                 _detached_toolbar_renderers(),
+                **window_options,
+            )
+
+    def test_editable_detached_view_requires_canonical_annotation_writer(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "require an annotation write coordinator",
+        ):
+            self._make_toolbar_window(
+                AnnotationViewWindow,
+                include_write_coordinator=False,
             )
 
     def test_annotation_view_places_annotation_tools_on_second_toolbar_row(self):
@@ -2863,8 +2882,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = SimpleNamespace(
-            save_annotation_positions=lambda *_args: False
+            save_annotation_positions=lambda *_args, **_kwargs: False
         )
+        self._attach_annotation_write_coordinator(window, window._ann_write_svc)
         window._file_path = "bid.mdb"
         window.plan_view = plan_view
         changes = [("a1", "text", [1.0, 1.0], [2.0, 2.0])]
@@ -2883,8 +2903,9 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = SimpleNamespace(
-            save_annotation_text_properties=lambda *_args: False
+            save_annotation_text_properties=lambda *_args, **_kwargs: False
         )
+        self._attach_annotation_write_coordinator(window, window._ann_write_svc)
         window._file_path = "bid.mdb"
         window.plan_view = plan_view
         changes = [("a1", "text", {"Text": "Old"}, {"Text": "New"})]
@@ -2905,8 +2926,11 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = SimpleNamespace(
-            save_annotation_text_properties_and_positions=lambda *_args: False
+            save_annotation_text_properties_and_positions=(
+                lambda *_args, **_kwargs: False
+            )
         )
+        self._attach_annotation_write_coordinator(window, window._ann_write_svc)
         window._file_path = "bid.mdb"
         window.plan_view = plan_view
         text_changes = [("a1", "text", {"Text": "Old"}, {"Text": "New"})]
@@ -2929,7 +2953,12 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window._read_only = False
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
-        window._ann_write_svc = SimpleNamespace(delete_annotations=lambda *_args: False)
+        window._ann_write_svc = SimpleNamespace(
+            delete_annotations=lambda *_args, **_kwargs: False
+        )
+        self._attach_annotation_write_coordinator(
+            window, window._ann_write_svc, [annotation]
+        )
         window._file_path = "bid.mdb"
         window.plan_view = plan_view
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
@@ -3004,6 +3033,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
+        self._attach_annotation_write_coordinator(window, write_service)
         window._undo_svc = undo_service
         window.plan_view = plan_view
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
@@ -3090,6 +3120,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
+        self._attach_annotation_write_coordinator(window, write_service)
         window._undo_svc = undo_service
         window.plan_view = plan_view
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))
@@ -3126,6 +3157,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         window.page_data = FakeDetachedPageData()
         window._is_closing = False
         window._ann_write_svc = write_service
+        self._attach_annotation_write_coordinator(window, write_service)
         window._undo_svc = undo_service
         window.plan_view = plan_view
         window.view = SimpleNamespace(bid_ref=BidRef("bid.mdb", "7"))

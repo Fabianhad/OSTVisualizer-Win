@@ -138,7 +138,8 @@ class AppConfigUpdatedEvent:
 class NativeSceneUpdatedEvent:
     geometries: List[MeshGeometry]
     scene_identity: MeshSceneIdentity
-    bounds: Optional[tuple] = None
+    bounds: Optional[tuple]
+    scene_failed: bool
 
 
 @dataclass

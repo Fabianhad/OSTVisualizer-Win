@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple, cast
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
-from ....application.dtos.annotation_creation_factory import AnnotationCreationFactory
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.page_view_dto import PageViewDto
 from ....application.dtos.plan_view_renderers_dto import PlanViewRenderers
@@ -106,7 +105,6 @@ class DetachedPageViewWindowConfig:
 class DetachedPageViewWindow(QtWidgets.QMainWindow):
     dropdown_size_changed = QtCore.Signal()
     _PAGE_UID_ROLE = QtCore.Qt.ItemDataRole.UserRole
-    _annotation_write_coordinator = None
 
     def __init__(
         self,
@@ -177,6 +175,10 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         )
         self._ann_write_svc = annotation_write_service
         self._annotation_write_coordinator = annotation_write_coordinator
+        if config.allow_annotation_editing and annotation_write_coordinator is None:
+            raise ValueError(
+                "Editable detached views require an annotation write coordinator"
+            )
         self._file_path: Optional[str] = file_path
         self._undo_svc = undo_service
         self._annotation_clipboard_svc: Optional[SelectionClipboardService] = (
@@ -1246,37 +1248,19 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
 
         self._undo_svc.push(_undo_styles, _redo_styles)
 
-    def _apply_default_annotation_layer(self, spec) -> None:
-        if self.page_data is None:
-            return
-        factory = AnnotationCreationFactory(self.page_data.annotation_layer_uid)
-        factory.assign_default_layer(spec)
-
     def _save_annotation_positions(self, db_path: str, changes: list) -> bool:
-        if self._annotation_write_coordinator is not None:
-            return self._annotation_write_coordinator.save_positions(db_path, changes)
-        return self._ann_write_svc.save_annotation_positions(db_path, changes)
+        return self._annotation_write_coordinator.save_positions(db_path, changes)
 
     def _save_annotation_text_properties(self, db_path: str, updates: list) -> bool:
-        if self._annotation_write_coordinator is not None:
-            return self._annotation_write_coordinator.save_text_properties(
-                db_path, updates
-            )
-        return self._ann_write_svc.save_annotation_text_properties(db_path, updates)
+        return self._annotation_write_coordinator.save_text_properties(db_path, updates)
 
     def _save_annotation_styles(self, db_path: str, updates: list) -> bool:
-        if self._annotation_write_coordinator is not None:
-            return self._annotation_write_coordinator.save_styles(db_path, updates)
-        return self._ann_write_svc.save_annotation_styles(db_path, updates)
+        return self._annotation_write_coordinator.save_styles(db_path, updates)
 
     def _save_annotation_text_and_positions(
         self, db_path: str, updates: list, positions: list
     ) -> bool:
-        if self._annotation_write_coordinator is not None:
-            return self._annotation_write_coordinator.save_text_and_positions(
-                db_path, updates, positions
-            )
-        return self._ann_write_svc.save_annotation_text_properties_and_positions(
+        return self._annotation_write_coordinator.save_text_and_positions(
             db_path, updates, positions
         )
 
@@ -1286,52 +1270,26 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         specs: List[InsertAnnotationSpec],
         ref_remap=None,
     ) -> List[str]:
-        if self._annotation_write_coordinator is not None:
-            return self._annotation_write_coordinator.insert_annotations(
-                bid_ref, specs, ref_remap=ref_remap
-            )
-        for spec in specs:
-            self._apply_default_annotation_layer(spec)
-        return list(
-            self._ann_write_svc.insert_annotations(
-                bid_ref.file_path,
-                bid_ref.bid_uid,
-                specs,
-                ref_remap=ref_remap,
-            )
+        return self._annotation_write_coordinator.insert_annotations(
+            bid_ref, specs, ref_remap=ref_remap
         )
 
     def _delete_annotations(
         self, db_path: str, uids: List[str], specs: List[InsertAnnotationSpec]
     ) -> bool:
-        if self._annotation_write_coordinator is not None:
-            return self._annotation_write_coordinator.delete_annotations(
-                db_path, uids, specs
-            )
-        return self._ann_write_svc.delete_annotations(
-            db_path,
-            [(uid, spec.annotation_type) for uid, spec in zip(uids, specs)],
+        return self._annotation_write_coordinator.delete_annotations(
+            db_path, uids, specs
         )
 
     def _delete_saved_annotations(self, db_path: str, annotations: list) -> bool:
-        if self._annotation_write_coordinator is not None:
-            return self._annotation_write_coordinator.delete_saved_annotations(
-                db_path, annotations
-            )
-        return self._ann_write_svc.delete_annotations(
-            db_path,
-            [
-                (annotation.uid, annotation.annotation_type)
-                for annotation in annotations
-            ],
+        return self._annotation_write_coordinator.delete_saved_annotations(
+            db_path, annotations
         )
 
     def _insert_saved_annotations(self, bid_ref, annotations: list) -> list:
-        if self._annotation_write_coordinator is not None:
-            return self._annotation_write_coordinator.insert_saved_annotations(
-                bid_ref, annotations
-            )
-        return []
+        return self._annotation_write_coordinator.insert_saved_annotations(
+            bid_ref, annotations
+        )
 
     def _reset_annotation_clipboard(self) -> None:
         if self._annotation_clipboard_svc is None:
@@ -1473,16 +1431,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             bid_ref=bid_ref,
             write_svc=self._ann_write_svc,
             plan_view=self.plan_view,
-            insert_annotations_fn=(
-                self._insert_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
-            delete_annotations_fn=(
-                self._delete_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
+            insert_annotations_fn=self._insert_annotations,
+            delete_annotations_fn=self._delete_annotations,
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
 
@@ -1520,16 +1470,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             specs=[spec],
             write_svc=self._ann_write_svc,
             plan_view=self.plan_view,
-            insert_annotations_fn=(
-                self._insert_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
-            delete_annotations_fn=(
-                self._delete_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
+            insert_annotations_fn=self._insert_annotations,
+            delete_annotations_fn=self._delete_annotations,
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
 
@@ -1575,16 +1517,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             specs=[spec],
             write_svc=self._ann_write_svc,
             plan_view=self.plan_view,
-            insert_annotations_fn=(
-                self._insert_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
-            delete_annotations_fn=(
-                self._delete_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
+            insert_annotations_fn=self._insert_annotations,
+            delete_annotations_fn=self._delete_annotations,
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
 
@@ -1633,16 +1567,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             specs=[spec],
             write_svc=self._ann_write_svc,
             plan_view=self.plan_view,
-            insert_annotations_fn=(
-                self._insert_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
-            delete_annotations_fn=(
-                self._delete_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
+            insert_annotations_fn=self._insert_annotations,
+            delete_annotations_fn=self._delete_annotations,
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
 
@@ -1692,16 +1618,8 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
             specs=[spec],
             write_svc=self._ann_write_svc,
             plan_view=self.plan_view,
-            insert_annotations_fn=(
-                self._insert_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
-            delete_annotations_fn=(
-                self._delete_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
+            insert_annotations_fn=self._insert_annotations,
+            delete_annotations_fn=self._delete_annotations,
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
 
@@ -1818,18 +1736,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         cmd = DeleteAnnotationsCommand(
             saved_annotations=saved_annotations,
             bid_ref=bid_ref,
-            write_svc=self._ann_write_svc,
             plan_view=self.plan_view,
-            insert_saved_annotations_fn=(
-                self._insert_saved_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
-            delete_saved_annotations_fn=(
-                self._delete_saved_annotations
-                if self._annotation_write_coordinator is not None
-                else None
-            ),
+            insert_saved_annotations_fn=self._insert_saved_annotations,
+            delete_saved_annotations_fn=self._delete_saved_annotations,
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
 
@@ -1889,6 +1798,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._undo_svc = None
         self._annotation_clipboard_svc = None
         self._ann_write_svc = None
+        self._annotation_write_coordinator = None
         self._file_path = None
         self._renderers = None
         self._color_service = None

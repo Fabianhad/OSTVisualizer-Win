@@ -165,6 +165,8 @@ class _SqliteConnectionWrapper:
     def __exit__(self, exc_type, _exc, _tb):
         if exc_type is None:
             self._conn.commit()
+        else:
+            self._conn.rollback()
         return False
 
     def cursor(self):
@@ -230,6 +232,44 @@ def _page_info():
 
 
 class BidDimensionAnnotationTests(unittest.TestCase):
+    def test_annotation_batch_failure_rolls_back_without_uid_spec_misalignment(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """
+            CREATE TABLE BidAnnotationRects (
+                UID INTEGER PRIMARY KEY,
+                BidUID INTEGER,
+                BidPageUID INTEGER,
+                BidLayerUID INTEGER,
+                Position BLOB,
+                Color INTEGER,
+                Width INTEGER
+            )
+            """
+        )
+        specs = [
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="rect",
+                position=[1.0, 2.0, 3.0, 4.0],
+                color="#ff0000",
+                width=2.0,
+            ),
+            InsertAnnotationSpec(
+                page_uid="3",
+                annotation_type="unsupported",
+                position=[5.0, 6.0],
+                color="#00ff00",
+                width=1.0,
+            ),
+        ]
+        new_uids = _DimensionWriteOps(conn).insert_annotations("bid.mdb", "1", specs)
+        self.assertEqual(new_uids, [])
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM BidAnnotationRects").fetchone()[0],
+            0,
+        )
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -1230,6 +1270,30 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(hotlink_row[:4], (1, 3, 1, 255))
         self.assertEqual(hotlink_row[4], encode_position([5.0, 6.0]))
+
+    def test_hotlink_numeric_zero_target_is_persisted_as_null(self):
+        captured_values = {}
+        operations = _DimensionWriteOps(None)
+        operations._execute_insert_values = (
+            lambda _cursor, _schema, _table, values, _required, _operation: (
+                captured_values.update(values)
+            )
+        )
+        operations._execute_annotation_insert(
+            None,
+            _Schema(),
+            "BidHotLinks",
+            "hotlink",
+            1,
+            2,
+            3,
+            None,
+            b"position",
+            255,
+            0,
+            {"BidPageViewUID": 0},
+        )
+        self.assertIsNone(captured_values["BidPageViewUID"])
 
     def test_text_annotation_position_updates_write_text_payload(self):
         conn = sqlite3.connect(":memory:")

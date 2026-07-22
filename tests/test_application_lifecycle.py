@@ -27,6 +27,7 @@ from ost_visualizer.application.services.visualization_service import (
 from ost_visualizer.infrastructure.database.descriptor_registry import (
     DatabaseDescriptorRegistry,
 )
+from ost_visualizer.presentation.services.qt_scene_notifier import QtSceneNotifier
 
 
 class FakeEventBus:
@@ -39,6 +40,20 @@ class FakeEventBus:
 
     def unsubscribe(self, event_type, callback):
         self.unsubscriptions.append((event_type, callback))
+
+
+class QtSceneNotifierLifecycleTests(unittest.TestCase):
+    def test_scene_outcome_crosses_qt_bridge_and_cleanup_blocks_late_callbacks(self):
+        notifier = QtSceneNotifier()
+        scene_calls = []
+        notifier.set_handlers(
+            on_scene_ready=lambda *args: scene_calls.append(args),
+            on_full_refresh=lambda _file_path: None,
+        )
+        notifier.notify_scene_ready([], None, 7, True)
+        notifier.cleanup()
+        notifier.notify_scene_ready([], None, 8, False)
+        self.assertEqual(scene_calls, [([], None, 7, True)])
 
 
 class FakeShutdownParticipant(IShutdownAware):

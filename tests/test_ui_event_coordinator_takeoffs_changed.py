@@ -53,11 +53,13 @@ from ost_visualizer.presentation.utils.qt_callback_bridge import QtVoidCallback
 
 
 class FakeUiState:
-    active_page_uid = "page-1"
-    place_condition_uid = None
+    def __init__(self, bid_ref=BidRef("test.mdb", "bid-1")):
+        self.active_page_uid = "page-1"
+        self.place_condition_uid = None
+        self._bid_ref = bid_ref
 
     def get_selected_bid_ref(self):
-        return None
+        return self._bid_ref
 
     def clear_place_condition(self):
         self.place_condition_uid = None
@@ -177,7 +179,9 @@ class FakeMeshReceiver:
         self.visible = visible
         self.scene_loads = []
         self.scene_refreshes = []
+        self.scene_failures = []
         self.discarded_camera_states = []
+        self.plan_texture_updates = 0
 
     def apply_mesh_data(self, *args, **mesh_options):
         self.mesh_calls.append((args, mesh_options))
@@ -191,8 +195,14 @@ class FakeMeshReceiver:
     def prepare_scene_refresh(self, bid_ref, page_uids):
         self.scene_refreshes.append((bid_ref, tuple(page_uids)))
 
+    def apply_scene_failure(self, scene_identity):
+        self.scene_failures.append(scene_identity)
+
     def discard_saved_camera_states(self, *, bid_ref=None, file_path=None):
         self.discarded_camera_states.append((bid_ref, file_path))
+
+    def update_plan_texture(self):
+        self.plan_texture_updates += 1
 
     def isVisible(self):
         return self.visible
@@ -229,6 +239,7 @@ class FakeConstructedMeshWindow:
         self.undo_requested = FakeSignal()
         self.redo_requested = FakeSignal()
         self.scene_refreshes = []
+        self.scene_failures = []
 
     def set_context_menu_command_handlers(self, *args):
         pass
@@ -242,11 +253,17 @@ class FakeConstructedMeshWindow:
     def show_initial_window(self):
         self.visible = True
 
+    def close(self):
+        self.visible = False
+
     def apply_mesh_data(self, *args, **mesh_options):
         self.mesh_calls.append((args, mesh_options))
 
     def prepare_scene_refresh(self, bid_ref, page_uids):
         self.scene_refreshes.append((bid_ref, tuple(page_uids)))
+
+    def apply_scene_failure(self, scene_identity):
+        self.scene_failures.append(scene_identity)
 
     def clear_scene(self):
         self.visible = False
@@ -527,6 +544,7 @@ def configure_mesh_state(
     opengl_viewer=None,
     mesh_window=None,
     visualization=None,
+    last_mesh_scene=None,
 ):
     coordinator._tab_widget = FakeTabWidget(index=tab_index)
     coordinator._view_stack = FakeViewStack(index=view_index)
@@ -537,19 +555,9 @@ def configure_mesh_state(
     coordinator._mesh_scene_dirty = False
     coordinator._dirty_mesh_page_uids = set()
     coordinator._pending_dirty_mesh_refresh = False
-    if not hasattr(coordinator, "_last_mesh_scene"):
-        coordinator._last_mesh_scene = None
+    coordinator._last_mesh_scene = last_mesh_scene
     coordinator._is_cleaning_up = False
-    if not hasattr(coordinator, "ui_access_manager"):
-        coordinator.ui_access_manager = FakeMeshAccess()
-    if (
-        hasattr(coordinator, "ui_state_manager")
-        and hasattr(coordinator.ui_state_manager, "get_selected_bid_ref")
-        and coordinator.ui_state_manager.get_selected_bid_ref() is None
-    ):
-        coordinator.ui_state_manager.get_selected_bid_ref = lambda: BidRef(
-            "test.mdb", "bid-1"
-        )
+    coordinator.ui_access_manager = FakeMeshAccess()
 
 
 def scene_identity(bid_ref, generation, page_uids=("page-1",)):
@@ -627,6 +635,20 @@ class FakeRefreshNav:
 
 
 class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
+    def test_native_page_visibility_rebuilds_the_canonical_selected_page_texture(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        embedded = FakeMeshReceiver()
+        detached = FakeMeshReceiver()
+        coordinator.opengl_viewer = embedded
+        coordinator._mesh_window = detached
+        coordinator.ui_state_manager = SimpleNamespace(active_page_uid="unchecked-page")
+        coordinator.project_data = SimpleNamespace(
+            get_page=lambda _uid: SimpleNamespace(layer_visible=False)
+        )
+        coordinator._update_native_page_textures()
+        self.assertEqual(embedded.plan_texture_updates, 1)
+        self.assertEqual(detached.plan_texture_updates, 1)
+
     def test_license_event_keyword_contract_updates_ui(self):
         calls = []
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -644,9 +666,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             AppEvents.LICENSE_STATUS_CHANGED,
             coordinator._on_license_status_changed,
         )
-
         event_bus.publish(AppEvents.LICENSE_STATUS_CHANGED, has_license=True)
-
         self.assertEqual(calls, ["plan", "clear", "toolbar", "select"])
 
     def test_empty_access_hierarchy_still_delegates_monitoring_to_database_owner(self):
@@ -1159,6 +1179,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         class UiState:
             def __init__(self):
                 self.selected_page_uids = []
+                self.active_page_uid = "page-a"
                 self.selected_area_uid = ""
 
             def get_selected_bid_ref(self):
@@ -1210,7 +1231,12 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             coordinator.handle_page_selection(page_uids)
             generation += 1
             identity = scene_identity(bid_ref, generation, page_uids)
-            coordinator._on_native_scene_updated(geometries=[], scene_identity=identity)
+            coordinator._on_native_scene_updated(
+                geometries=[],
+                scene_identity=identity,
+                bounds=None,
+                scene_failed=False,
+            )
             return identity
 
         page_a_first = select_and_publish(["page-a"])
@@ -1253,11 +1279,21 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.handle_page_selection(["page-a"])
         page_a = scene_identity(bid_ref, 10, ["page-a"])
         coordinator.handle_page_selection(["page-b"])
-        coordinator._on_native_scene_updated(geometries=[], scene_identity=page_a)
+        coordinator._on_native_scene_updated(
+            geometries=[],
+            scene_identity=page_a,
+            bounds=None,
+            scene_failed=False,
+        )
         self.assertEqual(embedded.mesh_calls, [])
         self.assertEqual(detached.mesh_calls, [])
         page_b = scene_identity(bid_ref, 11, ["page-b"])
-        coordinator._on_native_scene_updated(geometries=[], scene_identity=page_b)
+        coordinator._on_native_scene_updated(
+            geometries=[],
+            scene_identity=page_b,
+            bounds=None,
+            scene_failed=False,
+        )
         self.assertEqual(embedded.mesh_calls[0][1]["scene_identity"], page_b)
         self.assertEqual(detached.mesh_calls[0][1]["scene_identity"], page_b)
 
@@ -1267,10 +1303,20 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         coordinator.handle_page_selection(["page-b", "page-a"])
         both_pages = scene_identity(bid_ref, 20, ["page-b", "page-a"])
-        coordinator._on_native_scene_updated(geometries=[], scene_identity=both_pages)
+        coordinator._on_native_scene_updated(
+            geometries=[],
+            scene_identity=both_pages,
+            bounds=None,
+            scene_failed=False,
+        )
         coordinator.handle_page_selection(["page-b"])
         page_b = scene_identity(bid_ref, 21, ["page-b"])
-        coordinator._on_native_scene_updated(geometries=[], scene_identity=page_b)
+        coordinator._on_native_scene_updated(
+            geometries=[],
+            scene_identity=page_b,
+            bounds=None,
+            scene_failed=False,
+        )
         self.assertEqual(
             coordinator.visualization_service.mesh_pages,
             [["page-a", "page-b"], ["page-b"]],
@@ -1296,6 +1342,61 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(len(embedded.scene_refreshes), 1)
         self.assertEqual(len(detached.scene_refreshes), 1)
+
+    def test_3d_page_toggles_preserve_active_takeoff_cursor_and_navigation(self):
+        coordinator, _bid_ref, _embedded, _detached = (
+            self._make_3d_page_selection_coordinator()
+        )
+        coordinator._nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
+        coordinator._nav.transition_to(NavState.PLACE_MODE)
+        coordinator.plan_view = SimpleNamespace(cursor_mode="place")
+        coordinator.handle_page_selection(["page-a"])
+        coordinator.visualization_service.mesh_pages.clear()
+        coordinator.handle_page_selection([])
+        coordinator.handle_page_selection(["page-b"])
+        coordinator.handle_page_selection(["page-b"])
+        self.assertEqual(coordinator.ui_state_manager.active_page_uid, "page-a")
+        self.assertEqual(coordinator.plan_view.cursor_mode, "place")
+        self.assertEqual(coordinator._nav.current_state, NavState.PLACE_MODE)
+        self.assertEqual(
+            coordinator.visualization_service.mesh_pages,
+            [[], ["page-b"]],
+        )
+
+    def test_failed_scene_is_not_replayed_and_same_selection_can_retry(self):
+        coordinator, bid_ref, embedded, detached = (
+            self._make_3d_page_selection_coordinator()
+        )
+        coordinator.handle_page_selection(["page-a"])
+        failed_identity = scene_identity(bid_ref, 25, ["page-a"])
+        coordinator._on_native_scene_updated(
+            geometries=[],
+            scene_identity=failed_identity,
+            bounds=None,
+            scene_failed=True,
+        )
+        self.assertEqual(embedded.scene_failures, [failed_identity])
+        self.assertEqual(detached.scene_failures, [failed_identity])
+        self.assertEqual(embedded.mesh_calls, [])
+        self.assertEqual(detached.mesh_calls, [])
+        self.assertIsNone(coordinator._last_mesh_scene)
+        self.assertTrue(coordinator._mesh_scene_dirty)
+        self.assertEqual(coordinator._dirty_mesh_page_uids, {"page-a"})
+        coordinator.handle_page_selection(["page-a"])
+        self.assertEqual(
+            coordinator.visualization_service.mesh_pages,
+            [["page-a"], ["page-a"]],
+        )
+        retry_identity = scene_identity(bid_ref, 26, ["page-a"])
+        coordinator._on_native_scene_updated(
+            geometries=[],
+            scene_identity=retry_identity,
+            bounds=None,
+            scene_failed=False,
+        )
+        self.assertEqual(embedded.mesh_calls[0][1]["scene_identity"], retry_identity)
+        self.assertEqual(detached.mesh_calls[0][1]["scene_identity"], retry_identity)
+        self.assertFalse(coordinator._mesh_scene_dirty)
 
     def test_database_refresh_invalidates_and_republishes_unchanged_page_scene_once(
         self,
@@ -1349,7 +1450,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         self.assertEqual(coordinator.project_data.select_calls, [])
         self.assertEqual(coordinator.ui_state_manager.set_page_selection_calls, [])
 
-    def test_page_selection_from_file_state_steps_through_bid_no_pages(self):
+    def test_page_selection_does_not_own_2d_navigation_state(self):
         bid_ref = BidRef("active.mdb", "bid-1")
         coordinator = self._make_page_selection_coordinator(
             bid_ref=bid_ref, current_state=NavState.FILE_LOADED_NO_BID
@@ -1363,7 +1464,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         )
         self.assertEqual(
             coordinator._nav.current_state,
-            NavState.BID_ACTIVE_PAGES_SELECTED,
+            NavState.FILE_LOADED_NO_BID,
         )
 
     def test_invalid_page_selection_uses_filtered_empty_selection_for_nav_state(self):
@@ -1889,6 +1990,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._on_native_scene_updated(
             geometries=[],
             scene_identity=scene_identity(active_ref, 1),
+            bounds=None,
+            scene_failed=False,
         )
         self.assertFalse(coordinator._mesh_scene_dirty)
         self.assertFalse(coordinator._pending_dirty_mesh_refresh)
@@ -1902,13 +2005,12 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._plan_view_handler = None
         coordinator._mesh_window = None
         coordinator._mesh_window_action = None
-        coordinator._last_mesh_scene = _MeshScenePublication(
+        last_mesh_scene = _MeshScenePublication(
             ("stale",),
             {"scene_identity": scene_identity(BidRef("test.mdb", "bid-1"), 1)},
         )
-        coordinator.ui_access_manager = FakeMeshAccess()
         coordinator.main_window = FakeMainWindow()
-        configure_mesh_state(coordinator)
+        configure_mesh_state(coordinator, last_mesh_scene=last_mesh_scene)
         coordinator._mesh_scene_dirty = True
         coordinator._dirty_mesh_page_uids = {"page-1"}
         from ost_visualizer.presentation.coordinators import ui_event_coordinator
@@ -1934,13 +2036,12 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         mesh_args = ("vertices", "normals", "indices", "colors")
         active_ref = BidRef("test.mdb", "bid-1")
         coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
-        coordinator._last_mesh_scene = _MeshScenePublication(
+        last_mesh_scene = _MeshScenePublication(
             mesh_args,
             {"scene_identity": scene_identity(active_ref, 1)},
         )
-        coordinator.ui_access_manager = FakeMeshAccess()
         coordinator.main_window = FakeMainWindow()
-        configure_mesh_state(coordinator)
+        configure_mesh_state(coordinator, last_mesh_scene=last_mesh_scene)
         from ost_visualizer.presentation.coordinators import ui_event_coordinator
 
         original = ui_event_coordinator.MeshViewWindow
@@ -1951,6 +2052,79 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             ui_event_coordinator.MeshViewWindow = original
         self.assertEqual(coordinator.visualization_service.mesh_pages, [])
         self.assertEqual(len(coordinator._mesh_window.mesh_calls), 1)
+
+    def test_detached_mesh_can_reopen_before_old_destroyed_signal_arrives(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.project_data = FakeProjectData()
+        coordinator._icon_provider = None
+        coordinator._color_service = None
+        coordinator._plan_view_handler = None
+        coordinator._mesh_window = None
+        coordinator._mesh_window_action = None
+        coordinator._last_mesh_scene = None
+        coordinator.ui_access_manager = FakeMeshAccess()
+        coordinator.main_window = FakeMainWindow()
+        configure_mesh_state(coordinator)
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        original = ui_event_coordinator.MeshViewWindow
+        ui_event_coordinator.MeshViewWindow = FakeConstructedMeshWindow
+        try:
+            coordinator.set_mesh_window_visible(True)
+            old_window = coordinator._mesh_window
+            old_destroyed = old_window.destroyed.callbacks[0]
+            coordinator.set_mesh_window_visible(False)
+            self.assertIsNone(coordinator._mesh_window)
+            coordinator.set_mesh_window_visible(True)
+            replacement = coordinator._mesh_window
+            self.assertIsNot(replacement, old_window)
+            old_destroyed(None)
+            self.assertIs(coordinator._mesh_window, replacement)
+        finally:
+            ui_event_coordinator.MeshViewWindow = original
+
+    def test_detached_mesh_opened_during_generation_accepts_pending_scene(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        active_ref = BidRef("test.mdb", "bid-1")
+        coordinator.ui_state_manager = FakeUiState()
+        coordinator.ui_state_manager.get_selected_bid_ref = lambda: active_ref
+        coordinator.project_data = FakeProjectData()
+        coordinator._icon_provider = None
+        coordinator._color_service = None
+        coordinator._plan_view_handler = None
+        coordinator._mesh_window = None
+        coordinator._mesh_window_action = None
+        coordinator._last_mesh_scene = None
+        coordinator.ui_access_manager = FakeMeshAccess()
+        coordinator.main_window = FakeMainWindow()
+        configure_mesh_state(coordinator)
+        coordinator._mesh_scene_dirty = True
+        coordinator._dirty_mesh_page_uids = {"page-1"}
+        coordinator._pending_dirty_mesh_refresh = True
+        coordinator._nav = FakeNav()
+        coordinator._plan_view_signaler = FakeMeshPlanSignaler()
+        from ost_visualizer.presentation.coordinators import ui_event_coordinator
+
+        original = ui_event_coordinator.MeshViewWindow
+        ui_event_coordinator.MeshViewWindow = FakeConstructedMeshWindow
+        try:
+            coordinator.set_mesh_window_visible(True)
+            window = coordinator._mesh_window
+            self.assertEqual(
+                window.scene_refreshes,
+                [(active_ref, ("page-1",))],
+            )
+            self.assertEqual(coordinator.visualization_service.mesh_pages, [])
+            coordinator._on_native_scene_updated(
+                geometries=[],
+                scene_identity=scene_identity(active_ref, 42),
+                bounds=None,
+                scene_failed=False,
+            )
+            self.assertEqual(len(window.mesh_calls), 1)
+        finally:
+            ui_event_coordinator.MeshViewWindow = original
 
     def test_embedded_view_uses_same_validated_replay_path_as_detached_view(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
@@ -2018,6 +2192,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             geometries=[geometry],
             bounds=(-1, 1, -2, 2, -3, 3),
             scene_identity=scene_identity(active_ref, 7),
+            scene_failed=False,
         )
         self.assertEqual(1, len(coordinator.opengl_viewer.mesh_calls))
         args, mesh_options = coordinator.opengl_viewer.mesh_calls[0]
@@ -2051,6 +2226,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._on_native_scene_updated(
             geometries=[],
             scene_identity=scene_identity(BidRef("stale.mdb", "stale-bid"), 21),
+            bounds=None,
+            scene_failed=False,
         )
         self.assertEqual(opengl_viewer.mesh_calls, [])
         self.assertEqual(mesh_window.mesh_calls, [])
@@ -2106,6 +2283,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._on_native_scene_updated(
             geometries=[],
             scene_identity=scene_identity(active_ref, 40),
+            bounds=None,
+            scene_failed=False,
         )
         self.assertEqual(len(embedded.mesh_calls), 1)
         self.assertEqual(closing_detached.mesh_calls, [])
@@ -2995,7 +3174,7 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
             def finish_refresh(self, state):
                 self.finished.append(state)
 
-            def compute_state_for(self, has_file, bid_ref, page_uids, placement_active):
+            def compute_state_for(self, has_file, bid_ref, active_page_uid):
                 return "BID_ACTIVE"
 
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)

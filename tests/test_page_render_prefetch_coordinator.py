@@ -221,7 +221,21 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         ]
         coordinator.prefetch_nearby_pages(pages[0], pages, None)
         self.assertEqual(coordinator._active_request_ids, set())
-        self.assertEqual(coordinator._completed_request_ids, set())
+        coordinator.cancel_pending()
+        self.assertEqual(rendering.cancelled, [])
+
+    def test_duplicate_prefetch_completion_does_not_leave_a_pending_request(self):
+        rendering = FakeRenderingService()
+        coordinator = self._coordinator(rendering)
+        pages = [
+            self._page("p1", image_path="p1.pdf"),
+            self._page("p2", image_path="p2.pdf"),
+        ]
+        coordinator.prefetch_nearby_pages(pages[0], pages, None)
+        request_id = rendering.calls[0][1]
+        rendering.complete(request_id)
+        rendering.complete(request_id)
+        self.assertEqual(coordinator._active_request_ids, set())
         coordinator.cancel_pending()
         self.assertEqual(rendering.cancelled, [])
 

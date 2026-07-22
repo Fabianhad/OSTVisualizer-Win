@@ -1660,7 +1660,7 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         self.assertEqual(manager.lease.commits, 0)
         self.assertEqual(manager.lease.rollbacks, 1)
 
-    def test_access_row_error_retains_established_best_effort_result(self):
+    def test_access_annotation_row_error_rolls_back_the_batch(self):
         writer = MdbWriter(conn_manager=_WriterManager())
         spec = InsertAnnotationSpec(
             page_uid="10",
@@ -1679,8 +1679,8 @@ class SqlCleanupCorrectnessTests(unittest.TestCase):
         ):
             result = writer.insert_annotations("example.mdb", "1", [spec])
         self.assertEqual(result, [])
-        self.assertEqual(writer._conn_manager.lease.commits, 1)
-        self.assertEqual(writer._conn_manager.lease.rollbacks, 0)
+        self.assertEqual(writer._conn_manager.lease.commits, 0)
+        self.assertEqual(writer._conn_manager.lease.rollbacks, 1)
 
     def test_sql_takeoff_write_does_not_retry_access_driver_resource_error(self):
         registry = DatabaseDescriptorRegistry()

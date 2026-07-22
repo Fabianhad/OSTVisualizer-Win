@@ -138,6 +138,26 @@ class NavigationStateMachineTests(unittest.TestCase):
         self.assertEqual(nav.current_state, NavState.NO_FILE)
         self.assertIsNone(nav.refresh_snapshot)
 
+    def test_state_computation_uses_active_2d_page_not_3d_checked_pages(self):
+        bid_ref = SimpleNamespace(file_path="a.mdb", bid_uid="b1")
+        nav = NavigationStateMachine()
+        self.assertEqual(
+            nav.compute_state_for(
+                has_file=True,
+                bid_ref=bid_ref,
+                active_page_uid="p1",
+            ),
+            NavState.BID_ACTIVE_PAGES_SELECTED,
+        )
+        self.assertEqual(
+            nav.compute_state_for(
+                has_file=True,
+                bid_ref=bid_ref,
+                active_page_uid=None,
+            ),
+            NavState.BID_ACTIVE_NO_PAGES,
+        )
+
     def test_placement_coordinator_blocks_place_mode_when_bid_has_no_pages(self):
         nav = NavigationStateMachine()
         nav.transition_to(NavState.FILE_LOADED_NO_BID)
@@ -365,9 +385,15 @@ class NavigationStateMachineTests(unittest.TestCase):
             ),
         )
         placement._plan_view = plan_view
+        nav = NavigationStateMachine()
+        nav.transition_to(NavState.FILE_LOADED_NO_BID)
+        nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
+        nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
+        placement.set_nav(nav)
         self.assertTrue(placement.enter("c1", ["c1"]))
         self.assertEqual(plan_view.place_calls, [("c1", ["c1"])])
         self.assertEqual(ui_state.place_condition_uid, "c1")
+        self.assertEqual(nav.current_state, NavState.PLACE_MODE)
 
     def test_toolbar_disables_place_action_when_bid_has_no_active_page(self):
         class FakeAction:

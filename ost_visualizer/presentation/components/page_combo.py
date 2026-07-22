@@ -238,12 +238,16 @@ class PageComboBox(TreePopupComboBoxBase):
             return
         uid = item.data(_ITEM_ROLE_UID)
         checked = item.checkState() == QtCore.Qt.CheckState.Checked
+        selection_changed = False
         if checked and uid not in self._selected_uids:
             self._selected_uids.append(uid)
+            selection_changed = True
         elif not checked and uid in self._selected_uids:
             self._selected_uids.remove(uid)
+            selection_changed = True
         self._update_display_text()
-        self.page_selection_changed.emit(list(self._selected_uids))
+        if selection_changed:
+            self.page_selection_changed.emit(list(self._selected_uids))
 
     def eventFilter(self, obj, event) -> bool:
         if (

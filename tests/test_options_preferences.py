@@ -4397,6 +4397,46 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
         combo.close()
 
+    def test_unchecking_final_3d_page_preserves_active_2d_page(self):
+        combo = PageComboBox()
+        combo.load_bid(
+            Bid(
+                uid="bid-1",
+                name="Bid",
+                pages_without_folder=[Page(uid="page-a", name="A101")],
+            )
+        )
+        combo.restore_selection(["page-a"], active_uid="page-a")
+        active_changes = []
+        combo.active_page_changed.connect(active_changes.append)
+        combo._page_items["page-a"].setCheckState(QtCore.Qt.CheckState.Unchecked)
+        self.assertEqual(combo.get_selected_page_uids(), [])
+        self.assertEqual(combo.get_active_page_uid(), "page-a")
+        self.assertEqual(active_changes, [])
+        combo.close()
+
+    def test_page_combo_does_not_emit_selection_for_label_or_indicator_updates(self):
+        combo = PageComboBox()
+        combo.load_bid(
+            Bid(
+                uid="bid-1",
+                name="Bid",
+                pages_without_folder=[
+                    Page(uid="page-a", name="A101", sequence=1),
+                    Page(uid="page-b", name="A102", sequence=2),
+                ],
+            )
+        )
+        combo.restore_selection(["page-a"], active_uid="page-a")
+        emitted = []
+        combo.page_selection_changed.connect(lambda pages: emitted.append(list(pages)))
+        combo.set_page_has_takeoffs("page-a", True)
+        combo.set_pages_with_takeoffs({"page-b"})
+        combo.set_label_options(True, False)
+        self.assertEqual(emitted, [])
+        self.assertEqual(combo.get_selected_page_uids(), ["page-a"])
+        combo.close()
+
     def test_page_label_index_uses_sequence_not_pdf_page_index(self):
         combo = PageComboBox()
         bid = Bid(

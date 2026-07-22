@@ -10,6 +10,9 @@ from ost_visualizer.presentation.components.mesh_view import OpenGLViewer
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
+from ost_visualizer.presentation.coordinators.navigation_state_machine import (
+    NavigationStateMachine,
+)
 from ost_visualizer.presentation.coordinators.viewer_sync_coordinator import (
     ViewerSyncCoordinator,
 )
@@ -137,7 +140,9 @@ class CanonicalExecutionPathTests(unittest.TestCase):
                 "_on_takeoffs_changed",
                 "_discard_mesh_camera_states",
                 "_update_export_menu_state",
+                "_sync_navigation_for_active_page",
             },
+            NavigationStateMachine: {"compute_state_for"},
             OpenGLViewer: {
                 "suspend_rendering",
                 "hideEvent",
@@ -145,6 +150,7 @@ class CanonicalExecutionPathTests(unittest.TestCase):
                 "_restore_saved_camera",
                 "_initialize_camera_for_current_scene",
                 "_connect_surface_notifications",
+                "apply_scene_failure",
                 "clear_scene",
                 "cleanup",
             },
@@ -175,6 +181,7 @@ class CanonicalExecutionPathTests(unittest.TestCase):
             "_clear_plan_view",
             "on_page_selection",
             "update_named_view_name",
+            "set_plan_texture_visibility",
         }
         forbidden_event_names = {
             "NamedViewCreatedEvent",

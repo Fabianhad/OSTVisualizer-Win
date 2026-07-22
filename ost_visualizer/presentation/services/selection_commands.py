@@ -3,7 +3,6 @@ from typing import Any, Callable, Dict, List, Optional
 from ...application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ...application.dtos.insert_takeoff_spec_dto import InsertTakeoffSpec
 from ...application.dtos.paste_ref_remap_dto import PasteRefRemap
-from ...domain.entities.annotation import ANNOTATION_TYPE_NAMED_VIEW
 from ...domain.entities.identity_refs import BidRef
 
 TakeoffInsertFn = Callable[[BidRef, List[InsertTakeoffSpec]], List[str]]
@@ -350,111 +349,30 @@ class DeleteAnnotationsCommand:
         self,
         saved_annotations: list,
         bid_ref: BidRef,
-        write_svc,
         plan_view,
-        insert_saved_annotations_fn: Optional[SavedAnnotationInsertFn] = None,
-        delete_saved_annotations_fn: Optional[SavedAnnotationDeleteFn] = None,
-        prepare_specs_fn: Optional[AnnotationSpecsPrepareFn] = None,
+        insert_saved_annotations_fn: SavedAnnotationInsertFn,
+        delete_saved_annotations_fn: SavedAnnotationDeleteFn,
     ) -> None:
         self._saved = deepcopy(saved_annotations)
         self._bid_ref = bid_ref
-        self._write_svc = write_svc
         self._plan_view = plan_view
-        self._current_uids: List[str] = [a.uid for a in self._saved]
         self._insert_saved_annotations_fn = insert_saved_annotations_fn
         self._delete_saved_annotations_fn = delete_saved_annotations_fn
-        self._prepare_specs_fn = prepare_specs_fn or _identity_annotation_specs
 
     def undo(self) -> None:
-        if self._insert_saved_annotations_fn is not None:
-            restored = self._insert_saved_annotations_fn(self._bid_ref, self._saved)
-            if not restored:
-                return
-            self._saved = list(restored)
-            self._current_uids = [annotation.uid for annotation in self._saved]
-            uid_type_set = {
-                (annotation.uid, annotation.annotation_type)
-                for annotation in self._saved
-            }
-            keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
-            self._plan_view.set_selected_uids(keys)
+        restored = self._insert_saved_annotations_fn(self._bid_ref, self._saved)
+        if not restored:
             return
-        nv_indices = [
-            i
-            for i, a in enumerate(self._saved)
-            if a.annotation_type == ANNOTATION_TYPE_NAMED_VIEW
-        ]
-        new_uids: List[Optional[str]] = [None] * len(self._saved)
-        ref_remap = PasteRefRemap()
-        if nv_indices:
-            nv_specs = [
-                InsertAnnotationSpec(
-                    page_uid=self._saved[i].page_uid,
-                    annotation_type=self._saved[i].annotation_type,
-                    position=self._saved[i].position,
-                    color=self._saved[i].color,
-                    width=self._saved[i].width,
-                    properties=dict(self._saved[i].properties),
-                    layer_uid=self._saved[i].layer_uid,
-                )
-                for i in nv_indices
-            ]
-            nv_new = self._write_svc.insert_annotations(
-                self._bid_ref.file_path,
-                self._bid_ref.bid_uid,
-                self._prepare_specs_fn(nv_specs),
-            )
-            for j, idx in enumerate(nv_indices):
-                if j < len(nv_new):
-                    new_uids[idx] = nv_new[j]
-                    ref_remap.namedview_uids[str(self._saved[idx].uid)] = str(nv_new[j])
-        other_indices = [i for i in range(len(self._saved)) if i not in set(nv_indices)]
-        if other_indices:
-            other_specs = [
-                InsertAnnotationSpec(
-                    page_uid=self._saved[i].page_uid,
-                    annotation_type=self._saved[i].annotation_type,
-                    position=self._saved[i].position,
-                    color=self._saved[i].color,
-                    width=self._saved[i].width,
-                    properties=dict(self._saved[i].properties),
-                    layer_uid=self._saved[i].layer_uid,
-                )
-                for i in other_indices
-            ]
-            other_new = self._write_svc.insert_annotations(
-                self._bid_ref.file_path,
-                self._bid_ref.bid_uid,
-                self._prepare_specs_fn(other_specs),
-                ref_remap=ref_remap,
-            )
-            for j, idx in enumerate(other_indices):
-                if j < len(other_new):
-                    new_uids[idx] = other_new[j]
-        successful = [(i, uid) for i, uid in enumerate(new_uids) if uid is not None]
-        self._current_uids = [uid for _, uid in successful]
-        self._saved = [self._saved[i] for i, _ in successful]
-        if self._current_uids:
-            uid_type_set = {
-                (uid, self._saved[i].annotation_type)
-                for i, uid in enumerate(self._current_uids)
-            }
-            keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
-            self._plan_view.set_selected_uids(keys)
+        self._saved = list(restored)
+        uid_type_set = {
+            (annotation.uid, annotation.annotation_type) for annotation in self._saved
+        }
+        keys = self._plan_view.find_annotation_keys_by_uid_type(uid_type_set)
+        self._plan_view.set_selected_uids(keys)
 
     def redo(self) -> None:
-        if self._delete_saved_annotations_fn is not None:
-            if self._delete_saved_annotations_fn(self._bid_ref.file_path, self._saved):
-                self._plan_view.clear_selection()
-            return
-        self._write_svc.delete_annotations(
-            self._bid_ref.file_path,
-            [
-                (uid, a.annotation_type)
-                for uid, a in zip(self._current_uids, self._saved)
-            ],
-        )
-        self._plan_view.clear_selection()
+        if self._delete_saved_annotations_fn(self._bid_ref.file_path, self._saved):
+            self._plan_view.clear_selection()
 
 
 class PasteAnnotationsCommand:

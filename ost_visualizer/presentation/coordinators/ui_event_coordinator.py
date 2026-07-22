@@ -2,7 +2,6 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtCore import QObject
 from ...application.dtos.mesh_geometry_dto import (
     MeshGeometry,
     MeshSceneIdentity,
@@ -453,15 +452,6 @@ class UIEventCoordinator:
             view for view in (self.opengl_viewer, self._mesh_window) if view is not None
         )
 
-    def _update_native_page_visibility(self) -> None:
-        page_uid = self.ui_state_manager.active_page_uid
-        page = self.project_data.get_page(page_uid) if page_uid else None
-        if page is None:
-            return
-        visible = bool(page.layer_visible)
-        for view in self._native_3d_views():
-            view.set_plan_texture_visibility(visible)
-
     def _update_native_page_textures(self) -> None:
         for view in self._native_3d_views():
             view.update_plan_texture()
@@ -526,13 +516,25 @@ class UIEventCoordinator:
                     menu_controller.trigger_menu_action,
                     menu_controller.get_menu_action_state,
                 )
-            window.destroyed.connect(self._on_mesh_window_destroyed)
+            window_identity = id(window)
+            window.destroyed.connect(
+                lambda _object: self._on_mesh_window_destroyed(window_identity)
+            )
             self._mesh_window = window
             self._refresh_mesh_window_access()
             if self._plan_texture_provider:
                 window.set_plan_texture_provider(self._plan_texture_provider)
             self._sync_overlay_display_mode(self.ui_state_manager.active_page_uid)
             self._sync_mesh_window_action(True)
+            if self._last_mesh_scene is None and (
+                not self._mesh_scene_dirty or self._pending_dirty_mesh_refresh
+            ):
+                bid_ref = self.ui_state_manager.get_selected_bid_ref()
+                if bid_ref is not None:
+                    window.prepare_scene_refresh(
+                        bid_ref,
+                        self.project_data.get_selected_page_uids(),
+                    )
             window.show_initial_window()
             if self._mesh_scene_dirty:
                 self._flush_dirty_mesh_refresh_if_needed()
@@ -542,7 +544,10 @@ class UIEventCoordinator:
         if self._mesh_window is None:
             self._sync_mesh_window_action(False)
             return
-        self._mesh_window.close()
+        window = self._mesh_window
+        self._mesh_window = None
+        self._sync_mesh_window_action(False)
+        window.close()
 
     def _replay_mesh_if_current(self, surface) -> None:
         publication = self._last_mesh_scene
@@ -671,7 +676,9 @@ class UIEventCoordinator:
             return
         self._sync_selection(self._SOURCE_3D_WINDOW, takeoff_uids)
 
-    def _on_mesh_window_destroyed(self, _: QObject) -> None:
+    def _on_mesh_window_destroyed(self, window_identity: int) -> None:
+        if self._mesh_window is None or id(self._mesh_window) != window_identity:
+            return
         self._mesh_window = None
         self._sync_mesh_window_action(False)
 
@@ -2377,8 +2384,7 @@ class UIEventCoordinator:
             base_target = self._nav.compute_state_for(
                 has_file=has_file,
                 bid_ref=snap.bid_ref,
-                page_uids=snap.page_uids,
-                placement_active=False,
+                active_page_uid=snap.active_page_uid,
             )
             self._nav.finish_refresh(base_target)
             if (
@@ -2569,7 +2575,8 @@ class UIEventCoordinator:
         self,
         geometries: List[MeshGeometry],
         scene_identity: MeshSceneIdentity,
-        bounds: tuple | None = None,
+        bounds: tuple | None,
+        scene_failed: bool,
     ) -> None:
         if self._is_cleaning_up or self._nav.is_refreshing:
             return
@@ -2593,6 +2600,17 @@ class UIEventCoordinator:
                 bid_ref,
                 selected_pages,
             )
+            return
+        if scene_failed:
+            self._clear_mesh_replay_buffer()
+            self._pending_dirty_mesh_refresh = False
+            self._mark_mesh_scene_dirty(list(scene_identity.page_uids))
+            for surface, is_live in (
+                (self.opengl_viewer, self._is_embedded_3d_active()),
+                (self._mesh_window, self._is_detached_mesh_visible()),
+            ):
+                if surface is not None and is_live:
+                    surface.apply_scene_failure(scene_identity)
             return
         (
             vertices,
@@ -2708,13 +2726,7 @@ class UIEventCoordinator:
             if self.ui_state_manager.selected_page_uids:
                 self._update_page_selection([])
             return
-        selected = self._update_page_selection(page_uids)
-        if self._nav.current_state == NavState.FILE_LOADED_NO_BID:
-            self._nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
-        if selected:
-            self._nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
-        else:
-            self._nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
+        self._update_page_selection(page_uids)
 
     def handle_active_page_changed(self, active_uid: Optional[str]) -> None:
         if self._nav.is_refreshing:
@@ -2722,6 +2734,7 @@ class UIEventCoordinator:
         self._save_current_page_view_state(selected_page_override=active_uid)
         self.ui_state_manager.active_page_uid = active_uid
         bid_ref = self.ui_state_manager.get_selected_bid_ref()
+        self._sync_navigation_for_active_page(bid_ref, active_uid)
         if bid_ref:
             self._sql_collaboration.update_presence(
                 bid_ref.file_path, bid_ref.bid_uid, active_uid
@@ -2748,6 +2761,22 @@ class UIEventCoordinator:
             self._placement.force_exit()
         self._update_page_info_status()
         self._update_export_menu_state()
+
+    def _sync_navigation_for_active_page(
+        self, bid_ref: Optional[BidRef], active_page_uid: Optional[str]
+    ) -> None:
+        if not bid_ref:
+            return
+        if not active_page_uid:
+            if self._placement.is_active:
+                self._placement.force_exit()
+            if self._nav.current_state != NavState.BID_ACTIVE_NO_PAGES:
+                self._nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
+            return
+        if self._nav.current_state == NavState.PLACE_MODE:
+            return
+        if self._nav.current_state != NavState.BID_ACTIVE_PAGES_SELECTED:
+            self._nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
 
     def _clear_page_info_status(self) -> None:
         if self._status_panel:
@@ -2807,7 +2836,7 @@ class UIEventCoordinator:
             self._page_settings_bar.get_selected_area_uid() or ""
         )
 
-    def _update_page_selection(self, page_uids: List[str]) -> List[str]:
+    def _update_page_selection(self, page_uids: List[str]) -> None:
         previous = list(self.ui_state_manager.selected_page_uids)
         selected = self.project_data.select_pages(page_uids)
         self.ui_state_manager.set_page_selection(selected)
@@ -2822,7 +2851,6 @@ class UIEventCoordinator:
         self._sidebar.update_conditions_quantities()
         self._update_export_menu_state()
         self._update_page_info_status()
-        return selected
 
     def _cache_bid_data(self, loaded_files: List[LoadedFile]) -> None:
         if self._bid_data_cache:
@@ -3502,7 +3530,7 @@ class UIEventCoordinator:
             self._suspend_active_layer_tool(layer_uid)
         changed_page_uids = self.project_data.update_layer_visibility(layer_uid, show)
         if image_layer:
-            self._update_native_page_visibility()
+            self._update_native_page_textures()
         self.event_bus.publish(
             AppEvents.LAYER_VISIBILITY_CHANGED,
             file_path=bid_ref.file_path,
@@ -3634,7 +3662,7 @@ class UIEventCoordinator:
             self._suspend_active_layer_tool()
         self.project_data.set_bid_layer_visibility(layers)
         changed_page_uids = self.project_data.update_all_layer_visibility(show)
-        self._update_native_page_visibility()
+        self._update_native_page_textures()
         self.event_bus.publish(
             AppEvents.LAYER_VISIBILITY_CHANGED,
             file_path=bid_ref.file_path,

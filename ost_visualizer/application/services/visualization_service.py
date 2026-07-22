@@ -134,10 +134,15 @@ class VisualizationService:
         with self._mesh_generation_lock:
             identity = self._start_mesh_generation_locked(bid_ref, page_uids)
             self._mesh_pending_task = None
-        geometries, bounds = self._visualization_provider.convert_meshes_to_geometries(
-            [], {}
-        )
-        self._on_scene_ready(geometries, bounds, identity.generation)
+        try:
+            geometries, bounds = (
+                self._visualization_provider.convert_meshes_to_geometries([], {})
+            )
+        except Exception as exc:
+            logger.exception("Empty mesh scene conversion error: %s", exc)
+            self._on_scene_ready([], None, identity.generation, scene_failed=True)
+            return
+        self._on_scene_ready(geometries, bounds, identity.generation, False)
 
     def _mesh_worker_loop(self) -> None:
         while not self._mesh_shutdown.is_set():
@@ -177,14 +182,25 @@ class VisualizationService:
                 )
                 if not self._is_current_mesh_generation(gen_id):
                     continue
-                self._scene_notifier.notify_scene_ready(geometries, bounds, gen_id)
+                self._scene_notifier.notify_scene_ready(
+                    geometries, bounds, gen_id, False
+                )
             except Exception as exc:
                 logger.exception("Mesh generation error: %s", exc)
                 if self._is_current_mesh_generation(gen_id):
-                    self._scene_notifier.notify_scene_ready([], None, gen_id)
+                    self._scene_notifier.notify_scene_ready(
+                        [],
+                        None,
+                        gen_id,
+                        True,
+                    )
 
     def _on_scene_ready(
-        self, geometries: List[MeshGeometry], bounds: Any, gen_id: int
+        self,
+        geometries: List[MeshGeometry],
+        bounds: Any,
+        gen_id: int,
+        scene_failed: bool,
     ) -> None:
         identity = self._claim_mesh_result(gen_id)
         if identity is None:
@@ -194,6 +210,7 @@ class VisualizationService:
             geometries=geometries,
             bounds=bounds,
             scene_identity=identity,
+            scene_failed=scene_failed,
         )
 
     def close_realtime_visualization(self) -> None:

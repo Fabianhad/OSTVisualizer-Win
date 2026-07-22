@@ -298,45 +298,36 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
                     layer_uid = spec.layer_uid
                     table = self._ANNOTATION_TABLE.get(annotation_type)
                     if not table:
-                        new_uids.append(None)
-                        continue
+                        raise ValueError(
+                            f"Unsupported annotation type: {annotation_type}"
+                        )
                     position_val = serialize_position_for_table(table, position)
                     color_int = hex_to_color_int(color)
                     width_int = int(width) if width else 0
                     layer_int = int(layer_uid) if layer_uid else None
-                    try:
-                        new_uid = self._next_uid(cursor, table)
-                        self._execute_annotation_insert(
-                            cursor,
-                            schema,
-                            table,
-                            annotation_type,
-                            new_uid,
-                            int(bid_uid),
-                            int(page_uid),
-                            layer_int,
-                            position_val,
-                            color_int,
-                            width_int,
-                            properties,
-                            ref_remap=ref_remap,
-                        )
-                        new_uids.append(str(new_uid))
-                    except Exception as exc:
-                        if self._record_caught_mutation_error(exc):
-                            raise
-                        self.logger.exception(
-                            "Failed to insert %s annotation in %s",
-                            annotation_type,
-                            db_path,
-                        )
-                        new_uids.append(None)
+                    new_uid = self._next_uid(cursor, table)
+                    self._execute_annotation_insert(
+                        cursor,
+                        schema,
+                        table,
+                        annotation_type,
+                        new_uid,
+                        int(bid_uid),
+                        int(page_uid),
+                        layer_int,
+                        position_val,
+                        color_int,
+                        width_int,
+                        properties,
+                        ref_remap=ref_remap,
+                    )
+                    new_uids.append(str(new_uid))
         except Exception as exc:
             if self._record_caught_mutation_error(exc):
                 raise
             self.logger.exception("Failed to bulk insert annotations in %s", db_path)
             return []
-        return [u for u in new_uids if u is not None]
+        return new_uids
 
     def _execute_annotation_insert(
         self,
@@ -477,7 +468,7 @@ class AnnotationOperationsMixin(AccessIdentityAllocationMixin):
             )
         elif annotation_type == ANNOTATION_TYPE_HOTLINK:
             page_view_uid = properties.get("BidPageViewUID")
-            if page_view_uid not in (None, "", "0"):
+            if page_view_uid not in (None, "", "0", 0):
                 remapped = namedview_remap.get(str(page_view_uid))
                 page_view_val = int(remapped if remapped is not None else page_view_uid)
             else:

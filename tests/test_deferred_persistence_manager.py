@@ -26,6 +26,10 @@ from ost_visualizer.presentation.controllers.menu_controller import MenuControll
 from ost_visualizer.presentation.coordinators.sidebar_coordinator import (
     SidebarCoordinator,
 )
+from ost_visualizer.presentation.coordinators.navigation_state_machine import (
+    NavigationStateMachine,
+    NavState,
+)
 from ost_visualizer.presentation.coordinators.ui_event_coordinator import (
     UIEventCoordinator,
 )
@@ -951,15 +955,11 @@ class RecordingPlanView:
 
 class RecordingNativeMeshView:
     def __init__(self):
-        self.plan_texture_visibility_calls = []
         self.plan_texture_update_calls = 0
         self.scene_refresh_calls = []
 
     def prepare_scene_refresh(self, bid_ref, page_uids):
         self.scene_refresh_calls.append((bid_ref, tuple(page_uids)))
-
-    def set_plan_texture_visibility(self, visible):
-        self.plan_texture_visibility_calls.append(bool(visible))
 
     def update_plan_texture(self):
         self.plan_texture_update_calls += 1
@@ -1024,7 +1024,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         coordinator.ui_access_manager = SimpleNamespace(
             is_allowed=lambda _feature: True
         )
-        coordinator._nav = SimpleNamespace(is_refreshing=False)
+        coordinator._nav = NavigationStateMachine()
+        coordinator._nav.transition_to(NavState.FILE_LOADED_NO_BID)
+        coordinator._nav.transition_to(NavState.BID_ACTIVE_NO_PAGES)
+        coordinator._nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
         coordinator.opengl_viewer = None
         coordinator._mesh_window = None
         return coordinator, pages
@@ -1396,22 +1399,12 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.plan_view.image_visibility_pages, ["p1"])
         self.assertEqual(mesh_calls, [])
         self.assertEqual(coordinator.quantity_update_calls, [])
-        self.assertEqual(
-            coordinator.opengl_viewer.plan_texture_visibility_calls, [False]
-        )
-        self.assertEqual(
-            coordinator._mesh_window.plan_texture_visibility_calls, [False]
-        )
+        self.assertEqual(coordinator.opengl_viewer.plan_texture_update_calls, 1)
+        self.assertEqual(coordinator._mesh_window.plan_texture_update_calls, 1)
         self.assertTrue(coordinator.update_layer_visibility_deferred("l1", True))
-        self.assertEqual(
-            coordinator.opengl_viewer.plan_texture_visibility_calls, [False, True]
-        )
-        self.assertEqual(
-            coordinator._mesh_window.plan_texture_visibility_calls, [False, True]
-        )
         self.assertEqual(mesh_calls, [])
-        self.assertEqual(coordinator.opengl_viewer.plan_texture_update_calls, 0)
-        self.assertEqual(coordinator._mesh_window.plan_texture_update_calls, 0)
+        self.assertEqual(coordinator.opengl_viewer.plan_texture_update_calls, 2)
+        self.assertEqual(coordinator._mesh_window.plan_texture_update_calls, 2)
 
     def test_condition_layer_visibility_uses_loaded_item_path(self):
         coordinator = self._make_visibility_coordinator(layer_name="Layer 1")
@@ -1583,16 +1576,10 @@ class DeferredPersistenceCoordinatorTests(unittest.TestCase):
             [(False, coordinator.project_data.get_bid_conditions())],
         )
         self.assertEqual(coordinator.plan_view.layer_visibility_calls, [])
-        self.assertEqual(
-            coordinator.opengl_viewer.plan_texture_visibility_calls, [False]
-        )
+        self.assertEqual(coordinator.opengl_viewer.plan_texture_update_calls, 1)
         self.assertTrue(coordinator.update_all_layers_visibility_deferred(True))
-        self.assertEqual(
-            coordinator.opengl_viewer.plan_texture_visibility_calls, [False, True]
-        )
-        self.assertEqual(
-            coordinator._mesh_window.plan_texture_visibility_calls, [False, True]
-        )
+        self.assertEqual(coordinator.opengl_viewer.plan_texture_update_calls, 2)
+        self.assertEqual(coordinator._mesh_window.plan_texture_update_calls, 2)
 
     def test_repeated_layer_toggles_coalesce_to_last_write(self):
         service = FakeProjectWriteService()

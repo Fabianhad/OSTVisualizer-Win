@@ -1,4 +1,5 @@
 import threading
+from dataclasses import dataclass
 from typing import Iterable, Optional
 from .....application.dtos.render_result_dto import RenderResult
 from .....application.interfaces.i_page_load_strategy_service import (
@@ -9,6 +10,12 @@ from .....domain.entities.identity_refs import BidRef
 from .....domain.entities.page import Page
 from ..page_cache import PageCache
 from ..render_priority import RenderPriority
+
+
+@dataclass
+class _PrefetchSubmissionState:
+    request_id: str = ""
+    completed_request_id: str = ""
 
 
 class PageRenderPrefetchCoordinator:
@@ -24,7 +31,6 @@ class PageRenderPrefetchCoordinator:
         self._lock = threading.Lock()
         self._generation = 0
         self._active_request_ids: set[str] = set()
-        self._completed_request_ids: set[str] = set()
 
     def prefetch_nearby_pages(
         self,
@@ -48,7 +54,6 @@ class PageRenderPrefetchCoordinator:
         with self._lock:
             request_ids = list(self._active_request_ids)
             self._active_request_ids.clear()
-            self._completed_request_ids.clear()
             self._generation += 1
         for request_id in request_ids:
             self._rendering_service.cancel_request(request_id)
@@ -79,9 +84,10 @@ class PageRenderPrefetchCoordinator:
         if not strategy.needs_async_loading or not page.layer_visible:
             return
         request_id = ""
+        submission = _PrefetchSubmissionState()
 
         def callback(result: RenderResult) -> None:
-            self._on_prefetch_complete(result, generation)
+            self._on_prefetch_complete(result, generation, submission)
 
         if strategy.load_composite:
             render_scale = self._cacheable_prefetch_scale(
@@ -138,10 +144,10 @@ class PageRenderPrefetchCoordinator:
         if not request_id:
             return
         with self._lock:
+            submission.request_id = request_id
             if generation != self._generation:
                 cancel_now = True
-            elif request_id in self._completed_request_ids:
-                self._completed_request_ids.remove(request_id)
+            elif submission.completed_request_id == request_id:
                 cancel_now = False
             else:
                 self._active_request_ids.add(request_id)
@@ -149,16 +155,23 @@ class PageRenderPrefetchCoordinator:
         if cancel_now:
             self._rendering_service.cancel_request(request_id)
 
-    def _on_prefetch_complete(self, result: RenderResult, generation: int) -> None:
+    def _on_prefetch_complete(
+        self,
+        result: RenderResult,
+        generation: int,
+        submission: _PrefetchSubmissionState,
+    ) -> None:
         with self._lock:
             stale = generation != self._generation
             if stale:
                 self._active_request_ids.discard(result.request_id)
                 return
-            if result.request_id in self._active_request_ids:
-                self._active_request_ids.remove(result.request_id)
-            else:
-                self._completed_request_ids.add(result.request_id)
+            if not submission.request_id:
+                submission.completed_request_id = result.request_id
+                return
+            if result.request_id != submission.request_id:
+                return
+            self._active_request_ids.discard(result.request_id)
 
     def _cacheable_prefetch_scale(
         self,

@@ -1729,12 +1729,19 @@ class PlanViewActionHandler:
             self._select_skipped_named_views(skipped_selection_keys)
             return
         if takeoff_uids:
-            takeoffs_deleted = self._write_svc.delete_takeoffs(db_path, takeoff_uids)
+            takeoffs_deleted = self._write_svc.delete_takeoffs(
+                db_path,
+                takeoff_uids,
+                publish_database_refreshed_after_write=False,
+            )
         if saved_annotations:
             annotations_deleted = self._ann_write_svc.delete_annotations(
                 db_path,
                 [(a.uid, a.annotation_type) for a in saved_annotations],
+                publish_database_refreshed_after_write=False,
             )
+        if takeoffs_deleted or annotations_deleted:
+            self._write_svc.reload_and_notify(db_path)
         delete_cmds = []
         if saved_takeoffs and takeoffs_deleted:
             saved_takeoff_extras = {
@@ -1760,18 +1767,30 @@ class PlanViewActionHandler:
             saved_annotation_scales = self._capture_saved_annotation_scales(
                 saved_annotations
             )
+
+            def _restore_mixed_delete_annotations(current_bid_ref, current_annotations):
+                restore_annotations = self._saved_annotations_for_current_scales(
+                    current_annotations,
+                    saved_annotation_scales,
+                )
+                restored = self._insert_saved_annotations_fast(
+                    current_bid_ref,
+                    restore_annotations,
+                )
+                if restored:
+                    saved_annotation_scales.clear()
+                    saved_annotation_scales.update(
+                        self._capture_saved_annotation_scales(restored)
+                    )
+                return restored
+
             delete_cmds.append(
                 DeleteAnnotationsCommand(
                     saved_annotations=saved_annotations,
                     bid_ref=bid_ref,
-                    write_svc=self._ann_write_svc,
                     plan_view=self._plan_view,
-                    prepare_specs_fn=lambda current_specs: (
-                        self._annotation_specs_for_current_scales(
-                            current_specs,
-                            saved_annotation_scales,
-                        )
-                    ),
+                    insert_saved_annotations_fn=_restore_mixed_delete_annotations,
+                    delete_saved_annotations_fn=self._delete_saved_annotations_fast,
                 )
             )
         if not delete_cmds:
@@ -2025,18 +2044,25 @@ class PlanViewActionHandler:
             self._annotation_writes.apply_default_annotation_layer(ann_specs)
             ref_remap = PasteRefRemap(takeoff_uids=dict(takeoff_uid_remap))
             use_fast_annotation_paste = not pasted_takeoffs or use_fast_takeoff_paste
-            if use_fast_annotation_paste:
-                new_ann_uids = self._insert_annotations_fast(
-                    bid_ref, ann_specs, ref_remap=ref_remap
+            insert_batch = None
+            if not use_fast_annotation_paste:
+                insert_batch = lambda current_bid_ref, current_specs, current_remap: (
+                    self._ann_write_svc.insert_annotations(
+                        current_bid_ref.file_path,
+                        current_bid_ref.bid_uid,
+                        current_specs,
+                        ref_remap=current_remap,
+                    )
                 )
-            else:
-                new_ann_uids = self._ann_write_svc.insert_annotations(
-                    bid_ref.file_path,
-                    bid_ref.bid_uid,
-                    ann_specs,
-                    ref_remap=ref_remap,
-                )
-            ann_specs = ann_specs[: len(new_ann_uids)]
+            inserted_annotations = self._annotation_writes.insert_annotation_copies(
+                bid_ref,
+                clipboard_anns,
+                ann_specs,
+                ref_remap=ref_remap,
+                insert_batch=insert_batch,
+            )
+            new_ann_uids = list(inserted_annotations.uids)
+            ann_specs = list(inserted_annotations.specs)
         else:
             use_fast_annotation_paste = False
         takeoff_uids = {t.uid for t in pasted_takeoffs}

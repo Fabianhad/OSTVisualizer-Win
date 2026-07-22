@@ -330,6 +330,11 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             return
         cast(OpenGLViewer, self.viewer).prepare_scene_refresh(bid_ref, page_uids)
 
+    def apply_scene_failure(self, scene_identity: MeshSceneIdentity) -> None:
+        if self._is_closing:
+            return
+        cast(OpenGLViewer, self.viewer).apply_scene_failure(scene_identity)
+
     def discard_saved_camera_states(
         self,
         *,
@@ -346,10 +351,6 @@ class MeshViewWindow(QtWidgets.QMainWindow):
     def set_plan_texture_provider(self, provider) -> None:
         if self.viewer:
             self.viewer.set_plan_texture_provider(provider)
-
-    def set_plan_texture_visibility(self, visible: bool) -> None:
-        if self.viewer:
-            self.viewer.set_plan_texture_visibility(visible)
 
     def update_plan_texture(self) -> None:
         if self.viewer:

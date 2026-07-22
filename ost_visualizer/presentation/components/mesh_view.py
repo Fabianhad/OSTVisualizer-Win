@@ -136,6 +136,8 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._right_button_dragged = False
 
     def _on_animation_frame(self) -> None:
+        if self._destroyed:
+            return
         if not self._renderer:
             self._animation_timer.stop()
             return
@@ -784,13 +786,6 @@ class OpenGLViewer(QtWidgets.QWidget):
     ) -> None:
         self._plan_texture_provider = provider
 
-    def set_plan_texture_visibility(self, visible: bool) -> None:
-        if not self._renderer or self._current_plan_texture is None:
-            return
-        self._renderer.set_plan_texture_visibility(bool(visible))
-        self._has_visible_plan_texture = bool(visible)
-        self._update_after_plan_texture_change()
-
     def update_plan_texture(self) -> None:
         if (
             not self._renderer
@@ -1022,6 +1017,25 @@ class OpenGLViewer(QtWidgets.QWidget):
             return
         self._set_scene_request(bid_ref, page_uids)
 
+    def apply_scene_failure(self, scene_identity: MeshSceneIdentity) -> None:
+        if self._destroyed or not self._claim_scene_result(scene_identity):
+            return
+        bid_ref = scene_identity.bid_ref
+        is_new_bid = bid_ref != self._current_bid_ref
+        if is_new_bid:
+            self._selected_takeoff_uids.clear()
+            self._camera_initialized_for_scene = False
+        self._current_bid_ref = bid_ref
+        self._loading_bid_ref = None
+        self._scene_refresh_pending = True
+        if self._renderer:
+            self._renderer.scene.clear()
+            self._renderer.clear_plan_texture()
+        self._current_plan_texture = None
+        self._has_visible_plan_texture = False
+        self.suspend_rendering()
+        self.update()
+
     def _set_scene_request(self, bid_ref: BidRef, page_uids: Sequence[str]) -> None:
         self._accepted_scene_bid_ref = bid_ref
         self._requested_scene_page_uids = normalize_scene_page_uids(page_uids)
@@ -1184,15 +1198,8 @@ class OpenGLViewer(QtWidgets.QWidget):
         return bounds
 
     def clear_scene(self) -> None:
-        if QtCore.QThread.currentThread() != self.thread():
-            QtCore.QMetaObject.invokeMethod(
-                self, "_do_clear", QtCore.Qt.QueuedConnection
-            )
+        if self._destroyed:
             return
-        self._do_clear()
-
-    @QtCore.Slot()
-    def _do_clear(self) -> None:
         self._save_current_camera()
         self._zoom_reference_distance = 0.0
         self._selected_takeoff_uids = []
