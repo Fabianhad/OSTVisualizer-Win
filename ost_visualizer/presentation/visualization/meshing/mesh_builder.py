@@ -119,6 +119,7 @@ def process_takeoffs_to_meshes(
                     "opacity": opacity,
                     "condition_uid": condition_uid,
                     "takeoff_uid": takeoff.uid,
+                    "page_uid": takeoff.page_uid or "",
                 }
                 meshes_with_metadata.append((mesh, metadata))
                 mesh_colors_temp[temp_idx] = (color_hex, opacity)
@@ -133,6 +134,7 @@ def process_takeoffs_to_meshes(
             "opacity": metadata["opacity"],
             "condition_uid": metadata.get("condition_uid", ""),
             "takeoff_uid": metadata.get("takeoff_uid", ""),
+            "page_uid": metadata.get("page_uid", ""),
         }
     bounds = calculate_mesh_bounds(meshes)
     return meshes, mesh_colors, bounds

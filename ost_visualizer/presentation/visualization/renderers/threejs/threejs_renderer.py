@@ -12,6 +12,7 @@ from .....application.interfaces.i_color_service import IColorService
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from .....domain.services.page_image_plane_transform import (
+    resolve_page_floor_elevations,
     threejs_page_plane_transform,
 )
 from .....domain.entities.area import BidArea
@@ -99,7 +100,13 @@ def visualize_with_threejs(
             include_elevation_callouts=include_elevation_callouts,
             elevation_callout_settings=elevation_callout_settings,
             elevation_callout_color=elevation_callout_color,
-            scene_bounds=scene_data.get("bounds"),
+            page_floor_elevations=resolve_page_floor_elevations(
+                (
+                    str(metadata.get("page_uid", "") or ""),
+                    (vertex[2] for vertex in mesh.vertices),
+                )
+                for mesh, metadata in processed_meshes
+            ),
         )
     )
     if page_entries:
@@ -140,11 +147,11 @@ def _build_multi_page_data(
     page_area_selections: Optional[Dict],
     *,
     include_elevation_callouts: bool,
+    page_floor_elevations: Dict[str, float],
     elevation_callout_settings: ElevationCalloutSettings = (
         DEFAULT_ELEVATION_CALLOUT_SETTINGS
     ),
     elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
-    scene_bounds: Optional[dict] = None,
 ):
     page_entries = []
     takeoffs_2d = []
@@ -188,11 +195,13 @@ def _build_multi_page_data(
             "pdf_document_uid": pdf_document_uid,
             "pdf_page_index": pdf_page_index,
         }
-        transform = threejs_page_plane_transform(
-            float(page["page_width"] or 0.0),
-            float(page["page_height"] or 0.0),
-            scene_bounds,
-        )
+        transform = None
+        if page_uid in page_floor_elevations:
+            transform = threejs_page_plane_transform(
+                float(page["page_width"] or 0.0),
+                float(page["page_height"] or 0.0),
+                page_floor_elevations[page_uid],
+            )
         if transform is not None:
             page_entry.update(
                 {

@@ -29,5 +29,6 @@ class MeshGeometry:
     indices: List[int]
     color: str
     opacity: float
+    page_uid: str
     condition_uid: str
     takeoff_uid: str

@@ -1,6 +1,6 @@
 import logging
 import threading
-from typing import Any, List, Optional, Tuple
+from typing import List, Optional, Tuple
 from ...domain.entities.database_descriptor import DatabaseBackend
 from ...domain.entities.identity_refs import BidRef
 from ...domain.services.project_data_service import ProjectDataService
@@ -135,14 +135,14 @@ class VisualizationService:
             identity = self._start_mesh_generation_locked(bid_ref, page_uids)
             self._mesh_pending_task = None
         try:
-            geometries, bounds = (
-                self._visualization_provider.convert_meshes_to_geometries([], {})
+            geometries = self._visualization_provider.convert_meshes_to_geometries(
+                [], {}
             )
         except Exception as exc:
             logger.exception("Empty mesh scene conversion error: %s", exc)
-            self._on_scene_ready([], None, identity.generation, scene_failed=True)
+            self._on_scene_ready([], identity.generation, scene_failed=True)
             return
-        self._on_scene_ready(geometries, bounds, identity.generation, False)
+        self._on_scene_ready(geometries, identity.generation, False)
 
     def _mesh_worker_loop(self) -> None:
         while not self._mesh_shutdown.is_set():
@@ -175,22 +175,17 @@ class VisualizationService:
                 )
                 if not self._is_current_mesh_generation(gen_id):
                     continue
-                geometries, bounds = (
-                    self._visualization_provider.convert_meshes_to_geometries(
-                        meshes, mesh_colors
-                    )
+                geometries = self._visualization_provider.convert_meshes_to_geometries(
+                    meshes, mesh_colors
                 )
                 if not self._is_current_mesh_generation(gen_id):
                     continue
-                self._scene_notifier.notify_scene_ready(
-                    geometries, bounds, gen_id, False
-                )
+                self._scene_notifier.notify_scene_ready(geometries, gen_id, False)
             except Exception as exc:
                 logger.exception("Mesh generation error: %s", exc)
                 if self._is_current_mesh_generation(gen_id):
                     self._scene_notifier.notify_scene_ready(
                         [],
-                        None,
                         gen_id,
                         True,
                     )
@@ -198,7 +193,6 @@ class VisualizationService:
     def _on_scene_ready(
         self,
         geometries: List[MeshGeometry],
-        bounds: Any,
         gen_id: int,
         scene_failed: bool,
     ) -> None:
@@ -208,7 +202,6 @@ class VisualizationService:
         self.event_bus.publish(
             AppEvents.NATIVE_SCENE_UPDATED,
             geometries=geometries,
-            bounds=bounds,
             scene_identity=identity,
             scene_failed=scene_failed,
         )

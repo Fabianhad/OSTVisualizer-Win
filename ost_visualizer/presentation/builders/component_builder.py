@@ -290,7 +290,7 @@ class ComponentBuilder:
             renderers.page_cache,
             page_visualization_metadata_service,
         )
-        ui_event_handler.set_plan_texture_provider(page_plane_provider.build_for_bounds)
+        ui_event_handler.set_plan_texture_provider(page_plane_provider.build_for_scene)
         plan_view = TakeoffPlanView(
             color_service,
             renderers.rendering_service,

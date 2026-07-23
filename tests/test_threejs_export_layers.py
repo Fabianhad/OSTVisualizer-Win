@@ -23,6 +23,7 @@ from ost_visualizer.domain.entities.layer import BidLayer
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.page_image_plane_transform import (
     PAGE_PLANE_FLOOR_OFFSET,
+    resolve_page_floor_elevations,
 )
 from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.presentation.visualization.core.mesh_generator import MeshData
@@ -226,7 +227,7 @@ def _page_template(pdf_path: Path, uid: str, page_index: int):
     }
 
 
-def _build_pages_without_takeoffs(pages, scene_bounds=None):
+def _build_pages_without_takeoffs(pages, page_floor_elevations=None):
     page_entries, pdf_documents, takeoffs_2d, callouts = _build_multi_page_data(
         pages,
         {},
@@ -237,7 +238,7 @@ def _build_pages_without_takeoffs(pages, scene_bounds=None):
         True,
         {},
         include_elevation_callouts=False,
-        scene_bounds=scene_bounds,
+        page_floor_elevations=page_floor_elevations or {},
     )
     assert callouts == []
     return page_entries, pdf_documents, takeoffs_2d
@@ -379,6 +380,25 @@ class _ProjectData:
 
 
 class ThreejsExportLayerTests(unittest.TestCase):
+    def test_page_floor_elevation_reducer_is_order_independent(self):
+        page_a = MeshData(
+            vertices=[(0.0, 0.0, 12.0), (1.0, 1.0, 10.0)],
+            faces=[(0, 1, 1)],
+        )
+        page_b = MeshData(
+            vertices=[(0.0, 0.0, 25.0), (1.0, 1.0, 20.0)],
+            faces=[(0, 1, 1)],
+        )
+        self.assertEqual(
+            resolve_page_floor_elevations(
+                [
+                    ("page-b", (vertex[2] for vertex in page_b.vertices)),
+                    ("page-a", (vertex[2] for vertex in page_a.vertices)),
+                ]
+            ),
+            {"page-a": 10.0, "page-b": 20.0},
+        )
+
     def test_export_strategy_filename_policy_handles_long_single_page_names(self):
         page_name = "P" * 300
         html_strategy = _HtmlExportStrategyAdapter(SimpleNamespace())
@@ -1020,7 +1040,15 @@ class ThreejsExportLayerTests(unittest.TestCase):
                     patch(
                         f"{renderer_module}.process_meshes_for_threejs",
                         return_value=(
-                            [object()],
+                            [
+                                (
+                                    MeshData(
+                                        vertices=[(0.0, 0.0, 0.0)],
+                                        faces=[(0, 0, 0)],
+                                    ),
+                                    {"page_uid": "page-1"},
+                                )
+                            ],
                             (0.0, 1.0, 0.0, 1.0, 0.0, 1.0),
                         ),
                     )
@@ -1098,7 +1126,18 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 stack.enter_context(
                     patch(
                         f"{renderer_module}.process_meshes_for_threejs",
-                        return_value=([object()], (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)),
+                        return_value=(
+                            [
+                                (
+                                    MeshData(
+                                        vertices=[(0.0, 0.0, 0.0)],
+                                        faces=[(0, 0, 0)],
+                                    ),
+                                    {"page_uid": "page-1"},
+                                )
+                            ],
+                            (0.0, 1.0, 0.0, 1.0, 0.0, 1.0),
+                        ),
                     )
                 )
                 stack.enter_context(
@@ -1143,6 +1182,10 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 )
         self.assertFalse(
             build_multi_page_data.call_args.kwargs["include_elevation_callouts"]
+        )
+        self.assertEqual(
+            build_multi_page_data.call_args.kwargs["page_floor_elevations"],
+            {"page-1": 0.0},
         )
         self.assertNotIn("elevation_callouts", captured_scene)
 
@@ -1266,10 +1309,9 @@ class ThreejsExportLayerTests(unittest.TestCase):
             pdf_path = Path(tmpdir) / "pages.pdf"
             _write_minimal_pdf(pdf_path, [(612, 792), (300, 400), (500, 600)])
             source_size = pdf_path.stat().st_size
-            bounds = {"min": [0.0, 4.0, 0.0], "max": [10.0, 12.0, 8.0]}
             page_entries, pdf_documents, takeoffs_2d = _build_pages_without_takeoffs(
                 [_page_template(pdf_path, "page-2", 1)],
-                scene_bounds=bounds,
+                page_floor_elevations={"page-2": 4.0},
             )
         self.assertEqual(len(pdf_documents), 1)
         embedded_pdf = _decode_pdf_document(pdf_documents[0])
@@ -1286,6 +1328,36 @@ class ThreejsExportLayerTests(unittest.TestCase):
         self.assertTrue(page_entries[0]["plane_flip_v"])
         self.assertNotIn("image_visible", page_entries[0])
         self.assertEqual(takeoffs_2d, [])
+
+    def test_multi_page_plane_elevations_are_owned_by_each_page_uid(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = Path(tmpdir) / "pages.pdf"
+            _write_minimal_pdf(pdf_path, [(612, 792), (300, 400)])
+            page_entries, _pdf_documents, _takeoffs_2d = _build_pages_without_takeoffs(
+                [
+                    _page_template(pdf_path, "page-b", 1),
+                    _page_template(pdf_path, "page-a", 0),
+                ],
+                page_floor_elevations={"page-a": 10.0, "page-b": 25.0},
+            )
+        elevations = {page["uid"]: page["plane_y"] for page in page_entries}
+        self.assertEqual(
+            elevations,
+            {
+                "page-a": 10.0 - PAGE_PLANE_FLOOR_OFFSET,
+                "page-b": 25.0 - PAGE_PLANE_FLOOR_OFFSET,
+            },
+        )
+
+    def test_multi_page_entry_without_geometry_has_no_origin_plane(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = Path(tmpdir) / "pages.pdf"
+            _write_minimal_pdf(pdf_path, [(612, 792)])
+            page_entries, _pdf_documents, _takeoffs_2d = _build_pages_without_takeoffs(
+                [_page_template(pdf_path, "page-a", 0)],
+                page_floor_elevations={},
+            )
+        self.assertNotIn("plane_y", page_entries[0])
 
     def test_multi_page_renderer_data_embeds_only_selected_pages_from_source_pdf(self):
         with tempfile.TemporaryDirectory() as tmpdir:

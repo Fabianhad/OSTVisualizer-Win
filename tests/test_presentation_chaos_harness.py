@@ -1434,7 +1434,6 @@ class UIEventCoordinatorChaosHarness:
                     tuple(self.coordinator.project_data.get_selected_page_uids()),
                     1,
                 ),
-                bounds=None,
                 scene_failed=False,
             )
         return ChaosActionResult("native_scene_updated")

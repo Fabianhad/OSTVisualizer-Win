@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Callable, Dict, List, Optional, Tuple, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.dtos.mesh_geometry_dto import (
@@ -31,6 +32,9 @@ from ...domain.entities.identity_refs import BidRef
 from ...domain.entities.loaded_file import LoadedFile
 from ...domain.entities.named_view import NamedView, build_named_view_from_annotation
 from ...domain.entities.project_factory import build_loaded_files
+from ...domain.services.page_image_plane_transform import (
+    resolve_page_floor_elevations,
+)
 from ..config import TAB_INDEX_PROJECTS, TAB_INDEX_SUMMARY, TAB_INDEX_TAKEOFF
 from ..dialogs.adjust_images_dialog import AdjustImagesDialog, ImageAdjustmentSettings
 from ..dialogs.areas_dialog import BidAreasDialog
@@ -2575,7 +2579,6 @@ class UIEventCoordinator:
         self,
         geometries: List[MeshGeometry],
         scene_identity: MeshSceneIdentity,
-        bounds: tuple | None,
         scene_failed: bool,
     ) -> None:
         if self._is_cleaning_up or self._nav.is_refreshing:
@@ -2621,13 +2624,17 @@ class UIEventCoordinator:
             takeoff_uids,
         ) = _mesh_geometries_to_render_buffers(geometries)
         mesh_args = (vertices, normals, indices, colors)
+        page_floor_elevations = MappingProxyType(
+            resolve_page_floor_elevations(
+                (geometry.page_uid, geometry.vertices[2::3]) for geometry in geometries
+            )
+        )
         mesh_options = {
             "scene_identity": scene_identity,
+            "page_floor_elevations": page_floor_elevations,
             "condition_uids": condition_uids,
             "takeoff_uids": takeoff_uids,
         }
-        if bounds is not None:
-            mesh_options["scene_bounds"] = bounds
         self._last_mesh_scene = _MeshScenePublication(mesh_args, mesh_options)
         if self._pending_dirty_mesh_refresh:
             self._clear_mesh_dirty_state()

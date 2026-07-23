@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Union
 from ..application.dtos.page_visualization_page_dto import PageVisualizationPageDto
 from ..application.dtos.mesh_geometry_dto import MeshGeometry
 from ..application.dtos.scene_data_dto import ScenePageImageLayer
@@ -10,10 +10,7 @@ from ..application.interfaces.i_exporter import IExportStrategy
 from ..application.interfaces.i_html_renderer import IHtmlRenderer
 from ..application.interfaces.i_mesh_generator import IMeshGenerator, MeshData
 from ..application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
-from ..application.interfaces.i_visualization_provider import (
-    Bounds,
-    IVisualizationProvider,
-)
+from ..application.interfaces.i_visualization_provider import IVisualizationProvider
 from ..domain.entities.area import BidArea
 from ..domain.entities.config import Config
 from ..domain.entities.elevation_callout import (
@@ -369,5 +366,5 @@ class VisualizationProvider(IVisualizationProvider):
         self,
         meshes: Sequence[MeshData],
         mesh_colors: Dict[str, Union[str, Dict[str, object]]],
-    ) -> Tuple[List[MeshGeometry], Bounds]:
+    ) -> List[MeshGeometry]:
         return meshes_to_geometries(meshes, mesh_colors, self._color_service)

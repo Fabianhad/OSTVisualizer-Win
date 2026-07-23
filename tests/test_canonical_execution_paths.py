@@ -155,7 +155,7 @@ class CanonicalExecutionPathTests(unittest.TestCase):
                 "cleanup",
             },
             ViewerSyncCoordinator: {"clear_plan_view"},
-            NativePageImagePlaneProvider: {"build_for_bounds"},
+            NativePageImagePlaneProvider: {"build_for_scene"},
             PageRenderPrefetchCoordinator: {"cancel_pending"},
             PlanViewActionHandler: {
                 "_publish_takeoffs_changed_for_pages",
@@ -179,10 +179,12 @@ class CanonicalExecutionPathTests(unittest.TestCase):
             "_last_mesh_args",
             "_last_mesh_options",
             "_clear_plan_view",
+            "build_for_bounds",
             "on_page_selection",
             "update_named_view_name",
             "set_plan_texture_visibility",
         }
+        forbidden_definitions = {"build_for_bounds"}
         forbidden_event_names = {
             "NamedViewCreatedEvent",
             "NamedViewRenamedEvent",
@@ -190,6 +192,7 @@ class CanonicalExecutionPathTests(unittest.TestCase):
         }
         found_attributes: set[str] = set()
         found_names: set[str] = set()
+        found_definitions: set[str] = set()
         mesh_identity_create_calls = 0
         for path in _production_python_sources():
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -206,8 +209,11 @@ class CanonicalExecutionPathTests(unittest.TestCase):
                 elif isinstance(node, (ast.ClassDef, ast.FunctionDef)):
                     if node.name in forbidden_event_names:
                         found_names.add(node.name)
+                    if node.name in forbidden_definitions:
+                        found_definitions.add(node.name)
         self.assertEqual(found_attributes, set())
         self.assertEqual(found_names, set())
+        self.assertEqual(found_definitions, set())
         self.assertEqual(mesh_identity_create_calls, 0)
 
     def test_removed_event_and_refresh_routes_remain_absent(self):

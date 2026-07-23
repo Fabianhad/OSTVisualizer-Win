@@ -6,7 +6,6 @@ from ....application.interfaces.i_color_service import IColorService
 
 if TYPE_CHECKING:
     from ..core.mesh_generator import MeshData
-Bounds = Tuple[float, float, float, float, float, float]
 
 
 def get_box_edges() -> List[List[int]]:
@@ -203,10 +202,8 @@ def meshes_to_geometries(
     meshes: Sequence[MeshData],
     mesh_colors: Dict[str, Union[str, Dict[str, object]]],
     color_service: IColorService,
-) -> Tuple[List[MeshGeometry], Bounds]:
+) -> List[MeshGeometry]:
     geometries: List[MeshGeometry] = []
-    min_x = min_y = min_z = float("inf")
-    max_x = max_y = max_z = float("-inf")
     for idx, mesh in enumerate(meshes):
         if not mesh or not mesh.vertices or not mesh.faces:
             continue
@@ -218,12 +215,6 @@ def meshes_to_geometries(
         for i, vertex in enumerate(vertices):
             tx, ty, tz = _transform_vertex(vertex)
             vertex_buffer.extend([tx, ty, tz])
-            min_x = min(min_x, tx)
-            max_x = max(max_x, tx)
-            min_y = min(min_y, ty)
-            max_y = max(max_y, ty)
-            min_z = min(min_z, tz)
-            max_z = max(max_z, tz)
             if i < len(normals):
                 nn = normals[i]
                 tnx, tny, tnz = _transform_normal(nn)
@@ -239,31 +230,23 @@ def meshes_to_geometries(
         color, opacity = color_service.as_hex_with_opacity(color_entry)
         condition_uid = ""
         takeoff_uid = ""
+        page_uid = ""
         if isinstance(color_entry, dict):
             condition_uid = str(color_entry.get("condition_uid", ""))
             takeoff_uid = str(color_entry.get("takeoff_uid", ""))
+            page_uid = str(color_entry.get("page_uid", ""))
         geometry = MeshGeometry(
             vertices=vertex_buffer,
             normals=normal_buffer,
             indices=index_buffer,
             color=color,
             opacity=opacity,
+            page_uid=page_uid,
             condition_uid=condition_uid,
             takeoff_uid=takeoff_uid,
         )
         geometries.append(geometry)
-    if min_x == float("inf"):
-        bounds = (-1000, 1000, -1000, 1000, -10, 10)
-    else:
-        bounds = (
-            min_x - 100,
-            max_x + 100,
-            min_y - 10,
-            max_y + 10,
-            min_z - 100,
-            max_z + 100,
-        )
-    return geometries, bounds
+    return geometries
 
 
 def get_radial_mesh_edges(segments: int) -> List[List[int]]:

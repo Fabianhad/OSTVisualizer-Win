@@ -2,7 +2,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 from PySide6 import QtGui
 from ...application.dtos.mesh_geometry_dto import normalize_scene_page_uids
 from ...domain.services.page_image_plane_transform import native_page_plane_transform
@@ -46,22 +46,28 @@ class NativePageImagePlaneProvider:
         self._page_cache = page_cache
         self._page_metadata = page_metadata_service
 
-    def build_for_bounds(
-        self, mesh_bounds: Optional[Sequence[float]]
+    def build_for_scene(
+        self,
+        scene_page_uids: Sequence[str],
+        page_floor_elevations: Mapping[str, float],
     ) -> Optional[NativePageImagePlaneData]:
-        page_uid = self._active_page_uid()
-        if not page_uid:
+        rendered_page_uid = self._rendered_page_uid(scene_page_uids)
+        if rendered_page_uid not in page_floor_elevations:
             return None
-        page = self._project_data.get_page(page_uid)
+        page = self._project_data.get_page(rendered_page_uid)
         if not page or not page.image_path or not os.path.isfile(page.image_path):
             return None
-        page_entries = self._page_metadata.build_pages([page_uid])
+        page_entries = self._page_metadata.build_pages([rendered_page_uid])
         if not page_entries:
             return None
         page_entry = page_entries[0]
         page_width = float(page_entry["page_width"] or 0.0)
         page_height = float(page_entry["page_height"] or 0.0)
-        transform = native_page_plane_transform(page_width, page_height, mesh_bounds)
+        transform = native_page_plane_transform(
+            page_width,
+            page_height,
+            page_floor_elevations[rendered_page_uid],
+        )
         if transform is None:
             return None
         render_scale = native_plan_texture_render_scale(
@@ -78,9 +84,9 @@ class NativePageImagePlaneProvider:
         if rgba is None:
             return None
         pixels_rgba, width_px, height_px = rgba
-        visible = self._page_metadata.image_layer_visible([page_uid])
+        visible = self._page_metadata.image_layer_visible([rendered_page_uid])
         return NativePageImagePlaneData(
-            page_uid=page_uid,
+            page_uid=rendered_page_uid,
             pixels_rgba=pixels_rgba,
             width_px=width_px,
             height_px=height_px,
@@ -95,10 +101,8 @@ class NativePageImagePlaneProvider:
             flip_v=transform.flip_v,
         )
 
-    def _active_page_uid(self) -> str:
-        selected = normalize_scene_page_uids(
-            self._project_data.get_selected_page_uids()
-        )
+    def _rendered_page_uid(self, scene_page_uids: Sequence[str]) -> str:
+        selected = normalize_scene_page_uids(scene_page_uids)
         active_uid = self._ui_state.active_page_uid
         if active_uid and active_uid in selected:
             return str(active_uid)

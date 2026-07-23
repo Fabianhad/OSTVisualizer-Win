@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 import math
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Mapping, Optional, Sequence, Union
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QTimer, Signal
 from ...application.dtos.mesh_geometry_dto import (
@@ -60,6 +60,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._loading_bid_ref: Optional[BidRef] = None
         self._accepted_scene_bid_ref: Optional[BidRef] = None
         self._requested_scene_page_uids: Optional[tuple[str, ...]] = None
+        self._page_floor_elevations: dict[str, float] = {}
         self._latest_scene_generation = 0
         self._scene_refresh_pending = False
         self._camera_initialized_for_scene = False
@@ -100,7 +101,10 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._curved_check_fn = lambda _uids: (False, False)
         self._selected_context_state_fn = None
         self._plan_texture_provider: Optional[
-            Callable[[Optional[Sequence[float]]], Optional[NativePageImagePlaneData]]
+            Callable[
+                [Sequence[str], Mapping[str, float]],
+                Optional[NativePageImagePlaneData],
+            ]
         ] = None
         self._current_plan_texture: Optional[NativePageImagePlaneData] = None
         self._has_visible_plan_texture = False
@@ -781,7 +785,10 @@ class OpenGLViewer(QtWidgets.QWidget):
     def set_plan_texture_provider(
         self,
         provider: Optional[
-            Callable[[Optional[Sequence[float]]], Optional[NativePageImagePlaneData]]
+            Callable[
+                [Sequence[str], Mapping[str, float]],
+                Optional[NativePageImagePlaneData],
+            ]
         ],
     ) -> None:
         self._plan_texture_provider = provider
@@ -793,18 +800,7 @@ class OpenGLViewer(QtWidgets.QWidget):
             or not self._requested_scene_page_uids
         ):
             return
-        scene_bounds = None
-        if not self._renderer.scene.empty():
-            bounds = self._renderer.scene.get_bounds()
-            scene_bounds = (
-                bounds.min.x,
-                bounds.max.x,
-                bounds.min.y,
-                bounds.max.y,
-                bounds.min.z,
-                bounds.max.z,
-            )
-        self._replace_plan_texture(scene_bounds)
+        self._replace_plan_texture()
         self._update_after_plan_texture_change()
 
     def apply_mesh_data(
@@ -815,9 +811,9 @@ class OpenGLViewer(QtWidgets.QWidget):
         colors: Sequence[object],
         *,
         scene_identity: MeshSceneIdentity,
+        page_floor_elevations: Mapping[str, float],
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
-        scene_bounds: Optional[Sequence[float]] = None,
     ) -> None:
         if self._destroyed:
             return
@@ -837,9 +833,9 @@ class OpenGLViewer(QtWidgets.QWidget):
                     "indices": indices_list,
                     "colors": colors,
                     "scene_identity": scene_identity,
+                    "page_floor_elevations": dict(page_floor_elevations),
                     "condition_uids": condition_uids,
                     "takeoff_uids": takeoff_uids,
-                    "scene_bounds": scene_bounds,
                 }
             )
             return
@@ -849,9 +845,9 @@ class OpenGLViewer(QtWidgets.QWidget):
             indices_list,
             colors,
             scene_identity,
+            page_floor_elevations,
             condition_uids,
             takeoff_uids,
-            scene_bounds,
         )
 
     def _claim_scene_result(self, scene_identity: MeshSceneIdentity) -> bool:
@@ -900,6 +896,25 @@ class OpenGLViewer(QtWidgets.QWidget):
                 + ", ".join(f"{name}={length}" for name, length in mismatched.items())
             )
 
+    @staticmethod
+    def _validated_page_floor_elevations(
+        scene_identity: MeshSceneIdentity,
+        page_floor_elevations: Mapping[str, float],
+    ) -> dict[str, float]:
+        validated = {
+            str(page_uid): float(elevation)
+            for page_uid, elevation in page_floor_elevations.items()
+        }
+        unexpected = set(validated).difference(scene_identity.page_uids)
+        if unexpected:
+            raise ValueError(
+                "Page elevation identities must belong to the scene request: "
+                f"{sorted(unexpected)}"
+            )
+        if not all(math.isfinite(elevation) for elevation in validated.values()):
+            raise ValueError("Page elevations must be finite")
+        return validated
+
     @QtCore.Slot(object)
     def _apply_queued_mesh_data(self, data: dict) -> None:
         if self._destroyed:
@@ -910,9 +925,9 @@ class OpenGLViewer(QtWidgets.QWidget):
             data["indices"],
             data["colors"],
             data["scene_identity"],
+            data["page_floor_elevations"],
             data["condition_uids"],
             data["takeoff_uids"],
-            data["scene_bounds"],
         )
 
     def _do_apply_mesh_data(
@@ -922,9 +937,9 @@ class OpenGLViewer(QtWidgets.QWidget):
         indices_list: Sequence[Sequence[int]],
         colors: Sequence[object],
         scene_identity: MeshSceneIdentity,
+        page_floor_elevations: Mapping[str, float],
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
-        scene_bounds: Optional[Sequence[float]] = None,
     ) -> None:
         self._validate_mesh_buffer_lengths(
             vertices_list,
@@ -936,6 +951,10 @@ class OpenGLViewer(QtWidgets.QWidget):
         )
         if not self._scene_result_matches_request(scene_identity):
             return
+        validated_page_floor_elevations = self._validated_page_floor_elevations(
+            scene_identity,
+            page_floor_elevations,
+        )
         if not self._ensure_renderer():
             return
         meshes = []
@@ -966,6 +985,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._current_bid_ref = bid_ref
         self._loading_bid_ref = None
         self._scene_refresh_pending = False
+        self._page_floor_elevations = validated_page_floor_elevations
         if is_new_bid:
             self._selected_takeoff_uids.clear()
             self._camera_initialized_for_scene = False
@@ -973,7 +993,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         for mesh in meshes:
             self._renderer.scene.add_mesh(mesh)
         if scene_identity.page_uids:
-            self._replace_plan_texture(scene_bounds)
+            self._replace_plan_texture()
         else:
             self._current_plan_texture = None
             self._has_visible_plan_texture = False
@@ -1002,6 +1022,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._loading_bid_ref = bid_ref
         self._set_scene_request(bid_ref, ())
         self._camera_initialized_for_scene = False
+        self._page_floor_elevations = {}
         if self._renderer:
             self._renderer.scene.clear()
             self._renderer.clear_plan_texture()
@@ -1028,6 +1049,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._current_bid_ref = bid_ref
         self._loading_bid_ref = None
         self._scene_refresh_pending = True
+        self._page_floor_elevations = {}
         if self._renderer:
             self._renderer.scene.clear()
             self._renderer.clear_plan_texture()
@@ -1117,13 +1139,16 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._zoom_reference_distance = self._get_camera_distance()
         self.zoom_changed.emit(1.0)
 
-    def _replace_plan_texture(self, scene_bounds: Optional[Sequence[float]]) -> None:
+    def _replace_plan_texture(self) -> None:
         self._current_plan_texture = None
         self._has_visible_plan_texture = False
         if not self._plan_texture_provider:
             self._renderer.clear_plan_texture()
             return
-        data = self._plan_texture_provider(scene_bounds)
+        data = self._plan_texture_provider(
+            self._requested_scene_page_uids or (),
+            self._page_floor_elevations,
+        )
         if data is None:
             self._renderer.clear_plan_texture()
             return
@@ -1207,6 +1232,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._loading_bid_ref = None
         self._accepted_scene_bid_ref = None
         self._requested_scene_page_uids = None
+        self._page_floor_elevations = {}
         self._scene_refresh_pending = False
         self._camera_initialized_for_scene = False
         if self._renderer:
@@ -1247,6 +1273,7 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._loading_bid_ref = None
         self._accepted_scene_bid_ref = None
         self._requested_scene_page_uids = None
+        self._page_floor_elevations = {}
         self._scene_refresh_pending = False
         self._camera_initialized_for_scene = False
         self._saved_camera_states = {}

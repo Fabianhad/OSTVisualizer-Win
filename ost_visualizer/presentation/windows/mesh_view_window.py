@@ -1,4 +1,4 @@
-from typing import Optional, Sequence, cast
+from typing import Mapping, Optional, Sequence, cast
 from PySide6 import QtCore, QtGui, QtWidgets
 from ...application.dtos.mesh_geometry_dto import MeshSceneIdentity
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
@@ -303,9 +303,9 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         colors: Sequence[object],
         *,
         scene_identity: MeshSceneIdentity,
+        page_floor_elevations: Mapping[str, float],
         condition_uids: Optional[Sequence[str]] = None,
         takeoff_uids: Optional[Sequence[str]] = None,
-        scene_bounds: Optional[Sequence[float]] = None,
     ) -> None:
         if self._is_closing:
             return
@@ -315,9 +315,9 @@ class MeshViewWindow(QtWidgets.QMainWindow):
             indices_list,
             colors,
             scene_identity=scene_identity,
+            page_floor_elevations=page_floor_elevations,
             condition_uids=condition_uids,
             takeoff_uids=takeoff_uids,
-            scene_bounds=scene_bounds,
         )
 
     def begin_scene_load(self, bid_ref: BidRef) -> None:
