@@ -3131,7 +3131,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             page_index=0,
             width_pts=100.0,
             height_pts=100.0,
-            overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 96.0, 100.0 / 72.0 * 96.0),
+            overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 64.0, 100.0 / 72.0 * 64.0),
         )
         image = renderer.render_composite_frame(
             page,
@@ -3163,10 +3163,10 @@ class OptionsPreferencesTests(unittest.TestCase):
             width_pts=100.0,
             height_pts=100.0,
             overlay_rect=(
-                10.0 / 72.0 * 96.0,
+                10.0 / 72.0 * 64.0,
                 0.0,
-                100.0 / 72.0 * 96.0,
-                100.0 / 72.0 * 96.0,
+                100.0 / 72.0 * 64.0,
+                100.0 / 72.0 * 64.0,
             ),
             image_show_mode=2,
         )
@@ -3193,10 +3193,10 @@ class OptionsPreferencesTests(unittest.TestCase):
             width_pts=100.0,
             height_pts=100.0,
             overlay_rect=(
-                20.5 / 72.0 * 96.0,
+                20.5 / 72.0 * 64.0,
                 0.0,
-                100.0 / 72.0 * 96.0,
-                100.0 / 72.0 * 96.0,
+                100.0 / 72.0 * 64.0,
+                100.0 / 72.0 * 64.0,
             ),
             image_show_mode=2,
         )
@@ -3223,10 +3223,10 @@ class OptionsPreferencesTests(unittest.TestCase):
             width_pts=100.0,
             height_pts=100.0,
             overlay_rect=(
-                10.0 / 72.0 * 96.0,
+                10.0 / 72.0 * 64.0,
                 0.0,
-                100.0 / 72.0 * 96.0,
-                100.0 / 72.0 * 96.0,
+                100.0 / 72.0 * 64.0,
+                100.0 / 72.0 * 64.0,
             ),
             image_show_mode=2,
         )
@@ -3255,8 +3255,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_rect=(
                 0.0,
                 0.0,
-                100.0 / 72.0 * 96.0,
-                100.0 / 72.0 * 96.0,
+                100.0 / 72.0 * 64.0,
+                100.0 / 72.0 * 64.0,
             ),
             overlay_rotation=0.2,
             image_show_mode=2,
@@ -3287,10 +3287,10 @@ class OptionsPreferencesTests(unittest.TestCase):
             width_pts=100.0,
             height_pts=100.0,
             overlay_rect=(
-                10.0 / 72.0 * 96.0,
+                10.0 / 72.0 * 64.0,
                 0.0,
-                100.0 / 72.0 * 96.0,
-                100.0 / 72.0 * 96.0,
+                100.0 / 72.0 * 64.0,
+                100.0 / 72.0 * 64.0,
             ),
             image_show_mode=2,
             overlay_rotation=0.0,
@@ -3332,7 +3332,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_image_path="overlay.pdf",
             width_pts=100.0,
             height_pts=100.0,
-            overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 96.0, 100.0 / 72.0 * 96.0),
+            overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 64.0, 100.0 / 72.0 * 64.0),
             image_show_mode=1,
         )
         pixmap = QtGui.QPixmap(400, 200)
@@ -3349,7 +3349,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             QtCore.Qt.TransformationMode.SmoothTransformation,
         )
 
-    def test_overlay_item_uses_ost_overlay_rect_page_pixel_coordinates(self):
+    def test_overlay_item_uses_ost_overlay_composite_coordinates(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         page = Page(
             uid="6420",
@@ -3357,7 +3357,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_image_path="overlay.pdf",
             width_pts=42.0 * 72.0,
             height_pts=30.0 * 72.0,
-            overlay_rect=(-1.587912, 0.0, 4028.531767, 2877.295846),
+            overlay_rect=(-1.103146, 0.0, 2686.161423, 1919.474692),
             image_show_mode=1,
         )
         pixmap = QtGui.QPixmap(6048, 4320)
@@ -3368,12 +3368,12 @@ class OptionsPreferencesTests(unittest.TestCase):
             show_mode=1,
         )
         transform = item.transform()
-        self.assertAlmostEqual(transform.m31(), -3.572802, places=5)
+        self.assertAlmostEqual(transform.m31(), -3.72311775, places=5)
         self.assertAlmostEqual(transform.m32(), 0.0, places=5)
-        self.assertAlmostEqual(transform.m11(), 1.498710, places=5)
-        self.assertAlmostEqual(transform.m22(), 1.498592, places=5)
+        self.assertAlmostEqual(transform.m11(), 1.498974, places=5)
+        self.assertAlmostEqual(transform.m22(), 1.499590, places=5)
 
-    def test_overlay_pdf_tiles_use_ost_overlay_rect_page_pixel_coordinates(self):
+    def test_overlay_pdf_tiles_use_ost_overlay_composite_coordinates(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._scene_scale = 3.0
         view._overlay_pdf_width_pts = 42.0 * 72.0
@@ -3384,14 +3384,14 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_image_path="overlay.pdf",
             width_pts=42.0 * 72.0,
             height_pts=30.0 * 72.0,
-            overlay_rect=(-1.587912, 0.0, 4028.531767, 2877.295846),
+            overlay_rect=(-1.103146, 0.0, 2686.161423, 1919.474692),
             image_show_mode=2,
         )
         transform = view._overlay_pdf_tile_transform()
-        self.assertAlmostEqual(transform.m31(), -3.572802, places=5)
+        self.assertAlmostEqual(transform.m31(), -3.72311775, places=5)
         self.assertAlmostEqual(transform.m32(), 0.0, places=5)
-        self.assertAlmostEqual(transform.m11(), 0.999140, places=5)
-        self.assertAlmostEqual(transform.m22(), 0.999061, places=5)
+        self.assertAlmostEqual(transform.m11(), 0.999316, places=5)
+        self.assertAlmostEqual(transform.m22(), 0.999726, places=5)
 
     def test_page_view_state_uses_ost_page_pixel_coordinates(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -3432,7 +3432,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_image_path="overlay.png",
             width_pts=100.0,
             height_pts=100.0,
-            overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 96.0, 100.0 / 72.0 * 96.0),
+            overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 64.0, 100.0 / 72.0 * 64.0),
             image_show_mode=1,
         )
         pixmap = QtGui.QPixmap(200, 200)
@@ -4046,7 +4046,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             image_show_mode=2,
             width_pts=100.0,
             height_pts=100.0,
-            overlay_rect=(0.0, 0.0, 133.333333, 133.333333),
+            overlay_rect=(0.0, 0.0, 88.888889, 88.888889),
         )
         view._loaded_visual_kind = VISUAL_KIND_COMPOSITE
         view._can_zoom_rerender = True
@@ -4066,12 +4066,12 @@ class OptionsPreferencesTests(unittest.TestCase):
         view.mapToScene = lambda _rect: QtGui.QPolygonF(QtCore.QRectF(0, 0, 50, 50))
         view.viewport = lambda: SimpleNamespace(rect=lambda: QtCore.QRect(0, 0, 50, 50))
         first_context = view._build_visible_frame_context(8.0)
-        view._current_page.overlay_rect = (96.0, 48.0, 133.333333, 133.333333)
+        view._current_page.overlay_rect = (64.0, 32.0, 88.888889, 88.888889)
         second_context = view._build_visible_frame_context(8.0)
         self.assertIsNotNone(first_context)
         self.assertIsNotNone(second_context)
         self.assertNotEqual(first_context["key"], second_context["key"])
-        self.assertIn((96.0, 48.0, 133.333333, 133.333333), second_context["key"][-1])
+        self.assertIn((64.0, 32.0, 88.888889, 88.888889), second_context["key"][-1])
 
     def test_overlay_only_pdf_high_resolution_disabled_requests_low_scale_base(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)

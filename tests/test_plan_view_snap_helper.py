@@ -973,10 +973,10 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness._current_page.overlay_offset_y = -999.0
         harness._current_page.overlay_rotation = math.pi / 2.0
         harness._current_page.overlay_rect = (
-            96.0,
-            48.0,
-            200.0 / 72.0 * 96.0,
-            100.0 / 72.0 * 96.0,
+            64.0,
+            32.0,
+            200.0 / 72.0 * 64.0,
+            100.0 / 72.0 * 64.0,
         )
         mapped = harness._pdf_intelligence_point_to_page_point(
             "overlay",

@@ -4292,7 +4292,7 @@ class TakeoffPlanView(
             return
         scene_dx = scene_pos.x() - self._overlay_move_anchor_scene.x()
         scene_dy = scene_pos.y() - self._overlay_move_anchor_scene.y()
-        delta = page.canvas_point_to_ost_page_pixels(
+        delta = page.canvas_point_to_overlay_rect_units(
             scene_dx,
             scene_dy,
             page.effective_width_pts * self._scene_scale,

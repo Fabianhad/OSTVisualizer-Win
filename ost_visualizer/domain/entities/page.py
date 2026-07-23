@@ -2,9 +2,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
 from .page_info import BidPageInfo
+from .overlay import OST_OVERLAY_RECT_UNITS_PER_INCH, OST_PAGE_COORDINATE_DPI
 from .takeoff import Takeoff
-
-OST_OVERLAY_RECT_DPI = 96.0
 
 
 @dataclass
@@ -55,20 +54,26 @@ class Page:
     def effective_height_pts(self) -> float:
         return self.width_pts if self.rotation in (90, 270) else self.height_pts
 
-    def _ost_page_pixel_size(self) -> Optional[tuple[float, float]]:
+    def _page_coordinate_size(
+        self, units_per_inch: float
+    ) -> Optional[tuple[float, float]]:
         try:
-            page_w = float(self.effective_width_pts) / 72.0 * OST_OVERLAY_RECT_DPI
-            page_h = float(self.effective_height_pts) / 72.0 * OST_OVERLAY_RECT_DPI
+            coordinate_dpi = float(units_per_inch)
+            page_w = float(self.effective_width_pts) / 72.0 * coordinate_dpi
+            page_h = float(self.effective_height_pts) / 72.0 * coordinate_dpi
         except (TypeError, ValueError):
             return None
-        if page_w <= 0.0 or page_h <= 0.0:
+        if coordinate_dpi <= 0.0 or page_w <= 0.0 or page_h <= 0.0:
             return None
         return page_w, page_h
 
     def _conversion_dimensions(
-        self, canvas_width: float, canvas_height: float
+        self,
+        canvas_width: float,
+        canvas_height: float,
+        units_per_inch: float,
     ) -> Optional[tuple[float, float, float, float]]:
-        page_size = self._ost_page_pixel_size()
+        page_size = self._page_coordinate_size(units_per_inch)
         if page_size is None:
             return None
         try:
@@ -88,7 +93,11 @@ class Page:
         canvas_width: float,
         canvas_height: float,
     ) -> Optional[tuple[float, float]]:
-        dimensions = self._conversion_dimensions(canvas_width, canvas_height)
+        dimensions = self._conversion_dimensions(
+            canvas_width,
+            canvas_height,
+            OST_PAGE_COORDINATE_DPI,
+        )
         if dimensions is None:
             return None
         try:
@@ -106,7 +115,55 @@ class Page:
         canvas_width: float,
         canvas_height: float,
     ) -> Optional[tuple[float, float]]:
-        dimensions = self._conversion_dimensions(canvas_width, canvas_height)
+        dimensions = self._conversion_dimensions(
+            canvas_width,
+            canvas_height,
+            OST_PAGE_COORDINATE_DPI,
+        )
+        if dimensions is None:
+            return None
+        try:
+            point_x = float(x)
+            point_y = float(y)
+        except (TypeError, ValueError):
+            return None
+        page_w, page_h, canvas_w, canvas_h = dimensions
+        return point_x * page_w / canvas_w, point_y * page_h / canvas_h
+
+    def overlay_rect_units_to_canvas_point(
+        self,
+        x: float,
+        y: float,
+        canvas_width: float,
+        canvas_height: float,
+    ) -> Optional[tuple[float, float]]:
+        dimensions = self._conversion_dimensions(
+            canvas_width,
+            canvas_height,
+            OST_OVERLAY_RECT_UNITS_PER_INCH,
+        )
+        if dimensions is None:
+            return None
+        try:
+            point_x = float(x)
+            point_y = float(y)
+        except (TypeError, ValueError):
+            return None
+        page_w, page_h, canvas_w, canvas_h = dimensions
+        return point_x * canvas_w / page_w, point_y * canvas_h / page_h
+
+    def canvas_point_to_overlay_rect_units(
+        self,
+        x: float,
+        y: float,
+        canvas_width: float,
+        canvas_height: float,
+    ) -> Optional[tuple[float, float]]:
+        dimensions = self._conversion_dimensions(
+            canvas_width,
+            canvas_height,
+            OST_OVERLAY_RECT_UNITS_PER_INCH,
+        )
         if dimensions is None:
             return None
         try:
@@ -122,10 +179,10 @@ class Page:
     ) -> tuple[float, float, float, float]:
         try:
             rect_x, rect_y, rect_w, rect_h = self.overlay_rect
-            origin = self.ost_page_pixels_to_canvas_point(
+            origin = self.overlay_rect_units_to_canvas_point(
                 rect_x, rect_y, canvas_width, canvas_height
             )
-            size = self.ost_page_pixels_to_canvas_point(
+            size = self.overlay_rect_units_to_canvas_point(
                 rect_w, rect_h, canvas_width, canvas_height
             )
         except (TypeError, ValueError):

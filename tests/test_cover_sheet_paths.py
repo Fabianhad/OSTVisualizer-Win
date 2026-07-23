@@ -229,7 +229,12 @@ class _BulkDeleteCoverSheetOps(_CoverSheetSettingsOps):
 
 class _OverlayRectSchema:
     def column_exists(self, table, column):
-        return table == "BidPages" and column in ("OverlayImagePath", "OverlayRect")
+        return table == "BidPages" and column in (
+            "OverlayImagePath",
+            "OverlayRect",
+            "OverlayOffsetX",
+            "OverlayOffsetY",
+        )
 
     def require_table(self, _table):
         return None
@@ -573,8 +578,10 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         )
         self.assertEqual(
             page_update["values"]["OverlayRect"],
-            "0.000000,0.000000,4032.000000,2880.000000",
+            "0.000000,0.000000,2688.000000,1920.000000",
         )
+        self.assertEqual(page_update["values"]["OverlayOffsetX"], 0.0)
+        self.assertEqual(page_update["values"]["OverlayOffsetY"], 0.0)
         self.assertEqual(page_update["values"]["SheetNo"], "S-100")
 
     def test_cover_sheet_page_scale_change_rescales_existing_page_positions(self):
@@ -643,7 +650,27 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             ops.updates[0]["values"],
             {
                 "OverlayImagePath": r"C:\OCS Documents\OST\overlay.pdf",
-                "OverlayRect": "0.000000,0.000000,4032.000000,2880.000000",
+                "OverlayRect": "0.000000,0.000000,2688.000000,1920.000000",
+                "OverlayOffsetX": 0.0,
+                "OverlayOffsetY": 0.0,
+            },
+        )
+
+    def test_saving_overlay_rect_mirrors_native_translation_fields(self):
+        ops = _PageOverlayOps()
+        self.assertTrue(
+            ops.save_page_overlay_rect(
+                "bid.mdb",
+                "11",
+                (-1.103146, -2.5, 2686.161423, 1919.474692),
+            )
+        )
+        self.assertEqual(
+            ops.updates[0]["values"],
+            {
+                "OverlayRect": "-1.103146,-2.500000,2686.161423,1919.474692",
+                "OverlayOffsetX": -1.103146,
+                "OverlayOffsetY": -2.5,
             },
         )
 

@@ -466,10 +466,10 @@ class PdfTextSelectionTests(unittest.TestCase):
         view._current_page.overlay_offset_x = 999.0
         view._current_page.overlay_offset_y = -999.0
         view._current_page.overlay_rect = (
-            96.0,
-            48.0,
-            200.0 / 72.0 * 96.0,
-            100.0 / 72.0 * 96.0,
+            64.0,
+            32.0,
+            200.0 / 72.0 * 64.0,
+            100.0 / 72.0 * 64.0,
         )
         raw_runs = [
             _raw_run(
@@ -499,10 +499,10 @@ class PdfTextSelectionTests(unittest.TestCase):
         view._current_page.overlay_offset_y = -999.0
         view._current_page.overlay_rotation = math.pi / 2.0
         view._current_page.overlay_rect = (
-            96.0,
-            48.0,
-            200.0 / 72.0 * 96.0,
-            100.0 / 72.0 * 96.0,
+            64.0,
+            32.0,
+            200.0 / 72.0 * 64.0,
+            100.0 / 72.0 * 64.0,
         )
         raw_runs = [
             _raw_run(

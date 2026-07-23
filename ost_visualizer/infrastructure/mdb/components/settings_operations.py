@@ -175,6 +175,8 @@ class SettingsOperationsMixin:
                                     if page.get("overlay_path")
                                     else ""
                                 ),
+                                "OverlayOffsetX": 0.0,
+                                "OverlayOffsetY": 0.0,
                                 "BidPageFolderUID": folder_uid_val,
                             },
                             ("UID", "BidUID"),
@@ -215,6 +217,8 @@ class SettingsOperationsMixin:
                                     if page.get("overlay_path")
                                     else ""
                                 ),
+                                "OverlayOffsetX": 0.0,
+                                "OverlayOffsetY": 0.0,
                                 "BidPageFolderUID": folder_uid_val,
                                 "Sequence": page.get("sequence") or 1,
                             },

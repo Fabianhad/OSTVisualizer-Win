@@ -198,7 +198,7 @@ class PDFOverlayExportTests(unittest.TestCase):
                 image_show_mode=SHOW_OVERLAY,
                 width_pts=42.0 * 72.0,
                 height_pts=30.0 * 72.0,
-                overlay_rect=(-1.587912, 0.0, 4028.531767, 2877.295846),
+                overlay_rect=(-1.103146, 0.0, 2686.161423, 1919.474692),
             ),
         )
         self.assertTrue(result.success)
@@ -219,12 +219,12 @@ class PDFOverlayExportTests(unittest.TestCase):
             _page(
                 overlay_image_path="overlay.pdf",
                 image_show_mode=SHOW_OVERLAY,
-                overlay_rect=(96.0, 0.0, 816.0, 1056.0),
+                overlay_rect=(64.0, 0.0, 544.0, 704.0),
             ),
         )
         self.assertTrue(result.success)
         exported_page = writer.pages[0]
-        self.assertEqual(calls, [(96.0, 0.0, 816.0, 1056.0)])
+        self.assertEqual(calls, [(64.0, 0.0, 544.0, 704.0)])
         self.assertTrue(exported_page.source_pdf.endswith("moved-overlay.pdf"))
         self.assertEqual(exported_page.page_index, 0)
 
@@ -262,7 +262,7 @@ class PDFOverlayExportTests(unittest.TestCase):
                 image_show_mode=SHOW_OVERLAY,
                 width_pts=72.0,
                 height_pts=72.0,
-                overlay_rect=(-48.0, -48.0, 96.0, 96.0),
+                overlay_rect=(-32.0, -32.0, 64.0, 64.0),
             )
         )
         self.assertIsNotNone(image)

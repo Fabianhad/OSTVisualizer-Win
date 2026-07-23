@@ -214,6 +214,10 @@ class PageOperationsMixin:
                             )
                     else:
                         values["OverlayRect"] = ""
+                if schema.column_exists("BidPages", "OverlayOffsetX"):
+                    values["OverlayOffsetX"] = 0.0
+                if schema.column_exists("BidPages", "OverlayOffsetY"):
+                    values["OverlayOffsetY"] = 0.0
                 return self._execute_update_values(
                     cursor,
                     schema,
@@ -250,11 +254,16 @@ class PageOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                values = {
+                    "OverlayRect": rect_text,
+                    "OverlayOffsetX": float(rect_x),
+                    "OverlayOffsetY": float(rect_y),
+                }
                 return self._execute_update_values(
                     cursor,
                     schema,
                     "BidPages",
-                    {"OverlayRect": rect_text},
+                    values,
                     ("UID",),
                     "[UID]=?",
                     [int(page_uid)],

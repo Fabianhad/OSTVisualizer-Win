@@ -76,6 +76,12 @@ Persistence:
 - Saved databases use stable backend-aware descriptors in `file_state.json`.
   SQL passwords belong only in Windows Credential Manager; never place them in
   JSON, logs, exception text, labels, command lines, snapshots, or `repr` output.
+- MDB `BidPages.OverlayRect` uses the original OST overlay-composite coordinate
+  space of 64 units per inch. Page view state remains a separate 96-unit
+  coordinate space. Overlay loading, rendering, movement, and saving use the
+  64-unit contract directly, without per-record format detection or automatic
+  migration. Overlays written by earlier Python builds at 96 units per inch
+  must be explicitly recreated or migrated.
 
 Database backends:
 
