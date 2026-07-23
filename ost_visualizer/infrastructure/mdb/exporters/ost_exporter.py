@@ -11,17 +11,13 @@ from ....application.interfaces.i_uom_service import IUOMService
 from ....domain.dtos.raw_bid_data_dto import RawBidData
 from ....domain.entities.area import UNASSIGNED_AREA_UID
 from ....domain.entities.condition import Condition
+from ....domain.services.uom_service import convert_and_round_quantity
 from ....domain.utils.position import parse_position
 from ...parsers.ost_serializer import serialize_value
 from ..raw_bid_integrity import (
     format_integrity_issues,
     prepare_raw_bid_data_for_export,
     validate_raw_bid_integrity,
-)
-from ..reference_validation import (
-    collect_present_uids,
-    filter_hotlink_rows,
-    filter_page_referenced_rows,
 )
 from ..schema_contract import BID_SECTIONS as _BID_SECTIONS
 from ..schema_contract import BID_TAIL_SECTIONS as _BID_TAIL_SECTIONS
@@ -286,6 +282,21 @@ _BID_ALINE_ATTR_ORDER = [
     "Color",
     "Width",
 ]
+_BID_TEXT_ATTR_ORDER = [
+    "UID",
+    "BidUID",
+    "BidPageUID",
+    "BidLayerUID",
+    "Name",
+    "FontName",
+    "FontColor",
+    "FontSize",
+    "FontBold",
+    "FontItalic",
+    "FontUnderline",
+    "TextAlign",
+    "Position",
+]
 _BID_LEGEND_ATTR_ORDER = [
     "UID",
     "BidUID",
@@ -481,28 +492,6 @@ _OMIT_IF_EMPTY_BY_ELEMENT = {
 }
 _XML_NEWLINE = "\r\n"
 _ALWAYS_SELF_CLOSE_CHILD = frozenset({"BidAreas", "BidTypAreas", "BidTypAreaCounts"})
-_SELF_CLOSING_BID_SECTIONS = frozenset(
-    {
-        "BidPlanRooms",
-        "UserMasterConditions",
-        "BidConditionUser",
-    }
-)
-_SELF_CLOSING_PAGE_SECTIONS = frozenset(
-    {
-        "BidHighlights",
-        "BidTexts",
-        "BidDimensions",
-        "BidArrows",
-        "BidALines",
-        "BidCallOuts",
-        "BidAnnotationRects",
-        "BidAnnotationOvals",
-        "BidAnnotationPolygons",
-        "BidAnnotationClouds",
-        "BidAnnoInk",
-    }
-)
 _ATTR_ORDER_MAP: Dict[str, List[str]] = {
     "BidCondition": _BID_CONDITION_ATTR_ORDER,
     "BidPage": _BID_PAGE_ATTR_ORDER,
@@ -523,6 +512,7 @@ _ATTR_ORDER_MAP: Dict[str, List[str]] = {
     "BidHotLink": _BID_HOT_LINK_ATTR_ORDER,
     "BidDimension": _BID_DIMENSION_ATTR_ORDER,
     "BidALine": _BID_ALINE_ATTR_ORDER,
+    "BidText": _BID_TEXT_ATTR_ORDER,
 }
 
 
@@ -543,7 +533,7 @@ def _sort_attrs(attrs: Dict[str, str], element_type: str = "") -> Dict[str, str]
 def _normalize_nulls(row: Dict[str, str]) -> Dict[str, str]:
     result = {}
     for key, value in row.items():
-        if value in ("NULL", None):
+        if value == "NULL":
             result[key] = "0" if key in _ZERO_DEFAULT_FIELDS else ""
         elif value == "" and key in _ZERO_DEFAULT_FIELDS:
             result[key] = "0"
@@ -553,13 +543,10 @@ def _normalize_nulls(row: Dict[str, str]) -> Dict[str, str]:
 
 
 def _normalize_table_rows(tables: Dict[str, List]) -> Dict[str, List]:
-    result = {}
-    for table_name, rows in tables.items():
-        if isinstance(rows, list):
-            result[table_name] = [_normalize_nulls(row) for row in rows]
-        else:
-            result[table_name] = rows
-    return result
+    return {
+        table_name: [_normalize_nulls(row) for row in rows]
+        for table_name, rows in tables.items()
+    }
 
 
 def _filter_empty_attrs(row: Dict[str, str], element_type: str = "") -> Dict[str, str]:
@@ -568,26 +555,21 @@ def _filter_empty_attrs(row: Dict[str, str], element_type: str = "") -> Dict[str
         key: value
         for key, value in row.items()
         if not (
-            key in _OMIT_IF_EMPTY_FIELDS.union(element_omit_fields)
+            (key in _OMIT_IF_EMPTY_FIELDS or key in element_omit_fields)
             and value in ("", "NULL")
         )
     }
 
 
 def _normalize_column_names(row: Dict[str, str]) -> Dict[str, str]:
-    result = {}
-    for key, value in row.items():
-        normalized_key = _COLUMN_NAME_MAP.get(key, key)
-        result[normalized_key] = value
-    return result
+    return {_COLUMN_NAME_MAP.get(key, key): value for key, value in row.items()}
 
 
 def _build_section(
     parent: Element,
     table_name: str,
     rows: List[Dict[str, str]],
-    self_closing: bool = False,
-) -> Element:
+) -> None:
     container = SubElement(parent, table_name)
     item_tag = _singular(table_name)
     for row in rows:
@@ -596,7 +578,6 @@ def _build_section(
         SubElement(container, item_tag, sorted_row)
     if table_name in _ALWAYS_SELF_CLOSE_CHILD:
         SubElement(container, table_name)
-    return container
 
 
 def _group_by_key(
@@ -606,6 +587,16 @@ def _group_by_key(
     for row in rows:
         grouped[row.get(key, "")].append(row)
     return grouped
+
+
+def _accumulate_raw_quantities(
+    area_totals: Dict[Tuple[str, str], List[float]],
+    area_key: Tuple[str, str],
+    quantities: Tuple[float, float, float],
+) -> None:
+    totals = area_totals.setdefault(area_key, [0.0, 0.0, 0.0])
+    for index, quantity in enumerate(quantities):
+        totals[index] += quantity
 
 
 def _escape_xml_attr(text: str) -> str:
@@ -705,13 +696,12 @@ class OstExporter:
             if table_name == "BidEmployees" and not rows:
                 continue
             sorted_rows = self._sort_rows(table_name, rows)
-            self_closing = table_name in _SELF_CLOSING_BID_SECTIONS
             if table_name == "BidConditions":
                 self._build_conditions_section(
                     bid_elem, sorted_rows, bid_tables, page_tables
                 )
             else:
-                _build_section(bid_elem, table_name, sorted_rows, self_closing)
+                _build_section(bid_elem, table_name, sorted_rows)
 
     def _sort_rows(
         self, table_name: str, rows: List[Dict[str, str]]
@@ -719,11 +709,7 @@ class OstExporter:
         if not rows:
             return rows
         rows_copy = list(rows)
-        if table_name == "BidLayers":
-            rows_copy.sort(key=lambda x: int(x.get("Sequence", 0)))
-        elif table_name == "BidAreas":
-            rows_copy.sort(key=lambda x: int(x.get("Sequence", 0)), reverse=True)
-        elif table_name == "BidPageFolders":
+        if table_name in ("BidLayers", "BidAreas", "BidPageFolders"):
             rows_copy.sort(key=lambda x: int(x.get("UID", 0)), reverse=True)
         elif table_name == "BidConditions":
             rows_copy.sort(key=lambda x: int(x.get("UID", 0)))
@@ -746,6 +732,14 @@ class OstExporter:
             rows_copy.sort(key=lambda x: int(x.get("UID", 0)), reverse=True)
         elif table_name == "BidPages":
             rows_copy.sort(key=lambda x: int(x.get("Sequence", 0)))
+        elif table_name == "BidPageSettings":
+            rows_copy.sort(
+                key=lambda x: (
+                    int(x.get("BidAreaSelected", 0) or 0),
+                    int(x.get("UID", 0) or 0),
+                ),
+                reverse=True,
+            )
         elif table_name in ("BidNamedViews", "BidHotLinks"):
             rows_copy.sort(key=lambda x: int(x.get("UID", 0)), reverse=True)
         return rows_copy
@@ -847,9 +841,9 @@ class OstExporter:
                             calc_type1=calc_type1,
                             calc_type2=calc_type2,
                             calc_type3=calc_type3,
-                            uom1=uom1,
-                            uom2=uom2,
-                            uom3=uom3,
+                            uom1=0,
+                            uom2=0,
+                            uom3=0,
                             width=width,
                             height=height,
                             depth=depth,
@@ -863,14 +857,14 @@ class OstExporter:
                             grid_size1=grid_size1,
                             grid_size2=grid_size2,
                             gap=gap,
-                            round_quantity=round_quantity,
-                            round_up=round_up,
+                            round_quantity=False,
+                            round_up=0.0,
                         )
-                        if area_key not in area_totals:
-                            area_totals[area_key] = [0.0, 0.0, 0.0]
-                        area_totals[area_key][0] += q1
-                        area_totals[area_key][1] += q2
-                        area_totals[area_key][2] += q3
+                        _accumulate_raw_quantities(
+                            area_totals,
+                            area_key,
+                            (q1, q2, q3),
+                        )
                 else:
                     for takeoff in condition_takeoffs:
                         area_key = (
@@ -885,9 +879,9 @@ class OstExporter:
                             calc_type1=calc_type1,
                             calc_type2=calc_type2,
                             calc_type3=calc_type3,
-                            uom1=uom1,
-                            uom2=uom2,
-                            uom3=uom3,
+                            uom1=0,
+                            uom2=0,
+                            uom3=0,
                             width=width,
                             height=height,
                             depth=depth,
@@ -899,31 +893,61 @@ class OstExporter:
                             grid_size2=grid_size2,
                             gap=gap,
                             curve=int(takeoff.get("Curve", "-1") or "-1"),
-                            round_quantity=round_quantity,
-                            round_up=round_up,
+                            round_quantity=False,
+                            round_up=0.0,
                         )
-                        if area_key not in area_totals:
-                            area_totals[area_key] = [0.0, 0.0, 0.0]
-                        area_totals[area_key][0] += q1
-                        area_totals[area_key][1] += q2
-                        area_totals[area_key][2] += q3
+                        _accumulate_raw_quantities(
+                            area_totals,
+                            area_key,
+                            (q1, q2, q3),
+                        )
             if not area_totals:
                 area_totals[("0", "0")] = [0.0, 0.0, 0.0]
-            for (area_uid, typ_area_uid), totals in area_totals.items():
+            ordered_area_totals = sorted(
+                area_totals.items(),
+                key=lambda item: (
+                    int(item[0][0] or "0"),
+                    int(item[0][1] or "0"),
+                ),
+            )
+            area_condition_rows = []
+            for (area_uid, typ_area_uid), totals in ordered_area_totals:
+                converted_totals = (
+                    convert_and_round_quantity(
+                        totals[0],
+                        uom1,
+                        round_quantity=round_quantity,
+                        round_up=round_up,
+                    ),
+                    convert_and_round_quantity(
+                        totals[1],
+                        uom2,
+                        round_quantity=round_quantity,
+                        round_up=round_up,
+                    ),
+                    convert_and_round_quantity(
+                        totals[2],
+                        uom3,
+                        round_quantity=round_quantity,
+                        round_up=round_up,
+                    ),
+                )
                 area_condition = {
                     "UID": str(area_condition_uid),
                     "BidConditionUID": cdn_uid,
                     "AreaUID": area_uid,
                     "TypAreaUID": typ_area_uid,
-                    "Quantity1": serialize_value(totals[0]),
-                    "Quantity2": serialize_value(totals[1]),
-                    "Quantity3": serialize_value(totals[2]),
+                    "Quantity1": serialize_value(converted_totals[0]),
+                    "Quantity2": serialize_value(converted_totals[1]),
+                    "Quantity3": serialize_value(converted_totals[2]),
                 }
                 sorted_area = _sort_attrs(
                     area_condition, element_type="BidAreaCondition"
                 )
-                SubElement(area_container, "BidAreaCondition", sorted_area)
+                area_condition_rows.append(sorted_area)
                 area_condition_uid += 1
+            for area_condition in reversed(area_condition_rows):
+                SubElement(area_container, "BidAreaCondition", area_condition)
 
     def _build_pages_section(
         self,
@@ -933,9 +957,7 @@ class OstExporter:
     ) -> None:
         pages_container = SubElement(bid_elem, "BidPages")
         page_rows = bid_tables.get("BidPages", [])
-        if not page_rows:
-            page_rows = page_tables.get("BidPages", [])
-        page_rows = sorted(page_rows, key=lambda x: int(x.get("Sequence", 0)))
+        page_rows = self._sort_rows("BidPages", page_rows)
         grouped_page_data: Dict[str, Dict[str, List]] = {}
         for table_name in _PAGE_SECTIONS:
             rows = page_tables.get(table_name, [])
@@ -952,31 +974,15 @@ class OstExporter:
             page_data = grouped_page_data.get(page_uid, {})
             for table_name in _PAGE_SECTIONS:
                 rows = page_data.get(table_name, [])
-                self_closing = table_name in _SELF_CLOSING_PAGE_SECTIONS
-                _build_section(page_elem, table_name, rows, self_closing)
+                _build_section(page_elem, table_name, rows)
 
     def _build_tail_sections(
         self, bid_elem: Element, bid_tables: Dict[str, List]
     ) -> None:
-        valid_page_uids = collect_present_uids(bid_tables.get("BidPages", []))
-        named_view_rows = filter_page_referenced_rows(
-            bid_tables.get("BidNamedViews", []),
-            valid_page_uids,
-        )
-        valid_named_view_uids = collect_present_uids(named_view_rows)
         for table_name in _BID_TAIL_SECTIONS:
-            if table_name == "BidNamedViews":
-                rows = named_view_rows
-            elif table_name == "BidHotLinks":
-                rows = filter_hotlink_rows(
-                    bid_tables.get(table_name, []),
-                    valid_page_uids,
-                    valid_named_view_uids,
-                )
-            else:
-                rows = bid_tables.get(table_name, [])
+            rows = bid_tables.get(table_name, [])
             sorted_rows = self._sort_rows(table_name, rows)
-            _build_section(bid_elem, table_name, sorted_rows, self_closing=True)
+            _build_section(bid_elem, table_name, sorted_rows)
 
     def _build_global_sections(
         self,
@@ -1032,5 +1038,5 @@ class OstExporter:
                 rows = [r for r in rows if r.get("UID") in used_cdn_types]
             elif table_name == "JobStatuses":
                 rows = [r for r in rows if r.get("UID") == job_status_uid]
-            if rows or table_name == "AccessLevels":
+            if rows:
                 _build_section(root, table_name, rows)

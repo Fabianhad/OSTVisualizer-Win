@@ -1083,7 +1083,7 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertEqual(pay_class_uids, ["3"])
         self.assertEqual(root.find("./Bid").get("EstimatorUID"), "7")
 
-    def test_ost_export_writes_bid_layers_by_ascending_sequence(self):
+    def test_ost_export_writes_bid_layers_by_descending_uid(self):
         raw_data = RawBidData(
             bid_row={"UID": "1", "JobName": "Bid"},
             bid_tables={
@@ -1102,7 +1102,101 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             self.assertTrue(result.success, result.error_message)
             root = ET.parse(output_path).getroot()
         layers = root.findall("./Bid/BidLayers/BidLayer")
-        self.assertEqual([layer.get("Sequence") for layer in layers], ["0", "10", "20"])
+        self.assertEqual([layer.get("UID") for layer in layers], ["12", "11", "10"])
+
+    def test_ost_export_uses_native_area_page_setting_and_text_order(self):
+        text_row = {
+            "FontItalic": "0",
+            "Position": "1;2;3;4",
+            "Name": "Note",
+            "UID": "40",
+            "BidLayerUID": "5",
+            "FontName": "Arial",
+            "BidUID": "1",
+            "FontBold": "1",
+            "BidPageUID": "20",
+            "TextAlign": "0",
+            "FontColor": "255",
+            "FontSize": "12",
+            "FontUnderline": "0",
+        }
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Bid"},
+            bid_tables={
+                "BidAreas": [
+                    {"UID": "10", "BidUID": "1", "Name": "Low"},
+                    {"UID": "12", "BidUID": "1", "Name": "High"},
+                    {"UID": "11", "BidUID": "1", "Name": "Mid"},
+                ],
+                "BidLayers": [
+                    {"UID": "5", "BidUID": "1", "Name": "Annotation"},
+                ],
+                "BidConditions": [],
+                "BidPages": [
+                    {"UID": "20", "BidUID": "1", "Name": "Sheet", "Sequence": "1"},
+                ],
+            },
+            page_tables={
+                "BidPageSettings": [
+                    {
+                        "UID": "31",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "BidAreaUID": "10",
+                        "BidAreaSelected": "0",
+                    },
+                    {
+                        "UID": "30",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "BidAreaUID": "11",
+                        "BidAreaSelected": "1",
+                    },
+                    {
+                        "UID": "32",
+                        "BidUID": "1",
+                        "BidPageUID": "20",
+                        "BidAreaUID": "12",
+                        "BidAreaSelected": "1",
+                    },
+                ],
+                "BidTexts": [text_row],
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "native_order.ost"
+            result = OstExporter(SimpleNamespace()).export(raw_data, str(output_path))
+            self.assertTrue(result.success, result.error_message)
+            root = ET.parse(output_path).getroot()
+        areas = root.findall("./Bid/BidAreas/BidArea")
+        self.assertEqual([row.get("UID") for row in areas], ["12", "11", "10"])
+        page_settings = root.findall(
+            "./Bid/BidPages/BidPage/BidPageSettings/BidPageSetting"
+        )
+        self.assertEqual(
+            [row.get("UID") for row in page_settings],
+            ["32", "30", "31"],
+        )
+        text = root.find("./Bid/BidPages/BidPage/BidTexts/BidText")
+        self.assertIsNotNone(text)
+        self.assertEqual(
+            list(text.attrib),
+            [
+                "UID",
+                "BidUID",
+                "BidPageUID",
+                "BidLayerUID",
+                "Name",
+                "FontName",
+                "FontColor",
+                "FontSize",
+                "FontBold",
+                "FontItalic",
+                "FontUnderline",
+                "TextAlign",
+                "Position",
+            ],
+        )
 
     def test_ost_import_remaps_estimator_to_imported_employee(self):
         xml = """
@@ -1612,9 +1706,9 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertNotIn(b"\n", raw_bytes.replace(b"\r\n", b""))
         self.assertEqual(
             [child.tag for child in root],
-            ["OST", "Bid", "Employees", "AccessLevels", "CdnTypes", "JobStatuses"],
+            ["OST", "Bid", "Employees", "CdnTypes", "JobStatuses"],
         )
-        self.assertIn("<AccessLevels/>", text)
+        self.assertNotIn("<AccessLevels", text)
         self.assertNotIn("<BidEmployees", text)
         self.assertIn('<JobStatuse UID="79"', text)
         self.assertNotIn('<JobStatus UID="79"', text)
@@ -1632,6 +1726,75 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertIn('CurrentX="2302.443986254299944"', text)
         self.assertIn('CurrentY="1725.017182130580068"', text)
         self.assertIn('Quantity1="0" Quantity2="0" Quantity3="0"', text)
+
+    def test_ost_export_preserves_page_overlay_and_source_rows(self):
+        overlay_fields = (
+            "ImagePath",
+            "OverlayImagePath",
+            "OverlayRect",
+            "OverlayOffsetX",
+            "OverlayOffsetY",
+            "OverlayRotation",
+            "DeskewRotationOverlay",
+            "OverlayResized",
+            "Show",
+            "RasterDrawMethod",
+        )
+        page_row = {
+            "UID": "20",
+            "BidUID": "1",
+            "Name": "Overlay sheet",
+            "Sequence": "1",
+            "ImagePath": r"C:\plans\sheet.pdf",
+            "OverlayImagePath": r"C:\plans\overlay.pdf",
+            "OverlayRect": "-12.5,7.25,2688,1920",
+            "OverlayOffsetX": "-12.5",
+            "OverlayOffsetY": "7.25",
+            "OverlayRotation": "90",
+            "DeskewRotationOverlay": "0.125",
+            "OverlayResized": "1",
+            "Show": "3",
+            "RasterDrawMethod": "2",
+        }
+        raw_data = RawBidData(
+            bid_row={
+                "UID": "1",
+                "JobName": "Overlay bid",
+                "ExternalID": "",
+                "GUID": "{ABCDEF01-2345-6789-ABCD-EF0123456789}",
+                "CopyTimeStamp": "2026 7 19 0 39 2",
+            },
+            bid_tables={
+                "BidSettings": [
+                    {"UID": "2", "BidUID": "1", "BidPageSelectedUID": "999"}
+                ],
+                "BidPages": [page_row],
+            },
+        )
+        original_bid_row = dict(raw_data.bid_row)
+        original_settings_row = dict(raw_data.bid_tables["BidSettings"][0])
+        original_page_row = dict(page_row)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "overlay.ost"
+            result = OstExporter(SimpleNamespace()).export(raw_data, str(output_path))
+            self.assertTrue(result.success, result.error_message)
+            root = ET.parse(output_path).getroot()
+        exported_bid = root.find("./Bid")
+        exported_page = root.find("./Bid/BidPages/BidPage")
+        self.assertIsNotNone(exported_bid)
+        self.assertIsNotNone(exported_page)
+        self.assertEqual(
+            exported_bid.get("GUID"),
+            "{ABCDEF01-2345-6789-ABCD-EF0123456789}",
+        )
+        self.assertEqual(exported_bid.get("CopyTimestamp"), "2026 7 19 0 39 2")
+        self.assertEqual(
+            {name: exported_page.get(name) for name in overlay_fields},
+            {name: page_row[name] for name in overlay_fields},
+        )
+        self.assertEqual(raw_data.bid_row, original_bid_row)
+        self.assertEqual(raw_data.bid_tables["BidSettings"][0], original_settings_row)
+        self.assertEqual(raw_data.bid_tables["BidPages"][0], original_page_row)
 
     def test_ost_numeric_serializer_uses_reference_float_shape(self):
         self.assertEqual(serialize_value(0.0), "0")
@@ -1718,6 +1881,92 @@ class OstImportExportRelationshipTests(unittest.TestCase):
         self.assertIn(
             'Quantity1="734.011999999999944" Quantity2="0" Quantity3="1.25"',
             text,
+        )
+
+    def test_ost_export_converts_aggregated_area_condition_quantities_once(self):
+        calculation_order = []
+
+        def calculate_condition_quantities(**kwargs):
+            x = kwargs["position"][0]
+            calculation_order.append(int(x))
+            self.assertEqual(
+                (kwargs["uom1"], kwargs["uom2"], kwargs["uom3"]),
+                (0, 0, 0),
+            )
+            return x, 0.0, 0.0
+
+        raw_data = RawBidData(
+            bid_row={"UID": "1", "JobName": "Area order"},
+            bid_tables={
+                "BidAreas": [
+                    {"UID": "10", "BidUID": "1", "Name": "Low"},
+                    {"UID": "20", "BidUID": "1", "Name": "High"},
+                ],
+                "BidConditions": [
+                    {
+                        "UID": "100",
+                        "BidUID": "1",
+                        "Name": "Linear",
+                        "Type": "1",
+                        "UOM1": "2",
+                    }
+                ],
+                "BidPages": [
+                    {"UID": "200", "BidUID": "1", "Name": "Sheet", "Sequence": "1"}
+                ],
+            },
+            page_tables={
+                "BidTakeoffs": [
+                    {
+                        "UID": "1",
+                        "BidUID": "1",
+                        "BidConditionUID": "100",
+                        "BidPageUID": "200",
+                        "BidAreaUID": "10",
+                        "Position": "1;0;2;0",
+                    },
+                    {
+                        "UID": "3",
+                        "BidUID": "1",
+                        "BidConditionUID": "100",
+                        "BidPageUID": "200",
+                        "BidAreaUID": "10",
+                        "Position": "3;0;4;0",
+                    },
+                    {
+                        "UID": "2",
+                        "BidUID": "1",
+                        "BidConditionUID": "100",
+                        "BidPageUID": "200",
+                        "BidAreaUID": "20",
+                        "Position": "2;0;3;0",
+                    },
+                ]
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "area_order.ost"
+            result = OstExporter(
+                SimpleNamespace(
+                    calculate_condition_quantities=calculate_condition_quantities
+                )
+            ).export(raw_data, str(output_path))
+            self.assertTrue(result.success, result.error_message)
+            rows = (
+                ET.parse(output_path)
+                .getroot()
+                .findall("./Bid/BidConditions/BidCondition/BidAreaConditions/*")
+            )
+        self.assertEqual(calculation_order, [1, 3, 2])
+        self.assertEqual(
+            [
+                (row.get("UID"), row.get("AreaUID"), row.get("Quantity1"))
+                for row in rows
+            ],
+            [
+                ("2", "20", "0.166666666666667"),
+                ("1", "10", "0.333333333333333"),
+            ],
         )
 
     def test_save_page_area_handles_duplicate_selected_settings_rows(self):

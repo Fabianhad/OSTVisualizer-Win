@@ -218,7 +218,7 @@ def calculate_net_area_sf(
     if hole_positions:
         for hp in hole_positions:
             area_sq_in -= _calc_polygon_area_sq_inches(hp)
-    return max(0.0, area_sq_in) / 144.0
+    return convert_to_uom(max(0.0, area_sq_in), UOM_SQUARE_FEET)
 
 
 def vertices_from_position(position: List[float]) -> List[Tuple[float, float]]:
@@ -235,8 +235,7 @@ def calculate_polygon_area(vertices: List[Tuple[float, float]]) -> float:
     area = 0.0
     for i in range(n):
         j = (i + 1) % n
-        area += vertices[i][0] * vertices[j][1]
-        area -= vertices[j][0] * vertices[i][1]
+        area += vertices[i][0] * vertices[j][1] - vertices[j][0] * vertices[i][1]
     return abs(area) / 2.0
 
 
@@ -272,6 +271,20 @@ def convert_to_uom(raw_value: float, uom_code: int) -> float:
     if divisor == 0:
         return 0.0
     return raw_value / divisor
+
+
+def convert_and_round_quantity(
+    raw_value: float,
+    uom_code: int,
+    round_quantity: bool = False,
+    round_up: float = 0.0,
+) -> float:
+    value = convert_to_uom(raw_value, uom_code)
+    if round_quantity and round_up > 0:
+        increment = convert_to_uom(round_up, uom_code)
+        if increment > 0:
+            value = math.ceil(value / increment) * increment
+    return value
 
 
 def _calc_raw_for_count(
@@ -670,10 +683,12 @@ def calculate_condition_quantities(
                 bbox_w,
                 bbox_h,
             )
-        value = convert_to_uom(raw, uom)
-        if round_quantity and round_up > 0:
-            increment = convert_to_uom(round_up, uom)
-            if increment > 0:
-                value = math.ceil(value / increment) * increment
-        results.append(value)
+        results.append(
+            convert_and_round_quantity(
+                raw,
+                uom,
+                round_quantity=round_quantity,
+                round_up=round_up,
+            )
+        )
     return (results[0], results[1], results[2])

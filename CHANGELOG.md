@@ -13,7 +13,7 @@
 ### Changed
 
 - Changed Cover Sheet commits to perform a single post-save database refresh, reducing UI stalls after large page deletion batches.
-- Changed OST/OSP exports to emit bid layers in ascending sequence order for closer compatibility with original On-Screen Takeoff exports.
+- Changed OST/OSP exports to reproduce original On-Screen Takeoff ordering for bid layers, bid areas, page-area settings, takeoff quantity accumulation, and generated area-condition rows; use native-compatible polygon cross-product arithmetic; preserve the original attribute order for text annotations; and omit unused access-level sections.
 - Updated the main window title to show the selected database and bid alongside the OST Visualizer app name.
 
 ### Fixed
