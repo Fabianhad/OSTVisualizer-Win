@@ -49,9 +49,9 @@ class DeferredPersistenceManager(QtCore.QObject):
         description: str,
         write_fn: Callable[[], bool],
         skippable_when_blocked: bool = False,
-    ) -> None:
+    ) -> bool:
         if self._cleaned_up or self._shutdown_started:
-            return
+            return False
         self._pending[key] = DeferredPersistenceItem(
             kind,
             key,
@@ -60,6 +60,7 @@ class DeferredPersistenceManager(QtCore.QObject):
             skippable_when_blocked,
         )
         self._timer.start()
+        return True
 
     def schedule_page_view_state(
         self,
@@ -187,9 +188,9 @@ class DeferredPersistenceManager(QtCore.QObject):
         db_path: str,
         page_uid: str,
         overlay_rect: Tuple[float, float, float, float],
-    ) -> None:
+    ) -> bool:
         rect = tuple(float(value) for value in overlay_rect)
-        self.schedule(
+        return self.schedule(
             "page_overlay_rect",
             ("page_overlay_rect", db_path, page_uid),
             f"overlay rectangle for page {page_uid}",

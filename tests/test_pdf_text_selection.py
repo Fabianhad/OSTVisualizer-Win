@@ -94,6 +94,8 @@ class PdfTextSelectionTests(unittest.TestCase):
             image_path="drawing.pdf",
             width_pts=200.0,
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             page_index=0,
         )
         view._pdf_width_pts = 200.0
@@ -458,6 +460,15 @@ class PdfTextSelectionTests(unittest.TestCase):
             ("drawing.pdf", 0),
         )
         self.assertEqual(view._pdf_text_cache_key[1], "main")
+
+    def test_pdf_text_cache_changes_with_overlay_coordinate_calibration(self):
+        view = self._make_view()
+        view._current_page.overlay_image_path = "overlay.pdf"
+        view._current_page.image_show_mode = 1
+        first_key = view._pdf_text_extraction_cache_key()
+        view._current_page.scale_factor1 = 0.125
+        second_key = view._pdf_text_extraction_cache_key()
+        self.assertNotEqual(first_key, second_key)
 
     def test_overlay_pdf_text_boxes_map_through_overlay_rect_position(self):
         view = self._make_view()

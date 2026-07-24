@@ -3131,6 +3131,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             page_index=0,
             width_pts=100.0,
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 64.0, 100.0 / 72.0 * 64.0),
         )
         image = renderer.render_composite_frame(
@@ -3162,6 +3164,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             page_index=0,
             width_pts=100.0,
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(
                 10.0 / 72.0 * 64.0,
                 0.0,
@@ -3192,6 +3196,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             page_index=0,
             width_pts=100.0,
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(
                 20.5 / 72.0 * 64.0,
                 0.0,
@@ -3222,6 +3228,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             page_index=0,
             width_pts=100.0,
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(
                 10.0 / 72.0 * 64.0,
                 0.0,
@@ -3252,6 +3260,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             page_index=0,
             width_pts=100.0,
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(
                 0.0,
                 0.0,
@@ -3286,6 +3296,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             page_index=0,
             width_pts=100.0,
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(
                 10.0 / 72.0 * 64.0,
                 0.0,
@@ -3332,6 +3344,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_image_path="overlay.pdf",
             width_pts=100.0,
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 64.0, 100.0 / 72.0 * 64.0),
             image_show_mode=1,
         )
@@ -3349,7 +3363,7 @@ class OptionsPreferencesTests(unittest.TestCase):
             QtCore.Qt.TransformationMode.SmoothTransformation,
         )
 
-    def test_overlay_item_uses_ost_overlay_composite_coordinates(self):
+    def test_overlay_item_uses_page_calibrated_coordinates(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         page = Page(
             uid="6420",
@@ -3357,6 +3371,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_image_path="overlay.pdf",
             width_pts=42.0 * 72.0,
             height_pts=30.0 * 72.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(-1.103146, 0.0, 2686.161423, 1919.474692),
             image_show_mode=1,
         )
@@ -3373,7 +3389,7 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertAlmostEqual(transform.m11(), 1.498974, places=5)
         self.assertAlmostEqual(transform.m22(), 1.499590, places=5)
 
-    def test_overlay_pdf_tiles_use_ost_overlay_composite_coordinates(self):
+    def test_overlay_pdf_tiles_use_page_calibrated_coordinates(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
         view._scene_scale = 3.0
         view._overlay_pdf_width_pts = 42.0 * 72.0
@@ -3384,6 +3400,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_image_path="overlay.pdf",
             width_pts=42.0 * 72.0,
             height_pts=30.0 * 72.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(-1.103146, 0.0, 2686.161423, 1919.474692),
             image_show_mode=2,
         )
@@ -3432,6 +3450,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             overlay_image_path="overlay.png",
             width_pts=100.0,
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(0.0, 0.0, 100.0 / 72.0 * 64.0, 100.0 / 72.0 * 64.0),
             image_show_mode=1,
         )
@@ -4046,6 +4066,8 @@ class OptionsPreferencesTests(unittest.TestCase):
             image_show_mode=2,
             width_pts=100.0,
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(0.0, 0.0, 88.888889, 88.888889),
         )
         view._loaded_visual_kind = VISUAL_KIND_COMPOSITE
@@ -4068,9 +4090,14 @@ class OptionsPreferencesTests(unittest.TestCase):
         first_context = view._build_visible_frame_context(8.0)
         view._current_page.overlay_rect = (64.0, 32.0, 88.888889, 88.888889)
         second_context = view._build_visible_frame_context(8.0)
+        view._current_page.overlay_rect = (0.0, 0.0, 88.888889, 88.888889)
+        view._current_page.scale_factor1 = 0.125
+        calibrated_context = view._build_visible_frame_context(8.0)
         self.assertIsNotNone(first_context)
         self.assertIsNotNone(second_context)
+        self.assertIsNotNone(calibrated_context)
         self.assertNotEqual(first_context["key"], second_context["key"])
+        self.assertNotEqual(first_context["key"], calibrated_context["key"])
         self.assertIn((64.0, 32.0, 88.888889, 88.888889), second_context["key"][-1])
 
     def test_overlay_only_pdf_high_resolution_disabled_requests_low_scale_base(self):

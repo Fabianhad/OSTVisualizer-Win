@@ -314,7 +314,9 @@ class TakeoffPlanView(
         self._zoom_cursor: QCursor = QCursor(Qt.CursorShape.CrossCursor)
         self._rotate_cursor: QCursor = QCursor(Qt.CursorShape.CrossCursor)
         self._move_overlay_cursor: QCursor = QCursor(Qt.CursorShape.SizeAllCursor)
-        self._overlay_rect_save_handler = None
+        self._overlay_rect_save_handler: Optional[
+            Callable[[Tuple[float, float, float, float]], bool]
+        ] = None
         self._overlay_move_handle_item: Optional[QGraphicsPixmapItem] = None
         self._overlay_move_original_rect: Optional[
             Tuple[float, float, float, float]
@@ -2349,6 +2351,7 @@ class TakeoffPlanView(
             "bitonal": page.bitonal,
             "width_pts": page.width_pts,
             "height_pts": page.height_pts,
+            "overlay_units_per_sheet_inch": page.overlay_units_per_sheet_inch,
             "overlay_rect": page.overlay_rect,
             "overlay_rotation": page.overlay_rotation,
             "overlay_deskew": page.deskew_rotation_overlay,
@@ -2616,6 +2619,11 @@ class TakeoffPlanView(
         except OSError:
             image_mtime = None
         page = self._current_page
+        overlay_units = (
+            page.overlay_units_per_sheet_inch
+            if layer == PDF_INTELLIGENCE_SOURCE_OVERLAY
+            else None
+        )
         return (
             page.uid,
             layer,
@@ -2627,6 +2635,7 @@ class TakeoffPlanView(
             page.overlay_rect,
             float(page.overlay_rotation),
             float(page.deskew_rotation_overlay),
+            overlay_units,
             float(self._scene_scale),
         )
 
@@ -3195,7 +3204,10 @@ class TakeoffPlanView(
     def set_move_overlay_cursor(self, cursor: QCursor) -> None:
         self._move_overlay_cursor = cursor
 
-    def set_overlay_rect_save_handler(self, handler) -> None:
+    def set_overlay_rect_save_handler(
+        self,
+        handler: Callable[[Tuple[float, float, float, float]], bool],
+    ) -> None:
         self._overlay_rect_save_handler = handler
 
     def set_selection_enabled(self, enabled: bool) -> None:
@@ -4354,21 +4366,18 @@ class TakeoffPlanView(
         if self._overlay_rect_save_handler is None:
             rollback_failed_save()
             return
-        result = self._overlay_rect_save_handler(preview_rect)
-        if result is None or not result.write_success:
+        if not self._overlay_rect_save_handler(preview_rect):
             rollback_failed_save()
             return
         self._accept_overlay_move_preview_rect(preview_rect)
         self._apply_cursor_mode(CURSOR_MODE_SELECT)
         self.cursor_mode_change_requested.emit(CURSOR_MODE_SELECT)
         self._update_cursor()
-        if result.reload_success:
-            self._force_reload_current_page_visuals()
-        else:
+        if not self._force_reload_current_page_visuals():
             show_warning(
                 self,
                 "Move Overlay Image",
-                "The overlay position was saved, but the page could not be refreshed.",
+                "The overlay position was queued for saving, but the page could not be refreshed.",
             )
 
     def _create_rotate_handle(

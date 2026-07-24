@@ -1,12 +1,17 @@
 import pyodbc
 from ....domain.entities.area import UNASSIGNED_AREA_UID
+from ....domain.entities.overlay import overlay_units_per_sheet_inch
 from ....domain.services.page_scale_transform import (
     SCALE_EPSILON,
-    position_rescale_factor_between_page_scales,
     rescale_position_values,
 )
 from .constants import PAGE_CONTENT_TABLES
-from .overlay_rect import default_overlay_rect
+from .overlay_rect import (
+    overlay_path_storage_identity,
+    parse_overlay_rect_storage,
+    replacement_overlay_storage_values,
+    serialize_overlay_rect_storage,
+)
 from .serialization import parse_position_storage, serialize_position_for_table
 
 
@@ -48,20 +53,71 @@ class PageOperationsMixin:
         page_uid: int,
         sf1: float,
         sf2: float,
+        *,
+        rescale_overlay: bool = True,
     ) -> None:
         cursor.execute(
             "SELECT [ScaleFactor1], [ScaleFactor2] FROM [BidPages] WHERE [UID]=?",
             page_uid,
         )
         row = cursor.fetchone()
-        if row and row[0] and row[1]:
-            old_sf1 = float(row[0])
-            old_sf2 = float(row[1])
-            factor = position_rescale_factor_between_page_scales(
-                (old_sf1, old_sf2), (sf1, sf2)
-            )
-            if abs(factor - 1.0) > SCALE_EPSILON:
-                self._rescale_page_positions(cursor, schema, page_uid, factor)
+        if row is None:
+            raise ValueError(f"Page {page_uid} does not exist")
+        source_ratio = overlay_units_per_sheet_inch(row[0], row[1])
+        target_ratio = overlay_units_per_sheet_inch(sf1, sf2)
+        if source_ratio is None or target_ratio is None:
+            raise ValueError(f"Page {page_uid} requires finite positive scale factors")
+        factor = target_ratio / source_ratio
+        if abs(factor - 1.0) > SCALE_EPSILON:
+            if rescale_overlay:
+                self._rescale_page_overlay_rect(cursor, schema, page_uid, factor)
+            self._rescale_page_positions(cursor, schema, page_uid, factor)
+
+    def _rescale_page_overlay_rect(
+        self,
+        cursor: "pyodbc.Cursor",
+        schema,
+        page_uid: int,
+        factor: float,
+    ) -> None:
+        if not schema.column_exists("BidPages", "OverlayRect"):
+            return
+        cursor.execute(
+            "SELECT [OverlayRect] FROM [BidPages] WHERE [UID]=?",
+            page_uid,
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise ValueError(f"Page {page_uid} does not exist")
+        raw_rect = row[0]
+        if not raw_rect:
+            return
+        rect_x, rect_y, rect_w, rect_h = parse_overlay_rect_storage(raw_rect)
+        if rect_w <= 0.0 or rect_h <= 0.0:
+            return
+        scaled_rect = (
+            rect_x * factor,
+            rect_y * factor,
+            rect_w * factor,
+            rect_h * factor,
+        )
+        values = {
+            "OverlayRect": serialize_overlay_rect_storage(scaled_rect),
+        }
+        if schema.column_exists("BidPages", "OverlayOffsetX"):
+            values["OverlayOffsetX"] = scaled_rect[0]
+        if schema.column_exists("BidPages", "OverlayOffsetY"):
+            values["OverlayOffsetY"] = scaled_rect[1]
+        self._execute_update_values(
+            cursor,
+            schema,
+            "BidPages",
+            values,
+            ("UID", "OverlayRect"),
+            "[UID]=?",
+            [page_uid],
+            "rescale_page_overlay_rect",
+        )
 
     def save_page_name(self, db_path: str, page_uid: str, name: str) -> bool:
         try:
@@ -94,46 +150,38 @@ class PageOperationsMixin:
         factor: float,
     ) -> None:
         for table in self._POSITION_TABLES:
-            try:
-                if schema.optional_table_missing(table):
+            if schema.optional_table_missing(table):
+                continue
+            if not (
+                schema.column_exists(table, "UID")
+                and schema.column_exists(table, "BidPageUID")
+                and schema.column_exists(table, "Position")
+            ):
+                continue
+            cursor.execute(
+                f"SELECT UID, Position FROM [{table}] WHERE BidPageUID=?",
+                page_uid,
+            )
+            rows = cursor.fetchall()
+            for r in rows:
+                raw_position = r.Position
+                if not raw_position:
                     continue
-                if not (
-                    schema.column_exists(table, "UID")
-                    and schema.column_exists(table, "BidPageUID")
-                    and schema.column_exists(table, "Position")
-                ):
-                    continue
-                cursor.execute(
-                    f"SELECT UID, Position FROM [{table}] WHERE BidPageUID=?",
-                    page_uid,
-                )
-                rows = cursor.fetchall()
-                for r in rows:
-                    raw_position = r.Position
-                    if not raw_position:
-                        continue
-                    position = parse_position_storage(raw_position)
-                    if not position:
-                        self.logger.warning(
-                            "Skipping page-scale rescale for %s UID %s because Position is not numeric",
-                            table,
-                            r.UID,
-                        )
-                        continue
-                    scaled = [
-                        float(value)
-                        for value in rescale_position_values(position, factor)
-                    ]
-                    cursor.execute(
-                        f"UPDATE [{table}] SET [Position]=? WHERE [UID]=?",
-                        serialize_position_for_table(table, scaled),
-                        int(r.UID),
+                position = parse_position_storage(raw_position)
+                if not position:
+                    self.logger.warning(
+                        "Skipping page-scale rescale for %s UID %s because Position is not numeric",
+                        table,
+                        r.UID,
                     )
-            except pyodbc.Error as exc:
-                if self._record_caught_mutation_error(exc):
-                    raise
-                self.logger.exception(
-                    "Failed to rescale positions in %s for page %s", table, page_uid
+                    continue
+                scaled = [
+                    float(value) for value in rescale_position_values(position, factor)
+                ]
+                cursor.execute(
+                    f"UPDATE [{table}] SET [Position]=? WHERE [UID]=?",
+                    serialize_position_for_table(table, scaled),
+                    int(r.UID),
                 )
 
     def save_page_view_state(
@@ -200,24 +248,26 @@ class PageOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
-                values = {"OverlayImagePath": overlay_image_path or ""}
-                if schema.column_exists("BidPages", "OverlayRect"):
-                    if overlay_image_path:
-                        cursor.execute(
-                            "SELECT [Width], [Height] FROM [BidPages] WHERE [UID]=?",
-                            int(page_uid),
-                        )
-                        row = cursor.fetchone()
-                        if row is not None:
-                            values["OverlayRect"] = default_overlay_rect(
-                                row.Width, row.Height
-                            )
-                    else:
-                        values["OverlayRect"] = ""
-                if schema.column_exists("BidPages", "OverlayOffsetX"):
-                    values["OverlayOffsetX"] = 0.0
-                if schema.column_exists("BidPages", "OverlayOffsetY"):
-                    values["OverlayOffsetY"] = 0.0
+                cursor.execute(
+                    "SELECT [Width], [Height], [ScaleFactor1], [ScaleFactor2], "
+                    "[OverlayImagePath] FROM [BidPages] WHERE [UID]=?",
+                    int(page_uid),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise ValueError(f"Page {page_uid} does not exist")
+                new_path = overlay_image_path or ""
+                if overlay_path_storage_identity(
+                    row.OverlayImagePath
+                ) == overlay_path_storage_identity(new_path):
+                    return True
+                values = replacement_overlay_storage_values(
+                    new_path,
+                    row.Width,
+                    row.Height,
+                    row.ScaleFactor1,
+                    row.ScaleFactor2,
+                )
                 return self._execute_update_values(
                     cursor,
                     schema,
@@ -246,11 +296,8 @@ class PageOperationsMixin:
         overlay_rect: tuple[float, float, float, float],
     ) -> bool:
         try:
-            rect_x, rect_y, rect_w, rect_h = overlay_rect
-            rect_text = (
-                f"{float(rect_x):.6f},{float(rect_y):.6f},"
-                f"{float(rect_w):.6f},{float(rect_h):.6f}"
-            )
+            rect_text = serialize_overlay_rect_storage(overlay_rect)
+            rect_x, rect_y, _, _ = parse_overlay_rect_storage(rect_text)
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()

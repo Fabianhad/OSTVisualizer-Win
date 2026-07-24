@@ -11,6 +11,7 @@ from PySide6.QtCore import QCoreApplication
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
+    WriteReloadResult,
 )
 from ost_visualizer.application.dtos.collaboration_dtos import DatabaseMutationResult
 from ost_visualizer.domain.entities.annotation import (
@@ -129,11 +130,11 @@ class FakeProjectWriteService:
 
     def save_page_overlay_rect_result(
         self,
-        db_path,
-        page_uid,
-        overlay_rect,
-        publish_database_refreshed_after_write=True,
-    ):
+        db_path: str,
+        page_uid: str,
+        overlay_rect: tuple[float, float, float, float],
+        publish_database_refreshed_after_write: bool = True,
+    ) -> WriteReloadResult:
         self.calls.append(
             (
                 "page_overlay_rect",
@@ -144,7 +145,10 @@ class FakeProjectWriteService:
             )
         )
         success = "save_page_overlay_rect_result" not in self.fail_methods
-        return SimpleNamespace(write_success=success)
+        return WriteReloadResult(
+            write_success=success,
+            reload_success=success,
+        )
 
 
 class DeferredPersistenceManagerTests(unittest.TestCase):
@@ -236,6 +240,29 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
                 ("page_bitonal", "a.mdb", "p1", True),
             ],
         )
+
+    def test_overlay_write_exception_remains_pending_for_retry(self):
+        attempts = []
+
+        def write_overlay_rect():
+            attempts.append("write")
+            if len(attempts) == 1:
+                raise RuntimeError("database unavailable")
+            return True
+
+        self.assertTrue(
+            self.manager.schedule(
+                "page_overlay_rect",
+                ("page_overlay_rect", "a.mdb", "p1"),
+                "overlay rectangle for page p1",
+                write_overlay_rect,
+            )
+        )
+        self.assertFalse(self.manager.flush())
+        self.assertEqual(self.manager.pending_count, 1)
+        self.assertTrue(self.manager.flush())
+        self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(attempts, ["write", "write"])
 
     def test_expected_blocked_visual_write_is_skipped_without_warning(self):
         self.service.expected_deferred_write_blocked = True
@@ -443,6 +470,17 @@ class DeferredPersistenceManagerTests(unittest.TestCase):
     def test_cleanup_ignores_later_schedules(self):
         self.assertTrue(self.manager.cleanup())
         self.manager.schedule_page_invert("a.mdb", "p1", True)
+        self.assertFalse(
+            self.manager.schedule_page_overlay_rect("a.mdb", "p1", (0, 0, 10, 10))
+        )
+        self.assertEqual(self.manager.pending_count, 0)
+        self.assertEqual(self.service.calls, [])
+
+    def test_overlay_schedule_is_rejected_after_shutdown_begins(self):
+        self.manager.begin_shutdown()
+        self.assertFalse(
+            self.manager.schedule_page_overlay_rect("a.mdb", "p1", (0, 0, 10, 10))
+        )
         self.assertEqual(self.manager.pending_count, 0)
         self.assertEqual(self.service.calls, [])
 

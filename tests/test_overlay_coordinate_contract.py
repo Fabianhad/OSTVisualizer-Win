@@ -5,18 +5,17 @@ from types import SimpleNamespace
 import unittest
 from xml.etree.ElementTree import Element
 from PySide6.QtCore import QPointF
-from ost_visualizer.domain.entities.overlay import (
-    OST_OVERLAY_RECT_UNITS_PER_INCH,
-)
+from ost_visualizer.domain.entities.overlay import overlay_units_per_sheet_inch
 from ost_visualizer.domain.entities.page import Page
 from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
     BidDataReaderMixin,
 )
 from ost_visualizer.infrastructure.mdb.components.overlay_rect import (
-    default_overlay_rect,
+    EMPTY_OVERLAY_RECT,
+    full_page_overlay_rect,
+    parse_overlay_rect_storage,
 )
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
-from ost_visualizer.infrastructure.parsers.utils.parser import parse_overlay_rect
 from ost_visualizer.presentation.visualization.pdf.renderers.page_renderer import (
     PageRenderer,
 )
@@ -24,7 +23,8 @@ from ost_visualizer.presentation.visualization.pdf.services.composite_renderer i
     CompositeRenderer,
 )
 
-OST_RECORD_RECT = (-1.103146, 0.0, 2686.161423, 1919.474692)
+CALIBRATED_64_RECT = (-1.103146, 0.0, 2686.161423, 1919.474692)
+CALIBRATED_96_RECT = (0.0, 0.0, 4031.370174, 2879.550124)
 
 
 def _write_box_pdf(path: Path):
@@ -65,6 +65,8 @@ def _page(
     rotation=0,
     overlay_rotation=0.0,
     deskew_rotation_overlay=0.0,
+    scale_factor1=0.1875,
+    scale_factor2=12.0,
 ):
     return Page(
         uid="page",
@@ -73,6 +75,8 @@ def _page(
         overlay_image_path="overlay.pdf",
         width_pts=width_pts,
         height_pts=height_pts,
+        scale_factor1=scale_factor1,
+        scale_factor2=scale_factor2,
         rotation=rotation,
         overlay_rect=overlay_rect,
         overlay_rotation=overlay_rotation,
@@ -114,6 +118,14 @@ class _AllPageColumnsSchema:
         return f"[{column}]"
 
 
+class _RecordingLogger:
+    def __init__(self):
+        self.warnings = []
+
+    def warning(self, message, *args):
+        self.warnings.append(message % args)
+
+
 def _page_row(overlay_rect):
     return SimpleNamespace(
         UID=58227,
@@ -146,22 +158,28 @@ def _page_row(overlay_rect):
 
 
 class OverlayCoordinateContractTests(unittest.TestCase):
-    def test_full_page_overlay_uses_64_units_per_inch(self):
-        self.assertEqual(OST_OVERLAY_RECT_UNITS_PER_INCH, 64.0)
+    def test_overlay_units_follow_persisted_page_calibration(self):
+        self.assertEqual(overlay_units_per_sheet_inch(0.1875, 12.0), 64.0)
+        self.assertEqual(overlay_units_per_sheet_inch(0.125, 12.0), 96.0)
+        self.assertEqual(overlay_units_per_sheet_inch(0.3, 15.0), 50.0)
         self.assertEqual(
-            default_overlay_rect(42.0, 30.0),
+            full_page_overlay_rect(42.0, 30.0, 0.1875, 12.0),
             "0.000000,0.000000,2688.000000,1920.000000",
+        )
+        self.assertEqual(
+            full_page_overlay_rect(42.0, 30.0, 0.125, 12.0),
+            "0.000000,0.000000,4032.000000,2880.000000",
         )
 
     def test_mdb_reader_loads_overlay_rect_directly(self):
-        connection = _RowsConnection([_page_row(OST_RECORD_RECT)])
+        connection = _RowsConnection([_page_row(CALIBRATED_64_RECT)])
         pages = BidDataReaderMixin()._parse_bid_pages_for_bid(
             connection,
             "57895",
             {},
             _AllPageColumnsSchema(),
         )
-        self.assertEqual(pages["58227"].overlay_rect, OST_RECORD_RECT)
+        self.assertEqual(pages["58227"].overlay_rect, CALIBRATED_64_RECT)
         self.assertTrue(connection.statements)
         self.assertTrue(
             all(
@@ -170,17 +188,77 @@ class OverlayCoordinateContractTests(unittest.TestCase):
             )
         )
 
-    def test_original_ost_rect_converts_once_to_page_points(self):
-        rect = _page(OST_RECORD_RECT).overlay_rect_page_points()
+    def test_mdb_reader_exposes_malformed_rect_as_no_geometry(self):
+        row = _page_row(CALIBRATED_64_RECT)
+        row.OverlayRect = "0,0,not-a-width,1920"
+        connection = _RowsConnection([row])
+        reader = BidDataReaderMixin()
+        reader.logger = _RecordingLogger()
+        pages = reader._parse_bid_pages_for_bid(
+            connection,
+            "57895",
+            {},
+            _AllPageColumnsSchema(),
+        )
+        self.assertEqual(pages["58227"].overlay_rect, EMPTY_OVERLAY_RECT)
+        self.assertEqual(len(reader.logger.warnings), 1)
+
+    def test_mdb_reader_accepts_native_empty_rect_marker_without_warning(self):
+        row = _page_row(EMPTY_OVERLAY_RECT)
+        row.OverlayRect = "*"
+        connection = _RowsConnection([row])
+        reader = BidDataReaderMixin()
+        reader.logger = _RecordingLogger()
+        pages = reader._parse_bid_pages_for_bid(
+            connection,
+            "57895",
+            {},
+            _AllPageColumnsSchema(),
+        )
+        self.assertEqual(pages["58227"].overlay_rect, EMPTY_OVERLAY_RECT)
+        self.assertEqual(reader.logger.warnings, [])
+
+    def test_persisted_rect_converts_once_to_page_points(self):
+        rect = _page(CALIBRATED_64_RECT).overlay_rect_page_points()
         self.assertAlmostEqual(rect[0], -1.24103925)
         self.assertAlmostEqual(rect[1], 0.0)
         self.assertAlmostEqual(rect[2], 3021.931600875)
         self.assertAlmostEqual(rect[3], 2159.4090285)
 
-    def test_different_page_dimensions_preserve_native_full_page_size(self):
-        rect = parse_overlay_rect(default_overlay_rect(11.0, 8.5))
-        page = _page(rect, width_pts=792.0, height_pts=612.0)
+    def test_current_bid_uses_its_96_unit_page_calibration(self):
+        rect = _page(
+            CALIBRATED_96_RECT,
+            scale_factor1=0.125,
+            scale_factor2=12.0,
+        ).overlay_rect_page_points()
+        self.assertAlmostEqual(rect[0], 0.0)
+        self.assertAlmostEqual(rect[1], 0.0)
+        self.assertAlmostEqual(rect[2], 3023.5276305)
+        self.assertAlmostEqual(rect[3], 2159.662593)
+
+    def test_different_page_dimensions_preserve_full_page_size(self):
+        rect = parse_overlay_rect_storage(
+            full_page_overlay_rect(11.0, 8.5, 0.125, 12.0)
+        )
+        page = _page(
+            rect,
+            width_pts=792.0,
+            height_pts=612.0,
+            scale_factor1=0.125,
+            scale_factor2=12.0,
+        )
         self.assertEqual(page.overlay_rect_page_points(), (0.0, 0.0, 792.0, 612.0))
+
+    def test_arbitrary_calibration_uses_the_same_full_page_path(self):
+        rect = parse_overlay_rect_storage(full_page_overlay_rect(10.0, 5.0, 0.3, 15.0))
+        page = _page(
+            rect,
+            width_pts=720.0,
+            height_pts=360.0,
+            scale_factor1=0.3,
+            scale_factor2=15.0,
+        )
+        self.assertEqual(page.overlay_rect_page_points(), (0.0, 0.0, 720.0, 360.0))
 
     def test_page_rotation_uses_effective_destination_dimensions_once(self):
         page = _page(
@@ -207,11 +285,12 @@ class OverlayCoordinateContractTests(unittest.TestCase):
         self.assertEqual(info["crop_width_pts"], 180.0)
         self.assertEqual(info["crop_height_pts"], 80.0)
         self.assertEqual(info["intrinsic_rotation"], 90)
+        coordinate_ratio = overlay_units_per_sheet_inch(0.1875, 12.0)
         rect = (
             0.0,
             0.0,
-            info["pdf_width"] / 72.0 * OST_OVERLAY_RECT_UNITS_PER_INCH,
-            info["pdf_height"] / 72.0 * OST_OVERLAY_RECT_UNITS_PER_INCH,
+            info["pdf_width"] / 72.0 * coordinate_ratio,
+            info["pdf_height"] / 72.0 * coordinate_ratio,
         )
         page = _page(
             rect,
@@ -246,13 +325,67 @@ class OverlayCoordinateContractTests(unittest.TestCase):
 
     def test_numeric_and_string_zero_parse_identically(self):
         self.assertEqual(
-            parse_overlay_rect("0,0,2688,1920"),
+            parse_overlay_rect_storage("0,0,2688,1920"),
             (0.0, 0.0, 2688.0, 1920.0),
         )
         self.assertEqual(
-            parse_overlay_rect("0.0,0.0,0.0,0.0"),
-            (0.0, 0.0, 0.0, 0.0),
+            parse_overlay_rect_storage("0.0,0.0,0.0,0.0"),
+            EMPTY_OVERLAY_RECT,
         )
+
+    def test_absent_storage_values_produce_no_geometry(self):
+        for stored_rect in (None, "", "  ", "*", " * "):
+            with self.subTest(stored_rect=stored_rect):
+                self.assertEqual(
+                    parse_overlay_rect_storage(stored_rect),
+                    EMPTY_OVERLAY_RECT,
+                )
+
+    def test_invalid_calibration_produces_no_geometry_or_full_page_rect(self):
+        for scale_factor1, scale_factor2 in (
+            (0.0, 12.0),
+            (0.125, 0.0),
+            (-0.125, 12.0),
+            (0.125, -12.0),
+            (float("nan"), 12.0),
+            (0.125, float("inf")),
+            ("invalid", 12.0),
+        ):
+            with self.subTest(
+                scale_factor1=scale_factor1,
+                scale_factor2=scale_factor2,
+            ):
+                self.assertIsNone(
+                    overlay_units_per_sheet_inch(scale_factor1, scale_factor2)
+                )
+                page = _page(
+                    CALIBRATED_64_RECT,
+                    scale_factor1=scale_factor1,
+                    scale_factor2=scale_factor2,
+                )
+                self.assertEqual(
+                    page.overlay_rect_page_points(),
+                    EMPTY_OVERLAY_RECT,
+                )
+                with self.assertRaises(ValueError):
+                    full_page_overlay_rect(
+                        42.0,
+                        30.0,
+                        scale_factor1,
+                        scale_factor2,
+                    )
+
+    def test_malformed_storage_rect_is_rejected_without_inference(self):
+        for stored_rect in (
+            "0,0,2688",
+            "0,0,2688,1920,extra",
+            "0,0,invalid,1920",
+            "0,0,-1,1920",
+            "0,0,nan,1920",
+        ):
+            with self.subTest(stored_rect=stored_rect):
+                with self.assertRaises(ValueError):
+                    parse_overlay_rect_storage(stored_rect)
 
     def test_transform_is_forward_translate_rotate_then_scale(self):
         renderer = CompositeRenderer.__new__(CompositeRenderer)
@@ -296,8 +429,8 @@ class OverlayCoordinateContractTests(unittest.TestCase):
         self.assertAlmostEqual(mapped.x(), origin.x())
         self.assertGreater(mapped.y(), origin.y())
 
-    def test_overlay_move_delta_is_always_saved_in_native_units(self):
-        page = _page(OST_RECORD_RECT)
+    def test_overlay_move_delta_is_saved_in_calibrated_units(self):
+        page = _page(CALIBRATED_64_RECT)
         delta = page.canvas_point_to_overlay_rect_units(
             72.0,
             36.0,
@@ -306,12 +439,37 @@ class OverlayCoordinateContractTests(unittest.TestCase):
         )
         self.assertEqual(delta, (64.0, 32.0))
 
+    def test_overlay_move_uses_current_page_calibration(self):
+        page = _page(
+            CALIBRATED_96_RECT,
+            scale_factor1=0.125,
+            scale_factor2=12.0,
+        )
+        delta = page.canvas_point_to_overlay_rect_units(
+            72.0,
+            36.0,
+            3024.0,
+            2160.0,
+        )
+        self.assertEqual(delta, (96.0, 48.0))
+
     def test_cached_and_uncached_paths_share_one_transform_identity(self):
         renderer = CompositeRenderer.__new__(CompositeRenderer)
-        page = _page(OST_RECORD_RECT)
-        key = renderer._build_cache_key(page, None, 1.0, 0)
-        self.assertEqual(key, renderer._build_cache_key(page, None, 1.0, 0))
-        self.assertNotIn("64.0", key.split("|")[-1:])
+        page_at_64_units = _page(CALIBRATED_64_RECT)
+        page_at_96_units = _page(
+            CALIBRATED_64_RECT,
+            scale_factor1=0.125,
+            scale_factor2=12.0,
+        )
+        key = renderer._build_cache_key(page_at_64_units, None, 1.0, 0)
+        self.assertEqual(
+            key,
+            renderer._build_cache_key(page_at_64_units, None, 1.0, 0),
+        )
+        self.assertNotEqual(
+            key,
+            renderer._build_cache_key(page_at_96_units, None, 1.0, 0),
+        )
 
     def test_ost_export_preserves_raw_overlay_columns(self):
         exporter = OstExporter.__new__(OstExporter)

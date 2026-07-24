@@ -251,6 +251,11 @@ class PlacementModeMixin:
             image_mtime = None
         ratio = self._scene_builder.get_coordinate_system().scale_ratio
         page = self._current_page
+        overlay_units = (
+            page.overlay_units_per_sheet_inch
+            if layer == PDF_INTELLIGENCE_SOURCE_OVERLAY
+            else None
+        )
         return (
             page.uid,
             layer,
@@ -262,6 +267,7 @@ class PlacementModeMixin:
             page.overlay_rect,
             float(page.overlay_rotation),
             float(page.deskew_rotation_overlay),
+            overlay_units,
             float(ratio),
         )
 

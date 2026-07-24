@@ -92,12 +92,6 @@ _SAME_BID_FAST_TAKEOFF_EXTRA_COLUMNS = frozenset(
 
 
 @dataclass(frozen=True)
-class _DeferredWriteResult:
-    write_success: bool = True
-    refresh_failed: bool = False
-
-
-@dataclass(frozen=True)
 class _PendingTakeoffPlacement:
     database_id: str
     bid_uid: str
@@ -173,21 +167,24 @@ class PlanViewActionHandler:
         pv.paste_requested.connect(self.on_paste_requested)
         pv.paste_backouts_placed.connect(self.on_paste_backouts_placed)
 
-    def save_current_page_overlay_rect(self, overlay_rect: tuple):
+    def save_current_page_overlay_rect(
+        self, overlay_rect: tuple[float, float, float, float]
+    ) -> bool:
         if not self._is_allowed(Feature.EDIT_PAGE_SETTINGS):
-            return None
+            return False
         bid_ref = self._ui_state.get_selected_bid_ref()
         page_uid = self._ui_state.active_page_uid
         if not bid_ref or not page_uid:
-            return None
+            return False
         rect = tuple(float(value) for value in overlay_rect)
-        page = self._data_svc.get_page(page_uid)
-        if page is not None:
-            page.overlay_rect = rect
-        self._deferred_persistence.schedule_page_overlay_rect(
+        accepted = self._deferred_persistence.schedule_page_overlay_rect(
             bid_ref.file_path, page_uid, rect
         )
-        return _DeferredWriteResult()
+        if accepted:
+            page = self._data_svc.get_page(page_uid)
+            if page is not None:
+                page.overlay_rect = rect
+        return accepted
 
     def can_paste_to_current_bid(self) -> bool:
         if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):

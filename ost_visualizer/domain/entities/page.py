@@ -2,7 +2,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
 from .page_info import BidPageInfo
-from .overlay import OST_OVERLAY_RECT_UNITS_PER_INCH, OST_PAGE_COORDINATE_DPI
+from .overlay import OST_PAGE_COORDINATE_DPI, overlay_units_per_sheet_inch
 from .takeoff import Takeoff
 
 
@@ -53,6 +53,13 @@ class Page:
     @property
     def effective_height_pts(self) -> float:
         return self.width_pts if self.rotation in (90, 270) else self.height_pts
+
+    @property
+    def overlay_units_per_sheet_inch(self) -> Optional[float]:
+        return overlay_units_per_sheet_inch(
+            self.scale_factor1,
+            self.scale_factor2,
+        )
 
     def _page_coordinate_size(
         self, units_per_inch: float
@@ -137,10 +144,13 @@ class Page:
         canvas_width: float,
         canvas_height: float,
     ) -> Optional[tuple[float, float]]:
+        overlay_units = self.overlay_units_per_sheet_inch
+        if overlay_units is None:
+            return None
         dimensions = self._conversion_dimensions(
             canvas_width,
             canvas_height,
-            OST_OVERLAY_RECT_UNITS_PER_INCH,
+            overlay_units,
         )
         if dimensions is None:
             return None
@@ -159,10 +169,13 @@ class Page:
         canvas_width: float,
         canvas_height: float,
     ) -> Optional[tuple[float, float]]:
+        overlay_units = self.overlay_units_per_sheet_inch
+        if overlay_units is None:
+            return None
         dimensions = self._conversion_dimensions(
             canvas_width,
             canvas_height,
-            OST_OVERLAY_RECT_UNITS_PER_INCH,
+            overlay_units,
         )
         if dimensions is None:
             return None

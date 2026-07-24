@@ -125,6 +125,8 @@ def _page(**overrides):
         "overlay_image_path": "",
         "width_pts": 612.0,
         "height_pts": 792.0,
+        "scale_factor1": 0.1875,
+        "scale_factor2": 12.0,
         "page_index": 2,
         "layer_visible": True,
         "image_show_mode": SHOW_ORIGINAL,

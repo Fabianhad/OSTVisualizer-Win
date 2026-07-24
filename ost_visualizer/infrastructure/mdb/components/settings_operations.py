@@ -5,7 +5,10 @@ from ....domain.entities.area import BidAreaChangeset
 from ....domain.services.uom_service import normalize_uom_for_system
 from ...parsers.position_parser import convert_elevation_in_name
 from .constants import PAGE_DELETE_CHILD_TABLES, TAKEOFF_REFERENCE_TABLES
-from .overlay_rect import default_overlay_rect
+from .overlay_rect import (
+    overlay_path_storage_identity,
+    replacement_overlay_storage_values,
+)
 from .serialization import encode_text_blob
 
 
@@ -144,6 +147,13 @@ class SettingsOperationsMixin:
                             folder_uid_val = None
                         new_guid = "{" + str(uuid.uuid4()).upper() + "}"
                         assigned_page_uid = self._next_uid(cursor, "BidPages")
+                        overlay_values = replacement_overlay_storage_values(
+                            self._windows_path_separators(page.get("overlay_path")),
+                            page["width"],
+                            page["height"],
+                            page["scale_factor1"],
+                            page["scale_factor2"],
+                        )
                         self._execute_insert_values(
                             cursor,
                             schema,
@@ -167,31 +177,46 @@ class SettingsOperationsMixin:
                                 "ImagePath": self._windows_path_separators(
                                     page.get("image_path")
                                 ),
-                                "OverlayImagePath": self._windows_path_separators(
-                                    page.get("overlay_path")
-                                ),
-                                "OverlayRect": (
-                                    default_overlay_rect(page["width"], page["height"])
-                                    if page.get("overlay_path")
-                                    else ""
-                                ),
-                                "OverlayOffsetX": 0.0,
-                                "OverlayOffsetY": 0.0,
+                                **overlay_values,
                                 "BidPageFolderUID": folder_uid_val,
                             },
                             ("UID", "BidUID"),
                             "save_cover_sheet_new_page",
                         )
                     else:
+                        page_uid = int(page["uid"])
                         folder_uid_val = (
                             int(page["folder_uid"]) if page.get("folder_uid") else None
                         )
+                        overlay_path = self._windows_path_separators(
+                            page.get("overlay_path")
+                        )
+                        cursor.execute(
+                            "SELECT [OverlayImagePath] FROM [BidPages] WHERE [UID]=?",
+                            page_uid,
+                        )
+                        overlay_row = cursor.fetchone()
+                        if overlay_row is None:
+                            raise ValueError(f"Page {page_uid} does not exist")
+                        overlay_replaced = overlay_path_storage_identity(
+                            overlay_row[0]
+                        ) != overlay_path_storage_identity(overlay_path)
+                        overlay_values = {"OverlayImagePath": overlay_path}
+                        if overlay_replaced:
+                            overlay_values = replacement_overlay_storage_values(
+                                overlay_path,
+                                page["width"],
+                                page["height"],
+                                page["scale_factor1"],
+                                page["scale_factor2"],
+                            )
                         self._rescale_page_content_for_scale_change(
                             cursor,
                             schema,
-                            int(page["uid"]),
+                            page_uid,
                             page["scale_factor1"],
                             page["scale_factor2"],
+                            rescale_overlay=not overlay_replaced,
                         )
                         self._execute_update_values(
                             cursor,
@@ -209,22 +234,13 @@ class SettingsOperationsMixin:
                                 "ImagePath": self._windows_path_separators(
                                     page.get("image_path")
                                 ),
-                                "OverlayImagePath": self._windows_path_separators(
-                                    page.get("overlay_path")
-                                ),
-                                "OverlayRect": (
-                                    default_overlay_rect(page["width"], page["height"])
-                                    if page.get("overlay_path")
-                                    else ""
-                                ),
-                                "OverlayOffsetX": 0.0,
-                                "OverlayOffsetY": 0.0,
+                                **overlay_values,
                                 "BidPageFolderUID": folder_uid_val,
                                 "Sequence": page.get("sequence") or 1,
                             },
                             ("UID",),
                             "[UID]=?",
-                            [int(page["uid"])],
+                            [page_uid],
                             "save_cover_sheet_page",
                         )
                 return True

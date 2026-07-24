@@ -177,6 +177,8 @@ class PlacementHarness(placement_mode.PlacementModeMixin):
             name="Page 1",
             image_path="drawing.pdf",
             height_pts=100.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             page_index=0,
         )
         self._current_bid_page_uid = self._current_page.uid
@@ -961,6 +963,15 @@ class SnapSegmentCacheTests(unittest.TestCase):
         harness = PlacementHarness()
         first_key = harness._pdf_snap_cache_key()
         harness._pdf_width_pts = 300.0
+        second_key = harness._pdf_snap_cache_key()
+        self.assertNotEqual(first_key, second_key)
+
+    def test_pdf_snap_cache_key_includes_overlay_coordinate_calibration(self):
+        harness = PlacementHarness()
+        harness._current_page.overlay_image_path = "overlay.pdf"
+        harness._current_page.image_show_mode = 1
+        first_key = harness._pdf_snap_cache_key()
+        harness._current_page.scale_factor1 = 0.125
         second_key = harness._pdf_snap_cache_key()
         self.assertNotEqual(first_key, second_key)
 

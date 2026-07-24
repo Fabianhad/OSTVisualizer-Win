@@ -17,10 +17,11 @@ from ....domain.entities.page_info import BidPageInfo
 from ....domain.entities.takeoff import Takeoff
 from ...parsers.ost_serializer import serialize_row
 from ...parsers.position_parser import extract_z_value_from_name
-from ...parsers.utils.parser import decode_value, parse_float, parse_overlay_rect
+from ...parsers.utils.parser import decode_value, parse_float
 from ...database.schema_inspector_contract import IDatabaseSchemaInspector
 from ..schema_contract import PAGE_SECTIONS, RAW_BID_TABLES, RAW_GLOBAL_TABLES
 from .constants import PAGE_DELETE_CONFIRMATION_TABLES
+from .overlay_rect import EMPTY_OVERLAY_RECT, parse_overlay_rect_storage
 from .serialization import decode_text_blob, parse_position_storage
 
 BidConditions = Dict[str, Condition]
@@ -567,12 +568,15 @@ class BidDataReaderMixin:
                 uid = str(row.UID)
                 name_str = decode_value(row.Name)
                 overlay_rect_str = decode_value(row.OverlayRect)
-                overlay_rect = (0.0, 0.0, 0.0, 0.0)
-                if overlay_rect_str:
-                    rect_x, rect_y, rect_w, rect_h = parse_overlay_rect(
-                        overlay_rect_str
+                try:
+                    overlay_rect = parse_overlay_rect_storage(overlay_rect_str)
+                except ValueError as exc:
+                    self.logger.warning(
+                        "Ignoring invalid OverlayRect for page %s: %s",
+                        uid,
+                        exc,
                     )
-                    overlay_rect = (rect_x, rect_y, rect_w, rect_h)
+                    overlay_rect = EMPTY_OVERLAY_RECT
                 bid_pages[uid] = BidPageInfo(
                     name=name_str,
                     sheet_no=decode_value(row.SheetNo),

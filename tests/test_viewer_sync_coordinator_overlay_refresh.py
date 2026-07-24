@@ -1422,6 +1422,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             image_show_mode=2,
             width_pts=612.0,
             height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_rect=(64.0, 32.0, 272.0, 352.0),
         )
         view._current_page = page
@@ -1665,6 +1667,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             image_path="base.pdf",
             width_pts=612.0,
             height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_image_path="overlay.pdf",
             image_show_mode=2,
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
@@ -1971,6 +1975,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             name="P1",
             width_pts=612.0,
             height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_image_path="overlay.png",
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
@@ -1992,13 +1998,15 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertEqual(len(view._rendering_service.page_requests), page_request_count)
         view.cleanup()
 
-    def test_move_overlay_preview_translates_overlay_rect_in_native_units(self):
+    def test_move_overlay_preview_translates_rect_in_calibrated_units(self):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
             name="P1",
             width_pts=612.0,
             height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_image_path="overlay.pdf",
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
@@ -2020,6 +2028,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             name="P1",
             width_pts=612.0,
             height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_image_path="overlay.png",
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
@@ -2052,6 +2062,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             name="P1",
             width_pts=612.0,
             height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_image_path="overlay.pdf",
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
@@ -2071,19 +2083,16 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             name="P1",
             width_pts=612.0,
             height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_image_path="overlay.pdf",
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
         calls = []
-        result = type(
-            "Result",
-            (),
-            {"write_success": True, "reload_success": True},
-        )()
         view._current_page = page
         view._current_bid_page_uid = "p1"
         view._scene_scale = 2.0
-        view.set_overlay_rect_save_handler(lambda rect: calls.append(rect) or result)
+        view.set_overlay_rect_save_handler(lambda rect: calls.append(rect) or True)
         low_res_item = QGraphicsPixmapItem(QPixmap(10, 10))
         low_res_item.setVisible(True)
         view._scene.addItem(low_res_item)
@@ -2121,15 +2130,10 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             overlay_rect=(64.0, 32.0, 544.0, 704.0),
         )
         calls = []
-        result = type(
-            "Result",
-            (),
-            {"write_success": True, "reload_success": True},
-        )()
         view._current_page = page
         view._current_bid_page_uid = "p1"
         view._scene_scale = 2.0
-        view.set_overlay_rect_save_handler(lambda rect: calls.append(rect) or result)
+        view.set_overlay_rect_save_handler(lambda rect: calls.append(rect) or True)
         view._overlay_move_original_rect = (0.0, 0.0, 544.0, 704.0)
         view._overlay_move_preview_rect = page.overlay_rect
         view._set_overlay_move_handle_pos(QtCore.QPointF(144.0, 72.0))
@@ -2150,6 +2154,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             name="P1",
             width_pts=612.0,
             height_pts=792.0,
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
             overlay_image_path="overlay.pdf",
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
@@ -2441,14 +2447,9 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             overlay_rect=(64.0, 32.0, 544.0, 704.0),
         )
         calls = []
-        result = type(
-            "Result",
-            (),
-            {"write_success": True, "reload_success": True},
-        )()
         view._current_page = page
         view._current_bid_page_uid = "p1"
-        view.set_overlay_rect_save_handler(lambda rect: calls.append(rect) or result)
+        view.set_overlay_rect_save_handler(lambda rect: calls.append(rect) or True)
         view._overlay_move_original_rect = (0.0, 0.0, 544.0, 704.0)
         view._overlay_move_preview_rect = page.overlay_rect
         view._commit_overlay_move()
@@ -2466,28 +2467,26 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             overlay_image_path="overlay.pdf",
             overlay_rect=(64.0, 32.0, 544.0, 704.0),
         )
-        result = type(
-            "Result",
-            (),
-            {"write_success": False, "reload_success": False},
-        )()
         view._current_page = page
         view._current_bid_page_uid = "p1"
-        view.set_overlay_rect_save_handler(lambda _rect: result)
+        view.set_overlay_rect_save_handler(lambda _rect: False)
         view._overlay_move_original_rect = (0.0, 0.0, 544.0, 704.0)
         view._overlay_move_preview_rect = page.overlay_rect
-        view._apply_cursor_mode("move_overlay")
+        view._set_overlay_move_handle_pos(QtCore.QPointF(144.0, 72.0))
+        view._apply_cursor_mode("move_overlay_handle")
         with patch(
             "ost_visualizer.presentation.components.plan_view.view.show_warning"
         ) as warning:
-            view._commit_overlay_move()
+            event = self._left_press_event(300.0, 250.0)
+            view.mousePressEvent(event)
+        self.assertTrue(event.isAccepted())
         self.assertEqual(page.overlay_rect, (0.0, 0.0, 544.0, 704.0))
         self.assertEqual(view._cursor_mode, "select")
         self.assertIsNone(view._overlay_move_handle_item)
         warning.assert_called_once()
         view.cleanup()
 
-    def test_move_overlay_reload_failure_keeps_accepted_preview_visible(self):
+    def test_move_overlay_local_reload_failure_keeps_accepted_preview_visible(self):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
@@ -2499,19 +2498,15 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             image_show_mode=2,
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
-        result = type(
-            "Result",
-            (),
-            {"write_success": True, "reload_success": False},
-        )()
         view._current_page = page
         view._current_bid_page_uid = "p1"
-        view.set_overlay_rect_save_handler(lambda _rect: result)
+        view.set_overlay_rect_save_handler(lambda _rect: True)
         preview_overlay = QGraphicsPixmapItem(QPixmap(10, 10))
         view._scene.addItem(preview_overlay)
         view._overlay_move_preview_overlay_item = preview_overlay
         view._overlay_move_original_rect = page.overlay_rect
         view._overlay_move_preview_rect = (64.0, 32.0, 544.0, 704.0)
+        view._force_reload_current_page_visuals = lambda: False
         with patch(
             "ost_visualizer.presentation.components.plan_view.view.show_warning"
         ) as warning:
@@ -2524,7 +2519,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         warning.assert_called_once()
         view.cleanup()
 
-    def test_move_overlay_reload_failure_cancels_pending_preview_requests(self):
+    def test_move_overlay_local_reload_failure_cancels_pending_preview_requests(self):
         view = self._make_plan_view()
         page = Page(
             uid="p1",
@@ -2536,22 +2531,18 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             image_show_mode=2,
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
-        result = type(
-            "Result",
-            (),
-            {"write_success": True, "reload_success": False},
-        )()
         self._install_page_canvas(view, page)
         self.assertTrue(view.show_overlay_move_handle())
         base_request_id, base_options = view._rendering_service.page_requests[-1]
         overlay_request_id, overlay_options = view._rendering_service.overlay_requests[
             -1
         ]
-        view.set_overlay_rect_save_handler(lambda _rect: result)
+        view.set_overlay_rect_save_handler(lambda _rect: True)
         preview_overlay = QGraphicsPixmapItem(QPixmap(10, 10))
         view._scene.addItem(preview_overlay)
         view._overlay_move_preview_overlay_item = preview_overlay
         view._overlay_move_preview_rect = (64.0, 32.0, 544.0, 704.0)
+        view._force_reload_current_page_visuals = lambda: False
         with patch(
             "ost_visualizer.presentation.components.plan_view.view.show_warning"
         ):
@@ -2700,14 +2691,9 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             height_pts=792.0,
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
-        result = type(
-            "Result",
-            (),
-            {"write_success": True, "reload_success": True},
-        )()
         self._install_page_canvas(view, page)
         self.assertTrue(view.show_overlay_move_handle())
-        view.set_overlay_rect_save_handler(lambda _rect: result)
+        view.set_overlay_rect_save_handler(lambda _rect: True)
         view._overlay_move_preview_rect = (64.0, 32.0, 544.0, 704.0)
         page_request_id, _page_options = view._rendering_service.page_requests[-1]
         overlay_request_id, _overlay_options = view._rendering_service.overlay_requests[
@@ -2744,11 +2730,6 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             height_pts=792.0,
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
-        result = type(
-            "Result",
-            (),
-            {"write_success": True, "reload_success": False},
-        )()
         self._install_page_canvas(view, page)
         stale_image = QImage(20, 20, QImage.Format.Format_ARGB32)
         stale_image.fill(QColor(255, 255, 255).rgba())
@@ -2768,7 +2749,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._overlay_move_preview_overlay_item = preview_overlay
         view._overlay_move_original_rect = page.overlay_rect
         view._overlay_move_preview_rect = (64.0, 32.0, 544.0, 704.0)
-        view.set_overlay_rect_save_handler(lambda _rect: result)
+        view.set_overlay_rect_save_handler(lambda _rect: True)
+        view._force_reload_current_page_visuals = lambda: False
         with patch(
             "ost_visualizer.presentation.components.plan_view.view.show_warning"
         ):
@@ -2794,14 +2776,9 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             height_pts=792.0,
             overlay_rect=(0.0, 0.0, 544.0, 704.0),
         )
-        result = type(
-            "Result",
-            (),
-            {"write_success": True, "reload_success": True},
-        )()
         self._install_page_canvas(view, page)
         self.assertTrue(view.show_overlay_move_handle())
-        view.set_overlay_rect_save_handler(lambda _rect: result)
+        view.set_overlay_rect_save_handler(lambda _rect: True)
         view._overlay_move_preview_rect = (64.0, 32.0, 544.0, 704.0)
         view._commit_overlay_move()
         composite_request_id, composite_options = (
@@ -6698,6 +6675,36 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         page.rotation = 90
         view._refresh_overlays = lambda *_args: self.fail(
             "overlay refresh should not run when render identity changes"
+        )
+        self.assertFalse(
+            view.refresh_current_page_overlays(
+                page=page,
+                takeoffs=[],
+                conditions={},
+                color_map={},
+                bid_ref=bid_ref,
+                annotations=[],
+                page_area_selections={},
+            )
+        )
+
+    def test_overlay_refresh_rejects_page_calibration_change(self):
+        view = TakeoffPlanView.__new__(TakeoffPlanView)
+        page = Page(
+            uid="page-1",
+            name="Page 1",
+            overlay_image_path="overlay.pdf",
+            scale_factor1=0.1875,
+            scale_factor2=12.0,
+        )
+        bid_ref = BidRef(file_path="bid.mdb", bid_uid="bid-1")
+        view._current_bid_page_uid = page.uid
+        view._current_render_identity = TakeoffPlanView._build_render_identity(
+            view, page, bid_ref
+        )
+        page.scale_factor1 = 0.125
+        view._refresh_overlays = lambda *_args: self.fail(
+            "overlay refresh should not reuse a render from another calibration"
         )
         self.assertFalse(
             view.refresh_current_page_overlays(

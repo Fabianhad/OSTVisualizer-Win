@@ -50,6 +50,10 @@ from .header_state import (
 )
 
 logger = logging.getLogger(__name__)
+PdfPageSize = Tuple[float, float, str]
+PdfPageIndexData = Tuple[int, Optional[float], Optional[float]]
+PdfFileSignature = Tuple[int, int]
+PdfPageSizeCacheEntry = Tuple[PdfFileSignature, List[PdfPageSize]]
 
 
 class _PathLineEdit(QtWidgets.QLineEdit):
@@ -120,7 +124,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         reload_bid_areas_fn=None,
         refresh_fn=None,
         get_used_area_uids_fn=None,
-        pdf_page_sizes_fn: Optional[Callable[[str], list]] = None,
+        pdf_page_sizes_fn: Optional[Callable[[str], List[PdfPageSize]]] = None,
         bid_ref: Optional[BidRef] = None,
         create_mode: bool = False,
         pages_with_takeoffs: Optional[set] = None,
@@ -142,6 +146,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             else self._pages_with_takeoffs
         )
         self._pdf_page_sizes_fn = pdf_page_sizes_fn
+        self._pdf_page_sizes_cache: Dict[str, PdfPageSizeCacheEntry] = {}
         self._draft_icon_default = IconManager.colored_icon(
             IconId.PAGE_TAKEOFF_INDICATOR, "#808080"
         )
@@ -557,6 +562,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
     def _update_lock_state(self, locked: bool) -> None:
         self._locked = locked
         editable = not locked
+        self.plan_tree.setDragEnabled(editable)
+        self.plan_tree.setAcceptDrops(editable)
         for widget in (
             self.edit_bid_no,
             self.edit_project_name,
@@ -588,7 +595,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         else:
             self._update_action_button_states()
         for uid, combos in self._page_combos.items():
-            for key in ("scale", "show"):
+            for key in ("scale", "show", "index"):
                 w = combos.get(key)
                 if w:
                     w.setEnabled(editable)
@@ -619,6 +626,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
     def _update_license_state(self) -> None:
         if self._has_license:
             return
+        self.plan_tree.setDragEnabled(False)
+        self.plan_tree.setAcceptDrops(False)
         for widget in (
             self.combo_job_status,
             self._btn_job_status_picker,
@@ -639,7 +648,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         ):
             widget.setEnabled(False)
         for combos in self._page_combos.values():
-            for key in ("scale", "show", "size"):
+            for key in ("scale", "show", "size", "index"):
                 w = combos.get(key)
                 if w:
                     w.setEnabled(False)
@@ -866,7 +875,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
     def _add_page_item(self, parent, page) -> QtWidgets.QTreeWidgetItem:
         item = QtWidgets.QTreeWidgetItem(
-            [page.sheet_no, page.name, "", "", "", "", str(page.index), ""]
+            [page.sheet_no, page.name, "", "", "", "", "", ""]
         )
         item.setData(0, self._ITEM_ROLE, ("page", page.uid))
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
@@ -888,6 +897,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             page.show_mode,
             page.image_path,
             page.overlay_image_path,
+            page_index=page.index,
         )
         return item
 
@@ -909,30 +919,34 @@ class CoverSheetDialog(QtWidgets.QDialog):
         style = self.combo_pref_scale_style.currentData() or 1
         self._populate_pref_scale_combo(style)
 
-    def _read_pdf_page_sizes(self, path: str) -> list:
+    def _read_pdf_page_sizes(self, path: str) -> List[PdfPageSize]:
         if self._pdf_page_sizes_fn is None:
             return []
-        try:
-            return self._pdf_page_sizes_fn(path)
-        except Exception:
-            return []
+        path = self._clean_image_path_text(path)
+        signature = self._pdf_file_signature(path)
+        cache_key = self._path_identity(path)
+        cached = self._pdf_page_sizes_cache.get(cache_key)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+        page_sizes = self._pdf_page_sizes_fn(path)
+        self._pdf_page_sizes_cache[cache_key] = (signature, page_sizes)
+        return page_sizes
 
-    def _read_file_dimensions(
-        self, path: str, page_index: int = 0
-    ) -> Optional[Tuple[float, float]]:
+    @staticmethod
+    def _pdf_file_signature(path: str) -> PdfFileSignature:
+        stat = Path(path).stat()
+        return stat.st_mtime_ns, stat.st_size
+
+    def _read_raster_dimensions(self, path: str) -> Optional[Tuple[float, float]]:
         if not self._is_existing_file_path(path):
-            return None
-        if is_pdf_suffix(path):
-            sizes = self._read_pdf_page_sizes(path)
-            if page_index < len(sizes):
-                return (sizes[page_index][0], sizes[page_index][1])
             return None
         try:
             reader = QtGui.QImageReader(path)
-            size = reader.size()
+            image = reader.read()
+            size = image.size()
             if size.isValid() and size.width() > 0 and size.height() > 0:
-                dpm_x = reader.dotsPerMeterX()
-                dpm_y = reader.dotsPerMeterY()
+                dpm_x = image.dotsPerMeterX()
+                dpm_y = image.dotsPerMeterY()
                 if dpm_x > 0 and dpm_y > 0:
                     return size.width() / (dpm_x * 0.0254), size.height() / (
                         dpm_y * 0.0254
@@ -971,24 +985,29 @@ class CoverSheetDialog(QtWidgets.QDialog):
             editor.setStyleSheet("")
             editor.setToolTip(path)
 
-    def _on_page_image_changed(self, uid: str, path_key: str, path: str) -> None:
+    def _on_page_image_changed(
+        self,
+        uid: str,
+        path_key: str,
+        path: str,
+        *,
+        page_index: int = 1,
+    ) -> None:
         path = self._clean_image_path_text(path)
         combos = self._page_combos.get(uid, {})
         item = combos.get("item")
+        if path_key == "image_path" and item and not self._is_existing_file_path(path):
+            self._replace_page_index_combo(uid, [], page_index)
         if path_key == "image_path" and self._is_existing_file_path(path) and item:
             is_pdf = is_pdf_suffix(path)
-            page_sizes = self._read_pdf_page_sizes(path) if is_pdf else []
-            if not page_sizes:
-                dims = self._read_file_dimensions(path)
-                page_sizes = [dims] if dims else []
+            if is_pdf:
+                page_sizes = self._read_pdf_page_sizes(path)
+            else:
+                dimensions = self._read_raster_dimensions(path)
+                page_sizes = [(dimensions[0], dimensions[1], "")] if dimensions else []
+            self._replace_page_index_combo(uid, page_sizes, page_index)
             if page_sizes:
-                new_size_combo = self._build_page_size_combo(
-                    page_sizes[0][0], page_sizes[0][1]
-                )
-                self.plan_tree.setItemWidget(item, 2, new_size_combo)
-                combos["size"] = new_size_combo
                 num_pages = len(page_sizes)
-                item.setText(6, "1")
                 self._page_extras[uid] = {"multi_page_count": num_pages}
                 if num_pages > 1:
                     filename = Path(path).name
@@ -1003,8 +1022,16 @@ class CoverSheetDialog(QtWidgets.QDialog):
                     else:
                         base_pos = self.plan_tree.indexOfTopLevelItem(item) + 1
                     def_scale = self.combo_pref_scale.currentData() or (0.125, 12.0)
+                    existing_page_indexes = self._page_indexes_for_image_path(
+                        parent_item,
+                        path,
+                    )
+                    inserted_count = 0
                     for pg_idx in range(1, num_pages):
-                        pg_w, pg_h = page_sizes[pg_idx]
+                        page_index = pg_idx + 1
+                        if page_index in existing_page_indexes:
+                            continue
+                        pg_w, pg_h, _page_label = page_sizes[pg_idx]
                         new_uid = f"new_{self._new_page_counter}"
                         self._new_page_counter += 1
                         next_sheet = self._next_sheet_no()
@@ -1016,7 +1043,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
                                 "",
                                 "",
                                 "",
-                                str(pg_idx + 1),
+                                "",
                                 "",
                             ]
                         )
@@ -1027,11 +1054,16 @@ class CoverSheetDialog(QtWidgets.QDialog):
                             new_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable
                         )
                         if parent_item:
-                            parent_item.insertChild(base_pos + pg_idx - 1, new_item)
+                            parent_item.insertChild(
+                                base_pos + inserted_count,
+                                new_item,
+                            )
                         else:
                             self.plan_tree.insertTopLevelItem(
-                                base_pos + pg_idx - 1, new_item
+                                base_pos + inserted_count,
+                                new_item,
                             )
+                        inserted_count += 1
                         self._wire_page_widgets(
                             new_item,
                             new_uid,
@@ -1042,9 +1074,37 @@ class CoverSheetDialog(QtWidgets.QDialog):
                             0,
                             path,
                             "",
+                            page_index=page_index,
+                            pdf_page_sizes=page_sizes,
                         )
                         self._page_extras[new_uid] = {"multi_page_count": num_pages}
         self._update_page_size_lock(uid)
+
+    @staticmethod
+    def _path_identity(path: str) -> str:
+        return os.path.normcase(os.path.normpath(path or ""))
+
+    def _page_indexes_for_image_path(
+        self,
+        parent_item: Optional[QtWidgets.QTreeWidgetItem],
+        image_path: str,
+    ) -> set[int]:
+        path_identity = self._path_identity(image_path)
+        indexes: set[int] = set()
+        for page_uid, paths in self._page_paths.items():
+            combos = self._page_combos.get(page_uid)
+            if (
+                combos is None
+                or self._path_identity(paths.get("image_path", "")) != path_identity
+            ):
+                continue
+            item = combos["item"]
+            if item.parent() is not parent_item:
+                continue
+            index_data: Optional[PdfPageIndexData] = combos["index"].currentData()
+            if index_data is not None:
+                indexes.add(int(index_data[0]))
+        return indexes
 
     def _on_measure_base_changed(self, inches_checked: bool) -> None:
         if inches_checked:
@@ -1126,7 +1186,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         def_size = self.combo_pref_page_size.currentData() or (42.0, 30.0)
         def_scale = self.combo_pref_scale.currentData() or (0.125, 12.0)
         item = self._create_new_page_item(
-            new_uid, folder_uid, self._next_sheet_no(), "", 1, parent_item
+            new_uid, folder_uid, self._next_sheet_no(), "", parent_item
         )
         self._wire_page_widgets(
             item,
@@ -1262,7 +1322,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         )
         show_data = src_combos["show"].currentData() if src_combos.get("show") else 0
         orig_name = src.text(1)
-        orig_index = src.text(6)
+        orig_index = int(src_combos["index"].currentData()[0])
         image_path = src_paths.get("image_path", "")
         overlay_path = src_paths.get("overlay_path", "")
         multi_page_count = src_extras.get("multi_page_count", 0)
@@ -1274,7 +1334,6 @@ class CoverSheetDialog(QtWidgets.QDialog):
             folder_uid,
             self._next_sheet_no(),
             copy_name,
-            orig_index,
             parent_item,
         )
         self._wire_page_widgets(
@@ -1287,6 +1346,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             show_data if show_data is not None else 0,
             image_path,
             overlay_path,
+            page_index=orig_index,
         )
         self._page_extras[new_uid] = {"multi_page_count": multi_page_count}
         self.plan_tree.scrollToItem(item)
@@ -1327,16 +1387,16 @@ class CoverSheetDialog(QtWidgets.QDialog):
             return
         self._populate_imported_pages(file_sizes)
 
-    def _populate_imported_pages(self, file_sizes: List[Tuple[str, list]]) -> None:
+    def _populate_imported_pages(
+        self, file_sizes: List[Tuple[str, List[PdfPageSize]]]
+    ) -> None:
         parent_item, folder_uid = self._resolve_insertion_point()
         def_scale = self.combo_pref_scale.currentData() or (0.125, 12.0)
         last_item = None
         for file_path, page_sizes in file_sizes:
             num_pages = len(page_sizes)
             filename = Path(file_path).name
-            for page_idx, page_info in enumerate(page_sizes):
-                pg_w, pg_h = page_info[0], page_info[1]
-                label = page_info[2] if len(page_info) > 2 else ""
+            for page_idx, (pg_w, pg_h, label) in enumerate(page_sizes):
                 page_number = page_idx + 1
                 new_uid = f"new_{self._new_page_counter}"
                 self._new_page_counter += 1
@@ -1351,7 +1411,6 @@ class CoverSheetDialog(QtWidgets.QDialog):
                     folder_uid,
                     self._next_sheet_no(),
                     page_name,
-                    page_number,
                     parent_item,
                 )
                 self._wire_page_widgets(
@@ -1364,6 +1423,8 @@ class CoverSheetDialog(QtWidgets.QDialog):
                     0,
                     file_path,
                     "",
+                    page_index=page_number,
+                    pdf_page_sizes=page_sizes,
                 )
                 self._page_extras[new_uid] = {"multi_page_count": num_pages}
                 last_item = item
@@ -1377,56 +1438,42 @@ class CoverSheetDialog(QtWidgets.QDialog):
             if not data or data[0] not in ("page", "new_page"):
                 continue
             uid = data[1]
-            combos = self._page_combos.get(uid, {})
-            try:
-                self._pre_move_states[uid] = {
-                    "size_data": (
-                        combos["size"].currentData()
-                        if combos.get("size")
-                        else (42.0, 30.0)
-                    ),
-                    "scale_data": (
-                        combos["scale"].currentData()
-                        if combos.get("scale")
-                        else (0.125, 12.0)
-                    ),
-                    "show_data": (
-                        combos["show"].currentData() if combos.get("show") else 0
-                    ),
-                }
-            except Exception:
-                logger.exception("Failed to save state for uid %r", uid)
+            combos = self._page_combos[uid]
+            self._pre_move_states[uid] = {
+                "size_data": combos["size"].currentData(),
+                "scale_data": combos["scale"].currentData(),
+                "show_data": combos["show"].currentData(),
+                "page_index": int(combos["index"].currentData()[0]),
+            }
 
     def _on_tree_items_moved(self, items: list) -> None:
-        try:
-            for item in items:
-                data = item.data(0, self._ITEM_ROLE) or ()
-                if not data:
-                    continue
-                if data[0] in ("folder", "new_folder"):
-                    self._reinsert_folder_item(item)
-                    continue
-                if data[0] not in ("page", "new_page"):
-                    continue
-                uid = data[1]
-                state = self._pre_move_states.get(uid, {})
-                paths = self._page_paths.get(uid, {})
-                size_data = state.get("size_data", (42.0, 30.0))
-                scale_data = state.get("scale_data", (0.125, 12.0))
-                show_data = state.get("show_data", 0)
-                self._wire_page_widgets(
-                    item,
-                    uid,
-                    size_data[0],
-                    size_data[1],
-                    scale_data[0],
-                    scale_data[1],
-                    show_data if show_data is not None else 0,
-                    paths.get("image_path", ""),
-                    paths.get("overlay_path", ""),
-                )
-        except Exception:
-            logger.exception("Exception in _on_tree_items_moved")
+        for item in items:
+            data = item.data(0, self._ITEM_ROLE) or ()
+            if not data:
+                continue
+            if data[0] in ("folder", "new_folder"):
+                self._reinsert_folder_item(item)
+                continue
+            if data[0] not in ("page", "new_page"):
+                continue
+            uid = data[1]
+            state = self._pre_move_states[uid]
+            paths = self._page_paths[uid]
+            size_data = state["size_data"]
+            scale_data = state["scale_data"]
+            show_data = state["show_data"]
+            self._wire_page_widgets(
+                item,
+                uid,
+                size_data[0],
+                size_data[1],
+                scale_data[0],
+                scale_data[1],
+                show_data if show_data is not None else 0,
+                paths.get("image_path", ""),
+                paths.get("overlay_path", ""),
+                page_index=state["page_index"],
+            )
 
     def _on_item_double_clicked(
         self, item: QtWidgets.QTreeWidgetItem, column: int
@@ -1542,9 +1589,26 @@ class CoverSheetDialog(QtWidgets.QDialog):
 
         def _set_path(path: str) -> None:
             path = self._clean_image_path_text(path)
+            current_path = self._page_paths.get(page_uid, {}).get(path_key, "")
+            page_index = 1
+            if path_key == "image_path" and self._path_identity(
+                current_path
+            ) == self._path_identity(path):
+                index_data: Optional[PdfPageIndexData] = self._page_combos[page_uid][
+                    "index"
+                ].currentData()
+                if index_data is not None:
+                    page_index = int(index_data[0])
+            if path_key == "image_path":
+                self._pdf_page_sizes_cache.pop(self._path_identity(path), None)
             self._page_paths.setdefault(page_uid, {})[path_key] = path
             self._set_path_editor_state(editor, path, path_key)
-            self._on_page_image_changed(page_uid, path_key, path)
+            self._on_page_image_changed(
+                page_uid,
+                path_key,
+                path,
+                page_index=page_index,
+            )
 
         def _browse() -> None:
             current = self._page_paths.get(page_uid, {}).get(path_key, "") or ""
@@ -1599,12 +1663,9 @@ class CoverSheetDialog(QtWidgets.QDialog):
         folder_uid: Optional[str],
         sheet_no: str,
         name: str,
-        index,
         parent_item: Optional[QtWidgets.QTreeWidgetItem],
     ) -> QtWidgets.QTreeWidgetItem:
-        item = QtWidgets.QTreeWidgetItem(
-            [sheet_no, name, "", "", "", "", str(index), ""]
-        )
+        item = QtWidgets.QTreeWidgetItem([sheet_no, name, "", "", "", "", "", ""])
         item.setData(0, self._ITEM_ROLE, ("new_page", uid, folder_uid))
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
         item.setIcon(1, self._draft_icon_default)
@@ -1626,10 +1687,20 @@ class CoverSheetDialog(QtWidgets.QDialog):
         show_mode: int,
         image_path: str,
         overlay_path: str,
+        *,
+        page_index: int = 1,
+        pdf_page_sizes: Optional[List[PdfPageSize]] = None,
     ) -> None:
         size_combo = self._build_page_size_combo(size_w, size_h)
         scale_combo = self._build_scale_combo(sf1, sf2)
         show_combo = self._build_show_combo(show_mode)
+        if pdf_page_sizes is None:
+            pdf_page_sizes = (
+                self._read_pdf_page_sizes(image_path)
+                if self._is_existing_file_path(image_path) and is_pdf_suffix(image_path)
+                else []
+            )
+        index_combo = self._build_page_index_combo(page_index, pdf_page_sizes)
         self.plan_tree.setItemWidget(item, 2, size_combo)
         self.plan_tree.setItemWidget(item, 3, scale_combo)
         self.plan_tree.setItemWidget(
@@ -1638,14 +1709,88 @@ class CoverSheetDialog(QtWidgets.QDialog):
         self.plan_tree.setItemWidget(
             item, 5, self._make_file_picker(uid, "overlay_path", overlay_path)
         )
+        self.plan_tree.setItemWidget(item, 6, index_combo)
         self.plan_tree.setItemWidget(item, 7, show_combo)
         self._page_combos[uid] = {
             "size": size_combo,
             "scale": scale_combo,
+            "index": index_combo,
             "show": show_combo,
             "item": item,
         }
+        self._page_extras.setdefault(uid, {})["multi_page_count"] = len(pdf_page_sizes)
+        index_combo.currentIndexChanged.connect(
+            lambda _combo_index, page_uid=uid: self._on_page_index_changed(page_uid)
+        )
         self._page_paths[uid] = {"image_path": image_path, "overlay_path": overlay_path}
+        self._update_page_size_lock(uid)
+
+    @staticmethod
+    def _build_page_index_combo(
+        current_page_index: int,
+        page_sizes: List[PdfPageSize],
+    ) -> QtWidgets.QComboBox:
+        combo = QtWidgets.QComboBox()
+        current_page_index = max(1, int(current_page_index))
+        selected_combo_index = -1
+        for page_index, (width, height, label) in enumerate(page_sizes, start=1):
+            combo.addItem(str(page_index), (page_index, width, height))
+            if label:
+                combo.setItemData(
+                    combo.count() - 1,
+                    label,
+                    QtCore.Qt.ItemDataRole.ToolTipRole,
+                )
+            if page_index == current_page_index:
+                selected_combo_index = combo.count() - 1
+        if not page_sizes:
+            combo.addItem(
+                str(current_page_index),
+                (current_page_index, None, None),
+            )
+            selected_combo_index = 0
+        elif selected_combo_index < 0:
+            combo.addItem(
+                f"{current_page_index} (Unavailable)",
+                (current_page_index, None, None),
+            )
+            selected_combo_index = combo.count() - 1
+        combo.setCurrentIndex(selected_combo_index)
+        return combo
+
+    def _replace_page_index_combo(
+        self,
+        uid: str,
+        page_sizes: List[PdfPageSize],
+        page_index: int,
+    ) -> None:
+        combos = self._page_combos.get(uid)
+        if not combos:
+            return
+        item = combos["item"]
+        index_combo = self._build_page_index_combo(page_index, page_sizes)
+        self.plan_tree.setItemWidget(item, 6, index_combo)
+        combos["index"] = index_combo
+        self._page_extras.setdefault(uid, {})["multi_page_count"] = len(page_sizes)
+        index_combo.currentIndexChanged.connect(
+            lambda _combo_index, page_uid=uid: self._on_page_index_changed(page_uid)
+        )
+        self._on_page_index_changed(uid)
+
+    def _on_page_index_changed(self, uid: str) -> None:
+        combos = self._page_combos.get(uid)
+        if not combos:
+            return
+        index_data: Optional[PdfPageIndexData] = combos["index"].currentData()
+        if index_data is None:
+            return
+        _page_index, width, height = index_data
+        if width is None or height is None:
+            return
+        item = combos["item"]
+        size_combo = self._build_page_size_combo(width, height)
+        self.plan_tree.setItemWidget(item, 2, size_combo)
+        combos["size"] = size_combo
         self._update_page_size_lock(uid)
 
     def _build_page_size_combo(
@@ -1783,6 +1928,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             combos = self._page_combos.get(page_uid, {})
             size_data = combos["size"].currentData() if combos.get("size") else None
             scale_data = combos["scale"].currentData() if combos.get("scale") else None
+            index_data = combos["index"].currentData()
             show_data = combos["show"].currentData() if combos.get("show") else None
             paths = self._page_paths.get(page_uid, {})
             role_data = item.data(0, self._ITEM_ROLE) if item else None
@@ -1799,9 +1945,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
                     "scale_factor1": scale_data[0] if scale_data else None,
                     "scale_factor2": scale_data[1] if scale_data else None,
                     "show_mode": show_data if show_data is not None else 0,
-                    "index": (
-                        int(item.text(6)) if item and item.text(6).isdigit() else 1
-                    ),
+                    "index": int(index_data[0]),
                     "multi_page_count": self._page_extras.get(page_uid, {}).get(
                         "multi_page_count", 0
                     ),

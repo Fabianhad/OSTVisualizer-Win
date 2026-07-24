@@ -6,9 +6,10 @@ from types import SimpleNamespace
 from copy import deepcopy
 from pathlib import Path
 from unittest import mock
+import pyodbc
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.project_write_service import (
     ProjectWriteService,
@@ -61,6 +62,7 @@ class _FakeCursor:
         self.connection = object()
         self.last_query = None
         self.calls = []
+        self.current_overlay_path = ""
 
     def execute(self, query, *args):
         self.last_query = query
@@ -68,6 +70,13 @@ class _FakeCursor:
         return None
 
     def fetchone(self):
+        if self.last_query and "SELECT [OverlayImagePath]" in self.last_query:
+            return [self.current_overlay_path]
+        if (
+            self.last_query
+            and "SELECT [ScaleFactor1], [ScaleFactor2]" in self.last_query
+        ):
+            return [0.125, 12.0]
         return [0]
 
 
@@ -76,13 +85,15 @@ class _FakeConnection:
         self.cursor_obj = _FakeCursor()
         self.enter_count = 0
         self.exit_count = 0
+        self.exit_args = []
 
     def __enter__(self):
         self.enter_count += 1
         return self
 
-    def __exit__(self, *_args):
+    def __exit__(self, *args):
         self.exit_count += 1
+        self.exit_args.append(args)
         return False
 
     def cursor(self):
@@ -176,9 +187,13 @@ class _ScaleCoverSheetOps(_CoverSheetSettingsOps):
         super().__init__()
         self.conn = _ScaleConnection(old_sf1, old_sf2)
         self.rescale_calls = []
+        self.overlay_rescale_calls = []
 
     def _rescale_page_positions(self, _cursor, _schema, page_uid, factor):
         self.rescale_calls.append((page_uid, factor))
+
+    def _rescale_page_overlay_rect(self, _cursor, _schema, page_uid, factor):
+        self.overlay_rescale_calls.append((page_uid, factor))
 
 
 class _PageScaleOps(PageOperationsMixin):
@@ -205,6 +220,11 @@ class _PageScaleOps(PageOperationsMixin):
         self.rescale_calls.append((page_uid, factor))
 
 
+class _FailingPositionScaleOps(_PageScaleOps):
+    def _rescale_page_positions(self, _cursor, _schema, _page_uid, _factor):
+        raise pyodbc.Error("position update failed")
+
+
 class _FakeLogger:
     def exception(self, *_args):
         return None
@@ -227,52 +247,53 @@ class _BulkDeleteCoverSheetOps(_CoverSheetSettingsOps):
         self.schema = _AllDeleteColumnsSchema()
 
 
-class _OverlayRectSchema:
-    def column_exists(self, table, column):
-        return table == "BidPages" and column in (
-            "OverlayImagePath",
-            "OverlayRect",
-            "OverlayOffsetX",
-            "OverlayOffsetY",
-        )
-
-    def require_table(self, _table):
-        return None
-
-    def require_column(self, _table, _column):
-        return None
-
-
-class _OverlayRectRow:
-    Width = 42.0
-    Height = 30.0
-
-
 class _OverlayRectCursor(_FakeCursor):
-    def __init__(self):
+    def __init__(
+        self,
+        current_overlay_path="",
+        scale_factor1=0.125,
+        scale_factor2=12.0,
+        overlay_rect="-1.103146,0.000000,2686.161423,1919.474692",
+    ):
         super().__init__()
-        self.last_query = None
-
-    def execute(self, query, *_args):
-        self.last_query = query
-        return None
+        self.current_overlay_path = current_overlay_path
+        self.scale_factor1 = scale_factor1
+        self.scale_factor2 = scale_factor2
+        self.overlay_rect = overlay_rect
 
     def fetchone(self):
-        if self.last_query and "SELECT [Width], [Height]" in self.last_query:
-            return _OverlayRectRow()
-        return [0]
+        if (
+            self.last_query
+            and "SELECT [Width], [Height], [ScaleFactor1], [ScaleFactor2], "
+            "[OverlayImagePath]" in self.last_query
+        ):
+            return SimpleNamespace(
+                Width=42.0,
+                Height=30.0,
+                ScaleFactor1=self.scale_factor1,
+                ScaleFactor2=self.scale_factor2,
+                OverlayImagePath=self.current_overlay_path,
+            )
+        if (
+            self.last_query
+            and "SELECT [ScaleFactor1], [ScaleFactor2]" in self.last_query
+        ):
+            return [self.scale_factor1, self.scale_factor2]
+        if self.last_query and "SELECT [OverlayRect]" in self.last_query:
+            return [self.overlay_rect]
+        return super().fetchone()
 
 
 class _OverlayRectConnection(_FakeConnection):
-    def __init__(self):
+    def __init__(self, **cursor_options):
         super().__init__()
-        self.cursor_obj = _OverlayRectCursor()
+        self.cursor_obj = _OverlayRectCursor(**cursor_options)
 
 
 class _PageOverlayOps(PageOperationsMixin):
-    def __init__(self):
-        self.conn = _OverlayRectConnection()
-        self.schema = _OverlayRectSchema()
+    def __init__(self, current_overlay_path=""):
+        self.conn = _OverlayRectConnection(current_overlay_path=current_overlay_path)
+        self.schema = _FakeSchema()
         self.updates = []
         self.logger = _FakeLogger()
 
@@ -308,6 +329,59 @@ class _PageOverlayOps(PageOperationsMixin):
         return True
 
 
+class _OverlayScaleSchema:
+    @staticmethod
+    def column_exists(table, column):
+        return table == "BidPages" and column in (
+            "OverlayRect",
+            "OverlayOffsetX",
+            "OverlayOffsetY",
+        )
+
+
+class _OverlayScaleOps(PageOperationsMixin):
+    def __init__(self, overlay_rect="-1.103146,0.000000,2686.161423,1919.474692"):
+        self.conn = _OverlayRectConnection(
+            scale_factor1=0.1875,
+            overlay_rect=overlay_rect,
+        )
+        self.schema = _OverlayScaleSchema()
+        self.updates = []
+        self.position_rescales = []
+        self.logger = _FakeLogger()
+
+    def _connection(self, _db_path):
+        return self.conn
+
+    def _schema(self, _conn):
+        return self.schema
+
+    @staticmethod
+    def _require_write_columns(*_args):
+        return None
+
+    @staticmethod
+    def _record_caught_mutation_error(_exc):
+        return False
+
+    def _rescale_page_positions(self, _cursor, _schema, page_uid, factor):
+        self.position_rescales.append((page_uid, factor))
+
+    def _execute_update_values(
+        self,
+        _cursor,
+        _schema,
+        table,
+        values,
+        _required_columns,
+        _where_clause,
+        _where_values,
+        operation,
+    ):
+        self.updates.append((table, dict(values), operation))
+        return True
+
+
 class _FakeIconProvider:
     def set_window_icon(self, _window):
         return None
@@ -334,7 +408,12 @@ class _FakeWorkspaceStateModel:
 
 
 def _cover_sheet_data(
-    *, image_path="", overlay_image_path="", scale_factor1=0.125, scale_factor2=12.0
+    *,
+    image_path="",
+    overlay_image_path="",
+    scale_factor1=0.125,
+    scale_factor2=12.0,
+    page_index=1,
 ):
     return CoverSheetData(
         bid_uid="7",
@@ -356,7 +435,7 @@ def _cover_sheet_data(
                 scale_factor2=scale_factor2,
                 image_path=image_path,
                 overlay_image_path=overlay_image_path,
-                index=1,
+                index=page_index,
                 show_mode=0,
             )
         ],
@@ -369,6 +448,10 @@ def _path_editor(dialog, item, column):
 
 def _path_buttons(dialog, item, column):
     return dialog.plan_tree.itemWidget(item, column).findChildren(QtWidgets.QPushButton)
+
+
+def _index_combo(dialog, item):
+    return dialog.plan_tree.itemWidget(item, 6)
 
 
 def _first_page_update(dialog):
@@ -439,6 +522,170 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             self.assertEqual(header.visualIndex(0), 0)
         finally:
             dialog.deleteLater()
+
+    def test_cover_sheet_pdf_index_combo_lists_every_page_and_preserves_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "indexed.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            page_sizes = [
+                (24.0, 36.0, "11 TRAFFIC CONTROL DETAILS"),
+                (30.0, 42.0, "Floor Plan"),
+                (36.0, 48.0, ""),
+            ]
+            data = _cover_sheet_data(image_path=pdf_path, page_index=2)
+            data.pages_without_folder[0].width = 30.0
+            data.pages_without_folder[0].height = 42.0
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                data,
+                pdf_page_sizes_fn=lambda _path: page_sizes,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                combo = _index_combo(dialog, item)
+                self.assertIsInstance(combo, QtWidgets.QComboBox)
+                self.assertEqual(
+                    [combo.itemText(index) for index in range(combo.count())],
+                    ["1", "2", "3"],
+                )
+                self.assertEqual(
+                    [
+                        combo.itemData(index, QtCore.Qt.ItemDataRole.ToolTipRole)
+                        for index in range(combo.count())
+                    ],
+                    ["11 TRAFFIC CONTROL DETAILS", "Floor Plan", None],
+                )
+                self.assertEqual(combo.currentData(), (2, 30.0, 42.0))
+                self.assertEqual(item.text(6), "")
+                self.assertEqual(_first_page_update(dialog)["index"], 2)
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_pdf_index_change_updates_page_index_and_dimensions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "indexed.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=lambda _path: [
+                    (24.0, 36.0, "Cover"),
+                    (30.0, 42.0, "Floor Plan"),
+                    (35.0, 47.0, "Details"),
+                ],
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                combo = _index_combo(dialog, item)
+                combo.setCurrentIndex(2)
+                QtWidgets.QApplication.processEvents()
+                page = _first_page_update(dialog)
+                self.assertEqual(page["index"], 3)
+                self.assertEqual(page["width"], 35.0)
+                self.assertEqual(page["height"], 47.0)
+                self.assertEqual(item.text(6), "")
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_rows_have_independent_index_combos_and_share_pdf_metadata(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "indexed.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            data = _cover_sheet_data(image_path=pdf_path)
+            second_page = deepcopy(data.pages_without_folder[0])
+            second_page.uid = "p2"
+            second_page.index = 2
+            second_page.width = 30.0
+            second_page.height = 42.0
+            second_page.image_path = pdf_path.replace("\\", "/")
+            data.pages_without_folder.append(second_page)
+            calls = []
+            page_sizes = [
+                (24.0, 36.0, "Cover"),
+                (30.0, 42.0, "Floor Plan"),
+            ]
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                data,
+                pdf_page_sizes_fn=lambda path: calls.append(path) or page_sizes,
+            )
+            try:
+                first_combo = _index_combo(dialog, dialog.plan_tree.topLevelItem(0))
+                second_combo = _index_combo(dialog, dialog.plan_tree.topLevelItem(1))
+                self.assertIsNot(first_combo, second_combo)
+                self.assertEqual(calls, [pdf_path])
+                self.assertEqual(first_combo.currentData()[0], 1)
+                self.assertEqual(second_combo.currentData()[0], 2)
+                first_combo.setCurrentIndex(1)
+                self.assertEqual(first_combo.currentData()[0], 2)
+                self.assertEqual(second_combo.currentData()[0], 2)
+                second_combo.setCurrentIndex(0)
+                self.assertEqual(first_combo.currentData()[0], 2)
+                self.assertEqual(second_combo.currentData()[0], 1)
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_index_and_row_drag_follow_lock_state(self):
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, _cover_sheet_data())
+        try:
+            combo = _index_combo(dialog, dialog.plan_tree.topLevelItem(0))
+            dialog._update_lock_state(True)
+            self.assertFalse(combo.isEnabled())
+            self.assertFalse(dialog.plan_tree.dragEnabled())
+            self.assertFalse(dialog.plan_tree.acceptDrops())
+            dialog._update_lock_state(False)
+            self.assertTrue(combo.isEnabled())
+            self.assertTrue(dialog.plan_tree.dragEnabled())
+            self.assertTrue(dialog.plan_tree.acceptDrops())
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_moved_page_preserves_index_and_widget_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "indexed.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=lambda _path: [
+                    (24.0, 36.0, "Cover"),
+                    (30.0, 42.0, "Floor Plan"),
+                ],
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                _index_combo(dialog, item).setCurrentIndex(1)
+                before = _first_page_update(dialog)
+                dialog._on_tree_items_about_to_move([item])
+                moved_item = dialog.plan_tree.takeTopLevelItem(0)
+                dialog.plan_tree.addTopLevelItem(moved_item)
+                dialog._on_tree_items_moved([moved_item])
+                after = _first_page_update(dialog)
+                for field in (
+                    "index",
+                    "width",
+                    "height",
+                    "scale_factor1",
+                    "scale_factor2",
+                    "show_mode",
+                    "image_path",
+                    "overlay_path",
+                ):
+                    self.assertEqual(after[field], before[field])
+                self.assertEqual(moved_item.text(6), "")
+            finally:
+                dialog.close()
+                dialog.deleteLater()
 
     def test_cover_sheet_plan_header_state_restores_width_and_order(self):
         model = _FakeWorkspaceStateModel()
@@ -578,7 +825,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         )
         self.assertEqual(
             page_update["values"]["OverlayRect"],
-            "0.000000,0.000000,2688.000000,1920.000000",
+            "0.000000,0.000000,4032.000000,2880.000000",
         )
         self.assertEqual(page_update["values"]["OverlayOffsetX"], 0.0)
         self.assertEqual(page_update["values"]["OverlayOffsetY"], 0.0)
@@ -596,6 +843,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         )
         self.assertTrue(success)
         self.assertEqual(ops.rescale_calls, [(11, 0.5)])
+        self.assertEqual(ops.overlay_rescale_calls, [(11, 0.5)])
 
     def test_cover_sheet_unchanged_page_scale_does_not_rescale_positions(self):
         ops = _ScaleCoverSheetOps(old_sf1=0.125, old_sf2=12.0)
@@ -609,6 +857,59 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         )
         self.assertTrue(success)
         self.assertEqual(ops.rescale_calls, [])
+        self.assertEqual(ops.overlay_rescale_calls, [])
+
+    def test_cover_sheet_overlay_replacement_uses_new_calibration_once(self):
+        ops = _ScaleCoverSheetOps(old_sf1=0.1875, old_sf2=12.0)
+        success = ops.save_cover_sheet(
+            "bid.mdb",
+            "7",
+            {
+                "measure_base": 0,
+                "pages": [
+                    _cover_sheet_page_update(
+                        scale_factor1=0.125,
+                        overlay_path=r"C:\Plans\overlay.pdf",
+                    )
+                ],
+            },
+        )
+        self.assertTrue(success)
+        self.assertEqual(ops.overlay_rescale_calls, [])
+        page_update = next(
+            update for update in ops.updates if update["table"] == "BidPages"
+        )
+        self.assertEqual(
+            page_update["values"]["OverlayRect"],
+            "0.000000,0.000000,4032.000000,2880.000000",
+        )
+
+    def test_cover_sheet_separator_only_overlay_path_change_preserves_rectangle(self):
+        ops = _CoverSheetSettingsOps()
+        ops.conn.cursor_obj.current_overlay_path = "C:/Plans/overlay.pdf"
+        success = ops.save_cover_sheet(
+            "bid.mdb",
+            "7",
+            {
+                "measure_base": 0,
+                "pages": [
+                    _cover_sheet_page_update(
+                        overlay_path=r"C:\Plans\overlay.pdf",
+                    )
+                ],
+            },
+        )
+        self.assertTrue(success)
+        page_update = next(
+            update for update in ops.updates if update["table"] == "BidPages"
+        )
+        self.assertEqual(
+            page_update["values"]["OverlayImagePath"],
+            r"C:\Plans\overlay.pdf",
+        )
+        self.assertNotIn("OverlayRect", page_update["values"])
+        self.assertNotIn("OverlayOffsetX", page_update["values"])
+        self.assertNotIn("OverlayOffsetY", page_update["values"])
 
     def test_cover_sheet_new_page_scale_does_not_rescale_positions(self):
         ops = _ScaleCoverSheetOps(old_sf1=0.125, old_sf2=12.0)
@@ -636,6 +937,65 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         self.assertTrue(ops.save_page_scale("bid.mdb", "11", 0.25, 12.0))
         self.assertEqual(ops.rescale_calls, [(11, 0.5)])
 
+    def test_page_scale_save_rejects_invalid_overlay_calibration(self):
+        cases = (
+            (_PageScaleOps(old_sf1=0.0, old_sf2=12.0), 0.125, 12.0),
+            (_PageScaleOps(old_sf1=0.125, old_sf2=12.0), 0.0, 12.0),
+        )
+        for ops, scale_factor1, scale_factor2 in cases:
+            with self.subTest(
+                old_scale=(
+                    ops.conn.cursor_obj.old_sf1,
+                    ops.conn.cursor_obj.old_sf2,
+                ),
+                new_scale=(scale_factor1, scale_factor2),
+            ):
+                self.assertFalse(
+                    ops.save_page_scale(
+                        "bid.mdb",
+                        "11",
+                        scale_factor1,
+                        scale_factor2,
+                    )
+                )
+                self.assertEqual(ops.rescale_calls, [])
+
+    def test_page_scale_change_rescales_overlay_rect_and_offsets(self):
+        ops = _OverlayScaleOps()
+        self.assertTrue(ops.save_page_scale("bid.mdb", "11", 0.125, 12.0))
+        self.assertEqual(ops.position_rescales, [(11, 1.5)])
+        self.assertEqual(
+            ops.updates,
+            [
+                (
+                    "BidPages",
+                    {
+                        "OverlayRect": ("-1.654719,0.000000,4029.242135,2879.212038"),
+                        "OverlayOffsetX": -1.654719,
+                        "OverlayOffsetY": 0.0,
+                    },
+                    "rescale_page_overlay_rect",
+                )
+            ],
+        )
+
+    def test_page_scale_change_preserves_native_empty_overlay_marker(self):
+        ops = _OverlayScaleOps(overlay_rect="*")
+        self.assertTrue(ops.save_page_scale("bid.mdb", "11", 0.125, 12.0))
+        self.assertEqual(ops.position_rescales, [(11, 1.5)])
+        self.assertEqual(ops.updates, [])
+
+    def test_page_scale_position_failure_aborts_scale_update(self):
+        ops = _FailingPositionScaleOps(old_sf1=0.125, old_sf2=12.0)
+        self.assertFalse(ops.save_page_scale("bid.mdb", "11", 0.25, 12.0))
+        self.assertFalse(
+            any(
+                "UPDATE [BidPages] SET [ScaleFactor1]" in query
+                for query, _args in ops.conn.cursor_obj.calls
+            )
+        )
+        self.assertIs(ops.conn.exit_args[-1][0], pyodbc.Error)
+
     def test_saving_page_overlay_image_generates_full_page_overlay_rect(self):
         ops = _PageOverlayOps()
         success = ops.save_page_overlay_image(
@@ -650,11 +1010,28 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             ops.updates[0]["values"],
             {
                 "OverlayImagePath": r"C:\OCS Documents\OST\overlay.pdf",
-                "OverlayRect": "0.000000,0.000000,2688.000000,1920.000000",
+                "OverlayRect": "0.000000,0.000000,4032.000000,2880.000000",
                 "OverlayOffsetX": 0.0,
                 "OverlayOffsetY": 0.0,
             },
         )
+
+    def test_saving_same_overlay_image_preserves_existing_rectangle(self):
+        path = r"C:\OCS Documents\OST\overlay.pdf"
+        ops = _PageOverlayOps(current_overlay_path=path)
+        self.assertTrue(ops.save_page_overlay_image("bid.mdb", "11", path))
+        self.assertEqual(ops.updates, [])
+
+    def test_saving_same_overlay_image_with_other_separators_preserves_rectangle(self):
+        ops = _PageOverlayOps(current_overlay_path="C:/OCS Documents/OST/overlay.pdf")
+        self.assertTrue(
+            ops.save_page_overlay_image(
+                "bid.mdb",
+                "11",
+                r"C:\OCS Documents\OST\overlay.pdf",
+            )
+        )
+        self.assertEqual(ops.updates, [])
 
     def test_saving_overlay_rect_mirrors_native_translation_fields(self):
         ops = _PageOverlayOps()
@@ -1203,6 +1580,224 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 dialog.close()
                 dialog.deleteLater()
 
+    def test_cover_sheet_unchanged_missing_pdf_path_preserves_page_index(self):
+        missing_path = str(Path(tempfile.gettempdir()) / "missing-indexed-page.pdf")
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(image_path=missing_path, page_index=2),
+            pdf_page_sizes_fn=lambda _path: self.fail(
+                "A missing PDF must not invoke the metadata provider"
+            ),
+        )
+        try:
+            item = dialog.plan_tree.topLevelItem(0)
+            editor = _path_editor(dialog, item, 4)
+            editor.begin_path_edit()
+            editor.setText(missing_path)
+            editor.editingFinished.emit()
+            self.assertEqual(_index_combo(dialog, item).currentData()[0], 2)
+            self.assertEqual(_first_page_update(dialog)["index"], 2)
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_image_path_signal_accepts_multi_page_size_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "multi-page.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(),
+                pdf_page_sizes_fn=lambda _path: [
+                    (25.0, 37.0, "Sheet A"),
+                    (31.0, 43.0, "Sheet B"),
+                ],
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                editor = _path_editor(dialog, item, 4)
+                editor.begin_path_edit()
+                editor.setText(pdf_path)
+                with mock.patch("sys.excepthook") as exception_hook:
+                    editor.editingFinished.emit()
+                    QtWidgets.QApplication.processEvents()
+                exception_hook.assert_not_called()
+                pages = dialog.get_updates()["pages"]
+                self.assertEqual(
+                    [
+                        (
+                            page["name"],
+                            page["index"],
+                            page["width"],
+                            page["height"],
+                            page["image_path"],
+                        )
+                        for page in pages
+                    ],
+                    [
+                        ("Level 1", 1, 25.0, 37.0, pdf_path),
+                        ("multi-page.pdf (2)", 2, 31.0, 43.0, pdf_path),
+                    ],
+                )
+                for row in range(dialog.plan_tree.topLevelItemCount()):
+                    combo = _index_combo(dialog, dialog.plan_tree.topLevelItem(row))
+                    self.assertEqual(combo.count(), 2)
+                    self.assertEqual(
+                        [combo.itemText(index) for index in range(combo.count())],
+                        ["1", "2"],
+                    )
+                    self.assertEqual(
+                        [
+                            combo.itemData(
+                                index,
+                                QtCore.Qt.ItemDataRole.ToolTipRole,
+                            )
+                            for index in range(combo.count())
+                        ],
+                        ["Sheet A", "Sheet B"],
+                    )
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_reselecting_same_pdf_does_not_duplicate_page_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "multi-page.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(),
+                pdf_page_sizes_fn=lambda _path: [
+                    (25.0, 37.0, "Sheet A"),
+                    (31.0, 43.0, "Sheet B"),
+                ],
+            )
+            try:
+                editor = _path_editor(dialog, dialog.plan_tree.topLevelItem(0), 4)
+                for _ in range(2):
+                    editor.begin_path_edit()
+                    editor.setText(pdf_path)
+                    editor.editingFinished.emit()
+                pages = dialog.get_updates()["pages"]
+                self.assertEqual(len(pages), 2)
+                self.assertEqual(
+                    [(page["index"], page["image_path"]) for page in pages],
+                    [(1, pdf_path), (2, pdf_path)],
+                )
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_pdf_metadata_cache_tracks_file_signature(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "cached.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+
+            def page_sizes(path):
+                calls.append(Path(path).stat().st_size)
+                return [(float(calls[-1]), 30.0, "")]
+
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(),
+                pdf_page_sizes_fn=page_sizes,
+            )
+            try:
+                first = dialog._read_pdf_page_sizes(pdf_path)
+                self.assertIs(dialog._read_pdf_page_sizes(pdf_path), first)
+                Path(pdf_path).write_bytes(b"%PDF-1.4\nupdated\n")
+                second = dialog._read_pdf_page_sizes(pdf_path)
+                self.assertEqual(len(calls), 2)
+                self.assertNotEqual(first, second)
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_raster_path_signal_uses_image_dimensions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = str(Path(tmp) / "drawing.png")
+            image = QtGui.QImage(960, 480, QtGui.QImage.Format.Format_RGB32)
+            image.fill(QtCore.Qt.GlobalColor.white)
+            self.assertTrue(image.save(image_path))
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(),
+                pdf_page_sizes_fn=lambda _path: self.fail(
+                    "Raster images must not use the PDF page-size provider"
+                ),
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                editor = _path_editor(dialog, item, 4)
+                editor.begin_path_edit()
+                editor.setText(image_path)
+                with mock.patch("sys.excepthook") as exception_hook:
+                    editor.editingFinished.emit()
+                    QtWidgets.QApplication.processEvents()
+                exception_hook.assert_not_called()
+                page = _first_page_update(dialog)
+                self.assertEqual(page["image_path"], image_path)
+                self.assertAlmostEqual(page["width"], 10.0, delta=0.01)
+                self.assertAlmostEqual(page["height"], 5.0, delta=0.01)
+                combo = _index_combo(dialog, item)
+                self.assertEqual(combo.count(), 1)
+                page_index, width, height = combo.currentData()
+                self.assertEqual(page_index, 1)
+                self.assertAlmostEqual(width, 10.0, delta=0.01)
+                self.assertAlmostEqual(height, 5.0, delta=0.01)
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_pdf_provider_signature_errors_are_not_hidden(self):
+        def invalid_provider(_path, _obsolete_page_index):
+            return []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "drawing.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(),
+                pdf_page_sizes_fn=invalid_provider,
+            )
+            try:
+                with self.assertRaises(TypeError):
+                    dialog._read_pdf_page_sizes(pdf_path)
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_empty_pdf_result_does_not_retry_same_provider(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "unreadable.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(),
+                pdf_page_sizes_fn=lambda path: calls.append(path) or [],
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                editor = _path_editor(dialog, item, 4)
+                editor.begin_path_edit()
+                editor.setText(pdf_path)
+                editor.editingFinished.emit()
+                self.assertEqual(calls, [pdf_path])
+                self.assertEqual(_first_page_update(dialog)["image_path"], pdf_path)
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
     def test_cover_sheet_directory_path_is_missing_image_not_pdf(self):
         calls = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -1268,6 +1863,32 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 self.assertEqual(page["image_path"], "")
                 self.assertEqual(page["overlay_path"], "")
                 self.assertEqual(_path_editor(dialog, item, 4).text(), "")
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_cancelled_browse_preserves_current_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = str(Path(tmp) / "drawing.pdf")
+            Path(image_path).write_bytes(b"%PDF-1.4\n")
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=image_path),
+                pdf_page_sizes_fn=lambda _path: [(25.0, 37.0, "")],
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                image_browse, _image_clear = _path_buttons(dialog, item, 4)
+                with mock.patch.object(
+                    QtWidgets.QFileDialog,
+                    "getOpenFileName",
+                    return_value=("", ""),
+                ):
+                    image_browse.click()
+                page = _first_page_update(dialog)
+                self.assertEqual(page["image_path"], image_path)
+                self.assertEqual(_path_editor(dialog, item, 4).text(), "drawing.pdf")
             finally:
                 dialog.close()
                 dialog.deleteLater()

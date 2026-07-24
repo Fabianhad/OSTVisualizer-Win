@@ -597,11 +597,18 @@ class FakeWriteService:
 
 
 class FakeDeferredPersistence:
-    def __init__(self):
+    def __init__(self, accepts_writes=True):
         self.overlay_rect_calls = []
+        self.accepts_writes = accepts_writes
 
-    def schedule_page_overlay_rect(self, db_path, page_uid, overlay_rect):
+    def schedule_page_overlay_rect(
+        self,
+        db_path: str,
+        page_uid: str,
+        overlay_rect: tuple[float, float, float, float],
+    ) -> bool:
         self.overlay_rect_calls.append((db_path, page_uid, overlay_rect))
+        return self.accepts_writes
 
 
 class FakeAnnotationWriteService:
@@ -935,29 +942,51 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertTrue(dimension_spec.properties["FontItalic"])
         self.assertTrue(dimension_spec.properties["FontUnderline"])
 
-    def test_overlay_rect_updates_model_immediately_and_defers_persistence(self):
-        data = FakeProjectData()
-        write = FakeWriteService()
-        deferred = FakeDeferredPersistence()
-        handler = PlanViewActionHandler(
+    def _overlay_handler(self, data, deferred, *, allowed=True):
+        return PlanViewActionHandler(
             plan_view=FakePlanView(),
             ui_state_manager=FakeUiState(),
             project_data_svc=data,
-            project_write_svc=write,
+            project_write_svc=FakeWriteService(),
             annotation_write_svc=FakeAnnotationWriteService(),
             page_settings_bar=FakePageSettingsBar(),
             undo_svc=FakeUndoService(),
             event_bus=FakeEventBus(),
-            ui_access_manager=FakeAccess({Feature.EDIT_PAGE_SETTINGS}),
+            ui_access_manager=FakeAccess(
+                {Feature.EDIT_PAGE_SETTINGS} if allowed else set()
+            ),
             deferred_persistence_manager=deferred,
         )
-        result = handler.save_current_page_overlay_rect((1, 2.5, 3, 4.25))
-        self.assertTrue(result.write_success)
+
+    def test_overlay_rect_updates_model_immediately_and_defers_persistence(self):
+        data = FakeProjectData()
+        deferred = FakeDeferredPersistence()
+        handler = self._overlay_handler(data, deferred)
+        accepted = handler.save_current_page_overlay_rect((1, 2.5, 3, 4.25))
+        self.assertTrue(accepted)
         self.assertEqual(data.get_page("p1").overlay_rect, (1.0, 2.5, 3.0, 4.25))
         self.assertEqual(
             deferred.overlay_rect_calls,
             [("bid.mdb", "p1", (1.0, 2.5, 3.0, 4.25))],
         )
+
+    def test_overlay_rect_rejected_deferred_write_does_not_update_model(self):
+        data = FakeProjectData()
+        deferred = FakeDeferredPersistence(accepts_writes=False)
+        handler = self._overlay_handler(data, deferred)
+        original_rect = data.get_page("p1").overlay_rect
+        accepted = handler.save_current_page_overlay_rect((1, 2.5, 3, 4.25))
+        self.assertFalse(accepted)
+        self.assertEqual(data.get_page("p1").overlay_rect, original_rect)
+
+    def test_overlay_rect_permission_denial_returns_rejected_without_scheduling(self):
+        data = FakeProjectData()
+        deferred = FakeDeferredPersistence()
+        handler = self._overlay_handler(data, deferred, allowed=False)
+        original_rect = data.get_page("p1").overlay_rect
+        self.assertFalse(handler.save_current_page_overlay_rect((1, 2.5, 3, 4.25)))
+        self.assertEqual(deferred.overlay_rect_calls, [])
+        self.assertEqual(data.get_page("p1").overlay_rect, original_rect)
 
     def _paste_handler(
         self,

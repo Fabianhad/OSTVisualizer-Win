@@ -99,6 +99,7 @@ class CompositeRenderer:
                 str(page.overlay_rotation),
                 str(page.deskew_rotation_overlay),
                 str(page.overlay_rect),
+                str(page.overlay_units_per_sheet_inch),
             ]
         )
 

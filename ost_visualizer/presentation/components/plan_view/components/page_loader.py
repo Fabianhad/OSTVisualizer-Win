@@ -613,6 +613,7 @@ class PageLoaderMixin:
             tuple(round(value, 6) for value in overlay_rect),
             round(float(page.overlay_rotation or 0.0), 6),
             round(float(page.deskew_rotation_overlay or 0.0), 6),
+            page.overlay_units_per_sheet_inch,
         )
 
     def _visible_frame_render_identity_key(self):
