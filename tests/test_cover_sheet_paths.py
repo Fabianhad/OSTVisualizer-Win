@@ -1,5 +1,7 @@
 import os
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -33,10 +35,16 @@ from ost_visualizer.infrastructure.mdb.components.page_operations import (
 from ost_visualizer.infrastructure.mdb.components.settings_operations import (
     SettingsOperationsMixin,
 )
+from ost_visualizer.infrastructure.mdb.components.settings_reader import (
+    SettingsReaderMixin,
+)
 from ost_visualizer.presentation.dialogs.cover_sheet.dialog import CoverSheetDialog
 from ost_visualizer.presentation.dialogs.cover_sheet.header_state import (
     load_cover_sheet_plan_header_state,
     save_cover_sheet_plan_header_state,
+)
+from ost_visualizer.presentation.dialogs.cover_sheet.pdf_metadata_loader import (
+    PdfMetadataSnapshot,
 )
 from ost_visualizer.presentation.handlers.cover_sheet_handler import CoverSheetHandler
 from ost_visualizer.presentation.managers.icon_manager import IconId, IconManager
@@ -398,12 +406,14 @@ class _FakeMouseEvent:
 class _FakeWorkspaceStateModel:
     def __init__(self, state=None):
         self._state = deepcopy(state or WorkspaceState())
+        self.update_count = 0
 
     @property
     def state(self):
         return deepcopy(self._state)
 
     def update_state(self, state):
+        self.update_count += 1
         self._state = deepcopy(state)
 
 
@@ -414,6 +424,7 @@ def _cover_sheet_data(
     scale_factor1=0.125,
     scale_factor2=12.0,
     page_index=1,
+    multi_page_count=0,
 ):
     return CoverSheetData(
         bid_uid="7",
@@ -437,9 +448,24 @@ def _cover_sheet_data(
                 overlay_image_path=overlay_image_path,
                 index=page_index,
                 show_mode=0,
+                multi_page_count=multi_page_count,
             )
         ],
     )
+
+
+class _ManualRunnablePool:
+    def __init__(self):
+        self.runnables = []
+
+    def start(self, runnable):
+        self.runnables.append(runnable)
+
+    def run_next(self, *, process_events=True):
+        runnable = self.runnables.pop(0)
+        runnable.run()
+        if process_events:
+            QtWidgets.QApplication.processEvents()
 
 
 def _path_editor(dialog, item, column):
@@ -451,7 +477,48 @@ def _path_buttons(dialog, item, column):
 
 
 def _index_combo(dialog, item):
-    return dialog.plan_tree.itemWidget(item, 6)
+    return _combo_editor(dialog, item, 6)
+
+
+def _combo_editor(dialog, item, column):
+    model_index = dialog.plan_tree.indexFromItem(item, column)
+    delegate = dialog.plan_tree.itemDelegateForColumn(column)
+    option = QtWidgets.QStyleOptionViewItem()
+    editor = delegate.createEditor(dialog.plan_tree.viewport(), option, model_index)
+    deadline = time.monotonic() + 2.0
+    page_data = item.data(0, dialog._ITEM_ROLE) or ()
+    page_uid = str(page_data[1]) if len(page_data) > 1 else ""
+    while (
+        editor is None
+        and column == 6
+        and page_uid in dialog._page_rows
+        and dialog._page_rows[page_uid].pending_metadata_request is not None
+        and time.monotonic() < deadline
+    ):
+        QtWidgets.QApplication.processEvents()
+        time.sleep(0.005)
+        editor = delegate.createEditor(
+            dialog.plan_tree.viewport(),
+            option,
+            model_index,
+        )
+    if editor is not None:
+        delegate.setEditorData(editor, model_index)
+    return editor
+
+
+def _select_combo(dialog, item, column, combo_index):
+    combo = _combo_editor(dialog, item, column)
+    if combo is None:
+        raise AssertionError("Expected an editable Cover Sheet combo")
+    combo.setCurrentIndex(combo_index)
+    model_index = dialog.plan_tree.indexFromItem(item, column)
+    dialog.plan_tree.itemDelegateForColumn(column).setModelData(
+        combo,
+        dialog.plan_tree.model(),
+        model_index,
+    )
+    return combo
 
 
 def _first_page_update(dialog):
@@ -557,7 +624,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                     ["11 TRAFFIC CONTROL DETAILS", "Floor Plan", None],
                 )
                 self.assertEqual(combo.currentData(), (2, 30.0, 42.0))
-                self.assertEqual(item.text(6), "")
+                self.assertEqual(item.text(6), "2")
                 self.assertEqual(_first_page_update(dialog)["index"], 2)
             finally:
                 dialog.close()
@@ -579,17 +646,840 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             )
             try:
                 item = dialog.plan_tree.topLevelItem(0)
-                combo = _index_combo(dialog, item)
-                combo.setCurrentIndex(2)
+                combo = _select_combo(dialog, item, 6, 2)
                 QtWidgets.QApplication.processEvents()
                 page = _first_page_update(dialog)
                 self.assertEqual(page["index"], 3)
                 self.assertEqual(page["width"], 35.0)
                 self.assertEqual(page["height"], 47.0)
-                self.assertEqual(item.text(6), "")
+                self.assertEqual(item.text(6), "3")
             finally:
                 dialog.close()
                 dialog.deleteLater()
+
+    def test_cover_sheet_startup_virtualizes_combo_columns_without_pdf_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "shared.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            for page_count in (10, 100, 500, 1000):
+                data = _cover_sheet_data(
+                    image_path=pdf_path,
+                    multi_page_count=1,
+                )
+                template = data.pages_without_folder[0]
+                data.pages_without_folder = []
+                for index in range(page_count):
+                    page = deepcopy(template)
+                    page.uid = f"p{index}"
+                    page.sheet_no = str(index + 1)
+                    data.pages_without_folder.append(page)
+                workspace = _FakeWorkspaceStateModel()
+                dialog = CoverSheetDialog(
+                    _FakeIconProvider(),
+                    None,
+                    data,
+                    pdf_page_sizes_fn=lambda _path: self.fail(
+                        "Dialog startup must not read PDF metadata"
+                    ),
+                    workspace_state_model=workspace,
+                )
+                try:
+                    self.assertLessEqual(
+                        len(dialog.findChildren(QtWidgets.QComboBox)),
+                        10,
+                    )
+                    for row in (0, page_count - 1):
+                        item = dialog.plan_tree.topLevelItem(row)
+                        for column in (2, 3, 6, 7):
+                            self.assertIsNone(dialog.plan_tree.itemWidget(item, column))
+                    self.assertEqual(
+                        len(dialog.get_updates()["pages"]),
+                        page_count,
+                    )
+                    self.assertEqual(workspace.update_count, 0)
+                finally:
+                    dialog.close()
+                    dialog.deleteLater()
+                    QtWidgets.QApplication.processEvents()
+
+    def test_cover_sheet_index_metadata_loads_on_demand_without_changing_size(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "indexed.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            pool = _ManualRunnablePool()
+            calls = []
+            workspace = _FakeWorkspaceStateModel()
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(
+                    image_path=pdf_path,
+                    page_index=1,
+                    multi_page_count=2,
+                ),
+                pdf_page_sizes_fn=lambda path: calls.append(path)
+                or [
+                    (24.0, 36.0, "Cover"),
+                    (30.0, 42.0, "Plan"),
+                ],
+                pdf_metadata_pool=pool,
+                workspace_state_model=workspace,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                model_index = dialog.plan_tree.indexFromItem(item, 6)
+                delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                editor = delegate.createEditor(
+                    dialog.plan_tree.viewport(),
+                    QtWidgets.QStyleOptionViewItem(),
+                    model_index,
+                )
+                self.assertIsNone(editor)
+                self.assertEqual(calls, [])
+                self.assertEqual(len(pool.runnables), 1)
+                pool.run_next()
+                self.assertEqual(calls, [pdf_path])
+                self.assertEqual(workspace.update_count, 0)
+                self.assertEqual(_first_page_update(dialog)["width"], 42.0)
+                self.assertEqual(_first_page_update(dialog)["height"], 30.0)
+                editor = delegate.createEditor(
+                    dialog.plan_tree.viewport(),
+                    QtWidgets.QStyleOptionViewItem(),
+                    model_index,
+                )
+                self.assertIsInstance(editor, QtWidgets.QComboBox)
+                delegate.setEditorData(editor, model_index)
+                self.assertEqual(editor.count(), 2)
+                self.assertEqual(
+                    [
+                        editor.itemData(
+                            index,
+                            QtCore.Qt.ItemDataRole.ToolTipRole,
+                        )
+                        for index in range(editor.count())
+                    ],
+                    ["Cover", "Plan"],
+                )
+                editor.setCurrentIndex(1)
+                delegate.setModelData(
+                    editor,
+                    dialog.plan_tree.model(),
+                    model_index,
+                )
+                page = _first_page_update(dialog)
+                self.assertEqual(page["index"], 2)
+                self.assertEqual((page["width"], page["height"]), (30.0, 42.0))
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_index_single_click_starts_one_metadata_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "indexed.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            pool = _ManualRunnablePool()
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=lambda _path: [(42.0, 30.0, "Page 1")],
+                pdf_metadata_pool=pool,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                model_index = dialog.plan_tree.indexFromItem(item, 6)
+                dialog.plan_tree.setCurrentItem(item, 6)
+                dialog.plan_tree.clicked.emit(model_index)
+                self.assertEqual(len(pool.runnables), 1)
+                dialog.plan_tree.clicked.emit(model_index)
+                self.assertEqual(len(pool.runnables), 1)
+            finally:
+                dialog.reject()
+                dialog.deleteLater()
+
+    def test_locked_and_unlicensed_rows_do_not_request_pdf_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "restricted.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            for has_license, lock_dialog in ((True, True), (False, False)):
+                pool = _ManualRunnablePool()
+                dialog = CoverSheetDialog(
+                    _FakeIconProvider(),
+                    None,
+                    _cover_sheet_data(image_path=pdf_path),
+                    has_license=has_license,
+                    pdf_page_sizes_fn=lambda _path: [(42.0, 30.0, "Page 1")],
+                    pdf_metadata_pool=pool,
+                )
+                try:
+                    if lock_dialog:
+                        dialog._update_lock_state(True)
+                    item = dialog.plan_tree.topLevelItem(0)
+                    index = dialog.plan_tree.indexFromItem(item, 6)
+                    dialog._on_plan_cell_clicked(index)
+                    self.assertEqual(pool.runnables, [])
+                    delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                    self.assertIsNone(
+                        delegate.createEditor(
+                            dialog.plan_tree.viewport(),
+                            QtWidgets.QStyleOptionViewItem(),
+                            index,
+                        )
+                    )
+                finally:
+                    dialog.reject()
+                    dialog.deleteLater()
+
+    def test_cover_sheet_worker_start_failure_leaves_index_editable(self):
+        class FailingPool:
+            @staticmethod
+            def start(_runnable):
+                raise RuntimeError("pool is shutting down")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "indexed.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            calls = []
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=lambda path: calls.append(path) or [],
+                pdf_metadata_pool=FailingPool(),
+            )
+            try:
+                combo = _index_combo(dialog, dialog.plan_tree.topLevelItem(0))
+                self.assertIsInstance(combo, QtWidgets.QComboBox)
+                self.assertEqual(combo.currentData()[0], 1)
+                self.assertEqual(calls, [])
+                self.assertIsNone(dialog._page_rows["p1"].pending_metadata_request)
+            finally:
+                dialog.reject()
+                dialog.deleteLater()
+
+    def test_cover_sheet_uses_explicit_falsey_metadata_pool(self):
+        class FalseyPool(_ManualRunnablePool):
+            @staticmethod
+            def __bool__():
+                return False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "indexed.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            pool = FalseyPool()
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=lambda _path: [(42.0, 30.0, "Page 1")],
+                pdf_metadata_pool=pool,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                dialog.plan_tree.clicked.emit(dialog.plan_tree.indexFromItem(item, 6))
+                self.assertEqual(len(pool.runnables), 1)
+            finally:
+                dialog.reject()
+                dialog.deleteLater()
+
+    def test_cover_sheet_path_changes_update_page_size_editability(self):
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+        )
+        try:
+            item = dialog.plan_tree.topLevelItem(0)
+            size_delegate = dialog.plan_tree.itemDelegateForColumn(2)
+            size_index = dialog.plan_tree.indexFromItem(item, 2)
+            self.assertIsInstance(
+                size_delegate.createEditor(
+                    dialog.plan_tree.viewport(),
+                    QtWidgets.QStyleOptionViewItem(),
+                    size_index,
+                ),
+                QtWidgets.QComboBox,
+            )
+            overlay_editor = _path_editor(dialog, item, 5)
+            overlay_editor.begin_path_edit()
+            overlay_editor.setText("missing-overlay.pdf")
+            overlay_editor.editingFinished.emit()
+            self.assertIsNone(
+                size_delegate.createEditor(
+                    dialog.plan_tree.viewport(),
+                    QtWidgets.QStyleOptionViewItem(),
+                    size_index,
+                )
+            )
+            _path_buttons(dialog, item, 5)[-1].click()
+            self.assertIsInstance(
+                size_delegate.createEditor(
+                    dialog.plan_tree.viewport(),
+                    QtWidgets.QStyleOptionViewItem(),
+                    size_index,
+                ),
+                QtWidgets.QComboBox,
+            )
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+
+    def test_cover_sheet_initialization_blocks_user_change_handlers(self):
+        class InstrumentedDialog(CoverSheetDialog):
+            def __init__(self, *args, **kwargs):
+                self.change_counts = {
+                    "measure": 0,
+                    "scale_style": 0,
+                    "job_status": 0,
+                }
+                super().__init__(*args, **kwargs)
+
+            def _on_measure_base_changed(self, inches_checked):
+                self.change_counts["measure"] += 1
+                super()._on_measure_base_changed(inches_checked)
+
+            def _on_pref_scale_style_changed(self):
+                self.change_counts["scale_style"] += 1
+                super()._on_pref_scale_style_changed()
+
+            def _on_job_status_changed(self):
+                self.change_counts["job_status"] += 1
+                super()._on_job_status_changed()
+
+        dialog = InstrumentedDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+        )
+        try:
+            self.assertEqual(
+                dialog.change_counts,
+                {
+                    "measure": 0,
+                    "scale_style": 0,
+                    "job_status": 1,
+                },
+            )
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+
+    def test_preference_scale_population_preserves_existing_signal_block(self):
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(),
+        )
+        try:
+            dialog.combo_pref_scale.blockSignals(True)
+            dialog._populate_pref_scale_combo(1)
+            self.assertTrue(dialog.combo_pref_scale.signalsBlocked())
+        finally:
+            dialog.combo_pref_scale.blockSignals(False)
+            dialog.reject()
+            dialog.deleteLater()
+
+    def test_cover_sheet_duplicate_rows_coalesce_pending_pdf_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "shared.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            data = _cover_sheet_data(
+                image_path=pdf_path,
+                multi_page_count=2,
+            )
+            second = deepcopy(data.pages_without_folder[0])
+            second.uid = "p2"
+            second.index = 2
+            data.pages_without_folder.append(second)
+            pool = _ManualRunnablePool()
+            calls = []
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                data,
+                pdf_page_sizes_fn=lambda path: calls.append(path)
+                or [(42.0, 30.0, "One"), (42.0, 30.0, "Two")],
+                pdf_metadata_pool=pool,
+            )
+            try:
+                delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                for row in range(2):
+                    item = dialog.plan_tree.topLevelItem(row)
+                    self.assertIsNone(
+                        delegate.createEditor(
+                            dialog.plan_tree.viewport(),
+                            QtWidgets.QStyleOptionViewItem(),
+                            dialog.plan_tree.indexFromItem(item, 6),
+                        )
+                    )
+                self.assertEqual(len(pool.runnables), 1)
+                pool.run_next()
+                self.assertEqual(calls, [pdf_path])
+                self.assertEqual(
+                    [dialog._page_rows[uid].multi_page_count for uid in ("p1", "p2")],
+                    [2, 2],
+                )
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_stale_pdf_metadata_is_rejected_after_path_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path = str(Path(tmp) / "old.pdf")
+            missing_path = str(Path(tmp) / "missing.pdf")
+            Path(old_path).write_bytes(b"%PDF-1.4\n")
+            pool = _ManualRunnablePool()
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=old_path),
+                pdf_page_sizes_fn=lambda _path: [(24.0, 36.0, "Old")],
+                pdf_metadata_pool=pool,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                model_index = dialog.plan_tree.indexFromItem(item, 6)
+                delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        model_index,
+                    )
+                )
+                editor = _path_editor(dialog, item, 4)
+                editor.begin_path_edit()
+                editor.setText(missing_path)
+                editor.editingFinished.emit()
+                pool.run_next()
+                row = dialog._page_rows["p1"]
+                self.assertEqual(row.image_path, missing_path)
+                self.assertEqual(row.pdf_page_sizes, ())
+                self.assertEqual(row.page_index, 1)
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_changed_pdf_signature_rejects_result_and_allows_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "changing.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            pool = _ManualRunnablePool()
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=lambda _path: [(24.0, 36.0, "Changed")],
+                pdf_metadata_pool=pool,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                model_index = dialog.plan_tree.indexFromItem(item, 6)
+                delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        model_index,
+                    )
+                )
+                Path(pdf_path).write_bytes(b"%PDF-1.4\nupdated\n")
+                pool.run_next()
+                row = dialog._page_rows["p1"]
+                self.assertIsNone(row.pdf_page_sizes)
+                self.assertIsNone(row.pending_metadata_request)
+                retry_editor = delegate.createEditor(
+                    dialog.plan_tree.viewport(),
+                    QtWidgets.QStyleOptionViewItem(),
+                    model_index,
+                )
+                self.assertIsNone(retry_editor)
+                self.assertEqual(len(pool.runnables), 1)
+                pool.run_next()
+                retry_editor = delegate.createEditor(
+                    dialog.plan_tree.viewport(),
+                    QtWidgets.QStyleOptionViewItem(),
+                    model_index,
+                )
+                self.assertIsInstance(retry_editor, QtWidgets.QComboBox)
+            finally:
+                dialog.reject()
+                dialog.deleteLater()
+
+    def test_cover_sheet_does_not_coalesce_different_file_signatures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "changing.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            data = _cover_sheet_data(image_path=pdf_path)
+            second_page = deepcopy(data.pages_without_folder[0])
+            second_page.uid = "p2"
+            data.pages_without_folder.append(second_page)
+            pool = _ManualRunnablePool()
+            calls = []
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                data,
+                pdf_page_sizes_fn=lambda path: calls.append(path)
+                or [(42.0, 30.0, "Current")],
+                pdf_metadata_pool=pool,
+            )
+            try:
+                delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                first = dialog.plan_tree.topLevelItem(0)
+                second_item = dialog.plan_tree.topLevelItem(1)
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        dialog.plan_tree.indexFromItem(first, 6),
+                    )
+                )
+                Path(pdf_path).write_bytes(b"%PDF-1.4\nupdated\n")
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        dialog.plan_tree.indexFromItem(second_item, 6),
+                    )
+                )
+                self.assertEqual(len(pool.runnables), 2)
+                pool.run_next()
+                pool.run_next()
+                self.assertEqual(calls, [pdf_path])
+                self.assertIsNone(dialog._page_rows["p1"].pdf_page_sizes)
+                self.assertEqual(
+                    dialog._page_rows["p2"].pdf_page_sizes,
+                    ((42.0, 30.0, "Current"),),
+                )
+            finally:
+                dialog.reject()
+                dialog.deleteLater()
+
+    def test_cover_sheet_same_row_supersedes_pending_old_signature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "superseded.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            pool = _ManualRunnablePool()
+            calls = []
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=lambda path: calls.append(path)
+                or [(42.0, 30.0, "Current")],
+                pdf_metadata_pool=pool,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                model_index = dialog.plan_tree.indexFromItem(item, 6)
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        model_index,
+                    )
+                )
+                first_pending = dialog._page_rows["p1"].pending_metadata_request
+                Path(pdf_path).write_bytes(b"%PDF-1.4\nnew\n")
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        model_index,
+                    )
+                )
+                second_pending = dialog._page_rows["p1"].pending_metadata_request
+                self.assertNotEqual(first_pending, second_pending)
+                self.assertEqual(len(pool.runnables), 2)
+                pool.run_next()
+                self.assertEqual(
+                    dialog._page_rows["p1"].pending_metadata_request,
+                    second_pending,
+                )
+                pool.run_next()
+                self.assertEqual(calls, [pdf_path])
+                self.assertEqual(
+                    dialog._page_rows["p1"].pdf_page_sizes,
+                    ((42.0, 30.0, "Current"),),
+                )
+            finally:
+                dialog.reject()
+                dialog.deleteLater()
+
+    def test_cover_sheet_rejects_file_change_before_queued_result_is_applied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "queued.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            pool = _ManualRunnablePool()
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=lambda _path: [(42.0, 30.0, "Old")],
+                pdf_metadata_pool=pool,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        dialog.plan_tree.indexFromItem(item, 6),
+                    )
+                )
+                pool.run_next(process_events=False)
+                Path(pdf_path).write_bytes(b"%PDF-1.4\nnew content\n")
+                QtWidgets.QApplication.processEvents()
+                row = dialog._page_rows["p1"]
+                self.assertIsNone(row.pdf_page_sizes)
+                self.assertIsNone(row.pending_metadata_request)
+            finally:
+                dialog.reject()
+                dialog.deleteLater()
+
+    def test_cover_sheet_current_metadata_failure_is_reported_and_retryable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "failed.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            pool = _ManualRunnablePool()
+
+            def fail(_path):
+                raise ValueError("invalid PDF")
+
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=fail,
+                pdf_metadata_pool=pool,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                model_index = dialog.plan_tree.indexFromItem(item, 6)
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        model_index,
+                    )
+                )
+                with self.assertLogs(
+                    "ost_visualizer.presentation.dialogs.cover_sheet.dialog",
+                    level="WARNING",
+                ) as captured:
+                    pool.run_next()
+                self.assertIn("invalid PDF", captured.output[0])
+                row = dialog._page_rows["p1"]
+                self.assertIsNone(row.pending_metadata_request)
+                self.assertIsNone(row.pdf_page_sizes)
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        model_index,
+                    )
+                )
+                self.assertEqual(len(pool.runnables), 1)
+            finally:
+                dialog.reject()
+                dialog.deleteLater()
+
+    def test_cover_sheet_close_rejects_pending_pdf_metadata_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "pending.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            pool = _ManualRunnablePool()
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=lambda _path: [(24.0, 36.0, "Late")],
+                pdf_metadata_pool=pool,
+            )
+            item = dialog.plan_tree.topLevelItem(0)
+            delegate = dialog.plan_tree.itemDelegateForColumn(6)
+            self.assertIsNone(
+                delegate.createEditor(
+                    dialog.plan_tree.viewport(),
+                    QtWidgets.QStyleOptionViewItem(),
+                    dialog.plan_tree.indexFromItem(item, 6),
+                )
+            )
+            signature = dialog._metadata_loader.file_signature(pdf_path)
+            path_identity = dialog._path_identity(pdf_path)
+            dialog.reject()
+            pool.run_next()
+            self.assertTrue(dialog._closed)
+            self.assertIsNone(dialog._page_rows["p1"].pdf_page_sizes)
+            self.assertIsNone(dialog._metadata_loader.cached(path_identity, signature))
+            with self.assertRaisesRegex(RuntimeError, "loader is closed"):
+                dialog._metadata_loader.load(pdf_path, path_identity)
+            dialog.deleteLater()
+
+    def test_cover_sheet_close_during_real_worker_drops_late_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "worker.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            worker_started = threading.Event()
+            release_worker = threading.Event()
+            pool = QtCore.QThreadPool()
+            pool.setMaxThreadCount(1)
+
+            def page_sizes(_path):
+                worker_started.set()
+                release_worker.wait(2.0)
+                return [(42.0, 30.0, "Late")]
+
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=page_sizes,
+                pdf_metadata_pool=pool,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        dialog.plan_tree.indexFromItem(item, 6),
+                    )
+                )
+                self.assertTrue(worker_started.wait(1.0))
+                dialog.reject()
+                release_worker.set()
+                self.assertTrue(pool.waitForDone(2000))
+                QtWidgets.QApplication.processEvents()
+                self.assertIsNone(dialog._page_rows["p1"].pdf_page_sizes)
+            finally:
+                release_worker.set()
+                pool.waitForDone(2000)
+                dialog.deleteLater()
+
+    def test_cover_sheet_removed_row_rejects_pending_pdf_metadata_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "removed.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            pool = _ManualRunnablePool()
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(image_path=pdf_path),
+                pdf_page_sizes_fn=lambda _path: [(42.0, 30.0, "Late")],
+                pdf_metadata_pool=pool,
+            )
+            try:
+                item = dialog.plan_tree.topLevelItem(0)
+                delegate = dialog.plan_tree.itemDelegateForColumn(6)
+                self.assertIsNone(
+                    delegate.createEditor(
+                        dialog.plan_tree.viewport(),
+                        QtWidgets.QStyleOptionViewItem(),
+                        dialog.plan_tree.indexFromItem(item, 6),
+                    )
+                )
+                item.setSelected(True)
+                dialog._delete_selected()
+                self.assertNotIn("p1", dialog._page_rows)
+                pool.run_next()
+                self.assertNotIn("p1", dialog._page_rows)
+            finally:
+                dialog.reject()
+                dialog.deleteLater()
+
+    def test_cover_sheet_uses_persisted_multi_page_count_without_pdf_read(self):
+        dialog = CoverSheetDialog(
+            _FakeIconProvider(),
+            None,
+            _cover_sheet_data(multi_page_count=7),
+            pdf_page_sizes_fn=lambda _path: self.fail(
+                "Persisted multipage count must not require PDF metadata"
+            ),
+        )
+        try:
+            self.assertEqual(_first_page_update(dialog)["multi_page_count"], 7)
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+
+    def test_cover_sheet_reader_loads_persisted_multi_page_count(self):
+        class Schema:
+            @staticmethod
+            def require_column(_table, _column):
+                return None
+
+            @staticmethod
+            def optional_table_missing(table):
+                return table == "BidPageFolders"
+
+            @staticmethod
+            def optional_column(_table, column, _fallback):
+                return f"[{column}]"
+
+            @staticmethod
+            def order_by_existing(_table, _columns, fallback):
+                return fallback
+
+        class Cursor:
+            def __init__(self):
+                self.query = ""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, query, *_args):
+                self.query = query
+
+            def fetchall(self):
+                return [
+                    SimpleNamespace(
+                        UID=1,
+                        Name="Plan",
+                        SheetNo="A1",
+                        Width=42.0,
+                        Height=30.0,
+                        ScaleFactor1=0.125,
+                        ScaleFactor2=12.0,
+                        ImagePath="plan.pdf",
+                        OverlayImagePath=None,
+                        Index1=3,
+                        MultiPageCount=7,
+                        Show=0,
+                        BidPageFolderUID=None,
+                    )
+                ]
+
+        class Connection:
+            def __init__(self):
+                self.cursors = []
+
+            def cursor(self):
+                cursor = Cursor()
+                self.cursors.append(cursor)
+                return cursor
+
+        class Reader(SettingsReaderMixin):
+            @staticmethod
+            def _schema(_connection):
+                return Schema()
+
+            @staticmethod
+            def _record_caught_read_error(_error):
+                return False
+
+        connection = Connection()
+        _folders, pages = Reader()._query_cover_sheet_pages(connection, "7")
+        self.assertEqual(pages[0].multi_page_count, 7)
+        self.assertIn("[MultiPageCount]", connection.cursors[-1].query)
 
     def test_cover_sheet_rows_have_independent_index_combos_and_share_pdf_metadata(
         self,
@@ -623,10 +1513,12 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 self.assertEqual(calls, [pdf_path])
                 self.assertEqual(first_combo.currentData()[0], 1)
                 self.assertEqual(second_combo.currentData()[0], 2)
-                first_combo.setCurrentIndex(1)
+                _select_combo(dialog, dialog.plan_tree.topLevelItem(0), 6, 1)
+                first_combo = _index_combo(dialog, dialog.plan_tree.topLevelItem(0))
                 self.assertEqual(first_combo.currentData()[0], 2)
                 self.assertEqual(second_combo.currentData()[0], 2)
-                second_combo.setCurrentIndex(0)
+                _select_combo(dialog, dialog.plan_tree.topLevelItem(1), 6, 0)
+                second_combo = _index_combo(dialog, dialog.plan_tree.topLevelItem(1))
                 self.assertEqual(first_combo.currentData()[0], 2)
                 self.assertEqual(second_combo.currentData()[0], 1)
             finally:
@@ -636,20 +1528,20 @@ class CoverSheetPathSaveTests(unittest.TestCase):
     def test_cover_sheet_index_and_row_drag_follow_lock_state(self):
         dialog = CoverSheetDialog(_FakeIconProvider(), None, _cover_sheet_data())
         try:
-            combo = _index_combo(dialog, dialog.plan_tree.topLevelItem(0))
             dialog._update_lock_state(True)
-            self.assertFalse(combo.isEnabled())
+            item = dialog.plan_tree.topLevelItem(0)
+            self.assertIsNone(_index_combo(dialog, item))
             self.assertFalse(dialog.plan_tree.dragEnabled())
             self.assertFalse(dialog.plan_tree.acceptDrops())
             dialog._update_lock_state(False)
-            self.assertTrue(combo.isEnabled())
+            self.assertIsInstance(_index_combo(dialog, item), QtWidgets.QComboBox)
             self.assertTrue(dialog.plan_tree.dragEnabled())
             self.assertTrue(dialog.plan_tree.acceptDrops())
         finally:
             dialog.close()
             dialog.deleteLater()
 
-    def test_cover_sheet_moved_page_preserves_index_and_widget_state(self):
+    def test_cover_sheet_moved_page_preserves_row_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             pdf_path = str(Path(tmp) / "indexed.pdf")
             Path(pdf_path).write_bytes(b"%PDF-1.4\n")
@@ -664,9 +1556,8 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             )
             try:
                 item = dialog.plan_tree.topLevelItem(0)
-                _index_combo(dialog, item).setCurrentIndex(1)
+                _select_combo(dialog, item, 6, 1)
                 before = _first_page_update(dialog)
-                dialog._on_tree_items_about_to_move([item])
                 moved_item = dialog.plan_tree.takeTopLevelItem(0)
                 dialog.plan_tree.addTopLevelItem(moved_item)
                 dialog._on_tree_items_moved([moved_item])
@@ -682,7 +1573,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                     "overlay_path",
                 ):
                     self.assertEqual(after[field], before[field])
-                self.assertEqual(moved_item.text(6), "")
+                self.assertEqual(moved_item.text(6), "2")
             finally:
                 dialog.close()
                 dialog.deleteLater()
@@ -1187,6 +2078,28 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_cover_sheet_next_sheet_number_uses_deep_tree_pages(self):
+        data = _cover_sheet_data()
+        page = data.pages_without_folder.pop()
+        page.sheet_no = "00100"
+        deepest = CoverSheetFolder(uid="f3", name="Deep", pages=[page])
+        middle = CoverSheetFolder(
+            uid="f2",
+            name="Middle",
+            subfolders={"f3": deepest},
+        )
+        data.folders["f1"] = CoverSheetFolder(
+            uid="f1",
+            name="Root",
+            subfolders={"f2": middle},
+        )
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            self.assertEqual(dialog._next_sheet_no(), "00101")
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+
     def test_cover_sheet_imported_image_pages_keep_visual_sequence(self):
         data = _cover_sheet_data()
         dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
@@ -1262,7 +2175,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
         )
         try:
             page_item = dialog.plan_tree.topLevelItem(0)
-            scale_combo = dialog.plan_tree.itemWidget(page_item, 3)
+            scale_combo = _combo_editor(dialog, page_item, 3)
             self.assertEqual(tuple(scale_combo.currentData()), (1.0, 120.0))
             self.assertEqual(scale_combo.currentText(), '1" = 10\' 0"')
         finally:
@@ -1596,7 +2509,6 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             editor.begin_path_edit()
             editor.setText(missing_path)
             editor.editingFinished.emit()
-            self.assertEqual(_index_combo(dialog, item).currentData()[0], 2)
             self.assertEqual(_first_page_update(dialog)["index"], 2)
         finally:
             dialog.close()
@@ -1709,11 +2621,44 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             )
             try:
                 first = dialog._read_pdf_page_sizes(pdf_path)
-                self.assertIs(dialog._read_pdf_page_sizes(pdf_path), first)
+                self.assertEqual(dialog._read_pdf_page_sizes(pdf_path), first)
+                self.assertEqual(len(calls), 1)
                 Path(pdf_path).write_bytes(b"%PDF-1.4\nupdated\n")
                 second = dialog._read_pdf_page_sizes(pdf_path)
                 self.assertEqual(len(calls), 2)
                 self.assertNotEqual(first, second)
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
+    def test_cover_sheet_sync_metadata_keeps_exact_loaded_signature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = str(Path(tmp) / "drawing.pdf")
+            Path(pdf_path).write_bytes(b"%PDF-1.4\n")
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(),
+                pdf_page_sizes_fn=lambda _path: [],
+            )
+            loaded = PdfMetadataSnapshot(
+                signature=(123, 456),
+                page_sizes=((24.0, 36.0, "Page 1"),),
+            )
+            try:
+                with mock.patch.object(
+                    dialog._metadata_loader,
+                    "load",
+                    return_value=loaded,
+                ):
+                    dialog._on_page_image_changed(
+                        "p1",
+                        "image_path",
+                        pdf_path,
+                    )
+                row = dialog._page_rows["p1"]
+                self.assertEqual(row.metadata_signature, loaded.signature)
+                self.assertEqual(row.pdf_page_sizes, loaded.page_sizes)
             finally:
                 dialog.close()
                 dialog.deleteLater()

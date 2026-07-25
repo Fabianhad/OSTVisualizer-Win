@@ -25,6 +25,7 @@ class CoverSheetPage:
     overlay_image_path: str
     index: int
     show_mode: int
+    multi_page_count: int = 0
 
 
 @dataclass

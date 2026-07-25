@@ -82,12 +82,6 @@ class SettingsReaderMixin:
                 connection, bid_uid
             )
 
-            def _safe_float(val, default):
-                try:
-                    return float(val) if val not in (None, "", "NULL") else default
-                except (ValueError, TypeError):
-                    return default
-
             def _safe_int(val, default):
                 try:
                     return int(val) if val not in (None, "", "NULL") else default
@@ -104,12 +98,12 @@ class SettingsReaderMixin:
                 bid_no=_clean_optional_text(bid_row.get("BidNo", "")),
                 job_id=_clean_optional_text(bid_row.get("JobID", "")),
                 measure_base=_safe_int(bid_row.get("MeasureBase"), 0),
-                takeoff_increments=_safe_float(bid_row.get("TakeoffIncrements"), 1.0),
+                takeoff_increments=parse_float(bid_row.get("TakeoffIncrements"), 1.0),
                 scale_style=_safe_int(bid_row.get("ScaleStyle"), 1),
-                scale_factor1=_safe_float(bid_row.get("ScaleFactor1"), 0.25),
-                scale_factor2=_safe_float(bid_row.get("ScaleFactor2"), 12.0),
-                page_width=_safe_float(bid_row.get("PageWidth"), 42.0),
-                page_height=_safe_float(bid_row.get("PageHeight"), 30.0),
+                scale_factor1=parse_float(bid_row.get("ScaleFactor1"), 0.25),
+                scale_factor2=parse_float(bid_row.get("ScaleFactor2"), 12.0),
+                page_width=parse_float(bid_row.get("PageWidth"), 42.0),
+                page_height=parse_float(bid_row.get("PageHeight"), 30.0),
                 folders=folders,
                 pages_without_folder=pages_without_folder,
                 job_statuses=job_statuses,
@@ -172,6 +166,7 @@ class SettingsReaderMixin:
                         schema.optional_column("BidPages", "ImagePath", "NULL"),
                         schema.optional_column("BidPages", "OverlayImagePath", "NULL"),
                         schema.optional_column("BidPages", "Index1", "1"),
+                        schema.optional_column("BidPages", "MultiPageCount", "0"),
                         schema.optional_column("BidPages", "Show", "0"),
                         schema.optional_column("BidPages", "BidPageFolderUID", "NULL"),
                     ]
@@ -201,6 +196,11 @@ class SettingsReaderMixin:
                         overlay_image_path=decode_value(row.OverlayImagePath) or "",
                         index=int(row.Index1) if row.Index1 is not None else 1,
                         show_mode=int(row.Show) if row.Show is not None else 0,
+                        multi_page_count=(
+                            int(row.MultiPageCount)
+                            if row.MultiPageCount is not None
+                            else 0
+                        ),
                     )
                     folder_uid = (
                         str(row.BidPageFolderUID) if row.BidPageFolderUID else None
