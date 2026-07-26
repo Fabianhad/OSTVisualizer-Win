@@ -2281,6 +2281,59 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
             ],
         )
 
+    def test_create_window_releases_partial_window_when_setup_fails(self):
+        calls = []
+        manager = DetachedPageViewManager.__new__(DetachedPageViewManager)
+        manager.icon_provider = object()
+        manager.event_bus = object()
+        manager.project_data = SimpleNamespace(
+            get_bid=lambda bid_ref: None,
+            get_current_bid_file_path=lambda: None,
+            get_all_takeoffs=lambda: [],
+            find_hotlinks_targeting=lambda _uids: [],
+        )
+        manager.config_model = Config()
+        manager._coord_factory = SimpleNamespace(create=lambda: object())
+        manager._color_service = object()
+        manager._infrastructure_provider = SimpleNamespace(
+            create_plan_view_renderers=lambda _coord_system, _color_service: object()
+        )
+
+        class PartialWindow(FakeConstructedWindow):
+            def show_when_page_ready(self):
+                raise RuntimeError("show failed")
+
+            def close(self):
+                calls.append("close")
+
+        manager._window_factory = lambda **_options: PartialWindow(calls)
+        manager._annotation_write_service = None
+        manager._write_service = None
+        manager.parent_window = None
+        manager._window = None
+        manager._window_undo_service = None
+        manager._on_window_page_selected = lambda page_uid: None
+        manager._on_window_named_view_selected = lambda page_uid, _named_view_uid: None
+        manager._on_window_scale_changed = lambda page_uid, _sf1, _sf2: None
+        manager._collect_pages_with_takeoffs = lambda bid_ref: set()
+        manager._is_read_only = lambda: False
+        manager._get_page_data = lambda view: SimpleNamespace(page=object())
+        view = SimpleNamespace(uid="view-1", bid_ref=None)
+
+        with self.assertRaisesRegex(RuntimeError, "show failed"):
+            manager._create_window(view)
+
+        self.assertIsNone(manager._window)
+        self.assertIsNone(manager._window_undo_service)
+        self.assertEqual(
+            calls,
+            [
+                ("set_read_only", False),
+                "destroyed_connected",
+                "close",
+            ],
+        )
+
     def _manager_for_initial_state_tests(self, saved_state_provider=None):
         calls = []
         manager = DetachedPageViewManager.__new__(DetachedPageViewManager)

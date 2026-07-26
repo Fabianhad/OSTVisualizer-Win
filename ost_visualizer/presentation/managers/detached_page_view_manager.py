@@ -290,6 +290,7 @@ class DetachedPageViewManager(IShutdownAware):
         image_layer: bool = False,
         all_layers: bool = False,
     ) -> None:
+        del layer_uid, show, image_layer, all_layers
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()
@@ -307,6 +308,7 @@ class DetachedPageViewManager(IShutdownAware):
         annotation_uids: list | None = None,
         annotation_types: list | None = None,
     ) -> None:
+        del annotation_uids, annotation_types
         if not self.is_view_open():
             return
         view = self.repository.get_active_view()
@@ -727,7 +729,6 @@ class DetachedPageViewManager(IShutdownAware):
             coord_system, color_service
         )
         undo_svc = UndoRedoService()
-        self._window_undo_service = undo_svc
         if bid_ref:
             undo_svc.set_active_bid(bid_ref)
         annotation_write_coordinator = AnnotationWriteCoordinator(
@@ -736,7 +737,7 @@ class DetachedPageViewManager(IShutdownAware):
             self.event_bus,
         )
         snap_preferences = SnapPreferencesDto.from_config(self.config_model)
-        self._window = self._window_factory(
+        window = self._window_factory(
             icon_provider=self.icon_provider,
             view=view,
             event_bus=self.event_bus,
@@ -787,12 +788,26 @@ class DetachedPageViewManager(IShutdownAware):
             **snap_preferences.to_options(),
             parent=self.parent_window,
         )
-        self._window.set_read_only(self._is_read_only())
-        window_identity = id(self._window)
-        self._window.destroyed.connect(
-            lambda _object: self._on_window_destroyed(window_identity)
-        )
-        self._window.show_when_page_ready()
+        try:
+            window.set_read_only(self._is_read_only())
+            window_identity = id(window)
+            window.destroyed.connect(
+                lambda _object: self._on_window_destroyed(window_identity)
+            )
+            self._window = window
+            self._window_undo_service = undo_svc
+            window.show_when_page_ready()
+        except Exception:
+            if self._window is window:
+                self._window = None
+                self._window_undo_service = None
+            try:
+                window.close()
+            except Exception:
+                self.logger.exception(
+                    "Failed to close partially initialized detached view"
+                )
+            raise
 
     def _get_page_data(self, view: AnnotationView) -> PageViewDto:
         self._remote_update_generation += 1
