@@ -359,6 +359,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
         self._conditions = conditions
         self._grayscale = grayscale
         layer_key = str(layer_uid) if layer_uid is not None else None
+        updates_enabled = self.tree.updatesEnabled()
+        item_changes_blocked = self._block_item_changed
         self.tree.setUpdatesEnabled(False)
         self._block_item_changed = True
         try:
@@ -383,8 +385,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
                     item, condition.layer_visible
                 )
         finally:
-            self.tree.setUpdatesEnabled(True)
-            self._block_item_changed = False
+            self.tree.setUpdatesEnabled(updates_enabled)
+            self._block_item_changed = item_changes_blocked
         self._sync_button_states()
 
     def _rebuild_tree(self, preserve_scroll: bool = True) -> None:
@@ -396,54 +398,62 @@ class ConditionsSidebar(QtWidgets.QWidget):
             self._selected_condition_uids[:] if preserve_tree_state else []
         )
         selected_folders = self._selected_folder_uids[:] if preserve_tree_state else []
+        sorting_enabled = self.tree.isSortingEnabled()
+        updates_enabled = self.tree.updatesEnabled()
+        signals_blocked = self.tree.signalsBlocked()
+        item_changes_blocked = self._block_item_changed
         self.tree.setSortingEnabled(False)
         self.tree.setUpdatesEnabled(False)
         self._block_item_changed = True
         self.tree.blockSignals(True)
-        self.tree.clear()
-        self._condition_items.clear()
-        self._folder_items.clear()
-        self._selected_condition_uids = []
-        self._selected_folder_uids = []
-        root = _SortableItem([f"Conditions - {self._project_name}"])
-        set_condition_tree_item_row_height(root, self.tree.columnCount())
-        root.setData(_COL_NO, _ITEM_ROLE, (_TYPE_ROOT, ""))
-        root.setFlags(
-            QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
-        )
-        bold_font = root.font(0)
-        bold_font.setBold(True)
-        root.setFont(0, bold_font)
-        self.tree.addTopLevelItem(root)
-        root.setFirstColumnSpanned(True)
-        conds_by_folder: Dict[Optional[str], List[Condition]] = defaultdict(list)
-        for cond in self._conditions.values():
-            fuid = cond.folder_uid
-            if fuid and fuid in self._folders:
-                conds_by_folder[fuid].append(cond)
-            else:
-                conds_by_folder[None].append(cond)
-        children_by_parent: Dict[Optional[str], List[BidConditionFolder]] = defaultdict(
-            list
-        )
-        for folder in self._folders.values():
-            parent = folder.parent_uid if folder.parent_uid in self._folders else None
-            children_by_parent[parent].append(folder)
-        self._build_folder_tree(
-            root, children_by_parent, conds_by_folder, None, self._grayscale
-        )
-        no_folder_conds = conds_by_folder.get(None, [])
-        if no_folder_conds:
-            self._add_condition_group(root, no_folder_conds, self._grayscale)
-        self.tree.blockSignals(False)
-        self.tree.setSortingEnabled(True)
+        try:
+            self.tree.clear()
+            self._condition_items.clear()
+            self._folder_items.clear()
+            self._selected_condition_uids = []
+            self._selected_folder_uids = []
+            root = _SortableItem([f"Conditions - {self._project_name}"])
+            set_condition_tree_item_row_height(root, self.tree.columnCount())
+            root.setData(_COL_NO, _ITEM_ROLE, (_TYPE_ROOT, ""))
+            root.setFlags(
+                QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
+            )
+            bold_font = root.font(0)
+            bold_font.setBold(True)
+            root.setFont(0, bold_font)
+            self.tree.addTopLevelItem(root)
+            root.setFirstColumnSpanned(True)
+            conds_by_folder: Dict[Optional[str], List[Condition]] = defaultdict(list)
+            for cond in self._conditions.values():
+                fuid = cond.folder_uid
+                if fuid and fuid in self._folders:
+                    conds_by_folder[fuid].append(cond)
+                else:
+                    conds_by_folder[None].append(cond)
+            children_by_parent: Dict[Optional[str], List[BidConditionFolder]] = (
+                defaultdict(list)
+            )
+            for folder in self._folders.values():
+                parent = (
+                    folder.parent_uid if folder.parent_uid in self._folders else None
+                )
+                children_by_parent[parent].append(folder)
+            self._build_folder_tree(
+                root, children_by_parent, conds_by_folder, None, self._grayscale
+            )
+            no_folder_conds = conds_by_folder.get(None, [])
+            if no_folder_conds:
+                self._add_condition_group(root, no_folder_conds, self._grayscale)
+        finally:
+            self.tree.blockSignals(signals_blocked)
+            self.tree.setSortingEnabled(sorting_enabled)
+            self.tree.setUpdatesEnabled(updates_enabled)
+            self._block_item_changed = item_changes_blocked
         if preserve_tree_state:
             self._restore_expanded_item_keys(expanded_keys)
         else:
             self.tree.expandAll()
-        self.tree.setUpdatesEnabled(True)
         self.tree.doItemsLayout()
-        self._block_item_changed = False
         pending_condition = self._pending_condition_select_uid
         self._pending_condition_select_uid = None
         if pending_condition:
@@ -663,6 +673,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
         quantities: Dict[str, Tuple[float, float, float]],
         partial: bool = False,
     ) -> None:
+        updates_enabled = self.tree.updatesEnabled()
+        item_changes_blocked = self._block_item_changed
         self.tree.setUpdatesEnabled(False)
         self._block_item_changed = True
         try:
@@ -690,8 +702,8 @@ class ConditionsSidebar(QtWidgets.QWidget):
                     item.setText(col, text)
                     item.setData(col, _SORT_ROLE, val)
         finally:
-            self.tree.setUpdatesEnabled(True)
-            self._block_item_changed = False
+            self.tree.setUpdatesEnabled(updates_enabled)
+            self._block_item_changed = item_changes_blocked
 
     def _reveal_item_if_needed(self, item: QtWidgets.QTreeWidgetItem) -> None:
         rect = self.tree.visualItemRect(item)

@@ -685,6 +685,52 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         finally:
             sidebar.deleteLater()
 
+    def test_condition_sidebar_refreshes_restore_caller_owned_tree_state(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        condition = Condition(uid="c1", name="Condition 1", ref_no=1)
+        sidebar.load_conditions({"c1": condition}, {}, "Project")
+        sidebar.tree.setSortingEnabled(False)
+        sidebar.tree.setUpdatesEnabled(False)
+        sidebar.tree.blockSignals(True)
+        sidebar._block_item_changed = True
+
+        sidebar.load_conditions({"c1": condition}, {}, "Project")
+        sidebar.apply_layer_visibility_state({"c1": condition})
+        sidebar.update_quantities({"c1": (12.0, 0.0, 0.0)})
+
+        self.assertFalse(sidebar.tree.isSortingEnabled())
+        self.assertFalse(sidebar.tree.updatesEnabled())
+        self.assertTrue(sidebar.tree.signalsBlocked())
+        self.assertTrue(sidebar._block_item_changed)
+
+    def test_condition_sidebar_rebuild_restores_tree_state_after_failure(self):
+        sidebar = ConditionsSidebar(None)
+        self.addCleanup(sidebar.close)
+        condition = Condition(uid="c1", name="Condition 1", ref_no=1)
+        original_state = (
+            sidebar.tree.isSortingEnabled(),
+            sidebar.tree.updatesEnabled(),
+            sidebar.tree.signalsBlocked(),
+            sidebar._block_item_changed,
+        )
+
+        with patch.object(
+            sidebar, "_build_folder_tree", side_effect=RuntimeError("build failed")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "build failed"):
+                sidebar.load_conditions({"c1": condition}, {}, "Project")
+
+        self.assertEqual(
+            (
+                sidebar.tree.isSortingEnabled(),
+                sidebar.tree.updatesEnabled(),
+                sidebar.tree.signalsBlocked(),
+                sidebar._block_item_changed,
+            ),
+            original_state,
+        )
+
     def test_takeoff_renderer_creates_items_for_hidden_condition_layers(self):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
         condition = Condition(
