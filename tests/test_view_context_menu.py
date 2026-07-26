@@ -137,6 +137,10 @@ class ViewContextMenuTests(unittest.TestCase):
                 submenu.actions()[-1].text(), COMPACT_CONTEXT_MENU_NEXT_TEXT
             )
             self.assertEqual(reassign_menu.actions[submenu.actions()[1]], "22")
+            self.assertEqual(
+                set(reassign_menu.actions.values()),
+                {str(index) for index in range(22, 42)},
+            )
         finally:
             menu.deleteLater()
 
@@ -429,6 +433,35 @@ class ViewContextMenuTests(unittest.TestCase):
             )
         finally:
             menu.deleteLater()
+
+    def test_invalid_annotation_width_leaves_context_width_unchecked(self):
+        for invalid_width in (None, float("nan"), float("inf"), "invalid"):
+            with self.subTest(width=invalid_width):
+                annotation = BidAnnotation(
+                    uid="line-1",
+                    annotation_type="line",
+                    width=invalid_width,
+                )
+                state = build_selected_annotation_style_context_state(
+                    ["line-1"],
+                    lambda _uid: annotation,
+                )
+                menu = QtWidgets.QMenu()
+                try:
+                    actions = add_selected_annotation_style_actions(
+                        menu,
+                        state,
+                        select_color_callback=lambda: None,
+                        line_width_callback=lambda _width: None,
+                        enabled=True,
+                    )
+                    self.assertIsNone(state.current_line_width)
+                    self.assertTrue(actions.width_actions)
+                    self.assertFalse(
+                        any(action.isChecked() for action in actions.width_actions)
+                    )
+                finally:
+                    menu.deleteLater()
 
     def test_selected_shape_annotation_context_capabilities(self):
         for annotation_type in ("arrow", "rect", "oval", "polygon", "cloud", "ink"):

@@ -75,6 +75,8 @@ def populate_compact_context_menu(
     menu: QtWidgets.QMenu,
     items: Sequence[T],
     add_item_action: Callable[[QtWidgets.QMenu, T], QtGui.QAction],
+    *,
+    before_render: Callable[[], None] | None = None,
 ) -> QtWidgets.QMenu:
     menu.setProperty("ost_compact_overflow_menu", True)
     menu.setProperty(
@@ -84,6 +86,8 @@ def populate_compact_context_menu(
     menu.setProperty("ost_compact_overflow_item_count", len(items))
 
     def render_page(start: int = 0) -> None:
+        if before_render is not None:
+            before_render()
         menu.clear()
         page_start, page_end, has_previous, has_next = _visible_window(
             len(items), start

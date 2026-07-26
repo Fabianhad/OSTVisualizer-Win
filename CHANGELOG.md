@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Fixed plan context menus that retained stale condition actions while paging or crashed on invalid stored annotation widths.
 - Fixed overlay rectangle writes that accepted missing pages or pages with invalid calibration factors.
 - Fixed HTML exports so project text cannot terminate the embedded scene-data script or inject markup into the document title.
 - Fixed PDF cache shutdown so one native renderer cleanup failure cannot retain the remaining per-thread renderers.

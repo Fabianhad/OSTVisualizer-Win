@@ -195,13 +195,24 @@ def build_selected_annotation_style_context_state(
     show_line_width = annotation_types <= _ANNOTATION_CONTEXT_WIDTH_TYPES
     current_line_width = None
     if show_line_width:
-        widths = [float(annotation.width) for annotation in selected_annotations]
-        first_width = widths[0]
-        if all(
-            math.isclose(width, first_width, rel_tol=0.0, abs_tol=1e-6)
-            for width in widths
-        ):
-            current_line_width = first_width
+        widths = []
+        for annotation in selected_annotations:
+            try:
+                width = float(annotation.width)
+            except (TypeError, ValueError):
+                widths = []
+                break
+            if not math.isfinite(width):
+                widths = []
+                break
+            widths.append(width)
+        if widths:
+            first_width = widths[0]
+            if all(
+                math.isclose(width, first_width, rel_tol=0.0, abs_tol=1e-6)
+                for width in widths
+            ):
+                current_line_width = first_width
     return SelectedAnnotationStyleContextState(
         annotation_uids=selected_uids,
         show_color=annotation_types <= _ANNOTATION_CONTEXT_COLOR_TYPES,
@@ -370,7 +381,12 @@ def add_reassign_condition_submenu(
         actions[action] = condition.uid
         return action
 
-    populate_compact_context_menu(submenu, ordered, _add_condition_action)
+    populate_compact_context_menu(
+        submenu,
+        ordered,
+        _add_condition_action,
+        before_render=actions.clear,
+    )
     return ReassignConditionSubmenu(submenu, actions)
 
 
