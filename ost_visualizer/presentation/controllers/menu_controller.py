@@ -5,7 +5,6 @@ from ...application.events.app_events import AppEvents
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.config import Config
 from ...domain.entities.cover_sheet import CoverSheetData, CoverSheetPage
-from ...domain.entities.file_extensions import is_tiff_suffix
 from ...domain.entities.database_descriptor import DatabaseBackend
 from ..actions.action_ids import (
     ACTION_ADJUST_IMAGES,
@@ -208,7 +207,7 @@ class MenuController:
         }
         for fmt in self._export_formats:
             callbacks[f"export_as_{fmt}"] = (
-                lambda checked=False, f=fmt: self.handlers.export.export_format(
+                lambda _checked=False, f=fmt: self.handlers.export.export_format(
                     f,
                     self.project_data.get_selected_page_uids(),
                     self.ui_state_manager.active_page_uid,
@@ -601,12 +600,14 @@ class MenuController:
             current_value = self._current_state_value(variable)
             for action in actions:
                 data = action.data()
-                action.blockSignals(True)
-                if data is None:
-                    action.setChecked(bool(current_value))
-                else:
-                    action.setChecked(data == current_value)
-                action.blockSignals(False)
+                previous_blocked = action.blockSignals(True)
+                try:
+                    if data is None:
+                        action.setChecked(bool(current_value))
+                    else:
+                        action.setChecked(data == current_value)
+                finally:
+                    action.blockSignals(previous_blocked)
 
     @staticmethod
     def _clear_checked_actions(actions) -> None:
@@ -626,27 +627,8 @@ class MenuController:
                 group.setExclusive(was_exclusive)
 
     def _current_state_value(self, key: str):
-        if key == "display_modes_synced":
-            return self.ui_state_manager.state.display_modes_synced
-        if key == "display_mode_3d":
-            return self.ui_state_manager.state.display_mode_3d
-        if key == "display_mode_2d":
-            return self.ui_state_manager.state.display_mode_2d
-        if key == "grayscale":
-            return self.ui_state_manager.state.grayscale_enabled
-        if key in (
-            "main_toolbar_visible",
-            "view_toolbar_visible",
-            "plan_tools_toolbar_visible",
-            "page_invert",
-            "page_bitonal",
-            ACTION_SHOW_OVERLAY_IMAGE,
-            ACTION_SHOW_ORIGINAL_IMAGE,
-            "takeoff_2d_tab_visible",
-            "takeoff_3d_tab_visible",
-        ):
-            return self._state_getters[key]()
-        return None
+        getter = self._state_getters.get(key)
+        return getter() if getter else None
 
     def _active_page(self):
         page_uid = self.ui_state_manager.active_page_uid
@@ -687,18 +669,10 @@ class MenuController:
         if not self._active_selected_bid_ref():
             return False
         selected_pages = self.project_data.get_selected_page_uids()
-        if not selected_pages:
-            return False
-        page_uid = selected_pages[0]
-        current_page = self.project_data.get_page(page_uid)
-        if not current_page:
-            return False
-        if current_page.width_pts <= 0 or current_page.height_pts <= 0:
-            return False
-        if current_page.image_path:
-            if is_tiff_suffix(current_page.image_path):
-                return False
-        return True
+        return any(
+            page and page.width_pts > 0 and page.height_pts > 0
+            for page in (self.project_data.get_page(uid) for uid in selected_pages)
+        )
 
     def _should_enable_summary_csv_export(self) -> bool:
         return bool(
@@ -952,26 +926,31 @@ class MenuController:
             self.handlers.file_ops.create_sql_database()
             return
         dialog = QtWidgets.QInputDialog(self.window)
-        dialog.setWindowTitle("New Database")
-        dialog.setLabelText("Database name:")
-        dialog.setTextValue("")
-        dialog.setModal(True)
-        self.icon_provider.set_window_icon(dialog)
-        remove_minimize_maximize(dialog)
-        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
-            return
-        name = dialog.textValue().strip()
-        db_path = self._create_new_database_fn(name or None)
-        if not db_path:
-            show_critical(
-                self.window,
-                "New Database",
-                "Failed to create database. Check logs for details.",
-            )
-            return
-        result = self._file_loading_service.load_file(db_path)
-        if result.success:
-            self._event_bus.publish(AppEvents.FILE_OPENED, file_path=result.file_path)
+        try:
+            dialog.setWindowTitle("New Database")
+            dialog.setLabelText("Database name:")
+            dialog.setTextValue("")
+            dialog.setModal(True)
+            self.icon_provider.set_window_icon(dialog)
+            remove_minimize_maximize(dialog)
+            if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+                return
+            name = dialog.textValue().strip()
+            db_path = self._create_new_database_fn(name or None)
+            if not db_path:
+                show_critical(
+                    self.window,
+                    "New Database",
+                    "Failed to create database. Check logs for details.",
+                )
+                return
+            result = self._file_loading_service.load_file(db_path)
+            if result.success:
+                self._event_bus.publish(
+                    AppEvents.FILE_OPENED, file_path=result.file_path
+                )
+        finally:
+            dialog.deleteLater()
 
     def _show_about_dialog(self) -> None:
         dialog = AboutDialog(self.icon_provider, self.window)

@@ -1982,6 +1982,17 @@ class OptionsPreferencesTests(unittest.TestCase):
             ],
         )
 
+    def test_menu_variable_sync_uses_registered_getter_and_restores_signal_block(self):
+        action = QtGui.QAction()
+        action.setCheckable(True)
+        action.blockSignals(True)
+        controller = MenuController.__new__(MenuController)
+        controller._variable_actions = {"display_mode_3d": [action]}
+        controller._state_getters = {"display_mode_3d": lambda: True}
+        controller._sync_variable_actions(takeoff_active=True)
+        self.assertTrue(action.isChecked())
+        self.assertTrue(action.signalsBlocked())
+
     def test_summary_tab_disables_project_tree_creation_but_allows_import(self):
         controller = MenuController.__new__(MenuController)
         controller.window = SimpleNamespace(is_summary_tab_active=lambda: True)

@@ -954,9 +954,14 @@ class SqlDialogTests(unittest.TestCase):
         self.assertEqual(sql_calls, ["sql"])
 
         class _AccessNameDialog:
+            instances = []
+            result = QtWidgets.QDialog.DialogCode.Accepted
+
             def __init__(self, _parent):
                 self.title = ""
                 self.label = ""
+                self.deleted = False
+                self.instances.append(self)
 
             def setWindowTitle(self, title):
                 self.title = title
@@ -971,10 +976,13 @@ class SqlDialogTests(unittest.TestCase):
                 pass
 
             def exec(self):
-                return QtWidgets.QDialog.DialogCode.Accepted
+                return self.result
 
             def textValue(self):
                 return "Access Database"
+
+            def deleteLater(self):
+                self.deleted = True
 
         _TypeDialog.backend = DatabaseBackend.ACCESS
         created_names = []
@@ -1000,6 +1008,37 @@ class SqlDialogTests(unittest.TestCase):
             MenuController._new_database(controller)
         self.assertEqual(created_names, ["Access Database"])
         self.assertEqual(loaded_paths, ["access.mdb"])
+        self.assertTrue(_AccessNameDialog.instances[0].deleted)
+
+        _AccessNameDialog.result = QtWidgets.QDialog.DialogCode.Rejected
+        with patch(
+            "ost_visualizer.presentation.controllers.menu_controller."
+            "NewDatabaseTypeDialog",
+            _TypeDialog,
+        ), patch.object(QtWidgets, "QInputDialog", _AccessNameDialog), patch(
+            "ost_visualizer.presentation.controllers.menu_controller."
+            "remove_minimize_maximize"
+        ):
+            MenuController._new_database(controller)
+        self.assertEqual(created_names, ["Access Database"])
+        self.assertTrue(_AccessNameDialog.instances[1].deleted)
+
+        original_icon_provider = controller.icon_provider
+        controller.icon_provider = SimpleNamespace(
+            set_window_icon=lambda _dialog: (_ for _ in ()).throw(
+                RuntimeError("icon setup failed")
+            )
+        )
+        _AccessNameDialog.result = QtWidgets.QDialog.DialogCode.Accepted
+        with patch(
+            "ost_visualizer.presentation.controllers.menu_controller."
+            "NewDatabaseTypeDialog",
+            _TypeDialog,
+        ), patch.object(QtWidgets, "QInputDialog", _AccessNameDialog):
+            with self.assertRaisesRegex(RuntimeError, "icon setup failed"):
+                MenuController._new_database(controller)
+        self.assertTrue(_AccessNameDialog.instances[2].deleted)
+        controller.icon_provider = original_icon_provider
 
     def test_create_mode_initializes_before_accepting(self):
         class _Creator:

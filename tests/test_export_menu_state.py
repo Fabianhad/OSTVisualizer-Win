@@ -159,6 +159,25 @@ class ExportMenuStateTests(unittest.TestCase):
         self.assertTrue(controller._actions["export_as_osp"].isEnabled())
         self.assertTrue(controller._menus["export"].isEnabled())
 
+    def test_pdf_export_accepts_tiff_pages_supported_by_raster_export(self):
+        bid_ref = BidRef("db.mdb", "bid-1")
+        project_data = _ProjectData(bid_ref)
+        project_data.page.image_path = "drawing.tif"
+        controller = _controller(_UiState(bid_ref), project_data)
+        self.assertTrue(controller._should_enable_pdf_export())
+
+    def test_pdf_export_enables_when_any_selected_page_is_valid(self):
+        bid_ref = BidRef("db.mdb", "bid-1")
+        project_data = _ProjectData(bid_ref)
+        project_data.selected_page_uids = ["invalid", "valid"]
+        pages = {
+            "invalid": Page(uid="invalid", name="Invalid", width_pts=0, height_pts=0),
+            "valid": Page(uid="valid", name="Valid", width_pts=612, height_pts=792),
+        }
+        project_data.get_page = pages.get
+        controller = _controller(_UiState(bid_ref), project_data)
+        self.assertTrue(controller._should_enable_pdf_export())
+
     def test_select_current_area_menu_and_handler_require_selection_access(self):
         bid_ref = BidRef("db.mdb", "bid-1")
         controller = _controller(_UiState(bid_ref), _ProjectData(bid_ref))
