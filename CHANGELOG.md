@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Fixed HTML exports so project text cannot terminate the embedded scene-data script or inject markup into the document title.
 - Fixed PDF cache shutdown so one native renderer cleanup failure cannot retain the remaining per-thread renderers.
 - Fixed Cover Sheet multi-file imports assigning default sheet dimensions to raster images instead of using their actual image size.
 - Fixed workspace restoration callbacks so immediate shutdown cannot access a released window shell and delayed destruction from a replaced detached window cannot discard the replacement's persisted tracking state.

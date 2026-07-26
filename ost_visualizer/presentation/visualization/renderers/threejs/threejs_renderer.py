@@ -1,8 +1,8 @@
 import base64
+import html
 import json
 import os
 import tempfile
-import time
 import webbrowser
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -39,7 +39,6 @@ def visualize_with_threejs(
     title: str = "OST Takeoff 3D Visualization",
     output_path: Optional[str] = None,
     auto_open: bool = True,
-    bid_name: Optional[str] = None,
     display_mode_3d: str = Config.DISPLAY_MODE_SOLID,
     display_mode_2d: str = Config.DISPLAY_MODE_SOLID,
     display_modes_synced: bool = True,
@@ -57,7 +56,6 @@ def visualize_with_threejs(
     ),
     elevation_callout_color: str = Config.DEFAULT_ELEVATION_CALLOUT_COLOR,
 ) -> Optional[str]:
-    start_time = time.time()
     if not bid_conditions or not bid_takeoffs:
         return None
     processed_meshes, bounds = process_meshes_for_threejs(
@@ -131,8 +129,7 @@ def visualize_with_threejs(
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     if auto_open:
-        webbrowser.open(f"file://{os.path.abspath(output_path)}")
-    elapsed = time.time() - start_time
+        webbrowser.open(Path(output_path).resolve().as_uri())
     return output_path
 
 
@@ -268,7 +265,6 @@ def _generate_html(scene_data: SceneData, title: str) -> str:
     template_path = Path(__file__).parent / "templates" / "viewer.html"
     with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
-    scene_json = json.dumps(scene_data, separators=(",", ":"))
-    html = template.replace("{{TITLE}}", title)
-    html = html.replace("{{SCENE_DATA}}", scene_json)
-    return html
+    scene_json = json.dumps(scene_data, separators=(",", ":")).replace("<", "\\u003c")
+    rendered_html = template.replace("{{TITLE}}", html.escape(title, quote=False))
+    return rendered_html.replace("{{SCENE_DATA}}", scene_json)

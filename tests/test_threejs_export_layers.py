@@ -1077,6 +1077,9 @@ class ThreejsExportLayerTests(unittest.TestCase):
                         side_effect=capture_scene,
                     )
                 )
+                browser_open = stack.enter_context(
+                    patch(f"{renderer_module}.webbrowser.open")
+                )
                 result = visualize_with_threejs(
                     {"condition-1": condition},
                     [takeoff],
@@ -1084,11 +1087,12 @@ class ThreejsExportLayerTests(unittest.TestCase):
                     ColorService(),
                     _TakeoffService(),
                     output_path=output_path,
-                    auto_open=False,
+                    auto_open=True,
                     pages=[],
                     include_elevation_callouts=True,
                 )
         self.assertEqual(result, output_path)
+        browser_open.assert_called_once_with(Path(output_path).resolve().as_uri())
         self.assertEqual(captured_scene["geometries"], geometry_payload)
         self.assertEqual(captured_scene["takeoffs_2d"], [takeoff_entry])
         self.assertEqual(captured_scene["elevation_callouts"], [callout_entry])

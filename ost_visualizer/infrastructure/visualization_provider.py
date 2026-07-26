@@ -153,7 +153,6 @@ class _HtmlRendererAdapter(IHtmlRenderer):
                 title=title,
                 output_path=output_path,
                 auto_open=auto_open,
-                bid_name=bid_name,
                 display_mode_3d=display_mode_3d,
                 display_mode_2d=display_mode_2d,
                 display_modes_synced=display_modes_synced,

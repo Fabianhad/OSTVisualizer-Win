@@ -1,3 +1,4 @@
+import json
 import unittest
 from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.presentation.visualization.renderers.threejs.threejs_renderer import (
@@ -6,6 +7,35 @@ from ost_visualizer.presentation.visualization.renderers.threejs.threejs_rendere
 
 
 class ThreejsHtmlViewerTests(unittest.TestCase):
+    def test_html_generation_escapes_title_and_script_terminators(self):
+        injected_text = "</script><script>window.injected=true</script>"
+        scene_data = {
+            "title": injected_text,
+            "geometries": [],
+            "camera": {"position": [0.0, 0.0, 1.0], "target": [0.0, 0.0, 0.0]},
+            "bounds": {
+                "min": [0.0, 0.0, 0.0],
+                "max": [1.0, 1.0, 1.0],
+            },
+        }
+
+        rendered_html = _generate_html(scene_data, f"Bid & {injected_text}")
+
+        self.assertIn(
+            "<title>Bid &amp; &lt;/script&gt;&lt;script&gt;"
+            "window.injected=true&lt;/script&gt;</title>",
+            rendered_html,
+        )
+        self.assertNotIn(injected_text, rendered_html)
+        encoded_scene = (
+            rendered_html.split('<script type="application/json" id="scene-data">', 1)[
+                1
+            ]
+            .split("</script>", 1)[0]
+            .strip()
+        )
+        self.assertEqual(json.loads(encoded_scene), scene_data)
+
     def test_viewer_renders_elevation_callouts_in_plan_svg_only(self):
         scene_data = {
             "title": "Elevation Callout Test",
