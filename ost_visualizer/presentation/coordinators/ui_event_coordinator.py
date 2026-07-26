@@ -705,9 +705,6 @@ class UIEventCoordinator:
         )
         view.page_fully_loaded.connect(self._on_plan_view_page_fully_loaded)
         view.page_view_state_changed.connect(self._on_plan_view_state_changed)
-        view.overlay_display_mode_requested.connect(
-            self._on_overlay_display_mode_requested
-        )
         self._placement.set_plan_view(view)
 
     def set_status_panel(self, panel) -> None:

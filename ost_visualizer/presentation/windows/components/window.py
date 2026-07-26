@@ -512,9 +512,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self.plan_view.annotation_text_properties_flushed.connect(
             self._on_annotation_text_properties_flushed
         )
-        self.plan_view.annotation_text_and_positions_flushed.connect(
-            self._on_annotation_text_and_positions_flushed
-        )
         self.plan_view.annotation_styles_flushed.connect(
             self._on_annotation_styles_flushed
         )
@@ -1257,13 +1254,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
     def _save_annotation_styles(self, db_path: str, updates: list) -> bool:
         return self._annotation_write_coordinator.save_styles(db_path, updates)
 
-    def _save_annotation_text_and_positions(
-        self, db_path: str, updates: list, positions: list
-    ) -> bool:
-        return self._annotation_write_coordinator.save_text_and_positions(
-            db_path, updates, positions
-        )
-
     def _insert_annotations(
         self,
         bid_ref,
@@ -1623,63 +1613,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         )
         self._undo_svc.push(cmd.undo, cmd.redo)
 
-    def _on_annotation_text_and_positions_flushed(
-        self, text_changes: list, ann_position_changes: list
-    ) -> None:
-        if not self._config.allow_annotation_editing or self._read_only:
-            return
-        if (
-            self._is_closing
-            or self._ann_write_svc is None
-            or (not text_changes and not ann_position_changes)
-        ):
-            return
-        db_path = self._get_db_path()
-        if not db_path:
-            return
-        new_updates = [
-            (uid, ann_type, dict(new_props))
-            for uid, ann_type, _old_props, new_props in text_changes
-        ]
-        new_positions = [
-            (uid, ann_type, list(new_pos))
-            for uid, ann_type, _old_pos, new_pos in ann_position_changes
-        ]
-        success = self._save_annotation_text_and_positions(
-            db_path, new_updates, new_positions
-        )
-        if not success:
-            self.plan_view.restore_annotation_text_and_positions(
-                text_changes, ann_position_changes
-            )
-            return
-        if self._undo_svc is None:
-            return
-        old_updates = [
-            (uid, ann_type, dict(old_props))
-            for uid, ann_type, old_props, _new_props in text_changes
-            if old_props
-        ]
-        old_positions = [
-            (uid, ann_type, list(old_pos))
-            for uid, ann_type, old_pos, _new_pos in ann_position_changes
-            if old_pos
-        ]
-        if not (old_updates or old_positions):
-            return
-
-        def _undo_text_and_position():
-            self._save_annotation_text_and_positions(
-                db_path, old_updates, old_positions
-            )
-
-        def _redo_text_and_position():
-            self._save_annotation_text_and_positions(
-                db_path, new_updates, new_positions
-            )
-
-        self._undo_svc.push(_undo_text_and_position, _redo_text_and_position)
-
     def _on_elements_deleted(self, uids: list) -> None:
         if not self._config.allow_annotation_editing or self._read_only:
             return
@@ -1766,9 +1699,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         plan_view.positions_flushed.disconnect(self._on_positions_flushed)
         plan_view.annotation_text_properties_flushed.disconnect(
             self._on_annotation_text_properties_flushed
-        )
-        plan_view.annotation_text_and_positions_flushed.disconnect(
-            self._on_annotation_text_and_positions_flushed
         )
         plan_view.annotation_styles_flushed.disconnect(
             self._on_annotation_styles_flushed

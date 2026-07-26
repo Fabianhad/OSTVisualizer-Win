@@ -328,6 +328,7 @@ class FakeRenderingService:
         self.composite_frame_requests = []
         self.cancelled_requests = []
         self._request_counter = 0
+        self.shutdown_calls = 0
 
     def _next_request_id(self, prefix):
         self._request_counter += 1
@@ -365,7 +366,7 @@ class FakeRenderingService:
         return self._next_request_id("text")
 
     def shutdown(self):
-        pass
+        self.shutdown_calls += 1
 
 
 class FakeLoadCoordinator:
@@ -668,6 +669,15 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIsNotNone(view._condition_text_toolbar)
         self.assertTrue(view._condition_text_toolbar.isHidden())
         view.cleanup()
+
+    def test_plan_view_cleanup_is_idempotent_after_services_are_released(self):
+        view = self._make_plan_view()
+        rendering_service = view._rendering_service
+
+        view.cleanup()
+        view.cleanup()
+
+        self.assertEqual(rendering_service.shutdown_calls, 1)
 
     def test_place_preview_secondary_conditions_match_active_type(self):
         view = TakeoffPlanView.__new__(TakeoffPlanView)
@@ -3448,16 +3458,13 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         view._current_bid_page_uid = page.uid
         view._current_render_identity = view._build_render_identity(page, bid_ref)
-        emitted_text, emitted_positions, emitted_combined = (
-            self._capture_annotation_flushes(view)
-        )
+        emitted_text, emitted_positions = self._capture_annotation_flushes(view)
         self.assertTrue(view._select_text_annotation_label("a1"))
         old_position = list(annotation.position)
         view._set_condition_text_alignment(QtCore.Qt.AlignmentFlag.AlignHCenter)
         view._set_condition_text_alignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self.assertEqual(annotation.position, old_position)
         self.assertEqual(emitted_positions, [])
-        self.assertEqual(emitted_combined, [])
         self.assertEqual(annotation.properties["TextAlign"], 2)
         self.assertEqual(emitted_text[-1][3]["TextAlign"], 2)
         self.assertFalse(view._condition_text_toolbar.isHidden())
@@ -3489,16 +3496,13 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             text="Color text",
             position=[100.0, 120.0, 90.0, 25.0],
         )
-        emitted_text, emitted_positions, emitted_combined = (
-            self._capture_annotation_flushes(view)
-        )
+        emitted_text, emitted_positions = self._capture_annotation_flushes(view)
         self.assertTrue(view._select_text_annotation_label("a1"))
         old_position = list(annotation.position)
         with patch.object(QColorDialog, "getColor", return_value=QColor("#445566")):
             view._pick_condition_text_color()
         self.assertEqual(annotation.position, old_position)
         self.assertEqual(emitted_positions, [])
-        self.assertEqual(emitted_combined, [])
         self.assertEqual(annotation.properties["FontColor"], 0x665544)
         self.assertEqual(emitted_text[-1][3]["FontColor"], 0x665544)
         self.assertFalse(view._condition_text_toolbar.isHidden())
@@ -4369,12 +4373,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._selected_uids = {"a1"}
         view.update_selection_visuals(emit=False)
         emitted_text = []
-        combined_changes = []
         separate_position_changes = []
         view.annotation_text_properties_flushed.connect(emitted_text.extend)
-        view.annotation_text_and_positions_flushed.connect(
-            lambda text, positions: combined_changes.append((text, positions))
-        )
         view.positions_flushed.connect(
             lambda _takeoffs, annotations: separate_position_changes.extend(annotations)
         )
@@ -4396,7 +4396,6 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             ),
         )
         self.assertEqual(separate_position_changes, [])
-        self.assertEqual(combined_changes, [])
         self.assertEqual(emitted_text[-1][3]["FontSize"], 24)
         view.cleanup()
 
@@ -4417,15 +4416,11 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._selection_enabled = True
         emitted_text = []
         emitted_positions = []
-        emitted_combined = []
         view.annotation_text_properties_flushed.connect(
             lambda changes: emitted_text.extend(changes)
         )
         view.positions_flushed.connect(
             lambda _takeoffs, annotations: emitted_positions.extend(annotations)
-        )
-        view.annotation_text_and_positions_flushed.connect(
-            lambda text, positions: emitted_combined.append((text, positions))
         )
         self.assertTrue(view._select_text_annotation_label("a1"))
         old_position = list(annotation.position)
@@ -4434,7 +4429,6 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._condition_text_size_combo.setCurrentIndex(size_index)
         self.assertEqual(len(emitted_text), 1)
         self.assertEqual(emitted_positions, [])
-        self.assertEqual(emitted_combined, [])
         self.assertEqual(emitted_text[0][2]["FontSize"], 12)
         self.assertEqual(emitted_text[0][3]["FontSize"], 24)
         self.assertEqual(annotation.position, old_position)
@@ -4547,9 +4541,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._selection_enabled = True
         view._selected_uids = {"a1"}
         view.update_selection_visuals(emit=False)
-        emitted_text, emitted_positions, emitted_combined = (
-            self._capture_annotation_flushes(view)
-        )
+        emitted_text, emitted_positions = self._capture_annotation_flushes(view)
         old_position = list(annotation.position)
         self.assertTrue(view._begin_text_annotation_edit("a1"))
         item.setPlainText("A much longer annotation that should wrap inside the box")
@@ -4561,7 +4553,6 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
             "A much longer annotation that should wrap inside the box",
         )
         self.assertEqual(emitted_positions, [])
-        self.assertEqual(emitted_combined, [])
         self.assertEqual(emitted_text[-1][2]["Text"], "Short")
         self.assertEqual(
             emitted_text[-1][3]["Text"],
@@ -5601,17 +5592,13 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
     def _capture_annotation_flushes(self, view):
         emitted_text = []
         emitted_positions = []
-        emitted_combined = []
         view.annotation_text_properties_flushed.connect(
             lambda changes: emitted_text.extend(changes)
         )
         view.positions_flushed.connect(
             lambda _takeoffs, annotations: emitted_positions.extend(annotations)
         )
-        view.annotation_text_and_positions_flushed.connect(
-            lambda text, positions: emitted_combined.append((text, positions))
-        )
-        return emitted_text, emitted_positions, emitted_combined
+        return emitted_text, emitted_positions
 
     def _select_document_text(self, item):
         cursor = item.textCursor()

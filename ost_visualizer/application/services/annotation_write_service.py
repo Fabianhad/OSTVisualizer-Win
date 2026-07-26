@@ -152,43 +152,6 @@ class AnnotationWriteService(DatabaseMutationWriteService):
             self.reload_and_notify(db_path)
         return success
 
-    def save_annotation_text_properties_and_positions(
-        self,
-        db_path: str,
-        updates: List[Tuple[str, str, dict]],
-        positions: List[Tuple[str, str, List[float]]],
-        publish_database_refreshed_after_write: bool = True,
-    ) -> bool:
-        if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
-            return False
-        combined = list(updates) + list(positions)
-        resources = tuple(
-            ResourceRef(
-                "annotation",
-                f"{annotation_type}/{uid}",
-                self._bid_uid(db_path),
-            )
-            for uid, annotation_type, _value in combined
-        )
-
-        def save_all(recorder):
-            success = True
-            if updates:
-                success = self._save_annotation_text_properties.execute(
-                    db_path, updates
-                )
-            if success and positions:
-                success = self._save_annotation_positions.execute(db_path, positions)
-            if success:
-                for resource in resources:
-                    recorder.record(resource, ChangeOperation.UPDATE)
-            return success
-
-        success = bool(self._execute_mutation(db_path, resources, save_all))
-        if success and publish_database_refreshed_after_write:
-            self.reload_and_notify(db_path)
-        return success
-
     def insert_annotations(
         self,
         db_path: str,

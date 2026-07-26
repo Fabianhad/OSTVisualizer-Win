@@ -192,11 +192,9 @@ class TakeoffPlanView(
     reassign_condition_requested = Signal(list, str)
     set_negative_requested = Signal(list, bool)
     set_curved_requested = Signal(list, bool)
-    overlay_display_mode_requested = Signal(int)
     page_view_state_changed = Signal(str, float, float, float)
     positions_flushed = Signal(list, list)
     annotation_text_properties_flushed = Signal(list)
-    annotation_text_and_positions_flushed = Signal(list, list)
     annotation_styles_flushed = Signal(list)
     condition_text_properties_flushed = Signal(list)
     text_annotation_edit_mode_changed = Signal(bool)
@@ -241,6 +239,7 @@ class TakeoffPlanView(
         parent=None,
     ):
         super().__init__(parent)
+        self._is_cleaning_up = False
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -1107,18 +1106,6 @@ class TakeoffPlanView(
         if item is None:
             return False
         return item.boundingRect().contains(item.mapFromScene(scene_pos))
-
-    def update_named_view_label_text(self, uid: str, text: str) -> None:
-        ann = self._current_annotations.get(uid)
-        if ann is not None and ann.is_namedview:
-            ann.properties["Text"] = text
-        if self._editing_named_view_uid == uid:
-            return
-        item = self._named_view_label_item(uid)
-        if item is None:
-            return
-        item.setPlainText(text)
-        self._refresh_named_view_label_background(uid)
 
     def _select_text_annotation_label(self, uid: str) -> bool:
         item = self._text_annotation_item(uid)
@@ -3140,14 +3127,6 @@ class TakeoffPlanView(
 
     def restore_annotation_styles(self, changes: list) -> None:
         if self._restore_annotation_styles(changes):
-            self._rebuild_current_overlays_from_model()
-
-    def restore_annotation_text_and_positions(
-        self, text_changes: list, ann_position_changes: list
-    ) -> None:
-        changed = self._restore_annotation_properties(text_changes)
-        changed = self._restore_annotation_positions(ann_position_changes) or changed
-        if changed:
             self._rebuild_current_overlays_from_model()
 
     def _rebuild_current_overlays_from_model(self) -> None:
@@ -5867,6 +5846,9 @@ class TakeoffPlanView(
         set_palette_background(self, lambda c: self.setBackgroundBrush(QBrush(c)))
 
     def cleanup(self):
+        if self._is_cleaning_up:
+            return
+        self._is_cleaning_up = True
         self._zoom_debouncer.cancel()
         self._finish_active_inline_text_edit(commit=True)
         self._cancel_pending_renders()

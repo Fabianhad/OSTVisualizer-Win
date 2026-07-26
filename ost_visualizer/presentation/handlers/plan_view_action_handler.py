@@ -144,9 +144,6 @@ class PlanViewActionHandler:
         pv.annotation_text_properties_flushed.connect(
             self.on_annotation_text_properties_flushed
         )
-        pv.annotation_text_and_positions_flushed.connect(
-            self.on_annotation_text_and_positions_flushed
-        )
         pv.annotation_styles_flushed.connect(self.on_annotation_styles_flushed)
         pv.condition_text_properties_flushed.connect(
             self.on_condition_text_properties_flushed
@@ -324,13 +321,6 @@ class PlanViewActionHandler:
 
     def _save_annotation_styles_fast(self, db_path: str, updates: List[tuple]) -> bool:
         return self._annotation_writes.save_styles(db_path, updates)
-
-    def _save_annotation_text_and_positions_fast(
-        self, db_path: str, updates: List[tuple], positions: List[tuple]
-    ) -> bool:
-        return self._annotation_writes.save_text_and_positions(
-            db_path, updates, positions
-        )
 
     def _page_scale_for_page_uid(self, page_uid: str) -> PageScale:
         page = self._data_svc.get_page(str(page_uid))
@@ -841,66 +831,6 @@ class PlanViewActionHandler:
             self._save_annotation_styles_fast(db_path, new_updates)
 
         self._undo_svc.push(_undo_styles, _redo_styles)
-
-    def on_annotation_text_and_positions_flushed(
-        self, text_changes: list, ann_position_changes: list
-    ) -> None:
-        if not self._is_allowed(Feature.EDIT_ANNOTATION_TEXT):
-            return
-        db_path = self._data_svc.get_current_bid_file_path()
-        if not db_path or (not text_changes and not ann_position_changes):
-            return
-        new_updates = [
-            (uid, ann_type, dict(new_props))
-            for uid, ann_type, _old_props, new_props in text_changes
-        ]
-        new_positions = [
-            (uid, ann_type, list(new_pos))
-            for uid, ann_type, _old_pos, new_pos in ann_position_changes
-        ]
-        success = self._save_annotation_text_and_positions_fast(
-            db_path, new_updates, new_positions
-        )
-        if not success:
-            self._plan_view.restore_annotation_text_and_positions(
-                text_changes, ann_position_changes
-            )
-            return
-        old_updates = [
-            (uid, ann_type, dict(old_props))
-            for uid, ann_type, old_props, _new_props in text_changes
-            if old_props
-        ]
-        old_positions = [
-            (uid, ann_type, list(old_pos))
-            for uid, ann_type, old_pos, _new_pos in ann_position_changes
-            if old_pos
-        ]
-        annotation_scales = self._capture_annotation_scales(
-            old_positions or new_positions
-        )
-        if not (old_updates or old_positions):
-            return
-
-        def _undo_text_and_position():
-            self._save_annotation_text_and_positions_fast(
-                db_path,
-                old_updates,
-                self._positions_for_current_annotation_scales(
-                    old_positions, annotation_scales
-                ),
-            )
-
-        def _redo_text_and_position():
-            self._save_annotation_text_and_positions_fast(
-                db_path,
-                new_updates,
-                self._positions_for_current_annotation_scales(
-                    new_positions, annotation_scales
-                ),
-            )
-
-        self._undo_svc.push(_undo_text_and_position, _redo_text_and_position)
 
     def on_rotations_flushed(self, rotation_changes: list) -> None:
         if not self._is_allowed(Feature.EDIT_PLAN_ITEMS):

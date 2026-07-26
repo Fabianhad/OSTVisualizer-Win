@@ -84,7 +84,6 @@ class FakePlanView:
         self.restored_rotations = []
         self.restored_condition_text_properties = []
         self.restored_text_properties = []
-        self.restored_text_and_positions = []
         self.restored_annotation_styles = []
         self.activated_annotations = []
         self.named_view_name_validator = None
@@ -124,11 +123,6 @@ class FakePlanView:
 
     def restore_annotation_text_properties(self, changes):
         self.restored_text_properties.append(list(changes))
-
-    def restore_annotation_text_and_positions(self, text_changes, ann_position_changes):
-        self.restored_text_and_positions.append(
-            (list(text_changes), list(ann_position_changes))
-        )
 
     def restore_annotation_styles(self, changes):
         self.restored_annotation_styles.append(list(changes))
@@ -615,7 +609,6 @@ class FakeAnnotationWriteService:
     def __init__(self):
         self.position_calls = []
         self.text_property_calls = []
-        self.text_and_position_calls = []
         self.style_calls = []
         self.insert_calls = []
         self.delete_calls = []
@@ -634,14 +627,6 @@ class FakeAnnotationWriteService:
     ):
         self.text_property_calls.append(
             (db_path, updates, publish_database_refreshed_after_write)
-        )
-        return True
-
-    def save_annotation_text_properties_and_positions(
-        self, db_path, updates, positions, publish_database_refreshed_after_write=True
-    ):
-        self.text_and_position_calls.append(
-            (db_path, updates, positions, publish_database_refreshed_after_write)
         )
         return True
 
@@ -3180,77 +3165,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             ],
         )
 
-    def test_text_annotation_position_undo_redo_after_page_scale_change_uses_current_scale(
-        self,
-    ):
-        data = FakeProjectData()
-        data.pages["p1"].scale_factor1 = 0.125
-        data.pages["p1"].scale_factor2 = 12.0
-        data.annotations = [
-            BidAnnotation(
-                uid="a1",
-                annotation_type=ANNOTATION_TYPE_TEXT,
-                page_uid="p1",
-                position=[48.0, 48.0, 24.0, 12.0],
-                properties={"Text": "Old"},
-            )
-        ]
-        ann_write = FakeAnnotationWriteService()
-        undo = FakeUndoService()
-        handler = PlanViewActionHandler(
-            plan_view=FakePlanView(data),
-            ui_state_manager=FakeUiState(),
-            project_data_svc=data,
-            project_write_svc=FakeWriteService(),
-            annotation_write_svc=ann_write,
-            page_settings_bar=FakePageSettingsBar(),
-            undo_svc=undo,
-            event_bus=FakeEventBus(),
-            deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess(set(Feature)),
-        )
-        handler.on_annotation_text_and_positions_flushed(
-            [
-                (
-                    "a1",
-                    ANNOTATION_TYPE_TEXT,
-                    {"Text": "Old"},
-                    {"Text": "New"},
-                )
-            ],
-            [
-                (
-                    "a1",
-                    ANNOTATION_TYPE_TEXT,
-                    [48.0, 48.0, 24.0, 12.0],
-                    [60.0, 60.0, 30.0, 12.0],
-                )
-            ],
-        )
-        data.pages["p1"].scale_factor1 = 0.1875
-        data.pages["p1"].scale_factor2 = 12.0
-        data.annotations[0].position = [40.0, 40.0, 20.0, 8.0]
-        undo.undo()
-        undo.redo()
-        self.assertEqual(
-            ann_write.text_and_position_calls[1],
-            (
-                "bid.mdb",
-                [("a1", ANNOTATION_TYPE_TEXT, {"Text": "Old"})],
-                [("a1", ANNOTATION_TYPE_TEXT, [32.0, 32.0, 16.0, 8.0])],
-                False,
-            ),
-        )
-        self.assertEqual(
-            ann_write.text_and_position_calls[2],
-            (
-                "bid.mdb",
-                [("a1", ANNOTATION_TYPE_TEXT, {"Text": "New"})],
-                [("a1", ANNOTATION_TYPE_TEXT, [40.0, 40.0, 20.0, 8.0])],
-                False,
-            ),
-        )
-
     def test_failed_annotation_text_property_save_restores_plan_view(self):
         plan_view = FakePlanView()
         ann_write = FakeAnnotationWriteService()
@@ -3306,91 +3220,6 @@ class PlanViewActionHandlerTests(unittest.TestCase):
                     },
                 ),
             ],
-        )
-
-    def test_annotation_text_and_box_changes_are_saved_together(self):
-        data = FakeProjectData()
-        data.annotations = [
-            BidAnnotation(uid="a1", annotation_type="text", page_uid="p1")
-        ]
-        ann_write = FakeAnnotationWriteService()
-        undo = FakeUndoService()
-        handler = PlanViewActionHandler(
-            plan_view=FakePlanView(),
-            ui_state_manager=FakeUiState(),
-            project_data_svc=data,
-            project_write_svc=FakeWriteService(),
-            annotation_write_svc=ann_write,
-            page_settings_bar=FakePageSettingsBar(),
-            undo_svc=undo,
-            event_bus=FakeEventBus(),
-            deferred_persistence_manager=FakeDeferredPersistence(),
-            ui_access_manager=FakeAccess(set(Feature)),
-        )
-        handler.on_annotation_text_and_positions_flushed(
-            [
-                (
-                    "a1",
-                    "text",
-                    {"FontSize": 12, "FontColor": 0},
-                    {"FontSize": 24, "FontColor": 0x332211},
-                )
-            ],
-            [("a1", "text", [100.0, 100.0, 40.0, 15.0], [100.0, 100.0, 80.0, 30.0])],
-        )
-        self.assertEqual(
-            ann_write.text_and_position_calls[0],
-            (
-                "bid.mdb",
-                [("a1", "text", {"FontSize": 24, "FontColor": 0x332211})],
-                [("a1", "text", [100.0, 100.0, 80.0, 30.0])],
-                False,
-            ),
-        )
-        self.assertEqual(ann_write.text_property_calls, [])
-        self.assertEqual(ann_write.position_calls, [])
-        undo.undo()
-        undo.redo()
-        self.assertEqual(
-            ann_write.text_and_position_calls[1:],
-            [
-                (
-                    "bid.mdb",
-                    [("a1", "text", {"FontSize": 12, "FontColor": 0})],
-                    [("a1", "text", [100.0, 100.0, 40.0, 15.0])],
-                    False,
-                ),
-                (
-                    "bid.mdb",
-                    [("a1", "text", {"FontSize": 24, "FontColor": 0x332211})],
-                    [("a1", "text", [100.0, 100.0, 80.0, 30.0])],
-                    False,
-                ),
-            ],
-        )
-
-    def test_failed_annotation_text_and_box_save_restores_plan_view(self):
-        plan_view = FakePlanView()
-        ann_write = FakeAnnotationWriteService()
-        ann_write.save_annotation_text_properties_and_positions = (
-            lambda *args, **_call_options: False
-        )
-        handler = self._paste_handler(plan_view=plan_view, ann_write=ann_write)
-        text_changes = [
-            (
-                "a1",
-                "text",
-                {"FontSize": 12, "FontColor": 0},
-                {"FontSize": 24, "FontColor": 0x332211},
-            )
-        ]
-        position_changes = [
-            ("a1", "text", [100.0, 100.0, 40.0, 15.0], [100.0, 100.0, 80.0, 30.0])
-        ]
-        handler.on_annotation_text_and_positions_flushed(text_changes, position_changes)
-        self.assertEqual(
-            plan_view.restored_text_and_positions,
-            [(text_changes, position_changes)],
         )
 
     def test_pure_takeoff_rotation_uses_takeoffs_changed(self):

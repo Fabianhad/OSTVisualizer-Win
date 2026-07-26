@@ -73,30 +73,6 @@ class AnnotationWriteCoordinator:
         )
         return True
 
-    def save_text_and_positions(
-        self, db_path: str, updates: List[tuple], positions: List[tuple]
-    ) -> bool:
-        if not updates and not positions:
-            return True
-        if not self._write_svc.save_annotation_text_properties_and_positions(
-            db_path, updates, positions, publish_database_refreshed_after_write=False
-        ):
-            return False
-        page_uids = []
-        if updates:
-            page_uids.extend(self._data_svc.update_annotation_text_properties(updates))
-            self._update_named_view_names(updates)
-        if positions:
-            page_uids.extend(self._data_svc.update_annotation_positions(positions))
-        annotation_uids = self._annotation_uids_from_changes(updates)
-        annotation_uids.extend(self._annotation_uids_from_changes(positions))
-        annotation_types = self._annotation_types_from_changes(updates)
-        annotation_types.extend(self._annotation_types_from_changes(positions))
-        self.publish_annotations_changed_for_pages(
-            page_uids, annotation_uids, annotation_types
-        )
-        return True
-
     def insert_annotations(
         self,
         bid_ref: BidRef,

@@ -340,7 +340,6 @@ class FakeDetachedPlanView:
         self.mouse_ost_position = None
         self.restored_positions = []
         self.restored_text_properties = []
-        self.restored_text_and_positions = []
         self.selected_uids = set()
         self.annotation_key_map = {}
         self.activate_calls = []
@@ -354,11 +353,6 @@ class FakeDetachedPlanView:
 
     def restore_annotation_text_properties(self, changes):
         self.restored_text_properties.append(list(changes))
-
-    def restore_annotation_text_and_positions(self, text_changes, ann_position_changes):
-        self.restored_text_and_positions.append(
-            (list(text_changes), list(ann_position_changes))
-        )
 
     def restore_annotation_styles(self, changes):
         self.restored_annotation_styles = list(changes)
@@ -441,8 +435,6 @@ class FakeAnnotationWriteService:
         self.position_reload_flags = []
         self.text_property_calls = []
         self.text_property_reload_flags = []
-        self.text_and_position_calls = []
-        self.text_and_position_reload_flags = []
         self.style_calls = []
         self.style_reload_flags = []
         self.delete_calls = []
@@ -476,15 +468,6 @@ class FakeAnnotationWriteService:
     ):
         self.text_property_calls.append((db_path, updates))
         self.text_property_reload_flags.append(publish_database_refreshed_after_write)
-        return True
-
-    def save_annotation_text_properties_and_positions(
-        self, db_path, updates, positions, publish_database_refreshed_after_write=True
-    ):
-        self.text_and_position_calls.append((db_path, updates, positions))
-        self.text_and_position_reload_flags.append(
-            publish_database_refreshed_after_write
-        )
         return True
 
     def save_annotation_styles(
@@ -637,7 +620,6 @@ class CleanupPlanView:
         self.page_view_state_changed = CleanupSignal()
         self.positions_flushed = CleanupSignal()
         self.annotation_text_properties_flushed = CleanupSignal()
-        self.annotation_text_and_positions_flushed = CleanupSignal()
         self.annotation_styles_flushed = CleanupSignal()
         self.elements_deleted = CleanupSignal()
         self.annotation_created = CleanupSignal()
@@ -1694,7 +1676,6 @@ class FakeToolbarPlanView(QtWidgets.QWidget):
     page_view_state_changed = QtCore.Signal(str, float, float, float)
     positions_flushed = QtCore.Signal(list)
     annotation_text_properties_flushed = QtCore.Signal(list)
-    annotation_text_and_positions_flushed = QtCore.Signal(list)
     annotation_styles_flushed = QtCore.Signal(list)
     elements_deleted = QtCore.Signal(list)
     annotation_created = QtCore.Signal(str, list, str)
@@ -2911,35 +2892,6 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         changes = [("a1", "text", {"Text": "Old"}, {"Text": "New"})]
         window._on_annotation_text_properties_flushed(changes)
         self.assertEqual(plan_view.restored_text_properties, [changes])
-
-    def test_detached_annotation_text_and_position_save_failure_restores_plan_view(
-        self,
-    ):
-        from ost_visualizer.presentation.windows.components.window import (
-            DetachedPageViewWindow,
-        )
-
-        plan_view = FakeDetachedPlanView()
-        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
-        window._config = SimpleNamespace(allow_annotation_editing=True)
-        window._read_only = False
-        window.page_data = FakeDetachedPageData()
-        window._is_closing = False
-        window._ann_write_svc = SimpleNamespace(
-            save_annotation_text_properties_and_positions=(
-                lambda *_args, **_kwargs: False
-            )
-        )
-        self._attach_annotation_write_coordinator(window, window._ann_write_svc)
-        window._file_path = "bid.mdb"
-        window.plan_view = plan_view
-        text_changes = [("a1", "text", {"Text": "Old"}, {"Text": "New"})]
-        position_changes = [("a1", "text", [1.0, 1.0], [2.0, 2.0])]
-        window._on_annotation_text_and_positions_flushed(text_changes, position_changes)
-        self.assertEqual(
-            plan_view.restored_text_and_positions,
-            [(text_changes, position_changes)],
-        )
 
     def test_detached_annotation_delete_failure_restores_selection(self):
         from ost_visualizer.presentation.windows.components.window import (
