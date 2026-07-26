@@ -1312,7 +1312,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        valid_page_uids = self._unique_page_uids(page_uids)
+        valid_page_uids = self._unique_nonempty_uids(page_uids)
         if not valid_page_uids:
             return False
         bid_uid = self._active_bid_uid_for(db_path)
@@ -1448,7 +1448,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
     ) -> bool:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
             return False
-        valid_page_uids = self._unique_page_uids(page_uids)
+        valid_page_uids = self._unique_nonempty_uids(page_uids)
         if not valid_page_uids:
             return False
         resources = tuple(
@@ -1471,16 +1471,6 @@ class ProjectWriteService(DatabaseMutationWriteService):
             ("image_adjustments",),
         )
         return self._reload_after_success(db_path, success)
-
-    @staticmethod
-    def _unique_page_uids(page_uids: List[str]) -> List[str]:
-        valid_page_uids = []
-        seen_page_uids = set()
-        for uid in page_uids:
-            if uid and uid not in seen_page_uids:
-                valid_page_uids.append(uid)
-                seen_page_uids.add(uid)
-        return valid_page_uids
 
     def save_page_area(
         self,
@@ -1810,7 +1800,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
         return self._reload_after_success(db_path, success)
 
     def delete_pages(self, db_path: str, page_uids: List[str]) -> bool:
-        valid_page_uids = self._unique_page_uids(page_uids)
+        valid_page_uids = self._unique_nonempty_uids(page_uids)
         if not valid_page_uids:
             return False
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path):
@@ -1905,7 +1895,15 @@ class ProjectWriteService(DatabaseMutationWriteService):
         self, db_path: str, condition_type_uids: List[str]
     ) -> DeleteValidationResult:
         requested = [str(uid) for uid in (condition_type_uids or [])]
+        if not requested:
+            return DeleteValidationResult()
         used_uids = self._condition_type_uids_in_use(db_path)
+        if used_uids is None:
+            return DeleteValidationResult(
+                requested_uids=requested,
+                blocked_uids=requested,
+                failure_reason="condition_type_usage_unavailable",
+            )
         blocked = [uid for uid in requested if uid in used_uids]
         return DeleteValidationResult(
             requested_uids=requested,
@@ -1980,9 +1978,12 @@ class ProjectWriteService(DatabaseMutationWriteService):
             blocked_uids=validation.blocked_uids,
         )
 
-    def _condition_type_uids_in_use(self, db_path: str) -> set[str]:
+    def _condition_type_uids_in_use(self, db_path: str) -> Optional[set[str]]:
         if self._condition_type_uids_in_use_provider is None:
-            return set()
+            self.logger.warning(
+                "Cannot validate condition type usage without a provider"
+            )
+            return None
         try:
             return {
                 str(uid)
@@ -1994,7 +1995,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
                 "Failed to validate condition type usage before delete",
                 exc_info=True,
             )
-            return set()
+            return None
 
     def save_bid_areas(self, db_path: str, bid_uid: str, changes) -> Optional[dict]:
         result = self.save_bid_areas_result(db_path, bid_uid, changes)

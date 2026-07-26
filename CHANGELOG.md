@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Fixed condition-type deletion validation failing open when usage data could not be loaded; unavailable validation now blocks deletion instead of risking removal of an in-use type.
 - Fixed plan input edge cases so panning can begin at the viewport origin, horizontal-only wheel input no longer zooms out, keyboard moves persist once across auto-repeat and focus changes, area holes stay aligned with translated parents, canceled resize/rotation previews do not write changes, and interrupted pan, zoom-band, PDF-text, and drag interactions clean up reliably.
 - Fixed grouped plan-item rotation failures so later writes stop after an earlier failed stage and committed position changes remain accurately projected and undoable; mixed takeoff-and-annotation delete undo also preserves takeoff metadata captured before the database reload.
 - Fixed repeated final application-close events rerunning already completed workspace and service cleanup.

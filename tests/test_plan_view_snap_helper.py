@@ -355,6 +355,22 @@ def _indicator_lines(harness: PreviewHarness) -> list[QGraphicsLineItem]:
     ]
 
 
+class PlacementPreviewLifecycleTests(unittest.TestCase):
+    def test_paste_backout_refresh_tolerates_missing_viewport(self):
+        class View:
+            _last_mouse_vp_pos = None
+            _request_place_preview_repaint = (
+                placement_mode.PlacementModeMixin._request_place_preview_repaint
+            )
+
+            def viewport(self):
+                return None
+
+        placement_mode.PlacementModeMixin.refresh_paste_backout_preview_after_view_change(
+            View()
+        )
+
+
 class SnapSegmentCacheTests(unittest.TestCase):
     def setUp(self):
         FakeSnapIndex.instances.clear()

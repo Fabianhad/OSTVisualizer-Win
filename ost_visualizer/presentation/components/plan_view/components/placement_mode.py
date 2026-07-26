@@ -2011,7 +2011,7 @@ class PlacementModeMixin:
     def refresh_paste_backout_preview_after_view_change(self) -> None:
         if self._last_mouse_vp_pos is not None:
             self.update_paste_backout_preview(self.mapToScene(self._last_mouse_vp_pos))
-        self.viewport().update()
+        self._request_place_preview_repaint()
 
     def handle_paste_backout_press(self, event) -> bool:
         if not self._paste_backout_active:

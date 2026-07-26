@@ -2063,6 +2063,56 @@ class BidLockPermissionTests(unittest.TestCase):
             ],
         )
 
+    def test_condition_type_delete_fails_closed_when_usage_is_unavailable(self):
+        project_data = _ProjectData()
+        for provider in (
+            None,
+            lambda _file_path: (_ for _ in ()).throw(RuntimeError("read failed")),
+        ):
+            with self.subTest(provider=provider):
+                service, *_ = _write_service(project_data)
+                service._condition_type_uids_in_use_provider = provider
+                save_use_case = _SequenceUseCase([{}])
+                service._save_condition_types = save_use_case
+
+                result = service.delete_condition_types_result(
+                    project_data.bid_ref.file_path, ["type-unknown"]
+                )
+
+                self.assertFalse(result)
+                self.assertFalse(result.write_success)
+                self.assertEqual(
+                    result.failure_reason, "condition_type_usage_unavailable"
+                )
+                self.assertEqual(result.blocked_uids, ["type-unknown"])
+                self.assertEqual(save_use_case.calls, [])
+
+    def test_delete_pages_normalizes_empty_and_duplicate_uids(self):
+        project_data = _ProjectData()
+        service, *_ = _write_service(project_data)
+        delete_use_case = _UseCase(True)
+        service._delete_pages = delete_use_case
+
+        self.assertTrue(
+            service.delete_pages(
+                project_data.bid_ref.file_path,
+                ["page-1", "", "page-1", "page-2"],
+            )
+        )
+
+        self.assertEqual(
+            delete_use_case.calls,
+            [
+                (
+                    (
+                        project_data.bid_ref.file_path,
+                        ["page-1", "page-2"],
+                    ),
+                    {},
+                )
+            ],
+        )
+
     def test_condition_folder_delete_handler_uses_shared_validation(self):
         access = _FakeAccess({Feature.EDIT_CONDITION_STRUCTURE})
         validate_calls = []
