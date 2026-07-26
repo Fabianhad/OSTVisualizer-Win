@@ -18,7 +18,11 @@ from ..components.mesh_view import OpenGLViewer
 from ..components.page_combo import PageComboBox
 from ..components.page_settings_bar import PageSettingsBar
 from ..components.plan_view.view import TakeoffPlanView
-from ..components.popup_tracking_combo import PopupTrackingComboBox
+from ..components.popup_tracking_combo import (
+    PopupTrackingComboBox,
+    parse_zoom_percent,
+    update_zoom_combo,
+)
 from ..components.project_tree_view import ProjectView
 from ..components.status_panel import StatusPanel
 from ..components.viewer_cursors import (
@@ -124,15 +128,25 @@ class _PlanToolbarLayoutSyncFilter(QtCore.QObject):
     def __init__(self, callback, parent: QtCore.QObject | None = None):
         super().__init__(parent)
         self._callback = callback
+        self._sync_pending = False
 
     def eventFilter(self, watched, event) -> bool:
-        if event.type() in (
-            QtCore.QEvent.Type.Show,
-            QtCore.QEvent.Type.Resize,
-            QtCore.QEvent.Type.LayoutRequest,
+        if (
+            event.type()
+            in (
+                QtCore.QEvent.Type.Show,
+                QtCore.QEvent.Type.Resize,
+                QtCore.QEvent.Type.LayoutRequest,
+            )
+            and not self._sync_pending
         ):
-            QtCore.QTimer.singleShot(0, self._callback)
+            self._sync_pending = True
+            QtCore.QTimer.singleShot(0, self._run_callback)
         return super().eventFilter(watched, event)
+
+    def _run_callback(self) -> None:
+        self._sync_pending = False
+        self._callback()
 
 
 @dataclass
@@ -464,12 +478,7 @@ class ComponentBuilder:
         zoom_combo.popup_hidden.connect(lambda: _popup_open.__setitem__(0, False))
 
         def _update_combo(factor: float) -> None:
-            zoom_combo.blockSignals(True)
-            zoom_combo.lineEdit().blockSignals(True)
-            zoom_combo.setCurrentIndex(-1)
-            zoom_combo.lineEdit().setText(f"{int(factor * 100)}%")
-            zoom_combo.lineEdit().blockSignals(False)
-            zoom_combo.blockSignals(False)
+            update_zoom_combo(zoom_combo, factor)
 
         def _on_zoom_changed(factor: float) -> None:
             _last_2d_zoom[0] = factor
@@ -487,22 +496,25 @@ class ComponentBuilder:
             percent = float(percent)
             if view_stack.currentIndex() == 0:
                 canvas.set_zoom_percent(percent)
-                _update_combo(percent / 100.0)
+                _update_combo(canvas.get_zoom_percent() / 100.0)
             else:
                 plan_view.set_zoom_percent(percent)
 
         def _on_zoom_text_entered() -> None:
-            text = zoom_combo.currentText().strip().rstrip("%")
-            try:
-                percent = float(text)
-                if percent > 0:
-                    if view_stack.currentIndex() == 0:
-                        canvas.set_zoom_percent(percent)
-                        _update_combo(percent / 100.0)
-                    else:
-                        plan_view.set_zoom_percent(percent)
-            except ValueError:
-                pass
+            percent = parse_zoom_percent(zoom_combo.currentText())
+            if percent is None:
+                factor = (
+                    canvas.get_zoom_percent() / 100.0
+                    if view_stack.currentIndex() == 0
+                    else _last_2d_zoom[0]
+                )
+                _update_combo(factor)
+                return
+            if view_stack.currentIndex() == 0:
+                canvas.set_zoom_percent(percent)
+                _update_combo(canvas.get_zoom_percent() / 100.0)
+            else:
+                plan_view.set_zoom_percent(percent)
 
         def _on_view_changed(index: int) -> None:
             btn_3d.blockSignals(True)
@@ -519,14 +531,13 @@ class ComponentBuilder:
                 _update_combo(canvas.get_zoom_percent() / 100.0)
             else:
                 _update_combo(_last_2d_zoom[0])
-            if not ui_event_handler._is_cleaning_up:
-                ui_event_handler.refresh_toolbar()
+            ui_event_handler.refresh_toolbar()
 
         def _on_zoom_in() -> None:
             if view_stack.currentIndex() == 0:
                 pct = canvas.get_zoom_percent() * VIEWER_ZOOM_FACTOR
                 canvas.set_zoom_percent(pct)
-                _update_combo(pct / 100.0)
+                _update_combo(canvas.get_zoom_percent() / 100.0)
             else:
                 plan_view.zoom_in()
 
@@ -534,7 +545,7 @@ class ComponentBuilder:
             if view_stack.currentIndex() == 0:
                 pct = canvas.get_zoom_percent() / VIEWER_ZOOM_FACTOR
                 canvas.set_zoom_percent(pct)
-                _update_combo(pct / 100.0)
+                _update_combo(canvas.get_zoom_percent() / 100.0)
             else:
                 plan_view.zoom_out()
 
@@ -648,7 +659,7 @@ class ComponentBuilder:
         def _on_fit() -> None:
             if view_stack.currentIndex() == 0:
                 canvas.reset_view()
-                _update_combo(1.0)
+                _update_combo(canvas.get_zoom_percent() / 100.0)
             else:
                 plan_view.reset_view()
 

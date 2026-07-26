@@ -5,7 +5,11 @@ from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.identity_refs import BidRef
 from ..actions.action_ids import ACTION_REDO, ACTION_UNDO
 from ..components.mesh_view import OpenGLViewer
-from ..components.popup_tracking_combo import PopupTrackingComboBox
+from ..components.popup_tracking_combo import (
+    PopupTrackingComboBox,
+    parse_zoom_percent,
+    update_zoom_combo,
+)
 from ..components.viewer_cursors import make_zoom_cursor
 from ..config import (
     ACTION_ORBIT_LABEL,
@@ -248,31 +252,26 @@ class MeshViewWindow(QtWidgets.QMainWindow):
     def _update_zoom_combo(self, factor: float) -> None:
         if not self._zoom_combo:
             return
-        self._zoom_combo.blockSignals(True)
-        self._zoom_combo.lineEdit().blockSignals(True)
-        self._zoom_combo.setCurrentIndex(-1)
-        self._zoom_combo.lineEdit().setText(f"{int(factor * 100)}%")
-        self._zoom_combo.lineEdit().blockSignals(False)
-        self._zoom_combo.blockSignals(False)
+        update_zoom_combo(self._zoom_combo, factor)
 
     def _on_reset_view(self) -> None:
         if self.viewer:
             self.viewer.reset_view()
-            self._update_zoom_combo(1.0)
+            self._update_zoom_combo(self.viewer.get_zoom_percent() / 100.0)
 
     def _on_zoom_in(self) -> None:
         if not self.viewer:
             return
         pct = self.viewer.get_zoom_percent() * VIEWER_ZOOM_FACTOR
         self.viewer.set_zoom_percent(pct)
-        self._update_zoom_combo(pct / 100.0)
+        self._update_zoom_combo(self.viewer.get_zoom_percent() / 100.0)
 
     def _on_zoom_out(self) -> None:
         if not self.viewer:
             return
         pct = self.viewer.get_zoom_percent() / VIEWER_ZOOM_FACTOR
         self.viewer.set_zoom_percent(pct)
-        self._update_zoom_combo(pct / 100.0)
+        self._update_zoom_combo(self.viewer.get_zoom_percent() / 100.0)
 
     def _on_zoom_combo_activated(self, index: int) -> None:
         if not self._popup_open or not self.viewer or index < 0:
@@ -281,19 +280,17 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         if percent is None:
             return
         self.viewer.set_zoom_percent(float(percent))
-        self._update_zoom_combo(float(percent) / 100.0)
+        self._update_zoom_combo(self.viewer.get_zoom_percent() / 100.0)
 
     def _on_zoom_text_entered(self) -> None:
         if not self.viewer or not self._zoom_combo:
             return
-        text = self._zoom_combo.currentText().strip().rstrip("%")
-        try:
-            percent = float(text)
-            if percent > 0:
-                self.viewer.set_zoom_percent(percent)
-                self._update_zoom_combo(percent / 100.0)
-        except ValueError:
-            pass
+        percent = parse_zoom_percent(self._zoom_combo.currentText())
+        if percent is None:
+            self._update_zoom_combo(self.viewer.get_zoom_percent() / 100.0)
+            return
+        self.viewer.set_zoom_percent(percent)
+        self._update_zoom_combo(self.viewer.get_zoom_percent() / 100.0)
 
     def apply_mesh_data(
         self,
