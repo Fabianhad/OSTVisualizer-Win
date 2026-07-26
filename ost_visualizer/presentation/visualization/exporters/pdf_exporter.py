@@ -224,8 +224,15 @@ class PDFExporter:
             self._clear_export_render_resources()
 
     def _clear_export_render_resources(self) -> None:
-        self._export_composite_renderer.clear_cache()
-        self._export_page_cache.clear()
+        cleanup_steps = (
+            ("composite renderer cache", self._export_composite_renderer.clear_cache),
+            ("page cache", self._export_page_cache.clear),
+        )
+        for resource_name, cleanup in cleanup_steps:
+            try:
+                cleanup()
+            except Exception:
+                logger.exception("Failed to clear PDF export %s", resource_name)
 
     def _configure_page_background(
         self,
@@ -300,6 +307,8 @@ class PDFExporter:
 
     @staticmethod
     def _overlay_rect_matches_page(page: Page) -> bool:
+        if page.overlay_units_per_sheet_inch is None:
+            return False
         total_rotation = page.overlay_rotation + page.deskew_rotation_overlay
         if abs(total_rotation) > _OVERLAY_DIRECT_ROTATION_TOLERANCE_RADIANS:
             return False
@@ -323,6 +332,8 @@ class PDFExporter:
 
     def _render_positioned_overlay_background(self, page: Page) -> Optional[QImage]:
         if not page.overlay_image_path:
+            return None
+        if page.overlay_units_per_sheet_inch is None:
             return None
         overlay = self._export_page_cache.get_page(
             page.overlay_image_path,
@@ -350,11 +361,13 @@ class PDFExporter:
         painter = QPainter(result)
         if not painter.isActive():
             return None
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        painter.setClipRect(QRectF(0.0, 0.0, float(canvas_w), float(canvas_h)))
-        painter.setTransform(transform)
-        painter.drawImage(0, 0, overlay)
-        painter.end()
+        try:
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            painter.setClipRect(QRectF(0.0, 0.0, float(canvas_w), float(canvas_h)))
+            painter.setTransform(transform)
+            painter.drawImage(0, 0, overlay)
+        finally:
+            painter.end()
         return result
 
     def _try_single_source_background(
@@ -436,8 +449,10 @@ class PDFExporter:
         painter = QPainter(writer)
         if not painter.isActive():
             return None
-        painter.drawImage(QRectF(0.0, 0.0, page_width, page_height), image)
-        painter.end()
+        try:
+            painter.drawImage(QRectF(0.0, 0.0, page_width, page_height), image)
+        finally:
+            painter.end()
         return output_path
 
     @staticmethod

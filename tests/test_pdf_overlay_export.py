@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import zlib
 from types import SimpleNamespace
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QColor, QImage
@@ -73,6 +74,16 @@ class _Clearable:
         self.clear_calls += 1
 
 
+class _FailingClearable(_Clearable):
+    def clear(self):
+        super().clear()
+        raise RuntimeError("clear failed")
+
+    def clear_cache(self):
+        super().clear_cache()
+        raise RuntimeError("clear failed")
+
+
 class _ImageCache(_Clearable):
     def __init__(self, image):
         super().__init__()
@@ -80,6 +91,25 @@ class _ImageCache(_Clearable):
 
     def get_page(self, *_args):
         return self.image
+
+
+class _ExplodingPainter:
+    last_instance = None
+
+    def __init__(self, _target):
+        self.active = True
+        self.ended = False
+        type(self).last_instance = self
+
+    def isActive(self):
+        return self.active
+
+    def drawImage(self, *_args):
+        raise RuntimeError("draw failed")
+
+    def end(self):
+        self.active = False
+        self.ended = True
 
 
 class _CoordinateSystem:
@@ -182,6 +212,23 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertEqual(exported_page.source_pdf, "overlay.pdf")
         self.assertEqual(exported_page.page_index, 0)
         self.assertFalse(exported_page.is_blank)
+
+    def test_overlay_only_export_with_invalid_calibration_uses_blank_background(self):
+        writer = _FakeWriter()
+        exporter = _make_exporter(writer)
+        result = _export_single_page(
+            exporter,
+            _page(
+                overlay_image_path="overlay.pdf",
+                image_show_mode=SHOW_OVERLAY,
+                scale_factor1=0.0,
+                overlay_rect=(0.0, 0.0, 2688.0, 1920.0),
+            ),
+        )
+        self.assertTrue(result.success)
+        exported_page = writer.pages[0]
+        self.assertTrue(exported_page.is_blank)
+        self.assertEqual(exported_page.source_pdf, "")
 
     def test_overlay_only_pdf_export_uses_overlay_source_for_nearly_full_page_rect(
         self,
@@ -432,6 +479,25 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertIn("0.500000000 0 0 0.500000000 0 0 cm", stream_text)
         self.assertNotIn("0.060000000 0 0 -0.060000000", stream_text)
 
+    def test_raster_background_pdf_ends_painter_when_drawing_fails(self):
+        exporter = _make_exporter(_FakeWriter())
+        rendered_image = QImage(10, 10, QImage.Format.Format_ARGB32)
+        rendered_image.fill(QColor(255, 0, 0))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch(
+                "ost_visualizer.presentation.visualization.exporters.pdf_exporter.QPainter",
+                _ExplodingPainter,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "draw failed"):
+                    exporter._write_raster_background_pdf(
+                        rendered_image,
+                        {"width": 612.0, "height": 792.0},
+                        temp_dir,
+                        "composite",
+                    )
+        self.assertIsNotNone(_ExplodingPainter.last_instance)
+        self.assertTrue(_ExplodingPainter.last_instance.ended)
+
     def test_annotations_are_exported_over_overlay_only_source(self):
         writer = _FakeWriter()
         exporter = _make_exporter(writer)
@@ -480,6 +546,28 @@ class PDFOverlayExportTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(page_cache.clear_calls, 1)
         self.assertEqual(composite_renderer.clear_calls, 1)
+
+    def test_cleanup_failure_preserves_result_and_clears_remaining_resources(self):
+        writer = _FakeWriter()
+        exporter = _make_exporter(writer)
+        page_cache = _Clearable()
+        composite_renderer = _FailingClearable()
+        exporter._export_page_cache = page_cache
+        exporter._export_composite_renderer = composite_renderer
+        with self.assertLogs(
+            "ost_visualizer.presentation.visualization.exporters.pdf_exporter",
+            level="ERROR",
+        ) as captured:
+            result = _export_single_page(exporter, _page())
+        self.assertTrue(result.success)
+        self.assertEqual(composite_renderer.clear_calls, 1)
+        self.assertEqual(page_cache.clear_calls, 1)
+        self.assertTrue(
+            any(
+                "Failed to clear PDF export composite renderer cache" in message
+                for message in captured.output
+            )
+        )
 
 
 if __name__ == "__main__":
