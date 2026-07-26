@@ -82,9 +82,7 @@ class PageLoaderMixin:
     def _is_stale_generation(self, generation_id: int) -> bool:
         return generation_id != self._page_render_generation_id
 
-    def load_composite_async(
-        self, page: Page, bid_ref, render_scale: float, rotation: int
-    ):
+    def load_composite_async(self, page: Page, bid_ref, render_scale: float):
         request_id = self._rendering_service.render_composite_async(
             page=page,
             bid_ref=bid_ref,
@@ -100,7 +98,6 @@ class PageLoaderMixin:
         file_path: str,
         page_index: int,
         scale: float,
-        rotation: int,
         invert: bool,
         bitonal: bool,
         tint_rgb: Optional[tuple[int, int, int]] = None,
@@ -270,7 +267,6 @@ class PageLoaderMixin:
 
     def _rendered_pdf_page_dimensions(
         self,
-        rotation: Optional[int] = None,
         pdf_width_pts: Optional[float] = None,
         pdf_height_pts: Optional[float] = None,
     ) -> tuple[float, float]:
@@ -352,11 +348,14 @@ class PageLoaderMixin:
         if not self._uses_pdf_base_raster(data) and result is not None:
             return float(result.image.width()), float(result.image.height())
         width, height = self._rendered_pdf_page_dimensions(
-            data.get("rotation", self._current_rotation),
-            data["pdf_width_pts"],
-            data["pdf_height_pts"],
+            pdf_width_pts=data["pdf_width_pts"],
+            pdf_height_pts=data["pdf_height_pts"],
         )
         return width * self._scene_scale, height * self._scene_scale
+
+    def _complete_page_visual_load(self) -> None:
+        self._pending_page_data = None
+        self._mark_load_geometry_ready()
 
     def _clear_overlay_items(self) -> None:
         for item in self._overlay_items:
@@ -400,7 +399,7 @@ class PageLoaderMixin:
         self._base_raster_scale = data["base_raster_scale"]
         self._apply_page_transform_to_items()
         self._sync_page_image_layer_visibility()
-        self._mark_load_geometry_ready()
+        self._complete_page_visual_load()
         self._sync_overlay_move_hidden_normal_visuals()
 
     def _on_page_loaded(self, result: RenderResult):
@@ -439,7 +438,7 @@ class PageLoaderMixin:
                 page, data.get("bid_ref"), view_scale, show_mode, rotation
             )
         else:
-            self._mark_load_geometry_ready()
+            self._complete_page_visual_load()
         self._sync_overlay_move_hidden_normal_visuals()
 
     def _on_overlay_loaded(self, result: RenderResult):
@@ -467,15 +466,17 @@ class PageLoaderMixin:
         item = self._create_overlay_graphics_item(
             overlay_pixmap, page, view_scale, show_mode
         )
-        if item:
-            self._clear_overlay_items()
+        self._clear_overlay_items()
+        self._loaded_visual_kind = VISUAL_KIND_OVERLAY
+        self._base_raster_scale = render_scale
+        if item is not None:
             self._scene.addItem(item)
             self._overlay_items.append(item)
-            self._loaded_visual_kind = VISUAL_KIND_OVERLAY
-            self._base_raster_scale = render_scale
-            self._sync_page_image_layer_visibility()
-            self._mark_load_geometry_ready()
-            self._sync_overlay_move_hidden_normal_visuals()
+        else:
+            logger.warning("Overlay render has no valid calibrated placement geometry.")
+        self._sync_page_image_layer_visibility()
+        self._complete_page_visual_load()
+        self._sync_overlay_move_hidden_normal_visuals()
 
     def _sync_overlay_move_hidden_normal_visuals(self) -> None:
         if self._overlay_move_normal_visuals_hidden:

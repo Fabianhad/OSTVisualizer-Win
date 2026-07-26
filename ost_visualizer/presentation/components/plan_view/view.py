@@ -4793,14 +4793,12 @@ class TakeoffPlanView(
                         page,
                         resolved_bid_ref,
                         base_raster_scale,
-                        rotation,
                     )
                 else:
                     self.load_page_async(
                         page.image_path,
                         page.page_index,
                         base_raster_scale,
-                        rotation,
                         page.invert,
                         page.bitonal,
                         tint_rgb=(

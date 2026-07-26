@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Fixed successful plan-page renders remaining marked as pending, which could suppress later raster-quality correction; invalid overlay placement geometry now finishes loading without leaving the page busy.
 - Fixed PDF export remaining unavailable for TIFF-backed pages after raster background export support was added; mixed selections now enable export whenever at least one selected page has valid dimensions.
 - Fixed condition-type deletion validation failing open when usage data could not be loaded; unavailable validation now blocks deletion instead of risking removal of an in-use type.
 - Fixed plan input edge cases so panning can begin at the viewport origin, horizontal-only wheel input no longer zooms out, keyboard moves persist once across auto-repeat and focus changes, area holes stay aligned with translated parents, canceled resize/rotation previews do not write changes, and interrupted pan, zoom-band, PDF-text, and drag interactions clean up reliably.

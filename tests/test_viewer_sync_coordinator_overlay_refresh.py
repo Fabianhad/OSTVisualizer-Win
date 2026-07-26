@@ -723,6 +723,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         QApplication.processEvents()
         self.assertFalse(view._render_loading_bar.is_loading)
         self.assertTrue(view._render_loading_bar.isHidden())
+        self.assertIsNone(view._pending_page_data)
         view.cleanup()
 
     def test_page_switch_updates_canvas_and_schedules_render_before_completion(self):
@@ -974,6 +975,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         QApplication.processEvents()
         self.assertTrue(view._render_loading_bar.is_loading)
+        self.assertIsNotNone(view._pending_page_data)
         overlay_request_id, overlay_request = view._rendering_service.overlay_requests[
             -1
         ]
@@ -987,6 +989,39 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         )
         QApplication.processEvents()
         self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertIsNone(view._pending_page_data)
+        view.cleanup()
+
+    def test_invalid_overlay_geometry_completes_visual_load_without_an_item(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            overlay_image_path="overlay.pdf",
+            image_show_mode=1,
+            width_pts=612.0,
+            height_pts=792.0,
+            overlay_rect=(0.0, 0.0, 0.0, 0.0),
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        request_id, request = view._rendering_service.overlay_requests[-1]
+        with self.assertLogs(
+            "ost_visualizer.presentation.components.plan_view.components.page_loader",
+            level="WARNING",
+        ):
+            request["callback"](
+                RenderResult(
+                    request_id,
+                    True,
+                    QImage(1224, 1584, QImage.Format.Format_ARGB32),
+                    None,
+                )
+            )
+        QApplication.processEvents()
+        self.assertFalse(view._render_loading_bar.is_loading)
+        self.assertTrue(view._load_geometry_ready)
+        self.assertIsNone(view._pending_page_data)
+        self.assertEqual(view._overlay_items, [])
         view.cleanup()
 
     def test_page_switch_restarts_loading_and_stale_completion_does_not_hide_newer_bar(
@@ -2725,6 +2760,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertIsNotNone(view._background_item)
         self.assertTrue(view._background_item.isVisible())
         self.assertEqual(view._loaded_visual_kind, "composite")
+        self.assertIsNone(view._pending_page_data)
         self.assertEqual(page.overlay_rect, (64.0, 32.0, 544.0, 704.0))
         view.cleanup()
 
