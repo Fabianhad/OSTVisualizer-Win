@@ -371,6 +371,24 @@ class TestMeshViewLifecycle(unittest.TestCase):
         self.assertEqual((False, False), viewer._curved_check_fn(["uid"]))
         self.assertEqual({}, viewer._context_menu_conditions_fn())
 
+    def test_cleanup_releases_viewer_ownership_when_renderer_shutdown_fails(self):
+        self._app()
+        viewer = OpenGLViewer(None, SimpleNamespace())
+        renderer = SimpleNamespace(
+            shutdown=lambda: (_ for _ in ()).throw(RuntimeError("shutdown failed"))
+        )
+        viewer._renderer = renderer
+
+        with self.assertLogs(
+            "ost_visualizer.presentation.components.mesh_view", level="ERROR"
+        ):
+            viewer.cleanup()
+
+        self.assertTrue(viewer._destroyed)
+        self.assertIsNone(viewer._renderer)
+        self.assertIsNone(viewer._animation_timer)
+        self.assertIsNone(viewer._surface_metrics_timer)
+
     def test_failed_renderer_initialization_releases_partial_renderer(self):
         viewer = OpenGLViewer.__new__(OpenGLViewer)
         viewer._renderer = None

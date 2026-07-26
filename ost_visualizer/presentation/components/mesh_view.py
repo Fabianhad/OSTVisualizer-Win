@@ -1299,9 +1299,13 @@ class OpenGLViewer(QtWidgets.QWidget):
         self._surface_metrics_timer.timeout.disconnect(self._refresh_surface_metrics)
         self._surface_metrics_timer.deleteLater()
         self._surface_metrics_timer = None
-        if self._renderer is not None:
-            self._renderer.shutdown()
-            self._renderer = None
+        renderer = self._renderer
+        self._renderer = None
+        if renderer is not None:
+            try:
+                renderer.shutdown()
+            except Exception:
+                logger.exception("Failed to shut down ost_renderer during cleanup")
         self._render_surface_size = None
 
     def _disconnect_surface_notifications(self) -> None:
