@@ -154,7 +154,7 @@ class SelectionManagerMixin:
             check_pos = scene_pos
         cs = self._scene_builder.get_coordinate_system()
         for uid, ann in uid_ann_pairs:
-            if not ann.visible or not ann.is_interactive:
+            if not ann.is_interactive or not self._annotation_layer_visible(ann):
                 continue
             if ann.annotation_type not in ann.LINEAR_TYPES:
                 continue

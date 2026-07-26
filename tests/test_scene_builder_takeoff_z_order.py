@@ -154,6 +154,28 @@ class SceneBuilderTakeoffZOrderTests(unittest.TestCase):
         self.assertLess(uid_to_items["1"][0].zValue(), uid_to_items["2"][0].zValue())
         self.assertLess(uid_to_items["2"][0].zValue(), uid_to_items["10"][0].zValue())
 
+    def test_hidden_layer_linear_annotation_is_not_geometrically_selectable(self):
+        annotation = BidAnnotation(
+            uid="line-1",
+            annotation_type="line",
+            page_uid="page-1",
+            layer_uid="hidden",
+            position=[0.0, 0.0, 100.0, 0.0],
+        )
+        selection = _SelectionHarness(
+            QGraphicsScene(),
+            takeoffs={},
+            annotations={"line-1": annotation},
+            conditions={},
+        )
+        selection._hidden_layer_uids = {"hidden"}
+        selection._scene_builder = SimpleNamespace(
+            get_coordinate_system=lambda: FakeCoordinateSystem()
+        )
+        selection._current_page_transform = lambda: None
+
+        self.assertIsNone(selection.find_linear_annotation_near(QPointF(50.0, 0.0)))
+
     def test_pending_takeoff_preview_draws_after_committed_takeoffs(self):
         pending_uid = "pending:takeoff-placement:operation-1:0"
         _scene, renderer, uid_to_items = self._build_scene(
