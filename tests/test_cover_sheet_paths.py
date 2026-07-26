@@ -262,12 +262,14 @@ class _OverlayRectCursor(_FakeCursor):
         scale_factor1=0.125,
         scale_factor2=12.0,
         overlay_rect="-1.103146,0.000000,2686.161423,1919.474692",
+        page_exists=True,
     ):
         super().__init__()
         self.current_overlay_path = current_overlay_path
         self.scale_factor1 = scale_factor1
         self.scale_factor2 = scale_factor2
         self.overlay_rect = overlay_rect
+        self.page_exists = page_exists
 
     def fetchone(self):
         if (
@@ -286,6 +288,8 @@ class _OverlayRectCursor(_FakeCursor):
             self.last_query
             and "SELECT [ScaleFactor1], [ScaleFactor2]" in self.last_query
         ):
+            if not self.page_exists:
+                return None
             return [self.scale_factor1, self.scale_factor2]
         if self.last_query and "SELECT [OverlayRect]" in self.last_query:
             return [self.overlay_rect]
@@ -299,8 +303,11 @@ class _OverlayRectConnection(_FakeConnection):
 
 
 class _PageOverlayOps(PageOperationsMixin):
-    def __init__(self, current_overlay_path=""):
-        self.conn = _OverlayRectConnection(current_overlay_path=current_overlay_path)
+    def __init__(self, current_overlay_path="", **cursor_options):
+        self.conn = _OverlayRectConnection(
+            current_overlay_path=current_overlay_path,
+            **cursor_options,
+        )
         self.schema = _FakeSchema()
         self.updates = []
         self.logger = _FakeLogger()
@@ -1958,6 +1965,35 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 "OverlayOffsetY": -2.5,
             },
         )
+
+    def test_saving_overlay_rect_rejects_invalid_page_calibration(self):
+        cases = (
+            {"scale_factor1": 0.0},
+            {"scale_factor1": -0.125},
+            {"scale_factor2": float("nan")},
+        )
+        for cursor_options in cases:
+            with self.subTest(cursor_options=cursor_options):
+                ops = _PageOverlayOps(**cursor_options)
+                self.assertFalse(
+                    ops.save_page_overlay_rect(
+                        "bid.mdb",
+                        "11",
+                        (0.0, 0.0, 100.0, 100.0),
+                    )
+                )
+                self.assertEqual(ops.updates, [])
+
+    def test_saving_overlay_rect_rejects_missing_page(self):
+        ops = _PageOverlayOps(page_exists=False)
+        self.assertFalse(
+            ops.save_page_overlay_rect(
+                "bid.mdb",
+                "11",
+                (0.0, 0.0, 100.0, 100.0),
+            )
+        )
+        self.assertEqual(ops.updates, [])
 
     def test_cover_sheet_image_path_cells_highlight_missing_files(self):
         missing_image = str(Path(tempfile.gettempdir()) / "missing-cover-page.pdf")

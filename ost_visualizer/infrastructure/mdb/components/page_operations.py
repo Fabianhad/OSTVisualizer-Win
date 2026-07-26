@@ -48,7 +48,7 @@ class PageOperationsMixin:
 
     def _rescale_page_content_for_scale_change(
         self,
-        cursor: "pyodbc.Cursor",
+        cursor: pyodbc.Cursor,
         schema,
         page_uid: int,
         sf1: float,
@@ -75,7 +75,7 @@ class PageOperationsMixin:
 
     def _rescale_page_overlay_rect(
         self,
-        cursor: "pyodbc.Cursor",
+        cursor: pyodbc.Cursor,
         schema,
         page_uid: int,
         factor: float,
@@ -144,7 +144,7 @@ class PageOperationsMixin:
 
     def _rescale_page_positions(
         self,
-        cursor: "pyodbc.Cursor",
+        cursor: pyodbc.Cursor,
         schema,
         page_uid: int,
         factor: float,
@@ -301,6 +301,18 @@ class PageOperationsMixin:
             with self._connection(db_path) as conn:
                 schema = self._schema(conn)
                 cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT [ScaleFactor1], [ScaleFactor2] "
+                    "FROM [BidPages] WHERE [UID]=?",
+                    int(page_uid),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise ValueError(f"Page {page_uid} does not exist")
+                if overlay_units_per_sheet_inch(row[0], row[1]) is None:
+                    raise ValueError(
+                        f"Page {page_uid} requires finite positive scale factors"
+                    )
                 values = {
                     "OverlayRect": rect_text,
                     "OverlayOffsetX": float(rect_x),
@@ -463,7 +475,7 @@ class PageOperationsMixin:
 
     def _replace_page_area_selection(
         self,
-        cursor: "pyodbc.Cursor",
+        cursor: pyodbc.Cursor,
         schema,
         page_uid: int,
         area_uid: int | None,
@@ -518,7 +530,7 @@ class PageOperationsMixin:
 
     def _insert_page_area_selection(
         self,
-        cursor: "pyodbc.Cursor",
+        cursor: pyodbc.Cursor,
         schema,
         page_uid: int,
         area_uid: int | None,
