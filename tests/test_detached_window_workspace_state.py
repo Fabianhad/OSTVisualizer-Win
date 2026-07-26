@@ -771,7 +771,89 @@ class FakeSplitterForSidebarSizes:
         self.applied_sizes.append(list(sizes))
 
 
+class FakeCheckAction:
+    def __init__(self):
+        self.checked = False
+
+    def isChecked(self):
+        return self.checked
+
+    def setChecked(self, checked):
+        self.checked = bool(checked)
+
+    def blockSignals(self, _blocked):
+        pass
+
+
 class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
+    def test_explicit_annotation_window_state_overrides_saved_fullscreen(self):
+        calls = []
+        state = WorkspaceState()
+        saved = state.detached_windows.annotation_view
+        saved.geometry_b64 = _encoded_geometry(b"saved")
+        saved.is_maximized = True
+        saved.is_fullscreen = True
+        window = MainWindow.__new__(MainWindow)
+        window._workspace_state_model = SimpleNamespace(state=state)
+        window._annotation_window_action = FakeCheckAction()
+        window._annotation_view_manager = SimpleNamespace(
+            is_view_open=lambda: False,
+            set_ui_access_manager=lambda _manager: None,
+            open_view=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+        window._view_window_manager = SimpleNamespace(is_view_open=lambda: False)
+        window.ui_access_manager = object()
+        window.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("job.mdb", "bid-1")
+        )
+        window.can_restore_annotation_window = lambda: True
+        window.get_active_takeoff_page_uid = lambda: "page-1"
+        explicit_geometry = QtCore.QByteArray(b"explicit")
+        MainWindow.set_annotation_window_visible(
+            window,
+            True,
+            initial_geometry=explicit_geometry,
+            initial_is_maximized=False,
+            initial_is_fullscreen=False,
+        )
+        self.assertEqual(calls[0][1]["initial_geometry"], explicit_geometry)
+        self.assertFalse(calls[0][1]["initial_is_maximized"])
+        self.assertFalse(calls[0][1]["initial_is_fullscreen"])
+
+    def test_explicit_view_window_state_overrides_saved_fullscreen(self):
+        calls = []
+        state = WorkspaceState()
+        saved = state.detached_windows.view_window
+        saved.geometry_b64 = _encoded_geometry(b"saved")
+        saved.is_maximized = True
+        saved.is_fullscreen = True
+        window = MainWindow.__new__(MainWindow)
+        window._workspace_state_model = SimpleNamespace(state=state)
+        window._view_window_action = FakeCheckAction()
+        window._view_window_manager = SimpleNamespace(
+            is_view_open=lambda: False,
+            set_ui_access_manager=lambda _manager: None,
+            open_view=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+        window._annotation_view_manager = SimpleNamespace(get_active_view=lambda: None)
+        window.ui_access_manager = object()
+        window.ui_state_manager = SimpleNamespace(
+            get_selected_bid_ref=lambda: BidRef("job.mdb", "bid-1")
+        )
+        window.can_restore_view_window = lambda: True
+        window.get_active_takeoff_page_uid = lambda: "page-1"
+        explicit_geometry = QtCore.QByteArray(b"explicit")
+        MainWindow.set_view_window_visible(
+            window,
+            True,
+            initial_geometry=explicit_geometry,
+            initial_is_maximized=False,
+            initial_is_fullscreen=False,
+        )
+        self.assertEqual(calls[0][1]["initial_geometry"], explicit_geometry)
+        self.assertFalse(calls[0][1]["initial_is_maximized"])
+        self.assertFalse(calls[0][1]["initial_is_fullscreen"])
+
     def test_hidden_left_splitter_size_does_not_replace_last_good_layout(self):
         window = MainWindow.__new__(MainWindow)
         window._left_splitter = FakeSplitterForSidebarSizes()

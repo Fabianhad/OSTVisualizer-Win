@@ -16,7 +16,14 @@ from ..application.use_cases.project.import_project_files_from_args_use_case imp
 )
 from ..domain.entities.annotation_style import AnnotationStyle
 from ..domain.entities.file_state import normalize_path
-from ..domain.entities.project_constants import DELETED_BIDS_PROJECT_NAME
+from ..domain.entities.project_constants import (
+    DELETED_BIDS_PROJECT_NAME,
+    DELETED_BIDS_PROJECT_UID,
+)
+from ..domain.entities.workspace_state import (
+    WORKSPACE_ACTIVE_VIEW_2D,
+    WORKSPACE_ACTIVE_VIEW_3D,
+)
 from .actions.action_ids import (
     ACTION_ANNOTATION_WINDOW,
     ACTION_BACKOUT_MODE,
@@ -105,10 +112,7 @@ class MainWindow(QtWidgets.QMainWindow):
     VIEW_TOOLBAR_KEY = "view_toolbar"
     PLAN_TOOLS_TOOLBAR_KEY = "plan_tools_toolbar"
     OVERLAY_TOOLS_TOOLBAR_KEY = "overlay_tools_toolbar"
-    _MAIN_TOOLBAR_KEY = MAIN_TOOLBAR_KEY
-    _VIEW_TOOLBAR_KEY = VIEW_TOOLBAR_KEY
-    _PLAN_TOOLS_TOOLBAR_KEY = PLAN_TOOLS_TOOLBAR_KEY
-    _OVERLAY_TOOLS_TOOLBAR_KEY = OVERLAY_TOOLS_TOOLBAR_KEY
+    _application_shutdown_finalized = False
 
     def __init__(
         self, app_controller, splash_screen=None, startup_project_file_args=None
@@ -259,30 +263,30 @@ class MainWindow(QtWidgets.QMainWindow):
             self.set_conditions_sidebar_visible
         )
         self._workspace_toolbar_visibility = {
-            self._MAIN_TOOLBAR_KEY: True,
-            self._VIEW_TOOLBAR_KEY: True,
-            self._PLAN_TOOLS_TOOLBAR_KEY: True,
-            self._OVERLAY_TOOLS_TOOLBAR_KEY: True,
+            self.MAIN_TOOLBAR_KEY: True,
+            self.VIEW_TOOLBAR_KEY: True,
+            self.PLAN_TOOLS_TOOLBAR_KEY: True,
+            self.OVERLAY_TOOLS_TOOLBAR_KEY: True,
         }
         self._syncing_toolbar_visibility = False
         self._main_toolbar.visibilityChanged.connect(
             lambda visible: self._on_workspace_toolbar_visibility_changed(
-                self._MAIN_TOOLBAR_KEY, visible
+                self.MAIN_TOOLBAR_KEY, visible
             )
         )
         self._plan_tools_toolbar.visibilityChanged.connect(
             lambda visible: self._on_workspace_toolbar_visibility_changed(
-                self._PLAN_TOOLS_TOOLBAR_KEY, visible
+                self.PLAN_TOOLS_TOOLBAR_KEY, visible
             )
         )
         self._overlay_tools_toolbar.visibilityChanged.connect(
             lambda visible: self._on_workspace_toolbar_visibility_changed(
-                self._OVERLAY_TOOLS_TOOLBAR_KEY, visible
+                self.OVERLAY_TOOLS_TOOLBAR_KEY, visible
             )
         )
         self._view_toolbar.visibilityChanged.connect(
             lambda visible: self._on_workspace_toolbar_visibility_changed(
-                self._VIEW_TOOLBAR_KEY, visible
+                self.VIEW_TOOLBAR_KEY, visible
             )
         )
         self._annotation_view_manager.set_visibility_changed_callback(
@@ -949,12 +953,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _show_update_dialog(self, version_info) -> None:
         self._visualization_service.set_update_dialog_active(True)
-        dialog = UpdateDialog(self.icon_provider, self, version_info)
+        dialog = None
         try:
+            dialog = UpdateDialog(self.icon_provider, self, version_info)
             dialog.show_dialog()
         finally:
-            dialog.deleteLater()
-        self._visualization_service.set_update_dialog_active(False)
+            if dialog is not None:
+                dialog.deleteLater()
+            self._visualization_service.set_update_dialog_active(False)
 
     def show_license_dialog(self) -> None:
         self.license_coordinator.show_dialog()
@@ -1070,7 +1076,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _can_paste_project_bids(
         self, file_path: str, target_project_uid: str | None
     ) -> bool:
-        if target_project_uid == "1":
+        if target_project_uid == DELETED_BIDS_PROJECT_UID:
             return False
         if not self._bid_clipboard.has_content():
             return False
@@ -1109,14 +1115,14 @@ class MainWindow(QtWidgets.QMainWindow):
             target_project_uid = self._project_data_service.find_project_uid_for_bid(
                 bid_ref
             )
-            if target_project_uid == "1":
+            if target_project_uid == DELETED_BIDS_PROJECT_UID:
                 return None
             return (
                 bid_ref.file_path,
                 target_project_uid,
             )
         project_uid = self.ui_state_manager.selected_project_uid
-        if project_uid == "1":
+        if project_uid == DELETED_BIDS_PROJECT_UID:
             return None
         file_path = self.ui_state_manager.selected_file_path
         if not file_path:
@@ -1259,20 +1265,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self._syncing_toolbar_visibility = True
         try:
             takeoff_active = self.is_takeoff_tab_active()
-            self._set_toolbar_visible(self._main_toolbar, self._MAIN_TOOLBAR_KEY, True)
+            self._set_toolbar_visible(self._main_toolbar, self.MAIN_TOOLBAR_KEY, True)
             self._set_toolbar_visible(
                 self._plan_tools_toolbar,
-                self._PLAN_TOOLS_TOOLBAR_KEY,
+                self.PLAN_TOOLS_TOOLBAR_KEY,
                 takeoff_active,
             )
             self._set_toolbar_visible(
                 self._overlay_tools_toolbar,
-                self._OVERLAY_TOOLS_TOOLBAR_KEY,
+                self.OVERLAY_TOOLS_TOOLBAR_KEY,
                 takeoff_active,
             )
             self._set_toolbar_visible(
                 self._view_toolbar,
-                self._VIEW_TOOLBAR_KEY,
+                self.VIEW_TOOLBAR_KEY,
                 takeoff_active,
             )
         finally:
@@ -1291,19 +1297,19 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.setTitle(SHOW_TOOLBARS_MENU_TITLE)
         toolbar_entries = (
             (
-                self._MAIN_TOOLBAR_KEY,
+                self.MAIN_TOOLBAR_KEY,
                 MAIN_TOOLBAR_LABEL,
             ),
             (
-                self._VIEW_TOOLBAR_KEY,
+                self.VIEW_TOOLBAR_KEY,
                 VIEW_TOOLBAR_LABEL,
             ),
             (
-                self._PLAN_TOOLS_TOOLBAR_KEY,
+                self.PLAN_TOOLS_TOOLBAR_KEY,
                 PLAN_TOOLS_TOOLBAR_LABEL,
             ),
             (
-                self._OVERLAY_TOOLS_TOOLBAR_KEY,
+                self.OVERLAY_TOOLS_TOOLBAR_KEY,
                 OVERLAY_TOOLS_TOOLBAR_LABEL,
             ),
         )
@@ -1312,7 +1318,7 @@ class MainWindow(QtWidgets.QMainWindow):
             action.setCheckable(True)
             action.setChecked(self._workspace_toolbar_visibility[key])
             action.setEnabled(
-                key == self._MAIN_TOOLBAR_KEY or self.is_takeoff_tab_active()
+                key == self.MAIN_TOOLBAR_KEY or self.is_takeoff_tab_active()
             )
             action.toggled.connect(
                 lambda checked, toolbar_key=key: self._set_workspace_toolbar_preference(
@@ -1448,7 +1454,11 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def get_active_takeoff_view(self) -> str:
-        return "2d" if self._view_stack.currentIndex() == 1 else "3d"
+        return (
+            WORKSPACE_ACTIVE_VIEW_2D
+            if self._view_stack.currentIndex() == 1
+            else WORKSPACE_ACTIVE_VIEW_3D
+        )
 
     def can_go_previous_takeoff_page(self) -> bool:
         return self._can_go_takeoff_page(-1)
@@ -1499,13 +1509,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.handlers.ui_event.navigate_to_takeoff_page(order[-1])
 
     def set_active_takeoff_view(self, active_view: str) -> None:
-        index = 1 if str(active_view).lower() == "2d" else 0
+        index = 1 if str(active_view).lower() == WORKSPACE_ACTIVE_VIEW_2D else 0
         if self._view_stack.currentIndex() != index:
             self._view_stack.setCurrentIndex(index)
 
     def navigate_to_hotlink_page(self, page_uid: str, named_view_uid: str = "") -> None:
         self.handlers.ui_event.navigate_to_takeoff_page(page_uid, named_view_uid)
-        self.set_active_takeoff_view("2d")
+        self.set_active_takeoff_view(WORKSPACE_ACTIVE_VIEW_2D)
         self.handlers.ui_event.apply_pending_hotlink_view_focus()
 
     def is_takeoff_2d_tab_visible(self) -> bool:
@@ -1798,6 +1808,7 @@ class MainWindow(QtWidgets.QMainWindow):
             detached_state = (
                 self._workspace_state_model.state.detached_windows.annotation_view
             )
+            restore_saved_fullscreen = initial_geometry is None
             initial_geometry, initial_is_maximized = (
                 self._resolve_detached_initial_state(
                     detached_state,
@@ -1805,7 +1816,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     initial_is_maximized,
                 )
             )
-            initial_is_fullscreen = detached_state.is_fullscreen
+            if restore_saved_fullscreen:
+                initial_is_fullscreen = detached_state.is_fullscreen
         action = self._annotation_window_action
         if action.isChecked() != visible:
             action.blockSignals(True)
@@ -1854,6 +1866,7 @@ class MainWindow(QtWidgets.QMainWindow):
             detached_state = (
                 self._workspace_state_model.state.detached_windows.view_window
             )
+            restore_saved_fullscreen = initial_geometry is None
             initial_geometry, initial_is_maximized = (
                 self._resolve_detached_initial_state(
                     detached_state,
@@ -1861,7 +1874,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     initial_is_maximized,
                 )
             )
-            initial_is_fullscreen = detached_state.is_fullscreen
+            if restore_saved_fullscreen:
+                initial_is_fullscreen = detached_state.is_fullscreen
         action = self._view_window_action
         if action.isChecked() != visible:
             action.blockSignals(True)
@@ -1985,6 +1999,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        if self._application_shutdown_finalized:
+            event.accept()
+            return
         if self._collaboration_shutdown_pending or self._collaboration_shutdown_failed:
             event.ignore()
             return
@@ -1994,6 +2011,7 @@ class MainWindow(QtWidgets.QMainWindow):
             event.ignore()
             QtCore.QTimer.singleShot(0, self._begin_application_shutdown)
             return
+        self._application_shutdown_finalized = True
         self._workspace_state_coordinator.flush()
         self._workspace_state_coordinator.cleanup()
         self.event_coordinator.cleanup()

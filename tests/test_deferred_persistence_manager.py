@@ -583,12 +583,54 @@ class RecordingDeferredPersistence:
 class FakeCloseEvent:
     def __init__(self):
         self.ignored = False
+        self.accepted = False
 
     def ignore(self):
         self.ignored = True
 
+    def accept(self):
+        self.accepted = True
+
 
 class DeferredPersistenceShutdownTests(unittest.TestCase):
+    def test_update_dialog_failure_always_clears_monitor_state(self):
+        active_states = []
+        deleted = []
+        window = MainWindow.__new__(MainWindow)
+        window._visualization_service = SimpleNamespace(
+            set_update_dialog_active=lambda active: active_states.append(active)
+        )
+        window.icon_provider = object()
+
+        def fail_to_show():
+            raise RuntimeError("dialog failed")
+
+        dialog = SimpleNamespace(
+            show_dialog=fail_to_show,
+            deleteLater=lambda: deleted.append(True),
+        )
+        with patch(
+            "ost_visualizer.presentation.main_window.UpdateDialog",
+            return_value=dialog,
+        ), self.assertRaisesRegex(RuntimeError, "dialog failed"):
+            MainWindow._show_update_dialog(window, object())
+        self.assertEqual(active_states, [True, False])
+        self.assertEqual(deleted, [True])
+
+    def test_update_dialog_constructor_failure_always_clears_monitor_state(self):
+        active_states = []
+        window = MainWindow.__new__(MainWindow)
+        window._visualization_service = SimpleNamespace(
+            set_update_dialog_active=lambda active: active_states.append(active)
+        )
+        window.icon_provider = object()
+        with patch(
+            "ost_visualizer.presentation.main_window.UpdateDialog",
+            side_effect=RuntimeError("constructor failed"),
+        ), self.assertRaisesRegex(RuntimeError, "constructor failed"):
+            MainWindow._show_update_dialog(window, object())
+        self.assertEqual(active_states, [True, False])
+
     def test_app_close_flushes_current_page_state_and_cleans_deferred_manager(self):
         calls = []
         window = MainWindow.__new__(MainWindow)
@@ -739,6 +781,64 @@ class DeferredPersistenceShutdownTests(unittest.TestCase):
             side_effect=lambda: calls.append("qt_quit"),
         ):
             MainWindow.closeEvent(window, event)
+        self.assertEqual(
+            calls,
+            [
+                "workspace_flush",
+                "workspace_cleanup",
+                "event_cleanup",
+                "ui_cleanup",
+                "license_cleanup",
+                "access_cleanup",
+                "mcp_cleanup",
+                "lifecycle",
+                "window_close",
+                "qt_quit",
+            ],
+        )
+
+    def test_completed_shutdown_finalization_is_idempotent(self):
+        calls = []
+        lifecycle = SimpleNamespace(shutdown=lambda: calls.append("lifecycle"))
+        window = MainWindow.__new__(MainWindow)
+        window._application_shutdown_finalized = False
+        window._collaboration_shutdown_pending = False
+        window._collaboration_shutdown_complete = True
+        window._collaboration_shutdown_failed = False
+        window._workspace_state_coordinator = SimpleNamespace(
+            flush=lambda: calls.append("workspace_flush"),
+            cleanup=lambda: calls.append("workspace_cleanup"),
+        )
+        window.event_coordinator = SimpleNamespace(
+            cleanup=lambda: calls.append("event_cleanup")
+        )
+        window.handlers = SimpleNamespace(
+            ui_event=SimpleNamespace(cleanup=lambda: calls.append("ui_cleanup"))
+        )
+        window.license_coordinator = SimpleNamespace(
+            cleanup=lambda: calls.append("license_cleanup")
+        )
+        window.ui_access_manager = SimpleNamespace(
+            cleanup=lambda: calls.append("access_cleanup")
+        )
+        window._mcp_context_bridge = SimpleNamespace(
+            cleanup=lambda: calls.append("mcp_cleanup")
+        )
+        window.app_controller = SimpleNamespace(get_service=lambda _service: lifecycle)
+        first = FakeCloseEvent()
+        second = FakeCloseEvent()
+        with patch.object(
+            MainWindow.__mro__[1],
+            "closeEvent",
+            side_effect=lambda _event: calls.append("window_close"),
+        ), patch.object(
+            QtCore.QCoreApplication,
+            "quit",
+            side_effect=lambda: calls.append("qt_quit"),
+        ):
+            MainWindow.closeEvent(window, first)
+            MainWindow.closeEvent(window, second)
+        self.assertTrue(second.accepted)
         self.assertEqual(
             calls,
             [
