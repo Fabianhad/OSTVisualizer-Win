@@ -3,7 +3,7 @@ import itertools
 import logging
 import os
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QDate
 from ....domain.entities.cover_sheet import CoverSheetData
@@ -1030,11 +1030,10 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 )
             if self._reload_job_statuses_fn:
                 self.data.job_statuses = self._reload_job_statuses_fn()
-            self.combo_job_status.blockSignals(True)
-            self.combo_job_status.clear()
-            for js in self.data.job_statuses:
-                self.combo_job_status.addItem(js.name, js.uid)
-            self.combo_job_status.blockSignals(False)
+            self._replace_combo_items(
+                self.combo_job_status,
+                ((js.name, js.uid) for js in self.data.job_statuses),
+            )
             if selected_name:
                 matched = next(
                     (
@@ -1094,11 +1093,10 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 )
             if self._reload_employees_fn:
                 self._all_employees, self.data.pay_classes = self._reload_employees_fn()
-            self.combo_estimator.blockSignals(True)
-            self.combo_estimator.clear()
-            for emp in self._all_employees:
-                self.combo_estimator.addItem(emp.display_name, emp.uid)
-            self.combo_estimator.blockSignals(False)
+            self._replace_combo_items(
+                self.combo_estimator,
+                ((emp.display_name, emp.uid) for emp in self._all_employees),
+            )
             matched = -1
             for i in range(self.combo_estimator.count()):
                 if selected_name and self.combo_estimator.itemText(i) == selected_name:
@@ -1218,10 +1216,22 @@ class CoverSheetDialog(QtWidgets.QDialog):
         return item
 
     def _populate_pref_scale_combo(self, scale_style: int) -> None:
-        blocker = QtCore.QSignalBlocker(self.combo_pref_scale)
-        self.combo_pref_scale.clear()
-        for sf1, sf2, label in SCALES_BY_STYLE.get(scale_style, ARCH_SCALES):
-            self.combo_pref_scale.addItem(label, (sf1, sf2))
+        self._replace_combo_items(
+            self.combo_pref_scale,
+            (
+                (label, (sf1, sf2))
+                for sf1, sf2, label in SCALES_BY_STYLE.get(scale_style, ARCH_SCALES)
+            ),
+        )
+
+    @staticmethod
+    def _replace_combo_items(
+        combo: QtWidgets.QComboBox, items: Iterable[Tuple[str, object]]
+    ) -> None:
+        blocker = QtCore.QSignalBlocker(combo)
+        combo.clear()
+        for label, value in items:
+            combo.addItem(label, value)
         del blocker
 
     def _select_pref_scale(self, sf1: float, sf2: float) -> None:
@@ -1646,7 +1656,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             self,
             "Select image files",
             "",
-            "PDF Files (*.pdf);;All Files (*)",
+            IMAGE_FILE_FILTER,
         )
         if not files:
             return
@@ -1658,10 +1668,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
             results = []
             for fp in normalized:
                 reporter.report(Path(fp).name)
-                sizes = self._read_pdf_page_sizes(fp) if is_pdf_suffix(fp) else []
-                if not sizes:
-                    sizes = [(42.0, 30.0, "")]
-                results.append((fp, sizes))
+                results.append((fp, self._read_import_page_sizes(fp)))
             return results
 
         label = Path(normalized[0]).name if total == 1 else f"{total} files"
@@ -1675,6 +1682,16 @@ class CoverSheetDialog(QtWidgets.QDialog):
         if not file_sizes:
             return
         self._populate_imported_pages(file_sizes)
+
+    def _read_import_page_sizes(self, path: str) -> List[PdfPageSize]:
+        if is_pdf_suffix(path):
+            sizes = self._read_pdf_page_sizes(path)
+        else:
+            dimensions = self._read_raster_dimensions(path)
+            sizes = (
+                [(dimensions[0], dimensions[1], "")] if dimensions is not None else []
+            )
+        return sizes or [(42.0, 30.0, "")]
 
     def _populate_imported_pages(
         self, file_sizes: List[Tuple[str, List[PdfPageSize]]]
@@ -1814,7 +1831,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
         new_index = self._folder_insert_index(parent_item, item)
         if old_index == new_index:
             return
-        self.plan_tree.blockSignals(True)
+        blocker = QtCore.QSignalBlocker(self.plan_tree)
         try:
             if parent_item is not None:
                 parent_item.takeChild(old_index)
@@ -1825,7 +1842,7 @@ class CoverSheetDialog(QtWidgets.QDialog):
                 self.plan_tree.insertTopLevelItem(new_index, item)
             self.plan_tree.setCurrentItem(item)
         finally:
-            self.plan_tree.blockSignals(False)
+            del blocker
 
     def _make_file_picker(
         self, page_uid: str, path_key: str, initial_path: str

@@ -979,6 +979,23 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             dialog.reject()
             dialog.deleteLater()
 
+    def test_combo_item_replacement_preserves_existing_signal_block(self):
+        combo = QtWidgets.QComboBox()
+        combo.blockSignals(True)
+        try:
+            CoverSheetDialog._replace_combo_items(
+                combo,
+                [("One", 1), ("Two", 2)],
+            )
+            self.assertTrue(combo.signalsBlocked())
+            self.assertEqual(
+                [(combo.itemText(i), combo.itemData(i)) for i in range(combo.count())],
+                [("One", 1), ("Two", 2)],
+            )
+        finally:
+            combo.blockSignals(False)
+            combo.deleteLater()
+
     def test_cover_sheet_duplicate_rows_coalesce_pending_pdf_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
             pdf_path = str(Path(tmp) / "shared.pdf")
@@ -2034,6 +2051,23 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             dialog.close()
             dialog.deleteLater()
 
+    def test_cover_sheet_folder_reorder_preserves_existing_signal_block(self):
+        data = _cover_sheet_data()
+        data.folders["b1"] = CoverSheetFolder(uid="b1", name="Beta")
+        data.folders["z1"] = CoverSheetFolder(uid="z1", name="Zulu")
+        dialog = CoverSheetDialog(_FakeIconProvider(), None, data)
+        try:
+            zulu_item = dialog.plan_tree.topLevelItem(1)
+            dialog.plan_tree.blockSignals(True)
+            zulu_item.setText(0, "Alpha")
+            dialog._reinsert_folder_item(zulu_item)
+            self.assertTrue(dialog.plan_tree.signalsBlocked())
+            self.assertEqual(_top_level_labels(dialog), ["Alpha", "Beta", "A101"])
+        finally:
+            dialog.plan_tree.blockSignals(False)
+            dialog.close()
+            dialog.deleteLater()
+
     def test_cover_sheet_moved_folder_reorders_to_persisted_position(self):
         data = _cover_sheet_data()
         data.folders["b1"] = CoverSheetFolder(uid="b1", name="Beta")
@@ -2700,6 +2734,30 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 dialog.close()
                 dialog.deleteLater()
 
+    def test_cover_sheet_raster_import_uses_image_dimensions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = str(Path(tmp) / "drawing.png")
+            image = QtGui.QImage(960, 480, QtGui.QImage.Format.Format_RGB32)
+            image.fill(QtCore.Qt.GlobalColor.white)
+            self.assertTrue(image.save(image_path))
+            dialog = CoverSheetDialog(
+                _FakeIconProvider(),
+                None,
+                _cover_sheet_data(),
+                pdf_page_sizes_fn=lambda _path: self.fail(
+                    "Raster imports must not use the PDF page-size provider"
+                ),
+            )
+            try:
+                sizes = dialog._read_import_page_sizes(image_path)
+                self.assertEqual(len(sizes), 1)
+                self.assertAlmostEqual(sizes[0][0], 10.0, delta=0.01)
+                self.assertAlmostEqual(sizes[0][1], 5.0, delta=0.01)
+                self.assertEqual(sizes[0][2], "")
+            finally:
+                dialog.close()
+                dialog.deleteLater()
+
     def test_cover_sheet_pdf_provider_signature_errors_are_not_hidden(self):
         def invalid_provider(_path, _obsolete_page_index):
             return []
@@ -2866,6 +2924,7 @@ class CoverSheetPathSaveTests(unittest.TestCase):
             reload_employees_fn=lambda: (list(data.employees), data.pay_classes),
         )
         try:
+            dialog.combo_estimator.blockSignals(True)
             from ost_visualizer.presentation.dialogs.cover_sheet import dialog as module
 
             old_dialog = module.EmployeesDialog
@@ -2876,7 +2935,9 @@ class CoverSheetPathSaveTests(unittest.TestCase):
                 module.EmployeesDialog = old_dialog
             self.assertEqual(dialog.combo_estimator.currentData(), "emp-1")
             self.assertEqual(dialog.combo_estimator.currentText(), "Alice Estimator")
+            self.assertTrue(dialog.combo_estimator.signalsBlocked())
         finally:
+            dialog.combo_estimator.blockSignals(False)
             dialog.close()
             dialog.deleteLater()
 
