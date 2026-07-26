@@ -1,5 +1,8 @@
+import logging
 from typing import Mapping, Optional, Sequence, cast
+
 from PySide6 import QtCore, QtGui, QtWidgets
+
 from ...application.dtos.mesh_geometry_dto import MeshSceneIdentity
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.identity_refs import BidRef
@@ -38,6 +41,7 @@ from ..managers.shortcut_manager import ShortcutManager
 from ..modes.cursor import CURSOR_MODE_DEFAULT, CURSOR_MODE_PAN, CURSOR_MODE_ZOOM
 
 _RESIZE_DEBOUNCE_MS = 100
+logger = logging.getLogger(__name__)
 
 
 class MeshViewWindow(QtWidgets.QMainWindow):
@@ -404,19 +408,37 @@ class MeshViewWindow(QtWidgets.QMainWindow):
         if self._is_closing:
             return
         self._is_closing = True
-        self._resize_timer.stop()
-        self._resize_timer.timeout.disconnect(self._on_resize_settled)
-        self._resize_timer.deleteLater()
+        resize_timer = self._resize_timer
         self._resize_timer = None
-        viewer = cast(OpenGLViewer, self.viewer)
-        viewer.blockSignals(True)
-        viewer.cleanup()
+        viewer = self.viewer
         self.viewer = None
         self._zoom_combo = None
         self._context_menu_command_trigger = None
         self._context_menu_action_state = None
         self.icon_provider = None
         self._color_service = None
+        if resize_timer is not None:
+            try:
+                resize_timer.stop()
+            except Exception:
+                logger.exception("Failed to stop the mesh-window resize timer")
+            try:
+                resize_timer.timeout.disconnect(self._on_resize_settled)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                resize_timer.deleteLater()
+            except Exception:
+                logger.exception("Failed to delete the mesh-window resize timer")
+        if viewer is not None:
+            try:
+                viewer.blockSignals(True)
+            except Exception:
+                logger.exception("Failed to block mesh-viewer signals during cleanup")
+            try:
+                viewer.cleanup()
+            except Exception:
+                logger.exception("Failed to clean up the mesh viewer")
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.cleanup()
