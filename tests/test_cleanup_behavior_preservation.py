@@ -81,6 +81,7 @@ class CleanupBehaviorPreservationTests(unittest.TestCase):
             ("Bid", ["One", "Two"], "Bid - One + Two"),
             ("Bid", ["One", "Two", "Three"], "Bid - One + Two + 1 more"),
             ("Bid", ["A/B:*?<>|"], "Bid - A_B______"),
+            ("Bid/Phase:*?<>|", ["Page"], "Bid_Phase______ - Page"),
             ("", ["Page"], " - Page"),
             ("Bid", [""], "Bid - "),
             ("Bíd", ["Páge"], "Bíd - Páge"),

@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Fixed 3D and HTML export default filenames when bid names contain Windows-reserved filename characters.
 - Fixed silent toolbar check-state synchronization so it preserves signal blocks owned by an enclosing UI update.
 - Fixed hidden-layer line, arrow, and dimension annotations remaining selectable through geometric fallback hit-testing.
 - Fixed native 3D viewer cleanup so a renderer shutdown failure cannot retain a stale native renderer or prevent the remaining Qt-owned resources from being released.

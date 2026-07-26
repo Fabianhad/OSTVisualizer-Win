@@ -46,26 +46,28 @@ def _prepare_export_filename(
     bid_name: str,
     page_names: List[str],
 ) -> str:
+    clean_bid_name = sanitize_filename(bid_name)
     clean_names = [sanitize_filename(name) for name in page_names]
     if len(clean_names) == 1:
-        filename = f"{bid_name} - {clean_names[0]}.{format_extension}"
+        filename = f"{clean_bid_name} - {clean_names[0]}.{format_extension}"
     elif len(clean_names) == 2:
         filename = (
-            f"{bid_name} - {clean_names[0]} + {clean_names[1]}.{format_extension}"
+            f"{clean_bid_name} - {clean_names[0]} + "
+            f"{clean_names[1]}.{format_extension}"
         )
     else:
         remaining = len(clean_names) - 2
         filename = (
-            f"{bid_name} - {clean_names[0]} + {clean_names[1]} + "
+            f"{clean_bid_name} - {clean_names[0]} + {clean_names[1]} + "
             f"{remaining} more.{format_extension}"
         )
     if len(filename) <= _MAX_EXPORT_FILENAME_LENGTH:
         return filename
     overflow = len(filename) - _MAX_EXPORT_FILENAME_LENGTH
-    max_project_length = len(bid_name) - overflow - 3
+    max_project_length = len(clean_bid_name) - overflow - 3
     if max_project_length > 10:
-        truncated_project = bid_name[:max_project_length] + "..."
-        return filename.replace(bid_name, truncated_project, 1)
+        truncated_project = clean_bid_name[:max_project_length] + "..."
+        return filename.replace(clean_bid_name, truncated_project, 1)
     if len(clean_names) == 1:
         return f"{clean_names[0]}.{format_extension}"
     return f"Export_{len(clean_names)}_pages.{format_extension}"
