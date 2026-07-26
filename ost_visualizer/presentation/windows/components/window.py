@@ -6,9 +6,7 @@ from shiboken6 import isValid
 from ....application.dtos.insert_annotation_spec_dto import InsertAnnotationSpec
 from ....application.dtos.page_view_dto import PageViewDto
 from ....application.dtos.plan_view_renderers_dto import PlanViewRenderers
-from ....application.events.app_events import AppEvents
 from ....application.interfaces.i_color_service import IColorService
-from ....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ....application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ....domain.entities.annotation import (
     ANNOTATION_TYPE_HOTLINK,
@@ -112,7 +110,6 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         view: AnnotationView,
         event_bus,
         page_data: PageViewDto,
-        coord_system: ICoordinateTransformer,
         color_service: IColorService,
         renderers: PlanViewRenderers,
         config: DetachedPageViewWindowConfig,
@@ -828,6 +825,7 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         page = self.page_data.page if self.page_data else None
         if not page:
             self.plan_view.clear()
+            self._reveal_named_view_blank_canvas()
             return False
         self._update_scale_combo(page.scale_factor1, page.scale_factor2)
         self._capture_refresh_view_state(page)
@@ -842,17 +840,21 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
                 page_area_selections=self.page_data.page_area_selections,
                 hidden_layer_uids=self.page_data.hidden_layer_uids,
             )
+        except Exception:
+            self.logger.exception("Error loading page into plan_view")
+            self.plan_view.clear()
+            self._reveal_named_view_blank_canvas()
+            return False
+        try:
             self.plan_view.prefetch_nearby_pages(
                 page,
                 self.page_data.ordered_pages,
                 self.page_data.bid_ref,
             )
-            self._apply_named_view_focus_if_possible(require_stable_view=False)
-            return True
         except Exception:
-            self.logger.exception("Error loading page into plan_view")
-            self.plan_view.clear()
-            return False
+            self.logger.exception("Error prefetching nearby pages")
+        self._apply_named_view_focus_if_possible(require_stable_view=False)
+        return True
 
     def _capture_refresh_view_state(self, page) -> None:
         if self._navigation_source != "refresh" or self.plan_view is None:
@@ -1729,6 +1731,9 @@ class DetachedPageViewWindow(QtWidgets.QMainWindow):
         self._annotation_clipboard_svc = None
         self._ann_write_svc = None
         self._annotation_write_coordinator = None
+        self._annotation_style_getter = None
+        self._annotation_style_setter = None
+        self._linked_hotlink_resolver = None
         self._file_path = None
         self._renderers = None
         self._color_service = None

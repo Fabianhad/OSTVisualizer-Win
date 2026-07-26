@@ -14,6 +14,7 @@
 ### Changed
 
 - Changed Cover Sheet commits to perform a single post-save database refresh, reducing UI stalls after large page deletion batches.
+- Changed detached plan windows to keep a successfully loaded page visible when nearby-page prefetch fails and to reveal the normal canvas when named-view navigation cannot load its target page.
 - Changed OST/OSP exports to reproduce original On-Screen Takeoff ordering for bid layers, bid areas, page-area settings, takeoff quantity accumulation, and generated area-condition rows; use native-compatible polygon cross-product arithmetic; preserve the original attribute order for text annotations; and omit unused access-level sections.
 - Updated the main window title to show the selected database and bid alongside the OST Visualizer app name.
 

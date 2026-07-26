@@ -741,7 +741,6 @@ class DetachedPageViewManager(IShutdownAware):
             view=view,
             event_bus=self.event_bus,
             page_data=page_data,
-            coord_system=coord_system,
             color_service=color_service,
             renderers=renderers,
             bid=bid,

@@ -1704,6 +1704,9 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         window._annotation_clipboard_svc = None
         window._ann_write_svc = retained
         window._annotation_write_coordinator = retained
+        window._annotation_style_getter = retained
+        window._annotation_style_setter = retained
+        window._linked_hotlink_resolver = retained
         window._file_path = "file.mdb"
         window._renderers = retained
         window._color_service = retained
@@ -1726,6 +1729,9 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         self.assertTrue(plan_view.cleaned)
         self.assertIsNone(window.plan_view)
         self.assertIsNone(window._annotation_write_coordinator)
+        self.assertIsNone(window._annotation_style_getter)
+        self.assertIsNone(window._annotation_style_setter)
+        self.assertIsNone(window._linked_hotlink_resolver)
         self.assertIsNone(window._renderers)
         self.assertIsNone(window._color_service)
         self.assertIsNone(window._config)
@@ -1890,7 +1896,6 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
                 ),
                 SimpleNamespace(),
                 FakeDetachedPageData(),
-                SimpleNamespace(),
                 SimpleNamespace(),
                 _detached_toolbar_renderers(),
                 **window_options,
@@ -2266,6 +2271,7 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._create_window(view, geometry, False)
         self.assertEqual(factory_options[0]["initial_geometry"], geometry)
         self.assertFalse(factory_options[0]["initial_is_maximized"])
+        self.assertNotIn("coord_system", factory_options[0])
         self.assertEqual(
             calls,
             [
@@ -3609,6 +3615,79 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         )
         self.assertTrue(window._btn_prev.enabled)
         self.assertFalse(window._btn_next.enabled)
+
+    def test_detached_missing_page_reveals_deferred_named_view_canvas(self):
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window.page_data = SimpleNamespace(page=None)
+        window.plan_view = FakeDetachedLoadPlanView()
+        reveals = []
+        window._reveal_named_view_blank_canvas = lambda: reveals.append(True)
+        self.assertFalse(DetachedPageViewWindow._load_page_content(window))
+        self.assertEqual(window.plan_view.clear_calls, 1)
+        self.assertEqual(reveals, [True])
+
+    def test_detached_page_load_failure_reveals_deferred_named_view_canvas(self):
+        page = Page(uid="p1", name="Page 1")
+        plan_view = FakeDetachedLoadPlanView()
+
+        def fail_load(**_page_options):
+            raise RuntimeError("load failed")
+
+        plan_view.load_page = fail_load
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window.page_data = SimpleNamespace(page=page)
+        window.plan_view = plan_view
+        window._scale_combo = None
+        window._page_view_states = {}
+        window._navigation_source = "unknown"
+        reveals = []
+        errors = []
+        window._reveal_named_view_blank_canvas = lambda: reveals.append(True)
+        window.logger = SimpleNamespace(
+            exception=lambda message: errors.append(message)
+        )
+        self.assertFalse(DetachedPageViewWindow._load_page_content(window))
+        self.assertEqual(plan_view.clear_calls, 1)
+        self.assertEqual(reveals, [True])
+        self.assertEqual(errors, ["Error loading page into plan_view"])
+
+    def test_detached_prefetch_failure_preserves_loaded_page(self):
+        page = Page(uid="p1", name="Page 1")
+        plan_view = FakeDetachedLoadPlanView()
+
+        def fail_prefetch(*_args):
+            raise RuntimeError("prefetch failed")
+
+        plan_view.prefetch_nearby_pages = fail_prefetch
+        window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)
+        window.page_data = SimpleNamespace(
+            page=page,
+            takeoffs=[],
+            conditions={},
+            color_map={},
+            bid_ref=BidRef("bid.mdb", "bid-1"),
+            annotations=[],
+            ordered_pages=[page],
+            page_area_selections={},
+            hidden_layer_uids=set(),
+        )
+        window.plan_view = plan_view
+        window._scale_combo = None
+        window._page_view_states = {}
+        window._navigation_source = "unknown"
+        focus_calls = []
+        errors = []
+        window._apply_named_view_focus_if_possible = (
+            lambda require_stable_view: focus_calls.append(require_stable_view)
+        )
+        window.logger = SimpleNamespace(
+            exception=lambda message: errors.append(message)
+        )
+        self.assertTrue(DetachedPageViewWindow._load_page_content(window))
+        self.assertEqual(plan_view.clear_calls, 0)
+        self.assertEqual(len(plan_view.load_calls), 1)
+        self.assertEqual(focus_calls, [False])
+        self.assertEqual(errors, ["Error prefetching nearby pages"])
 
     def test_detached_refresh_preserves_live_view_state_before_page_reload(self):
         page = Page(
