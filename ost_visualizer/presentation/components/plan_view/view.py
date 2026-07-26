@@ -427,6 +427,8 @@ class TakeoffPlanView(
         self._drag_uid_orig_items: Dict[str, List] = {}
         self._drag_multi_orig_positions: Dict[str, List[float]] = {}
         self._drag_last_valid_new_pos: List[float] = []
+        self._drag_model_orig_position: Optional[List[float]] = None
+        self._drag_position_before_edit_existed: bool = False
         self._last_mouse_vp_pos: Optional[QtCore.QPoint] = None
         self._place_session_uid: Optional[str] = None
         self._place_all_condition_uids: List[str] = []
@@ -3211,11 +3213,7 @@ class TakeoffPlanView(
         self.cancel_paste_backout()
         self.cancel_place_mode()
         self._cancel_active_drag_interaction(restore_preview=True)
-        if self._rotation_drag_active:
-            self._rotation_drag_active = False
-            self._rotation_drag_uid = None
-            self._rotation_drag_preview_items = []
-            self._rotation_drag_handle_origins = []
+        if self._cancel_rotation_drag_interaction():
             self._rebuild_current_overlays_from_model()
         self._remove_rotate_handle()
         for uid, position in self._position_before_edit.items():
@@ -4936,6 +4934,8 @@ class TakeoffPlanView(
         self._drag_uid_orig_items = {}
         self._drag_multi_orig_positions = {}
         self._drag_last_valid_new_pos = []
+        self._drag_model_orig_position = None
+        self._drag_position_before_edit_existed = False
         self._remove_rotate_handle()
         self._rotation_drag_uid = None
         self._rotation_drag_active = False
@@ -5550,6 +5550,8 @@ class TakeoffPlanView(
         self._drag_uid_orig_items = {}
         self._drag_multi_orig_positions = {}
         self._drag_last_valid_new_pos = []
+        self._drag_model_orig_position = None
+        self._drag_position_before_edit_existed = False
         self._rotate_handle_item = None
         self._rotate_line_item = None
         self._rotate_line_outline_item = None

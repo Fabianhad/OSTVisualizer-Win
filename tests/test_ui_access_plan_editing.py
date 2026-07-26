@@ -68,6 +68,11 @@ class _ConcurrencyTokens:
 class UIAccessPlanEditingTests(unittest.TestCase):
     def test_revoking_plan_editing_cancels_every_active_mutation_mode(self):
         cancellations = []
+
+        def cancel_rotation_drag():
+            cancellations.append(("rotation-drag", True))
+            return False
+
         view = SimpleNamespace(
             _editing_enabled=True,
             _rotation_drag_active=False,
@@ -82,6 +87,7 @@ class UIAccessPlanEditingTests(unittest.TestCase):
             _cancel_active_drag_interaction=lambda restore_preview: cancellations.append(
                 ("drag", restore_preview)
             ),
+            _cancel_rotation_drag_interaction=cancel_rotation_drag,
             cancel_overlay_move_mode=lambda restore_preview: cancellations.append(
                 ("overlay", restore_preview)
             ),
@@ -98,6 +104,7 @@ class UIAccessPlanEditingTests(unittest.TestCase):
         )
         TakeoffPlanView.set_editing_enabled(view, False)
         self.assertIn(("drag", True), cancellations)
+        self.assertIn(("rotation-drag", True), cancellations)
         self.assertIn(("overlay", True), cancellations)
         self.assertIn(("intelligent-paste", True), cancellations)
         self.assertIn(("paste-backout", True), cancellations)

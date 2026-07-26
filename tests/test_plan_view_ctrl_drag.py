@@ -91,6 +91,9 @@ class BaseKeyHandler:
     def mouseMoveEvent(self, _event):
         pass
 
+    def focusOutEvent(self, _event):
+        pass
+
 
 class _FakeSignal:
     def __init__(self):
@@ -433,6 +436,14 @@ class FakeMouseEvent:
         self.accepted = True
 
 
+class FakeWheelEvent:
+    def __init__(self, x=10, y=10):
+        self._point = QtCore.QPointF(x, y)
+
+    def position(self):
+        return self._point
+
+
 class FakeCursorViewport:
     def __init__(self):
         self.cursor = None
@@ -449,10 +460,14 @@ class FakeCursorViewport:
 
 class FakeKeyEvent:
     def __init__(
-        self, key=Qt.Key.Key_Control, modifiers=Qt.KeyboardModifier.NoModifier
+        self,
+        key=Qt.Key.Key_Control,
+        modifiers=Qt.KeyboardModifier.NoModifier,
+        auto_repeat=False,
     ):
         self._key = key
         self._modifiers = modifiers
+        self._auto_repeat = auto_repeat
         self.accepted = False
 
     def key(self):
@@ -462,7 +477,7 @@ class FakeKeyEvent:
         return self._modifiers
 
     def isAutoRepeat(self):
-        return False
+        return self._auto_repeat
 
     def accept(self):
         self.accepted = True
@@ -742,12 +757,21 @@ class CtrlDragTests(unittest.TestCase):
         view._handle_infos = []
         view._selection_items = []
         view._current_takeoffs = {
-            "t1": SimpleNamespace(position=[0.0, 0.0, 10.0, 0.0], condition_uid="c"),
-            "t2": SimpleNamespace(position=[20.0, 0.0, 30.0, 0.0], condition_uid="c"),
+            "t1": Takeoff(
+                uid="t1",
+                position=[0.0, 0.0, 10.0, 0.0],
+                condition_uid="c",
+            ),
+            "t2": Takeoff(
+                uid="t2",
+                position=[20.0, 0.0, 30.0, 0.0],
+                condition_uid="c",
+            ),
         }
         view._current_annotations = {}
         view._hotlink_items = []
         view._current_conditions = {}
+        view._scene = None
         view._uid_to_items = {"t1": [FakeItem(1.0, 2.0)], "t2": [FakeItem(3.0, 4.0)]}
         view._takeoff_items = []
         view.mapToScene = lambda _point: QtCore.QPointF(10.0, 10.0)
@@ -1504,6 +1528,28 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(view._drag_orig_position, [10.0, 10.0])
         self.assertEqual(view._drag_handle_index, -1)
 
+    def test_selected_item_click_clears_all_drag_tracking(self):
+        view = self._make_hotlink_view(selected=True)
+        view._scene = QGraphicsScene()
+        view._scene.addItem(view._uid_to_items["h1"][0])
+        view.mousePressEvent(FakeMouseEvent())
+        view._drag_item_orig_paths = {1: QPainterPath()}
+        view._drag_item_orig_text_states = {
+            2: ("", -1.0, 0.0, QtCore.QPointF(), None, None)
+        }
+        view._drag_last_valid_new_pos = [10.0, 10.0]
+
+        release = FakeMouseEvent(buttons=Qt.MouseButton.NoButton)
+        view.mouseReleaseEvent(release)
+
+        self.assertTrue(release.accepted)
+        self.assertIsNone(view._drag_plan_item_uid)
+        self.assertEqual(view._drag_item_orig_positions, {})
+        self.assertEqual(view._drag_item_orig_paths, {})
+        self.assertEqual(view._drag_item_orig_text_states, {})
+        self.assertEqual(view._drag_uid_orig_items, {})
+        self.assertEqual(view._drag_last_valid_new_pos, [])
+
     def test_selected_hotlink_drag_does_not_start_rubber_band(self):
         view = self._make_hotlink_view(selected=True)
         view.mapToScene = lambda point: QtCore.QPointF(point)
@@ -1822,6 +1868,43 @@ class CtrlDragTests(unittest.TestCase):
         cursor = view._resolve_cursor(QtCore.QPoint(100, 100))
         self.assertEqual(cursor, Qt.CursorShape.ArrowCursor)
 
+    def test_pan_update_accepts_viewport_origin_as_previous_point(self):
+        view = self._make_view()
+        view._panning = True
+        view._last_pan_point = QtCore.QPoint(0, 0)
+        horizontal_values = []
+        vertical_values = []
+        horizontal = SimpleNamespace(
+            value=lambda: 10,
+            setValue=horizontal_values.append,
+        )
+        vertical = SimpleNamespace(
+            value=lambda: 20,
+            setValue=vertical_values.append,
+        )
+        view.horizontalScrollBar = lambda: horizontal
+        view.verticalScrollBar = lambda: vertical
+        user_changes = []
+        view._mark_user_view_changed_during_load = lambda: user_changes.append(True)
+
+        self.assertTrue(view._apply_pan_update(QtCore.QPoint(3, 4)))
+
+        self.assertEqual(horizontal_values, [7])
+        self.assertEqual(vertical_values, [16])
+        self.assertEqual(view._last_pan_point, QtCore.QPoint(3, 4))
+        self.assertEqual(user_changes, [True])
+
+    def test_zero_vertical_wheel_delta_does_not_zoom(self):
+        view = self._make_view()
+        calls = []
+        view._mark_user_view_changed_during_load = lambda: calls.append("changed")
+        view._apply_zoom = lambda _factor: calls.append("zoom")
+        view._publish_current_page_view_state = lambda: calls.append("publish")
+
+        view._apply_wheel_zoom(FakeWheelEvent(), 0)
+
+        self.assertEqual(calls, [])
+
     def test_ctrl_left_press_blocks_multi_select_drag_setup(self):
         view = self._make_view({"t1", "t2"})
         view.find_takeoff_at = lambda _scene_pos: self.fail(
@@ -2108,6 +2191,64 @@ class CtrlDragTests(unittest.TestCase):
         self.assertEqual(border1.pos(), QtCore.QPointF(307.0, 307.0))
         self.assertEqual(border2.pos(), QtCore.QPointF(408.0, 408.0))
 
+    def test_multi_drag_moves_unselected_hole_with_selected_area_parent(self):
+        view = self._make_view({"parent", "t2"})
+        view._current_conditions = {
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA),
+            "linear": Condition(uid="linear", condition_type=Condition.TYPE_LINEAR),
+        }
+        view._current_takeoffs = {
+            "parent": Takeoff(
+                uid="parent",
+                condition_uid="area",
+                position=[3.0, 3.0, 13.0, 3.0, 13.0, 13.0, 3.0, 13.0],
+            ),
+            "hole": Takeoff(
+                uid="hole",
+                condition_uid="area",
+                parent_uid="parent",
+                position=[6.0, 6.0, 9.0, 6.0, 9.0, 9.0, 6.0, 9.0],
+            ),
+            "t2": Takeoff(
+                uid="t2",
+                condition_uid="linear",
+                position=[22.0, 22.0, 32.0, 22.0],
+            ),
+        }
+        view._uid_to_items = {
+            "parent": [FakeItem(100.0, 100.0)],
+            "hole": [FakeItem(150.0, 150.0)],
+            "t2": [FakeItem(200.0, 200.0)],
+        }
+        view._snap_increments = 10.0
+        view.mapToScene = lambda point: QtCore.QPointF(point)
+        view.scene_to_ost_delta = lambda dx, dy: (dx, dy)
+        view.ost_to_scene_delta = lambda dx, dy: (dx, dy)
+        view.find_takeoff_at = lambda _scene_pos: "parent"
+        view.find_takeoffs_at = lambda _scene_pos: ["parent"]
+
+        view.mousePressEvent(FakeMouseEvent(x=0, y=0))
+        self.assertEqual(set(view._drag_multi_orig_positions), {"parent", "hole", "t2"})
+        view.mouseMoveEvent(FakeMouseEvent(x=6, y=6))
+
+        self.assertEqual(
+            view._uid_to_items["parent"][0].pos(), QtCore.QPointF(107.0, 107.0)
+        )
+        self.assertEqual(
+            view._uid_to_items["hole"][0].pos(), QtCore.QPointF(157.0, 157.0)
+        )
+        view.mouseReleaseEvent(
+            FakeMouseEvent(x=6, y=6, buttons=Qt.MouseButton.NoButton)
+        )
+        self.assertEqual(
+            view._current_takeoffs["parent"].position,
+            [10.0, 10.0, 20.0, 10.0, 20.0, 20.0, 10.0, 20.0],
+        )
+        self.assertEqual(
+            view._current_takeoffs["hole"].position,
+            [13.0, 13.0, 16.0, 13.0, 16.0, 16.0, 13.0, 16.0],
+        )
+
     def test_multi_hotlink_arrow_move_updates_graphics_and_dirty_positions(self):
         view = self._make_view({"hot1", "hot2"})
         hot1 = BidAnnotation(
@@ -2191,6 +2332,163 @@ class CtrlDragTests(unittest.TestCase):
         )
         self.assertEqual(flushed, [{"t1": [1.0, 0.0, 11.0, 0.0]}])
 
+    def test_area_parent_arrow_move_preserves_hole_relative_position(self):
+        view = self._make_view({"parent"})
+        view._current_conditions = {
+            "area": Condition(uid="area", condition_type=Condition.TYPE_AREA)
+        }
+        view._current_takeoffs = {
+            "parent": Takeoff(
+                uid="parent",
+                condition_uid="area",
+                position=[3.0, 3.0, 13.0, 3.0, 13.0, 13.0, 3.0, 13.0],
+            ),
+            "hole": Takeoff(
+                uid="hole",
+                condition_uid="area",
+                parent_uid="parent",
+                position=[6.0, 6.0, 9.0, 6.0, 9.0, 9.0, 6.0, 9.0],
+            ),
+        }
+        view._uid_to_items = {
+            "parent": [FakeItem(100.0, 100.0)],
+            "hole": [FakeItem(150.0, 150.0)],
+        }
+        view._snap_increments = 10.0
+
+        InputHandlerMixin.keyPressEvent(view, FakeKeyEvent(Qt.Key.Key_Right))
+
+        self.assertEqual(
+            view._current_takeoffs["parent"].position,
+            [10.0, 3.0, 20.0, 3.0, 20.0, 13.0, 10.0, 13.0],
+        )
+        self.assertEqual(
+            view._current_takeoffs["hole"].position,
+            [13.0, 6.0, 16.0, 6.0, 16.0, 9.0, 13.0, 9.0],
+        )
+        self.assertEqual(
+            view._uid_to_items["hole"][0].pos(), QtCore.QPointF(157.0, 150.0)
+        )
+        self.assertEqual(
+            set(view._dirty_positions),
+            {"parent", "hole"},
+        )
+        self.assertEqual(
+            view._position_before_edit["hole"],
+            [6.0, 6.0, 9.0, 6.0, 9.0, 9.0, 6.0, 9.0],
+        )
+
+    def test_arrow_auto_repeat_release_does_not_split_move_flush(self):
+        view = self._make_view({"t1"})
+        flushed = []
+        view._flush_dirty_positions = lambda: flushed.append(
+            dict(view._dirty_positions)
+        )
+        InputHandlerMixin.keyPressEvent(view, FakeKeyEvent(Qt.Key.Key_Right))
+
+        repeat_release = FakeKeyEvent(Qt.Key.Key_Right, auto_repeat=True)
+        InputHandlerMixin.keyReleaseEvent(view, repeat_release)
+
+        self.assertTrue(repeat_release.accepted)
+        self.assertEqual(flushed, [])
+        self.assertTrue(view._keyboard_move_dirty)
+
+        final_release = FakeKeyEvent(Qt.Key.Key_Right)
+        InputHandlerMixin.keyReleaseEvent(view, final_release)
+        self.assertTrue(final_release.accepted)
+        self.assertEqual(flushed, [{"t1": [1.0, 0.0, 11.0, 0.0]}])
+        self.assertFalse(view._keyboard_move_dirty)
+
+    def test_focus_loss_flushes_pending_keyboard_move(self):
+        view = self._make_view({"t1"})
+        flushed = []
+        reset_calls = []
+        view._flush_dirty_positions = lambda: flushed.append(
+            dict(view._dirty_positions)
+        )
+        view.reset_ctrl_held = lambda: reset_calls.append(True)
+        InputHandlerMixin.keyPressEvent(view, FakeKeyEvent(Qt.Key.Key_Right))
+
+        InputHandlerMixin.focusOutEvent(view, object())
+
+        self.assertEqual(flushed, [{"t1": [1.0, 0.0, 11.0, 0.0]}])
+        self.assertFalse(view._keyboard_move_dirty)
+        self.assertEqual(reset_calls, [True])
+
+    def test_focus_loss_cancels_zoom_rubber_band_started_without_selection(self):
+        view = self._make_view()
+        hidden = []
+        view._rubber_band_origin = QtCore.QPointF(1.0, 2.0)
+        view._rubber_band = SimpleNamespace(hide=lambda: hidden.append(True))
+        view.reset_ctrl_held = lambda: None
+
+        InputHandlerMixin.focusOutEvent(view, object())
+
+        self.assertEqual(hidden, [True])
+        self.assertIsNone(view._rubber_band_origin)
+
+    def test_focus_loss_finishes_pan_and_publishes_changed_view(self):
+        view = self._make_view()
+        published = []
+        view._panning = True
+        view._pan_view_changed = True
+        view._last_pan_point = QtCore.QPoint(5, 6)
+        view._right_pan_press_pos = None
+        view._right_pan_dragged = False
+        view._publish_current_page_view_state = lambda: published.append(True)
+        view.reset_ctrl_held = lambda: None
+
+        InputHandlerMixin.focusOutEvent(view, object())
+
+        self.assertFalse(view._panning)
+        self.assertFalse(view._pan_view_changed)
+        self.assertIsNone(view._last_pan_point)
+        self.assertEqual(published, [True])
+
+    def test_focus_loss_restores_rotation_preview_without_committing(self):
+        view = self._make_view()
+        preview_item = QGraphicsPathItem()
+        preview_item.setRotation(15.0)
+        handle_item = FakeItem(15.0, 20.0)
+        view._rotation_drag_active = True
+        view._rotation_drag_uid = "t1"
+        view._rotation_drag_last_angle = 15.0
+        view._rotation_drag_accumulated_deg = 15.0
+        view._rotation_drag_snapped_deg = 15.0
+        view._rotation_drag_preview_items = [preview_item]
+        view._rotation_drag_handle_origins = [(handle_item, QtCore.QPointF(10.0, 20.0))]
+        view._rotation_drag_orig_positions = {"t1": [0.0, 0.0, 10.0, 0.0]}
+        view._rotation_drag_orig_rotations = {"t1": 0.0}
+        view._rotate_line_item = None
+        view._rotate_line_outline_item = None
+        view.reset_ctrl_held = lambda: None
+
+        InputHandlerMixin.focusOutEvent(view, object())
+
+        self.assertEqual(preview_item.rotation(), 0.0)
+        self.assertEqual(handle_item.pos(), QtCore.QPointF(10.0, 20.0))
+        self.assertFalse(view._rotation_drag_active)
+        self.assertEqual(view._rotation_drag_preview_items, [])
+        self.assertEqual(view._rotation_drag_orig_positions, {})
+
+    def test_focus_loss_finishes_pdf_text_selection_drag(self):
+        view = self._make_view()
+        finished = []
+        view._pdf_text_drag_anchor = (0, 1)
+
+        def finish_pdf_text_selection_drag():
+            finished.append(True)
+            view._pdf_text_drag_anchor = None
+            return True
+
+        view._finish_pdf_text_selection_drag = finish_pdf_text_selection_drag
+        view.reset_ctrl_held = lambda: None
+
+        InputHandlerMixin.focusOutEvent(view, object())
+
+        self.assertEqual(finished, [True])
+        self.assertIsNone(view._pdf_text_drag_anchor)
+
     def test_rotation_preview_does_not_rotate_condition_label_items(self):
         view = self._make_view({"t1"})
         view._cursor_mode = "rotate"
@@ -2202,7 +2500,6 @@ class CtrlDragTests(unittest.TestCase):
         view._rotate_handle_start_angle_deg = 0.0
         view._is_rotatable_uid = lambda uid: uid == "t1"
         view._current_takeoffs["t1"].rotation = 0.0
-        view._current_takeoffs["t1"].is_hole = False
         path = QGraphicsPathItem()
         path.setData(0, "t1")
         label = QGraphicsTextItem("Display Name")
@@ -2288,7 +2585,6 @@ class CtrlDragTests(unittest.TestCase):
         view._rotate_handle_start_angle_deg = 0.0
         view._is_rotatable_uid = lambda uid: uid == "t1"
         view._current_takeoffs["t1"].rotation = 0.0
-        view._current_takeoffs["t1"].is_hole = False
         path = QGraphicsPathItem()
         path.setData(0, "t1")
         label = QGraphicsTextItem("Display Dimension")
@@ -2541,6 +2837,43 @@ class CtrlDragTests(unittest.TestCase):
             color="#008000",
         )
         return view, ann
+
+    def test_rotated_annotation_resize_press_defers_write_and_cancel_restores(self):
+        view = self._make_view({"a1"})
+        original = [
+            0.0,
+            0.0,
+            10.0,
+            0.0,
+            10.0,
+            4.0,
+            0.0,
+            4.0,
+            math.radians(30.0),
+        ]
+        ann = BidAnnotation(
+            uid="a1",
+            annotation_type="rect",
+            position=list(original),
+        )
+        view._current_takeoffs = {}
+        view._current_annotations = {"a1": ann}
+        view._drag_plan_item_uid = "a1"
+        view._drag_orig_position = list(original)
+        view._flush_dirty_positions = lambda: self.fail(
+            "resize press must not persist before movement"
+        )
+
+        view._unrotate_annotation_for_resize(ann, "a1")
+
+        self.assertNotEqual(ann.position, original)
+        self.assertEqual(view._position_before_edit["a1"], original)
+        self.assertEqual(view._dirty_ann_positions, {})
+
+        view._clear_drag_tracking(restore_preview=True)
+
+        self.assertEqual(ann.position, original)
+        self.assertNotIn("a1", view._position_before_edit)
 
     def test_ink_annotation_drag_translates_even_path_points_once(self):
         view = InputHandlerHarness()

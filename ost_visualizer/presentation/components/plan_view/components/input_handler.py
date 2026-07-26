@@ -157,6 +157,8 @@ class InputHandlerMixin:
     _use_full_window_crosshairs: bool = False
     _pdf_text_drag_anchor: Optional[tuple] = None
     _editing_text_annotation_uid: Optional[str] = None
+    _drag_model_orig_position: Optional[List[float]] = None
+    _drag_position_before_edit_existed: bool = False
 
     def _request_crosshair_repaint(self) -> None:
         if not self._use_full_window_crosshairs:
@@ -244,6 +246,16 @@ class InputHandlerMixin:
                 item.setPos(orig)
 
     def _clear_drag_tracking(self, restore_preview: bool = False) -> None:
+        if (
+            restore_preview
+            and self._drag_model_orig_position is not None
+            and self._drag_plan_item_uid is not None
+        ):
+            ann = self._current_annotations.get(self._drag_plan_item_uid)
+            if ann is not None:
+                ann.position = list(self._drag_model_orig_position)
+            if not self._drag_position_before_edit_existed:
+                self._position_before_edit.pop(self._drag_plan_item_uid, None)
         if restore_preview:
             self._restore_drag_preview_positions()
         self._drag_plan_item_uid = None
@@ -256,10 +268,13 @@ class InputHandlerMixin:
         self._drag_uid_orig_items = {}
         self._drag_multi_orig_positions = {}
         self._drag_last_valid_new_pos = []
+        self._drag_model_orig_position = None
+        self._drag_position_before_edit_existed = False
 
     def _has_active_drag_interaction(self) -> bool:
         return (
-            self._select_band_origin is not None
+            self._rubber_band_origin is not None
+            or self._select_band_origin is not None
             or self._select_band_active
             or self._select_band_dragged
             or self._zoom_press_ctrl
@@ -287,7 +302,7 @@ class InputHandlerMixin:
         self._cancel_active_drag_interaction(restore_preview=True)
 
     def _apply_pan_update(self, cur_vp: QtCore.QPoint) -> bool:
-        if not self._panning or not self._last_pan_point:
+        if not self._panning or self._last_pan_point is None:
             return False
         delta = cur_vp - self._last_pan_point
         if delta.isNull():
@@ -301,7 +316,46 @@ class InputHandlerMixin:
         self._pan_view_changed = True
         return True
 
+    def _finish_pan_interaction(self) -> None:
+        pan_view_changed = self._pan_view_changed
+        restore_persistent_mode = self._right_pan_active
+        self._right_pan_active = False
+        self._panning = False
+        self._pan_view_changed = False
+        self._last_pan_point = None
+        self._right_pan_press_pos = None
+        self._right_pan_dragged = False
+        if restore_persistent_mode:
+            self._persistent_cursor_mode = self._pre_pan_persistent_mode
+            self._pre_pan_persistent_mode = None
+            self.cursor_mode_change_requested.emit(self._persistent_cursor_mode)
+        self._update_cursor()
+        if pan_view_changed:
+            self._publish_current_page_view_state()
+
+    def _cancel_rotation_drag_interaction(self) -> bool:
+        if not self._rotation_drag_active:
+            return False
+        for item in self._rotation_drag_preview_items:
+            item.setRotation(0.0)
+        for handle_item, orig_pos in self._rotation_drag_handle_origins:
+            handle_item.setPos(orig_pos)
+        self._update_rotation_handle_preview(0.0)
+        self._rotation_drag_active = False
+        self._rotation_drag_uid = None
+        self._rotation_drag_last_angle = 0.0
+        self._rotation_drag_accumulated_deg = 0.0
+        self._rotation_drag_snapped_deg = 0.0
+        self._rotation_drag_preview_items = []
+        self._rotation_drag_handle_origins = []
+        self._rotation_drag_orig_positions = {}
+        self._rotation_drag_orig_rotations = {}
+        self._update_cursor()
+        return True
+
     def _apply_wheel_zoom(self, event: QWheelEvent, delta_y: float) -> None:
+        if delta_y == 0:
+            return
         factor = self.ZOOM_FACTOR if delta_y > 0 else 1.0 / self.ZOOM_FACTOR
         cursor_vp = event.position().toPoint()
         scene_before = self.mapToScene(cursor_vp)
@@ -797,7 +851,11 @@ class InputHandlerMixin:
                                             )
                     elif len(self._selected_uids) > 1:
                         self._drag_item_orig_positions = {}
-                        for uid in self._selected_uids:
+                        drag_uids = set(self._selected_uids)
+                        drag_uids.update(
+                            self._area_child_parent_map(self._selected_uids)
+                        )
+                        for uid in drag_uids:
                             takeoff = self._current_takeoffs.get(uid)
                             ann = (
                                 self._current_annotations.get(uid)
@@ -1086,7 +1144,7 @@ class InputHandlerMixin:
             self._rubber_band.setGeometry(QRect(vp_origin, cur_vp).normalized())
             event.accept()
             return
-        if self._panning and self._last_pan_point:
+        if self._panning and self._last_pan_point is not None:
             if self._right_pan_active:
                 total = cur_vp - self._right_pan_press_pos
                 threshold = QApplication.startDragDistance()
@@ -1111,19 +1169,7 @@ class InputHandlerMixin:
             held_ms = self._right_pan_press_timer.elapsed()
             if self._right_pan_dragged or held_ms > RIGHT_CLICK_CONTEXT_MENU_MAX_MS:
                 self._suppress_next_context_menu = True
-            pan_view_changed = self._pan_view_changed
-            self._right_pan_active = False
-            self._panning = False
-            self._pan_view_changed = False
-            self._last_pan_point = None
-            self._right_pan_press_pos = None
-            self._right_pan_dragged = False
-            self._persistent_cursor_mode = self._pre_pan_persistent_mode
-            self._pre_pan_persistent_mode = None
-            self.cursor_mode_change_requested.emit(self._persistent_cursor_mode)
-            self._update_cursor()
-            if pan_view_changed:
-                self._publish_current_page_view_state()
+            self._finish_pan_interaction()
             event.accept()
             return
         if (
@@ -1231,19 +1277,11 @@ class InputHandlerMixin:
                 event.accept()
                 return
             else:
-                if (
-                    not was_dragged
-                    and self._drag_plan_item_uid
-                    and self._drag_item_orig_positions
+                if not was_dragged and (
+                    self._drag_plan_item_uid is not None
+                    or bool(self._drag_multi_orig_positions)
                 ):
-                    for item in self._uid_to_items.get(self._drag_plan_item_uid, []):
-                        orig = self._drag_item_orig_positions.get(id(item))
-                        if orig is not None:
-                            item.setPos(orig)
-                    self._drag_item_orig_positions = {}
-                    self._drag_plan_item_uid = None
-                    self._drag_handle_index = -2
-                    self._drag_orig_position = []
+                    self._clear_drag_tracking(restore_preview=True)
                 if was_dragged and (
                     self._drag_plan_item_uid is not None
                     or self._drag_multi_orig_positions
@@ -1334,6 +1372,8 @@ class InputHandlerMixin:
                                 and condition
                                 and condition.is_area
                             ):
+                                parent_dx = new_pos[0] - self._drag_orig_position[0]
+                                parent_dy = new_pos[1] - self._drag_orig_position[1]
                                 for child in self._current_takeoffs.values():
                                     if child.parent_uid == uid:
                                         orig_child_pos = list(child.position)
@@ -1341,14 +1381,9 @@ class InputHandlerMixin:
                                             self._position_before_edit[child.uid] = (
                                                 orig_child_pos
                                             )
-                                        new_child_pos = list(orig_child_pos)
-                                        for ci in range(0, len(new_child_pos) - 1, 2):
-                                            new_child_pos[ci] = self.snap_ost(
-                                                new_child_pos[ci] + ost_dx
-                                            )
-                                            new_child_pos[ci + 1] = self.snap_ost(
-                                                new_child_pos[ci + 1] + ost_dy
-                                            )
+                                        new_child_pos = self._translate_position(
+                                            orig_child_pos, parent_dx, parent_dy
+                                        )
                                         child.position = new_child_pos
                                         self._dirty_positions[child.uid] = new_child_pos
                         elif uid in self._current_annotations:
@@ -1375,10 +1410,11 @@ class InputHandlerMixin:
                         ost_dx, ost_dy = self.apply_intelligent_paste_axis_snap(
                             ost_dx, ost_dy
                         )
-                        for uid, orig_pos in self._drag_multi_orig_positions.items():
-                            new_pos = self._compute_snapped_multi_drag_position(
-                                uid, orig_pos, ost_dx, ost_dy
-                            )
+                        new_positions = self._compute_group_translation_positions(
+                            self._drag_multi_orig_positions, ost_dx, ost_dy
+                        )
+                        for uid, new_pos in new_positions.items():
+                            orig_pos = self._drag_multi_orig_positions[uid]
                             if uid in self._current_takeoffs:
                                 takeoff = self._current_takeoffs.get(uid)
                                 if takeoff:
@@ -1488,13 +1524,7 @@ class InputHandlerMixin:
                 self._publish_current_page_view_state()
             event.accept()
         elif self._panning and event.button() == Qt.MouseButton.LeftButton:
-            pan_view_changed = self._pan_view_changed
-            self._panning = False
-            self._pan_view_changed = False
-            self._last_pan_point = None
-            self._update_cursor()
-            if pan_view_changed:
-                self._publish_current_page_view_state()
+            self._finish_pan_interaction()
             event.accept()
         else:
             super().mouseReleaseEvent(event)
@@ -1532,12 +1562,12 @@ class InputHandlerMixin:
             cy = sum(coord_pos[i] for i in range(1, n_coords, 2)) / (n_coords // 2)
             unrotated = rotate_points_around(coord_pos, -stored_deg, cx, cy)
             pos = list(unrotated)
+        self._drag_model_orig_position = list(ann.position)
+        self._drag_position_before_edit_existed = uid in self._position_before_edit
         if uid not in self._position_before_edit:
             self._position_before_edit[uid] = list(ann.position)
         ann.position = pos
-        self._dirty_ann_positions[uid] = (ann.annotation_type, pos)
         self._drag_orig_position = list(pos)
-        self._flush_dirty_positions()
 
     def _compute_ink_drag_position(
         self, orig_pos: list, ost_dx: float, ost_dy: float
@@ -1587,15 +1617,106 @@ class InputHandlerMixin:
         )
         return QtCore.QPointF(item_sdx, item_sdy)
 
+    def _area_child_parent_map(self, parent_uids, child_uids=None) -> dict:
+        parent_uids = set(parent_uids)
+        if child_uids is not None:
+            child_parent_by_uid = {}
+            for child_uid in child_uids:
+                child = self._current_takeoffs.get(child_uid)
+                if child is None or child.parent_uid not in parent_uids:
+                    continue
+                parent = self._current_takeoffs.get(child.parent_uid)
+                condition = (
+                    self._current_conditions.get(parent.condition_uid)
+                    if parent is not None
+                    else None
+                )
+                if condition is not None and condition.is_area:
+                    child_parent_by_uid[child.uid] = child.parent_uid
+            return child_parent_by_uid
+        area_parent_uids = {
+            uid
+            for uid in parent_uids
+            if (
+                (takeoff := self._current_takeoffs.get(uid)) is not None
+                and (condition := self._current_conditions.get(takeoff.condition_uid))
+                is not None
+                and condition.is_area
+            )
+        }
+        if not area_parent_uids:
+            return {}
+        return {
+            takeoff.uid: takeoff.parent_uid
+            for takeoff in self._current_takeoffs.values()
+            if takeoff.parent_uid in area_parent_uids
+        }
+
+    @staticmethod
+    def _translate_position(position: list, ost_dx: float, ost_dy: float) -> list:
+        translated = list(position)
+        for index in range(0, len(translated) - 1, 2):
+            translated[index] += ost_dx
+            translated[index + 1] += ost_dy
+        return translated
+
+    def _compute_group_translation_positions(
+        self,
+        orig_positions: dict,
+        ost_dx: float,
+        ost_dy: float,
+        *,
+        preserve_zero_axes: bool = False,
+    ) -> dict:
+        child_parent_by_uid = self._area_child_parent_map(
+            orig_positions, child_uids=orig_positions
+        )
+        new_positions = {}
+        for uid, orig_pos in orig_positions.items():
+            if uid in child_parent_by_uid:
+                continue
+            new_pos = self._compute_snapped_multi_drag_position(
+                uid, orig_pos, ost_dx, ost_dy
+            )
+            if preserve_zero_axes:
+                ann = self._current_annotations.get(uid)
+                start = 1 if ann and ann.is_ink and len(orig_pos) % 2 == 1 else 0
+                if ost_dx == 0:
+                    for index in range(start, len(new_pos) - 1, 2):
+                        new_pos[index] = orig_pos[index]
+                if ost_dy == 0:
+                    for index in range(start + 1, len(new_pos), 2):
+                        new_pos[index] = orig_pos[index]
+            new_positions[uid] = new_pos
+        for child_uid, parent_uid in child_parent_by_uid.items():
+            child_orig = orig_positions.get(child_uid)
+            parent_orig = orig_positions.get(parent_uid)
+            parent_new = new_positions.get(parent_uid)
+            if (
+                child_orig is None
+                or parent_orig is None
+                or parent_new is None
+                or len(parent_orig) < 2
+                or len(parent_new) < 2
+            ):
+                continue
+            parent_dx = parent_new[0] - parent_orig[0]
+            parent_dy = parent_new[1] - parent_orig[1]
+            new_positions[child_uid] = self._translate_position(
+                child_orig, parent_dx, parent_dy
+            )
+        return new_positions
+
     def _update_snapped_multi_drag_preview(
         self, scene_dx: float, scene_dy: float, ost_dx: float, ost_dy: float
     ) -> None:
         fallback_delta = QtCore.QPointF(scene_dx, scene_dy)
         preview_delta_by_uid = {}
-        for uid, orig_pos in self._drag_multi_orig_positions.items():
-            new_pos = self._compute_snapped_multi_drag_position(
-                uid, orig_pos, ost_dx, ost_dy
-            )
+        new_positions = self._compute_group_translation_positions(
+            self._drag_multi_orig_positions, ost_dx, ost_dy
+        )
+        for uid, new_pos in new_positions.items():
+            orig_pos = self._drag_multi_orig_positions[uid]
             delta = self._snapped_multi_drag_scene_delta(
                 uid, orig_pos, new_pos, scene_dx, scene_dy
             )
@@ -1622,6 +1743,7 @@ class InputHandlerMixin:
         fallback_delta = QtCore.QPointF(fallback_sdx, fallback_sdy)
         delta_by_uid = {}
         moved = False
+        orig_positions = {}
         for uid in self._selected_uids:
             takeoff = self._current_takeoffs.get(uid)
             ann = self._current_annotations.get(uid)
@@ -1633,9 +1755,21 @@ class InputHandlerMixin:
                 continue
             if not orig_pos:
                 continue
-            new_pos = self._compute_snapped_multi_drag_position(
-                uid, orig_pos, ost_dx, ost_dy
-            )
+            orig_positions[uid] = orig_pos
+        for child_uid in self._area_child_parent_map(orig_positions):
+            child = self._current_takeoffs.get(child_uid)
+            if child is not None and child.position:
+                orig_positions[child_uid] = list(child.position)
+        new_positions = self._compute_group_translation_positions(
+            orig_positions,
+            ost_dx,
+            ost_dy,
+            preserve_zero_axes=True,
+        )
+        for uid, new_pos in new_positions.items():
+            orig_pos = orig_positions[uid]
+            takeoff = self._current_takeoffs.get(uid)
+            ann = self._current_annotations.get(uid)
             delta = self._snapped_multi_drag_scene_delta(
                 uid, orig_pos, new_pos, fallback_sdx, fallback_sdy
             )
@@ -2239,6 +2373,9 @@ class InputHandlerMixin:
             Qt.Key.Key_Up,
             Qt.Key.Key_Down,
         }:
+            if event.isAutoRepeat():
+                event.accept()
+                return
             if self._keyboard_move_dirty:
                 self._keyboard_move_dirty = False
                 self._flush_dirty_positions()
@@ -2760,6 +2897,16 @@ class InputHandlerMixin:
 
     def focusOutEvent(self, event) -> None:
         super().focusOutEvent(event)
+        if self._keyboard_move_dirty:
+            self._keyboard_move_dirty = False
+            self._flush_dirty_positions()
+        if self._panning:
+            if self._right_pan_active:
+                self._suppress_next_context_menu = True
+            self._finish_pan_interaction()
+        self._cancel_rotation_drag_interaction()
+        if self._pdf_text_drag_anchor is not None:
+            self._finish_pdf_text_selection_drag()
         self._cancel_active_drag_interaction(restore_preview=True)
         self.reset_ctrl_held()
 
