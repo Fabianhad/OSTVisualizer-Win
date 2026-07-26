@@ -1487,6 +1487,13 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         coordinator._cleaned_up = True
         coordinator._track_detached_window(WorkspaceStateCoordinator._DETACHED_VIEW)
 
+    def test_late_splitter_restore_after_cleanup_is_ignored(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        coordinator._cleaned_up = True
+        coordinator._shell = None
+        coordinator._restore_takeoff_splitter_sizes_after_show([100, 200])
+        coordinator._restore_left_splitter_sizes_after_show([30, 70])
+
     def test_reset_to_defaults_persists_default_workspace_and_reapplies_state(self):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
         timer = FakeWorkspaceSaveTimer(active=True)
@@ -1668,7 +1675,7 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
             },
         )
 
-    def test_tracked_window_destroy_drops_reference_after_cleanup(self):
+    def test_tracked_window_destroy_drops_matching_reference(self):
         coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
         key = WorkspaceStateCoordinator._DETACHED_VIEW
         window = TrackableDetachedWindow()
@@ -1677,10 +1684,26 @@ class WorkspaceStateCoordinatorDetachedWindowTests(unittest.TestCase):
         coordinator._detached_restore_applied = {key: True}
         coordinator._save_timer = None
         coordinator._cleaned_up = False
-        coordinator._on_tracked_window_destroyed(key)
+        coordinator._on_tracked_window_destroyed(key, window)
         self.assertEqual(coordinator._tracked_detached_windows, {})
         self.assertEqual(coordinator._tracked_detached_destroy_callbacks, {})
         self.assertEqual(coordinator._detached_restore_applied, {})
+
+    def test_stale_window_destroy_keeps_replacement_tracking(self):
+        coordinator = WorkspaceStateCoordinator.__new__(WorkspaceStateCoordinator)
+        key = WorkspaceStateCoordinator._DETACHED_VIEW
+        stale_window = TrackableDetachedWindow()
+        replacement_window = TrackableDetachedWindow()
+        callback = lambda *_args: None
+        coordinator._tracked_detached_windows = {key: replacement_window}
+        coordinator._tracked_detached_destroy_callbacks = {key: callback}
+        coordinator._detached_restore_applied = {key: True}
+        coordinator._save_timer = None
+        coordinator._cleaned_up = False
+        coordinator._on_tracked_window_destroyed(key, stale_window)
+        self.assertIs(coordinator._tracked_detached_windows[key], replacement_window)
+        self.assertIs(coordinator._tracked_detached_destroy_callbacks[key], callback)
+        self.assertTrue(coordinator._detached_restore_applied[key])
 
     def test_detached_page_window_cleanup_releases_renderer_references(self):
         window = DetachedPageViewWindow.__new__(DetachedPageViewWindow)

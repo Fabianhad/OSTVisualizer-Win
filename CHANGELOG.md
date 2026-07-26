@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Fixed workspace restoration callbacks so immediate shutdown cannot access a released window shell and delayed destruction from a replaced detached window cannot discard the replacement's persisted tracking state.
 - Fixed 3D and HTML export default filenames when bid names contain Windows-reserved filename characters.
 - Fixed silent toolbar check-state synchronization so it preserves signal blocks owned by an enclosing UI update.
 - Fixed hidden-layer line, arrow, and dimension annotations remaining selectable through geometric fallback hit-testing.

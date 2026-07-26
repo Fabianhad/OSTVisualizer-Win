@@ -191,19 +191,31 @@ class WorkspaceStateCoordinator(QtCore.QObject):
         else:
             self._shell.show()
         if self._pending_takeoff_splitter_sizes:
+            takeoff_sizes = list(self._pending_takeoff_splitter_sizes)
             QtCore.QTimer.singleShot(
                 0,
-                lambda: self._shell.set_takeoff_splitter_sizes(
-                    self._pending_takeoff_splitter_sizes
+                lambda sizes=takeoff_sizes: self._restore_takeoff_splitter_sizes_after_show(
+                    sizes
                 ),
             )
         if self._pending_splitter_sizes:
+            left_sizes = list(self._pending_splitter_sizes)
             QtCore.QTimer.singleShot(
                 0,
-                lambda: self._shell.set_left_splitter_sizes(
-                    self._pending_splitter_sizes
+                lambda sizes=left_sizes: self._restore_left_splitter_sizes_after_show(
+                    sizes
                 ),
             )
+
+    def _restore_takeoff_splitter_sizes_after_show(self, sizes: list[int]) -> None:
+        if self._cleaned_up:
+            return
+        self._shell.set_takeoff_splitter_sizes(sizes)
+
+    def _restore_left_splitter_sizes_after_show(self, sizes: list[int]) -> None:
+        if self._cleaned_up:
+            return
+        self._shell.set_left_splitter_sizes(sizes)
 
     def restore_deferred_state(self) -> None:
         self._pending_mesh_restore = bool(self._state.detached_windows.mesh_view.open)
@@ -553,8 +565,8 @@ class WorkspaceStateCoordinator(QtCore.QObject):
                 window.dropdown_size_changed.connect(self._on_dropdown_size_changed)
             except RuntimeError:
                 pass
-        destroyed_callback = (
-            lambda *_args, window_key=key: self._on_tracked_window_destroyed(window_key)
+        destroyed_callback = lambda *_args, window_key=key, widget=window: self._on_tracked_window_destroyed(
+            window_key, widget
         )
         self._tracked_detached_destroy_callbacks[key] = destroyed_callback
         window.destroyed.connect(destroyed_callback)
@@ -567,7 +579,9 @@ class WorkspaceStateCoordinator(QtCore.QObject):
             self._complete_detached_window_tracking(key, window)
         self.request_save()
 
-    def _on_tracked_window_destroyed(self, key: str) -> None:
+    def _on_tracked_window_destroyed(self, key: str, window: QtWidgets.QWidget) -> None:
+        if self._tracked_detached_windows.get(key) is not window:
+            return
         self._tracked_detached_windows.pop(key, None)
         self._tracked_detached_destroy_callbacks.pop(key, None)
         self._detached_restore_applied.pop(key, None)
