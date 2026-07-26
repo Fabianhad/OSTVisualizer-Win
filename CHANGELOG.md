@@ -19,6 +19,7 @@
 
 ### Fixed
 
+- Fixed grouped plan-item rotation failures so later writes stop after an earlier failed stage and committed position changes remain accurately projected and undoable; mixed takeoff-and-annotation delete undo also preserves takeoff metadata captured before the database reload.
 - Fixed repeated final application-close events rerunning already completed workspace and service cleanup.
 - Fixed update-dialog failures leaving later application notifications permanently suppressed.
 - Fixed explicit detached annotation and named-view window restore requests being overwritten by stale saved fullscreen state.

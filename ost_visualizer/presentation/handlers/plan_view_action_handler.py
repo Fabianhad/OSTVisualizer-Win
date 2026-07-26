@@ -298,13 +298,18 @@ class PlanViewActionHandler:
         positions: List[tuple],
         rotations: List[tuple],
     ) -> bool:
-        if positions and not self._write_svc.save_takeoff_positions(
-            db_path, positions, publish_database_refreshed_after_write=False
-        ):
-            return False
+        positions_saved = False
+        if positions:
+            if not self._write_svc.save_takeoff_positions(
+                db_path, positions, publish_database_refreshed_after_write=False
+            ):
+                return False
+            positions_saved = True
         if rotations and not self._write_svc.save_takeoff_rotations(
             db_path, rotations, publish_database_refreshed_after_write=False
         ):
+            if positions_saved:
+                self._publish_saved_takeoff_position_rotation_changes(positions, [])
             return False
         self._publish_saved_takeoff_position_rotation_changes(positions, rotations)
         return True
@@ -513,22 +518,20 @@ class PlanViewActionHandler:
         takeoff_scales = self._capture_takeoff_scales(t_old or t_new)
         annotation_scales = self._capture_annotation_scales(a_old or a_new)
 
-        def _save_takeoff_positions(positions: List[tuple]) -> None:
-            self._save_takeoff_positions_for_current_scales(
-                db_path, positions, takeoff_scales
+        def _save_positions(takeoff_positions, annotation_positions) -> None:
+            if not self._save_takeoff_positions_for_current_scales(
+                db_path, takeoff_positions, takeoff_scales
+            ):
+                return
+            self._save_annotation_positions_for_current_scales(
+                db_path, annotation_positions, annotation_scales
             )
 
         def _undo_partial():
-            _save_takeoff_positions(t_old)
-            self._save_annotation_positions_for_current_scales(
-                db_path, a_old, annotation_scales
-            )
+            _save_positions(t_old, a_old)
 
         def _redo_partial():
-            _save_takeoff_positions(t_new)
-            self._save_annotation_positions_for_current_scales(
-                db_path, a_new, annotation_scales
-            )
+            _save_positions(t_new, a_new)
 
         self._undo_svc.push(_undo_partial, _redo_partial)
 
@@ -579,8 +582,7 @@ class PlanViewActionHandler:
             parent_uid = str(takeoff.parent_uid or "0")
             if parent_uid not in ("0", "") and parent_uid in deleting_uids:
                 return False
-            extras = self._data_svc.get_takeoff_extras(takeoff.uid)
-            saved_takeoff_extras[takeoff.uid] = dict(extras)
+            extras = saved_takeoff_extras.get(takeoff.uid, {})
             if not self._same_bid_takeoff_extras_allow_fast_refresh(extras):
                 return False
         return True
@@ -889,38 +891,27 @@ class PlanViewActionHandler:
         r_old = [(uid, old) for uid, old, _ in rotation_changes if old is not None]
         takeoff_scales = self._capture_takeoff_scales(t_old or t_new)
         annotation_scales = self._capture_annotation_scales(a_old or a_new)
-        ok_t = True
-        ok_r = True
         if ann_changes:
-            if t_new:
-                ok_t = self._save_takeoff_positions_fast(db_path, t_new)
-            ok_a = self._save_annotation_positions_fast(
+            if t_new and not self._save_takeoff_positions_fast(db_path, t_new):
+                self._plan_view.restore_flushed_positions(takeoff_changes, ann_changes)
+                self._plan_view.restore_flushed_rotations(rotation_changes)
+                return
+            if not self._save_annotation_positions_fast(
                 db_path,
                 [
                     (uid, ann_type, new_pos)
                     for uid, ann_type, _old, new_pos in ann_changes
                 ],
-            )
-            if r_new:
-                ok_r = self._save_takeoff_rotations_fast(db_path, r_new)
-            if not (ok_t and ok_a and ok_r):
-                if not ok_t:
-                    self._plan_view.restore_flushed_positions(
-                        takeoff_changes, ann_changes
-                    )
-                    self._plan_view.restore_flushed_rotations(rotation_changes)
-                elif not ok_a:
-                    self._push_position_undo_for_committed_partial(
-                        db_path, t_old, t_new
-                    )
-                    self._plan_view.restore_flushed_positions([], ann_changes)
-                    if not ok_r:
-                        self._plan_view.restore_flushed_rotations(rotation_changes)
-                elif not ok_r:
-                    self._push_position_undo_for_committed_partial(
-                        db_path, t_old, t_new, a_old, a_new
-                    )
-                    self._plan_view.restore_flushed_rotations(rotation_changes)
+            ):
+                self._push_position_undo_for_committed_partial(db_path, t_old, t_new)
+                self._plan_view.restore_flushed_positions([], ann_changes)
+                self._plan_view.restore_flushed_rotations(rotation_changes)
+                return
+            if r_new and not self._save_takeoff_rotations_fast(db_path, r_new):
+                self._push_position_undo_for_committed_partial(
+                    db_path, t_old, t_new, a_old, a_new
+                )
+                self._plan_view.restore_flushed_rotations(rotation_changes)
                 return
         else:
             positions_saved = False
@@ -946,12 +937,14 @@ class PlanViewActionHandler:
 
         def _undo_group():
             if a_old:
-                self._save_takeoff_positions_for_current_scales(
+                if not self._save_takeoff_positions_for_current_scales(
                     db_path, t_old, takeoff_scales
-                )
-                self._save_annotation_positions_for_current_scales(
+                ):
+                    return
+                if not self._save_annotation_positions_for_current_scales(
                     db_path, a_old, annotation_scales
-                )
+                ):
+                    return
                 if r_old:
                     self._save_takeoff_rotations_fast(db_path, r_old)
             else:
@@ -963,12 +956,14 @@ class PlanViewActionHandler:
 
         def _redo_group():
             if a_new:
-                self._save_takeoff_positions_for_current_scales(
+                if not self._save_takeoff_positions_for_current_scales(
                     db_path, t_new, takeoff_scales
-                )
-                self._save_annotation_positions_for_current_scales(
+                ):
+                    return
+                if not self._save_annotation_positions_for_current_scales(
                     db_path, a_new, annotation_scales
-                )
+                ):
+                    return
                 if r_new:
                     self._save_takeoff_rotations_fast(db_path, r_new)
             else:
@@ -1573,7 +1568,10 @@ class PlanViewActionHandler:
         takeoffs_deleted = False
         annotations_deleted = False
         simple_takeoff_delete = bool(saved_takeoffs) and not saved_annotations
-        saved_takeoff_extras = {}
+        saved_takeoff_extras = {
+            t.uid: dict(self._data_svc.get_takeoff_extras(t.uid))
+            for t in saved_takeoffs
+        }
         if simple_takeoff_delete:
             simple_takeoff_delete = self._takeoffs_allow_fast_delete(
                 saved_takeoffs, saved_takeoff_extras
@@ -1671,9 +1669,6 @@ class PlanViewActionHandler:
             self._write_svc.reload_and_notify(db_path)
         delete_cmds = []
         if saved_takeoffs and takeoffs_deleted:
-            saved_takeoff_extras = {
-                t.uid: self._data_svc.get_takeoff_extras(t.uid) for t in saved_takeoffs
-            }
             saved_takeoff_scales = self._capture_item_page_scales(saved_takeoffs)
             delete_cmds.append(
                 DeleteTakeoffsCommand(

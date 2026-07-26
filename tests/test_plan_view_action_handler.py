@@ -3427,6 +3427,249 @@ class PlanViewActionHandlerTests(unittest.TestCase):
             [AppEvents.TAKEOFFS_CHANGED] * 3,
         )
 
+    def test_group_rotation_takeoff_failure_stops_later_writes(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+            rotation=0.0,
+        )
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type=ANNOTATION_TYPE_RECT,
+                page_uid="p1",
+                position=[1.0, 2.0, 3.0, 4.0],
+            )
+        ]
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        write.save_takeoff_positions = lambda *_args, **_kwargs: False
+        annotation_write = FakeAnnotationWriteService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=FakeUndoService(),
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        takeoff_changes = [("t1", [0.0, 0.0], [3.0, 4.0])]
+        annotation_changes = [
+            (
+                "a1",
+                ANNOTATION_TYPE_RECT,
+                [1.0, 2.0, 3.0, 4.0],
+                [5.0, 6.0, 7.0, 8.0],
+            )
+        ]
+        rotation_changes = [("t1", 0.0, 45.0)]
+        handler.on_group_rotation_flushed(
+            takeoff_changes, annotation_changes, rotation_changes
+        )
+        self.assertEqual(annotation_write.position_calls, [])
+        self.assertEqual(write.rotation_calls, [])
+        self.assertEqual(
+            plan_view.restored_positions,
+            [(takeoff_changes, annotation_changes)],
+        )
+        self.assertEqual(plan_view.restored_rotations, [rotation_changes])
+
+    def test_group_rotation_annotation_failure_stops_rotation_write(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+            rotation=0.0,
+        )
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type=ANNOTATION_TYPE_RECT,
+                page_uid="p1",
+                position=[1.0, 2.0, 3.0, 4.0],
+            )
+        ]
+        plan_view = FakePlanView(data)
+        write = FakeWriteService()
+        annotation_write = FakeAnnotationWriteService()
+        annotation_write.save_annotation_positions = lambda *_args, **_kwargs: False
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        takeoff_changes = [("t1", [0.0, 0.0], [3.0, 4.0])]
+        annotation_changes = [
+            (
+                "a1",
+                ANNOTATION_TYPE_RECT,
+                [1.0, 2.0, 3.0, 4.0],
+                [5.0, 6.0, 7.0, 8.0],
+            )
+        ]
+        rotation_changes = [("t1", 0.0, 45.0)]
+        handler.on_group_rotation_flushed(
+            takeoff_changes, annotation_changes, rotation_changes
+        )
+        self.assertEqual(write.rotation_calls, [])
+        self.assertEqual(data.takeoffs["t1"].position, [3.0, 4.0])
+        self.assertEqual(plan_view.restored_positions, [([], annotation_changes)])
+        self.assertEqual(plan_view.restored_rotations, [rotation_changes])
+        self.assertEqual(undo.count, 1)
+
+    def test_group_rotation_undo_rotation_failure_projects_saved_position(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+            rotation=0.0,
+        )
+        write = FakeWriteService()
+        undo = FakeUndoService()
+        events = FakeEventBus()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=None,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=events,
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_group_rotation_flushed(
+            [("t1", [0.0, 0.0], [3.0, 4.0])],
+            [],
+            [("t1", 0.0, 45.0)],
+        )
+        write.save_takeoff_rotations = lambda *_args, **_kwargs: False
+        undo.undo()
+        self.assertEqual(data.takeoffs["t1"].position, [0.0, 0.0])
+        self.assertEqual(data.takeoffs["t1"].rotation, 45.0)
+        self.assertEqual(
+            [event for event, _payload in events.events],
+            [AppEvents.TAKEOFFS_CHANGED, AppEvents.TAKEOFFS_CHANGED],
+        )
+
+    def test_group_rotation_undo_takeoff_failure_stops_later_writes(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+            rotation=0.0,
+        )
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type=ANNOTATION_TYPE_RECT,
+                page_uid="p1",
+                position=[1.0, 2.0, 3.0, 4.0],
+            )
+        ]
+        write = FakeWriteService()
+        annotation_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_group_rotation_flushed(
+            [("t1", [0.0, 0.0], [3.0, 4.0])],
+            [
+                (
+                    "a1",
+                    ANNOTATION_TYPE_RECT,
+                    [1.0, 2.0, 3.0, 4.0],
+                    [5.0, 6.0, 7.0, 8.0],
+                )
+            ],
+            [("t1", 0.0, 45.0)],
+        )
+        write.save_takeoff_positions = lambda *_args, **_kwargs: False
+        undo.undo()
+        self.assertEqual(len(annotation_write.position_calls), 1)
+        self.assertEqual(len(write.rotation_calls), 1)
+
+    def test_partial_group_rotation_undo_takeoff_failure_stops_annotation_write(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+            rotation=0.0,
+        )
+        data.annotations = [
+            BidAnnotation(
+                uid="a1",
+                annotation_type=ANNOTATION_TYPE_RECT,
+                page_uid="p1",
+                position=[1.0, 2.0, 3.0, 4.0],
+            )
+        ]
+        write = FakeWriteService()
+        annotation_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=FakePlanView(data),
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        write.save_takeoff_rotations = lambda *_args, **_kwargs: False
+        handler.on_group_rotation_flushed(
+            [("t1", [0.0, 0.0], [3.0, 4.0])],
+            [
+                (
+                    "a1",
+                    ANNOTATION_TYPE_RECT,
+                    [1.0, 2.0, 3.0, 4.0],
+                    [5.0, 6.0, 7.0, 8.0],
+                )
+            ],
+            [("t1", 0.0, 45.0)],
+        )
+        write.save_takeoff_positions = lambda *_args, **_kwargs: False
+        undo.undo()
+        self.assertEqual(len(annotation_write.position_calls), 1)
+
     def test_simple_takeoff_delete_uses_targeted_path(self):
         data = FakeProjectData()
         data.takeoffs["t1"] = Takeoff(
@@ -3799,6 +4042,53 @@ class PlanViewActionHandlerTests(unittest.TestCase):
         self.assertEqual(
             [call[2] for call in annotation_write.delete_calls],
             [False, False],
+        )
+
+    def test_mixed_delete_snapshots_takeoff_extras_before_reload(self):
+        data = FakeProjectData()
+        data.takeoffs["t1"] = Takeoff(
+            uid="t1",
+            condition_uid="c1",
+            page_uid="p1",
+            position=[0.0, 0.0],
+        )
+        data.extras["t1"] = {"CustomColumn": "preserve-me"}
+        annotation = BidAnnotation(
+            uid="a1",
+            annotation_type=ANNOTATION_TYPE_RECT,
+            page_uid="p1",
+            position=[1.0, 2.0, 3.0, 4.0],
+        )
+        data.annotations = [annotation]
+        plan_view = FakePlanView(data)
+        plan_view.annotations["rect-item"] = annotation
+        write = FakeWriteService()
+
+        def reload_and_clear_extras(db_path):
+            write.reloads.append(db_path)
+            data.extras.clear()
+            return True
+
+        write.reload_and_notify = reload_and_clear_extras
+        annotation_write = FakeAnnotationWriteService()
+        undo = FakeUndoService()
+        handler = PlanViewActionHandler(
+            plan_view=plan_view,
+            ui_state_manager=FakeUiState(),
+            project_data_svc=data,
+            project_write_svc=write,
+            annotation_write_svc=annotation_write,
+            page_settings_bar=FakePageSettingsBar(),
+            undo_svc=undo,
+            event_bus=FakeEventBus(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(set(Feature)),
+        )
+        handler.on_elements_deleted(["t1", "rect-item"])
+        undo.undo()
+        self.assertEqual(
+            write.calls[0][2][0].raw_extras,
+            {"CustomColumn": "preserve-me"},
         )
 
     def test_named_view_delete_with_linked_hotlink_no_or_close_cancels_delete(self):
