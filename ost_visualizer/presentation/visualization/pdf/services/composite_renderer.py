@@ -1,4 +1,5 @@
 import math
+import threading
 from collections import OrderedDict
 from typing import Optional
 from PySide6.QtCore import QRectF
@@ -28,6 +29,7 @@ class CompositeRenderer:
 
     def __init__(self, page_cache: PageCache):
         self._page_cache = page_cache
+        self._cache_lock = threading.RLock()
         self._composite_cache: OrderedDict[str, QImage] = OrderedDict()
 
     def render_composite(
@@ -40,11 +42,12 @@ class CompositeRenderer:
         wait_for_in_flight: bool = True,
     ) -> Optional[QImage]:
         cache_key = self._build_cache_key(page, bid_ref, render_scale, raster_rotation)
-        if cache_key in self._composite_cache:
-            self._composite_cache.move_to_end(cache_key)
-            return self._composite_cache[cache_key]
         if cancelled_check and cancelled_check():
             return None
+        with self._cache_lock:
+            if cache_key in self._composite_cache:
+                self._composite_cache.move_to_end(cache_key)
+                return self._composite_cache[cache_key]
         red_tinted = self._get_tinted_page(
             page.image_path,
             page.page_index,
@@ -72,6 +75,8 @@ class CompositeRenderer:
         if cancelled_check and cancelled_check():
             return None
         composited = self._composite_images(red_tinted, blue_tinted, page)
+        if cancelled_check and cancelled_check():
+            return None
         self._store_composite(cache_key, composited)
         return composited
 
@@ -188,11 +193,13 @@ class CompositeRenderer:
         result = QImage(canvas_w, canvas_h, QImage.Format.Format_ARGB32)
         result.fill(QColor(255, 255, 255))
         painter = QPainter(result)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        painter.drawImage(0, 0, red)
-        self._draw_overlay_image(painter, blue, page, canvas_w, canvas_h)
-        painter.end()
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            painter.drawImage(0, 0, red)
+            self._draw_overlay_image(painter, blue, page, canvas_w, canvas_h)
+        finally:
+            painter.end()
         return result
 
     def _draw_overlay_image(
@@ -238,23 +245,27 @@ class CompositeRenderer:
         return transform
 
     def _evict_if_needed(self):
-        while (
-            len(self._composite_cache) > self.MAX_CACHE_SIZE
-            or self._cache_size_bytes() > _COMPOSITE_CACHE_MAX_BYTES
-        ):
-            self._composite_cache.popitem(last=False)
+        with self._cache_lock:
+            while (
+                len(self._composite_cache) > self.MAX_CACHE_SIZE
+                or self._cache_size_bytes() > _COMPOSITE_CACHE_MAX_BYTES
+            ):
+                self._composite_cache.popitem(last=False)
 
     def _store_composite(self, cache_key: str, image: QImage) -> None:
         if self._image_size_bytes(image) > _COMPOSITE_CACHE_MAX_SINGLE_IMAGE_BYTES:
             return
-        self._composite_cache[cache_key] = image
-        self._composite_cache.move_to_end(cache_key)
-        self._evict_if_needed()
+        with self._cache_lock:
+            self._composite_cache[cache_key] = image
+            self._composite_cache.move_to_end(cache_key)
+            self._evict_if_needed()
 
     def _cache_size_bytes(self) -> int:
-        return sum(
-            self._image_size_bytes(image) for image in self._composite_cache.values()
-        )
+        with self._cache_lock:
+            return sum(
+                self._image_size_bytes(image)
+                for image in self._composite_cache.values()
+            )
 
     @staticmethod
     def _image_size_bytes(image: QImage) -> int:
@@ -311,36 +322,40 @@ class CompositeRenderer:
         )
         result.fill(QColor(255, 255, 255))
         painter = QPainter(result)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        painter.drawImage(0, 0, red_tinted)
-        if page.overlay_image_path:
-            if is_pdf_suffix(page.overlay_image_path):
-                self._draw_overlay_pdf_frame(
-                    painter,
-                    page,
-                    render_scale,
-                    frame_x,
-                    frame_y,
-                    frame_w,
-                    frame_h,
-                    rotation,
-                    cancelled_check,
-                    wait_for_in_flight,
-                )
-            else:
-                self._draw_overlay_raster_frame(
-                    painter,
-                    page,
-                    render_scale,
-                    frame_x,
-                    frame_y,
-                    frame_w,
-                    frame_h,
-                    rotation,
-                    cancelled_check,
-                    wait_for_in_flight,
-                )
-        painter.end()
+        try:
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            painter.drawImage(0, 0, red_tinted)
+            if page.overlay_image_path:
+                if is_pdf_suffix(page.overlay_image_path):
+                    self._draw_overlay_pdf_frame(
+                        painter,
+                        page,
+                        render_scale,
+                        frame_x,
+                        frame_y,
+                        frame_w,
+                        frame_h,
+                        rotation,
+                        cancelled_check,
+                        wait_for_in_flight,
+                    )
+                else:
+                    self._draw_overlay_raster_frame(
+                        painter,
+                        page,
+                        render_scale,
+                        frame_x,
+                        frame_y,
+                        frame_w,
+                        frame_h,
+                        rotation,
+                        cancelled_check,
+                        wait_for_in_flight,
+                    )
+        finally:
+            painter.end()
+        if cancelled_check and cancelled_check():
+            return None
         return result
 
     def _draw_overlay_pdf_frame(
@@ -618,4 +633,5 @@ class CompositeRenderer:
         return left, top, right - left, bottom - top
 
     def clear_cache(self):
-        self._composite_cache.clear()
+        with self._cache_lock:
+            self._composite_cache.clear()
