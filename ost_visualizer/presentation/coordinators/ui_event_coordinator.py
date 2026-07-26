@@ -1726,6 +1726,8 @@ class UIEventCoordinator:
         self._menu_state_signaler.request()
 
     def cleanup(self) -> None:
+        if self._is_cleaning_up:
+            return
         self._is_cleaning_up = True
         self._invalidate_mesh_scene_request()
         if self._plan_view_handler is not None:

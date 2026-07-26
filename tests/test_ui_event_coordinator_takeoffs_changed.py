@@ -2655,6 +2655,52 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator._nav = None
         coordinator._on_takeoff_selection_changed(["t1"])
 
+    def test_cleanup_is_idempotent_after_dependencies_are_released(self):
+        coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
+        visualization = FakeVisualization()
+        coordinator._is_cleaning_up = False
+        coordinator.visualization_service = visualization
+        coordinator._last_mesh_scene = None
+        coordinator._mesh_scene_dirty = False
+        coordinator._dirty_mesh_page_uids = set()
+        coordinator._pending_dirty_mesh_refresh = False
+        coordinator._plan_view_handler = None
+        coordinator._view_stack = None
+        coordinator._tab_widget = None
+        coordinator._undo_service = None
+        coordinator._subscriptions = []
+        coordinator.event_bus = None
+        coordinator._plan_view_signaler = None
+        coordinator._menu_state_signaler = None
+        coordinator._bid_data_cache = {}
+        coordinator._mesh_window = None
+        coordinator._mesh_window_action = None
+        coordinator._placement = None
+        coordinator.opengl_viewer = None
+        coordinator.takeoff_sidebar = None
+        coordinator.plan_view = None
+        coordinator._sidebar = None
+        coordinator._viewer = None
+        coordinator._toolbar = None
+        coordinator.main_window = None
+        coordinator.ui_state_manager = None
+        coordinator.ui_access_manager = None
+        coordinator.project_data = None
+        coordinator.project_operations = None
+        coordinator._color_service = None
+        coordinator._icon_provider = None
+        coordinator._project_write_service = None
+        coordinator._project_read_service = None
+        coordinator.conditions_sidebar = None
+        coordinator.condition_summary_tab = None
+        coordinator._condition_handler = None
+        coordinator._deferred_persistence = None
+
+        coordinator.cleanup()
+        coordinator.cleanup()
+
+        self.assertEqual(visualization.cancelled_mesh_refreshes, 1)
+
     def test_clearing_takeoff_selection_keeps_placement_owned_highlight(self):
         coordinator = UIEventCoordinator.__new__(UIEventCoordinator)
 
