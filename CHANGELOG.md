@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Fixed silent toolbar check-state synchronization so it preserves signal blocks owned by an enclosing UI update.
 - Fixed hidden-layer line, arrow, and dimension annotations remaining selectable through geometric fallback hit-testing.
 - Fixed native 3D viewer cleanup so a renderer shutdown failure cannot retain a stale native renderer or prevent the remaining Qt-owned resources from being released.
 - Fixed page deletion failing open when MDB content verification could not finish; unavailable verification now blocks both Cover Sheet and current-page deletion instead of skipping the content warning.

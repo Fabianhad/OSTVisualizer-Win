@@ -137,6 +137,26 @@ class _OverlayPlanView(_PlanView):
 
 
 class ToolbarStateCoordinatorTests(unittest.TestCase):
+    def test_silent_action_updates_preserve_caller_owned_signal_blocks(self):
+        _app()
+        coordinator = ToolbarStateCoordinator(_UiState(), _Access(), _ProjectData())
+        select_action = QtGui.QAction()
+        select_action.setCheckable(True)
+        select_action.blockSignals(True)
+        backout_action = QtGui.QAction()
+        backout_action.setCheckable(True)
+        backout_action.blockSignals(True)
+        coordinator.set_select_action(select_action)
+        coordinator.set_backout_action(backout_action)
+
+        coordinator.set_select_checked()
+        coordinator._set_backout_checked_silent(True)
+
+        self.assertTrue(select_action.isChecked())
+        self.assertTrue(select_action.signalsBlocked())
+        self.assertTrue(backout_action.isChecked())
+        self.assertTrue(backout_action.signalsBlocked())
+
     def test_read_only_plan_actions_keep_copy_and_selection_but_disable_mutations(self):
         _app()
         access = _SelectiveAccess({Feature.SELECT_PLAN_ITEMS})

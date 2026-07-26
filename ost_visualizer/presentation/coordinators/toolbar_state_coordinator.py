@@ -121,18 +121,22 @@ class ToolbarStateCoordinator:
             return
         if self._backout_action.isChecked() == checked:
             return
-        self._backout_action.blockSignals(True)
-        self._backout_action.setChecked(checked)
-        self._backout_action.blockSignals(False)
+        signals_blocked = self._backout_action.blockSignals(True)
+        try:
+            self._backout_action.setChecked(checked)
+        finally:
+            self._backout_action.blockSignals(signals_blocked)
 
     def set_select_checked(self) -> None:
         if not self._select_action:
             return
         if self._select_action.isChecked():
             return
-        self._select_action.blockSignals(True)
-        self._select_action.setChecked(True)
-        self._select_action.blockSignals(False)
+        signals_blocked = self._select_action.blockSignals(True)
+        try:
+            self._select_action.setChecked(True)
+        finally:
+            self._select_action.blockSignals(signals_blocked)
 
     def is_takeoff_2d_view_active(self) -> bool:
         return bool(
