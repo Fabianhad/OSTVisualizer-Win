@@ -56,6 +56,13 @@ class CoverSheetHandler:
         pages_requiring_delete_confirmation = (
             self._read_service.get_pages_with_delete_content(file_path, bid_uid)
         )
+        if pages_requiring_delete_confirmation is None:
+            show_critical(
+                self.window,
+                "Cover Sheet",
+                f"Failed to verify page contents. {DB_LOCKED_HINT}",
+            )
+            return
         context = CoverSheetContext(
             project_read_service=self._read_service,
             project_write_service=self._write_service,

@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Fixed page deletion failing open when MDB content verification could not finish; unavailable verification now blocks both Cover Sheet and current-page deletion instead of skipping the content warning.
 - Fixed condition-sidebar refreshes so nested updates preserve their caller's Qt signal, sorting, and repaint state, and failed tree rebuilds no longer leave the sidebar permanently blocked.
 - Fixed deleted takeoffs retaining stale supplemental metadata in the active project model after their visible and bid-level records were removed.
 - Fixed successful plan-page renders remaining marked as pending, which could suppress later raster-quality correction; invalid overlay placement geometry now finishes loading without leaving the page busy.

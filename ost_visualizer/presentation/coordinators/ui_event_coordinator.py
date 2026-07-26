@@ -3307,6 +3307,13 @@ class UIEventCoordinator:
         pages_with_content = self._project_read_service.get_pages_with_delete_content(
             bid_ref.file_path, bid_ref.bid_uid
         )
+        if pages_with_content is None:
+            show_critical(
+                self.main_window,
+                "Delete Page",
+                f"Failed to verify page contents. {DB_LOCKED_HINT}",
+            )
+            return
         loaded_page_has_content = bool(
             self.project_data.get_page_takeoffs(page_uid)
             or self.project_data.get_page_annotations(page_uid)

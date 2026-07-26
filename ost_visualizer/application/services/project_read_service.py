@@ -135,14 +135,16 @@ class ProjectReadService:
             self.logger.warning("Failed to load pages with takeoffs", exc_info=True)
             return set()
 
-    def get_pages_with_delete_content(self, file_path: str, bid_uid: str) -> set:
+    def get_pages_with_delete_content(
+        self, file_path: str, bid_uid: str
+    ) -> Optional[set]:
         try:
             return self._reader.get_pages_with_delete_content(file_path, bid_uid)
         except Exception:
             self.logger.warning(
                 "Failed to load pages with delete-sensitive content", exc_info=True
             )
-            return set()
+            return None
 
     @staticmethod
     def get_uom_label(uom_code: int) -> str:

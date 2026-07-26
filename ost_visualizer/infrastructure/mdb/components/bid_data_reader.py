@@ -383,7 +383,9 @@ class BidDataReaderMixin:
                 raise
         return result
 
-    def get_pages_with_delete_content(self, file_path: str, bid_uid: str) -> set:
+    def get_pages_with_delete_content(
+        self, file_path: str, bid_uid: str
+    ) -> Optional[set]:
         result = set()
         content_tables = PAGE_DELETE_CONFIRMATION_TABLES
         try:
@@ -423,6 +425,7 @@ class BidDataReaderMixin:
                 bid_uid,
                 exc_info=True,
             )
+            return None
         return result
 
     def get_bid_layers_for_sidebar(
