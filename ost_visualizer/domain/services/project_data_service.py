@@ -1,4 +1,3 @@
-import logging
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 from ...domain.aggregates.ost_aggregate import OstAggregate
@@ -50,9 +49,8 @@ class CollectedTakeoffsResult:
 
 
 class ProjectDataService:
-    def __init__(self, model: OstAggregate, logger: Optional[logging.Logger] = None):
+    def __init__(self, model: OstAggregate):
         self.model = model
-        self.logger = logger or logging.getLogger(__name__)
 
     def reset(self) -> None:
         self.model.clear_bid()
@@ -665,6 +663,8 @@ class ProjectDataService:
         self.model.bid_takeoffs = [
             takeoff for takeoff in self.model.bid_takeoffs if takeoff.uid not in wanted
         ]
+        for takeoff_uid in wanted:
+            self.model.bid_takeoff_extras.pop(takeoff_uid, None)
         for page_uid in page_uids:
             page = self.model.get_page(page_uid)
             if page is not None:

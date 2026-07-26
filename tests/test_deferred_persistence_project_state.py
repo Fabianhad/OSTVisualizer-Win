@@ -159,6 +159,35 @@ class DeferredPersistenceProjectStateTests(unittest.TestCase):
         self.assertTrue(model.pages[1].layer_visible)
         self.assertEqual(service.get_hidden_layer_uids(), set())
 
+    def test_remove_takeoffs_clears_page_bid_and_supplemental_state(self):
+        model = FakeProjectModel()
+        removed = SimpleNamespace(uid="t1", page_uid="p1")
+        retained = SimpleNamespace(uid="t2", page_uid="p2")
+        model.pages[0].takeoffs = [removed]
+        model.pages[1].takeoffs = [retained]
+        model.bid_takeoffs = [removed, retained]
+        model.bid_takeoff_extras = {
+            "t1": {"condition_name": "Removed"},
+            "t2": {"condition_name": "Retained"},
+        }
+        model.get_all_takeoffs = lambda: [
+            takeoff for page in model.pages for takeoff in page.takeoffs
+        ]
+        model.get_page = lambda uid: next(
+            (page for page in model.pages if page.uid == uid), None
+        )
+
+        changed_pages = ProjectDataService(model).remove_takeoffs(["t1"])
+
+        self.assertEqual(changed_pages, ["p1"])
+        self.assertEqual(model.bid_takeoffs, [retained])
+        self.assertEqual(model.pages[0].takeoffs, [])
+        self.assertEqual(model.pages[1].takeoffs, [retained])
+        self.assertEqual(
+            model.bid_takeoff_extras,
+            {"t2": {"condition_name": "Retained"}},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,6 +69,5 @@ class ModelBuilder:
                 logger=license_logger,
             ),
         )
-        project_data_logger = self.logger.getChild("ProjectDataService")
-        project_data_service = ProjectDataService(ost_model, logger=project_data_logger)
+        project_data_service = ProjectDataService(ost_model)
         self.container.register_instance("project_data_service", project_data_service)
