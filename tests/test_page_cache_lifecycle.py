@@ -124,6 +124,17 @@ class _TokenAwareRenderer:
         return QImage(16, 16, QImage.Format.Format_ARGB32)
 
 
+class _ClosableRenderer:
+    def __init__(self, error=None):
+        self.error = error
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+        if self.error is not None:
+            raise self.error
+
+
 class PageCacheLifecycleTests(unittest.TestCase):
     def test_cacheable_base_scale_keeps_heavy_pdf_under_cache_budget(self):
         scale = PageCache.cacheable_base_render_scale(3024.0, 2160.0, 2.0)
@@ -345,6 +356,23 @@ class PageCacheLifecycleTests(unittest.TestCase):
         self.assertIsNone(frame)
         self.assertEqual(cache._cache, {})
         self.assertEqual(cache._frame_cache, {})
+
+    def test_clear_releases_every_renderer_when_one_close_fails(self):
+        expected_error = RuntimeError("native close failed")
+        failing_renderer = _ClosableRenderer(expected_error)
+        remaining_renderer = _ClosableRenderer()
+        cache = PageCache()
+        original_local = cache._local
+        cache._renderers.extend((failing_renderer, remaining_renderer))
+
+        with self.assertRaisesRegex(RuntimeError, "native close failed") as raised:
+            cache.clear()
+
+        self.assertIs(raised.exception, expected_error)
+        self.assertTrue(failing_renderer.closed)
+        self.assertTrue(remaining_renderer.closed)
+        self.assertEqual(cache._renderers, [])
+        self.assertIsNot(cache._local, original_local)
 
 
 if __name__ == "__main__":

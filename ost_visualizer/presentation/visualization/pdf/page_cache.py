@@ -556,7 +556,15 @@ class PageCache:
             self._page_size_cache.clear()
             self._text_runs_cache.clear()
         with self._renderers_lock:
-            for renderer in self._renderers:
-                renderer.close()
+            renderers = tuple(self._renderers)
             self._renderers.clear()
-        self._local = threading.local()
+            self._local = threading.local()
+        first_error = None
+        for renderer in renderers:
+            try:
+                renderer.close()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
