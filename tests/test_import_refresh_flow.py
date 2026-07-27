@@ -191,6 +191,32 @@ class ImportRefreshFlowTests(unittest.TestCase):
         self.assertEqual(importer.calls[0][2:], ("target.mdb", "project-1"))
         self.assertFalse(fake_cab.root.exists())
 
+    def test_osp_import_rejects_unsafe_cab_member_paths_before_extraction(self):
+        unsafe_names = (
+            "..\\outside\\payload.ost",
+            "C:\\outside\\payload.ost",
+            "\\outside\\payload.ost",
+            "\\\\server\\share\\payload.ost",
+            "payload.ost:stream",
+            ".",
+        )
+        original_cab = osp_importer_module.ost_cab
+        try:
+            for unsafe_name in unsafe_names:
+                with self.subTest(member_name=unsafe_name):
+                    fake_cab = FakeOspCab(names=["Project.ost", unsafe_name])
+                    importer = FakeImporter()
+                    osp_importer_module.ost_cab = fake_cab
+                    with self.assertLogs(osp_importer_module.logger, level="ERROR"):
+                        result = OspImporter(importer).import_osp(
+                            "source.osp", "target.mdb", "project-1"
+                        )
+                    self.assertFalse(result)
+                    self.assertEqual(fake_cab.extract_calls, [])
+                    self.assertEqual(importer.calls, [])
+        finally:
+            osp_importer_module.ost_cab = original_cab
+
     def test_osp_import_cleanup_failure_does_not_fail_successful_import(self):
         fake_cab = FakeOspCab()
         importer = FakeImporter()

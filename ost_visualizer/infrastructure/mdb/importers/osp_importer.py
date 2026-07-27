@@ -57,6 +57,18 @@ def _is_safe_legacy_extract_root(root: Path, member_names: list[str]) -> bool:
     )
 
 
+def _is_safe_cab_member_name(member_name: str) -> bool:
+    if not isinstance(member_name, str) or not member_name:
+        return False
+    member_path = PureWindowsPath(member_name.replace("/", "\\"))
+    if member_path.is_absolute() or member_path.drive or member_path.root:
+        return False
+    parts = member_path.parts
+    return bool(parts) and all(
+        part not in (".", "..") and ":" not in part for part in parts
+    )
+
+
 def _create_extract_temp_dir(member_names: list[str]) -> Path:
     fallback_error: Optional[OSError] = None
     candidates = _extract_temp_parent_candidates()
@@ -113,6 +125,17 @@ class OspImporter:
         tmp_path: Optional[Path] = None
         try:
             names = list(ost_cab.list_cab(osp_file_path))
+            unsafe_name = next(
+                (name for name in names if not _is_safe_cab_member_name(name)),
+                None,
+            )
+            if unsafe_name is not None:
+                logger.error(
+                    "Unsafe CAB member path in .osp archive %s: %r",
+                    osp_file_path,
+                    unsafe_name,
+                )
+                return False
             tmp_path = _create_extract_temp_dir(names)
             for name in names:
                 _create_cab_member_parent_dir(tmp_path, name)
