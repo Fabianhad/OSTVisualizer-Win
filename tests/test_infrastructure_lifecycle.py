@@ -1,10 +1,12 @@
 import logging
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
+from unittest.mock import patch
 import pyodbc
 from ost_visualizer.infrastructure import providers
 from ost_visualizer.infrastructure.mdb import database_creator
@@ -323,6 +325,128 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         self.assertTrue(fake_connection.cursor_instance.closed)
         self.assertTrue(fake_connection.rolled_back)
         self.assertTrue(fake_connection.closed)
+
+    def test_database_creator_preserves_schema_error_across_cleanup_failures(self):
+        class FakeCursor:
+            def execute(self, _sql):
+                raise RuntimeError("ddl failed")
+
+            def close(self):
+                raise RuntimeError("cursor close failed")
+
+        class FakeConnection:
+            def __init__(self):
+                self.closed = False
+
+            def cursor(self):
+                return FakeCursor()
+
+            def rollback(self):
+                raise RuntimeError("rollback failed")
+
+            def close(self):
+                self.closed = True
+
+        fake_connection = FakeConnection()
+        original_connect = database_creator.pyodbc.connect
+        database_creator.pyodbc.connect = (
+            lambda *_args, **_call_options: fake_connection
+        )
+        try:
+            creator = database_creator.DatabaseCreator(
+                logging.getLogger("test.database_creator.cleanup")
+            )
+            with self.assertLogs(creator._logger, level="ERROR"):
+                with self.assertRaisesRegex(RuntimeError, "ddl failed"):
+                    creator._create_schema("test.mdb")
+        finally:
+            database_creator.pyodbc.connect = original_connect
+        self.assertTrue(fake_connection.closed)
+
+    def test_database_creator_closes_connection_before_raising_cleanup_error(self):
+        class FakeCursor:
+            def execute(self, _sql):
+                return None
+
+            def close(self):
+                raise RuntimeError("cursor close failed")
+
+        class FakeConnection:
+            def __init__(self):
+                self.closed = False
+
+            def cursor(self):
+                return FakeCursor()
+
+            def commit(self):
+                return None
+
+            def rollback(self):
+                raise AssertionError("successful schema should not roll back")
+
+            def close(self):
+                self.closed = True
+
+        fake_connection = FakeConnection()
+        original_connect = database_creator.pyodbc.connect
+        database_creator.pyodbc.connect = (
+            lambda *_args, **_call_options: fake_connection
+        )
+        try:
+            creator = database_creator.DatabaseCreator(
+                logging.getLogger("test.database_creator.success_cleanup")
+            )
+            with self.assertLogs(creator._logger, level="ERROR"):
+                with self.assertRaisesRegex(RuntimeError, "cursor close failed"):
+                    creator._create_schema("test.mdb")
+        finally:
+            database_creator.pyodbc.connect = original_connect
+        self.assertTrue(fake_connection.closed)
+
+    def test_database_creator_preserves_metadata_error_when_dao_close_fails(self):
+        class FakeDatabase:
+            def TableDefs(self, _table_name):
+                raise RuntimeError("metadata failed")
+
+            def Close(self):
+                raise RuntimeError("DAO close failed")
+
+        engine = SimpleNamespace(OpenDatabase=lambda _path: FakeDatabase())
+        creator = database_creator.DatabaseCreator(
+            logging.getLogger("test.database_creator.dao_cleanup")
+        )
+        with patch("win32com.client.Dispatch", return_value=engine):
+            with self.assertLogs(creator._logger, level="ERROR"):
+                with self.assertRaisesRegex(RuntimeError, "metadata failed"):
+                    creator._apply_reference_schema_metadata("test.mdb")
+
+    def test_database_creator_uses_unique_argument_based_vbs_scripts(self):
+        commands = []
+        scripts = []
+
+        def run(command, **_call_options):
+            commands.append(command)
+            script_path = Path(command[2])
+            scripts.append((script_path, script_path.read_text(encoding="utf-8")))
+            Path(command[3]).touch()
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            first_path = Path(tmp_dir) / "first;database.mdb"
+            second_path = Path(tmp_dir) / "second.mdb"
+            with patch.object(database_creator.subprocess, "run", side_effect=run):
+                creator = database_creator.DatabaseCreator()
+                creator._create_blank_mdb(first_path)
+                creator._create_blank_mdb(second_path)
+
+        self.assertNotEqual(commands[0][2], commands[1][2])
+        self.assertEqual(commands[0][3], str(first_path))
+        self.assertEqual(commands[1][3], str(second_path))
+        for script_path, script in scripts:
+            self.assertFalse(script_path.exists())
+            self.assertIn("WScript.Arguments(0)", script)
+            self.assertNotIn(str(first_path), script)
+            self.assertNotIn(str(second_path), script)
 
     def test_database_creator_reports_major_progress_stages(self):
         class FakeDatabaseCreator(database_creator.DatabaseCreator):

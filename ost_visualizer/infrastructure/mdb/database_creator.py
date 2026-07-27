@@ -906,16 +906,25 @@ class DatabaseCreator:
 
     def _create_blank_mdb(self, db_path: Path) -> None:
         vbs_script = (
+            "dbPath = WScript.Arguments(0)\n"
             'Set cat = CreateObject("ADOX.Catalog")\n'
-            f'cat.Create "Provider=Microsoft.ACE.OLEDB.12.0;'
-            f'Data Source={db_path};Jet OLEDB:Engine Type=5;"\n'
+            'cat.Create "Provider=Microsoft.ACE.OLEDB.12.0;Data Source=" '
+            '& Chr(34) & dbPath & Chr(34) & ";Jet OLEDB:Engine Type=5;"\n'
             "Set cat = Nothing\n"
         )
-        vbs_path = Path(tempfile.gettempdir()) / "ost_create_mdb.vbs"
+        vbs_path = None
         try:
-            vbs_path.write_text(vbs_script, encoding="utf-8")
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                prefix="ost_create_mdb_",
+                suffix=".vbs",
+                delete=False,
+            ) as vbs_file:
+                vbs_file.write(vbs_script)
+                vbs_path = Path(vbs_file.name)
             result = subprocess.run(
-                ["cscript", "//NoLogo", str(vbs_path)],
+                ["cscript", "//NoLogo", str(vbs_path), str(db_path)],
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -927,8 +936,14 @@ class DatabaseCreator:
             if not db_path.exists():
                 raise RuntimeError("VBScript completed but MDB file was not created")
         finally:
-            if vbs_path.exists():
-                vbs_path.unlink()
+            if vbs_path is not None:
+                try:
+                    vbs_path.unlink(missing_ok=True)
+                except OSError:
+                    self._logger.exception(
+                        "Failed to remove temporary MDB creation script %s",
+                        vbs_path,
+                    )
 
     def _create_schema(
         self,
@@ -940,6 +955,7 @@ class DatabaseCreator:
         )
         conn = pyodbc.connect(conn_str, autocommit=False)
         cursor = None
+        operation_failed = False
         try:
             cursor = conn.cursor()
             self._report_progress(progress_callback, "schema tables")
@@ -947,12 +963,16 @@ class DatabaseCreator:
                 cursor.execute(ddl)
             conn.commit()
         except Exception:
-            conn.rollback()
+            operation_failed = True
+            self._rollback_connection(conn, "schema creation")
             raise
         finally:
-            if cursor is not None:
-                cursor.close()
-            conn.close()
+            self._close_odbc_resources(
+                cursor,
+                conn,
+                "schema creation",
+                suppress_errors=operation_failed,
+            )
         self._apply_reference_schema_metadata(
             db_path,
             progress_callback=progress_callback,
@@ -967,6 +987,7 @@ class DatabaseCreator:
 
         engine = win32com.client.Dispatch("DAO.DBEngine.120")
         db = engine.OpenDatabase(str(db_path))
+        operation_failed = False
         try:
             self._report_progress(progress_callback, "schema field metadata")
             for table_name in UID_REQUIRED_TABLES:
@@ -999,8 +1020,11 @@ class DatabaseCreator:
                 relation_field.ForeignName = child_column
                 relation.Fields.Append(relation_field)
                 db.Relations.Append(relation)
+        except Exception:
+            operation_failed = True
+            raise
         finally:
-            db.Close()
+            self._close_dao_database(db, suppress_errors=operation_failed)
 
     def _insert_seed_data(
         self,
@@ -1013,6 +1037,7 @@ class DatabaseCreator:
         )
         conn = pyodbc.connect(conn_str, autocommit=False)
         cursor = None
+        operation_failed = False
         try:
             cursor = conn.cursor()
             self._report_progress(progress_callback, "default data")
@@ -1056,9 +1081,55 @@ class DatabaseCreator:
                 )
             conn.commit()
         except Exception:
-            conn.rollback()
+            operation_failed = True
+            self._rollback_connection(conn, "seed-data insertion")
             raise
         finally:
-            if cursor is not None:
-                cursor.close()
-            conn.close()
+            self._close_odbc_resources(
+                cursor,
+                conn,
+                "seed-data insertion",
+                suppress_errors=operation_failed,
+            )
+
+    def _rollback_connection(self, connection, operation: str) -> None:
+        try:
+            connection.rollback()
+        except Exception:
+            self._logger.exception("Failed to roll back MDB %s", operation)
+
+    def _close_odbc_resources(
+        self,
+        cursor,
+        connection,
+        operation: str,
+        *,
+        suppress_errors: bool,
+    ) -> None:
+        first_error = None
+        for resource_name, resource in (
+            ("cursor", cursor),
+            ("connection", connection),
+        ):
+            if resource is None:
+                continue
+            try:
+                resource.close()
+            except Exception as exc:
+                self._logger.exception(
+                    "Failed to close MDB %s after %s",
+                    resource_name,
+                    operation,
+                )
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None and not suppress_errors:
+            raise first_error
+
+    def _close_dao_database(self, database, *, suppress_errors: bool) -> None:
+        try:
+            database.Close()
+        except Exception:
+            self._logger.exception("Failed to close MDB DAO database")
+            if not suppress_errors:
+                raise
