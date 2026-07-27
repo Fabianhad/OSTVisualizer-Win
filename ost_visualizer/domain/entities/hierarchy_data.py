@@ -106,13 +106,23 @@ class HierarchyData:
                     return True
         return False
 
-    def find_file_path_for_project(self, project_uid: str) -> Optional[str]:
+    def find_file_path_for_project(
+        self, project_uid: str, preferred_file_path: Optional[str] = None
+    ) -> Optional[str]:
         if not project_uid:
             return None
+        matched_file_path = None
         for file_entry in self.loaded_files:
-            if project_uid in file_entry.bid_projects:
-                return file_entry.file_path
-        return None
+            if project_uid not in file_entry.bid_projects:
+                continue
+            if preferred_file_path is not None:
+                if file_entry.file_path == preferred_file_path:
+                    return file_entry.file_path
+                continue
+            if matched_file_path is not None:
+                return None
+            matched_file_path = file_entry.file_path
+        return matched_file_path
 
     @staticmethod
     def _bid_has_page(bid: HierarchyBidInfo, page_uid: str) -> bool:
