@@ -65,6 +65,7 @@ class RemotePlanUpdatePipeline(Generic[RequestT, PreparedT]):
         apply: Callable[[PreparedT], bool],
         is_current: Callable[[RequestT], bool],
         coalesce: Callable[[RequestT, RequestT], RequestT],
+        can_coalesce: Optional[Callable[[RequestT, RequestT], bool]] = None,
         thread_pool: Optional[IRunnablePool] = None,
     ) -> None:
         self._callback_bridge = callback_bridge
@@ -72,6 +73,7 @@ class RemotePlanUpdatePipeline(Generic[RequestT, PreparedT]):
         self._apply = apply
         self._is_current = is_current
         self._coalesce = coalesce
+        self._can_coalesce = can_coalesce
         self._thread_pool = thread_pool or QtCore.QThreadPool.globalInstance()
         self._lock = threading.Lock()
         self._in_flight: Optional[_Submission[RequestT]] = None
@@ -80,6 +82,7 @@ class RemotePlanUpdatePipeline(Generic[RequestT, PreparedT]):
 
     def submit(self, request: RequestT, completion: Callable[[bool], None]) -> None:
         start: Optional[_Submission[RequestT]] = None
+        superseded_completions: tuple[Callable[[bool], None], ...] = ()
         reject = False
         with self._lock:
             if self._closed:
@@ -89,12 +92,20 @@ class RemotePlanUpdatePipeline(Generic[RequestT, PreparedT]):
                 self._in_flight = start
             elif self._pending is None:
                 self._pending = _Submission(request, [completion])
+            elif self._can_coalesce is not None and not self._can_coalesce(
+                self._pending.request, request
+            ):
+                superseded_completions = tuple(self._pending.completions)
+                self._pending = _Submission(request, [completion])
             else:
                 self._pending.request = self._coalesce(self._pending.request, request)
                 self._pending.completions.append(completion)
         if reject:
             self._invoke_completions((completion,), False)
-        elif start is not None:
+            return
+        if superseded_completions:
+            self._invoke_completions(superseded_completions, False)
+        if start is not None:
             self._start_submission(start)
 
     def _start_submission(self, submission: _Submission[RequestT]) -> None:

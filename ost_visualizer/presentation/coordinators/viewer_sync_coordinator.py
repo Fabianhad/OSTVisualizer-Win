@@ -69,6 +69,7 @@ class ViewerSyncCoordinator:
             apply=self._apply_plan_update,
             is_current=self._is_remote_plan_update_current,
             coalesce=self._coalesce_remote_plan_updates,
+            can_coalesce=self._can_coalesce_remote_plan_updates,
             thread_pool=plan_update_thread_pool,
         )
         self.plan_view = None
@@ -136,6 +137,7 @@ class ViewerSyncCoordinator:
             self.plan_view is None
             or bid_ref != BidRef(database_id, bid_uid)
             or not page_uid
+            or barrier.database_id != database_id
             or barrier.runtime_generation != runtime_generation
         ):
             return False
@@ -319,6 +321,30 @@ class ViewerSyncCoordinator:
             and self._ui_state.active_page_uid == identity.page_uid
             and self.plan_view is not None
             and not self.plan_view.has_active_remote_projection_blocker()
+        )
+
+    @staticmethod
+    def _can_coalesce_remote_plan_updates(
+        previous: _PlanUpdateSnapshot, current: _PlanUpdateSnapshot
+    ) -> bool:
+        previous_identity = previous.remote_identity
+        current_identity = current.remote_identity
+        if previous_identity is None or current_identity is None:
+            return False
+        return (
+            previous_identity.database_id,
+            previous_identity.bid_uid,
+            previous_identity.page_uid,
+            previous_identity.surface_id,
+            previous_identity.barrier.database_id,
+            previous_identity.barrier.runtime_generation,
+        ) == (
+            current_identity.database_id,
+            current_identity.bid_uid,
+            current_identity.page_uid,
+            current_identity.surface_id,
+            current_identity.barrier.database_id,
+            current_identity.barrier.runtime_generation,
         )
 
     @staticmethod

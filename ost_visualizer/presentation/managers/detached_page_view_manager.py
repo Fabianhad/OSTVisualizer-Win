@@ -124,6 +124,7 @@ class DetachedPageViewManager(IShutdownAware):
             apply=self._apply_remote_page_data,
             is_current=self._is_remote_page_data_current,
             coalesce=lambda _previous, current: current,
+            can_coalesce=self._can_coalesce_remote_page_data,
         )
         self.event_bus.subscribe(
             AppEvents.DATABASE_REFRESHED, self._on_database_refreshed
@@ -407,6 +408,7 @@ class DetachedPageViewManager(IShutdownAware):
             or view.bid_ref.file_path != database_id
             or view.bid_ref.bid_uid != bid_uid
             or not view.target_page_uid
+            or barrier.database_id != database_id
             or barrier.runtime_generation != runtime_generation
         ):
             return
@@ -902,6 +904,32 @@ class DetachedPageViewManager(IShutdownAware):
             and view.bid_ref.bid_uid == identity.bid_uid
             and view.target_page_uid == identity.page_uid
             and not self._window.plan_view.has_active_remote_projection_blocker()
+        )
+
+    @staticmethod
+    def _can_coalesce_remote_page_data(
+        previous: _DetachedPlanSnapshot, current: _DetachedPlanSnapshot
+    ) -> bool:
+        previous_identity = previous.identity
+        current_identity = current.identity
+        if previous_identity is None or current_identity is None:
+            return False
+        return (
+            previous_identity.database_id,
+            previous_identity.bid_uid,
+            previous_identity.page_uid,
+            previous_identity.view_uid,
+            previous_identity.surface_id,
+            previous_identity.barrier.database_id,
+            previous_identity.barrier.runtime_generation,
+        ) == (
+            current_identity.database_id,
+            current_identity.bid_uid,
+            current_identity.page_uid,
+            current_identity.view_uid,
+            current_identity.surface_id,
+            current_identity.barrier.database_id,
+            current_identity.barrier.runtime_generation,
         )
 
     def _apply_remote_page_data(self, page_data: PageViewDto) -> bool:

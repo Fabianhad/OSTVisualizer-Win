@@ -39,6 +39,17 @@ class _ThreadPool:
             worker.join(timeout=2.0)
 
 
+class _ManualThreadPool:
+    def __init__(self) -> None:
+        self.runnables = []
+
+    def start(self, runnable) -> None:
+        self.runnables.append(runnable)
+
+    def run_next(self) -> None:
+        self.runnables.pop(0).run()
+
+
 class _FailingOnceThreadPool(_ThreadPool):
     def __init__(self) -> None:
         super().__init__()
@@ -179,6 +190,43 @@ class RemotePlanUpdatePipelineTests(unittest.TestCase):
         callback(payload)
         self.assertEqual(prepared, [1, 6])
         self.assertEqual(completed, [(1, True), (2, True), (4, True)])
+
+    def test_incompatible_pending_update_is_rejected_before_replacement(self) -> None:
+        bridge = _QueuedBridge()
+        pool = _ManualThreadPool()
+        current_context = {"value": "new"}
+        completed = []
+        pipeline = RemotePlanUpdatePipeline(
+            callback_bridge=bridge,
+            thread_pool=pool,
+            prepare=lambda request: request,
+            apply=lambda _request: True,
+            is_current=lambda request: request[0] == current_context["value"],
+            coalesce=lambda previous, current: (
+                current[0],
+                previous[1] + current[1],
+            ),
+            can_coalesce=lambda previous, current: previous[0] == current[0],
+        )
+        pipeline.submit(
+            ("in-flight", 1),
+            lambda success: completed.append(("in-flight", success)),
+        )
+        pipeline.submit(("old", 2), lambda success: completed.append(("old", success)))
+        pipeline.submit(("new", 4), lambda success: completed.append(("new", success)))
+        self.assertEqual(completed, [("old", False)])
+
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+
+        self.assertEqual(
+            completed,
+            [("old", False), ("in-flight", False), ("new", True)],
+        )
 
     def test_stale_result_is_not_applied_and_cleanup_rejects_pending(self) -> None:
         bridge = _QueuedBridge()
@@ -461,6 +509,29 @@ class ViewerRemotePlanUpdateTests(unittest.TestCase):
         self.assertEqual(completed, [False])
         viewer.cleanup()
 
+    def test_request_rejects_barrier_for_a_different_database(self):
+        viewer, _state, _bridge, pool, _threads = self._make_viewer()
+        completed = []
+        barrier = RemoteProjectionBarrier(
+            database_id="other-db",
+            runtime_generation=2,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        self.assertFalse(
+            viewer.request_remote_plan_update(
+                database_id="sql-db",
+                runtime_generation=2,
+                bid_uid="bid-1",
+                resource_uids_by_family={"takeoffs": ("takeoff-1",)},
+                barrier=barrier,
+                completion=completed.append,
+            )
+        )
+        self.assertEqual(pool.threads, [])
+        self.assertEqual(completed, [])
+        viewer.cleanup()
+
     def test_active_local_edit_is_not_overwritten_by_remote_result(self):
         viewer, _state, bridge, pool, _threads = self._make_viewer()
         viewer.plan_view.blocks_remote_projection = True
@@ -541,8 +612,105 @@ class ViewerRemotePlanUpdateTests(unittest.TestCase):
         )
         viewer.cleanup()
 
+    def test_pending_different_context_is_rejected_not_acknowledged(self):
+        bridge = _QueuedBridge()
+        pool = _ManualThreadPool()
+
+        class ColorService:
+            def get_color_mapping(self, *_args):
+                return {}, {"condition-1": "#000000"}
+
+        state = _ViewerState()
+        viewer = ViewerSyncCoordinator(
+            ui_state_manager=state,
+            ui_access_manager=None,
+            color_service=ColorService(),
+            project_data=_ViewerProjectData(),
+            callback_bridge=bridge,
+            plan_update_thread_pool=pool,
+        )
+        viewer.plan_view = _ViewerPlan()
+        completions = {"first": [], "superseded": [], "current": []}
+
+        def barrier(database_id):
+            return RemoteProjectionBarrier(
+                database_id=database_id,
+                runtime_generation=2,
+                is_runtime_current=lambda _database_id, _generation: True,
+                on_complete=lambda _success: None,
+            )
+
+        viewer.request_remote_plan_update(
+            database_id="sql-db",
+            runtime_generation=2,
+            bid_uid="bid-1",
+            resource_uids_by_family={"takeoffs": ("takeoff-1",)},
+            barrier=barrier("sql-db"),
+            completion=completions["first"].append,
+        )
+        viewer.request_remote_plan_update(
+            database_id="sql-db",
+            runtime_generation=2,
+            bid_uid="bid-1",
+            resource_uids_by_family={"takeoffs": ("takeoff-2",)},
+            barrier=barrier("sql-db"),
+            completion=completions["superseded"].append,
+        )
+        state.bid_ref = BidRef("other-db", "bid-2")
+        viewer.request_remote_plan_update(
+            database_id="other-db",
+            runtime_generation=2,
+            bid_uid="bid-2",
+            resource_uids_by_family={"takeoffs": ("takeoff-3",)},
+            barrier=barrier("other-db"),
+            completion=completions["current"].append,
+        )
+        self.assertEqual(completions["superseded"], [False])
+
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+        pool.run_next()
+        callback, payload = bridge.callbacks.pop(0)
+        callback(payload)
+
+        self.assertEqual(completions["first"], [False])
+        self.assertEqual(completions["current"], [True])
+        viewer.cleanup()
+
 
 class DetachedRemotePlanUpdateTests(unittest.TestCase):
+    def test_coalescing_requires_the_same_detached_projection_context(self) -> None:
+        barrier = RemoteProjectionBarrier(
+            database_id="sql-db",
+            runtime_generation=2,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+
+        def snapshot(page_uid, view_uid="view-1"):
+            return SimpleNamespace(
+                identity=SimpleNamespace(
+                    database_id="sql-db",
+                    bid_uid="bid-1",
+                    page_uid=page_uid,
+                    view_uid=view_uid,
+                    surface_id="detached:test",
+                    barrier=barrier,
+                )
+            )
+
+        self.assertTrue(
+            DetachedPageViewManager._can_coalesce_remote_page_data(
+                snapshot("page-1"), snapshot("page-1")
+            )
+        )
+        self.assertFalse(
+            DetachedPageViewManager._can_coalesce_remote_page_data(
+                snapshot("page-1"), snapshot("page-2")
+            )
+        )
+
     def test_detached_projection_registers_its_own_surface_only(self) -> None:
         bid_ref = BidRef("sql-db", "bid-1")
         view = SimpleNamespace(
@@ -563,6 +731,23 @@ class DetachedRemotePlanUpdateTests(unittest.TestCase):
             )
         )
         completed = []
+        mismatched_barrier = RemoteProjectionBarrier(
+            database_id="other-db",
+            runtime_generation=2,
+            is_runtime_current=lambda _database_id, _generation: True,
+            on_complete=lambda _success: None,
+        )
+        manager._on_remote_plan_projection_requested(
+            database_id="sql-db",
+            bid_uid="bid-1",
+            runtime_generation=2,
+            families=("takeoffs",),
+            condition_uids=(),
+            resource_uids_by_family={"takeoffs": ("takeoff-1",)},
+            barrier=mismatched_barrier,
+        )
+        self.assertEqual(submissions, [])
+
         barrier = RemoteProjectionBarrier(
             database_id="sql-db",
             runtime_generation=2,
