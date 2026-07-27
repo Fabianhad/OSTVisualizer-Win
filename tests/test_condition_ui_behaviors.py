@@ -53,6 +53,7 @@ from ost_visualizer.presentation.utils.view_context_menu import (
 from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
     TakeoffRenderer,
 )
+from ost_visualizer.presentation.visualization.pdf.renderers import pattern_renderer
 
 
 def _app():
@@ -1528,6 +1529,38 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertAlmostEqual(
             self._line_spacing(pattern_items[0], pattern_items[1]), 2.0, delta=0.01
         )
+
+    def test_pattern_spacing_rejects_invalid_converted_values(self):
+        class InvalidCoordinateSystem:
+            def __init__(self, converted, view_scale=1.0):
+                self.converted = converted
+                self.page_info = {"view_scale": view_scale}
+
+            def ost_to_pdf_points(self, _value):
+                return self.converted
+
+        for converted, view_scale in (
+            (-2.0, 1.0),
+            (0.0, 1.0),
+            (float("nan"), 1.0),
+            (2.0, float("inf")),
+        ):
+            with self.subTest(converted=converted, view_scale=view_scale):
+                self.assertEqual(
+                    pattern_renderer._convert_spacing(
+                        2.0, InvalidCoordinateSystem(converted, view_scale)
+                    ),
+                    72.0,
+                )
+
+    def test_fixed_diagonal_intersections_count_shared_vertices_once(self):
+        square = [[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]]
+
+        backward = pattern_renderer._find_backward_diagonal_intersections(0.0, square)
+        forward = pattern_renderer._find_forward_diagonal_intersections(10.0, square)
+
+        self.assertEqual(backward, [(0.0, 0.0), (10.0, 10.0)])
+        self.assertEqual(forward, [(0.0, 10.0), (10.0, 0.0)])
 
     def test_area_linear_patterns_exclude_backout_hole(self):
         line_patterns = [

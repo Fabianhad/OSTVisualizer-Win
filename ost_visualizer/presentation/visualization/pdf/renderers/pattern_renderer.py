@@ -214,11 +214,24 @@ def create_grid_items(
 def _convert_spacing(
     spacing: float, coord_system: ICoordinateTransformer | None
 ) -> float:
-    if coord_system is not None and spacing > 0:
-        pdf_spacing = coord_system.ost_to_pdf_points(spacing)
-        view_scale = coord_system.page_info.get("view_scale", 1.0)
-        return pdf_spacing * view_scale
-    return spacing if spacing > 0 else 72.0
+    fallback_spacing = 72.0
+    try:
+        normalized_spacing = float(spacing)
+    except (TypeError, ValueError, OverflowError):
+        return fallback_spacing
+    if not math.isfinite(normalized_spacing) or normalized_spacing <= 0:
+        return fallback_spacing
+    if coord_system is None:
+        return normalized_spacing
+    try:
+        pdf_spacing = float(coord_system.ost_to_pdf_points(normalized_spacing))
+        view_scale = float(coord_system.page_info.get("view_scale", 1.0))
+        converted_spacing = pdf_spacing * view_scale
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return fallback_spacing
+    if not math.isfinite(converted_spacing) or converted_spacing <= 0:
+        return fallback_spacing
+    return converted_spacing
 
 
 def _extract_path_contours(path: QPainterPath) -> Contours:
@@ -428,11 +441,12 @@ def _find_backward_diagonal_intersections(c: float, contours: Contours) -> Conto
     intersections = []
     for (px, py), (qx, qy) in _iter_contour_edges(contours):
         dx, dy = qx - px, qy - py
-        denom = dx - dy
-        if abs(denom) > 1e-10:
+        p_normal = px - py
+        q_normal = qx - qy
+        if (p_normal <= c < q_normal) or (q_normal <= c < p_normal):
+            denom = q_normal - p_normal
             t = (c - (px - py)) / denom
-            if 0 <= t <= 1:
-                intersections.append((px + t * dx, py + t * dy))
+            intersections.append((px + t * dx, py + t * dy))
     intersections.sort(key=lambda point: point[0])
     return intersections
 
@@ -441,10 +455,11 @@ def _find_forward_diagonal_intersections(c: float, contours: Contours) -> Contou
     intersections = []
     for (px, py), (qx, qy) in _iter_contour_edges(contours):
         dx, dy = qx - px, qy - py
-        denom = dx + dy
-        if abs(denom) > 1e-10:
+        p_normal = px + py
+        q_normal = qx + qy
+        if (p_normal <= c < q_normal) or (q_normal <= c < p_normal):
+            denom = q_normal - p_normal
             t = (c - (px + py)) / denom
-            if 0 <= t <= 1:
-                intersections.append((px + t * dx, py + t * dy))
+            intersections.append((px + t * dx, py + t * dy))
     intersections.sort(key=lambda point: point[0])
     return intersections
