@@ -10,7 +10,15 @@ from ost_visualizer.presentation.config import (
 from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
     ToolbarStateCoordinator,
 )
+from ost_visualizer.presentation.coordinators.placement_coordinator import (
+    PlacementCoordinator,
+)
 from ost_visualizer.presentation.managers.ui_access_manager import Feature
+from ost_visualizer.presentation.modes.cursor import (
+    CURSOR_MODE_ANNOTATION_PLACE,
+    CURSOR_MODE_PLACE,
+    CURSOR_MODE_SELECT,
+)
 
 
 def _app():
@@ -24,12 +32,18 @@ class _Access:
     def is_allowed(self, _feature: Feature) -> bool:
         return True
 
+    def is_allowed_for_active_placement(self, _feature: Feature) -> bool:
+        return True
+
 
 class _SelectiveAccess:
     def __init__(self, allowed):
         self.allowed = set(allowed)
 
     def is_allowed(self, feature: Feature) -> bool:
+        return feature in self.allowed
+
+    def is_allowed_for_active_placement(self, feature: Feature) -> bool:
         return feature in self.allowed
 
 
@@ -141,6 +155,85 @@ class _SummaryTab:
 class _OverlayPlanView(_PlanView):
     def can_move_overlay_image(self):
         return True
+
+
+class _Signal:
+    def __init__(self):
+        self._callbacks = []
+
+    def connect(self, callback):
+        self._callbacks.append(callback)
+
+    def disconnect(self, callback):
+        self._callbacks.remove(callback)
+
+    def emit(self, *args):
+        for callback in list(self._callbacks):
+            callback(*args)
+
+
+class _AreaPlacementAccess(_Access):
+    def __init__(self, project_data):
+        self.area_active = False
+        self.project_data = project_data
+
+    def set_area_placement_active(self, active: bool) -> None:
+        self.area_active = bool(active)
+
+    def is_allowed(self, feature: Feature) -> bool:
+        if (
+            feature == Feature.PLACE_ANNOTATIONS
+            and not self.project_data.annotation_layer_visible
+        ):
+            return False
+        if self.area_active and feature in {
+            Feature.SELECT_PLAN_ITEMS,
+            Feature.EDIT_PLAN_ITEMS,
+            Feature.PLACE_ANNOTATIONS,
+            Feature.EDIT_ANNOTATION_TEXT,
+        }:
+            return False
+        return True
+
+    def is_allowed_for_active_placement(self, feature: Feature) -> bool:
+        if feature == Feature.PLACE_ANNOTATIONS:
+            return self.project_data.annotation_layer_visible
+        return feature == Feature.PLACE_PLAN_ITEMS
+
+
+class _AreaPlacementProjectData(_ProjectData):
+    def __init__(self):
+        self.annotation_layer_visible = True
+
+
+class _AreaPlacementPlanView(_PlanView):
+    def __init__(self):
+        super().__init__()
+        self.place_exited = _Signal()
+        self.area_placement_in_progress = _Signal()
+        self.place_condition_uid = None
+        self.cursor_mode = CURSOR_MODE_SELECT
+        self.area_active = False
+
+    def begin_area(self):
+        self.area_active = True
+        self.area_placement_in_progress.emit(True)
+
+    def end_area(self):
+        if not self.area_active:
+            return
+        self.area_active = False
+        self.area_placement_in_progress.emit(False)
+
+    def set_cursor_mode(self, mode: str):
+        super().set_cursor_mode(mode)
+        self.cursor_mode = mode
+        if mode == CURSOR_MODE_SELECT:
+            self.end_area()
+            self.place_condition_uid = None
+
+    def cancel_place_mode(self):
+        self.set_cursor_mode(CURSOR_MODE_SELECT)
 
 
 class ToolbarStateCoordinatorTests(unittest.TestCase):
@@ -297,6 +390,163 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         coordinator.set_plan_view(PlanView())
         coordinator.refresh()
         self.assertTrue(action.isEnabled())
+
+    def test_active_annotation_area_survives_refresh_and_unlocks_actions_on_end(self):
+        _app()
+        project_data = _AreaPlacementProjectData()
+        access = _AreaPlacementAccess(project_data)
+        ui_state = _UiState(active_page_uid="p1")
+        plan_view = _AreaPlacementPlanView()
+        coordinator = ToolbarStateCoordinator(ui_state, access, project_data)
+        select_action = QtGui.QAction()
+        select_action.setCheckable(True)
+        annotation_action = QtGui.QAction()
+        annotation_action.setCheckable(True)
+        action_group = QtGui.QActionGroup(None)
+        action_group.setExclusive(True)
+        action_group.addAction(select_action)
+        action_group.addAction(annotation_action)
+        copy_action = QtGui.QAction()
+        select_action.setChecked(True)
+        select_action.toggled.connect(
+            lambda checked: (
+                plan_view.set_cursor_mode(CURSOR_MODE_SELECT) if checked else None
+            )
+        )
+        annotation_action.toggled.connect(
+            lambda checked: (
+                setattr(plan_view, "cursor_mode", CURSOR_MODE_ANNOTATION_PLACE)
+                if checked
+                else None
+            )
+        )
+        coordinator.set_select_action(select_action)
+        coordinator.set_annotation_tool_actions([annotation_action])
+        coordinator.set_copy_action(copy_action)
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_IndexWidget(1))
+        coordinator.set_plan_view(plan_view)
+        placement = PlacementCoordinator(ui_state, access, None, project_data)
+        placement.set_plan_view(plan_view)
+        placement.set_area_state_change_callback(coordinator.refresh)
+
+        annotation_action.setChecked(True)
+        plan_view.has_selection = True
+        plan_view.begin_area()
+
+        self.assertTrue(access.area_active)
+        self.assertTrue(annotation_action.isChecked())
+        self.assertFalse(copy_action.isEnabled())
+        coordinator.refresh()
+        self.assertTrue(access.area_active)
+        self.assertTrue(annotation_action.isChecked())
+        self.assertEqual(plan_view.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+
+        plan_view.end_area()
+        self.assertFalse(access.area_active)
+        self.assertTrue(annotation_action.isChecked())
+        self.assertTrue(annotation_action.isEnabled())
+        self.assertTrue(copy_action.isEnabled())
+
+    def test_invalid_active_area_cancels_once_before_toolbar_projection(self):
+        _app()
+        project_data = _AreaPlacementProjectData()
+        access = _AreaPlacementAccess(project_data)
+        ui_state = _UiState(active_page_uid="p1")
+        plan_view = _AreaPlacementPlanView()
+        coordinator = ToolbarStateCoordinator(ui_state, access, project_data)
+        select_action = QtGui.QAction()
+        select_action.setCheckable(True)
+        annotation_action = QtGui.QAction()
+        annotation_action.setCheckable(True)
+        action_group = QtGui.QActionGroup(None)
+        action_group.setExclusive(True)
+        action_group.addAction(select_action)
+        action_group.addAction(annotation_action)
+        copy_action = QtGui.QAction()
+        select_action.setChecked(True)
+        select_action.toggled.connect(
+            lambda checked: (
+                plan_view.set_cursor_mode(CURSOR_MODE_SELECT) if checked else None
+            )
+        )
+        annotation_action.toggled.connect(
+            lambda checked: (
+                setattr(plan_view, "cursor_mode", CURSOR_MODE_ANNOTATION_PLACE)
+                if checked
+                else None
+            )
+        )
+        coordinator.set_select_action(select_action)
+        coordinator.set_annotation_tool_actions([annotation_action])
+        coordinator.set_copy_action(copy_action)
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_IndexWidget(1))
+        coordinator.set_plan_view(plan_view)
+        placement = PlacementCoordinator(ui_state, access, None, project_data)
+        placement.set_plan_view(plan_view)
+        placement.set_area_state_change_callback(coordinator.refresh)
+        area_transitions = []
+        plan_view.area_placement_in_progress.connect(area_transitions.append)
+
+        annotation_action.setChecked(True)
+        plan_view.has_selection = True
+        plan_view.begin_area()
+        project_data.annotation_layer_visible = False
+        coordinator.refresh()
+
+        self.assertEqual(area_transitions, [True, False])
+        self.assertFalse(access.area_active)
+        self.assertTrue(select_action.isChecked())
+        self.assertFalse(annotation_action.isChecked())
+        self.assertFalse(annotation_action.isEnabled())
+        self.assertTrue(copy_action.isEnabled())
+        self.assertEqual(plan_view.cursor_modes.count(CURSOR_MODE_SELECT), 1)
+
+    def test_invalid_takeoff_area_cancellation_does_not_leave_stale_actions(self):
+        _app()
+        project_data = _AreaPlacementProjectData()
+        access = _AreaPlacementAccess(project_data)
+        ui_state = _UiState(active_page_uid="p1")
+        plan_view = _AreaPlacementPlanView()
+        plan_view.place_condition_uid = "c1"
+        plan_view.cursor_mode = CURSOR_MODE_PLACE
+        plan_view.has_selection = True
+        coordinator = ToolbarStateCoordinator(ui_state, access, project_data)
+        select_action = QtGui.QAction()
+        select_action.setCheckable(True)
+        place_action = QtGui.QAction()
+        place_action.setCheckable(True)
+        action_group = QtGui.QActionGroup(None)
+        action_group.setExclusive(True)
+        action_group.addAction(select_action)
+        action_group.addAction(place_action)
+        copy_action = QtGui.QAction()
+        select_action.toggled.connect(
+            lambda checked: (
+                plan_view.set_cursor_mode(CURSOR_MODE_SELECT) if checked else None
+            )
+        )
+        coordinator.set_select_action(select_action)
+        coordinator.set_place_action(place_action)
+        coordinator.set_copy_action(copy_action)
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_IndexWidget(1))
+        coordinator.set_plan_view(plan_view)
+        placement = PlacementCoordinator(ui_state, access, None, project_data)
+        placement.set_plan_view(plan_view)
+        placement.set_area_state_change_callback(coordinator.refresh)
+        place_action.setChecked(True)
+        plan_view.begin_area()
+
+        plan_view.current_page_uid = None
+        coordinator.refresh()
+
+        self.assertFalse(access.area_active)
+        self.assertTrue(select_action.isChecked())
+        self.assertFalse(place_action.isChecked())
+        self.assertTrue(copy_action.isEnabled())
+        self.assertEqual(plan_view.cursor_modes.count(CURSOR_MODE_SELECT), 1)
 
     def test_summary_tab_disables_project_only_edit_actions_despite_project_selection(
         self,

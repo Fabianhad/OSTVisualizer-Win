@@ -787,6 +787,27 @@ class BidLockPermissionTests(unittest.TestCase):
         manager.set_text_annotation_edit_active(True)
         self.assertFalse(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
 
+    def test_active_annotation_placement_ignores_only_its_own_area_lock(self):
+        project_data = _ProjectData()
+        manager = self._access_manager(project_data)
+        manager.set_area_placement_active(True)
+        self.assertFalse(manager.is_allowed(Feature.PLACE_ANNOTATIONS))
+        self.assertTrue(
+            manager.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
+        )
+        self.assertFalse(
+            manager.is_allowed_for_active_placement(Feature.EDIT_PLAN_ITEMS)
+        )
+        project_data.annotation_layer_visible = False
+        self.assertFalse(
+            manager.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
+        )
+        project_data.annotation_layer_visible = True
+        project_data.locked = True
+        self.assertFalse(
+            manager.is_allowed_for_active_placement(Feature.PLACE_ANNOTATIONS)
+        )
+
     def test_split_structure_permissions_keep_existing_blockers(self):
         project_data = _ProjectData()
         manager = self._access_manager(project_data)

@@ -180,6 +180,7 @@ class UIEventCoordinator:
             project_data=self.project_data,
         )
         self._placement.set_nav(self._nav)
+        self._placement.set_area_state_change_callback(self._toolbar.refresh)
         ui_access_manager.set_placement_coordinator(self._placement)
         self._condition_handler = ConditionActionHandler(
             coordinator=self,

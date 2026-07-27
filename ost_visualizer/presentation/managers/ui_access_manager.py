@@ -285,6 +285,25 @@ class UIAccessManager:
             resource=resource,
         )
 
+    def is_allowed_for_active_placement(
+        self,
+        feature: Feature,
+        resource: ResourceRef | None = None,
+    ) -> bool:
+        if feature not in {
+            Feature.PLACE_PLAN_ITEMS,
+            Feature.PLACE_ANNOTATIONS,
+        }:
+            return False
+        if resource is None:
+            resource = self._current_resource_context(feature)
+        return not self._feature_blocked(
+            feature,
+            require_current_selection=True,
+            resource=resource,
+            ignore_area_placement=True,
+        )
+
     def _current_resource_context(self, feature: Feature) -> ResourceRef | None:
         if self._ui_state_manager is None:
             return None
@@ -346,12 +365,17 @@ class UIAccessManager:
         *,
         require_current_selection: bool,
         resource: ResourceRef | None,
+        ignore_area_placement: bool = False,
     ) -> bool:
         if not isinstance(feature, Feature):
             return True
         if self._text_annotation_edit_active and feature in _TEXT_EDIT_BLOCKED:
             return True
-        if self._area_placement_active and feature in _PLACEMENT_BLOCKED:
+        if (
+            not ignore_area_placement
+            and self._area_placement_active
+            and feature in _PLACEMENT_BLOCKED
+        ):
             return True
         if self._ost_active and feature in _OST_BLOCKED:
             return True

@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from typing import Optional
+from typing import Callable, Optional
 from ..managers.ui_access_manager import Feature
 from .navigation_state_machine import NavState
 
@@ -21,9 +21,16 @@ class PlacementCoordinator:
         self._plan_view = None
         self._state = PlacementState.IDLE
         self._nav = None
+        self._area_placement_in_progress = False
+        self._state_change_callback: Optional[Callable[[], None]] = None
 
     def set_nav(self, nav) -> None:
         self._nav = nav
+
+    def set_area_state_change_callback(
+        self, callback: Optional[Callable[[], None]]
+    ) -> None:
+        self._state_change_callback = callback
 
     @property
     def state(self) -> PlacementState:
@@ -90,18 +97,25 @@ class PlacementCoordinator:
         self._finalize_exit()
 
     def _on_area_placement_changed(self, in_progress: bool) -> None:
+        in_progress = bool(in_progress)
+        if self._area_placement_in_progress == in_progress:
+            return
+        self._area_placement_in_progress = in_progress
         if in_progress and self._state == PlacementState.READY:
             self._state = PlacementState.AREA_IN_PROGRESS
         elif not in_progress and self._state == PlacementState.AREA_IN_PROGRESS:
             self._state = PlacementState.READY
         self._access.set_area_placement_active(in_progress)
+        if self._state_change_callback:
+            self._state_change_callback()
 
     def _finalize_exit(self) -> None:
         if self._state == PlacementState.IDLE:
             return
         self._state = PlacementState.IDLE
         self._ui_state.clear_place_condition()
-        self._access.set_area_placement_active(False)
+        if self._area_placement_in_progress:
+            self._on_area_placement_changed(False)
         if self._nav and self._nav.current_state == NavState.PLACE_MODE:
             self._nav.transition_to(NavState.BID_ACTIVE_PAGES_SELECTED)
 
@@ -167,6 +181,7 @@ class PlacementCoordinator:
             self._disconnect_plan_view(self._plan_view)
         self._plan_view = None
         self._nav = None
+        self._state_change_callback = None
         self._ui_state = None
         self._access = None
         self._color_service = None

@@ -426,6 +426,25 @@ class NavigationStateMachineTests(unittest.TestCase):
         self.assertEqual(len(new_view.place_exited.callbacks), 1)
         self.assertEqual(len(new_view.area_placement_in_progress.callbacks), 1)
 
+    def test_area_placement_transition_refreshes_once_after_access_update(self):
+        transitions = []
+        callbacks = []
+        access = SimpleNamespace(
+            set_area_placement_active=lambda active: transitions.append(bool(active))
+        )
+        placement = PlacementCoordinator(None, access, None, None)
+        placement.set_area_state_change_callback(
+            lambda: callbacks.append(tuple(transitions))
+        )
+
+        placement._on_area_placement_changed(True)
+        placement._on_area_placement_changed(True)
+        placement._on_area_placement_changed(False)
+        placement._on_area_placement_changed(False)
+
+        self.assertEqual(transitions, [True, False])
+        self.assertEqual(callbacks, [(True,), (True, False)])
+
     def test_toolbar_disables_place_action_when_bid_has_no_active_page(self):
         class FakeAction:
             def __init__(self):

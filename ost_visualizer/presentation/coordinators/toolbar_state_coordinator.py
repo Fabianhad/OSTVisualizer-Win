@@ -39,6 +39,8 @@ class ToolbarStateCoordinator:
         self.condition_summary_tab = None
         self._tab_widget = None
         self._view_stack = None
+        self._refreshing = False
+        self._refresh_requested = False
 
     def set_copy_action(self, action: QtGui.QAction) -> None:
         self._copy_action = action
@@ -138,6 +140,16 @@ class ToolbarStateCoordinator:
         finally:
             self._select_action.blockSignals(signals_blocked)
 
+    @staticmethod
+    def _set_action_checked_silent(action: QtGui.QAction, checked: bool) -> None:
+        if action.isChecked() == checked:
+            return
+        signals_blocked = action.blockSignals(True)
+        try:
+            action.setChecked(checked)
+        finally:
+            action.blockSignals(signals_blocked)
+
     def is_takeoff_2d_view_active(self) -> bool:
         return bool(
             self._tab_widget
@@ -184,6 +196,23 @@ class ToolbarStateCoordinator:
         self._set_backout_checked_silent(False)
 
     def refresh(self) -> None:
+        if self._refreshing:
+            self._refresh_requested = True
+            return
+        self._refreshing = True
+        try:
+            while True:
+                self._refresh_requested = False
+                self._refresh_once()
+                if not self._refresh_requested:
+                    break
+        finally:
+            self._refreshing = False
+
+    def _refresh_once(self) -> None:
+        if self._normalize_active_tool():
+            self._refresh_requested = True
+            return
         current_tab = self._tab_widget.currentIndex() if self._tab_widget else 0
         on_takeoff_tab = current_tab == TAB_INDEX_TAKEOFF
         on_summary_tab = current_tab == TAB_INDEX_SUMMARY
@@ -342,15 +371,6 @@ class ToolbarStateCoordinator:
         )
         if self._place_action:
             self._place_action.setEnabled(can_place_plan_items)
-            if (
-                not can_place_plan_items
-                and self._place_action.isChecked()
-                and self._select_action
-            ):
-                if self.plan_view:
-                    self.plan_view.reset_ctrl_held()
-                    self.plan_view.set_cursor_mode(CURSOR_MODE_SELECT)
-                self.set_select_checked()
         can_place_annotation = (
             on_takeoff_tab
             and self._access.is_allowed(Feature.PLACE_ANNOTATIONS)
@@ -360,8 +380,6 @@ class ToolbarStateCoordinator:
         )
         for action in self._annotation_tool_actions:
             action.setEnabled(can_place_annotation)
-            if not can_place_annotation and action.isChecked() and self._select_action:
-                self._select_action.setChecked(True)
         can_move_overlay = (
             self.is_takeoff_2d_view_active()
             and self._access.is_allowed(Feature.EDIT_PAGE_SETTINGS)
@@ -410,6 +428,56 @@ class ToolbarStateCoordinator:
             )
         self.refresh_backout_action()
 
+    def _normalize_active_tool(self) -> bool:
+        active_place = bool(self._place_action and self._place_action.isChecked())
+        active_annotation = any(
+            action.isChecked() for action in self._annotation_tool_actions
+        )
+        if not active_place and not active_annotation:
+            return False
+        if not self._select_action:
+            return False
+        if active_place:
+            condition_uid = (
+                self.plan_view.place_condition_uid if self.plan_view else None
+            )
+            tool_valid = bool(
+                self.is_takeoff_2d_view_active()
+                and self.plan_view
+                and self._ui_state.active_page_uid
+                and self.plan_view.current_page_uid
+                and condition_uid
+                and self._is_condition_placeable(condition_uid)
+                and self._access.is_allowed_for_active_placement(
+                    Feature.PLACE_PLAN_ITEMS
+                )
+            )
+        else:
+            tool_valid = bool(
+                self._tab_widget
+                and self._tab_widget.currentIndex() == TAB_INDEX_TAKEOFF
+                and self.plan_view
+                and self.plan_view.current_page_uid
+                and self._view_stack
+                and self._view_stack.currentIndex() == 1
+                and self._access.is_allowed_for_active_placement(
+                    Feature.PLACE_ANNOTATIONS
+                )
+            )
+        if tool_valid:
+            return False
+        if active_place:
+            self._set_action_checked_silent(self._place_action, False)
+        else:
+            for action in self._annotation_tool_actions:
+                if action.isChecked():
+                    self._set_action_checked_silent(action, False)
+        self.set_select_checked()
+        if self.plan_view:
+            self.plan_view.reset_ctrl_held()
+            self.plan_view.set_cursor_mode(CURSOR_MODE_SELECT)
+        return True
+
     def cleanup(self) -> None:
         self._copy_action = None
         self._cut_action = None
@@ -436,6 +504,8 @@ class ToolbarStateCoordinator:
         self.condition_summary_tab = None
         self._tab_widget = None
         self._view_stack = None
+        self._refreshing = False
+        self._refresh_requested = False
         self._ui_state = None
         self._access = None
         self._project_data = None
