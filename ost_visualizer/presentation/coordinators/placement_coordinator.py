@@ -40,13 +40,7 @@ class PlacementCoordinator:
     def set_plan_view(self, view) -> None:
         prev = self._plan_view
         if prev:
-            try:
-                prev.place_exited.disconnect(self._on_place_exited)
-                prev.area_placement_in_progress.disconnect(
-                    self._on_area_placement_changed
-                )
-            except RuntimeError:
-                pass
+            self._disconnect_plan_view(prev)
         self._plan_view = view
         if view:
             view.place_exited.connect(self._on_place_exited)
@@ -157,15 +151,20 @@ class PlacementCoordinator:
         )
         self._plan_view.update_color_map(color_map)
 
-    def cleanup(self) -> None:
-        if self._plan_view:
+    def _disconnect_plan_view(self, view) -> None:
+        connections = (
+            (view.place_exited, self._on_place_exited),
+            (view.area_placement_in_progress, self._on_area_placement_changed),
+        )
+        for signal, callback in connections:
             try:
-                self._plan_view.place_exited.disconnect(self._on_place_exited)
-                self._plan_view.area_placement_in_progress.disconnect(
-                    self._on_area_placement_changed
-                )
+                signal.disconnect(callback)
             except RuntimeError:
                 pass
+
+    def cleanup(self) -> None:
+        if self._plan_view:
+            self._disconnect_plan_view(self._plan_view)
         self._plan_view = None
         self._nav = None
         self._ui_state = None

@@ -395,6 +395,37 @@ class NavigationStateMachineTests(unittest.TestCase):
         self.assertEqual(ui_state.place_condition_uid, "c1")
         self.assertEqual(nav.current_state, NavState.PLACE_MODE)
 
+    def test_replacing_plan_view_disconnects_each_old_signal_independently(self):
+        class Signal:
+            def __init__(self, fail_disconnect=False):
+                self.callbacks = []
+                self.fail_disconnect = fail_disconnect
+
+            def connect(self, callback):
+                self.callbacks.append(callback)
+
+            def disconnect(self, callback):
+                if self.fail_disconnect:
+                    raise RuntimeError("already disconnected")
+                self.callbacks.remove(callback)
+
+        class PlanView:
+            def __init__(self, fail_place_disconnect=False):
+                self.place_exited = Signal(fail_place_disconnect)
+                self.area_placement_in_progress = Signal()
+
+        placement = PlacementCoordinator(None, None, None, None)
+        old_view = PlanView()
+        new_view = PlanView()
+        placement.set_plan_view(old_view)
+        old_view.place_exited.fail_disconnect = True
+
+        placement.set_plan_view(new_view)
+
+        self.assertEqual(old_view.area_placement_in_progress.callbacks, [])
+        self.assertEqual(len(new_view.place_exited.callbacks), 1)
+        self.assertEqual(len(new_view.area_placement_in_progress.callbacks), 1)
+
     def test_toolbar_disables_place_action_when_bid_has_no_active_page(self):
         class FakeAction:
             def __init__(self):

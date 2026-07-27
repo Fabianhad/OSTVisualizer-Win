@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed replacement or cleanup of a plan view leaving one placement signal
+  connected when the other signal had already been disconnected.
 - Fixed the page-area picker saving or restoring stale bid state when its
   database context is cleared while the dialog is open.
 - Fixed axis-aligned curved linear takeoffs using a shorter quadratic fallback instead of their circular arc when calculating quantities.
