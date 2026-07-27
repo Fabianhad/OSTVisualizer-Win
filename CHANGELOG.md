@@ -13,6 +13,7 @@
 
 ### Changed
 
+- Changed source builds to require Python 3.10 or newer, matching the client syntax and native extension configuration; HTML scene DTOs no longer require Python 3.11-only typing imports.
 - Changed Cover Sheet commits to perform a single post-save database refresh, reducing UI stalls after large page deletion batches.
 - Changed detached plan windows to keep a successfully loaded page visible when nearby-page prefetch fails and to reveal the normal canvas when named-view navigation cannot load its target page.
 - Changed embedded and detached 3D zoom controls to reject non-finite values, restore the current zoom after invalid text, and coalesce redundant docked-toolbar layout updates during resize bursts.

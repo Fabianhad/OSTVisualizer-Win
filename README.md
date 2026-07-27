@@ -81,7 +81,7 @@ For licensing questions, contact [fabian@fabianhad.com](mailto:fabian@fabianhad.
 | Component | Technology |
 |---|---|
 | UI | PySide6 (Qt 6.10.2) |
-| Language | Python 3.8+, C++17 |
+| Language | Python 3.10+, C++17 |
 | 3D Rendering | OpenGL via custom C++ renderer |
 | Geometry | Manifold, Earcut |
 | PDF | PDFium, QPDF |
@@ -318,7 +318,7 @@ Run client setup, development, architecture, and build commands from the reposit
 
 ## Building from Source
 
-Requires Python 3.8+, Visual Studio 2022 (MSVC x64), CMake 3.20+, and Qt 6.10.2.
+Requires Python 3.10+, Visual Studio 2022 (MSVC x64), CMake 3.20+, and Qt 6.10.2.
 
 ```powershell
 .\scripts\setup.ps1          # Create venv, install Python dependencies

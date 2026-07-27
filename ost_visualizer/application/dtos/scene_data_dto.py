@@ -1,4 +1,4 @@
-from typing import List, NotRequired, TypedDict
+from typing import List, TypedDict
 
 
 class SceneCameraConfig(TypedDict):
@@ -70,7 +70,17 @@ class ScenePdfDocumentEntry(TypedDict):
     data_base64: str
 
 
-class ScenePageEntry(TypedDict):
+class _ScenePagePlaneEntry(TypedDict, total=False):
+    plane_x: float
+    plane_y: float
+    plane_z: float
+    plane_width: float
+    plane_height: float
+    plane_flip_u: bool
+    plane_flip_v: bool
+
+
+class ScenePageEntry(_ScenePagePlaneEntry):
     uid: str
     label: str
     name: str
@@ -84,13 +94,6 @@ class ScenePageEntry(TypedDict):
     visible: bool
     pdf_document_uid: str
     pdf_page_index: int
-    plane_x: NotRequired[float]
-    plane_y: NotRequired[float]
-    plane_z: NotRequired[float]
-    plane_width: NotRequired[float]
-    plane_height: NotRequired[float]
-    plane_flip_u: NotRequired[bool]
-    plane_flip_v: NotRequired[bool]
 
 
 class SceneTakeoff2DEntry(TypedDict):
@@ -119,11 +122,7 @@ class SceneElevationCalloutEntry(TypedDict):
     color: str
 
 
-class SceneData(TypedDict, total=False):
-    title: str
-    geometries: List[SceneGeometryEntry]
-    camera: SceneCameraConfig
-    bounds: SceneBoundsConfig
+class _OptionalSceneData(TypedDict, total=False):
     layers: List[SceneLayerEntry]
     conditions: List[SceneConditionEntry]
     areas: List[SceneAreaEntry]
@@ -135,3 +134,10 @@ class SceneData(TypedDict, total=False):
     takeoffs_2d: List[SceneTakeoff2DEntry]
     elevation_callouts: List[SceneElevationCalloutEntry]
     display_modes: SceneDisplayModesConfig
+
+
+class SceneData(_OptionalSceneData):
+    title: str
+    geometries: List[SceneGeometryEntry]
+    camera: SceneCameraConfig
+    bounds: SceneBoundsConfig
