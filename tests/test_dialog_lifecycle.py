@@ -267,7 +267,10 @@ class DialogLifecycleTests(unittest.TestCase):
             self.assertEqual(len(task_threads), 1)
             self.assertNotEqual(task_threads[0], ui_thread)
         finally:
+            worker_thread = dialog._thread
             dialog.cleanup()
+            self.assertIsNotNone(worker_thread)
+            self.assertFalse(worker_thread.isRunning())
             dialog.deleteLater()
 
     def test_progress_dialog_delivers_worker_progress_to_label(self):

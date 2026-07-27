@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed progress dialogs intermittently destroying a worker thread before its
+  queued shutdown reached the UI event loop.
 - Fixed periodic license validation updating internal authorization without
   notifying the UI when a license expired, became invalid, or recovered.
 - Fixed malformed empty polygon and ink data crashing the native PDF annotation

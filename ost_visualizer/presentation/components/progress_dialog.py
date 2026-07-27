@@ -22,8 +22,8 @@ class ProgressReporter(QObject):
         self.progress.emit(description)
 
 
-class _Worker(QObject):
-    finished = Signal(object, object)
+class _WorkerThread(QThread):
+    completed = Signal(object, object)
 
     def __init__(self, fn: Callable[[], Any]) -> None:
         super().__init__()
@@ -37,7 +37,9 @@ class _Worker(QObject):
             logger.exception("Worker error")
             result = False
             error = exc
-        self.finished.emit(result, error)
+        finally:
+            self._fn = None
+        self.completed.emit(result, error)
 
 
 class _CenteredBusyProgressBar(QtWidgets.QProgressBar):
@@ -119,14 +121,15 @@ class ProgressDialog(QtWidgets.QDialog):
     ) -> None:
         super().__init__(parent)
         self._task_fn = task_fn
-        self._thread: Optional[QThread] = None
-        self._worker: Optional[_Worker] = None
+        self._thread: Optional[_WorkerThread] = None
+        self._worker: Optional[QObject] = None
         self._reporter = reporter
         self._action_text = action_text
         self._result: Any = None
         self._error: Optional[Exception] = None
         self._cleaned_up = False
         self._started = False
+        self._worker_finished = False
         self._setup_ui(filename)
 
     def _setup_ui(self, filename: str) -> None:
@@ -165,18 +168,13 @@ class ProgressDialog(QtWidgets.QDialog):
     def _start(self) -> None:
         if self._cleaned_up:
             return
-        self._worker = _Worker(self._task_fn)
-        self._thread = QThread()
-        self._worker.moveToThread(self._thread)
+        self._thread = _WorkerThread(self._task_fn)
         if self._reporter:
             self._reporter.progress.connect(
                 self._on_progress, QtCore.Qt.ConnectionType.QueuedConnection
             )
-        self._thread.started.connect(self._worker.run)
-        self._worker.finished.connect(self._on_finished)
-        self._worker.finished.connect(self._thread.quit)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.completed.connect(self._on_finished)
+        self._thread.finished.connect(self._finish_if_ready)
         self._thread.start()
 
     def _on_progress(self, description: str) -> None:
@@ -190,7 +188,15 @@ class ProgressDialog(QtWidgets.QDialog):
             return
         self._result = result
         self._error = error
-        if result:
+        self._worker_finished = True
+        self._finish_if_ready()
+
+    def _finish_if_ready(self) -> None:
+        if self._cleaned_up or not self._worker_finished:
+            return
+        if self._thread is not None and self._thread.isRunning():
+            return
+        if self._result:
             self.accept()
         else:
             self.reject()
@@ -208,7 +214,15 @@ class ProgressDialog(QtWidgets.QDialog):
             return
         self._cleaned_up = True
         if self._thread and self._thread.isRunning():
-            self._thread.wait(5000)
+            self._thread.quit()
+            if not self._thread.wait(5000):
+                logger.warning("Progress worker did not stop during dialog cleanup")
+                return
+        if self._thread:
+            try:
+                self._thread.finished.disconnect(self._finish_if_ready)
+            except (TypeError, RuntimeError):
+                pass
         if self._reporter:
             try:
                 self._reporter.progress.disconnect(self._on_progress)
