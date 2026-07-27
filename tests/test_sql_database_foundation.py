@@ -328,6 +328,15 @@ class DatabaseDescriptorTests(unittest.TestCase):
                 {"descriptor": descriptor.to_dict(), "is_checked": "false"}
             )
 
+    def test_version_two_file_state_rejects_bare_database_paths(self):
+        with self.assertRaisesRegex(ValueError, "unsupported format"):
+            FileState.from_dict(
+                {
+                    "version": 2,
+                    "database_entries": [r"C:\data\sample.mdb"],
+                }
+            )
+
     def test_windows_credential_store_round_trip_uses_os_adapter(self):
         api = _FakeCredentialApi()
         store = WindowsCredentialStore(api)

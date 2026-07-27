@@ -49,7 +49,7 @@
 - Fixed broad read-only MCP database, project, bid, hierarchy, and live-selection
   responses so they enforce result limits, report truncation metadata, cannot
   double-count repeated live selection IDs, and never expose legacy database
-  entries without an explicit checked state.
+  entries or malformed current database entries without an explicit checked state.
 - Fixed plan context menus that retained stale condition actions while paging or crashed on invalid stored annotation widths.
 - Fixed overlay rectangle writes that accepted missing pages or pages with invalid calibration factors.
 - Fixed HTML exports so project text cannot terminate the embedded scene-data script or inject markup into the document title.

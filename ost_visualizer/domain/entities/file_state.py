@@ -126,6 +126,8 @@ class FileState:
         if isinstance(entries_data, list):
             if data.get("version") != 2:
                 raise ValueError("Saved database entries use an unsupported version")
+            if any(not isinstance(entry, dict) for entry in entries_data):
+                raise ValueError("Saved database entries use an unsupported format")
         else:
             entries_data = data.get("file_entries")
         if isinstance(entries_data, list):
