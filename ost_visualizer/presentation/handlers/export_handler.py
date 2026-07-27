@@ -23,6 +23,10 @@ from ..utils.messagebox import show_critical, show_info, show_warning
 logger = logging.getLogger(__name__)
 
 
+def _path_identity(path: str) -> str:
+    return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+
+
 def _progress_callback(
     reporter: Optional[ProgressReporter],
 ) -> Optional[ExportProgressCallback]:
@@ -130,9 +134,9 @@ class ExportHandler:
         if not filename:
             return
         source_paths = [p.page.image_path for p in pages_data if p.page.image_path]
-        if source_paths and os.path.normpath(filename) in [
-            os.path.normpath(p) for p in source_paths
-        ]:
+        if source_paths and _path_identity(filename) in {
+            _path_identity(path) for path in source_paths
+        }:
             show_critical(
                 self.window,
                 "Invalid Save Location",

@@ -295,6 +295,48 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
         self.assertFalse(calls[0][5].include_top)
         self.assertEqual(calls[0][6], "#abcdef")
 
+    def test_pdf_export_rejects_case_variant_of_source_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "Source.PDF"
+            source_path.write_bytes(b"source")
+            page = Page(
+                uid="page-1",
+                name="Source",
+                image_path=str(source_path),
+                width_pts=612.0,
+                height_pts=792.0,
+            )
+            project_data = SimpleNamespace(
+                get_bid_conditions=lambda: {},
+                get_page=lambda _uid: page,
+                get_page_takeoffs=lambda _uid: [],
+                get_current_bid=lambda: SimpleNamespace(name="Bid"),
+            )
+            pdf_exporter = SimpleNamespace(
+                export=lambda *_args, **_kwargs: self.fail(
+                    "source-overwrite guard must stop the exporter"
+                )
+            )
+            errors = []
+            handler = _make_export_handler(
+                project_data_service=project_data,
+                pdf_exporter=pdf_exporter,
+            )
+            with patch.object(
+                export_handler_module.QtWidgets.QFileDialog,
+                "getSaveFileName",
+                return_value=(str(Path(temp_dir) / "source.pdf"), ""),
+            ), patch.object(
+                export_handler_module,
+                "show_critical",
+                side_effect=lambda _window, title, message: errors.append(
+                    (title, message)
+                ),
+            ):
+                handler.export_as_pdf(["page-1"])
+
+        self.assertEqual(errors[0][0], "Invalid Save Location")
+
     def test_general_export_uses_saved_config_snapshot(self):
         config = Config(html_elevation_callouts_enabled=False)
         snapshots = []
