@@ -1,5 +1,5 @@
 from typing import Any, List, Optional, Tuple
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsTextItem
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
@@ -423,7 +423,42 @@ class TakeoffRenderer:
                 points.append((elem.x, elem.y))
         if len(points) < 3:
             return None
-        return self._calculate_polygon_centroid(points)
+        centroid = self._calculate_polygon_centroid(points)
+        if path.contains(QPointF(*centroid)):
+            return centroid
+        return self._nearest_interior_anchor(path, centroid, points)
+
+    @staticmethod
+    def _nearest_interior_anchor(
+        path: QPainterPath,
+        preferred: tuple[float, float],
+        vertices: list[tuple[float, float]],
+    ) -> tuple[float, float]:
+        candidates: list[tuple[float, float]] = []
+        for vx, vy in vertices:
+            for fraction in (0.01, 0.05, 0.1, 0.25, 0.5):
+                candidate = (
+                    vx + (preferred[0] - vx) * fraction,
+                    vy + (preferred[1] - vy) * fraction,
+                )
+                if path.contains(QPointF(*candidate)):
+                    candidates.append(candidate)
+        bounds = path.boundingRect()
+        divisions = 32
+        if bounds.width() > 0 and bounds.height() > 0:
+            for row in range(divisions):
+                y = bounds.top() + bounds.height() * (row + 0.5) / divisions
+                for column in range(divisions):
+                    x = bounds.left() + bounds.width() * (column + 0.5) / divisions
+                    if path.contains(QPointF(x, y)):
+                        candidates.append((x, y))
+        if not candidates:
+            return preferred
+        return min(
+            candidates,
+            key=lambda point: (point[0] - preferred[0]) ** 2
+            + (point[1] - preferred[1]) ** 2,
+        )
 
     def _calculate_polygon_centroid(
         self, points: list[tuple[float, float]]
@@ -479,6 +514,8 @@ class TakeoffRenderer:
         position: list[float],
         takeoff: dict,
     ) -> QPainterPath | None:
+        if condition.is_area and (len(position) < 6 or len(position) % 2):
+            return None
         tx_position = self._cs.transform_vertices_to_2d(position)
         if condition.is_linear:
             return self._create_linear_path(position, tx_position, takeoff, condition)
@@ -542,7 +579,7 @@ class TakeoffRenderer:
     def _create_area_path(
         self, position: list[float], takeoff: dict | None = None
     ) -> QPainterPath | None:
-        if len(position) < 6:
+        if len(position) < 6 or len(position) % 2:
             return None
         points = [(position[i], position[i + 1]) for i in range(0, len(position), 2)]
         if len(points) < 3:
@@ -650,7 +687,7 @@ class TakeoffRenderer:
             if not hole_condition:
                 continue
             position = self._cs.parse_position(hole_takeoff.position)
-            if not position or len(position) < 6:
+            if not position or len(position) < 6 or len(position) % 2:
                 continue
             tx = self._cs.transform_vertices_to_2d(position)
             hole_path = self._create_area_path(tx, hole_takeoff)
@@ -673,7 +710,7 @@ class TakeoffRenderer:
         opacity: float,
     ) -> QGraphicsPathItem | list[QGraphicsPathItem] | None:
         position = self._cs.parse_position(takeoff.position)
-        if not position or len(position) < 6:
+        if not position or len(position) < 6 or len(position) % 2:
             return None
         tx_position = self._cs.transform_vertices_to_2d(position)
         parent_path = self._create_area_path(tx_position, takeoff)
@@ -681,7 +718,7 @@ class TakeoffRenderer:
             return None
         for hole_takeoff in holes:
             hole_position = self._cs.parse_position(hole_takeoff.position)
-            if not hole_position or len(hole_position) < 6:
+            if not hole_position or len(hole_position) < 6 or len(hole_position) % 2:
                 continue
             tx_hole_position = self._cs.transform_vertices_to_2d(hole_position)
             hole_path = self._create_area_path(tx_hole_position, hole_takeoff)

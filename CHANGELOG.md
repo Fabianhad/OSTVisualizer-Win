@@ -54,7 +54,7 @@
 - Fixed HTML exports so project text cannot terminate the embedded scene-data script or inject markup into the document title.
 - Fixed HTML exports reporting success when no renderable geometry was produced and no output file was written.
 - Fixed PDF cache and rendering-service shutdown so one native renderer cleanup failure cannot retain the remaining per-thread renderers, dependencies are not released while a render worker is still using them, and canceled results cannot invoke a queued GUI callback.
-- Fixed PDF takeoff pattern generation hanging on invalid converted spacing and emitting zero-length diagonal artifacts where scan lines pass through polygon vertices.
+- Fixed PDF takeoff rendering hanging on invalid converted pattern spacing, emitting zero-length diagonal artifacts where scan lines pass through polygon vertices, placing area labels or negative markers inside backout holes, and raising on malformed odd-length area coordinates.
 - Fixed Cover Sheet multi-file imports assigning default sheet dimensions to raster images instead of using their actual image size, and existing pages can now be moved into folders created in the same save.
 - Fixed existing bid areas failing to move beneath an area created in the same save.
 - Fixed multi-database project trees so a newly created folder opens rename in the correct database, grouped project selections do not duplicate operations, cross-database project selections cannot reach single-database writes, and tree rebuilds safely cancel active rename editors.

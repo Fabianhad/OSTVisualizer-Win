@@ -8,6 +8,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPainterPath
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QGraphicsPathItem, QGraphicsTextItem
 from single_action import SingleCallRecorder
@@ -1650,6 +1651,26 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         self.assertIsInstance(area_item, QGraphicsPathItem)
         self.assertFalse(area_item.path().contains(QtCore.QPointF(10.0, 10.0)))
         self.assertNotEqual(area_item.brush().style(), Qt.BrushStyle.NoBrush)
+
+    def test_area_path_rejects_odd_coordinate_count(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+
+        self.assertIsNone(
+            renderer._create_area_path([0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 5.0])
+        )
+
+    def test_area_with_hole_uses_anchor_inside_visible_fill(self):
+        renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
+        outer = QPainterPath()
+        outer.addRect(0.0, 0.0, 20.0, 20.0)
+        hole = QPainterPath()
+        hole.addRect(0.0, 0.0, 10.0, 10.0)
+        visible_path = outer.subtracted(hole)
+
+        anchor = renderer._path_centroid(visible_path)
+
+        self.assertIsNotNone(anchor)
+        self.assertTrue(visible_path.contains(QtCore.QPointF(*anchor)))
 
     def test_area_display_name_uses_centroid_when_dimension_is_not_present(self):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
