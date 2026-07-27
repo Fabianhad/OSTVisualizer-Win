@@ -14,7 +14,7 @@ from ...config import (
     OPTIONS_WINDOW_HEIGHT,
     OPTIONS_WINDOW_WIDTH,
 )
-from ...utils.messagebox import confirm
+from ...utils.messagebox import confirm, show_warning
 from ...utils.windows import remove_minimize_maximize
 from .components import ExportTab, McpSetupTab, OptionsTab
 
@@ -59,8 +59,8 @@ class OptionsDialog(QtWidgets.QDialog):
         return replace(self._config)
 
     def accept(self) -> None:
-        self._apply_pending_changes()
-        super().accept()
+        if self._apply_pending_changes():
+            super().accept()
 
     def _build_ui(self) -> None:
         main_layout = QtWidgets.QVBoxLayout(self)
@@ -510,14 +510,23 @@ class OptionsDialog(QtWidgets.QDialog):
         if self._apply_button is not None:
             self._apply_button.setEnabled(self._has_pending_changes())
 
-    def _apply_pending_changes(self) -> Config:
+    def _apply_pending_changes(self) -> bool:
         next_config = self._collect_widget_config()
         if next_config != self._applied_config and self._apply_callback is not None:
-            self._apply_callback(next_config)
+            try:
+                self._apply_callback(next_config)
+            except Exception:
+                show_warning(
+                    self,
+                    OPTIONS_DIALOG_TITLE,
+                    "Failed to apply settings. Reopen Options and try again.",
+                )
+                self._update_apply_enabled()
+                return False
         self._config = replace(next_config)
         self._applied_config = replace(next_config)
         self._update_apply_enabled()
-        return self.get_config()
+        return True
 
     def _reset_all_settings(self) -> None:
         if not confirm(
@@ -526,7 +535,15 @@ class OptionsDialog(QtWidgets.QDialog):
             self._RESET_ALL_SETTINGS_MESSAGE,
         ):
             return
-        next_config = self._reset_callback() if self._reset_callback else Config()
+        try:
+            next_config = self._reset_callback() if self._reset_callback else Config()
+        except Exception:
+            show_warning(
+                self,
+                OPTIONS_LABEL_RESET_ALL_SETTINGS,
+                "Failed to reset settings. Reopen Options and try again.",
+            )
+            return
         self._config = replace(next_config)
         self._applied_config = replace(next_config)
         self._load_config()
@@ -543,6 +560,8 @@ class OptionsDialog(QtWidgets.QDialog):
                 pass
         if self._mcp_setup_tab is not None:
             self._mcp_setup_tab.cleanup()
+        self._apply_callback = None
+        self._reset_callback = None
         self._options_tab = None
         self._export_tab = None
         self._mcp_setup_tab = None

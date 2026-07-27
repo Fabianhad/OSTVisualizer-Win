@@ -77,6 +77,7 @@ from ost_visualizer.presentation.components.plan_view.components.zoom_handler im
 )
 from ost_visualizer.presentation.components.plan_view.view import TakeoffPlanView
 from ost_visualizer.presentation.config import (
+    OPTIONS_DIALOG_TITLE,
     OPTIONS_LABEL_RESET_ALL_SETTINGS,
     OPTIONS_TAB_MCP_SETUP,
     OPTIONS_TAB_OPTIONS,
@@ -1041,6 +1042,53 @@ class OptionsPreferencesTests(unittest.TestCase):
         dialog._apply_pending_changes()
         self.assertEqual(event_bus.events, [])
         self.assertFalse(_apply_button(dialog).isEnabled())
+        dialog.close()
+
+    def test_options_dialog_apply_failure_keeps_pending_changes(self):
+        initial = Config(disable_high_resolution_images=False)
+        dialog = OptionsDialog(
+            initial,
+            apply_callback=lambda _config: (_ for _ in ()).throw(
+                OSError("disk unavailable")
+            ),
+        )
+        dialog.show()
+        try:
+            dialog._disable_high_res_check.setChecked(True)
+            with mock.patch(
+                "ost_visualizer.presentation.dialogs.options.dialog.show_warning"
+            ) as warning:
+                _apply_button(dialog).click()
+
+            self.assertTrue(dialog.isVisible())
+            self.assertTrue(_apply_button(dialog).isEnabled())
+            self.assertEqual(dialog.get_config(), initial)
+            warning.assert_called_once_with(
+                dialog,
+                OPTIONS_DIALOG_TITLE,
+                "Failed to apply settings. Reopen Options and try again.",
+            )
+        finally:
+            dialog.close()
+
+    def test_options_dialog_ok_failure_does_not_accept(self):
+        dialog = OptionsDialog(
+            Config(),
+            apply_callback=lambda _config: (_ for _ in ()).throw(
+                OSError("disk unavailable")
+            ),
+        )
+        dialog._disable_high_res_check.setChecked(True)
+        with mock.patch(
+            "ost_visualizer.presentation.dialogs.options.dialog.show_warning"
+        ):
+            dialog.accept()
+
+        self.assertNotEqual(
+            dialog.result(),
+            QtWidgets.QDialog.DialogCode.Accepted,
+        )
+        self.assertTrue(_apply_button(dialog).isEnabled())
         dialog.close()
 
     def test_options_dialog_uses_x_only_window_chrome(self):
@@ -2279,7 +2327,11 @@ class OptionsPreferencesTests(unittest.TestCase):
         )
 
     def test_options_dialog_result_path_runs_lifecycle_cleanup(self):
-        dialog = OptionsDialog(Config())
+        dialog = OptionsDialog(
+            Config(),
+            apply_callback=lambda _config: None,
+            reset_callback=lambda: Config(),
+        )
         mcp_tab = dialog._mcp_setup_tab
         cleanup_calls = []
         mcp_tab.cleanup = lambda: cleanup_calls.append("mcp")
@@ -2288,6 +2340,36 @@ class OptionsPreferencesTests(unittest.TestCase):
         self.assertIsNone(dialog._tabs)
         self.assertIsNone(dialog._options_tab)
         self.assertIsNone(dialog._mcp_setup_tab)
+        self.assertIsNone(dialog._apply_callback)
+        self.assertIsNone(dialog._reset_callback)
+
+    def test_options_dialog_reset_failure_keeps_current_settings(self):
+        initial = Config(show_toolbar_text=False)
+        dialog = OptionsDialog(
+            initial,
+            reset_callback=lambda: (_ for _ in ()).throw(OSError("disk unavailable")),
+        )
+        dialog._disable_high_res_check.setChecked(True)
+        with (
+            mock.patch(
+                "ost_visualizer.presentation.dialogs.options.dialog.confirm",
+                return_value=True,
+            ),
+            mock.patch(
+                "ost_visualizer.presentation.dialogs.options.dialog.show_warning"
+            ) as warning,
+        ):
+            _reset_all_button(dialog).click()
+
+        self.assertEqual(dialog.get_config(), initial)
+        self.assertTrue(dialog._disable_high_res_check.isChecked())
+        self.assertTrue(_apply_button(dialog).isEnabled())
+        warning.assert_called_once_with(
+            dialog,
+            OPTIONS_LABEL_RESET_ALL_SETTINGS,
+            "Failed to reset settings. Reopen Options and try again.",
+        )
+        dialog.close()
 
     def test_options_dialog_cancel_does_not_save_changes(self):
         repo = FakeConfigRepository()
