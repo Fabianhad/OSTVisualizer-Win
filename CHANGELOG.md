@@ -42,7 +42,10 @@
 - Fixed conflicting condition reference-number updates committing other conditions' renumbering before the target condition save; both changes now share one database transaction.
 - Fixed condition-type IDs from different loaded databases overwriting each other in active-bid memory when the databases used the same numeric IDs.
 - Fixed condition-property saves silently coercing invalid condition numbers or ignoring malformed spacing, and rejecting non-finite elevation, dimension, pitch, and display-size values before they can reach project storage.
-- Fixed broad read-only MCP database, project, bid, hierarchy, and live-selection responses so they enforce result limits, report truncation metadata, and cannot double-count repeated live selection IDs.
+- Fixed broad read-only MCP database, project, bid, hierarchy, and live-selection
+  responses so they enforce result limits, report truncation metadata, cannot
+  double-count repeated live selection IDs, and never expose legacy database
+  entries without an explicit checked state.
 - Fixed plan context menus that retained stale condition actions while paging or crashed on invalid stored annotation widths.
 - Fixed overlay rectangle writes that accepted missing pages or pages with invalid calibration factors.
 - Fixed HTML exports so project text cannot terminate the embedded scene-data script or inject markup into the document title.

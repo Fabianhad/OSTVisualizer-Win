@@ -65,6 +65,8 @@ class DatabaseRegistryTests(unittest.TestCase):
             db_path.write_text("", encoding="utf-8")
             unchecked_path = root / "unchecked.mdb"
             unchecked_path.write_text("", encoding="utf-8")
+            unspecified_path = root / "unspecified.mdb"
+            unspecified_path.write_text("", encoding="utf-8")
             txt_path = root / "notes.txt"
             txt_path.write_text("", encoding="utf-8")
             (root / "file_state.json").write_text(
@@ -73,6 +75,7 @@ class DatabaseRegistryTests(unittest.TestCase):
                         "file_entries": [
                             {"file_path": str(db_path), "is_checked": True},
                             {"file_path": str(unchecked_path), "is_checked": False},
+                            {"file_path": str(unspecified_path)},
                             {"file_path": str(txt_path), "is_checked": True},
                             str(root / "string-entry.mdb"),
                             {

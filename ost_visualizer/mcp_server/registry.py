@@ -88,7 +88,7 @@ class DatabaseRegistry:
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
-            if not bool(entry.get("is_checked", True)):
+            if entry.get("is_checked") is not True:
                 continue
             file_path = entry.get("file_path")
             if file_path:
