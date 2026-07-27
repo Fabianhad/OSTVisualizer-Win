@@ -58,6 +58,7 @@
 - Fixed PDF takeoff export substituting red when a condition's valid fill color was black.
 - Fixed numeric RGB and RGBA color entries being interpreted as color-and-opacity pairs.
 - Fixed Summary CSV exports changing double quotes in condition names into apostrophes.
+- Fixed Access database names escaping the default database directory or reaching creation with Windows-reserved path components.
 - Fixed Cover Sheet multi-file imports assigning default sheet dimensions to raster images instead of using their actual image size, and existing pages can now be moved into folders created in the same save.
 - Fixed existing bid areas failing to move beneath an area created in the same save.
 - Fixed multi-database project trees so a newly created folder opens rename in the correct database, grouped project selections do not duplicate operations, cross-database project selections cannot reach single-database writes, and tree rebuilds safely cancel active rename editors.

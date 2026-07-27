@@ -5,6 +5,30 @@ from typing import Callable, List, Optional
 from ...domain.entities.file_state import FileEntry, normalize_path
 from ..interfaces.i_database_creator import IDatabaseCreator
 
+_INVALID_DATABASE_NAME_CHARS = frozenset('<>:"/\\|?*')
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{number}" for number in range(1, 10)),
+        *(f"LPT{number}" for number in range(1, 10)),
+    }
+)
+
+
+def _validated_database_name(name: str) -> Optional[str]:
+    value = str(name).strip()
+    if (
+        not value
+        or value.endswith(".")
+        or any(char in _INVALID_DATABASE_NAME_CHARS or ord(char) < 32 for char in value)
+        or value.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES
+    ):
+        return None
+    return value
+
 
 class WorkingDirectoryService:
     def __init__(
@@ -51,6 +75,10 @@ class WorkingDirectoryService:
         self.ensure_working_dir()
         if not name:
             name = self._generate_default_name()
+        else:
+            name = _validated_database_name(name)
+            if name is None:
+                return None
         file_name = f"{name}.mdb"
         db_path = self._working_dir / file_name
         if db_path.exists():
