@@ -375,6 +375,46 @@ class OverlayCoordinateContractTests(unittest.TestCase):
                         scale_factor2,
                     )
 
+    def test_non_finite_page_conversion_inputs_produce_no_geometry(self):
+        for width_pts, height_pts in (
+            (float("nan"), 2160.0),
+            (3024.0, float("inf")),
+        ):
+            with self.subTest(width_pts=width_pts, height_pts=height_pts):
+                page = _page(
+                    CALIBRATED_64_RECT,
+                    width_pts=width_pts,
+                    height_pts=height_pts,
+                )
+                self.assertIsNone(
+                    page.ost_page_pixels_to_canvas_point(1.0, 1.0, 100.0, 100.0)
+                )
+                self.assertEqual(
+                    page.overlay_rect_canvas(100.0, 100.0),
+                    EMPTY_OVERLAY_RECT,
+                )
+
+        page = _page(CALIBRATED_64_RECT)
+        for invalid in (float("nan"), float("inf")):
+            with self.subTest(canvas_dimension=invalid):
+                self.assertIsNone(
+                    page.canvas_point_to_overlay_rect_units(
+                        1.0,
+                        1.0,
+                        invalid,
+                        100.0,
+                    )
+                )
+            with self.subTest(point_coordinate=invalid):
+                self.assertIsNone(
+                    page.canvas_point_to_ost_page_pixels(
+                        invalid,
+                        1.0,
+                        100.0,
+                        100.0,
+                    )
+                )
+
     def test_malformed_storage_rect_is_rejected_without_inference(self):
         for stored_rect in (
             "0,0,2688",

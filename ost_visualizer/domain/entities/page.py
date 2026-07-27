@@ -1,3 +1,4 @@
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
@@ -70,7 +71,14 @@ class Page:
             page_h = float(self.effective_height_pts) / 72.0 * coordinate_dpi
         except (TypeError, ValueError):
             return None
-        if coordinate_dpi <= 0.0 or page_w <= 0.0 or page_h <= 0.0:
+        if (
+            not math.isfinite(coordinate_dpi)
+            or not math.isfinite(page_w)
+            or not math.isfinite(page_h)
+            or coordinate_dpi <= 0.0
+            or page_w <= 0.0
+            or page_h <= 0.0
+        ):
             return None
         return page_w, page_h
 
@@ -88,7 +96,12 @@ class Page:
             canvas_h = float(canvas_height)
         except (TypeError, ValueError):
             return None
-        if canvas_w <= 0.0 or canvas_h <= 0.0:
+        if (
+            not math.isfinite(canvas_w)
+            or not math.isfinite(canvas_h)
+            or canvas_w <= 0.0
+            or canvas_h <= 0.0
+        ):
             return None
         page_w, page_h = page_size
         return page_w, page_h, canvas_w, canvas_h
@@ -112,6 +125,8 @@ class Page:
             point_y = float(y)
         except (TypeError, ValueError):
             return None
+        if not math.isfinite(point_x) or not math.isfinite(point_y):
+            return None
         page_w, page_h, canvas_w, canvas_h = dimensions
         return point_x * canvas_w / page_w, point_y * canvas_h / page_h
 
@@ -133,6 +148,8 @@ class Page:
             point_x = float(x)
             point_y = float(y)
         except (TypeError, ValueError):
+            return None
+        if not math.isfinite(point_x) or not math.isfinite(point_y):
             return None
         page_w, page_h, canvas_w, canvas_h = dimensions
         return point_x * page_w / canvas_w, point_y * page_h / canvas_h
@@ -159,6 +176,8 @@ class Page:
             point_y = float(y)
         except (TypeError, ValueError):
             return None
+        if not math.isfinite(point_x) or not math.isfinite(point_y):
+            return None
         page_w, page_h, canvas_w, canvas_h = dimensions
         return point_x * canvas_w / page_w, point_y * canvas_h / page_h
 
@@ -183,6 +202,8 @@ class Page:
             point_x = float(x)
             point_y = float(y)
         except (TypeError, ValueError):
+            return None
+        if not math.isfinite(point_x) or not math.isfinite(point_y):
             return None
         page_w, page_h, canvas_w, canvas_h = dimensions
         return point_x * page_w / canvas_w, point_y * page_h / canvas_h
