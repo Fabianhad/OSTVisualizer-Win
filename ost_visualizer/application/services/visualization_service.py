@@ -216,6 +216,11 @@ class VisualizationService:
         self._mesh_worker.join(timeout=3.0)
         self.close_realtime_visualization()
         self._transaction_monitor.cleanup()
+        if self._mesh_worker.is_alive():
+            raise RuntimeError(
+                "Mesh generation worker did not stop within 3 seconds; "
+                "visualization dependencies were retained for worker safety."
+            )
         self._transaction_monitor = None
         self._database_descriptor_registry = None
         self._callback_bridge = None

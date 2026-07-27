@@ -399,7 +399,10 @@ class ApplicationLifecycleTests(unittest.TestCase):
 
         service._mesh_shutdown = SimpleNamespace(set=lambda: None)
         service._mesh_task_event = SimpleNamespace(set=lambda: None)
-        service._mesh_worker = SimpleNamespace(join=join_mesh_worker)
+        service._mesh_worker = SimpleNamespace(
+            join=join_mesh_worker,
+            is_alive=lambda: False,
+        )
         service._mesh_generation_lock = threading.Lock()
         service._mesh_generation_id = 4
         service._mesh_generation_identity = object()
@@ -433,6 +436,47 @@ class ApplicationLifecycleTests(unittest.TestCase):
         self.assertIsNone(service.project_data)
         self.assertIsNone(service.project_operations)
         self.assertIsNone(service.event_bus)
+
+    def test_visualization_cleanup_retains_dependencies_when_mesh_worker_is_alive(
+        self,
+    ):
+        monitor = FakeCleanupObject()
+        notifier = FakeCleanupObject()
+        service = VisualizationService.__new__(VisualizationService)
+        retained = object()
+        service._mesh_shutdown = SimpleNamespace(set=lambda: None)
+        service._mesh_task_event = SimpleNamespace(set=lambda: None)
+        service._mesh_worker = SimpleNamespace(
+            join=lambda *, timeout=None: None,
+            is_alive=lambda: True,
+        )
+        service._mesh_generation_lock = threading.Lock()
+        service._mesh_generation_id = 4
+        service._mesh_generation_identity = retained
+        service._mesh_generation_delivered = False
+        service.close_realtime_visualization = lambda: None
+        service._transaction_monitor = monitor
+        service._database_descriptor_registry = retained
+        service._callback_bridge = retained
+        service._monitored_access_locator = "C:/projects/local.mdb"
+        service._scene_notifier = notifier
+        service._mesh_pending_task = ("large", "task")
+        service.config_model = retained
+        service._mesh_generator = retained
+        service._visualization_provider = retained
+        service.project_data = retained
+        service.project_operations = retained
+        service.event_bus = retained
+
+        with self.assertRaisesRegex(RuntimeError, "worker did not stop"):
+            VisualizationService.cleanup(service)
+
+        self.assertEqual(monitor.cleanup_calls, 1)
+        self.assertEqual(notifier.cleanup_calls, 0)
+        self.assertIs(service._transaction_monitor, monitor)
+        self.assertIs(service._scene_notifier, notifier)
+        self.assertIs(service._visualization_provider, retained)
+        self.assertIs(service.event_bus, retained)
 
     def test_visualization_orchestrator_cleanup_releases_service_reference(self):
         service = FakeCleanupObject()
