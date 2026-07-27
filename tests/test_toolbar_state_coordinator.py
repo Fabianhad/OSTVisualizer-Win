@@ -64,7 +64,7 @@ class _ProjectData:
     def is_current_bid_locked(self):
         return False
 
-    def project_has_bids(self, _uid):
+    def project_has_bids(self, _uid, _file_path=None):
         return False
 
     def find_project_uid_for_bid(self, _bid_ref):

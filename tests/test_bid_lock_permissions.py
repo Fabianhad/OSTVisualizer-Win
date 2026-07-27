@@ -30,6 +30,7 @@ from ost_visualizer.domain.entities.hierarchy_data import (
 )
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.domain.entities.takeoff import Takeoff
+from ost_visualizer.domain.services.project_data_service import ProjectDataService
 from ost_visualizer.presentation.config import TAB_INDEX_TAKEOFF
 from ost_visualizer.presentation.controllers.menu_controller import MenuController
 from ost_visualizer.presentation.coordinators.toolbar_state_coordinator import (
@@ -1472,9 +1473,81 @@ class BidLockPermissionTests(unittest.TestCase):
             clear_bid_calls=[],
             find_project_uid_for_bid=lambda _ref: selected_project_uid,
             get_hierarchy=lambda: hierarchy,
+            project_exists=lambda project_uid, file_path: any(
+                entry.file_path == file_path and project_uid in entry.bid_projects
+                for entry in hierarchy.loaded_files
+            ),
         )
         project_data.clear_bid = lambda: project_data.clear_bid_calls.append(True)
         return project_data
+
+    def test_project_delete_identity_checks_are_scoped_to_database(self):
+        project_uid = "shared-project"
+        first_path = "C:/jobs/first.mdb"
+        second_path = "C:/jobs/second.mdb"
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path=first_path,
+                    bid_projects={
+                        project_uid: HierarchyProjectInfo(
+                            name="First",
+                            bids=[HierarchyBidInfo(uid="bid-1")],
+                        )
+                    },
+                ),
+                HierarchyFileEntry(
+                    file_path=second_path,
+                    bid_projects={
+                        project_uid: HierarchyProjectInfo(
+                            name="Second",
+                            bids=[],
+                        )
+                    },
+                ),
+            ]
+        )
+        project_data = ProjectDataService(
+            SimpleNamespace(get_hierarchy_data=lambda: hierarchy)
+        )
+        delete_calls = []
+        handler = ProjectWriteHandler(
+            window=None,
+            project_data_service=project_data,
+            project_write_service=SimpleNamespace(
+                delete_projects=lambda file_path, project_uids: delete_calls.append(
+                    (file_path, list(project_uids))
+                )
+                or True
+            ),
+            ui_state_manager=SimpleNamespace(),
+            deferred_persistence_manager=_FakeDeferredPersistence(),
+        )
+
+        self.assertTrue(project_data.project_has_bids(project_uid, first_path))
+        self.assertFalse(project_data.project_has_bids(project_uid, second_path))
+        self.assertEqual(
+            handler._valid_delete_selection_state(
+                second_path,
+                {
+                    "kind": "project",
+                    "file_path": second_path,
+                    "project_uid": project_uid,
+                },
+            ),
+            {
+                "kind": "project",
+                "file_path": second_path,
+                "bid_uid": None,
+                "project_uid": project_uid,
+            },
+        )
+        with patch(
+            "ost_visualizer.presentation.handlers.project_write_handler.confirm",
+            return_value=True,
+        ):
+            handler._delete_projects([project_uid], second_path)
+        self.assertEqual(delete_calls, [(second_path, [project_uid])])
 
     def test_moving_active_bid_to_deleted_clears_selection_before_refresh(self):
         bid_ref = BidRef("C:/jobs/test.mdb", "bid-1")
@@ -1535,7 +1608,7 @@ class BidLockPermissionTests(unittest.TestCase):
         )
         project_data = SimpleNamespace(
             get_hierarchy=lambda: hierarchy,
-            project_has_bids=lambda _project_uid: False,
+            project_has_bids=lambda _project_uid, _file_path=None: False,
         )
         ui_state = SimpleNamespace(
             selected_project_uids=["project-empty"],

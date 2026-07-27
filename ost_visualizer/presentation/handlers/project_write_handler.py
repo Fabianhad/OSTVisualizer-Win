@@ -561,17 +561,12 @@ class ProjectWriteHandler:
                 }
         if kind == "project":
             project_uid = str(selection_state.get("project_uid") or "")
-            project_file_path = (
-                self.project_data.get_hierarchy().find_file_path_for_project(
-                    project_uid
-                )
-                if project_uid
-                else None
-            )
-            if project_file_path and self._same_file(file_path, project_file_path):
+            if project_uid and self.project_data.project_exists(
+                project_uid, state_file_path
+            ):
                 return {
                     "kind": "project",
-                    "file_path": project_file_path,
+                    "file_path": state_file_path,
                     "bid_uid": None,
                     "project_uid": project_uid,
                 }
@@ -614,7 +609,7 @@ class ProjectWriteHandler:
         for uid in project_uids:
             if uid == _DELETED_BIDS_PROJECT_UID:
                 continue
-            if self.project_data.project_has_bids(uid):
+            if self.project_data.project_has_bids(uid, file_path):
                 continue
             deletable.append(uid)
         if len(deletable) != len(

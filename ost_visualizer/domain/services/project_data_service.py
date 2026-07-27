@@ -733,13 +733,24 @@ class ProjectDataService:
             all_takeoffs.extend(self.model.get_page_takeoffs(uid))
         return compute_page_quantities(conditions, all_takeoffs, only_condition_uids)
 
-    def project_has_bids(self, project_uid: str) -> bool:
+    def project_has_bids(
+        self, project_uid: str, file_path: Optional[str] = None
+    ) -> bool:
         hierarchy = self.model.get_hierarchy_data()
         for file_entry in hierarchy.loaded_files:
+            if file_path is not None and file_entry.file_path != file_path:
+                continue
             project_info = file_entry.bid_projects.get(project_uid)
             if project_info is not None:
                 return len(project_info.bids) > 0
         return False
+
+    def project_exists(self, project_uid: str, file_path: str) -> bool:
+        hierarchy = self.model.get_hierarchy_data()
+        return any(
+            file_entry.file_path == file_path and project_uid in file_entry.bid_projects
+            for file_entry in hierarchy.loaded_files
+        )
 
     def get_project_bid_uids(
         self, file_path: str, project_uids: Iterable[str]

@@ -257,7 +257,9 @@ class ToolbarStateCoordinator:
                 self._delete_action.setEnabled(
                     self._access.is_allowed(Feature.EDIT_PROJECT_TREE_STRUCTURE)
                     and uid != "1"
-                    and not self._project_data.project_has_bids(uid)
+                    and not self._project_data.project_has_bids(
+                        uid, self._ui_state.selected_file_path
+                    )
                 )
             else:
                 self._delete_action.setEnabled(False)
