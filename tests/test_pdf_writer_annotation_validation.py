@@ -18,6 +18,17 @@ class PdfWriterAnnotationValidationTests(unittest.TestCase):
         if source_path.stat().st_mtime > binary_path.stat().st_mtime:
             self.skipTest("ost_pdf_writer must be rebuilt for native source changes")
 
+    def test_header_does_not_advertise_undefined_blank_page_method(self):
+        header_path = (
+            Path(__file__).parents[1]
+            / "cpp_extensions"
+            / "src"
+            / "pdf"
+            / "pdf_writer.hpp"
+        )
+
+        self.assertNotIn("create_blank_page(", header_path.read_text(encoding="utf-8"))
+
     def test_empty_polygon_returns_failure_instead_of_accessing_missing_vertex(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = Path(temp_dir) / "blank.pdf"

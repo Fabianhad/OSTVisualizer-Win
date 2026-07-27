@@ -143,7 +143,6 @@ namespace ost_pdf_writer
         };
         bool merge_pages_with_annotations(const std::vector<PageExportData> &pages,
                                           const std::string &output_pdf);
-        bool create_blank_page(double width, double height, const std::string &output_pdf);
         std::string get_last_error() const { return last_error_; }
         std::vector<std::array<double, 4>> get_page_sizes(const std::string &pdf_path);
 
