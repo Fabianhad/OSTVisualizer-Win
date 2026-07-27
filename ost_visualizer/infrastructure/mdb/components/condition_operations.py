@@ -389,6 +389,40 @@ class ConditionOperationsMixin:
         }
     )
 
+    def _shift_conflicting_ref_nos_for_update(
+        self,
+        cursor,
+        schema,
+        bid_uid: int,
+        condition_uid: int,
+        new_ref_no: int,
+    ) -> None:
+        self._require_write_columns(schema, "BidConditions", ("UID", "BidUID", "RefNo"))
+        cursor.execute(
+            "SELECT [RefNo] FROM [BidConditions] WHERE [UID] = ? AND [BidUID] = ?",
+            condition_uid,
+            bid_uid,
+        )
+        current_row = cursor.fetchone()
+        if current_row is None or int(current_row[0]) == new_ref_no:
+            return
+        cursor.execute(
+            "SELECT [UID] FROM [BidConditions] "
+            "WHERE [BidUID] = ? AND [RefNo] = ? AND [UID] <> ?",
+            bid_uid,
+            new_ref_no,
+            condition_uid,
+        )
+        if cursor.fetchone() is None:
+            return
+        cursor.execute(
+            "UPDATE [BidConditions] SET [RefNo] = [RefNo] + 1 "
+            "WHERE [BidUID] = ? AND [RefNo] >= ? AND [UID] <> ?",
+            bid_uid,
+            new_ref_no,
+            condition_uid,
+        )
+
     def update_condition(
         self,
         db_path: str,
@@ -419,6 +453,18 @@ class ConditionOperationsMixin:
                     values_by_col[col_name] = val
                 if not values_by_col:
                     return True
+                bid_uid_int = int(bid_uid)
+                condition_uid_int = int(condition_uid)
+                if "RefNo" in values_by_col:
+                    new_ref_no = int(values_by_col["RefNo"])
+                    values_by_col["RefNo"] = new_ref_no
+                    self._shift_conflicting_ref_nos_for_update(
+                        cursor,
+                        schema,
+                        bid_uid_int,
+                        condition_uid_int,
+                        new_ref_no,
+                    )
                 self._execute_update_values(
                     cursor,
                     schema,
@@ -426,7 +472,7 @@ class ConditionOperationsMixin:
                     values_by_col,
                     ("UID", "BidUID"),
                     "[UID] = ? AND [BidUID] = ?",
-                    [int(condition_uid), int(bid_uid)],
+                    [condition_uid_int, bid_uid_int],
                     "update_condition",
                 )
                 return True

@@ -851,7 +851,6 @@ class ProjectWriteService(DatabaseMutationWriteService):
         bid_uid: str,
         condition_uid: str,
         updates: UpdateConditionDto,
-        all_conditions=None,
         publish_database_refreshed_after_write: bool = True,
     ) -> UpdateConditionResultDto:
         if self._bid_write_guard.blocks_active_locked_bid_write(db_path, bid_uid):
@@ -862,7 +861,7 @@ class ProjectWriteService(DatabaseMutationWriteService):
 
         def update(recorder):
             result = self._update_condition.execute(
-                db_path, bid_uid, condition_uid, updates, all_conditions
+                db_path, bid_uid, condition_uid, updates
             )
             if result.success:
                 recorder.record(resource, ChangeOperation.UPDATE)

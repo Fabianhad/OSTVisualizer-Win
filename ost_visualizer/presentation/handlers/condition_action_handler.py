@@ -406,7 +406,6 @@ class ConditionActionHandler:
                 bid_ref.bid_uid,
                 condition_uid,
                 dto,
-                all_conditions=self._project_data.get_bid_conditions(),
                 publish_database_refreshed_after_write=False,
             )
             if result.success:
@@ -588,7 +587,6 @@ class ConditionActionHandler:
             bid_ref.bid_uid,
             condition_uid,
             dto,
-            all_conditions=self._project_data.get_bid_conditions(),
         )
         if not result.success:
             logger.warning(
@@ -688,7 +686,6 @@ class ConditionActionHandler:
                 bid_ref.bid_uid,
                 condition_uid,
                 dto,
-                all_conditions=self._project_data.get_bid_conditions(),
                 publish_database_refreshed_after_write=False,
             )
             if result.success:
@@ -772,7 +769,6 @@ class ConditionActionHandler:
                     bid_ref.bid_uid,
                     cond_uid,
                     dto,
-                    all_conditions=self._project_data.get_bid_conditions(),
                 )
                 if result.success:
                     self._coordinator.refresh_conditions_ui()
