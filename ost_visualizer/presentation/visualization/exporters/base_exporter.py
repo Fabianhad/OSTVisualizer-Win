@@ -70,7 +70,7 @@ class BaseExporter(ABC):
             takeoffs_by_group, materials_info = self._prepare_hierarchical_export(
                 exportable_takeoffs, bid_conditions, color_map, page_area_selections
             )
-            self._apply_boolean_operations(takeoffs_by_group, bid_conditions)
+            self._apply_boolean_operations(takeoffs_by_group)
             self._write_output(
                 output_path,
                 takeoffs_by_group,
@@ -147,12 +147,8 @@ class BaseExporter(ABC):
             )
         return takeoffs_by_condition, materials_info
 
-    def _apply_boolean_operations(
-        self, takeoffs_by_group: Dict, bid_conditions: Dict
-    ) -> None:
+    def _apply_boolean_operations(self, takeoffs_by_group: Dict) -> None:
         meshes_with_metadata: List[Tuple[MeshData, MeshMetadata]] = []
-        takeoff_to_index: Dict[str, int] = {}
-        index = 0
         for _, pairs in takeoffs_by_group.items():
             for takeoff, condition in pairs:
                 takeoff_uid = takeoff.uid
@@ -164,8 +160,6 @@ class BaseExporter(ABC):
                         "takeoff_uid": takeoff_uid,
                     }
                     meshes_with_metadata.append((mesh, metadata))
-                    takeoff_to_index[takeoff_uid] = index
-                    index += 1
         if not meshes_with_metadata:
             return
         processed_meshes = apply_boolean_operations(meshes_with_metadata)
