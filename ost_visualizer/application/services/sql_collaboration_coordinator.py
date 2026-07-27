@@ -1482,7 +1482,10 @@ class SqlCollaborationCoordinator:
     @staticmethod
     def _complete_lease_request(payload) -> None:
         callback, result = payload
-        callback(result)
+        try:
+            callback(result)
+        except Exception:
+            logger.exception("SQL immediate edit-lease completion callback failed")
 
     def _complete_runtime_lease_request(self, payload) -> None:
         database_id, generation, draft_id, callback, result = payload

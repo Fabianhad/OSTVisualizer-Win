@@ -3,6 +3,8 @@ import time
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
+from unittest.mock import patch
+
 from ost_visualizer.application.dtos.collaboration_resource_catalog import (
     COLLABORATION_RESOURCE_CATALOG,
     COLLABORATION_RESOURCE_CATALOG_CHECKSUM,
@@ -892,6 +894,26 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
             )
         )
         self.assertEqual(released, [handle])
+
+    def test_immediate_lease_callback_failure_is_contained(self):
+        result = EditLeaseResult(False, "not available")
+
+        with patch(
+            "ost_visualizer.application.services."
+            "sql_collaboration_coordinator.logger.exception"
+        ) as logged:
+            SqlCollaborationCoordinator._complete_lease_request(
+                (
+                    lambda _result: (_ for _ in ()).throw(
+                        RuntimeError("UI callback failed")
+                    ),
+                    result,
+                )
+            )
+
+        logged.assert_called_once_with(
+            "SQL immediate edit-lease completion callback failed"
+        )
 
     def test_edit_lease_result_rejects_incomplete_ownership_state(self):
         resource = ResourceRef("condition", "42", 8)
