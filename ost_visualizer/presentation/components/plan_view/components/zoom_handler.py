@@ -81,12 +81,13 @@ class ZoomHandlerMixin:
             self.setTransformationAnchor(anchor)
 
     def set_zoom_percent(self, percent: float) -> None:
-        if self._scene_scale <= 0:
+        if not math.isfinite(percent) or percent <= 0 or self._scene_scale <= 0:
             return
         target_m11 = (percent / 100.0) / (self._scene_scale * _DISPLAY_ZOOM_RATIO)
         current = self.transform().m11()
         if current == 0:
             return
+        self._mark_user_view_changed_during_load()
         self._apply_zoom_centered(target_m11 / current)
         self._publish_current_page_view_state()
 
@@ -208,6 +209,19 @@ class ZoomHandlerMixin:
         max_y: float,
         margin: float = 0.1,
     ) -> None:
+        try:
+            min_x, min_y, max_x, max_y, margin = (
+                float(value) for value in (min_x, min_y, max_x, max_y, margin)
+            )
+        except (TypeError, ValueError):
+            return
+        if (
+            not all(
+                math.isfinite(value) for value in (min_x, min_y, max_x, max_y, margin)
+            )
+            or margin < 0
+        ):
+            return
         width = max_x - min_x
         height = max_y - min_y
         if width <= 0 or height <= 0:
@@ -215,21 +229,34 @@ class ZoomHandlerMixin:
         cs = self._scene_builder.get_coordinate_system()
         tl_screen = cs.transform_to_2d(min_x, min_y)
         br_screen = cs.transform_to_2d(max_x, max_y)
-        screen_width = abs(br_screen[0] - tl_screen[0])
-        screen_height = abs(br_screen[1] - tl_screen[1])
+        try:
+            tl_x, tl_y = (float(value) for value in tl_screen)
+            br_x, br_y = (float(value) for value in br_screen)
+        except (TypeError, ValueError):
+            return
+        if not all(math.isfinite(value) for value in (tl_x, tl_y, br_x, br_y)):
+            return
+        screen_width = abs(br_x - tl_x)
+        screen_height = abs(br_y - tl_y)
         margin_x = screen_width * margin
         margin_y = screen_height * margin
         page_local_rect = QRectF(
-            min(tl_screen[0], br_screen[0]) - margin_x,
-            min(tl_screen[1], br_screen[1]) - margin_y,
+            min(tl_x, br_x) - margin_x,
+            min(tl_y, br_y) - margin_y,
             screen_width + margin_x * 2,
             screen_height + margin_y * 2,
         )
         page_transform = self._current_page_transform()
         if page_transform is not None:
             page_local_rect = page_transform.mapRect(page_local_rect)
-        self.fitInView(page_local_rect, Qt.AspectRatioMode.KeepAspectRatio)
-        self._zoom_debouncer.handle_scale_changed(self.transform().m11())
+        if page_local_rect.isNull() or not page_local_rect.isValid():
+            return
+        self._mark_user_view_changed_during_load()
+        self._fit_in_view_with_stable_scrollbars(page_local_rect)
+        new_scale = self.transform().m11()
+        self._zoom_debouncer.handle_scale_changed(new_scale)
+        self.zoom_changed.emit(new_scale * self._scene_scale * _DISPLAY_ZOOM_RATIO)
+        self._publish_current_page_view_state()
 
     def _get_page_transform(self, width: float, height: float) -> QTransform:
         transform = QTransform()

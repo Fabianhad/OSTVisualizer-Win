@@ -2957,6 +2957,38 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         self.assertAlmostEqual(view.transform().m11(), zoomed_scale)
         view.cleanup()
 
+    def test_user_zoom_percent_during_async_page_load_survives_image_success(self):
+        view = self._make_plan_view()
+        view.resize(300, 300)
+        view.show()
+        QApplication.processEvents()
+        page = Page(
+            uid="p1",
+            name="P1",
+            image_path="page.pdf",
+            width_pts=612.0,
+            height_pts=792.0,
+            zoom_fac=1.332,
+            current_x=408.0,
+            current_y=528.0,
+        )
+        self.assertTrue(view.load_page(page, [], {}, {}))
+        view.set_zoom_percent(250.0)
+        zoomed_scale = view.transform().m11()
+        self.assertTrue(view._load_user_view_changed)
+        request_id, request = view._rendering_service.page_requests[-1]
+        result = RenderResult(
+            request_id=request_id,
+            success=True,
+            image=QImage(1224, 1584, QImage.Format.Format_ARGB32),
+            error=None,
+        )
+        request["callback"](result)
+        QApplication.processEvents()
+        self.assertTrue(view._load_view_applied)
+        self.assertAlmostEqual(view.transform().m11(), zoomed_scale)
+        view.cleanup()
+
     def test_reset_view_during_async_page_load_overrides_restored_zoom(self):
         view = self._make_plan_view()
         view.resize(300, 300)
@@ -6963,6 +6995,57 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.fit_to_page()
         self.assertEqual(calls[0][0], "fit")
         self.assertEqual(calls[0][1], QtCore.QRectF(-50.0, -50.0, 200.0, 300.0))
+
+    def test_zoom_to_rect_publishes_zoom_and_page_view_state(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self._install_page_canvas(view, page)
+        view._load_view_applied = True
+        zoom_values = []
+        state_values = []
+        view.zoom_changed.connect(zoom_values.append)
+        view.page_view_state_changed.connect(
+            lambda *values: state_values.append(values)
+        )
+
+        view.zoom_to_rect(20.0, 30.0, 120.0, 180.0)
+
+        self.assertEqual(len(zoom_values), 1)
+        self.assertEqual(len(state_values), 1)
+        self.assertEqual(state_values[0][0], page.uid)
+        self.assertAlmostEqual(state_values[0][1], zoom_values[0])
+        self.assertAlmostEqual(page.zoom_fac, zoom_values[0])
+        view.cleanup()
+
+    def test_zoom_to_rect_rejects_non_finite_bounds_without_changing_view(self):
+        view = self._make_plan_view()
+        page = Page(
+            uid="p1",
+            name="P1",
+            width_pts=612.0,
+            height_pts=792.0,
+        )
+        self._install_page_canvas(view, page)
+        view._load_view_applied = True
+        original_transform = view.transform()
+        zoom_values = []
+        state_values = []
+        view.zoom_changed.connect(zoom_values.append)
+        view.page_view_state_changed.connect(
+            lambda *values: state_values.append(values)
+        )
+
+        view.zoom_to_rect(float("nan"), 30.0, 120.0, 180.0)
+
+        self.assertEqual(view.transform(), original_transform)
+        self.assertEqual(zoom_values, [])
+        self.assertEqual(state_values, [])
+        view.cleanup()
 
     def test_scene_rect_update_keeps_existing_view_center_when_off_page_items_expand_origin(
         self,
