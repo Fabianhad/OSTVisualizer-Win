@@ -710,6 +710,31 @@ class OstImportExportRelationshipTests(unittest.TestCase):
             connection.execute("SELECT COUNT(*) FROM Bids").fetchone()[0], 0
         )
 
+    def test_ost_import_rejects_duplicate_page_uid_before_backend_remapping(self):
+        xml = """
+        <XML_ROOT>
+          <Bid UID="1" JobName="Imported">
+            <BidPages>
+              <BidPage UID="20" BidUID="1" Name="First"/>
+              <BidPage UID="20" BidUID="1" Name="Duplicate"/>
+            </BidPages>
+          </Bid>
+        </XML_ROOT>
+        """
+        writer = _CapturingImportWriter()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ost_path = Path(temp_dir) / "duplicate_page.ost"
+            ost_path.write_text(xml, encoding="utf-8")
+            with self.assertLogs(
+                "ost_visualizer.infrastructure.mdb.importers.ost_importer",
+                level="ERROR",
+            ) as logs:
+                self.assertFalse(
+                    OstImporter(writer).import_ost(str(ost_path), "target.mdb")
+                )
+        self.assertIn("BidPages.UID=20 occurs 2 times", logs.output[0])
+        self.assertEqual(writer.takeoffs, ())
+
     def test_ost_import_rejects_malformed_takeoff_uid_before_remapping(self):
         cases = (
             (

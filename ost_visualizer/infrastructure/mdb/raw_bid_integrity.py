@@ -1,4 +1,4 @@
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Sequence, Set, Tuple
 from ...domain.dtos.raw_bid_data_dto import RawBidData, RawTable
@@ -241,10 +241,21 @@ def _present_uids(rows: Iterable[Mapping[str, str]], column: str) -> Set[str]:
 def validate_raw_bid_integrity(
     raw_data: RawBidData,
     relationships: Sequence[RawBidRelationship] = RAW_BID_RELATIONSHIPS,
-) -> List[RawBidIntegrityIssue]:
+) -> List[RawBidFormattedIssue]:
     rows_by_table = raw_bid_table_rows(raw_data)
     parent_uid_cache: Dict[Tuple[str, str], Set[str]] = {}
-    issues: List[RawBidIntegrityIssue] = []
+    issues: List[RawBidFormattedIssue] = []
+    for table in _RAW_TABLES:
+        uid_counts = Counter(
+            str(row.get("UID", ""))
+            for row in rows_by_table.get(table, [])
+            if is_present_uid(str(row.get("UID", "")))
+        )
+        issues.extend(
+            RawBidDuplicateUid(table, uid, count)
+            for uid, count in sorted(uid_counts.items())
+            if count > 1
+        )
     for relationship in relationships:
         child_rows = rows_by_table.get(relationship.child_table, [])
         if not child_rows:
