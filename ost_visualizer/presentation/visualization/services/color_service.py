@@ -143,18 +143,24 @@ def _create_hierarchy_map(
 
 class ColorService:
     def convert_to_rgba(
-        self, color_entry: Union[str, dict, Sequence[float]]
+        self, color_entry: Union[str, dict, Sequence[object]]
     ) -> ColorRGBA:
         opacity = 1.0
-        color_value: Union[str, Sequence[float]] = "#808080"
+        color_value: Union[str, Sequence[object]] = "#808080"
         if isinstance(color_entry, dict):
             color_value = color_entry.get("color", "#808080")
             opacity = color_entry.get("opacity", 1.0)
         elif isinstance(color_entry, (list, tuple)):
-            if color_entry:
+            if len(color_entry) >= 3 and all(
+                isinstance(component, (int, float)) for component in color_entry[:3]
+            ):
+                color_value = color_entry[:3]
+                if len(color_entry) > 3:
+                    opacity = color_entry[3]
+            elif color_entry:
                 color_value = color_entry[0]
-            if len(color_entry) > 1:
-                opacity = color_entry[1]
+                if len(color_entry) > 1:
+                    opacity = color_entry[1]
         elif isinstance(color_entry, str):
             color_value = color_entry
         opacity_float = float(opacity)
@@ -188,10 +194,15 @@ class ColorService:
             color = str(color_entry.get("color", color))
             opacity = color_entry.get("opacity", opacity)
         elif isinstance(color_entry, (tuple, list)):
-            if color_entry:
+            if len(color_entry) >= 3 and all(
+                isinstance(component, (int, float)) for component in color_entry[:3]
+            ):
+                r, g, b, opacity = self.convert_to_rgba(color_entry)
+                color = f"#{round(r * 255):02x}{round(g * 255):02x}{round(b * 255):02x}"
+            elif color_entry:
                 color = str(color_entry[0])
-            if len(color_entry) > 1:
-                opacity = color_entry[1]
+                if len(color_entry) > 1:
+                    opacity = color_entry[1]
         elif isinstance(color_entry, str) and color_entry:
             color = color_entry
         opacity = max(0.0, min(1.0, float(opacity)))

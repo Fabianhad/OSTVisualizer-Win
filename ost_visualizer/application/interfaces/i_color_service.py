@@ -9,10 +9,10 @@ ColorRGBA = Tuple[float, float, float, float]
 
 class IColorService(Protocol):
     def convert_to_rgba(
-        self, color_entry: Union[str, dict, Sequence[float]]
+        self, color_entry: Union[str, dict, Sequence[object]]
     ) -> ColorRGBA: ...
     def as_hex_with_opacity(
-        self, color_entry: Union[str, dict, Sequence[float]]
+        self, color_entry: Union[str, dict, Sequence[object]]
     ) -> ColorWithOpacity: ...
     def should_gray_out_takeoff(
         self,
