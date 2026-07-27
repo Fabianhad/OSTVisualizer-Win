@@ -18,6 +18,7 @@ from ost_visualizer.application.dtos.local_draft_dtos import LocalDraftConflict
 from ost_visualizer.application.dtos.local_draft_dtos import LocalDraftState
 from ost_visualizer.application.dtos.collaboration_dtos import (
     ChangeOperation,
+    CollaborationStatus,
     CollaborationPollingPolicy,
     CollaborationShutdownState,
     ConcurrencyToken,
@@ -1759,6 +1760,39 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         self.assertFalse(
             capabilities.is_editable(descriptor.database_id, ResourceRef("bid", "8", 8))
         )
+
+    def test_capability_check_uses_one_collaboration_status_snapshot(self):
+        descriptors = DatabaseDescriptorRegistry()
+        descriptor = DatabaseDescriptor.for_sql_server(
+            SqlServerDatabaseLocation(server="localhost", database="TEST"),
+            schema_version=SQL_SCHEMA_V1.version,
+        )
+        descriptors.register(descriptor)
+        locked = ResourceRef("condition", "42", 8)
+
+        class SnapshotChangingCapabilities(DatabaseCapabilityService):
+            def __init__(self):
+                super().__init__(descriptors, _PermissionProbe())
+                self.status_reads = 0
+
+            def collaboration_status(self, database_id):
+                self.status_reads += 1
+                if self.status_reads == 1:
+                    return CollaborationStatus(
+                        database_id=database_id,
+                        state=SynchronizationState.HEALTHY,
+                        locked_resources=frozenset({locked}),
+                    )
+                return CollaborationStatus(
+                    database_id=database_id,
+                    state=SynchronizationState.STOPPED,
+                )
+
+        capabilities = SnapshotChangingCapabilities()
+        capabilities.mark_connected(descriptor.database_id)
+
+        self.assertFalse(capabilities.is_editable(descriptor.database_id, locked))
+        self.assertEqual(capabilities.status_reads, 1)
 
     def test_resource_conflict_is_targeted_and_cleared_by_reconciliation(self):
         descriptors = DatabaseDescriptorRegistry()

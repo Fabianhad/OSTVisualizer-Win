@@ -1,4 +1,5 @@
 import re
+from math import isfinite
 from typing import Optional
 
 _EIGHTHS_FRACTIONS = {
@@ -23,6 +24,8 @@ def inches_to_mm(inches: float) -> float:
 
 
 def inches_to_display(inches: float, metric: bool = False) -> str:
+    if not isfinite(inches):
+        return ""
     if metric:
         return mm_to_display(inches_to_mm(inches))
     if inches == 0.0:
@@ -53,6 +56,8 @@ def inches_to_display(inches: float, metric: bool = False) -> str:
 
 
 def mm_to_display(mm: float) -> str:
+    if not isfinite(mm):
+        return ""
     if mm == 0.0:
         return ""
     if mm == int(mm):
@@ -84,15 +89,20 @@ def _parse_frac(frac_str: str) -> Optional[float]:
     return _FRACTION_MAP.get(frac_str)
 
 
+def _finite_float(value) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if isfinite(parsed) else None
+
+
 def display_to_mm(text: str) -> Optional[float]:
     text = text.strip()
     if not text:
         return 0.0
     cleaned = text.rstrip("m").rstrip("M").strip()
-    try:
-        return float(cleaned)
-    except ValueError:
-        return None
+    return _finite_float(cleaned)
 
 
 def display_to_inches(text: str, metric: bool = False) -> Optional[float]:
@@ -105,38 +115,41 @@ def display_to_inches(text: str, metric: bool = False) -> Optional[float]:
     m = _FEET_INCHES_FRAC_RE.match(text)
     if m:
         sign = -1 if m.group(1) == "-" else 1
-        feet = int(m.group(2))
-        whole = int(m.group(3))
+        feet = _finite_float(m.group(2))
+        whole = _finite_float(m.group(3))
         frac = _parse_frac(m.group(4))
-        if frac is None:
+        if feet is None or whole is None or frac is None:
             return None
-        return sign * (feet * 12 + whole + frac)
+        return _finite_float(sign * (feet * 12 + whole + frac))
     m = _FEET_INCHES_RE.match(text)
     if m:
         sign = -1 if m.group(1) == "-" else 1
-        feet = int(m.group(2))
-        inches = float(m.group(3))
-        return sign * (feet * 12 + inches)
+        feet = _finite_float(m.group(2))
+        inches = _finite_float(m.group(3))
+        if feet is None or inches is None:
+            return None
+        return _finite_float(sign * (feet * 12 + inches))
     m = _FEET_FRAC_RE.match(text)
     if m:
         sign = -1 if m.group(1) == "-" else 1
-        feet = int(m.group(2))
+        feet = _finite_float(m.group(2))
         frac = _parse_frac(m.group(3))
-        if frac is None:
+        if feet is None or frac is None:
             return None
-        return sign * (feet * 12 + frac)
+        return _finite_float(sign * (feet * 12 + frac))
     m = _FEET_ONLY_RE.match(text)
     if m:
         sign = -1 if m.group(1) == "-" else 1
-        return sign * int(m.group(2)) * 12.0
+        feet = _finite_float(m.group(2))
+        return None if feet is None else _finite_float(sign * feet * 12.0)
     m = _INCHES_FRAC_RE.match(text)
     if m:
         sign = -1 if m.group(1) == "-" else 1
-        whole = int(m.group(2))
+        whole = _finite_float(m.group(2))
         frac = _parse_frac(m.group(3))
-        if frac is None:
+        if whole is None or frac is None:
             return None
-        return sign * (whole + frac)
+        return _finite_float(sign * (whole + frac))
     m = _FRAC_ONLY_RE.match(text)
     if m:
         sign = -1 if m.group(1) == "-" else 1
@@ -147,8 +160,6 @@ def display_to_inches(text: str, metric: bool = False) -> Optional[float]:
     m = _INCHES_ONLY_RE.match(text)
     if m:
         sign = -1 if m.group(1) == "-" else 1
-        return sign * float(m.group(2))
-    try:
-        return float(text)
-    except ValueError:
-        return None
+        inches = _finite_float(m.group(2))
+        return None if inches is None else sign * inches
+    return _finite_float(text)

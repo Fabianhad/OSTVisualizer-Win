@@ -261,6 +261,38 @@ def _startup_import_window():
 
 
 class FileAssociationStartupImportTests(unittest.TestCase):
+    def test_current_project_import_target_uses_selected_database_for_duplicate_uid(
+        self,
+    ):
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path="first.mdb",
+                    bid_projects={"1": HierarchyProjectInfo(name="First")},
+                ),
+                HierarchyFileEntry(
+                    file_path="second.mdb",
+                    bid_projects={"1": HierarchyProjectInfo(name="Second")},
+                ),
+            ]
+        )
+        window = SimpleNamespace(
+            ui_state_manager=SimpleNamespace(
+                get_selected_bid_ref=lambda: None,
+                selected_project_uid="1",
+                selected_file_path="second.mdb",
+            ),
+            _project_data_service=SimpleNamespace(
+                get_hierarchy=lambda: hierarchy,
+                get_current_file_path=lambda: "first.mdb",
+            ),
+        )
+
+        target = MainWindow._current_project_import_target(window)
+
+        self.assertEqual(target.file_path, "second.mdb")
+        self.assertEqual(target.project_uid, "1")
+
     def test_parse_project_file_args_with_no_files_keeps_startup_path_empty(self):
         result = parse_project_file_args([])
         self.assertFalse(result.has_file_args)

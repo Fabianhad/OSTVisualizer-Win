@@ -2,7 +2,11 @@ import unittest
 from types import SimpleNamespace
 from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.file_results import FileLoadResult
-from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
+from ost_visualizer.domain.entities.hierarchy_data import (
+    HierarchyData,
+    HierarchyFileEntry,
+    HierarchyProjectInfo,
+)
 from ost_visualizer.infrastructure.persistence.repositories import (
     file_project_repository,
 )
@@ -35,6 +39,27 @@ class FakeLifecycleParser:
 
 
 class MdbFileParserTests(unittest.TestCase):
+    def test_project_file_lookup_requires_context_when_local_ids_collide(self):
+        hierarchy = HierarchyData(
+            loaded_files=[
+                HierarchyFileEntry(
+                    file_path="first-id",
+                    bid_projects={"1": HierarchyProjectInfo(name="First")},
+                ),
+                HierarchyFileEntry(
+                    file_path="second-id",
+                    bid_projects={"1": HierarchyProjectInfo(name="Second")},
+                ),
+            ]
+        )
+
+        self.assertIsNone(hierarchy.find_file_path_for_project("1"))
+        self.assertEqual(
+            hierarchy.find_file_path_for_project("1", "second-id"),
+            "second-id",
+        )
+        self.assertIsNone(hierarchy.find_file_path_for_project("1", "missing-id"))
+
     def test_registering_late_sql_hierarchy_preserves_active_access_database(self):
         class _Parser(FakeLifecycleParser):
             def parse(self, file_path):

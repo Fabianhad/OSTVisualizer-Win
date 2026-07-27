@@ -790,20 +790,20 @@ class MainWindow(QtWidgets.QMainWindow):
                     bid_ref
                 ),
             )
+        selected_file_path = self.ui_state_manager.selected_file_path
         if self.ui_state_manager.selected_project_uid:
             hierarchy = self._project_data_service.get_hierarchy()
             file_path = hierarchy.find_file_path_for_project(
-                self.ui_state_manager.selected_project_uid
+                self.ui_state_manager.selected_project_uid,
+                selected_file_path,
             )
             if file_path:
                 return ProjectImportCurrentTarget(
                     file_path=file_path,
                     project_uid=self.ui_state_manager.selected_project_uid,
                 )
-        if self.ui_state_manager.selected_file_path:
-            return ProjectImportCurrentTarget(
-                file_path=self.ui_state_manager.selected_file_path
-            )
+        if selected_file_path:
+            return ProjectImportCurrentTarget(file_path=selected_file_path)
         current_file_path = self._project_data_service.get_current_file_path()
         if current_file_path:
             return ProjectImportCurrentTarget(file_path=current_file_path)

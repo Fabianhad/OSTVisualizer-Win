@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added first-class Microsoft SQL Server databases with encrypted Windows or SQL authentication, Windows Credential Manager secrets, saved descriptors, descriptor-stable project-tree identities, On-Screen Takeoff-compatible reader/writer role membership, rollback-safe direct canonical schema-v1 creation, mandatory snapshot-isolated commit-ordered transaction feeds, multi-user desktop sessions with presence, expiring resource locks, optimistic concurrency, race-safe bid-state/token bootstrap, local-draft protection, reconnect-safe delta polling, finite-value-validated remote takeoff graphs, self-change-safe targeted UI synchronization with context-scoped plan projection coalescing, non-blocking pending-preview takeoff placement with ordered server writes, offline local unload/removal, asynchronous deterministic shutdown, and a safe mixed-application writer gate. Microsoft Access keeps its existing workflow and does not start collaboration services.
+- Added first-class Microsoft SQL Server databases with encrypted Windows or SQL authentication, Windows Credential Manager secrets, saved descriptors, descriptor-stable project-tree identities, On-Screen Takeoff-compatible reader/writer role membership, rollback-safe direct canonical schema-v1 creation, mandatory snapshot-isolated commit-ordered transaction feeds, multi-user desktop sessions with presence, expiring resource locks, atomic resource-aware capability snapshots, optimistic concurrency, race-safe bid-state/token bootstrap, local-draft protection, reconnect-safe delta polling, finite-value-validated remote takeoff graphs, self-change-safe targeted UI synchronization with context-scoped plan projection coalescing, non-blocking pending-preview takeoff placement with ordered server writes, offline local unload/removal, asynchronous deterministic shutdown, and a safe mixed-application writer gate. Microsoft Access keeps its existing workflow and does not start collaboration services.
 - Added ownership-guarded Ubuntu SQL Server container provisioning, multi-address source-IP allowlisting, WireGuard admission, TLS, validation, least-privilege repair, credential rotation, backup/restore verification, recovery, and uninstall tooling; new SQL connections now validate the server certificate and hostname by default.
 - Added persistent PDF annotation caption options with disabled-by-default global and per-caption controls plus Bluebeam-compatible selection, ordering, units, and formatting for all captions supported by exported polygon measurements.
 - Added persistent elevation callout options for HTML and PDF exports, including independent export enablement, red default text colors, and shared condition, top elevation, bottom elevation, and cubic-yard line selection.
@@ -30,7 +30,8 @@
 - Fixed progress dialogs intermittently destroying a worker thread before its
   queued shutdown reached the UI event loop.
 - Fixed periodic license validation updating internal authorization without
-  notifying the UI when a license expired, became invalid, or recovered.
+  notifying the UI when a license expired, became invalid, or recovered, and
+  shutdown now retains an in-flight validation worker until it actually exits.
 - Fixed future-dated local validation timestamps extending licensed offline grace beyond its configured duration.
 - Fixed malformed empty or odd-length polygon and ink data crashing plan
   annotation rendering or the native PDF writer instead of degrading safely.
@@ -45,7 +46,7 @@
 - Fixed axis-aligned curved linear takeoffs using a shorter quadratic fallback instead of their circular arc when calculating quantities.
 - Fixed conflicting condition reference-number updates committing other conditions' renumbering before the target condition save; both changes now share one database transaction.
 - Fixed condition-type IDs from different loaded databases overwriting each other in active-bid memory when the databases used the same numeric IDs.
-- Fixed condition-property saves silently coercing invalid condition numbers or ignoring malformed spacing, and rejecting non-finite elevation, dimension, pitch, and display-size values before they can reach project storage.
+- Fixed condition-property editing silently coercing invalid condition numbers, ignoring malformed spacing, or crashing while formatting non-finite dimension text; non-finite elevation, dimension, pitch, and display-size values are rejected before they can reach project storage.
 - Fixed broad read-only MCP database, project, bid, hierarchy, and live-selection
   responses so they enforce result limits, report truncation metadata, cannot
   double-count repeated live selection IDs, and never expose legacy database
@@ -63,7 +64,7 @@
 - Fixed pages disappearing from the project tree when their stored page folder references a parent folder that no longer exists.
 - Fixed Cover Sheet multi-file imports assigning default sheet dimensions to raster images instead of using their actual image size, and existing pages can now be moved into folders created in the same save.
 - Fixed existing bid areas failing to move beneath an area created in the same save.
-- Fixed multi-database project trees so a newly created folder opens rename in the correct database, grouped project selections do not duplicate operations, cross-database project selections cannot reach single-database writes, and tree rebuilds safely cancel active rename editors.
+- Fixed multi-database project trees so locally repeated project IDs cannot resolve restoration or imports to another database, a newly created folder opens rename in the correct database, grouped project selections do not duplicate operations, cross-database project selections cannot reach single-database writes, and tree rebuilds safely cancel active rename editors.
 - Fixed bid-layer sidebar reloads leaving a stale new-layer editor that blocked later additions, and inline renames now reject blank names and trim surrounding whitespace.
 - Fixed moving ordinary bid layers up or down reporting success without changing their stored sequence.
 - Fixed workspace restoration callbacks so immediate shutdown cannot access a released window shell and delayed destruction from a replaced detached window cannot discard the replacement's persisted tracking state.

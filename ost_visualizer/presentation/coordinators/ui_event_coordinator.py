@@ -2415,7 +2415,8 @@ class UIEventCoordinator:
             self._reset_takeoff_workspace_state()
             restored_project_file_path = (
                 self.project_data.get_hierarchy().find_file_path_for_project(
-                    snap.project_uid
+                    snap.project_uid,
+                    snap.selected_file_path,
                 )
             )
             if restored_project_file_path:

@@ -128,6 +128,24 @@ class DomainLifecycleTests(unittest.TestCase):
         state = WorkspaceState.from_dict({})
         self.assertEqual(state.takeoff_workspace.annotation_styles, {})
 
+    def test_workspace_annotation_styles_recover_from_non_finite_integer_fields(self):
+        state = WorkspaceState.from_dict(
+            {
+                "takeoff_workspace": {
+                    "annotation_styles": {
+                        "text": {
+                            "font_size": float("inf"),
+                            "text_align": float("-inf"),
+                        }
+                    }
+                }
+            }
+        )
+
+        style = state.takeoff_workspace.annotation_styles["text"]
+        self.assertEqual(style.font_size, 12)
+        self.assertEqual(style.text_align, 0)
+
     def test_workspace_summary_state_defaults_to_type_area_grouping(self):
         state = WorkspaceState.from_dict({})
         self.assertTrue(state.takeoff_workspace.summary_group_by_area)
