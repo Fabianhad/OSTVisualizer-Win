@@ -29,68 +29,80 @@ class ExportService:
     def get_export_dialog_info(
         self, page_uids: List[str], format_key: str
     ) -> ExportDialogDto:
-        strategy = self.get_strategy(format_key)
-        if not strategy:
+        format_name = ""
+        try:
+            strategy = self.get_strategy(format_key)
+            if not strategy:
+                return ExportDialogDto(
+                    success=False,
+                    error=f"Unknown export format: {format_key}",
+                    error_code=ExportErrorCode.UNKNOWN_FORMAT,
+                )
+            format_name = strategy.name
+            result = self._collect_takeoffs_for_strategy(page_uids, strategy)
+            if result.is_empty():
+                return ExportDialogDto(
+                    success=False,
+                    error="No takeoffs found for any of the selected pages.",
+                    error_code=ExportErrorCode.NO_DATA,
+                    format_name=format_name,
+                )
+            page_names = [
+                self.project_data.get_page_name(uid) for uid in result.valid_page_uids
+            ]
+            bid = self.project_data.get_current_bid()
+            bid_name = bid.name if bid else "Bid"
+            return ExportDialogDto(
+                success=True,
+                dialog_title=strategy.get_dialog_title(result.page_count),
+                default_filename=strategy.prepare_filename(bid_name, page_names),
+                format_name=format_name,
+                extension=strategy.extension,
+                valid_pages=result.valid_page_uids,
+                takeoffs=result.takeoffs,
+                page_names=page_names,
+                bid_name=bid_name,
+            )
+        except Exception as exc:
             return ExportDialogDto(
                 success=False,
-                error=f"Unknown export format: {format_key}",
-                error_code=ExportErrorCode.UNKNOWN_FORMAT,
+                error=str(exc),
+                error_code=ExportErrorCode.UNEXPECTED,
+                format_name=format_name,
             )
-        result = self._collect_takeoffs_for_strategy(page_uids, strategy)
-        if result.is_empty():
-            return ExportDialogDto(
-                success=False,
-                error="No takeoffs found for any of the selected pages.",
-                error_code=ExportErrorCode.NO_DATA,
-                format_name=strategy.name,
-            )
-        page_names = [
-            self.project_data.get_page_name(uid) for uid in result.valid_page_uids
-        ]
-        bid = self.project_data.get_current_bid()
-        bid_name = bid.name if bid else "Bid"
-        return ExportDialogDto(
-            success=True,
-            dialog_title=strategy.get_dialog_title(result.page_count),
-            default_filename=strategy.prepare_filename(bid_name, page_names),
-            format_name=strategy.name,
-            extension=strategy.extension,
-            valid_pages=result.valid_page_uids,
-            takeoffs=result.takeoffs,
-            page_names=page_names,
-            bid_name=bid_name,
-        )
 
     def export(self, config: Config, request: ExportRequestDto) -> ExportResultDto:
-        strategy = self.get_strategy(request.format_key)
-        if not strategy:
-            return ExportResultDto(
-                success=False,
-                format_name="Unknown",
-                error_message=f"Unknown export format: {request.format_key}",
-                error_code=ExportErrorCode.UNKNOWN_FORMAT,
-            )
-        result = self._collect_takeoffs_for_strategy(request.page_uids, strategy)
-        if result.is_empty():
-            return ExportResultDto(
-                success=False,
-                format_name=strategy.name,
-                error_message="No takeoffs found for any of the selected pages.",
-                error_code=ExportErrorCode.NO_DATA,
-            )
-        page_names = [
-            self.project_data.get_page_name(uid) for uid in result.valid_page_uids
-        ]
-        bid = self.project_data.get_current_bid()
-        bid_name = bid.name if bid else ""
-        metadata = {
-            "bid_name": bid_name,
-            "page_names": page_names,
-        }
-        title = strategy.prepare_title(bid_name, page_names)
-        if title:
-            metadata["title"] = title
+        format_name = "Unknown"
         try:
+            strategy = self.get_strategy(request.format_key)
+            if not strategy:
+                return ExportResultDto(
+                    success=False,
+                    format_name=format_name,
+                    error_message=f"Unknown export format: {request.format_key}",
+                    error_code=ExportErrorCode.UNKNOWN_FORMAT,
+                )
+            format_name = strategy.name
+            result = self._collect_takeoffs_for_strategy(request.page_uids, strategy)
+            if result.is_empty():
+                return ExportResultDto(
+                    success=False,
+                    format_name=format_name,
+                    error_message="No takeoffs found for any of the selected pages.",
+                    error_code=ExportErrorCode.NO_DATA,
+                )
+            page_names = [
+                self.project_data.get_page_name(uid) for uid in result.valid_page_uids
+            ]
+            bid = self.project_data.get_current_bid()
+            bid_name = bid.name if bid else ""
+            metadata = {
+                "bid_name": bid_name,
+                "page_names": page_names,
+            }
+            title = strategy.prepare_title(bid_name, page_names)
+            if title:
+                metadata["title"] = title
             export_options = strategy.get_export_options(
                 config, self.project_data.get_page_area_selections()
             )
@@ -125,18 +137,18 @@ class ExportService:
                 return ExportResultDto(
                     success=True,
                     page_count=result.page_count,
-                    format_name=strategy.name,
+                    format_name=format_name,
                 )
             return ExportResultDto(
                 success=False,
-                format_name=strategy.name,
+                format_name=format_name,
                 error_message="Export function returned False",
                 error_code=ExportErrorCode.WORKER_FAILED,
             )
         except Exception as e:
             return ExportResultDto(
                 success=False,
-                format_name=strategy.name,
+                format_name=format_name,
                 error_message=str(e),
                 error_code=ExportErrorCode.UNEXPECTED,
             )
