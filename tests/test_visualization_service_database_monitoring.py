@@ -2,6 +2,7 @@ import unittest
 import random
 import threading
 from types import SimpleNamespace
+from unittest.mock import patch
 from ost_visualizer.application.dtos.mesh_geometry_dto import MeshSceneIdentity
 from ost_visualizer.application.events.app_events import AppEvents
 from ost_visualizer.application.services.visualization_service import (
@@ -117,6 +118,37 @@ def _service(
 
 
 class VisualizationServiceDatabaseMonitoringTests(unittest.TestCase):
+    def test_monitor_closes_commit_event_when_status_setup_fails(self):
+        class _CommitEvent:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def open(self, _name) -> bool:
+                return True
+
+            def close(self) -> None:
+                self.closed = True
+
+        monitor = TransactionMonitor()
+        commit_event = _CommitEvent()
+        with (
+            patch(
+                "ost_visualizer.infrastructure.monitoring.transaction_monitor."
+                "ost_winevent.WinEvent",
+                return_value=commit_event,
+            ),
+            patch.object(
+                monitor,
+                "_open_status_event",
+                side_effect=RuntimeError("status setup failed"),
+            ),
+        ):
+            self.assertFalse(monitor._connect_to_events())
+
+        self.assertTrue(commit_event.closed)
+        self.assertIsNone(monitor._event)
+        self.assertIsNone(monitor._status_event)
+
     def test_empty_and_meshless_page_selections_publish_authoritative_scenes(
         self,
     ):

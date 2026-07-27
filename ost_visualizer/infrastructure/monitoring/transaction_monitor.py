@@ -50,6 +50,7 @@ class TransactionMonitor:
             self._handle_connection_established()
             return True
         except Exception:
+            self._reset_events()
             self._handle_connection_failed()
             return False
 

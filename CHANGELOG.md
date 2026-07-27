@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed realtime transaction monitoring leaking its opened commit-event handle
+  when status-event initialization failed.
 - Fixed progress dialogs intermittently destroying a worker thread before its
   queued shutdown reached the UI event loop.
 - Fixed periodic license validation updating internal authorization without
