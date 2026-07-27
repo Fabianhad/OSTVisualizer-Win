@@ -236,6 +236,22 @@ class _AreaPlacementPlanView(_PlanView):
         self.set_cursor_mode(CURSOR_MODE_SELECT)
 
 
+class _CancellingAreaPlacementPlanView(_AreaPlacementPlanView):
+    def __init__(self):
+        super().__init__()
+        self.editing_enabled = True
+        self.editing_disable_cancellations = 0
+
+    def set_editing_enabled(self, enabled: bool):
+        enabled = bool(enabled)
+        if self.editing_enabled == enabled:
+            return
+        super().set_editing_enabled(enabled)
+        if not enabled:
+            self.editing_disable_cancellations += 1
+            self.cancel_place_mode()
+
+
 class ToolbarStateCoordinatorTests(unittest.TestCase):
     def test_silent_action_updates_preserve_caller_owned_signal_blocks(self):
         _app()
@@ -392,7 +408,7 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         project_data = _AreaPlacementProjectData()
         access = _AreaPlacementAccess(project_data)
         ui_state = _UiState(active_page_uid="p1")
-        plan_view = _AreaPlacementPlanView()
+        plan_view = _CancellingAreaPlacementPlanView()
         coordinator = ToolbarStateCoordinator(ui_state, access, project_data)
         select_action = QtGui.QAction()
         select_action.setCheckable(True)
@@ -435,11 +451,56 @@ class ToolbarStateCoordinatorTests(unittest.TestCase):
         self.assertTrue(access.area_active)
         self.assertTrue(annotation_action.isChecked())
         self.assertEqual(plan_view.cursor_mode, CURSOR_MODE_ANNOTATION_PLACE)
+        self.assertEqual(plan_view.editing_disable_cancellations, 0)
         plan_view.end_area()
         self.assertFalse(access.area_active)
         self.assertTrue(annotation_action.isChecked())
         self.assertTrue(annotation_action.isEnabled())
         self.assertTrue(copy_action.isEnabled())
+
+    def test_active_takeoff_area_survives_first_point_toolbar_refresh(self):
+        _app()
+        project_data = _AreaPlacementProjectData()
+        access = _AreaPlacementAccess(project_data)
+        ui_state = _UiState(active_page_uid="p1")
+        plan_view = _CancellingAreaPlacementPlanView()
+        plan_view.place_condition_uid = "c1"
+        plan_view.cursor_mode = CURSOR_MODE_PLACE
+        coordinator = ToolbarStateCoordinator(ui_state, access, project_data)
+        select_action = QtGui.QAction()
+        select_action.setCheckable(True)
+        place_action = QtGui.QAction()
+        place_action.setCheckable(True)
+        action_group = QtGui.QActionGroup(None)
+        action_group.setExclusive(True)
+        action_group.addAction(select_action)
+        action_group.addAction(place_action)
+        select_action.toggled.connect(
+            lambda checked: (
+                plan_view.set_cursor_mode(CURSOR_MODE_SELECT) if checked else None
+            )
+        )
+        coordinator.set_select_action(select_action)
+        coordinator.set_place_action(place_action)
+        coordinator.set_tab_widget(_IndexWidget(TAB_INDEX_TAKEOFF))
+        coordinator.set_view_stack(_IndexWidget(1))
+        coordinator.set_plan_view(plan_view)
+        placement = PlacementCoordinator(ui_state, access, None, project_data)
+        placement.set_plan_view(plan_view)
+        placement.set_area_state_change_callback(coordinator.refresh)
+        area_transitions = []
+        plan_view.area_placement_in_progress.connect(area_transitions.append)
+        place_action.setChecked(True)
+
+        plan_view.begin_area()
+
+        self.assertEqual(area_transitions, [True])
+        self.assertTrue(access.area_active)
+        self.assertTrue(place_action.isChecked())
+        self.assertFalse(select_action.isChecked())
+        self.assertEqual(plan_view.cursor_mode, CURSOR_MODE_PLACE)
+        self.assertTrue(plan_view.editing_enabled)
+        self.assertEqual(plan_view.editing_disable_cancellations, 0)
 
     def test_invalid_active_area_cancels_once_before_toolbar_projection(self):
         _app()

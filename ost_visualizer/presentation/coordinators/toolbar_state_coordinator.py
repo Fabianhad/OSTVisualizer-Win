@@ -213,6 +213,11 @@ class ToolbarStateCoordinator:
         if self._normalize_active_tool():
             self._refresh_requested = True
             return
+        active_placement_feature = self._active_placement_feature()
+        active_placement_valid = bool(
+            active_placement_feature
+            and self._active_placement_is_valid(active_placement_feature)
+        )
         current_tab = self._tab_widget.currentIndex() if self._tab_widget else 0
         on_takeoff_tab = current_tab == TAB_INDEX_TAKEOFF
         on_summary_tab = current_tab == TAB_INDEX_SUMMARY
@@ -394,7 +399,10 @@ class ToolbarStateCoordinator:
         if self.plan_view:
             self.plan_view.set_selection_enabled(select_allowed)
             inline_edit_active = self.plan_view.is_text_annotation_inline_edit_active()
-            if not inline_edit_active or not inline_edit_allowed:
+            if (
+                not active_placement_valid
+                and (not inline_edit_active or not inline_edit_allowed)
+            ):
                 self.plan_view.set_editing_enabled(edit_allowed)
             self.plan_view.set_text_annotation_inline_edit_enabled(inline_edit_allowed)
         if self.opengl_viewer:
@@ -428,20 +436,19 @@ class ToolbarStateCoordinator:
             )
         self.refresh_backout_action()
 
-    def _normalize_active_tool(self) -> bool:
-        active_place = bool(self._place_action and self._place_action.isChecked())
-        active_annotation = any(
-            action.isChecked() for action in self._annotation_tool_actions
-        )
-        if not active_place and not active_annotation:
-            return False
-        if not self._select_action:
-            return False
-        if active_place:
+    def _active_placement_feature(self) -> Optional[Feature]:
+        if self._place_action and self._place_action.isChecked():
+            return Feature.PLACE_PLAN_ITEMS
+        if any(action.isChecked() for action in self._annotation_tool_actions):
+            return Feature.PLACE_ANNOTATIONS
+        return None
+
+    def _active_placement_is_valid(self, feature: Feature) -> bool:
+        if feature == Feature.PLACE_PLAN_ITEMS:
             condition_uid = (
                 self.plan_view.place_condition_uid if self.plan_view else None
             )
-            tool_valid = bool(
+            return bool(
                 self.is_takeoff_2d_view_active()
                 and self.plan_view
                 and self._ui_state.active_page_uid
@@ -452,8 +459,8 @@ class ToolbarStateCoordinator:
                     Feature.PLACE_PLAN_ITEMS
                 )
             )
-        else:
-            tool_valid = bool(
+        if feature == Feature.PLACE_ANNOTATIONS:
+            return bool(
                 self._tab_widget
                 and self._tab_widget.currentIndex() == TAB_INDEX_TAKEOFF
                 and self.plan_view
@@ -464,9 +471,15 @@ class ToolbarStateCoordinator:
                     Feature.PLACE_ANNOTATIONS
                 )
             )
-        if tool_valid:
+        return False
+
+    def _normalize_active_tool(self) -> bool:
+        active_feature = self._active_placement_feature()
+        if active_feature is None or not self._select_action:
             return False
-        if active_place:
+        if self._active_placement_is_valid(active_feature):
+            return False
+        if active_feature == Feature.PLACE_PLAN_ITEMS:
             self._set_action_checked_silent(self._place_action, False)
         else:
             for action in self._annotation_tool_actions:
