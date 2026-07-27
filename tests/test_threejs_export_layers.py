@@ -397,7 +397,6 @@ class ThreejsExportLayerTests(unittest.TestCase):
                 "missing.html",
                 include_elevation_callouts=False,
             )
-
         self.assertFalse(result)
         renderer.assert_called_once()
 

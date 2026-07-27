@@ -673,10 +673,8 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
     def test_plan_view_cleanup_is_idempotent_after_services_are_released(self):
         view = self._make_plan_view()
         rendering_service = view._rendering_service
-
         view.cleanup()
         view.cleanup()
-
         self.assertEqual(rendering_service.shutdown_calls, 1)
 
     def test_place_preview_secondary_conditions_match_active_type(self):
@@ -4051,9 +4049,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view._cursor_mode = "select"
         view.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
         view.viewport().setCursor(QtCore.Qt.CursorShape.IBeamCursor)
-
         view.leaveEvent(QtCore.QEvent(QtCore.QEvent.Type.Leave))
-
         self.assertEqual(
             view.cursor().shape(),
             QtCore.Qt.CursorShape.CrossCursor,
@@ -7034,9 +7030,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.page_view_state_changed.connect(
             lambda *values: state_values.append(values)
         )
-
         view.zoom_to_rect(20.0, 30.0, 120.0, 180.0)
-
         self.assertEqual(len(zoom_values), 1)
         self.assertEqual(len(state_values), 1)
         self.assertEqual(state_values[0][0], page.uid)
@@ -7061,9 +7055,7 @@ class TakeoffPlanViewOverlayRefreshTests(unittest.TestCase):
         view.page_view_state_changed.connect(
             lambda *values: state_values.append(values)
         )
-
         view.zoom_to_rect(float("nan"), 30.0, 120.0, 180.0)
-
         self.assertEqual(view.transform(), original_transform)
         self.assertEqual(zoom_values, [])
         self.assertEqual(state_values, [])

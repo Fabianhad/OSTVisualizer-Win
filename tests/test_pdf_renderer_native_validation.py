@@ -4,7 +4,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-
 from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 from ost_visualizer.presentation.visualization.pdf import ost_pdf
 
@@ -37,11 +36,9 @@ class PdfRendererNativeValidationTests(unittest.TestCase):
             pdf_path = self._create_blank_pdf(temp_dir)
             renderer = ost_pdf.PDFRenderer()
             self.assertTrue(renderer.open(str(pdf_path)))
-
             for scale in (0.0, -1.0, math.nan, math.inf, 1.0e30):
                 with self.subTest(scale=scale):
                     self.assertIsNone(renderer.render_page(0, scale, 0))
-
             self.assertIsNone(
                 renderer.render_page_frame(0, math.inf, 0.0, 0.0, 10.0, 10.0, 0)
             )
@@ -51,7 +48,6 @@ class PdfRendererNativeValidationTests(unittest.TestCase):
             self.assertIsNone(
                 renderer.render_page_frame(0, 1.0, 0.0, 0.0, math.inf, 10.0, 0)
             )
-
             page = renderer.render_page(0, 0.25, 0)
             self.assertIsNotNone(page)
             self.assertEqual((page.width, page.height, page.stride), (18, 18, 72))
@@ -64,7 +60,6 @@ import tempfile
 from pathlib import Path
 from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 from ost_visualizer.presentation.visualization.pdf import ost_pdf
-
 with tempfile.TemporaryDirectory() as temp_dir:
     path = Path(temp_dir) / "blank.pdf"
     writer = ost_pdf_writer.PDFWriter()

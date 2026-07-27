@@ -156,7 +156,6 @@ class LicenseActivationContractTests(unittest.TestCase):
             signature_verifier=verifier,
             offline_grace_hours=72,
         )
-
         self.assertFalse(aggregate.can_use_offline_grace())
 
     def test_failure_parser_maps_explicit_inactive_device_contract(self):
@@ -340,9 +339,7 @@ class LicenseActivationContractTests(unittest.TestCase):
             publisher,
             callback_bridge=bridge,
         )
-
         result = orchestrator._perform_periodic_validation()
-
         self.assertIs(result, invalid)
         self.assertEqual(
             bridge.dispatched,
@@ -369,9 +366,7 @@ class LicenseActivationContractTests(unittest.TestCase):
             publisher,
             callback_bridge=bridge,
         )
-
         result = orchestrator._perform_periodic_validation()
-
         self.assertIs(result, valid)
         self.assertEqual(
             bridge.dispatched,

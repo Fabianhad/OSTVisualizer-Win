@@ -1579,12 +1579,10 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE BidAnnotationRects (UID INTEGER PRIMARY KEY)")
         conn.execute("INSERT INTO BidAnnotationRects (UID) VALUES (1)")
-
         result = _DimensionWriteOps(conn).delete_annotations(
             "bid.mdb",
             [("1", "rect"), ("2", "unsupported")],
         )
-
         self.assertFalse(result)
         self.assertEqual(
             conn.execute("SELECT UID FROM BidAnnotationRects").fetchall(),
@@ -1595,12 +1593,10 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE BidAnnotationRects (UID INTEGER PRIMARY KEY)")
         conn.execute("INSERT INTO BidAnnotationRects (UID) VALUES (1)")
-
         result = _DimensionWriteOps(conn).delete_annotations(
             "bid.mdb",
             [("not-a-uid", "rect")],
         )
-
         self.assertFalse(result)
         self.assertEqual(
             conn.execute("SELECT UID FROM BidAnnotationRects").fetchall(),
@@ -1636,12 +1632,10 @@ class BidDimensionAnnotationTests(unittest.TestCase):
             annotation_type="polygon",
             position=[0.0, 0.0, 10.0, 0.0, 5.0],
         )
-
         geometry = calculate_annotation_geometry(
             annotation,
             lambda position: list(position),
         )
-
         self.assertEqual(geometry["points"], [(0.0, 0.0), (10.0, 0.0)])
 
     def test_empty_text_annotation_renders_editable_text_item(self):

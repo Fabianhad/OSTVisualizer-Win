@@ -854,12 +854,10 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             queued = []
             window = SimpleNamespace(enqueue_project_file_args=queued.append)
             logger = SimpleNamespace(warning=lambda *_args, **_kwargs: None)
-
             _install_single_instance_handler(server, window, logger)
             midpoint = len(payload) // 2
             socket.push(payload[:midpoint])
             socket.push(payload[midpoint:])
-
             self.assertEqual(queued, [])
             socket.disconnect()
             self.assertEqual(queued, [args])

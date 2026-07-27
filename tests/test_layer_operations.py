@@ -1,7 +1,6 @@
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
-
 from ost_visualizer.infrastructure.mdb.components.layer_operations import (
     LayerOperationsMixin,
 )
@@ -54,9 +53,7 @@ class _LayerOperations(LayerOperationsMixin):
 class LayerOperationsTests(unittest.TestCase):
     def test_bid_layer_swap_updates_non_template_rows(self):
         operations = _LayerOperations()
-
         self.assertTrue(operations.swap_layer_sequence("bid.mdb", "10", "11"))
-
         updates = operations.cursor.executions[1:]
         self.assertEqual(
             updates,

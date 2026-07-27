@@ -1059,7 +1059,6 @@ class OptionsPreferencesTests(unittest.TestCase):
                 "ost_visualizer.presentation.dialogs.options.dialog.show_warning"
             ) as warning:
                 _apply_button(dialog).click()
-
             self.assertTrue(dialog.isVisible())
             self.assertTrue(_apply_button(dialog).isEnabled())
             self.assertEqual(dialog.get_config(), initial)
@@ -1083,7 +1082,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             "ost_visualizer.presentation.dialogs.options.dialog.show_warning"
         ):
             dialog.accept()
-
         self.assertNotEqual(
             dialog.result(),
             QtWidgets.QDialog.DialogCode.Accepted,
@@ -2360,7 +2358,6 @@ class OptionsPreferencesTests(unittest.TestCase):
             ) as warning,
         ):
             _reset_all_button(dialog).click()
-
         self.assertEqual(dialog.get_config(), initial)
         self.assertTrue(dialog._disable_high_res_check.isChecked())
         self.assertTrue(_apply_button(dialog).isEnabled())

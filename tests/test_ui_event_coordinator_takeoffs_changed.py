@@ -2811,10 +2811,8 @@ class UIEventCoordinatorTakeoffsChangedTests(unittest.TestCase):
         coordinator.condition_summary_tab = None
         coordinator._condition_handler = None
         coordinator._deferred_persistence = None
-
         coordinator.cleanup()
         coordinator.cleanup()
-
         self.assertEqual(visualization.cancelled_mesh_refreshes, 1)
 
     def test_clearing_takeoff_selection_keeps_placement_owned_highlight(self):

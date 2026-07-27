@@ -595,7 +595,6 @@ class ImportRefreshFlowTests(unittest.TestCase):
             )
             import_handler_module.show_info = original_show_info
             import_handler_module.show_warning = original_show_warning
-
         self.assertEqual(service.reloads, ["target.mdb"])
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0][0], "Refresh Error")

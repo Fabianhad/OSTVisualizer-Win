@@ -151,7 +151,6 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
                 image_show_mode=1,
             )
         )
-
         self.assertTrue(strategy.needs_async_loading)
         self.assertTrue(strategy.load_overlay)
         self.assertFalse(strategy.load_main)
@@ -168,7 +167,6 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
                 image_show_mode=1,
             )
         )
-
         self.assertFalse(strategy.needs_async_loading)
         self.assertFalse(strategy.load_overlay)
         self.assertFalse(strategy.load_main)
@@ -500,7 +498,6 @@ class PageRenderPrefetchCoordinatorTests(unittest.TestCase):
         service._worker_threads = [worker]
         service.shutdown()
         self.assertIsNotNone(service._page_cache)
-
         worker.alive = False
         service.shutdown()
         self.assertIsNone(service._page_cache)

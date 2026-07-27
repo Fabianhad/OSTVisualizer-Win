@@ -1,8 +1,6 @@
 import logging
 from typing import Mapping, Optional, Sequence, cast
-
 from PySide6 import QtCore, QtGui, QtWidgets
-
 from ...application.dtos.mesh_geometry_dto import MeshSceneIdentity
 from ...application.interfaces.i_window_icon_provider import IWindowIconProvider
 from ...domain.entities.identity_refs import BidRef

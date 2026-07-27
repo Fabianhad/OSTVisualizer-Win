@@ -309,7 +309,6 @@ class InfrastructureLifecycleTests(unittest.TestCase):
             self.assertIs(service_provider.get_mdb_reader(), default_reader)
             default_writer = service_provider.get_mdb_writer()
             self.assertIs(service_provider.get_mdb_writer(), default_writer)
-
             default_manager = reader_type.call_args_list[0].args[0]
             self.assertIs(writer_type.call_args_list[0].args[0], default_manager)
             service_provider.get_mdb_reader(explicit_manager)
@@ -472,7 +471,6 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 creator = database_creator.DatabaseCreator()
                 creator._create_blank_mdb(first_path)
                 creator._create_blank_mdb(second_path)
-
         self.assertNotEqual(commands[0][2], commands[1][2])
         self.assertEqual(commands[0][3], str(first_path))
         self.assertEqual(commands[1][3], str(second_path))
@@ -1033,12 +1031,10 @@ class InfrastructureLifecycleTests(unittest.TestCase):
         conn.execute("INSERT INTO CdnTypes (UID, Name) VALUES (1, 'Unused')")
         conn.execute("INSERT INTO CdnTypes (UID, Name) VALUES (2, 'Used')")
         conn.execute("INSERT INTO BidConditions (UID, CdnTypeUID) VALUES (10, 2)")
-
         with self.assertLogs("test", level="WARNING"):
             result = _SqliteMdbOps(conn).save_condition_types(
                 "bid.mdb", {"deleted_uids": ["1", "2"]}
             )
-
         self.assertIsNone(result)
         self.assertEqual(
             conn.execute("SELECT UID FROM CdnTypes ORDER BY UID").fetchall(),
@@ -1170,9 +1166,7 @@ class InfrastructureLifecycleTests(unittest.TestCase):
                 """,
                 (index,),
             )
-
         self.assertTrue(_SqliteMdbOps(conn).delete_takeoffs("bid.mdb", ["2"]))
-
         self.assertEqual(
             conn.execute("SELECT UID FROM BidTakeoffs ORDER BY UID").fetchall(),
             [(1,), (3,)],

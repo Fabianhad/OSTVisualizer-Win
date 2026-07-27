@@ -696,11 +696,9 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         sidebar.tree.setUpdatesEnabled(False)
         sidebar.tree.blockSignals(True)
         sidebar._block_item_changed = True
-
         sidebar.load_conditions({"c1": condition}, {}, "Project")
         sidebar.apply_layer_visibility_state({"c1": condition})
         sidebar.update_quantities({"c1": (12.0, 0.0, 0.0)})
-
         self.assertFalse(sidebar.tree.isSortingEnabled())
         self.assertFalse(sidebar.tree.updatesEnabled())
         self.assertTrue(sidebar.tree.signalsBlocked())
@@ -716,13 +714,11 @@ class ConditionUiBehaviorTests(unittest.TestCase):
             sidebar.tree.signalsBlocked(),
             sidebar._block_item_changed,
         )
-
         with patch.object(
             sidebar, "_build_folder_tree", side_effect=RuntimeError("build failed")
         ):
             with self.assertRaisesRegex(RuntimeError, "build failed"):
                 sidebar.load_conditions({"c1": condition}, {}, "Project")
-
         self.assertEqual(
             (
                 sidebar.tree.isSortingEnabled(),
@@ -1556,10 +1552,8 @@ class ConditionUiBehaviorTests(unittest.TestCase):
 
     def test_fixed_diagonal_intersections_count_shared_vertices_once(self):
         square = [[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]]
-
         backward = pattern_renderer._find_backward_diagonal_intersections(0.0, square)
         forward = pattern_renderer._find_forward_diagonal_intersections(10.0, square)
-
         self.assertEqual(backward, [(0.0, 0.0), (10.0, 10.0)])
         self.assertEqual(forward, [(0.0, 10.0), (10.0, 0.0)])
 
@@ -1654,7 +1648,6 @@ class ConditionUiBehaviorTests(unittest.TestCase):
 
     def test_area_path_rejects_odd_coordinate_count(self):
         renderer = TakeoffRenderer(FakeCoordinateSystem(), FakeColorService())
-
         self.assertIsNone(
             renderer._create_area_path([0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 5.0])
         )
@@ -1666,9 +1659,7 @@ class ConditionUiBehaviorTests(unittest.TestCase):
         hole = QPainterPath()
         hole.addRect(0.0, 0.0, 10.0, 10.0)
         visible_path = outer.subtracted(hole)
-
         anchor = renderer._path_centroid(visible_path)
-
         self.assertIsNotNone(anchor)
         self.assertTrue(visible_path.contains(QtCore.QPointF(*anchor)))
 

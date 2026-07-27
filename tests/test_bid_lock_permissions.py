@@ -654,7 +654,6 @@ class BidLockPermissionTests(unittest.TestCase):
             project_data,
             capability=_ResourceCapability(),
         )
-
         self.assertFalse(manager.is_allowed(Feature.EDIT_BID_JOB_STATUS))
         self.assertEqual(
             checked_resources,
@@ -1564,7 +1563,6 @@ class BidLockPermissionTests(unittest.TestCase):
             ui_state_manager=SimpleNamespace(),
             deferred_persistence_manager=_FakeDeferredPersistence(),
         )
-
         self.assertTrue(project_data.project_has_bids(project_uid, first_path))
         self.assertFalse(project_data.project_has_bids(project_uid, second_path))
         self.assertEqual(
@@ -2188,11 +2186,9 @@ class BidLockPermissionTests(unittest.TestCase):
                 service._condition_type_uids_in_use_provider = provider
                 save_use_case = _SequenceUseCase([{}])
                 service._save_condition_types = save_use_case
-
                 result = service.delete_condition_types_result(
                     project_data.bid_ref.file_path, ["type-unknown"]
                 )
-
                 self.assertFalse(result)
                 self.assertFalse(result.write_success)
                 self.assertEqual(
@@ -2206,14 +2202,12 @@ class BidLockPermissionTests(unittest.TestCase):
         service, *_ = _write_service(project_data)
         delete_use_case = _UseCase(True)
         service._delete_pages = delete_use_case
-
         self.assertTrue(
             service.delete_pages(
                 project_data.bid_ref.file_path,
                 ["page-1", "", "page-1", "page-2"],
             )
         )
-
         self.assertEqual(
             delete_use_case.calls,
             [
@@ -2410,9 +2404,7 @@ class BidLockPermissionTests(unittest.TestCase):
                 "project-new", write_success=True, reload_success=True
             )
         )
-
         MenuController._new_folder(controller)
-
         self.assertEqual(renames, [("project-new", "db.mdb")])
 
     def test_batch_layer_delete_reports_partial_success_and_reloads_once(self):

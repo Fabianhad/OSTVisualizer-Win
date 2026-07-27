@@ -219,7 +219,6 @@ class DomainLifecycleTests(unittest.TestCase):
                 },
             }
         )
-
         self.assertTrue(state.main_window.is_maximized)
         self.assertTrue(state.main_window.status_bar_visible)
         self.assertTrue(state.takeoff_workspace.view_2d_tab_visible)

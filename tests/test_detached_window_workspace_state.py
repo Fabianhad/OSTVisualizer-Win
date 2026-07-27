@@ -2342,10 +2342,8 @@ class DetachedPageViewManagerLifecycleTests(unittest.TestCase):
         manager._is_read_only = lambda: False
         manager._get_page_data = lambda view: SimpleNamespace(page=object())
         view = SimpleNamespace(uid="view-1", bid_ref=None)
-
         with self.assertRaisesRegex(RuntimeError, "show failed"):
             manager._create_window(view)
-
         self.assertIsNone(manager._window)
         self.assertIsNone(manager._window_undo_service)
         self.assertEqual(

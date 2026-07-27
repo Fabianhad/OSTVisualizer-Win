@@ -3,7 +3,6 @@ import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-
 from ost_visualizer.domain.entities.identity_refs import BidRef
 from ost_visualizer.infrastructure.mdb.components.bid_data_reader import (
     BidDataReaderMixin,
@@ -77,7 +76,6 @@ class _Reader(BidDataReaderMixin):
 class BidDataReaderTests(unittest.TestCase):
     def test_delete_content_scan_discards_partial_results_after_failure(self):
         reader = _Reader()
-
         self.assertIsNone(reader.get_pages_with_delete_content("project.mdb", "bid-1"))
         self.assertGreaterEqual(reader.connection.query_count, 3)
 
@@ -100,14 +98,12 @@ class BidDataReaderTests(unittest.TestCase):
             delete_pages=Mock(side_effect=AssertionError("delete must not run"))
         )
         coordinator.main_window = object()
-
         with patch(
             "ost_visualizer.presentation.coordinators.ui_event_coordinator."
             "show_critical",
             critical,
         ):
             coordinator.delete_current_page()
-
         critical.assert_called_once()
         coordinator._stage_selection_after_page_delete.assert_not_called()
         coordinator._project_write_service.delete_pages.assert_not_called()
@@ -134,7 +130,6 @@ class BidDataReaderTests(unittest.TestCase):
             deferred_persistence_manager=object(),
             workspace_state_model=object(),
         )
-
         with patch(
             "ost_visualizer.presentation.handlers.cover_sheet_handler.show_critical"
         ) as critical, patch(
@@ -142,7 +137,6 @@ class BidDataReaderTests(unittest.TestCase):
             side_effect=AssertionError("dialog must not open"),
         ):
             handler.open_cover_sheet()
-
         critical.assert_called_once()
 
 

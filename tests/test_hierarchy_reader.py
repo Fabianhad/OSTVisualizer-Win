@@ -1,10 +1,8 @@
 import unittest
 from collections import namedtuple
-
 from ost_visualizer.infrastructure.mdb.components.hierarchy_reader import (
     HierarchyReaderMixin,
 )
-
 
 _PageRow = namedtuple(
     "_PageRow",
@@ -100,11 +98,9 @@ class HierarchyReaderTests(unittest.TestCase):
                 )
             ],
         )
-
         folders, pages_without_folder = _Reader()._get_bid_folder_page_structure(
             connection, "1", _Schema()
         )
-
         self.assertEqual(list(folders), ["10"])
         self.assertEqual([page.uid for page in folders["10"].pages], ["20"])
         self.assertEqual(pages_without_folder, [])

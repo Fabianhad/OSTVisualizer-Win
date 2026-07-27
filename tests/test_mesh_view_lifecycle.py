@@ -408,12 +408,10 @@ class TestMeshViewLifecycle(unittest.TestCase):
             shutdown=lambda: (_ for _ in ()).throw(RuntimeError("shutdown failed"))
         )
         viewer._renderer = renderer
-
         with self.assertLogs(
             "ost_visualizer.presentation.components.mesh_view", level="ERROR"
         ):
             viewer.cleanup()
-
         self.assertTrue(viewer._destroyed)
         self.assertIsNone(viewer._renderer)
         self.assertIsNone(viewer._animation_timer)
@@ -1288,13 +1286,11 @@ class TestMeshViewLifecycle(unittest.TestCase):
         window._context_menu_action_state = lambda: retained
         window.icon_provider = retained
         window._color_service = retained
-
         with self.assertLogs(
             "ost_visualizer.presentation.windows.mesh_view_window",
             level="ERROR",
         ) as captured:
             MeshViewWindow.cleanup(window)
-
         self.assertIsNone(window._resize_timer)
         self.assertIsNone(window.viewer)
         self.assertIsNone(window._zoom_combo)

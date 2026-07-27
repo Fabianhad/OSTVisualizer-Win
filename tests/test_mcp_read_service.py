@@ -354,12 +354,10 @@ class McpReadServiceTests(unittest.TestCase):
                 ),
             ]
         )
-
         databases = self.service.list_databases(limit=1)
         projects = self.service.list_projects("db-1", limit=1)
         bids = self.service.list_bids("db-1", limit=1)
         hierarchy = self.service.get_hierarchy("db-1", limit=2)
-
         self.assertEqual(len(databases), 1)
         self.assertTrue(databases.meta.truncated)
         self.assertEqual(len(projects), 1)

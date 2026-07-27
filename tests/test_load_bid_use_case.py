@@ -1,6 +1,5 @@
 import unittest
 from types import SimpleNamespace
-
 from ost_visualizer.application.use_cases.project.load_bid_use_case import (
     LoadBidUseCase,
 )
@@ -28,7 +27,6 @@ class LoadBidUseCaseTests(unittest.TestCase):
             deselect_pages=lambda: None,
         )
         use_case = LoadBidUseCase(model, FileManager(), ConcurrencyTokens())
-
         self.assertTrue(use_case.execute(BidRef("database-id", "42")))
         self.assertEqual(
             calls,

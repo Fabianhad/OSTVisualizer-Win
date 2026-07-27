@@ -1,7 +1,6 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
-
 from ost_visualizer.application.dtos.export_dto import (
     ExportErrorCode,
     ExportRequestDto,
@@ -75,9 +74,7 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
         self.strategy.prepare_filename.side_effect = RuntimeError(
             "filename preparation failed"
         )
-
         result = self.service.get_export_dialog_info(["page-1"], "obj")
-
         self.assertFalse(result.success)
         self.assertEqual(result.format_name, "OBJ")
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
@@ -87,12 +84,10 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
         self.project_data.collect_takeoffs_for_pages.side_effect = RuntimeError(
             "collection failed"
         )
-
         result = self.service.export(
             SimpleNamespace(),
             ExportRequestDto(["page-1"], "obj", "output.obj"),
         )
-
         self.assertFalse(result.success)
         self.assertEqual(result.format_name, "OBJ")
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)
@@ -102,12 +97,10 @@ class ExportServiceFailureBoundaryTests(unittest.TestCase):
         self.strategy.prepare_title.side_effect = RuntimeError(
             "title preparation failed"
         )
-
         result = self.service.export(
             SimpleNamespace(),
             ExportRequestDto(["page-1"], "obj", "output.obj"),
         )
-
         self.assertFalse(result.success)
         self.assertEqual(result.format_name, "OBJ")
         self.assertEqual(result.error_code, ExportErrorCode.UNEXPECTED)

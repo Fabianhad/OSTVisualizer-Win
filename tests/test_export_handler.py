@@ -334,7 +334,6 @@ class ExportHandlerPdfFilenameTests(unittest.TestCase):
                 ),
             ):
                 handler.export_as_pdf(["page-1"])
-
         self.assertEqual(errors[0][0], "Invalid Save Location")
 
     def test_general_export_uses_saved_config_snapshot(self):
@@ -747,7 +746,6 @@ class OspExporterProgressTests(unittest.TestCase):
                 result = self._make_osp_exporter(
                     lambda _uom_service: FakeOstExporter()
                 ).export(RawBidData(), str(output))
-
             self.assertFalse(result.success)
             self.assertEqual(result.error_code, ExportErrorCode.WRITE_FAILED)
             self.assertEqual(output.read_bytes(), b"existing archive")

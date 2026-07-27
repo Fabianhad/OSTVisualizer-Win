@@ -281,9 +281,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         project_two, _ = self.view._find_project_item("project-two", "C:/jobs/two.mdb")
         project_one.setSelected(True)
         project_two.setSelected(True)
-
         _bid_refs, project_uids = self.view._collect_multi_selection()
-
         self.assertEqual(project_uids, [])
 
     def test_grouped_project_multi_selection_deduplicates_project_uid(self):
@@ -318,9 +316,7 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         self.assertEqual(len(project_items), 2)
         for item in project_items:
             item.setSelected(True)
-
         _bid_refs, project_uids = self.view._collect_multi_selection()
-
         self.assertEqual(project_uids, ["project-shared"])
 
     def test_scheduled_rename_targets_matching_database_for_duplicate_project_uid(self):
@@ -329,10 +325,8 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         loaded_files.extend(self._loaded_file([], file_path="C:/jobs/two.mdb"))
         loaded_files[1].projects[0].uid = "project-shared"
         self.view.build_complete_structure(loaded_files)
-
         self.view.schedule_rename("project-shared", "C:/jobs/two.mdb")
         self.app.processEvents()
-
         self.assertIsNotNone(self.view._rename_item)
         self.assertEqual(self.view._rename_item[2], "C:/jobs/two.mdb")
         self.view.reset()
@@ -347,10 +341,8 @@ class ProjectTreeViewExpansionTests(unittest.TestCase):
         editor = self.view.top_tree.viewport().focusWidget()
         self.assertIsInstance(editor, QtWidgets.QLineEdit)
         editor.setText("Changed")
-
         self.view.reset()
         self.view._on_rename_editor_closed()
-
         self.assertIsNone(self.view._rename_item)
         self.assertFalse(self.view._rename_editor_connected)
         self.assertEqual(rename_calls, [])

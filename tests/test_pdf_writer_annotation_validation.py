@@ -1,7 +1,6 @@
 import tempfile
 import unittest
 from pathlib import Path
-
 from ost_visualizer.presentation.visualization.exporters import ost_pdf_writer
 
 
@@ -26,7 +25,6 @@ class PdfWriterAnnotationValidationTests(unittest.TestCase):
             / "pdf"
             / "pdf_writer.hpp"
         )
-
         self.assertNotIn("create_blank_page(", header_path.read_text(encoding="utf-8"))
 
     def test_empty_polygon_returns_failure_instead_of_accessing_missing_vertex(self):
@@ -38,7 +36,6 @@ class PdfWriterAnnotationValidationTests(unittest.TestCase):
             page.page_width = 72.0
             page.page_height = 72.0
             self.assertTrue(writer.merge_pages_with_annotations([page], str(pdf_path)))
-
             self.assertFalse(
                 writer.add_polygon_annotation(
                     str(pdf_path),
@@ -48,7 +45,6 @@ class PdfWriterAnnotationValidationTests(unittest.TestCase):
                     0.5,
                 )
             )
-
             self.assertIn("must contain vertices", writer.get_last_error())
 
     def test_empty_ink_strokes_return_failure_instead_of_accessing_missing_point(self):
@@ -62,9 +58,7 @@ class PdfWriterAnnotationValidationTests(unittest.TestCase):
             ink = ost_pdf_writer.InkAnnotationData()
             ink.strokes = [[]]
             page.inks = [ink]
-
             self.assertFalse(writer.merge_pages_with_annotations([page], str(pdf_path)))
-
             self.assertIn("must contain points", writer.get_last_error())
 
 
