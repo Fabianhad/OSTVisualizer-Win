@@ -63,6 +63,7 @@ from ost_visualizer.application.services.database_session_registry import (
 from ost_visualizer.application.services.page_load_strategy_service import (
     PageLoadStrategyService,
 )
+from ost_visualizer.application.dtos.color_dtos import ColorWithOpacity
 from ost_visualizer.domain.services.coordinate_transformation_service import (
     OSTCoordinateSystem,
 )
@@ -74,6 +75,10 @@ from ost_visualizer.infrastructure.database.entity_version_reader import (
     DatabaseEntityVersionReader,
 )
 from ost_visualizer.infrastructure.database.writer_router import DatabaseProjectWriter
+from ost_visualizer.presentation.interfaces.i_takeoff_renderer import ITakeoffRenderer
+from ost_visualizer.presentation.visualization.pdf.renderers.takeoff_renderer import (
+    TakeoffRenderer,
+)
 from ost_visualizer.infrastructure.mdb.exporters.ost_exporter import OstExporter
 from ost_visualizer.infrastructure.providers import (
     InfrastructureServiceProvider,
@@ -273,6 +278,15 @@ class CollaborationInterfaceContractTests(unittest.TestCase):
 
 
 class InterfaceShapeContractTests(unittest.TestCase):
+    def test_takeoff_renderer_color_map_contract_matches_runtime_values(self):
+        for member in (
+            ITakeoffRenderer.create_all_path_items,
+            TakeoffRenderer.create_all_path_items,
+        ):
+            color_map = get_type_hints(member)["color_map"]
+            self.assertEqual(get_origin(color_map), dict)
+            self.assertEqual(get_args(color_map), (str, ColorWithOpacity))
+
     def test_coordinate_class_helpers_are_static_in_contract_and_implementation(self):
         for name in ("parse_position", "ost_to_pdf_coordinates"):
             self.assertIsInstance(

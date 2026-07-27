@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
 )
 from ...application.dtos.collaboration_dtos import is_queued_takeoff_preview_uid
+from ...application.dtos.color_dtos import ColorWithOpacity
 from ...application.dtos.hotlink_dto import HotlinkDto
 from ...application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ...domain.entities.annotation import BidAnnotation
@@ -130,7 +131,7 @@ class SceneBuilder:
         all_takeoffs: List[Takeoff],
         render_takeoffs: List[Takeoff],
         conditions: Dict[str, Condition],
-        color_map: Dict[str, str],
+        color_map: Dict[str, ColorWithOpacity],
         page_info: Dict,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,
     ) -> Tuple[List[Any], Dict[str, List[Any]]]:

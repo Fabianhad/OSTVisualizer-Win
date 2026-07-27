@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 from PySide6.QtGui import QBrush, QColor, QPainterPath
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem
+from ...application.dtos.color_dtos import ColorWithOpacity
 from ...application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from ...domain.entities.condition import Condition
 from ...domain.entities.takeoff import Takeoff
@@ -14,7 +15,7 @@ class ITakeoffRenderer(Protocol):
         self,
         takeoffs: List[Takeoff],
         conditions: Dict[str, Condition],
-        color_map: Dict[str, str],
+        color_map: Dict[str, ColorWithOpacity],
         opacity: float = 0.5,
         page_info: Optional[Dict[str, Any]] = None,
         page_area_selections: Optional[Dict[str, Optional[str]]] = None,

@@ -2,6 +2,7 @@ from typing import Any, List, Optional, Tuple
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsTextItem
+from .....application.dtos.color_dtos import ColorWithOpacity
 from .....application.interfaces.i_coordinate_transformer import ICoordinateTransformer
 from .....domain.entities import pattern as pt
 from .....domain.entities import shape as shapes
@@ -626,11 +627,11 @@ class TakeoffRenderer:
         self,
         takeoffs: list[Takeoff],
         conditions: dict[str, Condition],
-        color_map: dict[str, str],
+        color_map: dict[str, ColorWithOpacity],
         opacity: float = 0.5,
         page_info: dict[str, Any] | None = None,
         page_area_selections: dict[str, str | None] | None = None,
-    ) -> list[tuple[str, QGraphicsPathItem | list[QGraphicsPathItem]]]:
+    ) -> list[tuple[str, QGraphicsItem | list[QGraphicsItem]]]:
         if page_info:
             self.set_page_info(page_info)
         takeoff_map = {t.uid: t for t in takeoffs}
