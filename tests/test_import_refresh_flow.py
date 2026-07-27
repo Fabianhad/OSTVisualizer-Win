@@ -72,6 +72,7 @@ class FakeImportService:
         self.import_calls = []
         self.reloads = []
         self.next_result = True
+        self.reload_result = True
 
     def import_ost(self, filename, target_db, target_project_uid, refresh=True):
         self.import_calls.append((filename, target_db, target_project_uid, refresh))
@@ -79,6 +80,7 @@ class FakeImportService:
 
     def reload_and_notify(self, target_db):
         self.reloads.append(target_db)
+        return self.reload_result
 
 
 class FakeProjectData:
@@ -557,6 +559,47 @@ class ImportRefreshFlowTests(unittest.TestCase):
             [("source.ost", "target.mdb", None, False)],
         )
         self.assertEqual(service.reloads, [])
+
+    def test_import_handler_warns_when_successful_import_cannot_refresh(self):
+        service = FakeImportService()
+        service.reload_result = False
+        messages = []
+        handler = ImportHandler(
+            window=None,
+            project_data_service=FakeProjectData(),
+            import_service=service,
+            ui_state_manager=FakeUiState(),
+            deferred_persistence_manager=FakeDeferredPersistence(),
+            ui_access_manager=FakeAccess(),
+        )
+        original_dialog = import_handler_module.ProgressDialog
+        original_get_open = import_handler_module.QtWidgets.QFileDialog.getOpenFileName
+        original_show_info = import_handler_module.show_info
+        original_show_warning = import_handler_module.show_warning
+        try:
+            import_handler_module.ProgressDialog = FakeProgressDialog
+            import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
+                lambda *_args, **_call_options: ("source.ost", "")
+            )
+            import_handler_module.show_info = lambda *_args, **_call_options: self.fail(
+                "a failed refresh must not report an unqualified success"
+            )
+            import_handler_module.show_warning = (
+                lambda _parent, title, message: messages.append((title, message))
+            )
+            handler.import_ost()
+        finally:
+            import_handler_module.ProgressDialog = original_dialog
+            import_handler_module.QtWidgets.QFileDialog.getOpenFileName = (
+                original_get_open
+            )
+            import_handler_module.show_info = original_show_info
+            import_handler_module.show_warning = original_show_warning
+
+        self.assertEqual(service.reloads, ["target.mdb"])
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0][0], "Refresh Error")
+        self.assertIn("Successfully imported 'source.ost'", messages[0][1])
 
 
 if __name__ == "__main__":

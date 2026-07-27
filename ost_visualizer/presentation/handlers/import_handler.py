@@ -79,12 +79,20 @@ class ImportHandler:
                 dialog.cleanup()
                 dialog.deleteLater()
             if rc == QtWidgets.QDialog.DialogCode.Accepted:
-                self._import_service.reload_and_notify(target_db)
-                show_info(
-                    self.window,
-                    "Import Complete",
-                    f"Successfully imported '{filename}' into the database.",
-                )
+                if self._import_service.reload_and_notify(target_db):
+                    show_info(
+                        self.window,
+                        "Import Complete",
+                        f"Successfully imported '{filename}' into the database.",
+                    )
+                else:
+                    show_warning(
+                        self.window,
+                        "Refresh Error",
+                        f"Successfully imported '{filename}', but the database view "
+                        "could not be refreshed. Reopen the database to see the "
+                        "imported project.",
+                    )
             else:
                 if worker_error is not None:
                     logger.error(
