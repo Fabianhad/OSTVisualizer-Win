@@ -76,7 +76,11 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self.tree.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self.tree.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked)
+        self.tree.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
+            if self._is_interactive
+            else QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
         self.tree.header().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.tree.header().setSectionResizeMode(
             0, QtWidgets.QHeaderView.ResizeMode.Stretch
@@ -121,11 +125,12 @@ class ConditionTypesDialog(QtWidgets.QDialog):
             tree_item = QtWidgets.QTreeWidgetItem([item.name])
             set_tree_item_row_height(tree_item, self.tree.columnCount())
             tree_item.setData(0, self._UID_ROLE, item.uid)
-            tree_item.setFlags(
-                QtCore.Qt.ItemFlag.ItemIsEnabled
-                | QtCore.Qt.ItemFlag.ItemIsSelectable
-                | QtCore.Qt.ItemFlag.ItemIsEditable
+            flags = (
+                QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
             )
+            if self._is_interactive:
+                flags |= QtCore.Qt.ItemFlag.ItemIsEditable
+            tree_item.setFlags(flags)
             self.tree.addTopLevelItem(tree_item)
         self.tree.blockSignals(False)
         self._building = False
@@ -224,6 +229,15 @@ class ConditionTypesDialog(QtWidgets.QDialog):
 
     def _on_item_changed(self, item: QtWidgets.QTreeWidgetItem, column: int) -> None:
         if self._building or column != 0:
+            return
+        if not self._is_interactive:
+            if item is self._pending_new_item:
+                self._remove_pending_new_item()
+                return
+            raw_uid = item.data(0, self._UID_ROLE)
+            original = self._name_by_uid(str(raw_uid)) if raw_uid is not None else None
+            if original is not None and item.text(0) != original:
+                self._set_item_text(item, original)
             return
         if item is self._pending_new_item:
             self._commit_new_item(item)
@@ -341,7 +355,15 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         )
         pairs = [(item.text(0), str(item.data(0, self._UID_ROLE))) for item in selected]
         selected_uids = [uid for _, uid in pairs]
-        blocked_uids = self._blocked_delete_uids(selected_uids)
+        try:
+            blocked_uids = self._blocked_delete_uids(selected_uids)
+        except Exception:
+            show_warning(
+                self,
+                "Condition Types",
+                "Failed to validate condition type deletion.",
+            )
+            return
         to_delete = confirm_multi_delete(
             self, "Delete Condition Type", pairs, blocked_uids
         )
@@ -402,6 +424,21 @@ class ConditionTypesDialog(QtWidgets.QDialog):
         self._set_controls_interactive(self._is_interactive)
 
     def _set_controls_interactive(self, enabled: bool) -> None:
+        if not enabled and self._pending_new_item is not None:
+            self._remove_pending_new_item()
+        self.tree.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
+            if enabled
+            else QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        for index in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(index)
+            flags = item.flags()
+            if enabled:
+                flags |= QtCore.Qt.ItemFlag.ItemIsEditable
+            else:
+                flags &= ~QtCore.Qt.ItemFlag.ItemIsEditable
+            item.setFlags(flags)
         self.btn_new.setEnabled(enabled)
         self._update_button_states()
 

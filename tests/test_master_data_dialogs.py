@@ -1199,6 +1199,74 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             dialog.cleanup()
             dialog.deleteLater()
 
+    def test_condition_type_interactivity_revocation_blocks_inline_writes(self):
+        save_calls = []
+        dialog = ConditionTypesDialog(
+            FakeIconProvider(),
+            condition_types=[CdnType(uid="type-1", name="Concrete")],
+            save_fn=lambda changes: save_calls.append(changes) or {},
+            reload_fn=lambda: [],
+            menu_mode=True,
+        )
+        try:
+            item = dialog.tree.topLevelItem(0)
+            dialog.set_interactive(False)
+
+            self.assertFalse(item.flags() & QtCore.Qt.ItemFlag.ItemIsEditable)
+            self.assertEqual(
+                dialog.tree.editTriggers(),
+                QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers,
+            )
+
+            dialog._set_item_text(item, "Asphalt")
+            dialog._on_item_changed(item, 0)
+
+            self.assertEqual(item.text(0), "Concrete")
+            self.assertEqual(save_calls, [])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
+    def test_condition_type_delete_validation_failure_is_contained(self):
+        delete_calls = []
+        dialog = ConditionTypesDialog(
+            FakeIconProvider(),
+            condition_types=[CdnType(uid="type-1", name="Concrete")],
+            save_fn=lambda _changes: {},
+            blocked_delete_uids_fn=lambda _uids: (_ for _ in ()).throw(
+                RuntimeError("validation unavailable")
+            ),
+            delete_fn=lambda uids: delete_calls.append(list(uids)),
+            reload_fn=lambda: [],
+            menu_mode=True,
+        )
+        try:
+            dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+            with (
+                patch(
+                    "ost_visualizer.presentation.dialogs."
+                    "condition_types_dialog.confirm_multi_delete"
+                ) as confirm_delete,
+                patch(
+                    "ost_visualizer.presentation.dialogs.condition_types_dialog."
+                    "show_warning"
+                ) as warning,
+            ):
+                dialog._on_delete()
+
+            confirm_delete.assert_not_called()
+            warning.assert_called_once_with(
+                dialog,
+                "Condition Types",
+                "Failed to validate condition type deletion.",
+            )
+            self.assertEqual(delete_calls, [])
+        finally:
+            dialog.close()
+            dialog.cleanup()
+            dialog.deleteLater()
+
     def test_condition_type_stale_selected_item_does_not_crash_button_update(self):
         save_calls = []
         dialog = ConditionTypesDialog(
