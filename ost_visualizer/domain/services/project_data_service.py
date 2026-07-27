@@ -103,9 +103,8 @@ class ProjectDataService:
             file_entry,
             cdn_types,
         )
-        self.model.cdn_types = (
-            self.model.file_manager.project_repository.get_merged_cdn_types()
-        )
+        repository = self.model.file_manager.project_repository
+        self.model.cdn_types = repository.get_cdn_types(repository.active_file_path)
         self.model.set_hierarchy(hierarchy)
         self.model.projects = build_projects(hierarchy)
 

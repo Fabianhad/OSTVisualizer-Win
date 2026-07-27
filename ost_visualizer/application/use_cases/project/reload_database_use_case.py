@@ -36,7 +36,8 @@ class ReloadDatabaseUseCase:
             )
             return False
         repo = self.file_manager.project_repository
-        self.model.cdn_types = repo.get_merged_cdn_types()
+        cdn_file_path = prev_bid_ref.file_path if prev_bid_ref else target_path
+        self.model.cdn_types = repo.get_cdn_types(cdn_file_path)
         self.model.set_hierarchy(result.hierarchy)
         self.model.projects = build_projects(result.hierarchy)
         if prev_bid_ref:

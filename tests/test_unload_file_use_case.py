@@ -31,7 +31,11 @@ class FakeRepo:
             loaded_files=[HierarchyFileEntry(file_path="active.mdb")]
         )
 
-    def get_merged_cdn_types(self):
+    @property
+    def active_file_path(self):
+        return self.current_hierarchy_data.loaded_files[0].file_path
+
+    def get_cdn_types(self, _file_path=None):
         return {}
 
 

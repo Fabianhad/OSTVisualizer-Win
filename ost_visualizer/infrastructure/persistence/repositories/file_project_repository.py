@@ -126,11 +126,10 @@ class FileProjectRepository(IProjectRepository):
     def current_hierarchy_data(self) -> HierarchyData:
         return self._current_hierarchy.data
 
-    def get_merged_cdn_types(self) -> Dict[str, CdnType]:
-        merged: Dict[str, CdnType] = {}
-        for cache in self._loaded_files.values():
-            merged.update(cache.cdn_types)
-        return merged
+    def get_cdn_types(self, file_path: Optional[str] = None) -> Dict[str, CdnType]:
+        target_path = file_path or self._active_file_path
+        cache = self._loaded_files.get(target_path) if target_path else None
+        return dict(cache.cdn_types) if cache is not None else {}
 
     def register_loaded_hierarchy(
         self,
@@ -161,8 +160,8 @@ class FileProjectRepository(IProjectRepository):
             return FileLoadResult(
                 success=True,
                 hierarchy=self._current_hierarchy.data,
-                cdn_types=cache.cdn_types,
-                pages=cache.pages,
+                cdn_types=dict(cache.cdn_types),
+                pages=dict(cache.pages),
             )
         try:
             result = self.parser.parse(file_path)
@@ -269,7 +268,7 @@ class FileProjectRepository(IProjectRepository):
         if result.success:
             cache = self._loaded_files[file_path]
             cache.parsed_hierarchy = result.parsed_hierarchy
-            cache.cdn_types = result.cdn_types
+            cache.cdn_types = dict(result.cdn_types)
             self._rebuild_merged_hierarchy()
             result.hierarchy = self._current_hierarchy.data
         return result

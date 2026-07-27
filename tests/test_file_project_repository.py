@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from ost_visualizer.domain.entities.cdn_type import CdnType
 from ost_visualizer.domain.entities.file_results import FileLoadResult
 from ost_visualizer.domain.entities.hierarchy_data import HierarchyFileEntry
 from ost_visualizer.infrastructure.persistence.repositories import (
@@ -69,6 +70,25 @@ class MdbFileParserTests(unittest.TestCase):
         )
         self.assertEqual(len(hierarchy.loaded_files), 1)
         self.assertEqual(hierarchy.loaded_files[0].display_name, "Updated")
+
+    def test_condition_types_remain_scoped_to_their_database_identity(self):
+        repository = FileProjectRepository(FakeLifecycleParser())
+        repository.register_loaded_hierarchy(
+            HierarchyFileEntry(file_path="first-id"),
+            {"1": CdnType(uid="1", name="First type")},
+        )
+        repository.register_loaded_hierarchy(
+            HierarchyFileEntry(file_path="second-id"),
+            {"1": CdnType(uid="1", name="Second type")},
+        )
+
+        first = repository.get_cdn_types("first-id")
+        second = repository.get_cdn_types("second-id")
+        first.clear()
+
+        self.assertEqual(second["1"].name, "Second type")
+        self.assertEqual(repository.get_cdn_types("first-id")["1"].name, "First type")
+        self.assertEqual(repository.get_cdn_types()["1"].name, "First type")
 
     def test_bid_load_keeps_core_data_when_optional_layers_fail(self):
         parser = MdbFileParser(parser=FakeMdbReaderWithLayerFailure())

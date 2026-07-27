@@ -44,6 +44,11 @@ class UnloadFileUseCase:
             return
         self.model.set_hierarchy(hierarchy_data)
         self.model.projects = build_projects(hierarchy_data)
-        self.model.cdn_types = repo.get_merged_cdn_types()
+        cdn_file_path = (
+            repo.active_file_path
+            if clear_bid or self.model.current_bid_ref is None
+            else self.model.current_bid_ref.file_path
+        )
+        self.model.cdn_types = repo.get_cdn_types(cdn_file_path)
         if clear_bid:
             self.model.clear_bid()
