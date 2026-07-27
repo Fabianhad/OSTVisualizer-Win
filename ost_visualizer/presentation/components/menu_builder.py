@@ -417,10 +417,12 @@ class MenuBuilder:
         menu.addMenu(submenu)
 
     @staticmethod
-    def _no_op() -> None:
+    def _no_op(*_args, **_kwargs) -> None:
         pass
 
     def cleanup(self) -> None:
+        if self._owned_actions is None:
+            return
         for action in self._owned_actions:
             try:
                 action.triggered.disconnect()
