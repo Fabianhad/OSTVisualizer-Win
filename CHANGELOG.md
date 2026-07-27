@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed periodic license validation updating internal authorization without
+  notifying the UI when a license expired, became invalid, or recovered.
 - Fixed malformed empty polygon and ink data crashing the native PDF annotation
   writer instead of returning its documented failure result.
 - Fixed takeoff undo/redo accepting incomplete authoritative insert identities,

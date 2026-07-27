@@ -195,9 +195,19 @@ class LicenseOrchestrator:
             return None
         result = self._validate_use_case.execute()
         self._apply_result(result)
-        if result.success:
-            self._event_publisher.reset_failure_state()
+        callback_bridge = self._callback_bridge
+        if callback_bridge is not None:
+            callback_bridge.dispatch(
+                self._publish_periodic_validation_outcome,
+                (result.success, result.message, result.license_status),
+            )
         return result
+
+    def _publish_periodic_validation_outcome(
+        self, outcome: tuple[bool, str, Optional[LicenseStatus]]
+    ) -> None:
+        success, message, license_status = outcome
+        self._publish_validation_outcome(success, message, license_status)
 
     def _publish_validation_outcome(
         self,

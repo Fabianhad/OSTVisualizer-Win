@@ -111,6 +111,15 @@ class ImmediateThreadManager:
         pass
 
 
+class ImmediateCallbackBridge:
+    def __init__(self):
+        self.dispatched = []
+
+    def dispatch(self, callback, payload):
+        self.dispatched.append(payload)
+        callback(payload)
+
+
 class FakeApiClient:
     def __init__(self, deactivate_response):
         self.deactivate_response = deactivate_response
@@ -285,7 +294,62 @@ class LicenseActivationContractTests(unittest.TestCase):
         self.assertEqual(model.clear_calls, 1)
         self.assertEqual(result.license_status, LicenseStatus.NO_LICENSE)
 
-    def _build_orchestrator(self, validate, activate, publisher):
+    def test_periodic_invalid_result_publishes_on_callback_bridge(self):
+        invalid = self._result(
+            False,
+            LicenseOperationStatus.INVALID_KEY,
+            LicenseStatus.INVALID,
+            "invalid",
+        )
+        validate = FakeUseCase(invalid)
+        publisher = FakeEventPublisher()
+        bridge = ImmediateCallbackBridge()
+        orchestrator = self._build_orchestrator(
+            validate,
+            FakeUseCase(invalid),
+            publisher,
+            callback_bridge=bridge,
+        )
+
+        result = orchestrator._perform_periodic_validation()
+
+        self.assertIs(result, invalid)
+        self.assertEqual(
+            bridge.dispatched,
+            [(False, "invalid", LicenseStatus.INVALID)],
+        )
+        self.assertEqual(
+            publisher.invalidated,
+            [("invalid", LicenseStatus.INVALID)],
+        )
+
+    def test_periodic_success_publishes_recovery_on_callback_bridge(self):
+        valid = self._result(
+            True,
+            LicenseOperationStatus.SUCCESS,
+            LicenseStatus.VALID,
+            "valid",
+        )
+        validate = FakeUseCase(valid)
+        publisher = FakeEventPublisher()
+        bridge = ImmediateCallbackBridge()
+        orchestrator = self._build_orchestrator(
+            validate,
+            FakeUseCase(valid),
+            publisher,
+            callback_bridge=bridge,
+        )
+
+        result = orchestrator._perform_periodic_validation()
+
+        self.assertIs(result, valid)
+        self.assertEqual(
+            bridge.dispatched,
+            [(True, "valid", LicenseStatus.VALID)],
+        )
+        self.assertEqual(publisher.activated_calls, 1)
+
+    def _build_orchestrator(self, validate, activate, publisher, callback_bridge=None):
         model = FakeModel()
         return LicenseOrchestrator(
             license_model=model,
@@ -302,7 +366,7 @@ class LicenseActivationContractTests(unittest.TestCase):
             scheduler=FakeScheduler(),
             event_publisher=publisher,
             thread_manager=ImmediateThreadManager(),
-            callback_bridge=object(),
+            callback_bridge=callback_bridge or object(),
             logger=logging.getLogger("test"),
         )
 
