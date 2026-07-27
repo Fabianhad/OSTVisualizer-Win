@@ -124,29 +124,28 @@ class DatabaseCapabilityService:
         if descriptor.backend == DatabaseBackend.ACCESS:
             return True
         with self._lock:
+            status = self.collaboration_status(descriptor.database_id)
             editable = (
                 descriptor.database_id in self._permission_editable_sql_databases
-                and self.collaboration_status(descriptor.database_id).state
-                == SynchronizationState.HEALTHY
+                and status.state == SynchronizationState.HEALTHY
             )
-        if not editable or resource is None:
-            return editable
-        status = self.collaboration_status(descriptor.database_id)
-        blocked = status.locked_resources | status.conflicted_resources
-        return not any(
-            (
-                candidate.resource_type == resource.resource_type
-                and candidate.resource_id == resource.resource_id
+            if not editable or resource is None:
+                return editable
+            blocked = status.locked_resources | status.conflicted_resources
+            return not any(
+                (
+                    candidate.resource_type == resource.resource_type
+                    and candidate.resource_id == resource.resource_id
+                )
+                or (
+                    resource.resource_type == CollaborationResourceType.BID.value
+                    and resource.bid_uid is not None
+                    and candidate.bid_uid == resource.bid_uid
+                )
+                or (
+                    candidate.resource_type == CollaborationResourceType.BID.value
+                    and resource.bid_uid is not None
+                    and candidate.resource_id == str(resource.bid_uid)
+                )
+                for candidate in blocked
             )
-            or (
-                resource.resource_type == CollaborationResourceType.BID.value
-                and resource.bid_uid is not None
-                and candidate.bid_uid == resource.bid_uid
-            )
-            or (
-                candidate.resource_type == CollaborationResourceType.BID.value
-                and resource.bid_uid is not None
-                and candidate.resource_id == str(resource.bid_uid)
-            )
-            for candidate in blocked
-        )
