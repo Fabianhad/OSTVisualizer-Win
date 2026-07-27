@@ -632,6 +632,81 @@ class StartupDatabaseRestoreTests(unittest.TestCase):
         warning.assert_called_once()
         self.assertIn("credentials", warning.call_args.args[2])
 
+    def test_failed_load_checkbox_rollback_save_failure_is_contained(self):
+        checked = FileEntry("C:/projects/unavailable.mdb", is_checked=True)
+
+        class _State:
+            file_entries = []
+
+            def __init__(self):
+                self.update_count = 0
+
+            def reload(self):
+                pass
+
+            def update_entries(self, entries):
+                self.update_count += 1
+                if self.update_count == 2:
+                    raise OSError("disk unavailable")
+                self.file_entries = list(entries)
+
+        class _Dialog:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return QtWidgets.QDialog.DialogCode.Accepted
+
+            def get_file_entries(self):
+                return [checked]
+
+            def commit_credential_changes(self):
+                return set()
+
+            def cleanup(self):
+                pass
+
+            def deleteLater(self):
+                pass
+
+        state = _State()
+        handler = FileOperationHandler(
+            window=None,
+            icon_provider=None,
+            event_bus=SimpleNamespace(publish=lambda *_args, **_kwargs: None),
+            file_state_model=state,
+            cleanup_deleted_files_use_case=SimpleNamespace(
+                execute_and_save=lambda: None
+            ),
+            file_loading_service=SimpleNamespace(
+                load_file=lambda _locator: SimpleNamespace(
+                    success=False,
+                    error_message="unavailable",
+                )
+            ),
+            working_directory_service=None,
+            unload_file_fn=lambda _locator: True,
+            deferred_persistence_manager=SimpleNamespace(),
+            ui_access_manager=SimpleNamespace(is_allowed=lambda _feature: True),
+            sql_collaboration_coordinator=SimpleNamespace(),
+        )
+        with (
+            patch(
+                "ost_visualizer.presentation.handlers.file_operation_handler."
+                "OpenFilesDialog",
+                _Dialog,
+            ),
+            patch(
+                "ost_visualizer.presentation.handlers.file_operation_handler."
+                "show_warning"
+            ) as warning,
+        ):
+            handler.open_files()
+
+        self.assertEqual(state.file_entries, [checked])
+        self.assertEqual(warning.call_count, 2)
+        self.assertIn("checked state could not be cleared", warning.call_args.args[2])
+
     def test_saved_sql_checkbox_remains_enabled_and_interactive(self):
         descriptor = DatabaseDescriptor.for_sql_server(
             SqlServerDatabaseLocation(server="localhost", database="UNAVAILABLE_SQL"),

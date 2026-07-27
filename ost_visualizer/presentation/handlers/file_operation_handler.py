@@ -177,7 +177,15 @@ class FileOperationHandler:
                             entry.is_checked = False
                             break
                 if failed_database_ids:
-                    self._file_state_model.update_entries(final_entries)
+                    try:
+                        self._file_state_model.update_entries(final_entries)
+                    except OSError:
+                        show_warning(
+                            self.window,
+                            "Open Files",
+                            "A database could not be loaded and its checked state "
+                            "could not be cleared.",
+                        )
             for database_id in old_checked_files.keys() & new_checked_entries.keys():
                 entry = new_checked_entries[database_id]
                 descriptor_changed = (
