@@ -1630,6 +1630,20 @@ class BidDimensionAnnotationTests(unittest.TestCase):
         finally:
             set_annotation_style_for_tool("rect", color="#ff0000", line_width=4.0)
 
+    def test_renderer_ignores_unpaired_polygon_coordinate(self):
+        annotation = BidAnnotation(
+            uid="polygon-1",
+            annotation_type="polygon",
+            position=[0.0, 0.0, 10.0, 0.0, 5.0],
+        )
+
+        geometry = calculate_annotation_geometry(
+            annotation,
+            lambda position: list(position),
+        )
+
+        self.assertEqual(geometry["points"], [(0.0, 0.0), (10.0, 0.0)])
+
     def test_empty_text_annotation_renders_editable_text_item(self):
         renderer = AnnotationItemRenderer(OSTCoordinateSystem())
         annotation = BidAnnotation(

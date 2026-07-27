@@ -198,7 +198,7 @@ def calculate_annotation_geometry(
         else:
             points = [
                 (tx_position[i], tx_position[i + 1])
-                for i in range(0, len(tx_position), 2)
+                for i in range(0, len(tx_position) - 1, 2)
             ]
         result["points"] = points
     elif anno_type in (
