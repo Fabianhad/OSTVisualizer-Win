@@ -1361,6 +1361,16 @@ class SqlCollaborationPhase4Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown collaboration resource"):
             ResourceRef("obsolete_resource", "1")
 
+    def test_resource_reference_order_handles_optional_bid_context(self):
+        context_free = ResourceRef("condition", "42")
+        bid_scoped = ResourceRef("condition", "42", 8)
+
+        self.assertEqual(
+            sorted((bid_scoped, context_free)),
+            [context_free, bid_scoped],
+        )
+        self.assertLess(context_free, bid_scoped)
+
     def test_large_hierarchy_change_coalesces_to_global_hierarchy_resource(self):
         records = [
             _RecordedMutation(ResourceRef("project", str(uid)), ChangeOperation.UPDATE)

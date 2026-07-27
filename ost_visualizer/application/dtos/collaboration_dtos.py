@@ -2,6 +2,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import total_ordering
 from typing import Generic, Optional, TypeVar
 from .collaboration_resource_catalog import resource_definition
 from ...domain.entities.area import BidArea
@@ -83,7 +84,8 @@ class CollaborationShutdownState(str, Enum):
     CLEANUP_FAILED = "cleanup_failed"
 
 
-@dataclass(frozen=True, order=True)
+@total_ordering
+@dataclass(frozen=True)
 class ResourceRef:
     resource_type: str
     resource_id: str
@@ -95,6 +97,21 @@ class ResourceRef:
         if not self.resource_id or len(self.resource_id) > 128:
             raise ValueError("Resource ID must contain 1 to 128 characters")
         resource_definition(self.resource_type)
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, ResourceRef):
+            return NotImplemented
+        return (
+            self.resource_type,
+            self.resource_id,
+            self.bid_uid is not None,
+            self.bid_uid or 0,
+        ) < (
+            other.resource_type,
+            other.resource_id,
+            other.bid_uid is not None,
+            other.bid_uid or 0,
+        )
 
     @property
     def lease_identity(self) -> tuple[str, str]:
