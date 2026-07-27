@@ -1,5 +1,6 @@
 import unittest
 from ost_visualizer.domain.aggregates.config_aggregate import ConfigAggregate
+from ost_visualizer.domain.entities.config import Config
 from ost_visualizer.domain.entities.condition import Condition
 from ost_visualizer.domain.entities.takeoff import Takeoff
 from ost_visualizer.domain.services.takeoff_domain_service import (
@@ -15,6 +16,10 @@ from ost_visualizer.domain.entities.workspace_state import (
 
 
 class DomainLifecycleTests(unittest.TestCase):
+    def test_config_rejects_truthy_string_for_boolean_field(self):
+        with self.assertRaisesRegex(TypeError, "show_toolbar_text"):
+            Config.from_dict({"show_toolbar_text": "false"})
+
     def test_condition_reassignment_preserves_geometry_compatibility_policy(self):
         conditions = {
             "linear-a": Condition(uid="linear-a", condition_type=Condition.TYPE_LINEAR),

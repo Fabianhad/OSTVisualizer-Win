@@ -5,6 +5,13 @@ from .annotation_caption import DEFAULT_ANNOTATION_CAPTION_IDS
 from .elevation_callout import ElevationCalloutSettings
 
 
+def _config_bool(data: dict, key: str) -> bool:
+    value = data[key]
+    if not isinstance(value, bool):
+        raise TypeError(f"{key} must be a boolean")
+    return value
+
+
 @dataclass
 class Config:
     DISPLAY_MODE_SOLID: ClassVar[str] = "Solid"
@@ -126,80 +133,88 @@ class Config:
         if not data:
             return config
         if "display_modes_synced" in data:
-            config.display_modes_synced = bool(data["display_modes_synced"])
+            config.display_modes_synced = _config_bool(data, "display_modes_synced")
         if "display_mode_3d" in data:
             config.display_mode_3d = str(data["display_mode_3d"])
         if "display_mode_2d" in data:
             config.display_mode_2d = str(data["display_mode_2d"])
         if "grayscale_enabled" in data:
-            config.grayscale_enabled = bool(data["grayscale_enabled"])
+            config.grayscale_enabled = _config_bool(data, "grayscale_enabled")
         if "roping_selection_method" in data:
             config.roping_selection_method = str(data["roping_selection_method"])
         if "display_page_index_with_sheet_name" in data:
-            config.display_page_index_with_sheet_name = bool(
-                data["display_page_index_with_sheet_name"]
+            config.display_page_index_with_sheet_name = _config_bool(
+                data, "display_page_index_with_sheet_name"
             )
         if "display_sheet_number_with_sheet_name" in data:
-            config.display_sheet_number_with_sheet_name = bool(
-                data["display_sheet_number_with_sheet_name"]
+            config.display_sheet_number_with_sheet_name = _config_bool(
+                data, "display_sheet_number_with_sheet_name"
             )
         if "hotlink_target" in data:
             config.hotlink_target = str(data["hotlink_target"])
         if "show_toolbar_text" in data:
-            config.show_toolbar_text = bool(data["show_toolbar_text"])
+            config.show_toolbar_text = _config_bool(data, "show_toolbar_text")
         if "disable_high_resolution_images" in data:
-            config.disable_high_resolution_images = bool(
-                data["disable_high_resolution_images"]
+            config.disable_high_resolution_images = _config_bool(
+                data, "disable_high_resolution_images"
             )
         if "enable_intelligent_paste" in data:
-            config.enable_intelligent_paste = bool(data["enable_intelligent_paste"])
+            config.enable_intelligent_paste = _config_bool(
+                data, "enable_intelligent_paste"
+            )
         if "enable_advanced_mouse_controls" in data:
-            config.enable_advanced_mouse_controls = bool(
-                data["enable_advanced_mouse_controls"]
+            config.enable_advanced_mouse_controls = _config_bool(
+                data, "enable_advanced_mouse_controls"
             )
         if "default_auto_zoom_level" in data:
             config.default_auto_zoom_level = int(data["default_auto_zoom_level"])
         if "use_full_window_crosshairs" in data:
-            config.use_full_window_crosshairs = bool(data["use_full_window_crosshairs"])
+            config.use_full_window_crosshairs = _config_bool(
+                data, "use_full_window_crosshairs"
+            )
         if "crosshair_color" in data:
             config.crosshair_color = str(data["crosshair_color"])
         if "crosshair_line_thickness" in data:
             config.crosshair_line_thickness = int(data["crosshair_line_thickness"])
         if "allow_add_page_from_takeoff_tab" in data:
-            config.allow_add_page_from_takeoff_tab = bool(
-                data["allow_add_page_from_takeoff_tab"]
+            config.allow_add_page_from_takeoff_tab = _config_bool(
+                data, "allow_add_page_from_takeoff_tab"
             )
         if "mouse_unpressed_snap_angle" in data:
             config.mouse_unpressed_snap_angle = int(data["mouse_unpressed_snap_angle"])
         if "mouse_pressed_snap_angle" in data:
             config.mouse_pressed_snap_angle = int(data["mouse_pressed_snap_angle"])
         if "snap_to_grid_enabled" in data:
-            config.snap_to_grid_enabled = bool(data["snap_to_grid_enabled"])
+            config.snap_to_grid_enabled = _config_bool(data, "snap_to_grid_enabled")
         if "snap_to_grid_threshold_px" in data:
             config.snap_to_grid_threshold_px = int(data["snap_to_grid_threshold_px"])
         if "snap_to_pdf_lines_enabled" in data:
-            config.snap_to_pdf_lines_enabled = bool(data["snap_to_pdf_lines_enabled"])
+            config.snap_to_pdf_lines_enabled = _config_bool(
+                data, "snap_to_pdf_lines_enabled"
+            )
         if "snap_to_pdf_lines_threshold_px" in data:
             config.snap_to_pdf_lines_threshold_px = int(
                 data["snap_to_pdf_lines_threshold_px"]
             )
         if "snap_to_takeoffs_enabled" in data:
-            config.snap_to_takeoffs_enabled = bool(data["snap_to_takeoffs_enabled"])
+            config.snap_to_takeoffs_enabled = _config_bool(
+                data, "snap_to_takeoffs_enabled"
+            )
         if "snap_to_takeoffs_threshold_px" in data:
             config.snap_to_takeoffs_threshold_px = int(
                 data["snap_to_takeoffs_threshold_px"]
             )
         if "snap_to_right_angle_enabled" in data:
-            config.snap_to_right_angle_enabled = bool(
-                data["snap_to_right_angle_enabled"]
+            config.snap_to_right_angle_enabled = _config_bool(
+                data, "snap_to_right_angle_enabled"
             )
         if "snap_to_right_angle_threshold_px" in data:
             config.snap_to_right_angle_threshold_px = int(
                 data["snap_to_right_angle_threshold_px"]
             )
         if "pdf_annotation_captions_enabled" in data:
-            config.pdf_annotation_captions_enabled = bool(
-                data["pdf_annotation_captions_enabled"]
+            config.pdf_annotation_captions_enabled = _config_bool(
+                data, "pdf_annotation_captions_enabled"
             )
         if "pdf_annotation_caption_ids" in data:
             caption_ids = data["pdf_annotation_caption_ids"]
@@ -209,28 +224,28 @@ class Config:
                 str(value) for value in caption_ids
             )
         if "html_elevation_callouts_enabled" in data:
-            config.html_elevation_callouts_enabled = bool(
-                data["html_elevation_callouts_enabled"]
+            config.html_elevation_callouts_enabled = _config_bool(
+                data, "html_elevation_callouts_enabled"
             )
         if "pdf_elevation_callouts_enabled" in data:
-            config.pdf_elevation_callouts_enabled = bool(
-                data["pdf_elevation_callouts_enabled"]
+            config.pdf_elevation_callouts_enabled = _config_bool(
+                data, "pdf_elevation_callouts_enabled"
             )
         if "elevation_callout_include_condition" in data:
-            config.elevation_callout_include_condition = bool(
-                data["elevation_callout_include_condition"]
+            config.elevation_callout_include_condition = _config_bool(
+                data, "elevation_callout_include_condition"
             )
         if "elevation_callout_include_top" in data:
-            config.elevation_callout_include_top = bool(
-                data["elevation_callout_include_top"]
+            config.elevation_callout_include_top = _config_bool(
+                data, "elevation_callout_include_top"
             )
         if "elevation_callout_include_bottom" in data:
-            config.elevation_callout_include_bottom = bool(
-                data["elevation_callout_include_bottom"]
+            config.elevation_callout_include_bottom = _config_bool(
+                data, "elevation_callout_include_bottom"
             )
         if "elevation_callout_include_cubic_yards" in data:
-            config.elevation_callout_include_cubic_yards = bool(
-                data["elevation_callout_include_cubic_yards"]
+            config.elevation_callout_include_cubic_yards = _config_bool(
+                data, "elevation_callout_include_cubic_yards"
             )
         if "html_elevation_callout_color" in data:
             config.html_elevation_callout_color = str(
