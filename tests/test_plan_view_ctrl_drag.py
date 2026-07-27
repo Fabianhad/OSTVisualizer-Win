@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QBrush, QColor, QPainterPath, QPen, QTransform
 from PySide6.QtWidgets import (
     QApplication,
+    QGraphicsItem,
     QGraphicsPathItem,
     QGraphicsRectItem,
     QGraphicsScene,
@@ -31,6 +32,7 @@ from ost_visualizer.presentation.components.plan_view.components.drag_handler im
     DragHandlerMixin,
 )
 from ost_visualizer.presentation.components.plan_view.components.graphics_items import (
+    DIMENSION_LABEL_ITEM_KIND,
     NAMED_VIEW_LABEL_ITEM_KIND,
 )
 from ost_visualizer.presentation.components.plan_view.components.input_handler import (
@@ -3145,6 +3147,27 @@ class CtrlDragTests(unittest.TestCase):
         view.update_drag_handle_positions([0.0, 0.0, 255.0, 0.0], "d1")
         self.assertEqual(view._uid_to_items["d1"], original_items)
         self.assertEqual(self._dimension_label(view).toPlainText(), "21' - 3\"")
+
+    def test_collapsed_bid_dimension_preview_removes_and_recreates_label(self):
+        view, _ann = self._make_dimension_resize_view()
+        original_label = self._dimension_label(view)
+
+        view.update_drag_handle_positions([0.0, 0.0, 0.0, 0.0], "d1")
+
+        self.assertTrue(self._dimension_path(view).path().isEmpty())
+        self.assertIsNone(original_label.scene())
+        self.assertNotIn(original_label, view._uid_to_items["d1"])
+        self.assertNotIn(original_label, view._takeoff_items)
+
+        view.update_drag_handle_positions([0.0, 0.0, 120.0, 0.0], "d1")
+
+        replacement_label = self._dimension_label(view)
+        self.assertIsNot(replacement_label, original_label)
+        self.assertEqual(replacement_label.data(0), "d1")
+        self.assertEqual(replacement_label.data(2), DIMENSION_LABEL_ITEM_KIND)
+        self.assertTrue(
+            replacement_label.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        )
 
     def test_bid_aline_resize_preview_remains_path_only(self):
         view, _ann = self._make_dimension_resize_view()

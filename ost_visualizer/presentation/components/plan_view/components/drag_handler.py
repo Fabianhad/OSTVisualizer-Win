@@ -4,6 +4,7 @@ from PySide6 import QtCore
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (
+    QGraphicsItem,
     QGraphicsPathItem,
     QGraphicsPolygonItem,
     QGraphicsRectItem,
@@ -31,7 +32,7 @@ from ....visualization.pdf.renderers.annotation_renderer import (
     create_cloud_path_points,
 )
 from .geometry_utils import polygon_is_valid, signed_area
-from .graphics_items import ClippedTextGraphicsItem
+from .graphics_items import DIMENSION_LABEL_ITEM_KIND, ClippedTextGraphicsItem
 
 
 def _line_line_intersect(
@@ -112,6 +113,8 @@ class DragHandlerMixin:
             if text_item is None:
                 return
             text_item.setData(0, uid)
+            text_item.setData(2, DIMENSION_LABEL_ITEM_KIND)
+            text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
             transform = self._current_page_transform()
             if transform is not None:
                 text_item.setTransform(transform)
@@ -120,13 +123,19 @@ class DragHandlerMixin:
             if text_item not in self._takeoff_items:
                 self._takeoff_items.append(text_item)
         else:
-            update_dimension_text_item(
+            updated = update_dimension_text_item(
                 text_item,
                 dimension,
                 ann.color,
                 cs,
                 DIMENSION_FONT_SIZE_ADJUSTMENT,
             )
+            if not updated:
+                if text_item.scene() is self._scene:
+                    self._scene.removeItem(text_item)
+                items.remove(text_item)
+                if text_item in self._takeoff_items:
+                    self._takeoff_items.remove(text_item)
 
     def _drag_preview_color_for_takeoff(self, takeoff, condition):
         return self._color_service.get_2d_color_for_takeoff(
