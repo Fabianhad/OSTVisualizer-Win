@@ -1805,6 +1805,50 @@ class MasterDataDialogButtonModeTests(unittest.TestCase):
             sidebar.close()
             sidebar.deleteLater()
 
+    def test_layers_sidebar_reload_cancels_pending_new_layer_editor(self):
+        sidebar = BidLayersSidebar(None)
+        layer = self._layer("layer-1", "Layer 1", 1)
+        sidebar.load_layers([layer])
+        sidebar.set_pending_selection(layer.uid)
+        try:
+            sidebar._on_add_clicked()
+            self.assertIsNotNone(sidebar._pending_new_item)
+            self.assertTrue(sidebar._pending_new_editor_connected)
+
+            sidebar.load_layers([layer])
+
+            self.assertIsNone(sidebar._pending_new_item)
+            self.assertFalse(sidebar._pending_new_editor_connected)
+            self.assertEqual(sidebar._selected_uid, layer.uid)
+            self.assertEqual(sidebar._table.topLevelItemCount(), 1)
+
+            sidebar._on_add_clicked()
+            self.assertIsNotNone(sidebar._pending_new_item)
+            self.assertEqual(sidebar._table.topLevelItemCount(), 2)
+        finally:
+            sidebar.clear()
+            sidebar.close()
+            sidebar.deleteLater()
+
+    def test_layers_sidebar_inline_rename_rejects_blank_and_trims_name(self):
+        sidebar = BidLayersSidebar(None)
+        sidebar.load_layers([self._layer("layer-1", "Layer 1", 1)])
+        renamed = []
+        sidebar.layer_renamed.connect(
+            lambda layer_uid, name: renamed.append((layer_uid, name))
+        )
+        item = sidebar._table.topLevelItem(0)
+        try:
+            item.setText(1, "   ")
+            self.assertEqual(item.text(1), "Layer 1")
+            self.assertEqual(renamed, [])
+
+            item.setText(1, "  Renamed Layer  ")
+            self.assertEqual(renamed, [("layer-1", "Renamed Layer")])
+        finally:
+            sidebar.close()
+            sidebar.deleteLater()
+
     def test_layers_dialog_partial_batch_delete_reloads_and_warns(self):
         reload_calls = []
         warnings = []

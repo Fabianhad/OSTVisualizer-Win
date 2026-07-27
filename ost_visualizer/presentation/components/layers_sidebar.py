@@ -175,7 +175,12 @@ class BidLayersSidebar(QtWidgets.QWidget):
         self, layers: List[BidLayer], used_uids: Optional[Set[str]] = None
     ) -> None:
         self._used_uids = used_uids or set()
-        prev_selected = self._pending_select_uid or self._selected_uid
+        pending_new_prev_uid = self._pending_new_prev_uid
+        if self._pending_new_item is not None:
+            self._clear_pending_new_layer_state(remove_item=False)
+        prev_selected = (
+            self._pending_select_uid or pending_new_prev_uid or self._selected_uid
+        )
         self._pending_select_uid = None
         pending_edit = self._pending_edit_uid
         self._pending_edit_uid = None
@@ -281,7 +286,12 @@ class BidLayersSidebar(QtWidgets.QWidget):
         layer = self._layers[row]
         if layer.is_template or layer.is_locked:
             return
-        new_name = item.text(1)
+        new_name = item.text(1).strip()
+        if not new_name:
+            self._block_item_changed = True
+            item.setText(1, layer.name)
+            self._block_item_changed = False
+            return
         if new_name == layer.name:
             return
         if self._is_duplicate_layer_name(new_name, layer.uid):
