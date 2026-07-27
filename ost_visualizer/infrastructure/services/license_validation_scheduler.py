@@ -27,10 +27,12 @@ class LicenseValidationScheduler:
         self._thread.start()
 
     def stop(self) -> None:
-        if self._thread and self._thread.is_alive():
+        thread = self._thread
+        if thread and thread.is_alive():
             self._stop_event.set()
-            self._thread.join(timeout=2)
-        self._thread = None
+            thread.join(timeout=2)
+        if thread and not thread.is_alive() and self._thread is thread:
+            self._thread = None
 
     def clear_task(self) -> None:
         self._task = None

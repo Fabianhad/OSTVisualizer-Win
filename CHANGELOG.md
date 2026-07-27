@@ -30,7 +30,8 @@
 - Fixed progress dialogs intermittently destroying a worker thread before its
   queued shutdown reached the UI event loop.
 - Fixed periodic license validation updating internal authorization without
-  notifying the UI when a license expired, became invalid, or recovered.
+  notifying the UI when a license expired, became invalid, or recovered, and
+  shutdown now retains an in-flight validation worker until it actually exits.
 - Fixed future-dated local validation timestamps extending licensed offline grace beyond its configured duration.
 - Fixed malformed empty or odd-length polygon and ink data crashing plan
   annotation rendering or the native PDF writer instead of degrading safely.
