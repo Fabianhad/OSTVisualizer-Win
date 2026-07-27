@@ -45,7 +45,7 @@
 - Fixed axis-aligned curved linear takeoffs using a shorter quadratic fallback instead of their circular arc when calculating quantities.
 - Fixed conflicting condition reference-number updates committing other conditions' renumbering before the target condition save; both changes now share one database transaction.
 - Fixed condition-type IDs from different loaded databases overwriting each other in active-bid memory when the databases used the same numeric IDs.
-- Fixed condition-property saves silently coercing invalid condition numbers or ignoring malformed spacing, and rejecting non-finite elevation, dimension, pitch, and display-size values before they can reach project storage.
+- Fixed condition-property editing silently coercing invalid condition numbers, ignoring malformed spacing, or crashing while formatting non-finite dimension text; non-finite elevation, dimension, pitch, and display-size values are rejected before they can reach project storage.
 - Fixed broad read-only MCP database, project, bid, hierarchy, and live-selection
   responses so they enforce result limits, report truncation metadata, cannot
   double-count repeated live selection IDs, and never expose legacy database
