@@ -46,6 +46,7 @@ from ost_visualizer.infrastructure.windows.file_associations import (
     build_open_command,
 )
 from ost_visualizer.main import (
+    _install_single_instance_handler,
     _project_file_args_from_payload,
     _project_file_args_to_payload,
 )
@@ -144,6 +145,73 @@ class FakeTimerQueue:
 
     def singleShot(self, _delay_ms, callback):
         self.callbacks.append(callback)
+
+
+class FakeSignal:
+    def __init__(self):
+        self.callbacks = []
+
+    def connect(self, callback):
+        self.callbacks.append(callback)
+
+    def emit(self):
+        for callback in list(self.callbacks):
+            callback()
+
+
+class FakeSocketBytes:
+    def __init__(self, data):
+        self._data = data
+
+    def data(self):
+        return self._data
+
+
+class FragmentedLocalSocket:
+    def __init__(self):
+        self.readyRead = FakeSignal()
+        self.disconnected = FakeSignal()
+        self._buffer = bytearray()
+        self._connected = True
+        self.delete_later_calls = 0
+
+    def push(self, data):
+        self._buffer.extend(data)
+        self.readyRead.emit()
+
+    def bytesAvailable(self):
+        return len(self._buffer)
+
+    def readAll(self):
+        data = bytes(self._buffer)
+        self._buffer.clear()
+        return FakeSocketBytes(data)
+
+    def state(self):
+        from PySide6.QtNetwork import QLocalSocket
+
+        if self._connected:
+            return QLocalSocket.LocalSocketState.ConnectedState
+        return QLocalSocket.LocalSocketState.UnconnectedState
+
+    def disconnect(self):
+        self._connected = False
+        self.disconnected.emit()
+
+    def deleteLater(self):
+        self.delete_later_calls += 1
+
+
+class FakeLocalServer:
+    def __init__(self, socket):
+        self.newConnection = FakeSignal()
+        self._pending = [socket]
+
+    def hasPendingConnections(self):
+        return bool(self._pending)
+
+    def nextPendingConnection(self):
+        return self._pending.pop(0)
 
 
 class FakeStartupProgressDialog:
@@ -774,6 +842,28 @@ class FileAssociationStartupImportTests(unittest.TestCase):
             )
             self.assertEqual(restored.files, args.files)
             self.assertEqual(restored.rejected, args.rejected)
+
+    def test_single_instance_handler_buffers_fragmented_socket_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.ost"
+            source.write_text("ost")
+            args = parse_project_file_args([str(source)])
+            payload = _project_file_args_to_payload(args)
+            socket = FragmentedLocalSocket()
+            server = FakeLocalServer(socket)
+            queued = []
+            window = SimpleNamespace(enqueue_project_file_args=queued.append)
+            logger = SimpleNamespace(warning=lambda *_args, **_kwargs: None)
+
+            _install_single_instance_handler(server, window, logger)
+            midpoint = len(payload) // 2
+            socket.push(payload[:midpoint])
+            socket.push(payload[midpoint:])
+
+            self.assertEqual(queued, [])
+            socket.disconnect()
+            self.assertEqual(queued, [args])
+            self.assertEqual(socket.delete_later_calls, 1)
 
     def test_registry_register_and_unregister_keys(self):
         registry = FakeRegistry()

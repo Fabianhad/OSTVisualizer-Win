@@ -199,12 +199,18 @@ def _install_single_instance_handler(
     def _on_new_connection() -> None:
         while server.hasPendingConnections():
             socket = server.nextPendingConnection()
+            payload = bytearray()
 
-            def _read_socket(sock=socket) -> None:
-                if not sock.bytesAvailable():
+            def _drain_socket(sock=socket, buffer=payload) -> None:
+                if sock.bytesAvailable():
+                    buffer.extend(sock.readAll().data())
+
+            def _process_socket(sock=socket, buffer=payload) -> None:
+                _drain_socket(sock, buffer)
+                if not buffer:
                     return
                 try:
-                    args = _project_file_args_from_payload(sock.readAll().data())
+                    args = _project_file_args_from_payload(bytes(buffer))
                 except Exception:
                     logger.warning(
                         "Ignoring malformed single-instance payload", exc_info=True
@@ -213,10 +219,11 @@ def _install_single_instance_handler(
                 if args.has_file_args:
                     window.enqueue_project_file_args(args)
 
-            socket.readyRead.connect(_read_socket)
+            socket.readyRead.connect(_drain_socket)
+            socket.disconnected.connect(_process_socket)
             socket.disconnected.connect(socket.deleteLater)
-            if socket.bytesAvailable():
-                _read_socket()
+            if socket.state() == QLocalSocket.LocalSocketState.UnconnectedState:
+                _process_socket()
 
     server.newConnection.connect(_on_new_connection)
     if server.hasPendingConnections():
