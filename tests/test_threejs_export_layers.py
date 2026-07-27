@@ -14,6 +14,7 @@ from ost_visualizer.application.services.page_visualization_metadata_service imp
 from ost_visualizer.infrastructure.visualization_provider import (
     _ExportStrategyAdapter,
     _HtmlExportStrategyAdapter,
+    _HtmlRendererAdapter,
 )
 from ost_visualizer.domain.entities.area import BidArea
 from ost_visualizer.domain.entities.condition import Condition
@@ -380,6 +381,26 @@ class _ProjectData:
 
 
 class ThreejsExportLayerTests(unittest.TestCase):
+    def test_html_renderer_adapter_reports_missing_output_as_failure(self):
+        adapter = _HtmlRendererAdapter(
+            SimpleNamespace(create=lambda: object()),
+            ColorService(),
+            _TakeoffService(),
+        )
+        renderer_module = "ost_visualizer.infrastructure.visualization_provider"
+        with patch(
+            f"{renderer_module}.visualize_with_threejs", return_value=None
+        ) as renderer:
+            result = adapter.render(
+                {},
+                [],
+                "missing.html",
+                include_elevation_callouts=False,
+            )
+
+        self.assertFalse(result)
+        renderer.assert_called_once()
+
     def test_page_floor_elevation_reducer_is_order_independent(self):
         page_a = MeshData(
             vertices=[(0.0, 0.0, 12.0), (1.0, 1.0, 10.0)],

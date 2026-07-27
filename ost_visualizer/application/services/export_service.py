@@ -96,13 +96,7 @@ class ExportService:
             ]
             bid = self.project_data.get_current_bid()
             bid_name = bid.name if bid else ""
-            metadata = {
-                "bid_name": bid_name,
-                "page_names": page_names,
-            }
             title = strategy.prepare_title(bid_name, page_names)
-            if title:
-                metadata["title"] = title
             export_options = strategy.get_export_options(
                 config, self.project_data.get_page_area_selections()
             )
@@ -115,8 +109,7 @@ class ExportService:
                 )
                 export_options.update(
                     {
-                        "title": metadata.get("title", "3D View"),
-                        "bid_name": bid_name,
+                        "title": title or "3D View",
                         "layers": layers,
                         "areas": areas,
                         "pages": pages,

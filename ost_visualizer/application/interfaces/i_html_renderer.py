@@ -19,7 +19,6 @@ class IHtmlRenderer(Protocol):
         bid_takeoffs: List[Takeoff],
         output_path: str,
         title: str = "3D Visualization",
-        bid_name: str = "Bid",
         display_mode_3d: str = Config.DISPLAY_MODE_SOLID,
         display_mode_2d: str = Config.DISPLAY_MODE_SOLID,
         display_modes_synced: bool = True,

@@ -24,6 +24,7 @@ from ost_visualizer.application.interfaces.i_database_session_registry import (
 from ost_visualizer.application.interfaces.i_entity_version_reader import (
     IEntityVersionReader,
 )
+from ost_visualizer.application.interfaces.i_html_renderer import IHtmlRenderer
 from ost_visualizer.application.interfaces.i_infrastructure_service_provider import (
     IInfrastructureServiceProvider,
 )
@@ -68,6 +69,7 @@ from ost_visualizer.domain.services.coordinate_transformation_service import (
 from ost_visualizer.domain.services.uom_service_impl import UOMDomainService
 from ost_visualizer.infrastructure.mdb.mdb_reader import MdbReader
 from ost_visualizer.infrastructure.mdb.mdb_writer import MdbWriter
+from ost_visualizer.infrastructure.visualization_provider import _HtmlRendererAdapter
 from ost_visualizer.infrastructure.database.entity_version_reader import (
     DatabaseEntityVersionReader,
 )
@@ -174,6 +176,16 @@ class CaptionInterfaceContractTests(unittest.TestCase):
 
 
 class ProviderInterfaceContractTests(unittest.TestCase):
+    def test_html_renderer_contract_matches_its_adapter(self):
+        self.assertEqual(
+            _call_shape(IHtmlRenderer.render),
+            _call_shape(_HtmlRendererAdapter.render),
+        )
+        self.assertEqual(
+            _hint_shapes(IHtmlRenderer.render),
+            _hint_shapes(_HtmlRendererAdapter.render),
+        )
+
     def test_infrastructure_provider_public_methods_match_interface(self):
         self.assertEqual(
             _public_methods(IInfrastructureServiceProvider),

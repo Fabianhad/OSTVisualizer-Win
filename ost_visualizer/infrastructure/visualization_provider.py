@@ -12,12 +12,14 @@ from ..application.interfaces.i_mesh_generator import IMeshGenerator, MeshData
 from ..application.interfaces.i_takeoff_domain_service import ITakeoffDomainService
 from ..application.interfaces.i_visualization_provider import IVisualizationProvider
 from ..domain.entities.area import BidArea
+from ..domain.entities.condition import Condition
 from ..domain.entities.config import Config
 from ..domain.entities.elevation_callout import (
     DEFAULT_ELEVATION_CALLOUT_SETTINGS,
     ElevationCalloutSettings,
 )
 from ..domain.entities.layer import BidLayer
+from ..domain.entities.takeoff import Takeoff
 from ..presentation.visualization.exporters.dxf_exporter import DXFExporter
 from ..presentation.visualization.exporters.fbx_exporter import FBXExporter
 from ..presentation.visualization.exporters.obj_exporter import OBJExporter
@@ -119,16 +121,15 @@ class _HtmlRendererAdapter(IHtmlRenderer):
 
     def render(
         self,
-        bid_conditions: Dict,
-        bid_takeoffs: List,
+        bid_conditions: Dict[str, Condition],
+        bid_takeoffs: List[Takeoff],
         output_path: str,
         title: str = "3D Visualization",
-        bid_name: str = "Bid",
         display_mode_3d: str = Config.DISPLAY_MODE_SOLID,
         display_mode_2d: str = Config.DISPLAY_MODE_SOLID,
         display_modes_synced: bool = True,
         grayscale_enabled: bool = True,
-        page_area_selections: Optional[Dict] = None,
+        page_area_selections: Optional[Dict[str, Optional[str]]] = None,
         auto_open: bool = False,
         pages: Optional[List[PageVisualizationPageDto]] = None,
         active_page_uid: str = "",
@@ -144,30 +145,31 @@ class _HtmlRendererAdapter(IHtmlRenderer):
     ) -> bool:
         try:
             coord_system = self._coord_factory.create()
-            visualize_with_threejs(
-                bid_conditions,
-                bid_takeoffs,
-                coord_system,
-                self._color_service,
-                self._takeoff_service,
-                title=title,
-                output_path=output_path,
-                auto_open=auto_open,
-                display_mode_3d=display_mode_3d,
-                display_mode_2d=display_mode_2d,
-                display_modes_synced=display_modes_synced,
-                grayscale_enabled=grayscale_enabled,
-                page_area_selections=page_area_selections,
-                pages=pages,
-                active_page_uid=active_page_uid,
-                layers=layers,
-                areas=areas,
-                page_image_layer=page_image_layer,
-                include_elevation_callouts=include_elevation_callouts,
-                elevation_callout_settings=elevation_callout_settings,
-                elevation_callout_color=elevation_callout_color,
+            return bool(
+                visualize_with_threejs(
+                    bid_conditions,
+                    bid_takeoffs,
+                    coord_system,
+                    self._color_service,
+                    self._takeoff_service,
+                    title=title,
+                    output_path=output_path,
+                    auto_open=auto_open,
+                    display_mode_3d=display_mode_3d,
+                    display_mode_2d=display_mode_2d,
+                    display_modes_synced=display_modes_synced,
+                    grayscale_enabled=grayscale_enabled,
+                    page_area_selections=page_area_selections,
+                    pages=pages,
+                    active_page_uid=active_page_uid,
+                    layers=layers,
+                    areas=areas,
+                    page_image_layer=page_image_layer,
+                    include_elevation_callouts=include_elevation_callouts,
+                    elevation_callout_settings=elevation_callout_settings,
+                    elevation_callout_color=elevation_callout_color,
+                )
             )
-            return True
         except Exception:
             return False
 
@@ -296,7 +298,6 @@ class _HtmlExportStrategyAdapter(IExportStrategy):
             exportable_takeoffs,
             output_path,
             title=export_options.get("title", "3D View"),
-            bid_name=export_options.get("bid_name", "Bid"),
             display_mode_3d=export_options["display_mode_3d"],
             display_mode_2d=export_options["display_mode_2d"],
             display_modes_synced=export_options["display_modes_synced"],
