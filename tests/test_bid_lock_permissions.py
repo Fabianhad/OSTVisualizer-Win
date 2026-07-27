@@ -641,6 +641,26 @@ class BidLockPermissionTests(unittest.TestCase):
         self.assertFalse(manager.is_allowed(Feature.DUPLICATE_CONDITION))
         self.assertFalse(manager.is_allowed(Feature.EDIT_PAGE_SETTINGS))
 
+    def test_bid_job_status_permission_uses_selected_bid_resource(self):
+        project_data = _ProjectData()
+        checked_resources = []
+
+        class _ResourceCapability:
+            def is_editable(self, _locator, resource=None):
+                checked_resources.append(resource)
+                return resource is None or resource.resource_id != "7"
+
+        manager = self._access_manager(
+            project_data,
+            capability=_ResourceCapability(),
+        )
+
+        self.assertFalse(manager.is_allowed(Feature.EDIT_BID_JOB_STATUS))
+        self.assertEqual(
+            checked_resources,
+            [ResourceRef("bid", "7", 7)],
+        )
+
     def test_revoked_database_capability_blocks_deferred_write_execution(self):
         service, *_unused = _write_service(
             _ProjectData(), database_capability=_DatabaseCapability(editable=False)

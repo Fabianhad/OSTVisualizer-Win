@@ -295,7 +295,11 @@ class UIAccessManager:
                 return ResourceRef("project", str(project_uid))
             return None
         bid_uid = int(bid_ref.bid_uid) if str(bid_ref.bid_uid).isdecimal() else None
-        if feature in {Feature.DELETE_BID, Feature.DUPLICATE_BID}:
+        if feature in {
+            Feature.DELETE_BID,
+            Feature.DUPLICATE_BID,
+            Feature.EDIT_BID_JOB_STATUS,
+        }:
             return ResourceRef("bid", str(bid_ref.bid_uid), bid_uid)
         if feature == Feature.COVER_SHEET:
             return ResourceRef("cover_sheet", str(bid_ref.bid_uid), bid_uid)
