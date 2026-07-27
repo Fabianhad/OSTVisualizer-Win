@@ -179,6 +179,8 @@ class HierarchyReaderMixin:
                     root_folders[folder_uid_str] = folder_data
                 elif parent_uid in all_folders:
                     all_folders[parent_uid].subfolders[folder_uid_str] = folder_data
+                else:
+                    root_folders[folder_uid_str] = folder_data
             select_clause = ", ".join(
                 schema.optional_column("BidPages", column, default)
                 for column, default in (
