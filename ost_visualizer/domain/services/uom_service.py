@@ -321,9 +321,9 @@ def _calc_raw_for_count(
 
 
 def _perp_slope(dx: float, dy: float) -> float:
-    if dx == 0.0:
-        return math.inf
     if dy == 0.0:
+        return math.inf
+    if dx == 0.0:
         return 0.0
     return -dx / dy
 
